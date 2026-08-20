@@ -383,7 +383,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// did when every role named h. Three roles (coord, lines, agentTerms) were
 	// assigned after the translator and captured nil until this was reordered.
 	// TestNew_EveryTranslateRoleIsWired pins it.
-	h.mcpRegistry = newMCPRegistry(h)
+	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.coord = newBridgeCoordinator(h)
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()

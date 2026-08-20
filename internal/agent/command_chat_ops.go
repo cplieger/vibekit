@@ -1,6 +1,6 @@
 package agent
 
-// Internal hub methods for chat state cleanup. These are called by
+// Internal runtime methods for chat state cleanup. These are called by
 // command_deps.go to satisfy the command package's role interfaces.
 
 import (

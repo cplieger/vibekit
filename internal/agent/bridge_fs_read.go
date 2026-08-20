@@ -51,7 +51,7 @@ func (h *Runtime) handleFSRequest(_ context.Context, chatID vibekit.ChatID, msg 
 		// fs read/write Call would hang forever. The fresh ctx lives until
 		// this goroutine finishes or the runtime shuts down (h.lifecycle.done),
 		// so Respond succeeds AND shutdown still cancels it. Mirrors the
-		// chat_summary goroutine in hub.go. Shadows the passed-in ctx.
+		// chat_summary goroutine in runtime.go. Shadows the passed-in ctx.
 		ctx, cancel := h.hubContext()
 		defer cancel()
 		defer func() {

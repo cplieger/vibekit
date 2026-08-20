@@ -6,7 +6,7 @@ package agent
 // assistant buffer does NOT hold. `chat_status` comes from KAS's focus_update
 // channel (the model's update_session_information tool), which is a session
 // event rather than turn content, so it appears in no message and in no
-// replay — hub/turn_mirror.go was its only holder.
+// replay — the deleted turn_mirror.go was its only holder.
 //
 // Deliberately ephemeral and deliberately tiny: one entry per chat, replaced
 // on each event, dropped when the turn ends. It is NEVER persisted, matching

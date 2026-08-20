@@ -236,7 +236,7 @@ func (us *utilitySession) resetIf(gen uint64) {
 	us.stopLocked()
 }
 
-// Stop stops the session if it is running. Thread-safe. Called from hub
+// Stop stops the session if it is running. Thread-safe. Called from the runtime
 // Shutdown (after inflight.Wait(), so no lease-holder is mid-Call).
 func (us *utilitySession) Stop() {
 	us.mu.Lock()

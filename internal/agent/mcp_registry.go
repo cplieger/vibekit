@@ -82,9 +82,27 @@ type mcpServerRuntime struct {
 	Relayed bool
 }
 
-// mcpRegistry is the runtime's in-memory view of connected MCP servers.
+// mcpRegistry is the in-memory view of connected MCP servers, and the whole MCP
+// surface: the status record, the HTTP routes over it, and the reconnect/prompt/
+// resource calls that go to a live CHAT bridge.
+//
+// It held a raw *Runtime, which was the strongest cycle in the package: the
+// registry reached back for three HTTP handlers, four broadcasts, the runtime's
+// own mcpConfig field and its done channel — while ten of those handlers' methods
+// sat on the runtime reaching forward into the registry. Two halves of one
+// concept, each holding the other. Merging them deletes the back-pointer; what is
+// left is three named collaborators.
 type mcpRegistry struct {
-	hub      *Runtime
+	// bridges looks up a chat's live bridge. Reconnect and prompt-fetch need a
+	// CHAT bridge, not the utility one, which is why this surface is not part of
+	// Settings even though it looks like configuration.
+	bridges *bridgeManager
+	// bus publishes the four MCP lifecycle events.
+	bus *bus
+	// lifetime supplies the done channel the debounce loop exits on.
+	lifetime *lifetime
+	// config is the enabled/known name sets vibekit itself configured.
+	config   mcpNameSets
 	servers  map[string]*mcpServerRuntime
 	onChange func()
 	// notifyCh coalesces rapid-fire onChange callbacks into a single
@@ -99,9 +117,12 @@ type mcpRegistry struct {
 	mu      sync.RWMutex
 }
 
-func newMCPRegistry(h *Runtime) *mcpRegistry {
+func newMCPRegistry(bridges *bridgeManager, b *bus, lt *lifetime, cfg mcpNameSets) *mcpRegistry {
 	r := &mcpRegistry{
-		hub:      h,
+		bridges:  bridges,
+		bus:      b,
+		lifetime: lt,
+		config:   cfg,
 		servers:  make(map[string]*mcpServerRuntime),
 		notifyCh: make(chan struct{}, 1),
 		readyCh:  make(chan struct{}),
@@ -112,24 +133,24 @@ func newMCPRegistry(h *Runtime) *mcpRegistry {
 // SetOnChange wires an invalidation callback fired (outside the lock)
 // whenever the registry mutates. The steering generator subscribes here.
 // Starts the debounced notifier goroutine on first call.
-func (r *mcpRegistry) SetOnChange(fn func()) {
-	r.mu.Lock()
-	first := r.onChange == nil && fn != nil
-	r.onChange = fn
-	r.mu.Unlock()
+func (reg *mcpRegistry) SetOnChange(fn func()) {
+	reg.mu.Lock()
+	first := reg.onChange == nil && fn != nil
+	reg.onChange = fn
+	reg.mu.Unlock()
 	if first {
-		r.startNotifier()
+		reg.startNotifier()
 	}
 }
 
 // WaitForReady blocks until MCP servers have reported their status
 // (via commands/available) or the timeout expires. Returns true if
 // ready, false on timeout or context cancellation.
-func (r *mcpRegistry) WaitForReady(ctx context.Context, timeout time.Duration) bool {
+func (reg *mcpRegistry) WaitForReady(ctx context.Context, timeout time.Duration) bool {
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 	select {
-	case <-r.readyCh:
+	case <-reg.readyCh:
 		return true
 	case <-t.C:
 		return false
@@ -140,11 +161,11 @@ func (r *mcpRegistry) WaitForReady(ctx context.Context, timeout time.Duration) b
 
 // Snapshot returns a deep copy of the current registry state, sorted
 // by server name for stable output.
-func (r *mcpRegistry) Snapshot() []mcpServerRuntime {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]mcpServerRuntime, 0, len(r.servers))
-	for _, v := range r.servers {
+func (reg *mcpRegistry) Snapshot() []mcpServerRuntime {
+	reg.mu.RLock()
+	defer reg.mu.RUnlock()
+	out := make([]mcpServerRuntime, 0, len(reg.servers))
+	for _, v := range reg.servers {
 		out = append(out, *v)
 	}
 	slices.SortFunc(out, func(a, b mcpServerRuntime) int { return cmp.Compare(a.Name, b.Name) })
@@ -157,29 +178,29 @@ func (r *mcpRegistry) Snapshot() []mcpServerRuntime {
 // mcp store's "/api/mcp/" subtree handler, so they take precedence on the
 // shared mux (same as "/api/mcp/status" already does). See mcp_control.go
 // for the handlers.
-func (r *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/mcp/status", r.handleStatus)
-	mux.HandleFunc("/api/mcp/reconnect", r.hub.handleMCPReconnect)
-	mux.HandleFunc("/api/mcp/prompt", r.hub.handleMCPGetPrompt)
-	mux.HandleFunc("/api/mcp/resource", r.hub.handleMCPGetResource)
+func (reg *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/mcp/status", reg.handleStatus)
+	mux.HandleFunc("/api/mcp/reconnect", reg.handleMCPReconnect)
+	mux.HandleFunc("/api/mcp/prompt", reg.handleMCPGetPrompt)
+	mux.HandleFunc("/api/mcp/resource", reg.handleMCPGetResource)
 	// The OAuth loopback relay (mcp_oauth_relay.go). Registering it here is
 	// mandatory, not optional: internal/mcp's "/api/mcp/" SUBTREE handler would
 	// otherwise swallow this path and read "oauth-relay" as a server id, so an
 	// unregistered relay 404s as an unknown server rather than failing visibly.
-	mux.HandleFunc("/api/mcp/oauth-relay", r.handleOAuthRelay)
+	mux.HandleFunc("/api/mcp/oauth-relay", reg.handleOAuthRelay)
 }
 
 // signalReady closes the readyCh so any goroutine waiting in
 // WaitForReady unblocks. Called when the first commands/available
 // notification arrives. Safe to call multiple times.
-func (r *mcpRegistry) signalReady() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (reg *mcpRegistry) signalReady() {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
 	select {
-	case <-r.readyCh:
+	case <-reg.readyCh:
 		// already closed
 	default:
-		close(r.readyCh)
+		close(reg.readyCh)
 	}
 }
 
@@ -187,13 +208,13 @@ func (r *mcpRegistry) signalReady() {
 // resources it advertises), broadcasts mcp_connected, and fires onChange.
 // Called from the _kiro/mcp/status handler when a server reports the
 // "connected" state. prompts/resources may be nil (server exposes none).
-func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
-	origin, ok := r.originFor(ctx, name)
+func (reg *mcpRegistry) recordConnected(ctx context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
+	origin, ok := reg.originFor(ctx, name)
 	if !ok {
 		return
 	}
-	r.mu.Lock()
-	r.servers[name] = &mcpServerRuntime{
+	reg.mu.Lock()
+	reg.servers[name] = &mcpServerRuntime{
 		Name:      name,
 		State:     mcpStateConnected,
 		Origin:    origin,
@@ -201,51 +222,51 @@ func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []
 		Prompts:   prompts,
 		Resources: resources,
 	}
-	r.mu.Unlock()
+	reg.mu.Unlock()
 
-	r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPConnected, "", vibekit.MCPConnectedPayload{Server: name}))
-	r.signalChange()
+	reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPConnected, "", vibekit.MCPConnectedPayload{Server: name}))
+	reg.signalChange()
 }
 
 // recordOAuth marks a server as waiting for OAuth and broadcasts the URL.
-func (r *mcpRegistry) recordOAuth(ctx context.Context, name, url string) {
-	origin, ok := r.originFor(ctx, name)
+func (reg *mcpRegistry) recordOAuth(ctx context.Context, name, url string) {
+	origin, ok := reg.originFor(ctx, name)
 	if !ok {
 		return
 	}
-	r.mu.Lock()
-	r.servers[name] = &mcpServerRuntime{
+	reg.mu.Lock()
+	reg.servers[name] = &mcpServerRuntime{
 		Name:     name,
 		State:    mcpStateOAuth,
 		Origin:   origin,
 		OAuthURL: url,
 	}
-	r.mu.Unlock()
+	reg.mu.Unlock()
 
-	r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPOAuthNeeded, "", vibekit.MCPOAuthPayload{Server: name, URL: url}))
-	r.signalChange()
+	reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPOAuthNeeded, "", vibekit.MCPOAuthPayload{Server: name, URL: url}))
+	reg.signalChange()
 }
 
 // recordInitFailure marks a server as having failed initialisation.
 // Broadcast mcp_failed so the client can render a red status and
 // surface the error message. A server the user disabled is silently dropped —
 // they have already chosen not to run it.
-func (r *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string) {
-	origin, ok := r.originFor(ctx, name)
+func (reg *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string) {
+	origin, ok := reg.originFor(ctx, name)
 	if !ok {
 		return
 	}
-	r.mu.Lock()
-	r.servers[name] = &mcpServerRuntime{
+	reg.mu.Lock()
+	reg.servers[name] = &mcpServerRuntime{
 		Name:   name,
 		State:  mcpStateFailed,
 		Origin: origin,
 		Error:  errMsg,
 	}
-	r.mu.Unlock()
+	reg.mu.Unlock()
 
-	r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPFailed, "", vibekit.MCPFailedPayload{Server: name, Error: errMsg}))
-	r.signalChange()
+	reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPFailed, "", vibekit.MCPFailedPayload{Server: name, Error: errMsg}))
+	reg.signalChange()
 }
 
 // recordDisabled records a server KAS reports as "disabled". It is the one
@@ -263,19 +284,19 @@ func (r *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string
 // transitions on its own, so the row lands on the next /api/mcp/status read (the
 // MCP page's own load, or any sibling server connecting in the same
 // notification). signalChange still fires so the steering doc regenerates.
-func (r *mcpRegistry) recordDisabled(ctx context.Context, name string) {
-	origin, ok := r.originFor(ctx, name)
+func (reg *mcpRegistry) recordDisabled(ctx context.Context, name string) {
+	origin, ok := reg.originFor(ctx, name)
 	if !ok || origin == vibekit.OriginUser {
 		return
 	}
-	r.mu.Lock()
-	r.servers[name] = &mcpServerRuntime{
+	reg.mu.Lock()
+	reg.servers[name] = &mcpServerRuntime{
 		Name:   name,
 		State:  mcpStateDisabled,
 		Origin: origin,
 	}
-	r.mu.Unlock()
-	r.signalChange()
+	reg.mu.Unlock()
+	reg.signalChange()
 }
 
 // oauthAttempt is a granted reservation to relay ONE authorization attempt's
@@ -317,10 +338,10 @@ type oauthAttempt struct {
 // A server in any other state has no attempt at all and gets errRelayNoFlow,
 // which is what keeps the route from being a standing lever with no flow behind
 // it.
-func (r *mcpRegistry) beginOAuthRelay(name string) (oauthAttempt, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	s, exists := r.servers[name]
+func (reg *mcpRegistry) beginOAuthRelay(name string) (oauthAttempt, error) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	s, exists := reg.servers[name]
 	if !exists || s.State != mcpStateOAuth || s.OAuthURL == "" {
 		return oauthAttempt{}, errRelayNoFlow
 	}
@@ -340,10 +361,10 @@ func (r *mcpRegistry) beginOAuthRelay(name string) (oauthAttempt, error) {
 // replaced while this relay was out belongs to a different attempt, and clearing
 // ITS latch would hand a fresh attempt's reservation to whoever holds a stale
 // token.
-func (r *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if a.rec != nil && r.servers[a.server] == a.rec {
+func (reg *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if a.rec != nil && reg.servers[a.server] == a.rec {
 		a.rec.Relayed = false
 	}
 }
@@ -351,11 +372,11 @@ func (r *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
 // clearAll wipes the runtime registry and broadcasts mcp_disconnected
 // for each server that had state. Called when the last bridge exits;
 // MCP subprocesses are scoped to kiro-cli, so nothing is live anymore.
-func (r *mcpRegistry) clearAll(ctx context.Context) {
-	r.mu.Lock()
-	prev := r.servers
-	r.servers = make(map[string]*mcpServerRuntime)
-	r.mu.Unlock()
+func (reg *mcpRegistry) clearAll(ctx context.Context) {
+	reg.mu.Lock()
+	prev := reg.servers
+	reg.servers = make(map[string]*mcpServerRuntime)
+	reg.mu.Unlock()
 
 	if len(prev) == 0 {
 		return
@@ -364,9 +385,9 @@ func (r *mcpRegistry) clearAll(ctx context.Context) {
 		if ctx.Err() != nil {
 			break
 		}
-		r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPDisconnected, "", vibekit.MCPDisconnectedPayload{Server: name}))
+		reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPDisconnected, "", vibekit.MCPDisconnectedPayload{Server: name}))
 	}
-	r.signalChange()
+	reg.signalChange()
 }
 
 // originFor answers both questions a record path has about a name at once: may
@@ -388,8 +409,8 @@ func (r *mcpRegistry) clearAll(ctx context.Context) {
 // A nil mcpConfig (test hubs) reports OriginUser for every name, which keeps the
 // pre-existing "no config means record it" behaviour and keeps recordDisabled's
 // drop rule intact for those hubs.
-func (r *mcpRegistry) originFor(ctx context.Context, name string) (vibekit.Origin, bool) {
-	cfg := r.hub.mcpConfig
+func (reg *mcpRegistry) originFor(ctx context.Context, name string) (vibekit.Origin, bool) {
+	cfg := reg.config
 	if cfg == nil {
 		return vibekit.OriginUser, true
 	}
@@ -438,8 +459,8 @@ type statusServer struct {
 	Relayed bool `json:"relayed,omitempty"`
 }
 
-func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	snap := r.Snapshot()
+func (reg *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	snap := reg.Snapshot()
 	out := make([]statusServer, len(snap))
 	for i := range snap {
 		out[i] = statusServer(snap[i])
@@ -450,31 +471,31 @@ func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 // startNotifier launches the single long-lived goroutine that drains
 // notifyCh and calls onChange with a short debounce. Must be called
 // after SetOnChange. Exits when h.lifecycle.done closes.
-func (r *mcpRegistry) startNotifier() {
+func (reg *mcpRegistry) startNotifier() {
 	go func() {
 		const debounce = 100 * time.Millisecond
 		for {
 			select {
-			case <-r.hub.lifecycle.done:
+			case <-reg.lifetime.done:
 				return
-			case <-r.notifyCh:
+			case <-reg.notifyCh:
 			}
 			// Debounce: wait a short window to coalesce rapid signals.
 			t := time.NewTimer(debounce)
 			select {
-			case <-r.hub.lifecycle.done:
+			case <-reg.lifetime.done:
 				t.Stop()
 				return
 			case <-t.C:
 			}
 			// Drain any signals that arrived during the debounce window.
 			select {
-			case <-r.notifyCh:
+			case <-reg.notifyCh:
 			default:
 			}
-			r.mu.RLock()
-			cb := r.onChange
-			r.mu.RUnlock()
+			reg.mu.RLock()
+			cb := reg.onChange
+			reg.mu.RUnlock()
 			if cb != nil {
 				cb()
 			}
@@ -484,9 +505,9 @@ func (r *mcpRegistry) startNotifier() {
 
 // signalChange sends a non-blocking signal to the notifier goroutine.
 // Multiple calls within the debounce window collapse into one cb().
-func (r *mcpRegistry) signalChange() {
+func (reg *mcpRegistry) signalChange() {
 	select {
-	case r.notifyCh <- struct{}{}:
+	case reg.notifyCh <- struct{}{}:
 	default:
 		// Already signalled; the notifier will pick it up.
 	}

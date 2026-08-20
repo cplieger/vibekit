@@ -65,8 +65,8 @@ const keyExitCode = "exitCode"
 // firstLiveBridge returns any live bridge, or nil when none are running.
 // All live bridges load the same global MCP config, so for reads (prompt /
 // resource) any one is equivalent.
-func (h *Runtime) firstLiveBridge() *sharedBridge {
-	for _, sb := range h.bridge.mgr.all() {
+func (reg *mcpRegistry) firstLiveBridge() *sharedBridge {
+	for _, sb := range reg.bridges.all() {
 		return sb
 	}
 	return nil
@@ -74,14 +74,14 @@ func (h *Runtime) firstLiveBridge() *sharedBridge {
 
 // mcpServerEnabled reports whether name is a currently-enabled configured
 // server. A nil mcpConfig (test hubs) treats every non-empty name as valid.
-func (h *Runtime) mcpServerEnabled(ctx context.Context, name string) bool {
+func (reg *mcpRegistry) mcpServerEnabled(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
 	}
-	if h.mcpConfig == nil {
+	if reg.config == nil {
 		return true
 	}
-	_, ok := h.mcpConfig.EnabledNames(ctx)[name]
+	_, ok := reg.config.EnabledNames(ctx)[name]
 	return ok
 }
 
@@ -90,8 +90,8 @@ func (h *Runtime) mcpServerEnabled(ctx context.Context, name string) bool {
 // errors are logged, not fatal — a wedged bridge must not block the others.
 // The refreshed _kiro/mcp/status each bridge emits on reconnect updates the
 // registry + SSE independently.
-func (h *Runtime) reconnectMCPServer(ctx context.Context, name string) int {
-	bridges := h.bridge.mgr.all()
+func (reg *mcpRegistry) reconnectMCPServer(ctx context.Context, name string) int {
+	bridges := reg.bridges.all()
 	if len(bridges) == 0 {
 		return 0
 	}
@@ -114,11 +114,11 @@ func (h *Runtime) reconnectMCPServer(ctx context.Context, name string) int {
 // getMCPPrompt resolves an MCP prompt via a live bridge's pool. Returns the
 // raw MCP GetPromptResult ({messages:[...]}) or an error. args is always
 // sent as an object (never null) so servers with no arguments still parse.
-func (h *Runtime) getMCPPrompt(ctx context.Context, server, promptName string, args map[string]any) (json.RawMessage, error) {
+func (reg *mcpRegistry) getMCPPrompt(ctx context.Context, server, promptName string, args map[string]any) (json.RawMessage, error) {
 	if args == nil {
 		args = map[string]any{}
 	}
-	return h.mcpFetch(ctx, methodV3MCPGetPrompt, map[string]any{
+	return reg.mcpFetch(ctx, methodV3MCPGetPrompt, map[string]any{
 		keyServerName: server,
 		"promptName":  promptName,
 		"arguments":   args,
@@ -127,8 +127,8 @@ func (h *Runtime) getMCPPrompt(ctx context.Context, server, promptName string, a
 
 // getMCPResource reads an MCP resource via a live bridge's pool. Returns the
 // raw MCP ReadResourceResult ({contents:[...]}) or an error.
-func (h *Runtime) getMCPResource(ctx context.Context, server, uri string) (json.RawMessage, error) {
-	return h.mcpFetch(ctx, methodV3MCPGetResource, map[string]any{
+func (reg *mcpRegistry) getMCPResource(ctx context.Context, server, uri string) (json.RawMessage, error) {
+	return reg.mcpFetch(ctx, methodV3MCPGetResource, map[string]any{
 		keyServerName: server,
 		"uri":         uri,
 	})
@@ -136,8 +136,8 @@ func (h *Runtime) getMCPResource(ctx context.Context, server, uri string) (json.
 
 // mcpFetch runs one C→A request against the first live bridge and returns
 // its raw result. errNoLiveBridge when nothing is running.
-func (h *Runtime) mcpFetch(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
-	sb := h.firstLiveBridge()
+func (reg *mcpRegistry) mcpFetch(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	sb := reg.firstLiveBridge()
 	if sb == nil {
 		return nil, errNoLiveBridge
 	}
@@ -162,7 +162,7 @@ type mcpReconnectReq struct {
 // handleMCPReconnect: POST /api/mcp/reconnect {server} → reconnect the named
 // server on every live bridge. Returns {"reconnected": N} (N = bridges
 // targeted; 0 when no chat is live).
-func (h *Runtime) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
+func (reg *mcpRegistry) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
@@ -171,11 +171,11 @@ func (h *Runtime) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
-	if !h.mcpServerEnabled(r.Context(), body.Server) {
+	if !reg.mcpServerEnabled(r.Context(), body.Server) {
 		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
-	n := h.reconnectMCPServer(r.Context(), body.Server)
+	n := reg.reconnectMCPServer(r.Context(), body.Server)
 	webhttp.WriteJSON(w, map[string]int{"reconnected": n})
 }
 
@@ -187,7 +187,7 @@ type mcpGetPromptReq struct {
 
 // handleMCPGetPrompt: POST /api/mcp/prompt {server, prompt, arguments} →
 // the raw MCP prompt result ({messages:[...]}).
-func (h *Runtime) handleMCPGetPrompt(w http.ResponseWriter, r *http.Request) {
+func (reg *mcpRegistry) handleMCPGetPrompt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
@@ -200,13 +200,13 @@ func (h *Runtime) handleMCPGetPrompt(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "prompt required")
 		return
 	}
-	if !h.mcpServerEnabled(r.Context(), body.Server) {
+	if !reg.mcpServerEnabled(r.Context(), body.Server) {
 		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
-	res, err := h.getMCPPrompt(r.Context(), body.Server, body.Prompt, body.Arguments)
+	res, err := reg.getMCPPrompt(r.Context(), body.Server, body.Prompt, body.Arguments)
 	if err != nil {
-		h.writeMCPFetchErr(w, err)
+		reg.writeMCPFetchErr(w, err)
 		return
 	}
 	writeMCPResult(w, res)
@@ -219,7 +219,7 @@ type mcpGetResourceReq struct {
 
 // handleMCPGetResource: POST /api/mcp/resource {server, uri} → the raw MCP
 // resource result ({contents:[...]}).
-func (h *Runtime) handleMCPGetResource(w http.ResponseWriter, r *http.Request) {
+func (reg *mcpRegistry) handleMCPGetResource(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
@@ -232,13 +232,13 @@ func (h *Runtime) handleMCPGetResource(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "uri required")
 		return
 	}
-	if !h.mcpServerEnabled(r.Context(), body.Server) {
+	if !reg.mcpServerEnabled(r.Context(), body.Server) {
 		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
-	res, err := h.getMCPResource(r.Context(), body.Server, body.URI)
+	res, err := reg.getMCPResource(r.Context(), body.Server, body.URI)
 	if err != nil {
-		h.writeMCPFetchErr(w, err)
+		reg.writeMCPFetchErr(w, err)
 		return
 	}
 	writeMCPResult(w, res)
@@ -258,7 +258,7 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 // errNoLiveBridge → 409 (open a chat first); any other error is a bridge /
 // MCP-server failure → 502 with a generic message (the raw RPC message is
 // often just "Internal error" and the useful detail is logged, not leaked).
-func (h *Runtime) writeMCPFetchErr(w http.ResponseWriter, err error) {
+func (reg *mcpRegistry) writeMCPFetchErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errNoLiveBridge) {
 		httpreply.Conflict(w, "no active chat session — open a chat to use MCP prompts and resources")
 		return

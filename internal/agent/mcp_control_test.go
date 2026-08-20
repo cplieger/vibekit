@@ -55,7 +55,7 @@ func TestReconnectMCPServer_FansOutToAllLiveBridges(t *testing.T) {
 	b1 := insertLiveBridge(t, h, "c1")
 	b2 := insertLiveBridge(t, h, "c2")
 
-	n := h.reconnectMCPServer(t.Context(), "everything")
+	n := h.mcpRegistry.reconnectMCPServer(t.Context(), "everything")
 	if n != 2 {
 		t.Fatalf("targeted = %d, want 2", n)
 	}
@@ -68,7 +68,7 @@ func TestReconnectMCPServer_FansOutToAllLiveBridges(t *testing.T) {
 
 func TestReconnectMCPServer_NoBridgesIsNoOp(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
-	if n := h.reconnectMCPServer(t.Context(), "everything"); n != 0 {
+	if n := h.mcpRegistry.reconnectMCPServer(t.Context(), "everything"); n != 0 {
 		t.Fatalf("targeted = %d, want 0", n)
 	}
 }
@@ -77,7 +77,7 @@ func TestGetMCPPrompt_CallsBridgeAndReturnsResult(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	b := insertLiveBridge(t, h, "c1")
 
-	res, err := h.getMCPPrompt(t.Context(), "everything", "simple-prompt", nil)
+	res, err := h.mcpRegistry.getMCPPrompt(t.Context(), "everything", "simple-prompt", nil)
 	if err != nil {
 		t.Fatalf("getMCPPrompt: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestGetMCPResource_CallsBridge(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	b := insertLiveBridge(t, h, "c1")
 
-	if _, err := h.getMCPResource(t.Context(), "everything", "demo://x"); err != nil {
+	if _, err := h.mcpRegistry.getMCPResource(t.Context(), "everything", "demo://x"); err != nil {
 		t.Fatalf("getMCPResource: %v", err)
 	}
 	if !bridgeCalled(b, methodV3MCPGetResource) {
@@ -104,7 +104,7 @@ func TestGetMCPResource_CallsBridge(t *testing.T) {
 
 func TestMCPFetch_NoLiveBridgeErrors(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
-	_, err := h.getMCPPrompt(t.Context(), "everything", "p", nil)
+	_, err := h.mcpRegistry.getMCPPrompt(t.Context(), "everything", "p", nil)
 	if !errors.Is(err, errNoLiveBridge) {
 		t.Fatalf("err = %v, want errNoLiveBridge", err)
 	}
@@ -114,7 +114,7 @@ func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/reconnect", nil)
 	rec := httptest.NewRecorder()
-	h.handleMCPReconnect(rec, req)
+	h.mcpRegistry.handleMCPReconnect(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("code = %d, want 405", rec.Code)
 	}
@@ -122,7 +122,7 @@ func TestHandleMCPReconnect_MethodNotAllowed(t *testing.T) {
 
 func TestHandleMCPReconnect_UnknownServer(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
-	rec := postJSON(h.handleMCPReconnect, "/api/mcp/reconnect", `{"server":"nope"}`)
+	rec := postJSON(h.mcpRegistry.handleMCPReconnect, "/api/mcp/reconnect", `{"server":"nope"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("code = %d, want 404", rec.Code)
 	}
@@ -131,7 +131,7 @@ func TestHandleMCPReconnect_UnknownServer(t *testing.T) {
 func TestHandleMCPReconnect_OK(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	insertLiveBridge(t, h, "c1")
-	rec := postJSON(h.handleMCPReconnect, "/api/mcp/reconnect", `{"server":"everything"}`)
+	rec := postJSON(h.mcpRegistry.handleMCPReconnect, "/api/mcp/reconnect", `{"server":"everything"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -148,7 +148,7 @@ func TestHandleMCPReconnect_OK(t *testing.T) {
 
 func TestHandleMCPGetPrompt_MissingPrompt(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
-	rec := postJSON(h.handleMCPGetPrompt, "/api/mcp/prompt", `{"server":"everything"}`)
+	rec := postJSON(h.mcpRegistry.handleMCPGetPrompt, "/api/mcp/prompt", `{"server":"everything"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", rec.Code)
 	}
@@ -156,7 +156,7 @@ func TestHandleMCPGetPrompt_MissingPrompt(t *testing.T) {
 
 func TestHandleMCPGetPrompt_NoLiveBridgeConflict(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
-	rec := postJSON(h.handleMCPGetPrompt, "/api/mcp/prompt", `{"server":"everything","prompt":"simple-prompt"}`)
+	rec := postJSON(h.mcpRegistry.handleMCPGetPrompt, "/api/mcp/prompt", `{"server":"everything","prompt":"simple-prompt"}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("code = %d, want 409 (%s)", rec.Code, rec.Body.String())
 	}
@@ -165,7 +165,7 @@ func TestHandleMCPGetPrompt_NoLiveBridgeConflict(t *testing.T) {
 func TestHandleMCPGetResource_OK(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	insertLiveBridge(t, h, "c1")
-	rec := postJSON(h.handleMCPGetResource, "/api/mcp/resource", `{"server":"everything","uri":"demo://x"}`)
+	rec := postJSON(h.mcpRegistry.handleMCPGetResource, "/api/mcp/resource", `{"server":"everything","uri":"demo://x"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
