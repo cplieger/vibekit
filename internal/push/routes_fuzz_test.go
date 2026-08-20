@@ -9,6 +9,16 @@ import (
 // FuzzIsAllowedPushEndpoint explores the URL grammar space to verify the
 // SSRF boundary invariant: any accepted endpoint must have scheme "https"
 // and a hostname matching the pushEndpointRules allowlist.
+//
+// The oracle below re-states the byte-exact host match, which means it catches a
+// folded implementation today (measured: rewriting the production comparison as
+// strings.EqualFold fails this target) but only for as long as nobody mirrors the
+// change into the oracle — and mirroring is the natural thing to do when a target
+// goes red right after an intentional edit. At that point the allow-list would
+// quietly grow every fold alias of every vendor host with the target still green.
+// The case decision is therefore ALSO pinned by direct assertion, in
+// TestIsAllowedPushEndpointIsByteExactOnHost, which names the aliases and the
+// direction of failure. Do not "align" this oracle with a folded implementation.
 func FuzzIsAllowedPushEndpoint(f *testing.F) {
 	// Seed corpus from the existing table-driven test cases.
 	f.Add("https://fcm.googleapis.com/fcm/send/abc")
@@ -25,6 +35,13 @@ func FuzzIsAllowedPushEndpoint(f *testing.F) {
 	f.Add("")
 	f.Add("https://")
 	f.Add("file:///etc/passwd")
+	// Case and fold aliases. The corpus reached none of these before: random
+	// mutation does not produce a valid vendor host with one rune swapped for
+	// its fold partner, and the weekly fuzz runner keeps no corpus between runs,
+	// so a committed seed is the only durable coverage of this class.
+	f.Add("https://FCM.GOOGLEAPIS.COM/fcm/send/abc")
+	f.Add("https://updates.push.\u017Fervices.mozilla.com/wpush/v2/xyz")
+	f.Add("https://sn1-wns.not\u0130fy.windows.com/wnsapi/foo")
 
 	f.Fuzz(func(t *testing.T, endpoint string) {
 		accepted := isAllowedPushEndpoint(endpoint)

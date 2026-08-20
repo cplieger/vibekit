@@ -316,3 +316,58 @@ func TestIsAllowedPushEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// TestIsAllowedPushEndpointIsByteExactOnHost states the case decision the gate
+// makes silently, and it is a DELIBERATE refusal rather than an oversight.
+//
+// url.Parse preserves host case (measured on go1.27.0: Hostname() of
+// https://FCM.GOOGLEAPIS.COM/… is "FCM.GOOGLEAPIS.COM"), and both comparisons in
+// isAllowedPushEndpoint are byte-exact, so an upper- or mixed-case spelling of an
+// allowed vendor is REFUSED. RFC 3986 §3.2.2 makes the host case-insensitive, so
+// that is a spec deviation — and the direction of failure is what makes it the
+// safe one: this is an ALLOW-LIST, so a refusal costs the subscriber their
+// notifications at subscribe time, while a widening costs the process an SSRF
+// primitive. Every browser emits its own service host lowercase, so nothing real
+// is refused today.
+//
+// The reason to pin it is the FIX someone will reach for. Neither standard
+// case-insensitive spelling is safe here, and they do not even agree with each
+// other. Measured exhaustively over the whole rune space on go1.27.0, one
+// substituted rune at a time: strings.EqualFold admits 17 / 33 / 17 / 13 distinct
+// single-rune aliases of the four allow-list hosts and strings.ToLower admits
+// 17 / 31 / 18 / 12. The differences are non-ASCII and go BOTH ways — EqualFold
+// admits U+017F LATIN SMALL LETTER LONG S for the "s" in "services", which
+// ToLower does not; ToLower admits U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE
+// for the "i" in "notify", which EqualFold does not. Each such alias is a
+// DIFFERENT DNS name, so either spelling turns the allow-list into a list of
+// hosts plus their homoglyphs. Unicode 17 widened SimpleFold by 116 runes with
+// zero removals, so a fold-based gate can only ever get more permissive on a
+// later toolchain, never less: that is the fail-open direction, and it is the
+// defect that shipped in a sibling app's Host allow-list.
+//
+// If case-insensitivity is ever wanted, the fix is ASCII-only normalisation of
+// the STORED endpoint — not a fold in this predicate — because vapidHeader
+// derives the RFC 8292 `aud` from u.Host, so the gate, the POST target and the
+// JWT audience all have to agree on one spelling.
+//
+// The byte-exact form is also the reason this whole predicate is Unicode-version
+// independent: == and strings.HasSuffix consult no table, so no Unicode upgrade
+// can move it in either direction.
+func TestIsAllowedPushEndpointIsByteExactOnHost(t *testing.T) {
+	refused := []string{
+		// ASCII case, which RFC 3986 says is equivalent and this gate does not.
+		"https://FCM.GOOGLEAPIS.COM/fcm/send/abc",
+		"https://Fcm.GoogleAPIs.Com/fcm/send/abc",
+		"https://WEB.PUSH.APPLE.COM/Q123",
+		"https://SN1-WNS.NOTIFY.WINDOWS.COM/wnsapi/foo",
+		// The two fold aliases a case-insensitive rewrite would let in. Both are
+		// distinct DNS names; neither may ever be accepted.
+		"https://updates.push.\u017Fervices.mozilla.com/wpush/v2/xyz", // EqualFold-only
+		"https://sn1-wns.not\u0130fy.windows.com/wnsapi/foo",          // ToLower-only
+	}
+	for _, in := range refused {
+		if isAllowedPushEndpoint(in) {
+			t.Errorf("isAllowedPushEndpoint(%q) = true; the host match must stay byte-exact", in)
+		}
+	}
+}
