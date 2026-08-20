@@ -53,7 +53,7 @@ func TestSweepStaleTemps_reaches_every_config_subdir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sweepStaleTemps(configDir, workDir)
+	sweepStaleTemps(t.Context(), configDir, workDir)
 
 	for _, orphan := range orphans {
 		if _, err := os.Stat(orphan); err == nil {
@@ -77,7 +77,7 @@ func TestSweepStaleTemps_workDir_is_swept_flat(t *testing.T) {
 	top := staleTemp(t, workDir, ".atomicfile-7777777777.tmp")
 	nested := staleTemp(t, filepath.Join(workDir, "vendor", "deep"), ".atomicfile-8888888888.tmp")
 
-	sweepStaleTemps(configDir, workDir)
+	sweepStaleTemps(t.Context(), configDir, workDir)
 
 	if _, err := os.Stat(top); err == nil {
 		t.Errorf("an orphan at the top of workDir survived the sweep: %s", top)
@@ -100,7 +100,7 @@ func TestSweepStaleTemps_spares_a_fresh_temp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sweepStaleTemps(configDir, workDir)
+	sweepStaleTemps(t.Context(), configDir, workDir)
 
 	if _, err := os.Stat(fresh); err != nil {
 		t.Errorf("a temp younger than the cutoff was removed: %v", err)
@@ -113,7 +113,7 @@ func TestSweepStaleTemps_spares_a_fresh_temp(t *testing.T) {
 func TestSweepStaleTemps_missing_dirs_are_not_fatal(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
-	sweepStaleTemps(filepath.Join(base, "nope"), filepath.Join(base, "also-nope"))
+	sweepStaleTemps(t.Context(), filepath.Join(base, "nope"), filepath.Join(base, "also-nope"))
 }
 
 // TestSweepStaleTemps_reclaims_a_leaked_writability_probe closes the loop between
@@ -132,7 +132,7 @@ func TestSweepStaleTemps_reclaims_a_leaked_writability_probe(t *testing.T) {
 	leaked := staleTemp(t, configDir, atomicfile.TempName())
 	strayShape := staleTemp(t, configDir, ".vibekit-probe-4242")
 
-	sweepStaleTemps(configDir, workDir)
+	sweepStaleTemps(t.Context(), configDir, workDir)
 
 	if _, err := os.Stat(leaked); err == nil {
 		t.Errorf("a leaked writability probe survived the sweep: %s", leaked)

@@ -121,7 +121,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 			"error", err, "path", legacyCheckpoints)
 	}
 
-	sweepStaleTemps(cfg.ConfigDir, cfg.WorkDir)
+	sweepStaleTemps(ctx, cfg.ConfigDir, cfg.WorkDir)
 
 	chatStore, err := chat.NewStore(filepath.Join(cfg.ConfigDir, "chats"))
 	if err != nil {
@@ -416,7 +416,12 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 // workDir is swept flat on purpose. It is the user's working tree, which can be an
 // arbitrarily large checkout; descending it on every startup would walk the whole repo to
 // find temps that only ever land at its top level.
-func sweepStaleTemps(configDir, workDir string) {
+//
+// ctx bounds the walk. The recursive configDir sweep is the one leg here that can take
+// real time -- it descends eleven writing locations including checkpoints/blobs -- and it
+// runs on the startup path, so a shutdown arriving mid-sweep should abandon it rather than
+// hold the boot open.
+func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 	const tempMaxAge = time.Hour
 	for _, sweep := range []struct {
 		dir  string
@@ -425,7 +430,7 @@ func sweepStaleTemps(configDir, workDir string) {
 		{configDir, []atomicfile.Option{atomicfile.WithRecursive(true)}},
 		{workDir, nil},
 	} {
-		if _, err := atomicfile.CleanupStaleTemps(sweep.dir, tempMaxAge, sweep.opts...); err != nil {
+		if _, err := atomicfile.CleanupStaleTemps(ctx, sweep.dir, tempMaxAge, sweep.opts...); err != nil {
 			slog.Debug("stale temp cleanup failed", "dir", sweep.dir, "error", err)
 		}
 	}
