@@ -125,8 +125,13 @@ func (p *giteaProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 	for i := range raw {
 		r := &raw[i]
 		owner := r.Owner.Login
-		if owner == "" && strings.Contains(r.FullName, "/") {
-			owner = strings.SplitN(r.FullName, "/", 2)[0]
+		if owner == "" {
+			// tea omits the owner object on some responses; the full name
+			// carries it. Cut rather than Contains-then-split: one pass, and
+			// the found bit IS the guard.
+			if head, _, found := strings.Cut(r.FullName, "/"); found {
+				owner = head
+			}
 		}
 		repos = append(repos, Repo{
 			Owner:         owner,

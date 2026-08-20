@@ -65,7 +65,7 @@ func TestScrubGitCredentials(t *testing.T) {
 					t.Fatalf("seed: %v", err)
 				}
 			}
-			if err := scrubGitCredentials(tc.host); err != nil {
+			if err := scrubGitCredentials(t.Context(), tc.host); err != nil {
 				t.Fatalf("scrubGitCredentials: %v", err)
 			}
 			data, err := os.ReadFile(credFile)

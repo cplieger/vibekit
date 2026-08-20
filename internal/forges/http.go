@@ -281,14 +281,14 @@ func writeOpsError(w http.ResponseWriter, err error) {
 	}
 }
 
-// splitID parses "kind:host" → (kind, host). Returns (KindGitHub, "")
-// for malformed input — the caller should validate Kind.Valid().
+// splitID parses "kind:host" → (kind, host). Returns ("", "") for
+// malformed input — the caller should validate Kind.Valid().
 func splitID(id string) (kind Kind, ref string) {
-	parts := strings.SplitN(id, ":", 2)
-	if len(parts) != 2 {
+	k, host, found := strings.Cut(id, ":")
+	if !found {
 		return "", ""
 	}
-	return Kind(parts[0]), parts[1]
+	return Kind(k), host
 }
 
 // splitFirst splits s at the first '/' separator, returning
