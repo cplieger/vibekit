@@ -33,8 +33,13 @@ ROOT = pathlib.Path(
 # runtime, the test framework, or a generated file.
 ENTRY = re.compile(r"^(main|init|Test|Benchmark|Fuzz|Example)")
 
-# A method that satisfies one of these is called through an interface the
-# stdlib owns, so there is no call site to find.
+# A method that satisfies one of these is called through an interface the stdlib
+# owns, so there is no call site to find and its body may legitimately ignore the
+# receiver.
+#
+# CURATED, not derived from GOROOT. Scanning every stdlib interface would suppress
+# names as common as Get, Set and Do, which would quietly gut the rules — the
+# suppression has to stay narrower than the thing it protects against.
 STDLIB_CONTRACT = {
     "Error",
     "String",
@@ -55,6 +60,12 @@ STDLIB_CONTRACT = {
     "Value",
     "Format",
     "LogValue",
+    # slog.Handler: a Recorder that captures everything answers Enabled with a
+    # bare true, which is the contract, not a receiver it forgot to use.
+    "Enabled",
+    "Handle",
+    "WithAttrs",
+    "WithGroup",
 }
 
 
@@ -125,10 +136,33 @@ def dependency_interface_members():
     return names
 
 
-def _go_files(include_tests):
-    for p in sorted(ROOT.glob("internal/**/*.go")) + sorted(ROOT.glob("cmd/**/*.go")):
-        if "node_modules" in str(p):
+EXCLUDED_DIRS = {
+    ".git",
+    "node_modules",
+    "testdata",
+    "static",
+    "vendor",
+    ".gocache",
+}
+
+
+def _repo_go_files(root):
+    """Every Go file in the repo, whatever its layout.
+
+    Globbing internal/** and cmd/** assumes an APPLICATION. A library keeps its
+    packages at the top level, so auditing cplieger/auth that way read only the
+    root package and internal/capture — oidc, ratelimit, webauthn and authtest,
+    four of its six packages, were never looked at. The tooling has to find
+    packages rather than assume where they are.
+    """
+    for p in sorted(root.rglob("*.go")):
+        if any(part in EXCLUDED_DIRS for part in p.parts):
             continue
+        yield p
+
+
+def _go_files(include_tests):
+    for p in _repo_go_files(ROOT):
         if p.name.endswith("_test.go") and not include_tests:
             continue
         yield p
@@ -223,20 +257,30 @@ def rule_test_only_production(report):
 
 
 def rule_unreferenced_interface_method(report):
-    """An interface method nothing calls.
+    """An interface method nothing in THIS REPO calls.
 
     The interface is wider than its consumer needs, which is the least-mechanism
-    principle applied to a contract: every member is something an implementer
-    must supply and a reader must account for.
+    principle applied to a contract: every member is something an implementer must
+    supply and a reader must account for.
+
+    Scoped to interfaces whose callers must be in this repo: an unexported
+    interface, or an exported one under internal/. An EXPORTED interface in an
+    importable package is a published contract whose callers are downstream by
+    design — cplieger/auth's store_contract.go is an implement-me SPI that the
+    library deliberately never calls, and reporting its fifteen members as dead
+    was the rule mistaking a library for an application.
     """
     prod, test = _reference_counts()
     for p in _go_files(include_tests=False):
+        importable = "internal" not in p.relative_to(ROOT).parts
         inside = None
         for i, line in enumerate(p.read_text(errors="replace").split("\n"), 1):
             s = line.strip()
             m = re.match(r"^type (\w+) interface \{", s)
             if m:
                 inside = m.group(1)
+                if importable and inside[:1].isupper():
+                    inside = None  # published contract: callers are downstream
                 continue
             if inside:
                 if s.startswith("}"):
@@ -358,7 +402,18 @@ def rule_stutter(report):
             # strings.StringReader — where the prefix carries nothing. resolve.
             # Resolver is the same word in a different part of speech: the type IS
             # the thing the package does, and there is no shorter honest name.
-            if name[len(pkg) :].lower() in ("r", "er", "or"):
+            rest = name[len(pkg) :]
+            # The remainder must start a NEW CamelCase word. auth.Authenticator is
+            # not a stutter: "authenticator" is a single word that happens to begin
+            # with the package's abbreviation, and the remainder "enticatorStore"
+            # starts lowercase. Google's examples repeat a whole word —
+            # http.HTTPServer leaves "Server", strings.StringReader leaves "Reader".
+            if not rest[:1].isupper():
+                continue
+            # An agent noun derived from a verb package is the same word in another
+            # part of speech, not repetition: resolve.Resolver has no shorter honest
+            # name.
+            if rest.lower() in ("r", "er", "or"):
                 continue
             report(
                 "stutter",

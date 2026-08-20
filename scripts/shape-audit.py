@@ -31,7 +31,11 @@ import pathlib
 import re
 import sys
 
-from shape_rules_reach import REACH_RULES, dependency_interface_members
+from shape_rules_reach import (
+    REACH_RULES,
+    _repo_go_files,
+    dependency_interface_members,
+)
 
 # The repo to audit. Defaults to this script's own repo and is overridable with
 # SHAPE_AUDIT_ROOT so the rules can be pointed at a sibling repo — the same fix
@@ -110,7 +114,10 @@ def stale_vocabulary():
 
 
 def go_files(pkg=None):
-    for p in sorted(ROOT.glob("internal/**/*.go")):
+    # Every package, whatever the repo's layout: a library keeps its packages at
+    # the top level, and globbing internal/** alone read four of auth's six
+    # packages as absent.
+    for p in _repo_go_files(ROOT):
         if p.name.endswith("_test.go"):
             continue
         if pkg and pkg not in str(p.parent):
@@ -265,9 +272,7 @@ def rule_stale_vocabulary(f):
     if not stale:
         return
     hist = re.compile(r"used to|formerly|had been|before the rename", re.IGNORECASE)
-    for p in sorted(ROOT.glob("internal/**/*.go")) + sorted(ROOT.glob("*.go")):
-        if "node_modules" in str(p):
-            continue
+    for p in _repo_go_files(ROOT):
         for i, line in enumerate(p.read_text(errors="replace").split("\n"), 1):
             if STALE_EXEMPT.search(line) or hist.search(line):
                 continue
