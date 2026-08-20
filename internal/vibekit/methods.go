@@ -154,12 +154,12 @@ const (
 )
 
 // ContentTypeText is the ACP content-block type discriminator for plain text content.
-// Used across hub, command, and translate packages; declared here as a single source
+// Used across agent, command, and translate packages; declared here as a single source
 // of truth so a protocol rename is one edit.
 const ContentTypeText = "text"
 
 // ModelAuto is the sentinel model value meaning "keep current / use
-// task-based selection". Used by bridge, hub, and model-switch logic.
+// task-based selection". Used by bridge, agent, and model-switch logic.
 const ModelAuto = "auto"
 
 // AgentEngineV3 is the only agent engine vibekit speaks:
@@ -190,7 +190,7 @@ const (
 
 // ACP content-block JSON field name constants. These are the wire-format
 // keys inside a content block object (distinct from ContentTypeText which
-// is the field VALUE). Single source of truth for hub, command, and
+// is the field VALUE). Single source of truth for agent, command, and
 // translate packages.
 const (
 	ContentKeyType = "type"
@@ -201,12 +201,12 @@ const (
 //
 //	{"type": "text", "text": content}
 //
-// Eliminates ad-hoc map construction across hub, command, and translate.
+// Eliminates ad-hoc map construction across agent, command, and translate.
 func TextBlock(content string) map[string]any {
 	return map[string]any{ContentKeyType: ContentTypeText, ContentKeyText: content}
 }
 
 // KeySessionID is the ACP wire key for the session identifier in
-// parameter maps. Single source of truth; hub and command packages
+// parameter maps. Single source of truth; agent and command packages
 // reference this constant instead of bare "sessionId" literals.
 const KeySessionID = "sessionId"

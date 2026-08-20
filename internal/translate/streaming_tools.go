@@ -235,7 +235,7 @@ func (t *Translator) applyToolCallDiffs(
 // command is done, which is why this is a copy at ONE moment rather than
 // incremental bookkeeping: a terminal's first output arrives before the update
 // that names it, so there is no earlier point where an append could be both
-// correct and complete. The hub keeps a released terminal's bytes under the same
+// correct and complete. The runtime keeps a released terminal's bytes under the same
 // id for the rest of the turn, so this still works after KAS has released it —
 // which it always has by now.
 //
@@ -250,7 +250,7 @@ func (t *Translator) applyToolCallDiffs(
 // exists to prevent: a card that renders empty looks exactly like a command that
 // printed nothing, which is how the output of an agent command was invisible for
 // the whole life of this feature with nothing saying so. The warning is worth
-// having only because the hub distinguishes "no record" from "an empty record" —
+// having only because the runtime distinguishes "no record" from "an empty record" —
 // a silent `mkdir -p` answers ok, so it does not file a false alarm here. What
 // remains is the real failure set: a record evicted before its turn ended, an id
 // KAS named and then reused, a completion arriving after the turn closed.

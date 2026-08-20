@@ -32,7 +32,7 @@ request (open a URL for the user, e.g. an MCP OAuth page).
 openExternalUrl advertises that we can open a URL for the user; KAS (v3) gates
 its _kiro/openExternalUrl request on it (proactively opening an MCP server's
 OAuth page — the client surfaces a clickable banner, no auto-open; see
-hub/bridge_v3_auth.go).`,
+agent/bridge_v3_auth.go).`,
 	},
 	{
 		key:      "infrastructureSafety",
@@ -76,7 +76,7 @@ user_input_response command.`,
 (control_bash_process, list_processes, get_process_output). KAS serves
 them from its own ACPBackgroundProcessManager over standard
 terminal/create + terminal/output, which vibekit already implements
-(hub/agent_terminal.go) — so the capability is the whole integration:
+(agent/agent_terminal.go) — so the capability is the whole integration:
 without it the agent has no way to run a dev server or a watcher
 without blocking its turn on a foreground command.`,
 	},
@@ -107,7 +107,7 @@ KAS keeps only an in-process memory copy and has no file of its own, so
 without this flag the store is never constructed and every bridge spawn
 re-runs discovery and a fresh POST /register — measured, and measured to
 stop at zero DCRs once a stored blob is replayed. Answered by
-hub/bridge_v3_secret.go against internal/secretstore. Declaring it is a
+agent/bridge_v3_secret.go against internal/secretstore. Declaring it is a
 COMMITMENT: KAS rethrows a client-side store/delete failure into the MCP
 connect path, so the handlers must answer on every bridge that declares
 it, the utility bridge included.
@@ -117,7 +117,7 @@ best-effort (no configDir, or a mode internal/secretstore cannot verify as
 0600, leaves it nil), and declaring the capability over a nil store made
 every MCP OAuth connect fail on the -32603 from secretStoreResult — worse
 than not offering it, because undeclared merely costs one DCR per spawn.
-The hub reads its store per spawn (StartOpts.SecretStorage); a false here
+The runtime reads its store per spawn (StartOpts.SecretStorage); a false here
 means KAS never asks, so the unanswerable request is never made.`,
 	},
 	{
@@ -134,7 +134,7 @@ hooks-management dashboard) AND on chat bridges (so the workspace's
 user-authored .kiro/hooks/*.json hooks autofire on their triggers
 during an agent turn). In v2 mode KAS loads the hook files and runs
 runCommand hooks internally — it does not call back the client to run
-autofired hooks. See hub/hooks.go and hub/bridge_coord.go.`,
+autofired hooks. See agent/hooks.go and agent/bridge_coord.go.`,
 	},
 	{
 		key:      "codeIntelligence",
@@ -145,7 +145,7 @@ autofired hooks. See hub/hooks.go and hub/bridge_coord.go.`,
 		because: `_meta.kiro.settings.codeIntelligence opts every session into KAS's
 native code tool (tree-sitter symbol navigation always; LSP-backed
 rename/references/diagnostics once the workspace is initialized —
-hub/code_intel.go). This is the client-owned settings channel KAS
+agent/code_intel.go). This is the client-owned settings channel KAS
 reads into clientMeta (the sqlite chat.enableCodeIntelligence
 setting does NOT apply to acp mode); lab-verified against 2.13.0.
 Costs nothing when unused: with no lsp.json and no servers on

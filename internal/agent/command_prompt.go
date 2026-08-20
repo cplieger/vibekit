@@ -1,6 +1,6 @@
 package agent
 
-// Internal hub methods for prompt handling. Called by command_deps.go.
+// Internal agent methods for prompt handling. Called by command_deps.go.
 
 import (
 	"encoding/json"

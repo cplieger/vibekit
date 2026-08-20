@@ -11,7 +11,7 @@ package command
 // So resume is: create a chat already BOUND to that session id. Nothing else is
 // needed. The next OpenBridge sees a stored ACPSessionID and takes the
 // session/load path, whose replay the projection turns into the transcript
-// (hub/load_projection.go). That is the whole import — vibekit copies no
+// (agent/load_projection.go). That is the whole import — vibekit copies no
 // messages, because it no longer owns them.
 
 import (

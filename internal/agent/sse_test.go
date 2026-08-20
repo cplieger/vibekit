@@ -205,7 +205,7 @@ func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 
 // TestRegisterRoutes_DrainingGate asserts the drain refusal through the MUX, not
 // by calling a handler directly. That is the whole point: the gate is a route
-// wrapper applied at registration (hub.refuseWhenDraining), so a test that calls
+// wrapper applied at registration (agent.refuseWhenDraining), so a test that calls
 // handleSSE or the dispatcher directly would bypass it and pass whether or not it
 // is wired. Both gated routes are checked, and one ungated route is checked too,
 // because the gate must NOT become global — the middleware chain also covers

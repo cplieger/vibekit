@@ -11,7 +11,7 @@
 //     yet-to-be-created targets), plus a re-run of layer 1 against the
 //     real on-disk path. Catches symlinks planted by an agent/shell
 //     that point outside the granted mounts or into sensitive
-//     territory. Mirrors hub/bridge_fs.resolveInsideWorkDir.
+//     territory. Mirrors agent/bridge_fs.resolveInsideWorkDir.
 //  3. The per-mount os.Root. Every filesystem operation goes through
 //     the matched mount's kernel-confined root handle, so a symlink
 //     swapped in AFTER layer 2 (TOCTOU) still cannot escape the mount.

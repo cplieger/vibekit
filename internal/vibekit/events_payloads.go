@@ -116,7 +116,7 @@ const (
 	SettledByUser SettledBy = "user"
 	// SettledByUnattended means nobody answered, so vibekit answered for the
 	// absent user when the unattended floor's budget expired (see
-	// hub/run_unattended.go). Named explicitly because an operator reading the
+	// agent/run_unattended.go). Named explicitly because an operator reading the
 	// collapsed card needs to know a machine made this choice, and on which
 	// side it defaults.
 	SettledByUnattended SettledBy = "unattended"
@@ -193,7 +193,7 @@ type MessageChunkPayload struct {
 // (replacing the gap handler's eager thinking-clear guess).
 type TurnStatePayload struct {
 	// Message is the in-flight assistant message as accumulated so
-	// far — the hub's turn mirror, byte-equivalent to what a
+	// far — the runtime's turn mirror, byte-equivalent to what a
 	// never-disconnected client would have rendered. Omitted when the
 	// turn hasn't produced content yet (busy signal only).
 	Message *Message `json:"message,omitempty"`
@@ -359,7 +359,7 @@ type GovernanceFeatures struct {
 // from the v3 (KAS) _kiro/governance/state notification (buildNotification:
 // {sessionId, isEnterprise, features, disabledReason}). The account/workspace
 // feature-flag policy KAS pushes on every session/new + session/load, and
-// re-pushes on a prompt when it changes; vibekit caches the latest hub-side and
+// re-pushes on a prompt when it changes; vibekit caches the latest runtime-side and
 // also serves it at GET /api/governance so a fresh page load can read it with
 // no chat open. The wire sessionId is used only for subagent-copy dedup and is
 // dropped from this payload — governance is account-global, so the SSE is
@@ -389,7 +389,7 @@ type GovernanceStatePayload struct {
 // window.open() not driven by a user gesture, so the client surfaces a
 // clickable affordance (a banner link) the user activates rather than
 // auto-opening. Only http/https URLs are broadcast (server-side scheme
-// guard in hub/bridge_v3_auth.go; the client re-checks before rendering).
+// guard in agent/bridge_v3_auth.go; the client re-checks before rendering).
 type OpenExternalURLPayload struct {
 	URL string `json:"url"`
 }

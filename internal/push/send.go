@@ -160,7 +160,7 @@ func classify(code int) disposition {
 // dead-letter store. A production web-push architecture puts a job queue and a
 // DLQ behind this, and the reason vibekit does not is that a DLQ exists to make
 // undelivered WORK recoverable, while nothing here is work: an unanswered
-// permission is replayed to every client on reconnect by the hub's pending-
+// permission is replayed to every client on reconnect by the runtime's pending-
 // permission tracker, and a finished turn is in the transcript. An undelivered
 // notification costs a nudge, not state.
 //

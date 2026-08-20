@@ -1,7 +1,7 @@
 package vibekit
 
 // Client commands: the wire shapes for POST /api/command envelopes +
-// per-type payloads. Command routing lives in hub/command.go; this file
+// per-type payloads. Command routing lives in agent/command.go; this file
 // just declares the contracts.
 
 import "encoding/json"
@@ -12,7 +12,7 @@ import "encoding/json"
 type CommandType string
 
 // Command type constants. Every value here corresponds to a key in
-// hub/command.go's registerCommandHandlers dispatch map.
+// agent/command.go's registerCommandHandlers dispatch map.
 const (
 	CmdCreateChat          CommandType = "create_chat"
 	CmdResumeSession       CommandType = "resume_session"
@@ -56,7 +56,7 @@ type ClientCommand struct {
 //
 // Text is required, trimmed, and capped at 512 KiB; oversize returns
 // HTTP 413. MessageID is required and must match the ULID/id character
-// set enforced by the hub's validMessageID check (128-byte cap, no
+// set enforced by the runtime's validMessageID check (128-byte cap, no
 // control chars). Model is optional; if non-empty it must match
 // validIdent (ASCII alphanumerics plus `_.-`, 1-128 bytes).
 // Attachments are resolved via resolveInsideWorkDir before read.

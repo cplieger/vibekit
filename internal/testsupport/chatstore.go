@@ -123,7 +123,7 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate
 
 // SetDraft stores the chat's draft without touching UpdatedAt and without
 // broadcasting, which is the contract (*chat.Store).SetDraft holds and the three
-// interfaces naming it — hub/deps.go, command/deps.go and chatStoreUnion above —
+// interfaces naming it — agent/deps.go, command/deps.go and chatStoreUnion above —
 // depend on. A fake that went through Mutate would stamp activity and make a
 // test unable to observe the one property the real method exists to hold.
 // Absent chat: no-op, like the real store's load-then-write.

@@ -62,7 +62,7 @@ type file struct {
 // on LOAD as well.
 //
 // The ZERO VALUE is usable: an empty path persists nothing, which is what a test
-// wants and what a hub built without the durable store falls back to. Nothing
+// wants and what a runtime built without the durable store falls back to. Nothing
 // here reaches back into its caller, so a caller may hold its own lock across a
 // call without a lock-order question.
 type Store struct {
@@ -72,7 +72,7 @@ type Store struct {
 }
 
 // NewMemory returns an in-memory store that persists nothing. For tests, and for
-// a hub constructed without a config dir.
+// a runtime constructed without a config dir.
 func NewMemory() *Store { return &Store{leases: map[string]Lease{}} }
 
 // NewStore opens (or starts) the store at <dir>/runs.json.

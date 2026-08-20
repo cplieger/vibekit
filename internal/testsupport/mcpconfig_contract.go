@@ -7,7 +7,7 @@ import (
 
 // MCPNameSets is the UNION of what the MCP name-census consumers declare, and
 // it lives here only because a shared contract suite has to name its subject.
-// internal/hub declares its own mcpNameSets (3 methods, unexported); *mcp.Store
+// internal/agent declares its own mcpNameSets (3 methods, unexported); *mcp.Store
 // implements them. This is the third copy on purpose: a consumer that grows a
 // fourth set has to add it here too, or the suite goes silent on it.
 type MCPNameSets interface {
@@ -42,7 +42,7 @@ func MCPConfigContractTest(t *testing.T, newConfig func(t *testing.T) MCPNameSet
 		}
 	})
 
-	// The nesting is what the hub's guard reasons from: it reads the three sets
+	// The nesting is what the runtime's guard reasons from: it reads the three sets
 	// in order and treats each gap as a distinct verdict, so an implementation
 	// that leaks a name into a narrower set than a wider one would make a
 	// configured server look like a Power's.

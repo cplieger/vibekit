@@ -107,7 +107,7 @@ func TestStore_FileShapeIsAVersionedObject(t *testing.T) {
 //
 // A record written by another build may carry semantics this one cannot honour,
 // and acting on half-understood leases is how a live run gets cancelled by a
-// sweep. But refusing to open the store would leave the hub with no lease
+// sweep. But refusing to open the store would leave the runtime with no lease
 // registry at all, so no run would get a wall clock — strictly worse. So: a
 // usable empty store, plus an error the caller logs.
 func TestStore_RejectsAVersionItDoesNotKnow(t *testing.T) {
@@ -129,7 +129,7 @@ func TestStore_RejectsAVersionItDoesNotKnow(t *testing.T) {
 				t.Error("the store accepted a file it cannot reason about, and its leases are now live")
 			}
 			if s == nil {
-				t.Fatal("NewStore returned no store; the hub would have no lease registry at all")
+				t.Fatal("NewStore returned no store; the runtime would have no lease registry at all")
 			}
 			if got := len(s.List()); got != 0 {
 				t.Errorf("the store kept %d leases from an unreadable file", got)
@@ -273,7 +273,7 @@ func TestStore_ListIsOrdered(t *testing.T) {
 	}
 }
 
-// TestStore_MemoryPersistsNothing pins the zero-path branch a test hub relies on:
+// TestStore_MemoryPersistsNothing pins the zero-path branch a test agent relies on:
 // no file is created, and nothing fails for the want of one.
 func TestStore_MemoryPersistsNothing(t *testing.T) {
 	t.Parallel()

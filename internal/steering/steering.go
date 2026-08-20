@@ -51,7 +51,7 @@ const (
 
 // MCPSnapshot is the subset of the MCP runtime registry the steering
 // generator uses. Returned by the snapshot function wired at construct
-// time; steering has no direct dependency on hub internals.
+// time; steering has no direct dependency on agent internals.
 type MCPSnapshot struct {
 	Servers []vibekit.MCPSnapshotServer
 }
@@ -87,7 +87,7 @@ func New(workDir, configDir string) *Generator {
 // SetMCPSnapshot wires a snapshot callback. Called once after
 // construction. If unset, the generator omits the MCP section entirely.
 // The callback runs OUTSIDE the generator's mutex (so it may safely
-// take hub locks without re-entry risk); only the pointer assignment
+// take agent locks without re-entry risk); only the pointer assignment
 // and read are lock-guarded. Generate enforces this by snapshotting
 // g.mcpSnapshot under g.mu, then releasing the lock around the call.
 func (g *Generator) SetMCPSnapshot(fn func() MCPSnapshot) {
@@ -116,7 +116,7 @@ func (g *Generator) Generate(ctx context.Context) {
 	// Snapshot the callback pointer under g.mu, then invoke it
 	// outside the read-only section. Matches the contract the
 	// SetMCPSnapshot doc promises: the callback may safely take
-	// hub locks without re-entry risk.
+	// agent locks without re-entry risk.
 	snapshotFn := g.mcpSnapshot
 	forgeFn := g.forgeSnapshot
 	var mcp MCPSnapshot

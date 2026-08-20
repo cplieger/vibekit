@@ -30,7 +30,7 @@ func govMsg(t *testing.T, sessionID string, extra map[string]any) *vibekit.RPCRe
 
 // HandleGovernanceState parses the notification, broadcasts a global (empty
 // chatID) governance_state event with the resolved flags, and caches it
-// hub-side via SetGovernance.
+// runtime-side via SetGovernance.
 func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	var cached *vibekit.GovernanceStatePayload
@@ -107,7 +107,7 @@ func TestHandleGovernanceState_Malformed(t *testing.T) {
 	}
 }
 
-// DecodeGovernanceState (the exported decoder the hub reuses for the utility
+// DecodeGovernanceState (the exported decoder the runtime reuses for the utility
 // bridge copy) maps the wire shape to the domain payload and rejects
 // empty/invalid input.
 func TestDecodeGovernanceState(t *testing.T) {

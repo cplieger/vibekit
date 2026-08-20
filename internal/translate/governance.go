@@ -24,7 +24,7 @@ package translate
 //
 // The state is account-GLOBAL (identical across a connection's sessions), so the
 // SSE is broadcast with an empty chat id (every client, including one on Settings
-// with no active chat, receives it) and the latest is cached hub-side
+// with no active chat, receives it) and the latest is cached runtime-side
 // (deps.SetGovernance) so GET /api/governance can serve it on a fresh page load.
 
 import (
@@ -74,7 +74,7 @@ func (w v3GovernanceState) payload() vibekit.GovernanceStatePayload {
 }
 
 // DecodeGovernanceState decodes a raw _kiro/governance/state params object into
-// the domain payload. Exported so the hub can reuse it for the copy the utility
+// the domain payload. Exported so the runtime can reuse it for the copy the utility
 // bridge receives (whose notifications don't flow through this dispatcher) —
 // keeping one wire→domain conversion. Returns false on empty/invalid params.
 func DecodeGovernanceState(raw json.RawMessage) (vibekit.GovernanceStatePayload, bool) {
@@ -89,7 +89,7 @@ func DecodeGovernanceState(raw json.RawMessage) (vibekit.GovernanceStatePayload,
 }
 
 // HandleGovernanceState translates _kiro/governance/state into a
-// governance_state SSE and caches the latest state hub-side. The SSE is
+// governance_state SSE and caches the latest state runtime-side. The SSE is
 // broadcast with an empty chat id because the policy is account-global (a
 // client on Settings with no active chat must still receive it). A
 // subagent-session copy is skipped (KAS may re-emit per session; the parent

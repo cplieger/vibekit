@@ -8,7 +8,7 @@ package vibekit
 // sidebar status footer.
 //
 // Fields mirror the KAS getUsage `data` object (snake_cased for the
-// client). Parsing lives in hub/account_usage.go; the raw KAS shape is
+// client). Parsing lives in agent/account_usage.go; the raw KAS shape is
 // not exposed to clients.
 
 // AccountUsage is the account/subscription usage snapshot for the

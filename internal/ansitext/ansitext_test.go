@@ -368,7 +368,7 @@ func TestParser_OpenStyleCarriesAcrossWrites(t *testing.T) {
 	}
 }
 
-// Offset is the parser's own count of emitted UTF-16 units, and the hub reports
+// Offset is the parser's own count of emitted UTF-16 units, and the runtime reports
 // it on the wire as the base of the chunk it is broadcasting. The property that
 // makes that correct: Offset read BEFORE a Write equals the absolute Start the
 // first span of that Write will carry. A second counter kept in step by hand is
@@ -542,7 +542,7 @@ func FuzzParse(f *testing.F) {
 				t.Fatalf("split at %d gave %q, one-shot gave %q", cut, a+b+tail, text)
 			}
 			// 6. Offset agrees with the text actually emitted, at every split.
-			//    The hub reports Offset as a chunk's base, so a drift here
+			//    The runtime reports Offset as a chunk's base, so a drift here
 			//    would rebase every live span onto the wrong character.
 			if got, want := p.Offset(), utf16Len(text); got != want {
 				t.Fatalf("split at %d: Offset = %d, want %d units of emitted text", cut, got, want)

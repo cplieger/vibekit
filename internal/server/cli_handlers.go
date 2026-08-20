@@ -14,7 +14,7 @@ import (
 )
 
 // The former handleModels (`kiro-cli chat --list-models` shell-out behind
-// GET /api/models) was replaced by the hub's GET /api/config-template,
+// GET /api/models) was replaced by the runtime's GET /api/config-template,
 // which serves the same catalog — plus the mode list — from kiro-cli
 // 2.14's session-less _kiro/config/template over the utility bridge.
 

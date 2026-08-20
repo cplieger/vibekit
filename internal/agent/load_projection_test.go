@@ -192,7 +192,7 @@ func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 }
 
 // TestReplayProjection_FrameWithNoLoadIsRejected pins the fallback that keeps
-// hub.handleSessionUpdate's drop path meaningful: a replay frame arriving with
+// agent.handleSessionUpdate's drop path meaningful: a replay frame arriving with
 // no load in flight has no transcript to belong to.
 func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
 	rp, _ := replayWithRecorder()

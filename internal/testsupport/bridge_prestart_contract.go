@@ -8,7 +8,7 @@ import (
 
 // ACPPreStartBridge is the subject of ACPBridgePreStartContractTest: the 5
 // methods of a kiro-cli ACP bridge that this suite reads. There is no shared
-// ACPBridge interface any more — internal/hub declares the contract at seven
+// ACPBridge interface any more — internal/agent declares the contract at seven
 // widths, up to 14 methods — and a contract suite has no business naming a
 // method it does not exercise.
 type ACPPreStartBridge interface {

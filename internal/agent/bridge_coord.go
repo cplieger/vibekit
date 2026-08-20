@@ -40,7 +40,7 @@ type BridgeCoordinator struct {
 	// Nil in tests that do not exercise a load.
 	replayProjection replayProjector
 	// onSessionRehydrated fires after a successful session/load, off the
-	// spawn path (own goroutine). The hub hangs the restart-paused run resume
+	// spawn path (own goroutine). The runtime hangs the restart-paused run resume
 	// sweep here: a rehydrated chat is exactly the moment its runs should heal,
 	// because the chat's process dying is what paused them. Nil in tests.
 	onSessionRehydrated func(vibekit.ChatID)
@@ -55,7 +55,7 @@ type BridgeCoordinator struct {
 	// chatStatus reads a chat's last self-declared status, which is what the
 	// agent-finished push body says instead of a fixed literal. A FUNCTION rather
 	// than the cache itself so the coordinator keeps taking no dependency on the
-	// SSE plane's internals, and nil-safe for tests that build a coordinator
+	// event bus's internals, and nil-safe for tests that build a coordinator
 	// without one.
 	chatStatus func(vibekit.ChatID) vibekit.ChatStatusPayload
 	// primeFrom notes which chat's transcript should prime a chat's FIRST
@@ -158,7 +158,7 @@ func (bc *BridgeCoordinator) hasSecretStorage() bool {
 // It is a plain field read: agent.New requires the runtime's lifetime context, so
 // there is nothing to be nil-safe against. The context.Background() fallback
 // that used to sit here existed for tests building a coordinator without a
-// lifecycle plane, and it was the third uncancellable substitution on this one
+// lifetime, and it was the third uncancellable substitution on this one
 // path — a test that wants a Stop-owned subprocess says so in its own
 // StartOpts now.
 func (bc *BridgeCoordinator) processLifetimeCtx() context.Context {
@@ -171,7 +171,7 @@ func (bc *BridgeCoordinator) processLifetimeCtx() context.Context {
 // ignored — honoring it would launch a legacy engine vibekit can no
 // longer talk to (session/new stalls, every turn fails). v3 requires the
 // host to answer _kiro/auth/getAccessToken + _kiro/terminal/shell_type
-// (internal/hub/bridge_v3_auth.go). The v2→v3 wire comparison is in
+// (internal/agent/bridge_v3_auth.go). The v2→v3 wire comparison is in
 // kiro-cli-research.md.
 func resolveAgentEngine() string {
 	return vibekit.AgentEngineV3
@@ -181,7 +181,7 @@ func resolveAgentEngine() string {
 // Concurrent callers for the same chatID coalesce via singleflight, keyed by
 // bridgeSpawnKey.
 //
-//nolint:revive // unexported-return: sharedBridge is package-internal; callers within hub use the methods on it. Exporting would leak ACP wiring outside the runtime package.
+//nolint:revive // unexported-return: sharedBridge is package-internal; callers within agent use the methods on it. Exporting would leak ACP wiring outside the runtime package.
 func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Fast path: bridge already exists.
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
@@ -303,7 +303,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// commands ran internally). So no chat-bridge executeHook handler is
 	// needed. Same trust model as vibekit's `!cmd` interception: the hooks are
 	// the user's own automation. The utility bridge keeps its own EnableHooks
-	// for the hooks dashboard (list/setEnabled/Run-now); see hub/hooks.go.
+	// for the hooks dashboard (list/setEnabled/Run-now); see agent/hooks.go.
 	//
 	// Forward MUST be draining NotifCh before Start: on v3 (KAS) the agent
 	// sends _kiro/auth/getAccessToken and _kiro/terminal/shell_type as
@@ -530,7 +530,7 @@ func (bc *BridgeCoordinator) CloseBridge(chatID vibekit.ChatID) {
 }
 
 // replayProjector is the slice of the Runtime's replay-projection lifecycle the
-// coordinator drives. See hub/load_projection.go for the settle barrier.
+// coordinator drives. See agent/load_projection.go for the settle barrier.
 type replayProjector interface {
 	OpenReplayProjection(vibekit.ChatID)
 	MarkReplayLoadDone(vibekit.ChatID)
@@ -548,7 +548,7 @@ func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 		// return: this goroutine is the one draining the frames, so its own
 		// view of the channel depth is the only sound completion signal.
 		// len() on a receive-only channel is the whole barrier — no timeout,
-		// no extra bridge API. Rationale in hub/load_projection.go.
+		// no extra bridge API. Rationale in agent/load_projection.go.
 		if bc.replayProjection != nil {
 			bc.replayProjection.SettleReplayProjection(chatID, len(ch), false)
 		}

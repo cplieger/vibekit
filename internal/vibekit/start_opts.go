@@ -9,9 +9,9 @@ import "context"
 //
 //	internal/server        1   RegisterRoutes — the chat router owns its own HTTP surface
 //	internal/translate     3   Get, Mutate, AppendMessage
-//	internal/hub's coord   4   + BuildHistory
+//	internal/agent's coord   4   + BuildHistory
 //	internal/command       5   Get, Mutate, AppendMessage, SetDraft, Delete
-//	internal/hub's field   7   the union it passes on, not what it calls
+//	internal/agent's field   7   the union it passes on, not what it calls
 //
 // Two members were reached through no interface at all: RegisterRoutes (called
 // on the concrete store) and UpdateMessage (called by nothing in production).
@@ -65,7 +65,7 @@ type StartOpts struct {
 	// every model switch fall back to a restart, and each abandoned child
 	// tree leaked ~250 MB.
 	//
-	// Pass the hub's shutdown context, not a request or turn context.
+	// Pass the runtime's shutdown context, not a request or turn context.
 	Lifetime    context.Context
 	SessionID   string
 	Model       string
@@ -85,7 +85,7 @@ type StartOpts struct {
 	// the workspace's .kiro/hooks/*.json hooks autofire on their triggers
 	// during a turn). In v2 mode KAS loads and runs the hooks itself; it
 	// does not call back the client to execute autofired hooks. See
-	// internal/hub/hooks.go and internal/hub/bridge_coord.go.
+	// internal/agent/hooks.go and internal/agent/bridge_coord.go.
 	EnableHooks bool
 	// Supervised requests KAS's turn-approval gate for this session, by setting
 	// the `autopilot` config option to FALSE at session/new.
@@ -103,7 +103,7 @@ type StartOpts struct {
 	// capability is a COMMITMENT: KAS rethrows a client-side store failure into
 	// the MCP connect path, so a bridge that declares it with no credential
 	// store behind it turns every MCP OAuth connect into a failure. Set from
-	// whether the hub actually opened a store (internal/secretstore), which is
+	// whether the runtime actually opened a store (internal/secretstore), which is
 	// best-effort — no configDir, or a mode that cannot be verified, leaves it
 	// nil. Undeclared, KAS keeps its own in-process copy and re-runs discovery
 	// and `POST /register` per spawn, which is the documented degradation and
@@ -115,8 +115,8 @@ type StartOpts struct {
 }
 
 // There is no ACPBridge interface here, and no ACPBridgeFactory. The subprocess
-// contract is declared at its consumer (internal/hub) at seven widths, because
-// the hub asks for wildly different things at different sites: 14 methods for a
+// contract is declared at its consumer (internal/agent) at seven widths, because
+// the runtime asks for wildly different things at different sites: 14 methods for a
 // per-chat bridge that starts, prompts, model-switches and stops, 6 for the
 // utility session, 7 for the metadata persist, 2 for a lease, 1 each for the
 // parameter builders and the idle culler. *bridge.Bridge satisfies the widest.
@@ -133,11 +133,11 @@ type StartOpts struct {
 // forges, git, mcp's Store and RegistryProxy) and an implementor is not a
 // consumer — each of their var _ assertions was a claim the composition root
 // already forced. So it is declared once, at the router, as an unexported
-// routeHandler. internal/hub declares an exported RouteRegistrar for the one
+// routeHandler. internal/agent declares an exported RouteRegistrar for the one
 // value it hands OUT.
 
 // There is no PushService interface here. Its consumers declare what they use:
-// internal/hub 4 of the 8 methods (send, ask, reload, close), internal/server 2
+// internal/agent 4 of the 8 methods (send, ask, reload, close), internal/server 2
 // (mount the routes, write the toggles), internal/forges 2 (its PRNotifier).
 //
 // Subscribe and Unsubscribe were members no consumer ever reached through an

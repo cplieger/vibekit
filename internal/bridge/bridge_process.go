@@ -131,7 +131,7 @@ func buildACPArgs(engine string) []string {
 	// The agent engine determines which ACP methods the agent registers.
 	// Default to v3 (KAS); vibekit is v3-only. v3 requires the host to
 	// answer the _kiro/auth/getAccessToken + _kiro/terminal/shell_type
-	// callbacks (see internal/hub/bridge_v3_auth.go).
+	// callbacks (see internal/agent/bridge_v3_auth.go).
 	if engine == "" {
 		engine = vibekit.AgentEngineV3
 	}
@@ -154,7 +154,7 @@ func (b *Bridge) startProcess(engine string) error {
 	// Already filtered (see acp_args.go) — never trust this slice to be safe
 	// because it came through StartOpts.
 	args := append(buildACPArgs(engine), b.extraArgs...)
-	// Normal teardown is owned by Stop(). lifecycleCtx is the hub's shutdown
+	// Normal teardown is owned by Stop(). lifecycleCtx is the runtime's shutdown
 	// context: a belt-and-braces kill so a bridge cannot outlive the process
 	// if Stop() races or panics. Start refuses a nil StartOpts.Lifetime, so
 	// this is non-nil by construction and needs no fallback — the
@@ -188,7 +188,7 @@ func (b *Bridge) startProcess(engine string) error {
 	// giving kiro-cli a chance to flush its own state. Stop() (called for
 	// normal teardown) goes straight to SIGKILL so chat-switch and tab-close
 	// teardown remain instantaneous; this path only fires if Stop races or
-	// panics during hub shutdown.
+	// panics during agent shutdown.
 	//
 	// Closing stdin FIRST is what makes the grace period mean anything: vibekit
 	// spawns `kiro-cli acp` on pipes and the head passes its stdio down, so the

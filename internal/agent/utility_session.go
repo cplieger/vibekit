@@ -83,7 +83,7 @@ type utilitySessionHooks struct {
 // context. Lazily started on first acquire, culled after 30 minutes of
 // inactivity (same as chat bridges).
 type utilitySession struct {
-	// shutdownCtx is the HUB's lifetime, required by the constructor and never a
+	// shutdownCtx is the RUNTIME's lifetime, required by the constructor and never a
 	// request context. It is a lifetime handle rather than a stashed caller
 	// context, and it has no run method to take it: the session is started
 	// lazily from acquire, whose ctx belongs to whichever request happened to

@@ -123,8 +123,8 @@ func TestSecretStoreRejectsBadParams(t *testing.T) {
 	}
 }
 
-// TestSecretNilStoreDegradesRatherThanFails covers the not-configured hub (no
-// configDir, and every existing hub test): a get must report "absent" so MCP
+// TestSecretNilStoreDegradesRatherThanFails covers the not-configured agent (no
+// configDir, and every existing agent test): a get must report "absent" so MCP
 // OAuth falls back to re-registering per spawn, instead of failing the connect.
 func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
 	if got := secretGetResult(nil, rawParams(t, map[string]string{"key": probeKey})); got.Value != nil {

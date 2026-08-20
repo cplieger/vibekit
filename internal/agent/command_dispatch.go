@@ -14,8 +14,8 @@ func (rt *Runtime) registerCommandHandlers() {
 	// A role is wired to whatever ACTUALLY owns its work. Four of the seven are
 	// one collaborator's job, and each of those was a set of Runtime methods whose
 	// whole bodies forwarded to a single field — the runtime was a name in the path
-	// and nothing else. Three are irreducibly hub-wide and say so by naming rt:
-	// Chats spans the chat store, the SSE plane and the run list; TurnOutcome is
+	// and nothing else. Three are irreducibly runtime-wide and say so by naming rt:
+	// Chats spans the chat store, the event bus and the run list; TurnOutcome is
 	// the seam between the bridge coordinator and the terminal registry (a turn
 	// ending must close its terminal attribution). Bridges is the coordinator's,
 	// reached through bridgeRole — the *sharedBridge <-> command.Bridge conversion

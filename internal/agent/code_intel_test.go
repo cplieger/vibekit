@@ -8,7 +8,7 @@ import (
 
 // TestEnsureCodeIntelligence_Guards pins the three no-op paths: not
 // wired, config already present, and gate closed. Each must return
-// without touching the utility session (the test hub has no live
+// without touching the utility session (the test agent has no live
 // bridge factory session — reaching acquire would fail loudly or
 // hang, so returning cleanly IS the assertion).
 func TestEnsureCodeIntelligence_Guards(t *testing.T) {

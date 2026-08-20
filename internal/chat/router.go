@@ -13,7 +13,7 @@ import (
 //
 // The Store's RegisterRoutes method delegates to Router.Register, which
 // separates the HTTP concern without changing the Store's method set — so the
-// chat-store contracts its consumers declare (hub/deps.go, command/deps.go) see
+// chat-store contracts its consumers declare (agent/deps.go, command/deps.go) see
 // the same store either way.
 type Router struct {
 	store *Store

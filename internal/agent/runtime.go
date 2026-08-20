@@ -89,7 +89,7 @@ type lifetime struct {
 
 // derivedContext returns a cancellable child of the process lifetime, for work
 // that must outlive the request that started it. Runtime's hubContext() is the same
-// two lines; this is the copy the planes use, so a plane does not need a *Runtime to
+// two lines; this is the copy the collaborators use, so a collaborator does not need a *Runtime to
 // ask a question about the lifetime this struct owns.
 func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(lt.shutdownCtx)
@@ -101,7 +101,7 @@ func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 // It replaced an exported ShutdownCtx() accessor, and the replacement is the
 // point: a command handler never wanted the raw lifetime context, it wanted a
 // turn context derived from it, and handing out the lifetime made every consumer
-// responsible for deriving one correctly. This plane is what holds the lifetime,
+// responsible for deriving one correctly. This type is what holds the lifetime,
 // so the derivation lives on it. It was a Runtime method forwarding to
 // h.lifecycle.shutdownCtx, which put the runtime in the path of a question only this
 // struct's own fields can answer.
@@ -151,7 +151,7 @@ type bridges struct {
 
 // bus groups Runtime fields related to SSE transport, replay,
 // and pending permissions. The transport (fan-out, replay
-// ring, Last-Event-ID resume, keepalives, eviction) is webhttp/sse's hub;
+// ring, Last-Event-ID resume, keepalives, eviction) is webhttp/sse's agent;
 // vibekit layers chat-topic filtering and pending-state replay on top.
 type bus struct {
 	fanout       *sse.Hub
@@ -306,7 +306,7 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 // (agent engine + model + effort); tool-call authorization is owned by
 // kiro-cli's native Cedar policy on v3, not by CLI trust flags.
 //
-// ctx is the runtime's LIFETIME and is required. The hub has no run method to take
+// ctx is the runtime's LIFETIME and is required. The runtime has no run method to take
 // it — it is handed to server.New as a route provider and the process then
 // blocks in ListenAndServe — so the fleet's rule for that case applies: require
 // the lifetime at construction rather than default it. There is deliberately no
@@ -331,7 +331,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 
-	// The planes are locals first so the run plane can name the two it depends on
+	// The collaborators are locals first so the run surface can name the two it depends on
 	// (the bridge registry and the pending-decision tracker) rather than reaching
 	// them through a *Runtime. Its remaining three collaborators do not exist yet and
 	// are assigned below; those assignments are the honest back-edges, in one
@@ -366,7 +366,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}
-	// Options may write the run plane's two stores (WithSchedules, WithRunLeases),
+	// Options may write the run surface's two stores (WithSchedules, WithRunLeases),
 	// so they run after it exists and before anything reads it.
 	for _, o := range opts {
 		o(h)
@@ -397,10 +397,10 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// (not in the struct literal) because it is a method value on the fully-built
 	// Runtime; see load_projection.go.
 	h.replay.onProjection = h.replay.swapProjectedTranscript
-	// Both planes take the LEASE's own accessor, not a Runtime method value. A
+	// Both collaborators take the LEASE's own accessor, not a Runtime method value. A
 	// thunk is still needed — the runtime is built lazily, and its build closes
 	// over two Settings hooks — but pointing it at the lease is what leaves
-	// neither plane holding a reference to the Runtime at all.
+	// neither collaborator holding a reference to the Runtime at all.
 	runs.utility = h.utility.get
 	runs.coord = h.coord
 	configP.utility = h.utility.get
@@ -452,8 +452,8 @@ func (rt *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort vibe
 func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 
 // MCPSnapshot returns a stable-ordered snapshot of the runtime registry
-// so callers outside hub (e.g. the steering generator) can read it
-// without taking hub internals as a dependency. Only servers in the
+// so callers outside agent (e.g. the steering generator) can read it
+// without taking agent internals as a dependency. Only servers in the
 // connected state are included: the steering file presents the list as
 // "Connected integrations", and a failed or OAuth-pending server has no
 // live tools for the agent to call.
@@ -651,7 +651,7 @@ func (rt *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 // particular is what reports the wind-down.
 //
 // It is needed at all because webhttp's own drain gate flips LATER: draining goes
-// true at the start of hub.Shutdown, the library's gate when srv.Shutdown begins,
+// true at the start of agent.Shutdown, the library's gate when srv.Shutdown begins,
 // and the window between the two is the last-instant-reconnect race. The library
 // gate remains the backstop after this one.
 func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {

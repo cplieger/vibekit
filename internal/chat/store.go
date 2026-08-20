@@ -125,7 +125,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		mode = "unverified"
 	}
 	// Startup breadcrumb so Loki can answer "did the store come up cleanly
-	// after restart?" without having to read the hub's wiring log. Matches the
+	// after restart?" without having to read the runtime's wiring log. Matches the
 	// single-Info-line-on-init pattern used by other vibekit package
 	// constructors. The mode logged is the one the FILESYSTEM stored, read back
 	// from the handle — not the constant we asked for. The old line reported

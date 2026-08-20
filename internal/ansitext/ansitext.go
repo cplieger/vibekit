@@ -17,7 +17,7 @@
 // # Scope
 //
 // This is a LINEAR parser, not a terminal. Agent terminals are pipes with no
-// PTY (see hub/agent_terminal.go), so the stream has no cursor addressing, no
+// PTY (see agent/agent_terminal.go), so the stream has no cursor addressing, no
 // carriage-return redraw and no alternate screen, and modelling a grid would
 // buy nothing while forcing a fixed column width onto a card whose width is
 // whatever the window is. Sequences that only make sense against a grid are
@@ -252,7 +252,7 @@ func NewParser() *Parser { return &Parser{cur: style{fg: ColorDefault, bg: Color
 // emitted, which is the absolute offset the NEXT emitted unit will carry.
 //
 // It exists so the one caller that has to name that position on the wire — the
-// hub, whose terminal_output payload reports where a chunk begins in the
+// agent, whose terminal_output payload reports where a chunk begins in the
 // terminal's accumulated output — can read the parser's own counter instead of
 // keeping a second one. The counter has to agree with the span offsets exactly,
 // and two implementations of "count the UTF-16 units" is precisely the coupling

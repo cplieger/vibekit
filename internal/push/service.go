@@ -216,7 +216,7 @@ func New(ctx context.Context, configDir, subject string) *Service {
 }
 
 // Close cancels any in-flight pushes and waits for the write loop to
-// drain pending saves. Call from the hub's shutdown path so pending
+// drain pending saves. Call from the runtime's shutdown path so pending
 // sends don't hold the shutdown up to 10s each.
 //
 // It SIGNALS and WAITS, which is the half of the rule the lifetime field serves:

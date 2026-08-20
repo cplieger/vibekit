@@ -1,6 +1,6 @@
 package agent
 
-// Tests for hub.go: top-level hub lifecycle (Shutdown) and the compile-time
+// Tests for agent.go: top-level agent lifecycle (Shutdown) and the compile-time
 // interface-satisfaction check for the shared fakes.
 
 import (

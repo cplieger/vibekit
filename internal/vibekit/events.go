@@ -1,8 +1,8 @@
 package vibekit
 
 // Server events: the wire shapes broadcast over SSE (/api/events) +
-// per-type payloads. Event dispatch lives in hub/sse.go and the
-// per-method translation lives in hub/translate*.go.
+// per-type payloads. Event dispatch lives in agent/sse.go and the
+// per-method translation lives in agent/translate*.go.
 //
 // Payload structs live in events_payloads.go; this file contains the
 // envelope types, event-type constants, and working-label logic.
@@ -168,7 +168,7 @@ func WorkingLabelForKind(kind ToolKind, title string) string {
 	return WorkingLabelThinking
 }
 
-// Working-label constants. Centralised so hub callers reference these
+// Working-label constants. Centralised so agent callers reference these
 // instead of bare string literals; a future label rename lands in one place.
 const (
 	WorkingLabelThinking = "Thinking"

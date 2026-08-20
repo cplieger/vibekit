@@ -98,7 +98,7 @@ func TestParseTokenEnvelope(t *testing.T) {
 // TestParseTokenEnvelope_ErrorTextIsSafeForALog covers the two properties of
 // the quoted upstream text that the fuzz target cannot state: what replaces
 // a masked credential, and that the text is safe in a log line at all. The
-// error reaches slog (hub's "v3 auth: token unavailable") and a JSON-RPC
+// error reaches slog (runtime's "v3 auth: token unavailable") and a JSON-RPC
 // frame, so a raw newline in it forges a log record and a C0 introducer
 // writes terminal escapes.
 func TestParseTokenEnvelope_ErrorTextIsSafeForALog(t *testing.T) {

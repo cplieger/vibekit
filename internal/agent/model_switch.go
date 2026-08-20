@@ -36,7 +36,7 @@ func resolveSwitchModel(chat *vibekit.Chat, p vibekit.SwitchModelCommand) (model
 	return p.Model, true
 }
 
-// responseOK2 is the canonical success response shape for hub
+// responseOK2 is the canonical success response shape for agent
 // commands that go through the dedup cache via h.respond.
 var responseOK2 = map[string]bool{"ok": true}
 

@@ -10,7 +10,7 @@
 //
 // It exists because this is BEHAVIOUR, and it used to sit in internal/vibekit
 // beside the wire and domain TYPES. Eight packages call it (auth, chat,
-// command, server, translate, hub, steering, procout) with no wire shape in
+// command, server, translate, agent, steering, procout) with no wire shape in
 // sight, so it never belonged in the one package the code generator walks for
 // the cross-language type contract.
 //

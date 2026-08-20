@@ -2,7 +2,7 @@ package vibekit
 
 // Chat domain types: session state, messages, tool calls, plans, usage,
 // session modes/models. These are the persisted and over-the-wire shapes
-// the store, hub, bridge, and push packages operate on.
+// the store, agent, bridge, and push packages operate on.
 
 import (
 	"encoding/json"
@@ -711,7 +711,7 @@ func (h *ChatHeader) SessionChain() []string {
 // ResumableSession is one stored KAS session offered by the previous-session
 // picker (GET /api/sessions). Adopts kiro-cli's own `--resume-picker`
 // capability: KAS owns the inventory and the transcript, so vibekit carries no
-// archive of its own. See hub/session_list.go for the wire provenance.
+// archive of its own. See agent/session_list.go for the wire provenance.
 //
 // Field order is fieldalignment's, not the JSON's.
 type ResumableSession struct {

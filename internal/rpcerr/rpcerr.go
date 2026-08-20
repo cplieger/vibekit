@@ -3,7 +3,7 @@
 //
 // It exists as its own package because THREE packages surface an ACP failure and
 // none of them owns the rule: internal/command (the prompt path, the retry, the
-// bridge-start failure and the dispatcher's shared 502), internal/hub (the model
+// bridge-start failure and the dispatcher's shared 502), internal/agent (the model
 // switch and every workflow read endpoint) and internal/workflow (Classify's
 // feature detection). It used to live in internal/workflow as Details, reachable
 // only from the run handlers, so the 127-of-137 error frames that carry their

@@ -302,7 +302,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 				// unchecked unlink today, and readDirectory is an unfiltered
 				// listing — which is how an agent discovers the file the
 				// ignore-list read filter would then refuse to open. Handled by
-				// hub/bridge_fs_kiro.go, which resolves inside the work dir,
+				// agent/bridge_fs_kiro.go, which resolves inside the work dir,
 				// filters the listing, and executes; it does not stage or gate
 				// (KAS checkpoints before its own delete and restores a
 				// rejected one through fs/write_text_file — a second gate here
@@ -319,7 +319,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 				}},
 			},
 			// terminal:true is what routes every agent shell command through
-			// vibekit's own terminal/* handlers (hub/agent_terminal.go) rather
+			// vibekit's own terminal/* handlers (agent/agent_terminal.go) rather
 			// than an in-process spawn inside KAS, so vibekit owns the pid, the
 			// argv and the output ring for all agent shell work.
 			//

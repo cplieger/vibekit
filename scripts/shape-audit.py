@@ -82,11 +82,31 @@ RECEIVER = {
 }
 
 # Identifiers that named a type or package this module has renamed away from.
-STALE = {
-    "hub": "internal/hub became internal/agent; Hub became Runtime",
-    "Plane": "the plane suffix described the structure of the code, not the problem",
+# Retired vocabulary, PER MODULE. These record one repo's rename history, so
+# applying them to another repo is a category error: subflux never had an
+# internal/hub, and every "hub" in it is the shared webhttp/sse library's type —
+# 28 findings, none of them real, the first time the rules were pointed at it.
+STALE_BY_MODULE = {
+    "github.com/cplieger/vibekit": {
+        "hub": "internal/hub became internal/agent; Hub became Runtime",
+        "Plane": "the plane suffix described the structure of the code, not the problem",
+    },
 }
-STALE_EXEMPT = re.compile(r"sse\.Hub|sseHub|webhttp/sse|GitHub|github")
+
+# The shared webhttp/sse hub is a LIBRARY type; prose naming it is correct.
+STALE_EXEMPT = re.compile(
+    r"sse\.Hub|sseHub|webhttp/sse|GitHub|github|[Ss][Ss][Ee] hub|shared sse",
+    re.IGNORECASE,
+)
+
+
+def stale_vocabulary():
+    """The retired words for the module being audited, empty when it declares none."""
+    gomod = ROOT / "go.mod"
+    if not gomod.exists():
+        return {}
+    m = re.search(r"^module (\S+)", gomod.read_text(), re.MULTILINE)
+    return STALE_BY_MODULE.get(m.group(1), {}) if m else {}
 
 
 def go_files(pkg=None):
@@ -229,15 +249,32 @@ def rule_nolint_explained(f):
 
 
 def rule_stale_vocabulary(f):
-    for p in go_files(pkg="internal/agent"):
-        for i, line in enumerate(p.read_text().split("\n"), 1):
-            if STALE_EXEMPT.search(line):
+    """Stale vocabulary anywhere in the repo, COMMENTS INCLUDED.
+
+    Comments were exempt, and that exemption hid 193 references to a package that
+    no longer exists — including cross-references like `internal/hub/governance.go`
+    that a reader cannot follow. A rename is not finished when the code compiles:
+    the prose pointing at the old name is still wrong, and only a reader pays.
+
+    Scoped to the whole repo rather than one package, because most of the stale
+    references were in OTHER packages describing this one. Historical statements
+    are exempt — "the hub used to carry a forward for it" is a true sentence about
+    the past, and rewriting it would make it false.
+    """
+    stale = stale_vocabulary()
+    if not stale:
+        return
+    hist = re.compile(r"used to|formerly|had been|before the rename", re.IGNORECASE)
+    for p in sorted(ROOT.glob("internal/**/*.go")) + sorted(ROOT.glob("*.go")):
+        if "node_modules" in str(p):
+            continue
+        for i, line in enumerate(p.read_text(errors="replace").split("\n"), 1):
+            if STALE_EXEMPT.search(line) or hist.search(line):
                 continue
-            for word, why in STALE.items():
-                if re.search(
-                    r"\b\w*" + word + r"\w*\b", line
-                ) and not line.lstrip().startswith("//"):
-                    f("R11", f"{p.name}:{i} stale {word} in code ({why})")
+            for word, why in stale.items():
+                if re.search(r"\b" + word + r"\b", line, re.IGNORECASE):
+                    rel = p.relative_to(ROOT)
+                    f("R11", f"{rel}:{i} stale {word} ({why})")
                     break
 
 

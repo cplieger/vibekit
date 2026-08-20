@@ -67,7 +67,7 @@ const (
 // and counts each step instance's tool calls for the turn cap.
 //
 // Written from the bridge-forward goroutine (one per chat) and read from the
-// same, but a hub has many chats and one Translator, so the mutex is real
+// same, but a runtime has many chats and one Translator, so the mutex is real
 // contention protection rather than ceremony.
 type stepRegistry struct {
 	byID  map[string]StepRef

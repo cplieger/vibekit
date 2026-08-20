@@ -160,7 +160,7 @@ func (s *Store) load() error {
 	// load. A group-readable token file is the exact exposure the 0600 exists to
 	// prevent, so continuing would mean writing every credential KAS hands us
 	// into a file we know we cannot protect. Failing here does not brick boot —
-	// hub treats a secretstore that will not open as best-effort, logs one ERROR
+	// agent treats a secretstore that will not open as best-effort, logs one ERROR
 	// and runs with h.secrets nil, which degrades MCP OAuth to the per-spawn DCR
 	// it did before this package existed. That is vibekit invariant 6's shape:
 	// remove the exposure, do not abort startup over persistent-volume state.

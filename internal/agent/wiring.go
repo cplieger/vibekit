@@ -2,20 +2,20 @@ package agent
 
 import "reflect"
 
-// requireCollaborators panics unless every collaborator field of every plane the
+// requireCollaborators panics unless every collaborator field of every collaborator the
 // Runtime built is populated.
 //
 // This guards a bug this constructor has now shipped THREE times, in three
 // different types, and the third time is what made it worth a structural answer
-// rather than a third fix. The pattern: a plane binds its collaborators BY VALUE
+// rather than a third fix. The pattern: a collaborator binds its collaborators BY VALUE
 // at construction, so a field still nil at that moment stays nil forever — where
-// the forwarding methods these planes replaced read h per call and so tolerated
+// the forwarding methods these collaborators replaced read h per call and so tolerated
 // any assignment order. Splitting the god object is exactly what made order
 // load-bearing, and nothing in the language notices.
 //
 // The failure mode is what makes it worth catching here: a nil collaborator is
 // not a compile error and not a startup error, it is a nil-receiver panic on the
-// first request that reaches that path. The run plane's utility thunk, three
+// first request that reaches that path. The run surface's utility thunk, three
 // translate roles and the inbound ladder's coordinator each shipped that way.
 //
 // A panic rather than an error, on the same terms as the nil lifetime context New
@@ -37,7 +37,7 @@ func requireCollaborators(h *Runtime) {
 	// Keyed literals, not positional: govet's fieldalignment wants `v` first and
 	// the name second, and a positional list silently swaps meaning the moment
 	// that order changes. Keys make the order the linter's business alone.
-	for _, plane := range []struct {
+	for _, c := range []struct {
 		v    any
 		name string
 	}{
@@ -50,12 +50,12 @@ func requireCollaborators(h *Runtime) {
 		{name: "utility", v: h.utility},
 		{name: "replay", v: h.replay},
 		// The coordinator is here because it was the FOURTH site to capture a nil
-		// this way, and the guard missed it: the list held the planes I thought of
+		// this way, and the guard missed it: the list held the collaborators I thought of
 		// rather than everything that binds a collaborator at construction. Any
 		// type built inside New with fields taken from h belongs in it.
 		{name: "coord", v: h.coord},
 	} {
-		requirePopulated(plane.name, plane.v)
+		requirePopulated(c.name, c.v)
 	}
 }
 
@@ -63,7 +63,7 @@ func requireCollaborators(h *Runtime) {
 func requirePopulated(owner string, v any) {
 	rv := reflect.ValueOf(v)
 	if !rv.IsValid() || rv.IsNil() {
-		panic("agent: plane " + owner + " was never constructed")
+		panic("agent: collaborator " + owner + " was never constructed")
 	}
 	s := rv.Elem()
 	for i := range s.NumField() {
@@ -80,7 +80,7 @@ func requirePopulated(owner string, v any) {
 			}
 		default:
 			// A value field (a mutex, a map, a string, an embedded struct) has no
-			// nil state to check. Maps are deliberately excluded: several planes
+			// nil state to check. Maps are deliberately excluded: several collaborators
 			// initialise theirs lazily on first write.
 		}
 	}

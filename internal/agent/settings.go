@@ -17,8 +17,8 @@ import (
 // and fetching a prompt are things a live session does.
 //
 // utility arrives as a thunk for the same reason Runs's does: the runtime is
-// built under a sync.Once whose hooks call back into hub surfaces, and one of
-// those hooks is this plane's own broadcastHooksChanged. Holding a built runtime
+// built under a sync.Once whose hooks call back into agent surfaces, and one of
+// those hooks is this type's own broadcastHooksChanged. Holding a built runtime
 // here would be a construction cycle.
 type Settings struct {
 	// governance caches the last governance state KAS reported, so a fresh page
@@ -42,7 +42,7 @@ func newSettings(lc *lifetime, broadcast func(context.Context, vibekit.ServerEve
 	}
 }
 
-// Config exposes the configuration plane to the composition root, which hands it
+// Config exposes the settings surface to the composition root, which hands it
 // to the server as its policyProvider (PolicyList + PolicyExplain).
 //
 // One accessor rather than two Runtime forwards, same as Runs().

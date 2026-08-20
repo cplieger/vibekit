@@ -146,7 +146,7 @@ type TerminalReader interface {
 }
 
 // GovernanceAccess caches the latest account/workspace governance state so GET
-// /api/governance can serve it with no chat open (see hub/governance.go).
+// /api/governance can serve it with no chat open (see agent/governance.go).
 //
 // One method, and its own name rather than a loose method on a composite,
 // because it is the only thing this package asks of that cache.
@@ -169,7 +169,7 @@ type MCPRecorder interface {
 	// RecordDisabled reports a server KAS says is off. The recorder keeps it
 	// only when vibekit never configured it — a configured server's off state is
 	// already on its config row, and this call must not resurrect one the user
-	// switched off. See hub's recordDisabled for the rule.
+	// switched off. See runtime's recordDisabled for the rule.
 	RecordDisabled(ctx context.Context, serverName string)
 	SignalReady()
 }

@@ -31,7 +31,7 @@ const DefaultOutputCap = 64 * 1024
 // flag.
 //
 // SAFETY: Buffer is not goroutine-safe by design — the single-writer
-// invariant is enforced by the hub's per-chat dispatch loop. The mu
+// invariant is enforced by the runtime's per-chat dispatch loop. The mu
 // field guards against silent corruption if the invariant is ever
 // violated by a future refactor.
 type Buffer struct {
@@ -80,7 +80,7 @@ type Buffer struct {
 	// clients can drop deltas the snapshot already folded in. Guarded
 	// by mu like the blocks it counts, and read either from the
 	// Append*Delta return values or from Snapshot — which is this
-	// buffer's own cross-goroutine read, replacing the hub-side replica
+	// buffer's own cross-goroutine read, replacing the runtime-side replica
 	// that used to be the snapshot surface.
 	chunkSeq int64
 	mu       sync.Mutex
@@ -315,7 +315,7 @@ func (buf *Buffer) MarkCancelledToolsFailed() []vibekit.ToolCall {
 // transcript rather than only the next delta.
 //
 // This is the buffer serving its own cross-goroutine read, which the hub used to
-// keep a whole SECOND replica for (hub/turn_mirror.go re-folded every broadcast
+// keep a whole SECOND replica for (agent/turn_mirror.go re-folded every broadcast
 // event into a parallel vibekit.Message — a duplicate implementation of the block
 // assembly happening right here, and one that could drift from it). Everything
 // that snapshot needs is already in these fields; the only thing missing was a

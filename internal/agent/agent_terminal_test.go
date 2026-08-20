@@ -441,7 +441,7 @@ func (r *sizeChunkReader) Read(p []byte) (int, error) {
 // broadcast chunk equals the raw input exactly (no byte dropped or
 // duplicated), and (2) when the whole input is valid UTF-8, every broadcast
 // chunk is itself valid UTF-8 (no rune split across the read boundary). One
-// hub is reused across iterations (fuzz iterations run sequentially per
+// agent is reused across iterations (fuzz iterations run sequentially per
 // process) to avoid leaking the per-Runtime background goroutines.
 func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	f.Add([]byte("hello"), uint8(1))

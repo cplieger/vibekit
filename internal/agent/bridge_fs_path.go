@@ -31,7 +31,7 @@ var (
 	errRejectedByUser = errors.New("change rejected by user")
 )
 
-// resolveInsideWorkDir confines p to the workspace. On the plane that holds
+// resolveInsideWorkDir confines p to the workspace. On the type that holds
 // workDir, so a collaborator needing it does not need a *Runtime.
 func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 	return workspace.ResolveInsideAbs(lt.workDir, p)

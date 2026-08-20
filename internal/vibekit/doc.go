@@ -26,7 +26,7 @@
 // mapper over these types belongs in one of those packages instead.
 //
 // The types are what keep the dependency graph acyclic — vibekit.ServerEvent
-// crosses the hub/translate seam, and hub imports translate rather than the
+// crosses the runtime/translate seam, and agent imports translate rather than the
 // reverse, so relocating that type would close a real cycle. cmd/wire-codegen
 // walks these types through internal/wirespec to generate the TypeScript
 // client's decoders, which is the second reason they have one obvious home.

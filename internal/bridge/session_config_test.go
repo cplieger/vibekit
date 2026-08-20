@@ -204,7 +204,7 @@ func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	}
 }
 
-// The lifetime context DOES own the subprocess, so hub shutdown still reaps a
+// The lifetime context DOES own the subprocess, so agent shutdown still reaps a
 // bridge even if Stop races or panics. Without this the belt-and-braces kill
 // that the handshake context used to provide would simply be gone.
 func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {

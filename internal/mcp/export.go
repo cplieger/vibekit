@@ -237,17 +237,17 @@ var errImportDuplicate = errors.New("names the same server twice")
 // concern — KAS infers the transport from the fields present and negotiates
 // HTTP vs SSE itself.
 //
-// EnabledNames stays: the hub still filters status notifications against the
+// EnabledNames stays: the runtime still filters status notifications against the
 // set of servers the user has enabled.
 
-// EnabledNames returns the set of enabled server names, for the hub's
+// EnabledNames returns the set of enabled server names, for the runtime's
 // defensive filtering of init notifications.
 func (s *Store) EnabledNames(_ context.Context) map[string]struct{} {
 	return s.namesWhere(func(sv *Server) bool { return sv.Enabled })
 }
 
 // ConfiguredNames returns every server name this store holds regardless of
-// its enabled flag. The hub subtracts EnabledNames
+// its enabled flag. The runtime subtracts EnabledNames
 // from it to identify the one case that still drops a status frame: a server
 // vibekit configured and the user switched off.
 func (s *Store) ConfiguredNames(_ context.Context) map[string]struct{} {

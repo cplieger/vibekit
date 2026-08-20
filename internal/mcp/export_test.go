@@ -118,7 +118,7 @@ func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	}
 }
 
-// TestConfiguredNames_IncludesDisabled pins the set the hub's guard subtracts
+// TestConfiguredNames_IncludesDisabled pins the set the runtime's guard subtracts
 // EnabledNames from: without a disabled server here, the guard could not tell
 // "the user switched this off" from "vibekit never configured this", which are
 // the two cases needing opposite treatment.
@@ -162,7 +162,7 @@ func TestAllNames_IncludesThePowersBlock(t *testing.T) {
 		t.Errorf("vibekit's own server is missing from AllNames: %+v", all)
 	}
 	if _, ok := s.ConfiguredNames(ctx)["from-a-power"]; ok {
-		t.Error("a Power's server must NOT appear in ConfiguredNames; the hub would read it as vibekit's own")
+		t.Error("a Power's server must NOT appear in ConfiguredNames; the runtime would read it as vibekit's own")
 	}
 }
 

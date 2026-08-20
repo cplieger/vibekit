@@ -90,7 +90,7 @@ func resolveRepoDir(workDir, repo string) string {
 // git repo into the workspace and expect the UI to address it by its
 // symlink name. Git itself doesn't follow symlinks into .git/, so
 // this is safe for the read operations this package performs. Write
-// operations in the hub's fs bridge resolve symlinks via EvalSymlinks
+// operations in the runtime's fs bridge resolve symlinks via EvalSymlinks
 // — that path has stricter requirements. The check is therefore
 // deliberately LEXICAL-ONLY: an os.Root here would refuse the
 // symlinked repos that are a feature of this surface.

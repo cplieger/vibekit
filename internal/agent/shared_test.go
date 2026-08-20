@@ -1,6 +1,6 @@
 package agent
 
-// Utility helpers for hub tests: newTestHub constructor, postCmd helper,
+// Utility helpers for agent tests: newTestHub constructor, postCmd helper,
 // event inspection helpers, and message builders.
 
 import (

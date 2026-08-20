@@ -368,7 +368,7 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 // RUNTIME state — they describe what is connected right now, not what the user
 // configured. They used to be written into this config file on every status
 // notification, which made a notification path do disk I/O and put agent-derived
-// data in a user-intent file. They live in the hub's runtime registry now and
+// data in a user-intent file. They live in the runtime's runtime registry now and
 // reach the UI through /api/mcp/status, beside the prompts and resources that
 // were already there.
 //

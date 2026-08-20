@@ -17,7 +17,7 @@ import (
 // than the true one. Declaring the capability is a commitment: KAS rethrows a
 // client-side store failure into its MCP connect path, so a bridge that offers
 // credential storage with no store behind it turns every MCP OAuth connect into
-// a failure (hub's secretStoreResult answers -32603). NOT offering it costs one
+// a failure (runtime's secretStoreResult answers -32603). NOT offering it costs one
 // `POST /register` per spawn and nothing else. So a regression to a hardcoded
 // true is strictly worse than the state before the capability existed, and the
 // false subtest is what catches it — it fails against the literal this replaced.

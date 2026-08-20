@@ -195,7 +195,7 @@ type agentTerminals struct {
 	// has to remember to do.
 	turnSeq map[vibekit.ChatID]uint64
 	// broadcast publishes a terminal's lifecycle and output frames. A function
-	// rather than the SSE plane, because emitting is the only thing this type
+	// rather than the event bus, because emitting is the only thing this type
 	// wants from it and a one-field dependency stated as a func cannot grow.
 	broadcast func(context.Context, vibekit.ServerEvent)
 	// bridges is the per-chat bridge registry, for answering the ACP request a

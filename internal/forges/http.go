@@ -58,7 +58,7 @@ const (
 //
 // Declared HERE, at the consumer, rather than in a shared contract package.
 // 1 method against a *agent.Runtime exporting well over a hundred; this package fires
-// exactly one event kind and needs nothing else from the hub at all.
+// exactly one event kind and needs nothing else from the runtime at all.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 }

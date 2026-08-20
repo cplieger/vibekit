@@ -666,7 +666,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	_ = notifLine
 }
 
-// TestRealBridge_Contract runs BridgeContractTest (from hub/shared_test.go)
+// TestRealBridge_Contract runs BridgeContractTest (from agent/shared_test.go)
 // against the real bridge.Bridge using a pipe-based fake kiro-cli script.
 // This catches interface drift between the fake and real implementations
 // at the Start/Stop/NotifCh lifecycle level without requiring a real
@@ -1534,7 +1534,7 @@ func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 // controls the _meta.kiro.hooks opt-in in the initialize handshake. When true
 // the bridge declares {enabled:true,v2:true} so KAS's v2 hook engine autofires
 // the workspace's .kiro/hooks/*.json hooks during a turn (chat bridges set this
-// in hub/bridge_coord.go; KAS then loads and runs the hooks internally, with no
+// in agent/bridge_coord.go; KAS then loads and runs the hooks internally, with no
 // executeHook callback to the client). When false (the zero value) the opt-in
 // is omitted, while the always-on openExternalUrl + infrastructureSafety kiro
 // capabilities are still declared either way.

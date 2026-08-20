@@ -2,7 +2,7 @@ package vibekit
 
 // Wire types for the tools engine (Settings -> Tools). The engine is
 // the cplieger/toolbelt library; these aliases keep the shapes in the
-// api contract hub so wiregen exports them to the client
+// api contract agent so wiregen exports them to the client
 // (static-src/wire/) alongside the SSE payloads. The REST layer is
 // toolbelt/httpapi, mounted by internal/server; its response envelopes
 // are aliased here for the same reason.

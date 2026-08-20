@@ -186,7 +186,7 @@ func (p *Projection) Ingest(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
 	default:
 		// user_message_chunk is handled here rather than in the switch above
 		// because its kind constant lives outside the ACPUpdate* set vibekit
-		// declares (it has never had a live handler — see hub/translate.go).
+		// declares (it has never had a live handler — see agent/translate.go).
 		if kind == replayUserChunkKind {
 			p.ingestUserText(raw)
 		}

@@ -201,7 +201,7 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 				return
 			}
 			// The line has to be actionable: the terminal id is the only handle on
-			// the hub-side record, and the byte count is what separates an empty
+			// the runtime-side record, and the byte count is what separates an empty
 			// card from a surviving fragment.
 			for _, want := range []string{
 				"terminal_id=" + termID, "tool_call_id=tc-1",

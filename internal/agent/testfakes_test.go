@@ -1,7 +1,7 @@
 package agent
 
 // Test fakes: in-memory implementations of ACPBridge and ChatStore
-// interfaces for use across hub package tests.
+// interfaces for use across agent package tests.
 
 import (
 	"context"

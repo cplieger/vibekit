@@ -37,7 +37,7 @@ func TestStubDeps_Contract(t *testing.T) {
 	d.Broadcast(ctx, vibekit.ServerEvent{})
 }
 
-// TestBaseDeps_FullContract mirrors the hub's TranslateDepsContractTest
+// TestBaseDeps_FullContract mirrors the runtime's TranslateDepsContractTest
 // assertions to catch drift between baseDeps and the Deps interface.
 func TestBaseDeps_FullContract(t *testing.T) {
 	d := newBaseDeps()

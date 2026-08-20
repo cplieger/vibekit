@@ -24,7 +24,7 @@ package translate
 // Both arrive on the SAME channel, which is why the filter exists rather
 // than a source check. Full precedence: agent focus title > local
 // first-prompt label > KAS's stored session title (adoptKASTitle in
-// hub/bridge_coord.go, which only ever names an unnamed chat).
+// agent/bridge_coord.go, which only ever names an unnamed chat).
 //
 // Titles land on the chat record (Mutate broadcasts chat_updated).
 // Status + description broadcast
@@ -43,7 +43,7 @@ import (
 
 // PrimePreambleSwitch is the fixed prefix of the invisible priming prompt the
 // bridge coordinator sends on a fresh session after a model-switch fallback
-// (hub bridge_coord.go builds the prime as preamble + history). Exported so the
+// (agent/bridge_coord.go builds the prime as preamble + history). Exported so the
 // coordinator and the focus filter share one definition — KAS derives a
 // first-prompt title from whatever prompt text it sees first, and on a primed
 // session that is this text.

@@ -12,7 +12,7 @@ import (
 // the implementation happens to hold.
 var safeRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
 
-// FuzzValidMessageID absorbed an identical target from internal/hub, which
+// FuzzValidMessageID absorbed an identical target from internal/agent, which
 // fuzzed this function through a forwarding wrapper while calling it nowhere in
 // production. Its invariants and seeds are the ones kept: the pair here was
 // crash-only, which on a gate this feeds catches nothing but a panic.

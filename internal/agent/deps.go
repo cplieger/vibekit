@@ -84,7 +84,7 @@ type bridgeChatRecords interface {
 // chatRecords is the runtime's field type, and it is a UNION rather than a usage
 // claim. 7 of the 9 methods *chat.Store offers.
 //
-// The hub itself calls 3 (Get, List, Mutate). It is 7 because the runtime is what
+// The runtime itself calls 3 (Get, List, Mutate). It is 7 because the runtime is what
 // the composition root hands the store to, and it passes narrower views of the
 // same value on: bridgeChatRecords (4) to the coordinator, command.ChatStore (5)
 // to the dispatcher, translate.ChatRecords (3) to the translator. A field has to
@@ -256,7 +256,7 @@ type utilityBridge interface {
 //
 // Exported, unlike its narrower relatives, because the composition root has to
 // name it: a factory literal's return type is not inferred from the parameter it
-// is passed to, so composition writes func() hub.ACPBridge explicitly.
+// is passed to, so composition writes func() agent.ACPBridge explicitly.
 type ACPBridge interface {
 	acpSessionFacts
 	utilityBridge
@@ -270,7 +270,7 @@ type ACPBridge interface {
 	SetModel(ctx context.Context, modelID string) error
 }
 
-// ACPBridgeFactory creates new ACPBridge instances. The hub calls it once per
+// ACPBridgeFactory creates new ACPBridge instances. The runtime calls it once per
 // chat to spawn a fresh kiro-cli subprocess, and once for the utility session;
 // each invocation is a new bridge. Exported for the same reason ACPBridge is.
 type ACPBridgeFactory func() ACPBridge

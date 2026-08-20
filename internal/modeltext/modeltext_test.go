@@ -24,7 +24,7 @@ func TestStripCodeFence(t *testing.T) {
 
 // TestHidden pins the named policy against the tag list it is built from, and
 // the ambient-set boundary: [internal] and [experimental] are SHOWN in the
-// picker, so Hidden must answer false for them or hub's wider policy would be
+// picker, so Hidden must answer false for them or runtime's wider policy would be
 // indistinguishable from this one.
 func TestHidden(t *testing.T) {
 	cases := []struct {

@@ -335,18 +335,18 @@ func (s *Server) ListenAndServe() error {
 
 	// webhttp.Run owns the serve/shutdown sequence (default 5s grace, matching
 	// the previous hand-rolled shutdown timeout). The pre-drain hook preserves
-	// vibekit's hub-before-server ordering: readiness flips, then the hub stops
+	// vibekit's agent-before-server ordering: readiness flips, then the runtime stops
 	// bridges and cancels the SSE/WebSocket streams, and only then does the
 	// HTTP drain run.
 	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
 		// drainCtx carries the shutdown grace, and Run calls this hook
-		// SYNCHRONOUSLY before srv.Shutdown: an unbounded hub teardown here
+		// SYNCHRONOUSLY before srv.Shutdown: an unbounded agent teardown here
 		// would consume the whole grace and leave the HTTP drain none, so the
 		// budget is passed on rather than discarded.
 		if err := s.agent.Shutdown(drainCtx); err != nil {
-			slog.Error("hub shutdown did not finish within the grace period", "error", err)
+			slog.Error("agent runtime shutdown did not finish within the grace period", "error", err)
 		}
 	}))
 	s.ready.Store(false) // no-op on the signal path; covers a serve failure

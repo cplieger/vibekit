@@ -90,7 +90,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// and it is what every component whose work must not outlive the process is
 	// parented on. App.Shutdown ends it (see stopApp).
 	//
-	// Deriving it here rather than inside a component is the point: the hub used
+	// Deriving it here rather than inside a component is the point: the runtime used
 	// to root its own lifetime at context.Background() and expose it as
 	// ShutdownCtx(), so a goroutine wired in this file took its context out of
 	// the agent. Now the lifetime flows the other way.
@@ -198,7 +198,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	// Tools engine: the cplieger/toolbelt reconciler owns tools.json v2
 	// + the install tree + the job queue; job lifecycle/output stream
-	// over the hub's SSE via the Config callbacks. The seed plants the
+	// over the runtime's SSE via the Config callbacks. The seed plants the
 	// disabled LSP + gh templates on fresh volumes (toggled on in
 	// Settings -> Tools). Boot reconciles async — installed tools
 	// persist on the volume, so nothing blocks server start.
@@ -350,27 +350,27 @@ func (a *App) Shutdown() {
 	if a.tools != nil {
 		a.tools.Close()
 	}
-	// The app's lifetime ends immediately BEFORE the hub's own teardown, not
-	// after it: the hub's shutdown context is a child of this one, so cancelling
+	// The app's lifetime ends immediately BEFORE the runtime's own teardown, not
+	// after it: the runtime's shutdown context is a child of this one, so cancelling
 	// here is the same instant the app-lifetime goroutines used to lose the
-	// context they took out of the hub via ShutdownCtx(). Doing it earlier would
+	// context they took out of the runtime via ShutdownCtx(). Doing it earlier would
 	// signal the push service's Done before the poller that consults it has been
 	// stopped, which is what the ordering above exists to prevent.
 	callIfSet(a.stopApp)
 	a.shutdownHub()
 }
 
-// hubStopGrace bounds the hub teardown App.Shutdown owns.
+// hubStopGrace bounds the runtime teardown App.Shutdown owns.
 //
 // Invented here because there is nothing to inherit: this path runs from
 // runMain's defer and from a serve failure, and the signal context is already
 // cancelled by then, so a derived budget would be zero. 10s is the PTY
-// teardown's own ceiling (hub's shutdownBudget, above the engine's 5s reap) and
+// teardown's own ceiling (runtime's shutdownBudget, above the engine's 5s reap) and
 // the largest single step in the sequence, so less would report an expiry for
 // work that was always going to take that long.
 const hubStopGrace = 10 * time.Second
 
-// shutdownHub tears the hub down on that budget and logs an expiry rather than
+// shutdownHub tears the runtime down on that budget and logs an expiry rather than
 // dropping it: both callers are terminal paths with nobody above them to return
 // an error to.
 func (a *App) shutdownHub() {
@@ -380,7 +380,7 @@ func (a *App) shutdownHub() {
 	ctx, cancel := context.WithTimeout(context.Background(), hubStopGrace)
 	defer cancel()
 	if err := a.Runtime.Shutdown(ctx); err != nil {
-		slog.Error("hub shutdown did not finish within the grace period",
+		slog.Error("agent runtime shutdown did not finish within the grace period",
 			"grace", hubStopGrace, "error", err)
 	}
 }
@@ -679,7 +679,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 	if _, rerr := toolsEngine.RefreshCatalog(); rerr != nil {
 		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
 	}
-	// Code-intelligence activation (hub/code_intel.go): the gate scans
+	// Code-intelligence activation (agent/code_intel.go): the gate scans
 	// the live inventory for an enabled+installed language server, and
 	// the boot fire covers the volume that already has servers but no
 	// lsp.json (first deploy of this feature, or a deleted config).

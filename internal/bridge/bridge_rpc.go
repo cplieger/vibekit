@@ -173,7 +173,7 @@ func (b *Bridge) dispatch(msg *vibekit.RPCResponse) {
 		}
 	case msg.ID != nil:
 		// Request FROM kiro-cli (fs/read_text_file, terminal/*);
-		// the hub will eventually call Respond(*msg.ID, ...).
+		// the runtime will eventually call Respond(*msg.ID, ...).
 		b.sendNotif(msg)
 	case msg.Method != "":
 		// Server-sent notification (session/update, etc.).

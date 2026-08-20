@@ -162,4 +162,4 @@ func mcpResources(in []v3MCPResource) []vibekit.MCPResourceInfo {
 
 // _kiro/sessions/changed (the v3 session-inventory diff) has no client
 // consumer: on v3 subagents are tool calls, not sessions, so there is no
-// session list to maintain. The method is noop'd in the hub dispatch.
+// session list to maintain. The method is noop'd in the runtime dispatch.

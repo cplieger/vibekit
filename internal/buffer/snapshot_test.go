@@ -6,7 +6,7 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// TestBufferSnapshot covers the read that replaced hub/turn_mirror.go's parallel
+// TestBufferSnapshot covers the read that replaced agent/turn_mirror.go's parallel
 // replica of the in-flight turn.
 //
 // The mirror re-folded every broadcast event into its own vibekit.Message — a second

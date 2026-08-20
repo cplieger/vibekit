@@ -18,19 +18,19 @@ type baseDeps struct {
 	lineTracker *buffer.LineTracker
 	onBroadcast func(context.Context, vibekit.ServerEvent)
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
-	// assert the hub-side cache write (mirrors onBroadcast).
+	// assert the runtime-side cache write (mirrors onBroadcast).
 	onSetGovernance func(vibekit.GovernanceStatePayload)
 	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
-	// test can stage a scheduled run without a hub or a scheduler.
+	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
 	// stepCapBreaches records every StepTurnCapExceeded call, so a test can
 	// assert the per-step turn cap fired once and named the right step without a
-	// hub behind it.
+	// agent behind it.
 	stepCapBreaches []stepCapBreach
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
-	// terminals stands in for the hub's agent-terminal registry, keyed by
+	// terminals stands in for the runtime's agent-terminal registry, keyed by
 	// terminal id, so adoptTerminalOutput is exercisable without one. A key
 	// present with an empty text is a REGISTERED terminal that printed nothing,
 	// which the real registry reports as ok — the distinction the miss warning

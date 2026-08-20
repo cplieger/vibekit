@@ -7,7 +7,7 @@
 // over two inputs — the model's description of itself, and the model's answer.
 //
 // It exists because this is BEHAVIOUR, and it used to sit in internal/vibekit beside
-// the wire and domain TYPES. Five packages call it (bridge, hub and translate
+// the wire and domain TYPES. Five packages call it (bridge, agent and translate
 // for the tags; git and server for the fences), none of which owns the others.
 // internal/git was the obvious candidate for the fence half, holding 3 of its 4
 // production call sites — declined because internal/server holds the fourth and
@@ -24,7 +24,7 @@ import "strings"
 // hiddenTags are the bracketed markers used by the UI model picker and the
 // bridge to hide end-of-life models from the user.
 //
-// Deliberately NARROWER than internal/hub's ambient-selection set, which adds
+// Deliberately NARROWER than internal/agent's ambient-selection set, which adds
 // [internal] and [experimental]: those models are SHOWN in the picker and merely
 // excluded from ambient-task selection, so the two policies are not the same
 // list and must not be merged into one.

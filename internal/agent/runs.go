@@ -70,8 +70,8 @@ type runPermClaimer interface {
 	TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool
 }
 
-// Runs exposes the run plane to the composition root, which starts the orphan
-// sweep and hands the plane to the schedule runner as its schedule.Launcher.
+// Runs exposes the run surface to the composition root, which starts the orphan
+// sweep and hands it to the schedule runner as its schedule.Launcher.
 //
 // One accessor rather than two Runtime forwards. A forward would put the runtime back in
 // the path of calls that have nothing to do with it, which is the shape this

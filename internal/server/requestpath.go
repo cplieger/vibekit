@@ -33,7 +33,7 @@ import (
 
 // apiPathPrefix is the subtree this guard covers, and it is vibekit's whole
 // HTTP surface bar one mount: every route registered in ListenAndServe and in
-// every RegisterRoutes under internal/{hub,chat,git,filebrowse,auth,mcp,
+// every RegisterRoutes under internal/{agent,chat,git,filebrowse,auth,mcp,
 // forges,push} sits under /api/, and the single exception is the "/" catch-all
 // that serves the SPA and the embedded static tree.
 //

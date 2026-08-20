@@ -3,7 +3,7 @@ package vibekit
 import "strconv"
 
 // Push types: Web Push subscription shapes and push notification kind
-// constants. Consumed by the push package and the hub's push-notification
+// constants. Consumed by the push package and the runtime's push-notification
 // path.
 
 // PushSubscription is a Web Push subscription from the browser (RFC 8030).
@@ -24,8 +24,8 @@ type PushSubscriptionKeys struct {
 type PushKind string
 
 // Push notification kind constants. These live in this package so
-// hub callers can reference them without importing the push package
-// (eliminating the hub→push import that existed solely for constant
+// agent callers can reference them without importing the push package
+// (eliminating the runtime→push import that existed solely for constant
 // access).
 const (
 	PushKindAgentFinished PushKind = "agent_finished"

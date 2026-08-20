@@ -94,7 +94,7 @@ func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }
 // never expired: there is no deadline to pass.
 //
 // UNEXPORTED, and the reason is the mechanism above it. Nothing outside this
-// package asks whether a deadline has passed, because nothing needs to: the hub
+// package asks whether a deadline has passed, because nothing needs to: the runtime
 // enforces the bound with a `time.AfterFunc` armed for exactly this instant, so
 // the timer FIRING is that question, and its callback then asks the sharper one
 // (is the stored deadline still the one I was armed for — armDeadline's

@@ -14,7 +14,7 @@ import (
 // and the translate package's expectations.
 //
 // It takes the Roles value rather than one aggregate interface, so the subject is
-// the wiring hub actually performs: a role whose owner stopped satisfying it
+// the wiring agent actually performs: a role whose owner stopped satisfying it
 // fails to compile at the literal, and a method that regresses fails here.
 //
 // Every field is now a different OWNER rather than two composites both filled

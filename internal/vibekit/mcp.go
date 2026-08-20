@@ -5,8 +5,8 @@ package vibekit
 //
 // The persisted config types live in internal/mcp.
 
-// There is no MCPConfig interface here. The name census the hub reads is
-// declared at that consumer (internal/hub's mcpNameSets); *mcp.Store implements
+// There is no MCPConfig interface here. The name census the runtime reads is
+// declared at that consumer (internal/agent's mcpNameSets); *mcp.Store implements
 // it and the composition root's agent.WithMCPConfig call forces the check.
 //
 // Two members it never had are worth recording. No ACPServers: vibekit no longer
@@ -14,7 +14,7 @@ package vibekit
 // config file, and KAS merges `client > file-based`, so an inline copy would
 // silently outrank the file. No SetKnownTools: a connected server's tool names
 // are runtime state that arrives with its prompts and resources, so they live in
-// the hub's registry rather than being written back into a user-config file on
+// the runtime's registry rather than being written back into a user-config file on
 // every notification.
 
 // Origin records where an MCP server came from, so a runtime status row can say
@@ -44,7 +44,7 @@ const (
 
 // --- SSE payloads ---
 //
-// The hub emits one event per MCP state transition. Payloads are
+// The runtime emits one event per MCP state transition. Payloads are
 // globally scoped (no chat_id) because MCP state is shared across all
 // chats within the same container.
 
@@ -79,14 +79,14 @@ type MCPFailedPayload struct {
 }
 
 // MCPDisconnectedPayload is the payload for type="mcp_disconnected".
-// Emitted when the hub's last bridge exits: kiro-cli's MCP subprocesses
+// Emitted when the runtime's last bridge exits: kiro-cli's MCP subprocesses
 // shut down with it, so no configured server is currently live.
 // Clients use this to clear their runtime-state map.
 type MCPDisconnectedPayload struct {
 	Server string `json:"server"`
 }
 
-// MCPSnapshotServer is one entry in a hub-to-steering MCP registry
+// MCPSnapshotServer is one entry in a runtime-to-steering MCP registry
 // snapshot. Defined here to keep the steering package decoupled from
 // internal/agent.
 type MCPSnapshotServer struct {
@@ -131,14 +131,14 @@ type MCPResourceInfo struct {
 }
 
 // MCPServerState is the lifecycle status of one MCP server KAS reported.
-// Exported so the hub's mcpRegistry and the /api/mcp/status endpoint
+// Exported so the runtime's mcpRegistry and the /api/mcp/status endpoint
 // share a single typed enum with compile-time safety.
 //
 // The five values are "idle" (configured but no bridge running), "connected"
 // (KAS reported the server initialised), "needs_auth" (KAS sent an
 // authorization URL), "failed" (KAS reported an init failure) and "disabled"
 // (KAS reports the server as off). They are declared as constants where they
-// are produced — the hub's mcpRegistry, which serves /api/mcp/status.
+// are produced — the runtime's mcpRegistry, which serves /api/mcp/status.
 //
 // "disabled" is only ever recorded for a server vibekit did NOT configure. A
 // configured server's off state is its config row's own `enabled: false`, which

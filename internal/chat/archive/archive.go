@@ -56,7 +56,7 @@ type Option func(*Service)
 // is about abandoned work, and deleting a chat out from under its own open tab
 // is never what a retention window meant.
 //
-// Injected because this package cannot see the hub that owns bridges.
+// Injected because this package cannot see the runtime that owns bridges.
 func WithLiveChats(fn func(chatID vibekit.ChatID) bool) Option {
 	return func(s *Service) { s.isLive = fn }
 }

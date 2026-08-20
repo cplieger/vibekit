@@ -73,7 +73,7 @@ func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 // for a 0o600 request reaches, via atomicfile.ErrModeNotStored.
 //
 // Failing here does not brick boot, which is why the escalation is legitimate:
-// hub treats a secretstore that will not open as best-effort (one ERROR log,
+// agent treats a secretstore that will not open as best-effort (one ERROR log,
 // h.secrets left nil) and degrades MCP OAuth to the per-spawn DCR it did before
 // this package existed.
 func TestLoad_RefusesAStoreWhoseModeItCannotVerify(t *testing.T) {

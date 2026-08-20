@@ -22,7 +22,7 @@ const (
 // parseErrBurst is the first N parse-error lines readLoop emits
 // verbatim before switching to summary-only mode. parseErrWindow is
 // the summary-line cadence; parseErrMaxConsecutive is the consecutive-
-// failure ceiling that triggers bridge teardown so the hub recreates
+// failure ceiling that triggers bridge teardown so the runtime recreates
 // a fresh subprocess on the next prompt.
 const (
 	parseErrBurst          = 10

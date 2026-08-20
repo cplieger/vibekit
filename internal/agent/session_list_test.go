@@ -41,7 +41,7 @@ func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 		}
 	}
 	// runs is populated because the run projection reads the bounds state for a
-	// run's end reason; a nil plane is a nil receiver at the first lookup.
+	// run's end reason; a nil collaborator is a nil receiver at the first lookup.
 	return &Runtime{chatStore: store, runs: &Runs{}}
 }
 

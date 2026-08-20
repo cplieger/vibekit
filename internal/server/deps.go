@@ -57,7 +57,7 @@ type chatEngine interface {
 // *push.Service satisfies it.
 //
 // 2 of the 8 methods the push service offers. Sending is not among them — that
-// is the hub's and the PR poller's — and neither is Subscribe/Unsubscribe, which
+// is the runtime's and the PR poller's — and neither is Subscribe/Unsubscribe, which
 // the service's own handlers call on themselves.
 type pushService interface {
 	routeHandler
@@ -107,7 +107,7 @@ type policyProvider interface {
 //
 // 1 method. internal/git declares its own copy for its own three endpoints
 // rather than importing this one — a 1-method contract is cheaper to restate
-// than to share, and sharing it is what put it in a hub package in the first
+// than to share, and sharing it is what put it in a runtime package in the first
 // place. It is NOT used for chat titles: those come from KAS.
 type utilityPrompter interface {
 	UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error)

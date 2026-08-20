@@ -19,7 +19,7 @@ import (
 
 // The bridge interfaces below are declared HERE, at the consumer, rather than in
 // a shared contract package. *agent.sharedBridge is what satisfies them, and the
-// check is forced where hub calls SessionParams(sb, …) rather than by an
+// check is forced where agent calls SessionParams(sb, …) rather than by an
 // assertion anybody has to remember to write.
 //
 // The width arithmetic runs from the inside out: SessionParams needs 1 of the
@@ -100,7 +100,7 @@ type promptSlot interface {
 // question it has no other stake in, and one PrimeIfNeeded's own name already
 // claims to answer.
 //
-// Exported because BridgeAccess returns it and hub's dispatcher wiring names it.
+// Exported because BridgeAccess returns it and runtime's dispatcher wiring names it.
 type Bridge interface {
 	bridgeRPC
 	promptSlot
@@ -251,7 +251,7 @@ func (w Workspace) ResolveInside(rel string) (string, error) {
 }
 
 // LifecycleAccess is the process-lifetime seam: the context a turn runs under,
-// and the in-flight accounting that makes hub shutdown wait for it.
+// and the in-flight accounting that makes agent shutdown wait for it.
 //
 // The three belong together because they are one protocol. A handler that starts
 // long-lived work takes a turn context, registers itself as in-flight, and
@@ -259,7 +259,7 @@ func (w Workspace) ResolveInside(rel string) (string, error) {
 type LifecycleAccess interface {
 	// TurnContext returns the context an in-flight turn runs under, plus the
 	// teardown its handler defers. It replaced a ShutdownCtx() accessor that
-	// handed out the hub's raw lifetime context and left every consumer to
+	// handed out the runtime's raw lifetime context and left every consumer to
 	// derive a turn context correctly; the one consumer wanted the derivation,
 	// not the lifetime.
 	TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc)

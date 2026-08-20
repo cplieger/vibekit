@@ -64,7 +64,7 @@ func (e *statusError) Error() string { return e.err.Error() }
 func (e *statusError) Unwrap() error { return e.err }
 
 // StatusError wraps err with the HTTP status the dispatcher should answer with.
-// Exported because Handler is: the hub registers cmdSwitchModel directly and
+// Exported because Handler is: the runtime registers cmdSwitchModel directly and
 // needs the same vocabulary as the handlers in this package.
 func StatusError(code int, err error) error {
 	return &statusError{code: code, err: err}

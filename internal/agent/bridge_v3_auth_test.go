@@ -87,7 +87,7 @@ func TestAuthTokenLatchTracksTheLastVend(t *testing.T) {
 		t.Error("a runtime that has never vended a token must not report a dead sign-in")
 	}
 
-	// A hub with no token source is the ErrNoSource path, which is the same
+	// A runtime with no token source is the ErrNoSource path, which is the same
 	// failure shape as an expired login as far as readiness is concerned.
 	if _, err := h.inbound.kiroAccessTokenResult(t.Context()); err == nil {
 		t.Fatal("kiroAccessTokenResult with no source should fail")
@@ -133,7 +133,7 @@ func TestAccessTokenFailureBroadcastsTheAuthError(t *testing.T) {
 	h, _, _ := newTestHub()
 	_, before := h.bus.fanout.Bounds()
 
-	// kiroToken is nil on a test hub, so the vend fails with ErrNoSource.
+	// kiroToken is nil on a test agent, so the vend fails with ErrNoSource.
 	id := int64(7)
 	h.inbound.respondKiroAccessToken(t.Context(), "c1", &vibekit.RPCResponse{
 		Method: methodKiroGetAccessToken,
