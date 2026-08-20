@@ -46,8 +46,4 @@ func newSettings(lc *lifetime, broadcast func(context.Context, vibekit.ServerEve
 // to the server as its policyProvider (PolicyList + PolicyExplain).
 //
 // One accessor rather than two Runtime forwards, same as Runs().
-//
-// the caller only forwards it on.
-//
-//nolint:revive // unexported-return: the type is package-internal on purpose and
 func (rt *Runtime) Config() *Settings { return rt.config }

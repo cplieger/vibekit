@@ -55,7 +55,8 @@ func TestParseAccountUsage(t *testing.T) {
 	t.Run("InvalidProfileArn", func(t *testing.T) {
 		// success:false — the exact error the wire returns without profileArn.
 		_, err := parseAccountUsage(json.RawMessage(
-			`{"success":false,"message":"Failed to retrieve usage information: Invalid profileArn."}`))
+			`{"success":false,"message":"Failed to retrieve usage information: Invalid profileArn."}`,
+		))
 		if err == nil {
 			t.Fatal("expected error for success:false")
 		}

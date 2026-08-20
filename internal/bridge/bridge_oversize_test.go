@@ -56,7 +56,8 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 	_ = capture.Default(t)
 	huge := strings.Repeat("x", scannerLineCap+16)
 	b := readLoopBridge(strings.NewReader(
-		huge + "\n" + `{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n"))
+		huge + "\n" + `{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n",
+	))
 	b.notifCh = make(chan *vibekit.RPCResponse, 4)
 
 	b.readLoop()

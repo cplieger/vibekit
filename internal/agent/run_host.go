@@ -266,7 +266,8 @@ func (rs *Runs) Delete(ctx context.Context, workflowID string) error {
 var errRunNotHosted = errors.New(
 	"this run has no live bridge on this server, so it cannot be paused or resumed from here; " +
 		"cancel still works. An agent-launched run is always in this state, " +
-		"and so is any run from before the last restart")
+		"and so is any run from before the last restart",
+)
 
 // Pause asks a running run to stop at its next node boundary, keeping its
 // state resumable. KAS sets `control.pauseRequested` and the in-flight node runs

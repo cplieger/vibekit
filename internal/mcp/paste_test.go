@@ -540,7 +540,8 @@ func TestTranslate_EnvKeepsTheReadmeOrder(t *testing.T) {
 	// A Go map would lose this, which is why the pairs are decoded off the token
 	// stream: the order is what the user reads in the form.
 	req, err := parseImportBody([]byte(
-		`{"mcpServers":{"x":{"command":"srv","env":{"ZED":"1","ALPHA":"2","MID":"3"}}}}`))
+		`{"mcpServers":{"x":{"command":"srv","env":{"ZED":"1","ALPHA":"2","MID":"3"}}}}`,
+	))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -558,7 +559,8 @@ func TestTranslate_EnvKeepsTheReadmeOrder(t *testing.T) {
 
 func TestTranslate_ScalarEnvValuesAreStringified(t *testing.T) {
 	req, err := parseImportBody([]byte(
-		`{"mcpServers":{"x":{"command":"srv","env":{"PORT":3000,"DEBUG":true}}}}`))
+		`{"mcpServers":{"x":{"command":"srv","env":{"PORT":3000,"DEBUG":true}}}}`,
+	))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -576,7 +578,8 @@ func TestTranslate_ScalarEnvValuesAreStringified(t *testing.T) {
 
 func TestTranslate_NonScalarEnvValueIsNamed(t *testing.T) {
 	_, err := parseImportBody([]byte(
-		`{"mcpServers":{"x":{"command":"srv","env":{"NESTED":{"a":1}}}}}`))
+		`{"mcpServers":{"x":{"command":"srv","env":{"NESTED":{"a":1}}}}}`,
+	))
 	if err == nil {
 		t.Fatal("expected an error for an object env value")
 	}
@@ -587,7 +590,8 @@ func TestTranslate_NonScalarEnvValueIsNamed(t *testing.T) {
 
 func TestTranslate_NameIsAdjustedAndReported(t *testing.T) {
 	req, err := parseImportBody([]byte(
-		`{"mcpServers":{"@acme/my.server":{"command":"srv"}}}`))
+		`{"mcpServers":{"@acme/my.server":{"command":"srv"}}}`,
+	))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

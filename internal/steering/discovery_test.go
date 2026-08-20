@@ -289,13 +289,15 @@ func hookDoc(hooks ...string) string {
 func TestParseHookDoc_CommandLengthBoundary(t *testing.T) {
 	cmd80 := strings.Repeat("a", 80)
 	hs := parseHookDoc([]byte(hookDoc(
-		`{"name":"n","trigger":"PreToolUse","action":{"type":"command","command":"` + cmd80 + `"}}`)))
+		`{"name":"n","trigger":"PreToolUse","action":{"type":"command","command":"` + cmd80 + `"}}`,
+	)))
 	if len(hs) != 1 || hs[0].Command != cmd80 {
 		t.Errorf("parseHookDoc(80-byte command) = %+v, want one entry with the 80-byte command unchanged", hs)
 	}
 	cmd81 := strings.Repeat("b", 81)
 	hs2 := parseHookDoc([]byte(hookDoc(
-		`{"action":{"type":"command","command":"` + cmd81 + `"}}`)))
+		`{"action":{"type":"command","command":"` + cmd81 + `"}}`,
+	)))
 	if len(hs2) != 1 || len(hs2[0].Command) != 80 || !strings.HasSuffix(hs2[0].Command, "...") {
 		t.Errorf("parseHookDoc(81-byte command) = %+v, want 80 bytes ending in '...'", hs2)
 	}
@@ -308,7 +310,8 @@ func TestParseHookDoc_Shapes(t *testing.T) {
 	t.Run("multiple hooks in one document", func(t *testing.T) {
 		hs := parseHookDoc([]byte(hookDoc(
 			`{"name":"A","trigger":"PostFileSave","action":{"type":"command","command":"lint"}}`,
-			`{"name":"B","trigger":"SessionStart","action":{"type":"agent","prompt":"load context"}}`)))
+			`{"name":"B","trigger":"SessionStart","action":{"type":"agent","prompt":"load context"}}`,
+		)))
 		if len(hs) != 2 {
 			t.Fatalf("parseHookDoc(2 hooks) = %+v, want 2 entries", hs)
 		}
@@ -329,7 +332,8 @@ func TestParseHookDoc_Shapes(t *testing.T) {
 	})
 	t.Run("hostile fields are sanitised", func(t *testing.T) {
 		hs := parseHookDoc([]byte(hookDoc(
-			`{"name":"evil\ninject","trigger":"PreToolUse","action":{"type":"command","command":"run \u0060rm\u0060\nline2"}}`)))
+			`{"name":"evil\ninject","trigger":"PreToolUse","action":{"type":"command","command":"run \u0060rm\u0060\nline2"}}`,
+		)))
 		if len(hs) != 1 {
 			t.Fatalf("parseHookDoc = %+v, want 1 entry", hs)
 		}
@@ -368,7 +372,8 @@ func TestFindRepoHooks_ReadableDir(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"), hookDoc(
 		`{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}`,
-		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`))
+		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`,
+	))
 
 	got := findRepoHooks(repo)
 	if len(got) != 2 {
@@ -429,7 +434,8 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 				filepath.Join(repo, ".kiro", "hooks", fmt.Sprintf("hook%02d.json", i)),
 				hookDoc(
 					`{"name":"a","trigger":"PreToolUse","action":{"type":"command","command":"x"}}`,
-					`{"name":"b","trigger":"PostToolUse","action":{"type":"command","command":"y"}}`))
+					`{"name":"b","trigger":"PostToolUse","action":{"type":"command","command":"y"}}`,
+				))
 		}
 		if got := len(findRepoHooks(repo)); got != 10 {
 			t.Errorf("findRepoHooks(12 hooks in 6 files) returned %d, want exactly 10 (cap)", got)

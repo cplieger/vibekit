@@ -1558,7 +1558,8 @@ func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	withCode := captureSlogJSON(t, slog.LevelInfo, func() {
 		ch := make(chan map[string]string, 1)
 		scanLoginOutput(strings.NewReader(
-			"Code: ABCD-1234\nOpen this URL: https://idp.example.com/\n"), ch)
+			"Code: ABCD-1234\nOpen this URL: https://idp.example.com/\n",
+		), ch)
 	})
 	rc := findLogRec(withCode, "login: auth URL extracted")
 	if rc == nil {
@@ -1571,7 +1572,8 @@ func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	noCode := captureSlogJSON(t, slog.LevelInfo, func() {
 		ch := make(chan map[string]string, 1)
 		scanLoginOutput(strings.NewReader(
-			"Open this URL: https://idp.example.com/\n"), ch)
+			"Open this URL: https://idp.example.com/\n",
+		), ch)
 	})
 	rn := findLogRec(noCode, "login: auth URL extracted")
 	if rn == nil {

@@ -333,12 +333,15 @@ type Roles struct {
 	Teardown  ChatTeardown
 	Perms     PendingPermAccess
 	Terminals TerminalAccess
-	Workspace Workspace
 	// Lifecycle is the process lifetime: the turn context and the in-flight
 	// counter a shutdown waits on.
 	Lifecycle   LifecycleAccess
 	MCP         MCPAccess
 	TurnOutcome TurnOutcomeAccess
+	// Workspace is last because it ends in a string: govet's fieldalignment
+	// counts leading POINTER bytes, and a trailing length word stops that count
+	// early. Field order here carries no other meaning.
+	Workspace Workspace
 }
 
 // promptRoles is the prompt path's six roles. The one handler that takes a
@@ -353,8 +356,8 @@ type promptRoles struct {
 	// a Broadcast member on the old ChatAccess composite, which is what made the
 	// chat store and the event bus inseparable to every consumer of it.
 	bus         Broadcaster
-	workspace   Workspace
 	lifecycle   LifecycleAccess
 	mcp         MCPAccess
 	turnOutcome TurnOutcomeAccess
+	workspace   Workspace // last for fieldalignment, as in Roles
 }

@@ -56,8 +56,8 @@ type Handler func(ctx context.Context, cmd *vibekit.ClientCommand) (any, error)
 // to attach to and a 404 when set_mode is asked to configure one. A
 // sentinel-to-status table would have to pick one and be wrong at the other.
 type statusError struct {
-	code int
 	err  error
+	code int
 }
 
 func (e *statusError) Error() string { return e.err.Error() }

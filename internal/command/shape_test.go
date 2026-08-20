@@ -18,7 +18,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,27 +97,37 @@ func collectInterfaces(t *testing.T, dirs ...string) []ifaceDecl {
 	var out []ifaceDecl
 	for _, dir := range dirs {
 		fset := token.NewFileSet()
-		pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
-			return !strings.HasSuffix(fi.Name(), "_test.go")
-		}, 0)
+		// ReadDir + ParseFile rather than parser.ParseDir, which Go 1.25
+		// deprecated for ignoring build tags. The suggested replacement,
+		// go/packages, type-checks a whole program to answer a question about
+		// syntax; this walk never needed the package grouping ParseDir returned,
+		// only the files.
+		ents, err := os.ReadDir(dir)
 		if err != nil {
-			t.Fatalf("parse %s: %v", dir, err)
+			t.Fatalf("read %s: %v", dir, err)
 		}
-		for _, pkg := range pkgs {
-			for path, file := range pkg.Files {
-				ast.Inspect(file, func(n ast.Node) bool {
-					ts, ok := n.(*ast.TypeSpec)
-					if !ok {
-						return true
-					}
-					it, ok := ts.Type.(*ast.InterfaceType)
-					if !ok {
-						return true
-					}
-					out = append(out, describe(dir, filepath.Base(path), ts.Name.Name, it))
-					return true
-				})
+		for _, ent := range ents {
+			name := ent.Name()
+			if ent.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
 			}
+			path := filepath.Join(dir, name)
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				t.Fatalf("parse %s: %v", path, err)
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				ts, ok := n.(*ast.TypeSpec)
+				if !ok {
+					return true
+				}
+				it, ok := ts.Type.(*ast.InterfaceType)
+				if !ok {
+					return true
+				}
+				out = append(out, describe(dir, name, ts.Name.Name, it))
+				return true
+			})
 		}
 	}
 	return out

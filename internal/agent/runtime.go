@@ -1,4 +1,4 @@
-// Package hub coordinates the server's per-chat runtime: SSE fan-out,
+// Package agent coordinates the server's per-chat runtime: SSE fan-out,
 // ACP bridge lifecycle, and POST /api/command dispatch — plus the
 // service surfaces that ride the shared utility bridge (knowledge,
 // specs, hooks, governance, account usage, policy), checkpoint HTTP,
@@ -197,7 +197,6 @@ type Runtime struct {
 	lines         *buffer.LineTracker
 	agentTerms    *agentTerminals
 	hookStatus    *hookStatusCache
-	governance    *governanceCache
 	// authLatch remembers the last outcome of vending a KAS access token, so
 	// readiness can report a dead sign-in without asking kiro-cli (see
 	// bridge_v3_auth.go).

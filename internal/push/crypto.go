@@ -23,8 +23,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"math/big"
 	"net/url"
 	"time"
 )
@@ -38,20 +36,19 @@ func (s *Service) vapidHeader(endpoint string) (string, error) {
 	return buildVAPIDHeader(s.vapidPriv, s.keys.PublicKey, s.subject, endpoint)
 }
 
-// ecdhToECDSA converts an ECDH P-256 private key to an ECDSA private key.
+// ecdhToECDSA converts an ECDH P-256 private key to an ECDSA private key, so a
+// key generated for RFC 8291 encryption can also sign the RFC 8292 VAPID JWT.
+//
+// ecdh.PrivateKey.Bytes returns the raw big-endian scalar, which is exactly
+// ParseRawPrivateKey's input format; the parser recomputes the public point
+// itself. This used to assemble an ecdsa.PrivateKey by hand out of big.Ints
+// sliced from the uncompressed public point — the ecdsa X/Y/D fields that Go
+// 1.26 deprecated, because assigning them can build an invalid key and
+// big.Int's methods are not constant-time on secret values. The parser also
+// REJECTS a scalar of zero or one not reduced modulo the curve order, which the
+// hand-rolled version accepted silently.
 func ecdhToECDSA(key *ecdh.PrivateKey) (*ecdsa.PrivateKey, error) {
-	rawPub := key.PublicKey().Bytes()
-	// Uncompressed P-256 point: 0x04 || X(32) || Y(32)
-	if len(rawPub) != 65 || rawPub[0] != 0x04 {
-		return nil, errors.New("unexpected public key format")
-	}
-	x := new(big.Int).SetBytes(rawPub[1:33])
-	y := new(big.Int).SetBytes(rawPub[33:65])
-	d := new(big.Int).SetBytes(key.Bytes())
-	return &ecdsa.PrivateKey{
-		PublicKey: ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y},
-		D:         d,
-	}, nil
+	return ecdsa.ParseRawPrivateKey(elliptic.P256(), key.Bytes())
 }
 
 // keyMaterial carries the five byte slices RFC 8291's key derivation consumes.

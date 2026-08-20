@@ -117,7 +117,8 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 			"a reply naming an empty run":    inspectPaused(t, "", stalePauseReason),
 			// The exact shape the old fixture produced: no workflowId key at all.
 			"a reply naming no run at all": json.RawMessage(
-				`{"state":{"status":"paused","pauseReason":"` + stalePauseReason + `"}}`),
+				`{"state":{"status":"paused","pauseReason":"` + stalePauseReason + `"}}`,
+			),
 			"a run KAS says is running":   inspectReply(t, "wf_1", "running", stalePauseReason),
 			"a run KAS says completed":    inspectReply(t, "wf_1", "completed", stalePauseReason),
 			"a reply carrying no status":  inspectReply(t, "wf_1", "", stalePauseReason),
@@ -141,7 +142,8 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowInspect: json.RawMessage(
-				`{"state":{"status":"paused","pauseReason":"` + stalePauseReason + `"}}`),
+				`{"state":{"status":"paused","pauseReason":"` + stalePauseReason + `"}}`,
+			),
 		}
 		if h.runs.restartPaused(t.Context(), "") {
 			t.Error("the empty workflow id read as a dead process")

@@ -90,7 +90,7 @@ func TestVAPIDHeader_ExpWithin12h(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := strings.SplitN(strings.TrimPrefix(header, "vapid t="), ", k=", 2)[0]
+	token, _, _ := strings.Cut(strings.TrimPrefix(header, "vapid t="), ", k=")
 	seg := strings.Split(token, ".")[1]
 	claimsJSON, _ := base64.RawURLEncoding.DecodeString(seg)
 	var claims struct {

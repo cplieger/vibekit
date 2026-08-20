@@ -122,7 +122,8 @@ func ConfigFromEnv() Config {
 		ToolCatalogPath:    cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG"), "/opt/vibekit/tool-catalog.json"),
 		ToolCatalogURL:     cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
-			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH"), "VIBEKIT_TOOL_CATALOG_REFRESH"),
+			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH"), "VIBEKIT_TOOL_CATALOG_REFRESH",
+		),
 		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
 		TrustedInstallUIDs:  parseTrustedInstallUIDs(os.Getenv("TRUSTED_INSTALL_UIDS")),

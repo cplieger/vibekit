@@ -64,7 +64,8 @@ var (
 	// resume. Both are invisible. This is rare, and it is fixable by the user in
 	// one edit, so it is the one case worth stating out loud.
 	errSteerLooksLikeNotification = errors.New(
-		`a message starting with "[notification/...]" is read as a system notice, not as your words — start it with anything else`)
+		`a message starting with "[notification/...]" is read as a system notice, not as your words — start it with anything else`,
+	)
 )
 
 // CmdSteer delivers a message into the RUNNING turn.

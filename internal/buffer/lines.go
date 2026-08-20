@@ -36,6 +36,7 @@ func (h fileHeap) Len() int           { return len(h) }
 func (h fileHeap) Less(i, j int) bool { return h[i].lastTurn < h[j].lastTurn }
 func (h fileHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i]; h[i].index = i; h[j].index = j }
 func (h *fileHeap) Push(x any)        { e, _ := x.(*fileHeapEntry); e.index = len(*h); *h = append(*h, e) }
+
 func (h *fileHeap) Pop() any {
 	old := *h
 	n := len(old)

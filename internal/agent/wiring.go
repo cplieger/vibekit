@@ -34,23 +34,26 @@ import "reflect"
 // rather than half-present when no store is wired, and the secret store and the
 // ignore matcher are both absent when no config dir is set.
 func requireCollaborators(h *Runtime) {
+	// Keyed literals, not positional: govet's fieldalignment wants `v` first and
+	// the name second, and a positional list silently swaps meaning the moment
+	// that order changes. Keys make the order the linter's business alone.
 	for _, plane := range []struct {
-		name string
 		v    any
+		name string
 	}{
-		{"runs", h.runs},
-		{"config", h.config},
-		{"inbound", h.inbound},
-		{"agentTerms", h.agentTerms},
-		{"mcpRegistry", h.mcpRegistry},
-		{"runRoutes", h.runRoutes},
-		{"utility", h.utility},
-		{"replay", h.replay},
+		{name: "runs", v: h.runs},
+		{name: "config", v: h.config},
+		{name: "inbound", v: h.inbound},
+		{name: "agentTerms", v: h.agentTerms},
+		{name: "mcpRegistry", v: h.mcpRegistry},
+		{name: "runRoutes", v: h.runRoutes},
+		{name: "utility", v: h.utility},
+		{name: "replay", v: h.replay},
 		// The coordinator is here because it was the FOURTH site to capture a nil
 		// this way, and the guard missed it: the list held the planes I thought of
 		// rather than everything that binds a collaborator at construction. Any
 		// type built inside New with fields taken from h belongs in it.
-		{"coord", h.coord},
+		{name: "coord", v: h.coord},
 	} {
 		requirePopulated(plane.name, plane.v)
 	}

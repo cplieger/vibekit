@@ -1,4 +1,4 @@
-// Package hub shell subsystem provides a single global PTY session with server-side VT parsing.
+// Shell subsystem: a single global PTY session with server-side VT parsing.
 //
 // The shell runs in a real pseudo-terminal (creack/pty) so interactive
 // programs (vim, htop, less, tab completion) work correctly. I/O flows
@@ -22,6 +22,7 @@
 //
 // The 0x00 prefix byte distinguishes control messages from raw input;
 // no valid terminal input starts with NUL.
+
 package agent
 
 import (

@@ -186,13 +186,15 @@ func guardOriginChange(in, existing *Server) error {
 		}); idx >= 0 {
 			return fmt.Errorf(
 				"url points at a new origin, so the stored %q header was not carried over: re-enter its value for %s",
-				kv.Name, originLabel(in.URL))
+				kv.Name, originLabel(in.URL),
+			)
 		}
 	}
 	if in.OAuthClientSecret == SecretMask && existing.OAuthClientSecret != "" {
 		return fmt.Errorf(
 			"url points at a new origin, so the stored oauth_client_secret was not carried over: re-enter it for %s",
-			originLabel(in.URL))
+			originLabel(in.URL),
+		)
 	}
 	return nil
 }

@@ -89,14 +89,14 @@ type Roles struct {
 	Terminals TerminalReader
 	// HookStatus reports whether hook status display is on.
 	HookStatus HookStatusReader
-	// WorkDir is the workspace root. A VALUE: it is a process constant, so there
-	// is nothing to substitute and no reason for a method.
-	WorkDir string
-
 	MCP        MCPRecorder
 	Governance GovernanceAccess
 	RunOrigin  RunOriginAccess
 	RunBounds  RunBoundsAccess
+	// WorkDir is the workspace root. A VALUE: it is a process constant, so there
+	// is nothing to substitute and no reason for a method. Last because a
+	// trailing string ends fieldalignment's leading-pointer count early.
+	WorkDir string
 }
 
 // Broadcaster publishes a domain event to every connected client.
@@ -186,7 +186,6 @@ type Translator struct {
 	sessions     SessionResolver
 	terminals    TerminalReader
 	hookStatus   HookStatusReader
-	workDir      string
 	mcp          MCPRecorder
 	governance   GovernanceAccess
 	runOrigin    RunOriginAccess
@@ -194,7 +193,8 @@ type Translator struct {
 	newMsgID     func() string
 	// steps maps a workflow step's ACP session id to its run and node. Fed from
 	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
-	steps *stepRegistry
+	steps   *stepRegistry
+	workDir string // last for fieldalignment, as in Roles
 }
 
 // New constructs a Translator over the roles the host supplies.

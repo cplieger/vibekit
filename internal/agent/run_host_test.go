@@ -402,7 +402,8 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
 		// The run list is where a re-hosted run's recipe comes from.
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`),
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`,
+		),
 	}
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
@@ -463,7 +464,8 @@ func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`),
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`,
+		),
 	}
 	// Deliberately NO bridge in the manager: that is what makes this the re-hosting
 	// path rather than the already-hosted one.
@@ -499,7 +501,8 @@ func TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`),
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`,
+		),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 

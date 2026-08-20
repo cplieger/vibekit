@@ -37,49 +37,17 @@ import (
 // place two locks are held (claimExpiredDeadline takes mu then the lease store's
 // own) is entirely inside this type.
 type Runs struct {
-	// --- owned outright ---
-
-	// schedules is the durable schedule store, nil when scheduling is off.
-	// Unlike leases there IS a "scheduling off" mode, so every reader checks.
-	schedules *schedule.Store `wiring:"optional"`
-	// leases is what vibekit knows about the runs it put on the wire. Reach it
-	// through leaseStore(), which supplies an in-memory registry when the
-	// durable store was not wired: a lease carries the run's wall clock, so
-	// there is no "leases off" mode.
-	//
-	// Optional at the FIELD and required at the READ, which is why leaseStore()
-	// exists — the fallback is the reason a nil here is not the wiring mistake the
-	// guard hunts.
-	leases *runlease.Store `wiring:"optional"`
-	// bounds holds the ceiling arms, the termination claims and the recorded
-	// abnormal terminations that let a run's row say what happened to it.
-	bounds runBoundsState
-	// mu guards bounds. Taken before the lease store's own mutex in
-	// claimExpiredDeadline, the only place both are held.
-	mu sync.Mutex
-
-	// --- collaborators ---
-
-	// bridges is the per-chat bridge registry; a run gets one keyed on its
-	// synthetic run chat id.
-	bridges *bridgeManager
-	// coord supplies CloseBridge and Forward for a run's own bridge.
-	coord *BridgeCoordinator
-	// utility is a THUNK, not a value: the utility runtime is built under a
-	// sync.Once whose hooks point back into runtime service surfaces (see
-	// permissions_policy.go), so this type must ask for it rather than hold it.
-	utility func() *utilityRuntime
-	// lifecycle supplies the process lifetime, the workspace dir and the config
-	// dir. One collaborator rather than three scalars, because it is the same
-	// struct that already owns all three.
-	lifecycle *lifetime
-	// chats is read-only here: two methods call Get and nothing mutates.
-	chats runChatReader
-	// translate receives the three run-shaped notifications.
+	chats     runChatReader
 	translate runTranslator
-	// perms lets an unattended deadline claim a pending permission before it
-	// answers on the machine's behalf.
-	perms runPermClaimer
+	perms     runPermClaimer
+	schedules *schedule.Store `wiring:"optional"`
+	leases    *runlease.Store `wiring:"optional"`
+	bridges   *bridgeManager
+	coord     *BridgeCoordinator
+	utility   func() *utilityRuntime
+	lifecycle *lifetime
+	bounds    runBoundsState
+	mu        sync.Mutex
 }
 
 // runChatReader is the chat store as the run surface uses it: one method, to
@@ -108,8 +76,4 @@ type runPermClaimer interface {
 // One accessor rather than two Runtime forwards. A forward would put the runtime back in
 // the path of calls that have nothing to do with it, which is the shape this
 // split exists to remove; the two callers want the run surface, so they get it.
-//
-// the type is package-internal on purpose and the caller only forwards it on.
-//
-//nolint:revive // unexported-return: same reason as BridgeCoordinator.Bridge —
 func (rt *Runtime) Runs() *Runs { return rt.runs }

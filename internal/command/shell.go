@@ -185,8 +185,7 @@ func shellStatusLine(runErr error, timedOut bool) string {
 	case runErr == nil:
 		return "[exit 0]"
 	default:
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return fmt.Sprintf("[exit %d]", exitErr.ExitCode())
 		}
 		// The command could not be run at all (e.g. sh missing, or the

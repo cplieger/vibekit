@@ -20,9 +20,11 @@ func newBenchDeps() *benchDeps { return &benchDeps{} }
 // The store methods are answered directly now: Roles holds ChatStore, so the
 // ChatStore() getter it used to return is gone.
 func (d *benchDeps) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) { return nil, false }
+
 func (d *benchDeps) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) error {
 	return nil
 }
+
 func (d *benchDeps) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {
 	return nil
 }

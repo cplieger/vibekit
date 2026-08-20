@@ -17,7 +17,8 @@ import (
 func launchableRecipe(br *fakeBridge, workflowID string) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(
-			`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
+			`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`,
+		),
 		methodKiroWorkflowList:   json.RawMessage(`{"runs":[]}`),
 		methodKiroWorkflowNew:    json.RawMessage(`{"workflowId":"` + workflowID + `"}`),
 		methodKiroWorkflowInvoke: json.RawMessage(`{}`),

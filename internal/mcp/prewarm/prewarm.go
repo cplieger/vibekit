@@ -242,7 +242,8 @@ func (p *Runner) installOne(ctx context.Context, pkg string) {
 // NpmPkgSpecRe accepts conservative npm package specs.
 var NpmPkgSpecRe = regexp.MustCompile(
 	`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*` +
-		`(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$`)
+		`(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$`,
+)
 
 // ExtractNpxPackage returns the npm identifier a stdio server will run
 // via `npx -y <pkg>`, or "" if the server's command isn't an npx run.

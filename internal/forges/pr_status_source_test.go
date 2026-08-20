@@ -173,7 +173,7 @@ func TestManagerPRSource_NoReposIsOneCheapAnswer(t *testing.T) {
 // TestManagerPRSource_ResolvesWhoamiOncePerForge: several watched repos usually
 // share one connection, and Whoami is a subprocess.
 func TestManagerPRSource_ResolvesWhoamiOncePerForge(t *testing.T) {
-	ops := &whoamiCountingOps{prStubOps: prStubOps{login: "cplieger"}}
+	ops := &whoamiCountingOps{login: "cplieger"}
 	src := newStubSource(ops, []PRRepo{
 		{ForgeID: "github:github.com", Slug: "a/one"},
 		{ForgeID: "github:github.com", Slug: "a/two"},
@@ -193,10 +193,10 @@ func TestManagerPRSource_ResolvesWhoamiOncePerForge(t *testing.T) {
 // TestManagerPRSource_APerRepoFailureIsSkipped: one archived repo or one permission
 // wall must not stop the other repos' PRs from being watched.
 func TestManagerPRSource_APerRepoFailureIsSkipped(t *testing.T) {
-	ops := &failFirstOps{prStubOps: prStubOps{
+	ops := &failFirstOps{
 		login: "cplieger",
 		prs:   []PR{{Number: 4, Author: "cplieger", CheckStatus: checkPassing}},
-	}}
+	}
 	src := newStubSource(ops, []PRRepo{
 		{ForgeID: "github:github.com", Slug: "a/broken"},
 		{ForgeID: "github:github.com", Slug: "a/fine"},

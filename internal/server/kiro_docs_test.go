@@ -74,7 +74,8 @@ func TestScanKiroDocs_Steering(t *testing.T) {
 	fsys := fstest.MapFS{
 		"steering/always.md": {Data: []byte("---\ndescription: Always on\n---\n")},
 		"steering/matched.md": {Data: []byte(
-			"---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\ndescription: Go layout\n---\n")},
+			"---\ninclusion: fileMatch\nfileMatchPattern: \"internal/**/*.go\"\ndescription: Go layout\n---\n",
+		)},
 		"steering/manual.md": {Data: []byte("---\ninclusion: manual\n---\n")},
 		// Recursive: a nested steering doc must still be found.
 		"steering/nested/deep.md": {Data: []byte("---\ndescription: Nested\n---\n")},

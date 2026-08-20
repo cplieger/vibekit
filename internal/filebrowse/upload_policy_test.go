@@ -16,15 +16,18 @@ const clientPolicyPath = "../../static-src/upload-policy.ts"
 var (
 	// MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 	clientBytesRe = regexp.MustCompile(
-		`MAX_UPLOAD_BYTES\s*=\s*(\d+)\s*\*\s*(\d+)\s*\*\s*(\d+)\s*;`)
+		`MAX_UPLOAD_BYTES\s*=\s*(\d+)\s*\*\s*(\d+)\s*\*\s*(\d+)\s*;`,
+	)
 	// UPLOADS_DIR = "/workspace/uploads";
 	clientDirRe = regexp.MustCompile(`UPLOADS_DIR\s*=\s*"([^"]*)"\s*;`)
 	// MULTIPART_RESERVE_BYTES = 1024 * 1024;
 	clientReserveRe = regexp.MustCompile(
-		`MULTIPART_RESERVE_BYTES\s*=\s*(\d+)\s*\*\s*(\d+)\s*;`)
+		`MULTIPART_RESERVE_BYTES\s*=\s*(\d+)\s*\*\s*(\d+)\s*;`,
+	)
 	// MAX_UPLOAD_TOTAL_BYTES = MAX_UPLOAD_BYTES - MULTIPART_RESERVE_BYTES;
 	clientTotalRe = regexp.MustCompile(
-		`MAX_UPLOAD_TOTAL_BYTES\s*=\s*MAX_UPLOAD_BYTES\s*-\s*MULTIPART_RESERVE_BYTES\s*;`)
+		`MAX_UPLOAD_TOTAL_BYTES\s*=\s*MAX_UPLOAD_BYTES\s*-\s*MULTIPART_RESERVE_BYTES\s*;`,
+	)
 )
 
 // productOf multiplies a regexp's numeric submatches, so `50 * 1024 * 1024`

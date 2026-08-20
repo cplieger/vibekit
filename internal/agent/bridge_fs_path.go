@@ -31,15 +31,6 @@ var (
 	errRejectedByUser = errors.New("change rejected by user")
 )
 
-// resolveInsideWorkDir turns a client-supplied path into an absolute
-// one guaranteed to live inside h.lifecycle.workDir. Rejects empty input, paths
-// that escape via `..`, and symlink-based escape — both the parent
-// directory and the final target are evaluated. Delegates to
-// workspace.ResolveInsideAbs (skips redundant filepath.Abs since h.lifecycle.workDir is already absolute).
-func (in *inbound) resolveInsideWorkDir(p string) (string, error) {
-	return in.lifetime.resolveInsideWorkDir(p)
-}
-
 // resolveInsideWorkDir confines p to the workspace. On the plane that holds
 // workDir, so a collaborator needing it does not need a *Runtime.
 func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
