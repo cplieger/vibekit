@@ -48,7 +48,7 @@ func (r *settleRecorder) sink() func(vibekit.ChatID, []vibekit.Message, string) 
 }
 
 // feedOneTurn ingests a complete bracketed turn.
-func feedOneTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID) {
+func feedOneTurn(t *testing.T, rp *replay, chatID vibekit.ChatID) {
 	t.Helper()
 	for _, f := range []struct {
 		kind vibekit.ACPUpdateKind
@@ -60,7 +60,7 @@ func feedOneTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID) {
 		{vibekit.ACPUpdateAgentChunk, "reply", ""},
 		{vibekit.ACPUpdateSessionInfo, "", "turn_end"},
 	} {
-		if !h.ingestReplayFrame(chatID, f.kind, replayUpdate(t, f.kind, f.text, f.sub)) {
+		if !rp.ingestReplayFrame(chatID, f.kind, replayUpdate(t, f.kind, f.text, f.sub)) {
 			t.Fatalf("frame %v/%s was not consumed by a projection", f.kind, f.sub)
 		}
 	}
@@ -78,63 +78,63 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 
 	t.Run("no settle before the load returns", func(t *testing.T) {
-		h, rec := hubWithRecorder()
-		h.OpenReplayProjection(chatID)
-		feedOneTurn(t, h, chatID)
+		rp, rec := replayWithRecorder()
+		rp.OpenReplayProjection(chatID)
+		feedOneTurn(t, rp, chatID)
 
-		h.SettleReplayProjection(chatID, 0, false)
+		rp.SettleReplayProjection(chatID, 0, false)
 		if rec.calls != 0 {
 			t.Errorf("settled %d times before the load returned, want 0", rec.calls)
 		}
-		if !h.hasProjection(chatID) {
+		if !rp.hasProjection(chatID) {
 			t.Error("projection was dropped before the load returned")
 		}
 	})
 
 	t.Run("no settle while frames remain buffered", func(t *testing.T) {
-		h, rec := hubWithRecorder()
-		h.OpenReplayProjection(chatID)
-		feedOneTurn(t, h, chatID)
-		h.MarkReplayLoadDone(chatID)
+		rp, rec := replayWithRecorder()
+		rp.OpenReplayProjection(chatID)
+		feedOneTurn(t, rp, chatID)
+		rp.MarkReplayLoadDone(chatID)
 
 		// The consumer still sees depth on the channel: undrained replay.
-		h.SettleReplayProjection(chatID, 3, false)
+		rp.SettleReplayProjection(chatID, 3, false)
 		if rec.calls != 0 {
 			t.Errorf("settled %d times with 3 frames still buffered, want 0", rec.calls)
 		}
-		if !h.hasProjection(chatID) {
+		if !rp.hasProjection(chatID) {
 			t.Error("projection was dropped while frames were still buffered")
 		}
 	})
 
 	t.Run("settles once both halves hold", func(t *testing.T) {
-		h, rec := hubWithRecorder()
-		h.OpenReplayProjection(chatID)
-		feedOneTurn(t, h, chatID)
-		h.MarkReplayLoadDone(chatID)
+		rp, rec := replayWithRecorder()
+		rp.OpenReplayProjection(chatID)
+		feedOneTurn(t, rp, chatID)
+		rp.MarkReplayLoadDone(chatID)
 
-		h.SettleReplayProjection(chatID, 0, false)
+		rp.SettleReplayProjection(chatID, 0, false)
 		if rec.calls != 1 {
 			t.Fatalf("settled %d times, want exactly 1", rec.calls)
 		}
 		if len(rec.msgs) != 2 {
 			t.Errorf("projected %d messages, want 2 (user + assistant)", len(rec.msgs))
 		}
-		if h.hasProjection(chatID) {
+		if rp.hasProjection(chatID) {
 			t.Error("projection outlived its settle")
 		}
 	})
 
 	t.Run("settle is idempotent", func(t *testing.T) {
-		h, rec := hubWithRecorder()
-		h.OpenReplayProjection(chatID)
-		feedOneTurn(t, h, chatID)
-		h.MarkReplayLoadDone(chatID)
+		rp, rec := replayWithRecorder()
+		rp.OpenReplayProjection(chatID)
+		feedOneTurn(t, rp, chatID)
+		rp.MarkReplayLoadDone(chatID)
 
 		// Forward calls this after EVERY frame, so a second call with the same
 		// condition must not re-swap a transcript.
 		for range 4 {
-			h.SettleReplayProjection(chatID, 0, false)
+			rp.SettleReplayProjection(chatID, 0, false)
 		}
 		if rec.calls != 1 {
 			t.Errorf("settled %d times, want 1: Forward calls settle per frame", rec.calls)
@@ -142,27 +142,27 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 	})
 
 	t.Run("force settles despite buffered depth", func(t *testing.T) {
-		h, rec := hubWithRecorder()
-		h.OpenReplayProjection(chatID)
-		feedOneTurn(t, h, chatID)
-		h.MarkReplayLoadDone(chatID)
+		rp, rec := replayWithRecorder()
+		rp.OpenReplayProjection(chatID)
+		feedOneTurn(t, rp, chatID)
+		rp.MarkReplayLoadDone(chatID)
 
 		// The bridge-exit call: no further frame can arrive to re-trigger the
 		// check, so the projection must complete rather than leak.
-		h.SettleReplayProjection(chatID, 7, true)
+		rp.SettleReplayProjection(chatID, 7, true)
 		if rec.calls != 1 {
 			t.Errorf("forced settle ran %d times, want 1", rec.calls)
 		}
 	})
 
 	t.Run("force still requires the load to have returned", func(t *testing.T) {
-		h, rec := hubWithRecorder()
-		h.OpenReplayProjection(chatID)
-		feedOneTurn(t, h, chatID)
+		rp, rec := replayWithRecorder()
+		rp.OpenReplayProjection(chatID)
+		feedOneTurn(t, rp, chatID)
 
 		// A bridge that died before session/load returned has no transcript to
 		// adopt; forcing must not manufacture one from a partial replay.
-		h.SettleReplayProjection(chatID, 0, true)
+		rp.SettleReplayProjection(chatID, 0, true)
 		if rec.calls != 0 {
 			t.Errorf("forced settle ran %d times on a load that never returned, want 0", rec.calls)
 		}
@@ -175,17 +175,17 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 // dead one's partial transcript.
 func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
-	h, rec := hubWithRecorder()
-	h.OpenReplayProjection(chatID)
-	feedOneTurn(t, h, chatID)
+	rp, rec := replayWithRecorder()
+	rp.OpenReplayProjection(chatID)
+	feedOneTurn(t, rp, chatID)
 
-	h.DiscardReplayProjection(chatID)
-	if h.hasProjection(chatID) {
+	rp.DiscardReplayProjection(chatID)
+	if rp.hasProjection(chatID) {
 		t.Error("projection survived a discard")
 	}
 	// Even the settle condition holding afterwards must not resurrect it.
-	h.MarkReplayLoadDone(chatID)
-	h.SettleReplayProjection(chatID, 0, true)
+	rp.MarkReplayLoadDone(chatID)
+	rp.SettleReplayProjection(chatID, 0, true)
 	if rec.calls != 0 {
 		t.Errorf("discarded projection settled %d times, want 0", rec.calls)
 	}
@@ -195,8 +195,8 @@ func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 // hub.handleSessionUpdate's drop path meaningful: a replay frame arriving with
 // no load in flight has no transcript to belong to.
 func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
-	h, _ := hubWithRecorder()
-	if h.ingestReplayFrame("nobody", vibekit.ACPUpdateAgentChunk,
+	rp, _ := replayWithRecorder()
+	if rp.ingestReplayFrame("nobody", vibekit.ACPUpdateAgentChunk,
 		replayUpdate(t, vibekit.ACPUpdateAgentChunk, "stray", "")) {
 		t.Error("a replay frame was consumed with no projection open")
 	}
@@ -207,14 +207,14 @@ func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
 // the first load's half-built transcript.
 func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
-	h, rec := hubWithRecorder()
+	rp, rec := replayWithRecorder()
 
-	h.OpenReplayProjection(chatID)
-	feedOneTurn(t, h, chatID)
-	h.OpenReplayProjection(chatID) // re-load
-	feedOneTurn(t, h, chatID)
-	h.MarkReplayLoadDone(chatID)
-	h.SettleReplayProjection(chatID, 0, false)
+	rp.OpenReplayProjection(chatID)
+	feedOneTurn(t, rp, chatID)
+	rp.OpenReplayProjection(chatID) // re-load
+	feedOneTurn(t, rp, chatID)
+	rp.MarkReplayLoadDone(chatID)
+	rp.SettleReplayProjection(chatID, 0, false)
 
 	if rec.calls != 1 {
 		t.Fatalf("settled %d times, want 1", rec.calls)
@@ -229,22 +229,24 @@ func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 	}
 }
 
-// hubWithRecorder builds the minimum Runtime these tests need. The projection
-// lifecycle touches only the embedded projectionState, so a bare Runtime is enough
-// — no bridge, no store, no goroutines.
-func hubWithRecorder() (*Runtime, *settleRecorder) {
+// replayWithRecorder builds the minimum these tests need, which is now a bare
+// replay rather than a Runtime: the projection lifecycle touches only that type's
+// own three fields, so there is no bridge, no store and no goroutine to stand up.
+// It was a &Runtime{} when the six methods hung off the runtime and reached an
+// embedded projectionState.
+func replayWithRecorder() (*replay, *settleRecorder) {
 	rec := &settleRecorder{}
-	h := &Runtime{}
-	h.onProjection = rec.sink()
-	return h, rec
+	rp := &replay{projections: map[vibekit.ChatID]*loadProjection{}}
+	rp.onProjection = rec.sink()
+	return rp, rec
 }
 
 // hasProjection reports whether a projection is open. Test-only, and defined
 // here rather than in production so it adds no exported surface.
-func (h *Runtime) hasProjection(chatID vibekit.ChatID) bool {
-	h.projMu.Lock()
-	defer h.projMu.Unlock()
-	_, ok := h.projections[chatID]
+func (rp *replay) hasProjection(chatID vibekit.ChatID) bool {
+	rp.projMu.Lock()
+	defer rp.projMu.Unlock()
+	_, ok := rp.projections[chatID]
 	return ok
 }
 

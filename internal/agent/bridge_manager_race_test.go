@@ -8,7 +8,7 @@ import (
 )
 
 // TestBridgeManager_ConcurrentGetOrInsertClose exercises the race
-// between getOrInsert (creates a new bridge for a chatID) and close
+// between orInsert (creates a new bridge for a chatID) and close
 // (removes + stops a bridge for the same chatID). Under -race this
 // catches any missed synchronization on the bridges map.
 func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
@@ -22,7 +22,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	wg.Go(func() {
 		for i := range N {
 			chatID := vibekit.ChatID("chat-" + string(rune('A'+i%5)))
-			bm.getOrInsert(chatID)
+			bm.orInsert(chatID)
 		}
 	})
 
@@ -62,7 +62,7 @@ func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
 	// Seed bridges.
 	for i := range 20 {
 		chatID := vibekit.ChatID("drain-" + string(rune('A'+i)))
-		bm.getOrInsert(chatID)
+		bm.orInsert(chatID)
 	}
 
 	var wg sync.WaitGroup

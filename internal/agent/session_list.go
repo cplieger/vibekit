@@ -92,7 +92,7 @@ type kasSessionRow struct {
 // Degrades to an empty list on every failure, matching /api/config-template:
 // the picker is an affordance, not a correctness surface, and an empty list
 // reads as "nothing to resume" rather than breaking the view.
-func (h *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
+func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -100,13 +100,13 @@ func (h *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	// Chats and runs degrade INDEPENDENTLY: a workflow-list failure must not
 	// blank the chat list, and vice versa. They are separate verbs on the same
 	// bridge, so one can fail on its own.
-	claimed := h.claimedSessions(r.Context())
-	rows, err := h.resumableSessions(r.Context(), claimed)
+	claimed := rt.claimedSessions(r.Context())
+	rows, err := rt.resumableSessions(r.Context(), claimed)
 	if err != nil {
 		slog.Warn("session list failed", "error", err)
 		rows = []vibekit.ResumableSession{}
 	}
-	runs, rErr := h.runs.list(r.Context(), claimed)
+	runs, rErr := rt.runs.list(r.Context(), claimed)
 	if rErr != nil {
 		slog.Warn("workflow run list failed", "error", rErr)
 		runs = []vibekit.WorkflowRun{}
@@ -115,8 +115,8 @@ func (h *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 }
 
 // resumableSessions fetches and filters the workspace's stored sessions.
-func (h *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.ResumableSession, error) {
-	u := h.utility.get()
+func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.ResumableSession, error) {
+	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
@@ -125,7 +125,7 @@ func (h *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibe
 	// measurement, against 2 for the workspace. `sessionListScopes` advertises
 	// only "workspace", so this is the intended narrowing.
 	raw, err := u.session.rawCall(cctx, "session list call", vibekit.MethodSessionList,
-		callerParams(map[string]any{"cwd": h.lifecycle.workDir}))
+		callerParams(map[string]any{"cwd": rt.lifecycle.workDir}))
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (h *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibe
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	return h.toResumable(claimed, list.Sessions), nil
+	return rt.toResumable(claimed, list.Sessions), nil
 }
 
 // claimedSessions maps every KAS session a vibekit chat owns to that chat.
@@ -144,10 +144,10 @@ func (h *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibe
 // own retired sessions looking unowned — offered back to the user as separate
 // resumable conversations, and leaving a run launched by such a chat
 // unattributed.
-func (h *Runtime) claimedSessions(ctx context.Context) map[string]vibekit.ChatID {
+func (rt *Runtime) claimedSessions(ctx context.Context) map[string]vibekit.ChatID {
 	claimed := map[string]vibekit.ChatID{}
 	// Indexed: vibekit.ChatHeader is 304 bytes, which gocritic's rangeValCopy flags.
-	headers := h.chatStore.List(ctx)
+	headers := rt.chatStore.List(ctx)
 	for i := range headers {
 		for _, sid := range headers[i].SessionChain() {
 			claimed[sid] = vibekit.ChatID(headers[i].ID)
@@ -186,7 +186,7 @@ func (h *Runtime) claimedSessions(ctx context.Context) map[string]vibekit.ChatID
 // chat was deleted while KAS still held it. Neither is reachable from this UI now,
 // and the trade is deliberate — an unclaimed row was indistinguishable from
 // vibekit's own machinery, and every instance a user actually met was machinery.
-func (h *Runtime) toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibekit.ResumableSession {
+func (rt *Runtime) toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibekit.ResumableSession {
 	out := make([]vibekit.ResumableSession, 0, len(rows))
 	for i := range rows {
 		row := &rows[i]
@@ -320,14 +320,14 @@ type kasWorkflowRun struct {
 }
 
 // list fetches the workspace's workflow runs, newest first.
-func (rp *Runs) list(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.WorkflowRun, error) {
-	u := rp.utility()
+func (rs *Runs) list(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.WorkflowRun, error) {
+	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
 	// workspacePaths is an ARRAY and is required — see methodKiroWorkflowList.
 	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		callerParams(map[string]any{keyWorkspacePaths: []string{rp.lifecycle.workDir}}))
+		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err
 	}
@@ -335,14 +335,14 @@ func (rp *Runs) list(ctx context.Context, claimed map[string]vibekit.ChatID) ([]
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	return rp.toWire(claimed, list.Runs), nil
+	return rs.toWire(claimed, list.Runs), nil
 }
 
 // toWire maps the raw run inventory to the wire rows, dropping the ones
 // that do not belong in a history list. Split out of list for the reason
 // toResumable is split out of resumableSessions: the filtering is the part worth
 // testing and the RPC is not.
-func (rp *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
+func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
 	out := make([]vibekit.WorkflowRun, 0, len(runs))
 	for i := range runs {
 		r := &runs[i]
@@ -383,7 +383,7 @@ func (rp *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 			// bounds stop a run through the same cancel a person does, so the
 			// reason has to come from the side that decided. "" for everything
 			// else, including a user cancel. See run_bounds.go.
-			EndReason: rp.endReason(r.WorkflowID),
+			EndReason: rs.endReason(r.WorkflowID),
 		})
 	}
 	// Stable: ties must keep insertion order or the run list reshuffles

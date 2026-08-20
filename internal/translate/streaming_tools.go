@@ -266,7 +266,7 @@ func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.Tool
 	if tc.TerminalID == "" {
 		return
 	}
-	text, spans, ok := t.terminals.TerminalOutput(tc.TerminalID)
+	text, spans, ok := t.terminals.Output(tc.TerminalID)
 	if !ok {
 		slog.Warn("terminal output missing at completion",
 			"chat_id", chatID, "tool_call_id", tc.ID,

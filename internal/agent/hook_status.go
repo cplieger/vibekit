@@ -134,6 +134,6 @@ func (c *hookStatusCache) IsHookStatusEnabled() bool {
 // toggle — so the prior lookup of "hooks_show_status" against that
 // file was a permanent no-op and the Settings → General switch was
 // silently dead. See vibekit.md "Experimental kiro-cli flags".
-func (h *Runtime) isHookStatusEnabled() bool {
-	return h.hookStatus.get()
+func (rt *Runtime) isHookStatusEnabled() bool {
+	return rt.hookStatus.get()
 }

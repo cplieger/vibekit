@@ -27,31 +27,31 @@ import (
 // bus contract, and it is named Broadcast rather than emit because four consumer
 // interfaces spell it that way; it used to be a 3-line Runtime forward to emit,
 // which put the runtime in the path of every event in the app.
-func (s *bus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
-	s.emit(evt)
+func (b *bus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+	b.emit(evt)
 }
 
 // PendingPermsAdd registers an unanswered decision so a reconnecting client gets
 // it replayed.
-func (s *bus) PendingPermsAdd(requestID int64, evt vibekit.ServerEvent) {
-	s.pendingPerms.Add(requestID, evt)
+func (b *bus) PendingPermsAdd(requestID int64, evt vibekit.ServerEvent) {
+	b.pendingPerms.Add(requestID, evt)
 }
 
-func (s *bus) emit(evt vibekit.ServerEvent) {
+func (b *bus) emit(evt vibekit.ServerEvent) {
 	switch evt.Type {
 	case vibekit.EventChatStatus:
 		if p, ok := evt.Payload.(vibekit.ChatStatusPayload); ok {
-			s.chatStatus.Set(evt.ChatID, p)
+			b.chatStatus.Set(evt.ChatID, p)
 		}
 	case vibekit.EventTurnEnded:
-		s.chatStatus.Clear(evt.ChatID)
+		b.chatStatus.Clear(evt.ChatID)
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
 		slog.Error("emit marshal", "type", evt.Type, "error", err)
 		return
 	}
-	s.hub.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
+	b.fanout.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
 }
 
 // handleSSE is the /api/events handler: opens a long-lived server-sent
@@ -60,7 +60,7 @@ func (s *bus) emit(evt vibekit.ServerEvent) {
 // the sse library's; vibekit owns the draining envelope, the connected
 // handshake carrying the replay bounds, and the initial per-client state
 // replay (pending permissions, staged writes, per-turn trust).
-func (h *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
+func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
 	lastRaw := r.Header.Get("Last-Event-ID")
 	slog.Info("SSE connected", "chat_filter", chatFilter, "last_event_id", lastRaw)
@@ -68,14 +68,14 @@ func (h *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// A reconnect (any Last-Event-ID) reloads push preferences from disk so
 	// settings edited while SSE was down take effect without a restart
 	// (deduplicated via singleflight inside the push service).
-	if lastRaw != "" && h.push != nil {
-		h.push.ReloadPreferences(r.Context())
+	if lastRaw != "" && rt.push != nil {
+		rt.push.ReloadPreferences(r.Context())
 	}
 
-	h.bus.hub.Serve(w, r,
+	rt.bus.fanout.Serve(w, r,
 		sse.WithTopic(string(chatFilter)),
 		sse.OnConnect(func(sw *sse.Writer, floor, head uint64) error {
-			return h.streamInitialState(sw, floor, head, chatFilter)
+			return rt.streamInitialState(sw, floor, head, chatFilter)
 		}),
 	)
 	slog.Info("SSE disconnected", "chat_filter", chatFilter)
@@ -95,9 +95,9 @@ func (h *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 // named by a relative path. The hook runs after the library's
 // Last-Event-ID replay, so the bounds are consistent with what the client
 // has already received.
-func (h *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter vibekit.ChatID) error {
+func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter vibekit.ChatID) error {
 	connectedEvt := vibekit.NewEvent(vibekit.EventConnected, "", vibekit.ConnectedPayload{
-		Workspace: h.lifecycle.workDir,
+		Workspace: rt.lifecycle.workDir,
 		Floor:     floor,
 		Head:      head,
 	})
@@ -122,7 +122,7 @@ func (h *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFil
 
 	// Replay any pending permissions that may have fallen out of the ring
 	// buffer, so permission dialogs survive reconnects.
-	if err := h.replayPendingPermissions(writeEvent, chatFilter); err != nil {
+	if err := rt.replayPendingPermissions(writeEvent, chatFilter); err != nil {
 		return err
 	}
 
@@ -135,7 +135,7 @@ func (h *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFil
 	// busy signal, so a client connecting mid-turn renders the
 	// streaming transcript immediately and never has to guess at
 	// thinking state.
-	return h.replayTurnState(writeEvent, chatFilter)
+	return rt.replayTurnState(writeEvent, chatFilter)
 }
 
 // replayTurnState emits one synthesized turn_state event per busy chat
@@ -148,17 +148,17 @@ func (h *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFil
 // The in-flight message comes straight from the chat's assistant buffer, which
 // is the same object the live stream and the turn-end persist read. There is no
 // separate replica to drift from it.
-func (h *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
-	for _, id := range h.bridge.mgr.promptingChatIDs() {
+func (rt *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
+	for _, id := range rt.bridge.mgr.promptingChatIDs() {
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
-		status := h.bus.chatStatus.Get(id)
+		status := rt.bus.chatStatus.Get(id)
 		payload := vibekit.TurnStatePayload{
 			Status:      status.Status,
 			Description: status.Description,
 		}
-		if buf := h.bridge.assistantBufs.Get(id); buf != nil {
+		if buf := rt.bridge.assistantBufs.Get(id); buf != nil {
 			if msg, seq, ok := buf.Snapshot(); ok {
 				payload.Message = &msg
 				payload.ChunkSeq = seq
@@ -176,8 +176,8 @@ func (h *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chatF
 // replayBounds returns (floor, head) of the current replay buffer, both
 // inclusive. Floor is the oldest event ID still replayable; head is the
 // newest. Clients with last-seen-id < floor know they missed events.
-func (h *Runtime) replayBounds() (floor, head uint64) {
-	return h.bus.hub.Bounds()
+func (rt *Runtime) replayBounds() (floor, head uint64) {
+	return rt.bus.fanout.Bounds()
 }
 
 // replayPendingPermissions sends the unresolved permission_needed events to
@@ -195,8 +195,8 @@ func (h *Runtime) replayBounds() (floor, head uint64) {
 // shown and the answer the server will take cannot disagree. The ORDER is List's
 // too — ascending request id, i.e. the order the agent asked — so this loop
 // writes the queue rather than a set.
-func (h *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
-	for _, evt := range h.bus.pendingPerms.List(chatFilter) {
+func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
+	for _, evt := range rt.bus.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {
 			return err
 		}

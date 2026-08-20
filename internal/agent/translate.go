@@ -47,51 +47,51 @@ func ignoreSubSession(fn func(context.Context, vibekit.ChatID, json.RawMessage))
 
 // initDispatch builds the method → handler maps. Called once from
 // translateACPEvent on first use (lazy init avoids a constructor).
-func (h *Runtime) initDispatch() {
-	h.chatHandlers = map[string]chatHandler{
-		vibekit.MethodSessionUpdate: h.handleSessionUpdate,
+func (rt *Runtime) initDispatch() {
+	rt.chatHandlers = map[string]chatHandler{
+		vibekit.MethodSessionUpdate: rt.handleSessionUpdate,
 		// Wrapped so a SCHEDULED run's request is refused on a short budget
 		// rather than parking the run forever (run_unattended.go). The wrapper
 		// is a no-op for every attended chat.
-		vibekit.MethodRequestPermission: h.runs.permissionWithUnattendedFloor(h.translator.HandlePermissionRequest),
+		vibekit.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.translator.HandlePermissionRequest),
 		// _kiro/mcp/elicitation (a request with an id). Routed here by method.
-		vibekit.MethodElicitationCreate: h.translator.HandleElicitationCreate,
+		vibekit.MethodElicitationCreate: rt.translator.HandleElicitationCreate,
 		// _kiro/userInput (a request with an id, 2.14+): the agent's
 		// structured question — gated on the _meta.kiro.userInput
 		// initialize capability declared in bridge.go.
-		vibekit.MethodKiroUserInput: h.translator.HandleUserInput,
+		vibekit.MethodKiroUserInput: rt.translator.HandleUserInput,
 		// v3 (KAS) _kiro/* notifications.
-		methodV3RateLimit:            h.translator.HandleRateLimit,
-		methodV3CustomAgentNotFound:  h.translator.HandleAgentNotFound,
-		methodV3CustomAgentConfigErr: h.translator.HandleAgentConfigError,
-		methodV3MCPStatus:            h.translator.HandleMCPStatus,
-		methodV3SystemNotify:         h.translator.HandleSystemNotify,
+		methodV3RateLimit:            rt.translator.HandleRateLimit,
+		methodV3CustomAgentNotFound:  rt.translator.HandleAgentNotFound,
+		methodV3CustomAgentConfigErr: rt.translator.HandleAgentConfigError,
+		methodV3MCPStatus:            rt.translator.HandleMCPStatus,
+		methodV3SystemNotify:         rt.translator.HandleSystemNotify,
 		// Native Cedar policy: hot-reload + parse-error notifications KAS
 		// emits when a permissions.{yaml,json} file changes. Translated to
 		// SSE so the client refetches GET /api/permissions.
-		methodV3PolicyChanged: h.translator.HandlePolicyChanged,
-		methodV3PolicyError:   h.translator.HandlePolicyError,
+		methodV3PolicyChanged: rt.translator.HandlePolicyChanged,
+		methodV3PolicyError:   rt.translator.HandlePolicyError,
 		// Licensed-code attribution: surfaced as a per-turn attribution chip.
-		methodV3CodeReferences: h.translator.HandleCodeReferences,
+		methodV3CodeReferences: rt.translator.HandleCodeReferences,
 		// Infrastructure-Safety gate state → safety_status / safety_properties
 		// SSE. Defensive: KAS only emits these when the gate is installed (client
 		// capability + an AWS governance flag that is off by default), so on a
 		// normal account they never fire. See translate/safety.go.
-		methodV3SafetyStatusChanged: h.translator.HandleSafetyStatusChanged,
-		methodV3SafetyPropertiesChg: h.translator.HandleSafetyPropertiesChanged,
+		methodV3SafetyStatusChanged: rt.translator.HandleSafetyStatusChanged,
+		methodV3SafetyPropertiesChg: rt.translator.HandleSafetyPropertiesChanged,
 		// Org/account feature-flag policy → governance_state SSE (broadcast
 		// global) + runtime-side cache served at GET /api/governance. Gates
 		// affordances the flags control (MCP availability, the org-policy
 		// disclosure, the code-reference chip). See translate/governance.go.
-		methodV3Governance: h.translator.HandleGovernanceState,
+		methodV3Governance: rt.translator.HandleGovernanceState,
 		// Workflow-run lifecycle. Nine KAS notifications → three SSE events; the
 		// seven middle kinds share one handler because they mean one thing to a
 		// client ("refetch"). See translate/workflow.go.
 		// Wrapped rather than registered bare: the run clock (run_bounds.go) has
 		// to see a run start, pause and finish, and `run_start` is the only frame
 		// vibekit gets for an AGENT-launched run, whose launch path is KAS's.
-		methodWFRunStart:    h.runs.observeStart,
-		methodWFRunComplete: h.runs.observeComplete,
+		methodWFRunStart:    rt.runs.observeStart,
+		methodWFRunComplete: rt.runs.observeComplete,
 	}
 	for method, kind := range map[string]vibekit.RunProgressKind{
 		methodWFNodeStart:     vibekit.RunProgressNodeStart,
@@ -102,19 +102,19 @@ func (h *Runtime) initDispatch() {
 		methodWFWatchPoll:     vibekit.RunProgressWatchPoll,
 		methodWFStepsQueued:   vibekit.RunProgressStepsQueued,
 	} {
-		h.chatHandlers[method] = h.translator.RunProgressHandler(kind)
+		rt.chatHandlers[method] = rt.translator.RunProgressHandler(kind)
 	}
 	// A run-level pause stops the clock, because each arm is a ceiling of
 	// EXECUTING time: a run parked on purpose must not be cancelled for having
 	// been parked. Node-level pauses keep it — a step waiting inside a run that is
 	// still going is exactly what the ceiling is for.
-	h.chatHandlers[methodWFPaused] = h.runs.observePaused(h.chatHandlers[methodWFPaused])
+	rt.chatHandlers[methodWFPaused] = rt.runs.observePaused(rt.chatHandlers[methodWFPaused])
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
 	// REST, and the session inventory diff which has no client consumer now
 	// that subagents are tool calls). Listing them keeps them out of the
 	// "unhandled" debug log.
-	h.noopMethods = map[string]struct{}{
+	rt.noopMethods = map[string]struct{}{
 		methodV3SessionsChanged:    {},
 		methodV3ToolsDidChange:     {},
 		methodV3SteeringDocs:       {},
@@ -123,50 +123,50 @@ func (h *Runtime) initDispatch() {
 	}
 	// Session-update sub-dispatcher: built eagerly to avoid a data race
 	// when multiple bridge goroutines call sessionUpdateHandlers() concurrently.
-	h.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
+	rt.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
 		vibekit.ACPUpdateAgentChunk: ignoreSubSession(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
-			h.translator.HandleAssistantChunk(ctx, chatID, raw, false)
+			rt.translator.HandleAssistantChunk(ctx, chatID, raw, false)
 		}),
 		vibekit.ACPUpdateThoughtChunk: ignoreSubSession(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
-			h.translator.HandleAssistantChunk(ctx, chatID, raw, true)
+			rt.translator.HandleAssistantChunk(ctx, chatID, raw, true)
 		}),
-		vibekit.ACPUpdateToolCall:   h.translator.HandleToolCall,
-		vibekit.ACPUpdateToolUpdate: h.translator.HandleToolCallUpdate,
-		vibekit.ACPUpdatePlan:       ignoreSubSession(h.translator.HandlePlan),
-		vibekit.ACPUpdateModeChange: ignoreSubSession(h.translator.HandleModeUpdate),
+		vibekit.ACPUpdateToolCall:   rt.translator.HandleToolCall,
+		vibekit.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
+		vibekit.ACPUpdatePlan:       ignoreSubSession(rt.translator.HandlePlan),
+		vibekit.ACPUpdateModeChange: ignoreSubSession(rt.translator.HandleModeUpdate),
 		// v3 (KAS) sub-kinds: context-usage + slash-command catalog moved
 		// here from the v2 _kiro.dev/metadata + commands/available notifs.
 		// session_info_update also carries compaction (summarization) state;
 		// usage_update is the primary v3 context-usage channel; and
 		// config_option_update delivers the live model/mode/effort catalog.
-		vibekit.ACPUpdateSessionInfo:  h.translator.HandleSessionInfoUpdate,
-		vibekit.ACPUpdateUsage:        ignoreSubSession(h.translator.HandleUsageUpdate),
-		vibekit.ACPUpdateConfigOption: ignoreSubSession(h.translator.HandleConfigOptionUpdate),
+		vibekit.ACPUpdateSessionInfo:  rt.translator.HandleSessionInfoUpdate,
+		vibekit.ACPUpdateUsage:        ignoreSubSession(rt.translator.HandleUsageUpdate),
+		vibekit.ACPUpdateConfigOption: ignoreSubSession(rt.translator.HandleConfigOptionUpdate),
 	}
 }
 
 // translateACPEvent is the sole entry point from bridge_lifecycle's
 // forward goroutine. Every branch must return promptly; long-running
 // work belongs in goroutines inside the handler (see bridge_fs.go).
-func (h *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	// Derive a context from the runtime's shutdownCtx so handlers can
 	// propagate shutdown cancellation to I/O calls.
-	ctx, cancel := h.hubContext()
+	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
 
 	// A RUN bridge's frames take their own door: step content must not flow
 	// into any transcript, and this connection's workflow lifecycle frames are
 	// workspace-global rather than a chat's. See run_host.go.
 	if isRunChat(chatID) {
-		h.dispatch(ctx, chatID, msg)
+		rt.dispatch(ctx, chatID, msg)
 		return
 	}
 
-	if msg.ID != nil && h.routeInboundRequest(ctx, chatID, msg) {
+	if msg.ID != nil && rt.routeInboundRequest(ctx, chatID, msg) {
 		return
 	}
 
-	if fn, ok := h.chatHandlers[msg.Method]; ok {
+	if fn, ok := rt.chatHandlers[msg.Method]; ok {
 		fn(ctx, chatID, msg)
 		return
 	}
@@ -175,7 +175,7 @@ func (h *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCRespo
 	// future request-shaped method added to that map would otherwise return here
 	// and never be answered, which is the exact wedge the refusal below exists to
 	// prevent — and it would be invisible, because a noop logs nothing.
-	if _, ok := h.noopMethods[msg.Method]; ok && msg.ID == nil {
+	if _, ok := rt.noopMethods[msg.Method]; ok && msg.ID == nil {
 		return
 	}
 	// An unrecognised REQUEST must be answered. KAS calls its ext-methods with
@@ -205,7 +205,7 @@ func (h *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCRespo
 	if msg.ID != nil {
 		slog.Warn("chat bridge: refusing an unexpected peer request",
 			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
-		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
+		if err := rt.BridgeRespond(ctx, chatID, *msg.ID, nil,
 			&vibekit.RPCError{
 				Code:    vibekit.RPCCodeMethodNotFound,
 				Message: "unsupported on the chat session: " + msg.Method,
@@ -232,30 +232,30 @@ func (h *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCRespo
 // are separately readable: every arm here owes a response on the wire, and
 // nothing below in the caller does. That is also why the caller's fallthrough is
 // a refusal rather than a log — see its comment.
-func (h *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
-	if h.inbound.handleFSRequest(ctx, chatID, msg) {
+func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+	if rt.inbound.handleFSRequest(ctx, chatID, msg) {
 		return true
 	}
 	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}). Separate from
 	// handleFSRequest because they are a different rung of KAS's adapter ladder
 	// with different shapes — and because these execute rather than stage.
-	if h.inbound.handleKiroFSRequest(ctx, chatID, msg) {
+	if rt.inbound.handleKiroFSRequest(ctx, chatID, msg) {
 		return true
 	}
 	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
 	// _kiro/terminal/shell_type).
-	if h.inbound.handleKiroClientRequest(ctx, chatID, msg) {
+	if rt.inbound.handleKiroClientRequest(ctx, chatID, msg) {
 		return true
 	}
 	// v3 (KAS) credential storage (_kiro/secret/*). Must be answered: KAS
 	// rethrows a store/delete failure into the MCP connect path, and an
 	// UNANSWERED request wedges the turn.
-	if h.inbound.handleKiroSecretRequest(ctx, chatID, msg) {
+	if rt.inbound.handleKiroSecretRequest(ctx, chatID, msg) {
 		return true
 	}
 	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.).
 	if strings.HasPrefix(msg.Method, methodTermPrefix) {
-		h.handleTerminalRequest(ctx, chatID, msg.Method, msg)
+		rt.handleTerminalRequest(ctx, chatID, msg.Method, msg)
 		return true
 	}
 	return false
@@ -268,7 +268,7 @@ func (h *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatID
 // params.sessionId identifies whether this notification belongs to the
 // parent chat or a subagent; we pass it through so tool-call handlers
 // can set SubSessionID on emitted events.
-func (h *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var env struct {
 		Params translate.ACPSessionUpdateEnvelope `json:"params"`
 	}
@@ -293,7 +293,7 @@ func (h *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatID
 	// which is not true of a step. A step's own attribution rides its blocks
 	// instead (ACPWorkflowMeta.SubtaskID).
 	subSessionID := ""
-	if h.translator.ClassifyFrame(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil) == translate.OwnerSubagent {
+	if rt.translator.ClassifyFrame(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil) == translate.OwnerSubagent {
 		subSessionID = env.Params.SessionID
 	}
 
@@ -335,7 +335,7 @@ func (h *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatID
 		// A load in flight consumes the frame into its projection; anything
 		// else is dropped, because a replay frame with no load to belong to has
 		// no transcript to build.
-		if !h.ingestReplayFrame(chatID, base.Kind, env.Params.Update) {
+		if !rt.replay.ingestReplayFrame(chatID, base.Kind, env.Params.Update) {
 			slog.Debug("session/update: dropping replayed frame, no load in flight",
 				"chat_id", chatID, "kind", base.Kind)
 		}
@@ -346,7 +346,7 @@ func (h *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatID
 	// is intentionally one of them: vibekit persists user messages itself
 	// (cmdPrompt echoes the bubble via message_appended before the turn
 	// starts), so consuming KAS's echo of the prompt would double-render it.
-	fn, ok := h.sessionUpdateHandlers()[base.Kind]
+	fn, ok := rt.sessionUpdateHandlers()[base.Kind]
 	if !ok {
 		return
 	}
@@ -358,6 +358,6 @@ type sessionUpdateHandler = func(ctx context.Context, chatID vibekit.ChatID, raw
 
 // sessionUpdateHandlers returns the map of sessionUpdate kind → handler.
 // The map is built eagerly in initDispatch and cached on the Runtime.
-func (h *Runtime) sessionUpdateHandlers() map[vibekit.ACPUpdateKind]sessionUpdateHandler {
-	return h.sessUpdateHandlers
+func (rt *Runtime) sessionUpdateHandlers() map[vibekit.ACPUpdateKind]sessionUpdateHandler {
+	return rt.sessUpdateHandlers
 }

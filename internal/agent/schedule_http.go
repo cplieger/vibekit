@@ -54,9 +54,9 @@ type scheduleView struct {
 	Enabled    bool          `json:"enabled"`
 }
 
-// registerScheduleRoutes wires the schedule surface. No-op when scheduling is
+// registerSchedule wires the schedule surface. No-op when scheduling is
 // unavailable (no store), so the routes never 500 on a nil dependency.
-func (rr *runRoutes) registerScheduleRoutes(mux *http.ServeMux) {
+func (rr *runRoutes) registerSchedule(mux *http.ServeMux) {
 	if rr.runs.schedules == nil {
 		return
 	}

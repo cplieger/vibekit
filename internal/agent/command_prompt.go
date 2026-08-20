@@ -15,8 +15,8 @@ import (
 // no buffer everywhere it is read — isEmptyTurn above, Snapshot's own guard, the
 // connect-time turn_state replay — because all three key on content, not
 // presence.
-func (h *Runtime) LatchTurnModel(chatID vibekit.ChatID, model string) {
-	h.bridge.assistantBufs.GetOrInit(chatID).SetModel(model)
+func (rt *Runtime) LatchTurnModel(chatID vibekit.ChatID, model string) {
+	rt.bridge.assistantBufs.GetOrInit(chatID).SetModel(model)
 }
 
 // isEmptyTurn returns true if the prompt response reports end_turn AND we
@@ -24,7 +24,7 @@ func (h *Runtime) LatchTurnModel(chatID vibekit.ChatID, model string) {
 // On v3 the prompt response carries only stopReason/usage — content only ever
 // arrives via session/update — so the buffer is the authoritative content
 // signal (a v2-era `content` array in the response is gone).
-func (h *Runtime) isEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool {
+func (rt *Runtime) isEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool {
 	if resp == nil || resp.Result == nil {
 		return false
 	}
@@ -37,7 +37,7 @@ func (h *Runtime) isEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) 
 	if result.StopReason != vibekit.StopReasonEndTurn {
 		return false
 	}
-	buf := h.bridge.assistantBufs.Get(chatID)
+	buf := rt.bridge.assistantBufs.Get(chatID)
 	if buf == nil {
 		return true
 	}

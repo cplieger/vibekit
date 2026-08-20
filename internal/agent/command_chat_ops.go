@@ -20,17 +20,17 @@ import (
 // terminals, clear pending perms, close+remove the assistant buffer) runs on both
 // paths. There is no staging queue to flush and no per-turn trust to clear —
 // both went with internal/pending.
-func (h *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
-	h.bus.ClearPendingPermsForChat(chatID)
-	h.coord.CloseBridge(chatID)
-	h.agentTerms.KillForChat(chatID)
-	h.lifecycle.mu.Lock()
-	h.bridge.assistantBufs.Delete(chatID)
-	h.lifecycle.mu.Unlock()
+func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
+	rt.bus.ClearPendingPermsForChat(chatID)
+	rt.coord.CloseBridge(chatID)
+	rt.agentTerms.KillForChat(chatID)
+	rt.lifecycle.mu.Lock()
+	rt.bridge.assistantBufs.Delete(chatID)
+	rt.lifecycle.mu.Unlock()
 	if reapDurable {
-		h.reapChatSession(ctx, chatID)
+		rt.reapChatSession(ctx, chatID)
 	}
-	h.lines.Clear(chatID)
+	rt.lines.Clear(chatID)
 }
 
 // reapChatSession removes the chat's on-disk kiro-cli/KAS session state on
@@ -42,15 +42,15 @@ func (h *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, r
 // session (failed session/load, model-switch fallback) has state under every
 // id it ever held, and leaving the retired ones behind makes them orphans the
 // hourly sweep has to find later.
-func (h *Runtime) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
-	if h.sessionReaper == nil {
+func (rt *Runtime) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
+	if rt.sessionReaper == nil {
 		return
 	}
-	c, ok := h.chatStore.Get(ctx, chatID)
+	c, ok := rt.chatStore.Get(ctx, chatID)
 	if !ok {
 		return
 	}
 	for _, id := range c.SessionChain() {
-		h.sessionReaper.Reap(id)
+		rt.sessionReaper.Reap(id)
 	}
 }

@@ -72,8 +72,8 @@ func (c *governanceCache) get() (vibekit.GovernanceStatePayload, bool) {
 
 // SetGovernance caches the latest governance state. Satisfies translate.GovernanceAccess
 // (called by translate.HandleGovernanceState on the chat-bridge path).
-func (cp *Settings) SetGovernance(p vibekit.GovernanceStatePayload) {
-	cp.governance.set(p)
+func (st *Settings) SetGovernance(p vibekit.GovernanceStatePayload) {
+	st.governance.set(p)
 }
 
 // cacheGovernanceFromUtility captures the _kiro/governance/state copy the
@@ -81,13 +81,13 @@ func (cp *Settings) SetGovernance(p vibekit.GovernanceStatePayload) {
 // caches the state and broadcasts the same account-global governance_state SSE
 // the chat path does, so a client that only ever triggered a utility-bridge
 // task (e.g. opened Settings) still gets a live update.
-func (cp *Settings) cacheGovernanceFromUtility(raw json.RawMessage) {
+func (st *Settings) cacheGovernanceFromUtility(raw json.RawMessage) {
 	payload, ok := translate.DecodeGovernanceState(raw)
 	if !ok {
 		return
 	}
-	cp.governance.set(payload)
-	cp.broadcast(cp.lifecycle.shutdownCtx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
+	st.governance.set(payload)
+	st.broadcast(st.lifecycle.shutdownCtx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
 }
 
 // Governance returns the cached governance state. On a warm cache it returns
@@ -96,11 +96,11 @@ func (cp *Settings) cacheGovernanceFromUtility(raw json.RawMessage) {
 // for the first push. A failure to warm returns a Known=false snapshot so the
 // client leaves governed affordances at their permissive default rather than
 // reading the zero value as "everything disabled".
-func (cp *Settings) Governance(ctx context.Context) vibekit.GovernanceStatePayload {
-	if p, ok := cp.governance.get(); ok {
+func (st *Settings) Governance(ctx context.Context) vibekit.GovernanceStatePayload {
+	if p, ok := st.governance.get(); ok {
 		return p
 	}
-	u := cp.utility()
+	u := st.utility()
 	warmCtx, cancel := context.WithTimeout(ctx, governanceWarmTimeout)
 	defer cancel()
 	if err := u.session.ensureStarted(warmCtx); err != nil {
@@ -108,10 +108,10 @@ func (cp *Settings) Governance(ctx context.Context) vibekit.GovernanceStatePaylo
 		return vibekit.GovernanceStatePayload{}
 	}
 	select {
-	case <-cp.governance.warm:
+	case <-st.governance.warm:
 	case <-warmCtx.Done():
 	}
-	if p, ok := cp.governance.get(); ok {
+	if p, ok := st.governance.get(); ok {
 		return p
 	}
 	return vibekit.GovernanceStatePayload{}
@@ -119,11 +119,11 @@ func (cp *Settings) Governance(ctx context.Context) vibekit.GovernanceStatePaylo
 
 // handleGovernance: GET /api/governance → the cached account/workspace
 // governance state. Read-only; the flags are org-controlled, not user-settable.
-func (cp *Settings) handleGovernance(w http.ResponseWriter, r *http.Request) {
-	webhttp.WriteJSON(w, cp.Governance(r.Context()))
+func (st *Settings) handleGovernance(w http.ResponseWriter, r *http.Request) {
+	webhttp.WriteJSON(w, st.Governance(r.Context()))
 }
 
 // registerGovernanceRoutes wires the governance snapshot endpoint.
-func (cp *Settings) registerGovernanceRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/governance", cp.handleGovernance)
+func (st *Settings) registerGovernanceRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/governance", st.handleGovernance)
 }

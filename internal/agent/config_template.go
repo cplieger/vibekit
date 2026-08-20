@@ -97,8 +97,8 @@ type configTemplateResponse struct {
 // model catalog. Degrades to empty lists on any failure (same contract the
 // old /api/models had): the client keeps its static fallbacks and the
 // authoritative per-session catalog arrives with the first bridge.
-func (h *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
-	u := h.utility.get()
+func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
+	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
 	raw, err := u.session.configTemplateRaw(cctx)

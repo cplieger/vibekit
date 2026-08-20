@@ -34,12 +34,12 @@ func (bm *bridgeManager) get(chatID vibekit.ChatID) *sharedBridge {
 	return bm.bridges[chatID]
 }
 
-// getOrInsert returns an existing bridge for chatID if present.
+// orInsert returns an existing bridge for chatID if present.
 // If not, it creates a new sharedBridge via the factory, inserts it
 // into the map, and returns (newBridge, false). With singleflight in
 // OpenBridge, concurrent callers coalesce so the new bridge
 // no longer needs to be returned locked.
-func (bm *bridgeManager) getOrInsert(chatID vibekit.ChatID) (sb *sharedBridge, existed bool) {
+func (bm *bridgeManager) orInsert(chatID vibekit.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	if existing, ok := bm.bridges[chatID]; ok {
 		bm.mu.Unlock()
@@ -55,7 +55,7 @@ func (bm *bridgeManager) getOrInsert(chatID vibekit.ChatID) (sb *sharedBridge, e
 // insert registers an ALREADY-STARTED bridge under chatID. The run-host path:
 // a run bridge's map key is its workflow id, which only `workflow/new`'s reply
 // knows, so the bridge is started first and registered once the key exists —
-// the inverse of getOrInsert's create-then-start. Replacing an existing entry
+// the inverse of orInsert's create-then-start. Replacing an existing entry
 // would orphan a live process, so insert refuses instead (the caller launched
 // the same run twice, which the single-run guard should have stopped).
 func (bm *bridgeManager) insert(chatID vibekit.ChatID, sb *sharedBridge) bool {

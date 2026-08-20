@@ -190,7 +190,7 @@ type mcpOAuthRelayResp struct {
 // must not be: the whole point is that a REMOTE browser reaches it, and that
 // helper's provenance check rejects a browser outright. The loopback constraint
 // belongs on the outbound half instead, which is relayClientFor's address policy.
-func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
+func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
@@ -210,7 +210,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 	// A refusal here is also the answer for an unknown server name: a server with
 	// no authorization in flight has nothing to relay either way, so the two cases
 	// need no separate reply and this one leaks no inventory.
-	attempt, err := r.beginOAuthRelay(body.Server)
+	attempt, err := reg.beginOAuthRelay(body.Server)
 	if err != nil {
 		httpreply.Conflict(w, err.Error())
 		return
@@ -222,14 +222,14 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 		// the pasted address or its disagreement with the stored URL, and none
 		// quotes either. The user is the one who pasted it and cannot fix it
 		// without being told which part was wrong.
-		r.releaseOAuthRelay(attempt)
+		reg.releaseOAuthRelay(attempt)
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
 
-	status, err := r.replayCallback(req.Context(), target)
+	status, err := reg.replayCallback(req.Context(), target)
 	if err != nil {
-		r.releaseOAuthRelay(attempt)
+		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
 			"server", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
@@ -240,7 +240,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 		// Delivered, and refused. The reservation goes back, so a corrected paste
 		// can still be tried: KAS runs its own state check and its own single-use
 		// rule, and a 4xx here is most often that check rejecting this code.
-		r.releaseOAuthRelay(attempt)
+		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
 			"server", body.Server, "port", target.Port(), "status", status)
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
@@ -259,7 +259,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 }
 
 // replayCallback performs the one GET and returns the listener's status.
-func (r *mcpRegistry) replayCallback(ctx context.Context, target *url.URL) (int, error) {
+func (reg *mcpRegistry) replayCallback(ctx context.Context, target *url.URL) (int, error) {
 	client, err := relayClientFor(target)
 	if err != nil {
 		return 0, err

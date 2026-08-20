@@ -53,7 +53,7 @@ func newBaseDeps() *baseDeps {
 	}
 }
 
-func (d *baseDeps) TerminalOutput(terminalID string) (string, []vibekit.TextSpan, bool) {
+func (d *baseDeps) Output(terminalID string) (string, []vibekit.TextSpan, bool) {
 	t, ok := d.terminals[terminalID]
 	return t.text, t.spans, ok
 }

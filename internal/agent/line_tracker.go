@@ -17,7 +17,7 @@ import (
 
 // handleFileChanges delegates to the line tracker for
 // GET /api/file-changes?chat_id=<id>&path=<path>.
-func (h *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
+func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -32,7 +32,7 @@ func (h *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "path query param is required")
 		return
 	}
-	ranges := h.lines.Get(vibekit.ChatID(chatID), path)
+	ranges := rt.lines.Get(vibekit.ChatID(chatID), path)
 	if ranges == nil {
 		ranges = []buffer.LineRange{}
 	}

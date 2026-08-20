@@ -152,7 +152,7 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 		h, _, _ := newTestHub()
 		seed(h)
 		// A bridge that stays registered so count() stays >= 1.
-		h.bridge.mgr.getOrInsert("keep")
+		h.bridge.mgr.orInsert("keep")
 		other := newFakeBridge()
 		other.Stop()
 		h.coord.Forward("other", other)
@@ -397,7 +397,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 
 	setSession := func(chatID vibekit.ChatID, sessionID string) {
 		t.Helper()
-		sb, _ := h.bridge.mgr.getOrInsert(chatID)
+		sb, _ := h.bridge.mgr.orInsert(chatID)
 		fb, ok := sb.bridge.(*fakeBridge)
 		if !ok {
 			t.Fatalf("bridge for %s is not a *fakeBridge", chatID)
@@ -454,7 +454,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 				return true
 			})
 
-			_, since := h.bus.hub.Bounds()
+			_, since := h.bus.fanout.Bounds()
 			h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
 
 			// The record always holds the mode the session is really in.

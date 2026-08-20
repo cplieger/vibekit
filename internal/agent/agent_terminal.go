@@ -421,18 +421,18 @@ func (at *agentTerminals) release(terminalID string) (*agentTerminal, bool) {
 }
 
 // handleTerminalRequest dispatches terminal/* ACP requests.
-func (h *Runtime) handleTerminalRequest(ctx context.Context, chatID vibekit.ChatID, method string, msg *vibekit.RPCResponse) {
+func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID vibekit.ChatID, method string, msg *vibekit.RPCResponse) {
 	switch method {
 	case methodTermCreate:
-		h.agentTerms.respondCreate(ctx, chatID, msg)
+		rt.agentTerms.respondCreate(ctx, chatID, msg)
 	case methodTermOutput:
-		h.agentTerms.respondOutput(ctx, chatID, msg)
+		rt.agentTerms.respondOutput(ctx, chatID, msg)
 	case methodTermRelease:
-		h.agentTerms.respondRelease(ctx, chatID, msg)
+		rt.agentTerms.respondRelease(ctx, chatID, msg)
 	case methodTermWaitForExit:
-		h.agentTerms.respondWaitForExit(ctx, chatID, msg)
+		rt.agentTerms.respondWaitForExit(ctx, chatID, msg)
 	case methodTermKill:
-		h.agentTerms.respondKill(ctx, chatID, msg)
+		rt.agentTerms.respondKill(ctx, chatID, msg)
 	default:
 		// The caller routes here on a `terminal/` PREFIX match, so a verb KAS
 		// adds later reaches this switch and must still be answered. Falling
@@ -446,7 +446,7 @@ func (h *Runtime) handleTerminalRequest(ctx context.Context, chatID vibekit.Chat
 		}
 		slog.Warn("chat bridge: refusing an unimplemented terminal verb",
 			"method", method, "chat_id", chatID, "id", *msg.ID)
-		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
+		if err := rt.BridgeRespond(ctx, chatID, *msg.ID, nil,
 			&vibekit.RPCError{
 				Code:    vibekit.RPCCodeMethodNotFound,
 				Message: "unimplemented terminal method: " + method,
@@ -1002,7 +1002,7 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID
 	respondOK(ctx, at.bridges, chatID, msg, map[string]any{})
 }
 
-// TerminalOutput returns an agent terminal's output for the translate layer to
+// Output returns an agent terminal's output for the translate layer to
 // persist onto the owning tool call. See translate.TerminalReader for why the
 // tool call needs it.
 //
@@ -1020,7 +1020,7 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID
 // registered terminal with no output answers ("", nil, true), because a silent
 // command is a different fact from a lost record and only the second one is
 // worth warning about.
-func (at *agentTerminals) TerminalOutput(terminalID string) (string, []vibekit.TextSpan, bool) {
+func (at *agentTerminals) Output(terminalID string) (string, []vibekit.TextSpan, bool) {
 	at.mu.Lock()
 	term, live := at.terms[terminalID]
 	at.mu.Unlock()

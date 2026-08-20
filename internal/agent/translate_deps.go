@@ -8,8 +8,8 @@ package agent
 // every collaborator could satisfy. Roles is flat now and each field names its
 // owner, so those eight are deleted rather than moved.
 //
-// What remains needs a body: hubMCPRecorder narrows five unexported registry
-// methods to an exported contract, and TerminalOutput renders a terminal's raw
+// What remains needs a body: mcpRecorder narrows five unexported registry
+// methods to an exported contract, and Output renders a terminal's raw
 // ring on demand.
 
 import (
@@ -22,31 +22,33 @@ import (
 )
 
 // MCPRecorder returns the Runtime's MCP state recorder.
-func (h *Runtime) MCPRecorder() translate.MCPRecorder {
-	return &hubMCPRecorder{h: h}
+func (rt *Runtime) MCPRecorder() translate.MCPRecorder {
+	return &mcpRecorder{reg: rt.mcpRegistry}
 }
 
-// hubMCPRecorder adapts Runtime's MCP internals to the MCPRecorder interface.
-type hubMCPRecorder struct{ h *Runtime }
+// mcpRecorder adapts the registry's five unexported record* methods to the
+// exported MCPRecorder contract translate consumes. It holds the REGISTRY, not the
+// Runtime: it was hubMCPRecorder holding a whole *Runtime to reach one field.
+type mcpRecorder struct{ reg *mcpRegistry }
 
-func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
-	r.h.mcpRegistry.recordConnected(ctx, serverName, tools, prompts, resources)
+func (r *mcpRecorder) RecordConnected(ctx context.Context, serverName string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
+	r.reg.recordConnected(ctx, serverName, tools, prompts, resources)
 }
 
-func (r *hubMCPRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {
-	r.h.mcpRegistry.recordOAuth(ctx, serverName, oauthURL)
+func (r *mcpRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {
+	r.reg.recordOAuth(ctx, serverName, oauthURL)
 }
 
-func (r *hubMCPRecorder) RecordInitFailure(ctx context.Context, serverName, errMsg string) {
-	r.h.mcpRegistry.recordInitFailure(ctx, serverName, errMsg)
+func (r *mcpRecorder) RecordInitFailure(ctx context.Context, serverName, errMsg string) {
+	r.reg.recordInitFailure(ctx, serverName, errMsg)
 }
 
-func (r *hubMCPRecorder) RecordDisabled(ctx context.Context, serverName string) {
-	r.h.mcpRegistry.recordDisabled(ctx, serverName)
+func (r *mcpRecorder) RecordDisabled(ctx context.Context, serverName string) {
+	r.reg.recordDisabled(ctx, serverName)
 }
 
-func (r *hubMCPRecorder) SignalReady() {
-	r.h.mcpRegistry.signalReady()
+func (r *mcpRecorder) SignalReady() {
+	r.reg.signalReady()
 }
 
 // IsScheduled reports whether a run was launched by a schedule.
@@ -56,8 +58,8 @@ func (r *hubMCPRecorder) SignalReady() {
 // Granted between `new` and `invoke` in launch, which is before the first
 // lifecycle frame can arrive, so a run_start reaching translate always sees the
 // origin its launch recorded.
-func (rp *Runs) IsScheduled(workflowID string) bool {
-	l, ok := rp.lease(workflowID)
+func (rs *Runs) IsScheduled(workflowID string) bool {
+	l, ok := rs.lease(workflowID)
 	return ok && l.Origin == runlease.OriginScheduled
 }
 
@@ -78,22 +80,22 @@ func (rp *Runs) IsScheduled(workflowID string) bool {
 // WHEN New read the fields, which is the entire bug. Checking at the call site
 // catches it at construction, with the field's name, instead of as a nil-receiver
 // panic on the first session update.
-func (h *Runtime) translateRoles() *translate.Roles {
+func (rt *Runtime) translateRoles() *translate.Roles {
 	return requireWired(&translate.Roles{
-		Bus:          h.bus,
-		Chats:        h.chatStore,
-		Buffers:      h.bridge.assistantBufs,
-		Lines:        h.lines,
-		PendingPerms: h.bus,
-		Push:         h.coord,
-		Sessions:     h.coord,
-		Terminals:    h.agentTerms,
-		HookStatus:   h.hookStatus,
-		WorkDir:      h.lifecycle.workDir,
-		MCP:          h.MCPRecorder(),
-		Governance:   h.config,
-		RunOrigin:    h.runs,
-		RunBounds:    h.runs,
+		Bus:          rt.bus,
+		Chats:        rt.chatStore,
+		Buffers:      rt.bridge.assistantBufs,
+		Lines:        rt.lines,
+		PendingPerms: rt.bus,
+		Push:         rt.coord,
+		Sessions:     rt.coord,
+		Terminals:    rt.agentTerms,
+		HookStatus:   rt.hookStatus,
+		WorkDir:      rt.lifecycle.workDir,
+		MCP:          rt.MCPRecorder(),
+		Governance:   rt.config,
+		RunOrigin:    rt.runs,
+		RunBounds:    rt.runs,
 	})
 }
 

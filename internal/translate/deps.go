@@ -142,7 +142,7 @@ type HookStatusReader interface {
 // command persisted an empty output and the bytes lived only in an ephemeral SSE
 // stream that a page reload discarded.
 type TerminalReader interface {
-	TerminalOutput(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
+	Output(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
 }
 
 // GovernanceAccess caches the latest account/workspace governance state so GET

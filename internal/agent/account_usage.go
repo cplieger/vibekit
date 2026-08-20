@@ -34,10 +34,10 @@ const accountUsageCallTimeout = 45 * time.Second
 // and parses the KAS getUsage result into the domain shape. Lazily
 // constructs the utility bridge (same pattern as UtilityPrompt) so the
 // footer works even when no chat is open. Satisfies server.AccountUsageProvider.
-func (h *Runtime) AccountUsage(ctx context.Context) (*vibekit.AccountUsage, error) {
+func (rt *Runtime) AccountUsage(ctx context.Context) (*vibekit.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
-	raw, err := h.utility.get().session.accountUsageRaw(cctx)
+	raw, err := rt.utility.get().session.accountUsageRaw(cctx)
 	if err != nil {
 		return nil, err
 	}

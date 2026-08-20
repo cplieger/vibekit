@@ -62,8 +62,8 @@ func shutdownHub(t *testing.T, h *Runtime) {
 }
 
 // handleCommand is a test helper that delegates to the dispatcher.
-func (h *Runtime) handleCommand(w http.ResponseWriter, r *http.Request) {
-	h.dispatcher.ServeHTTP(w, r)
+func (rt *Runtime) handleCommand(w http.ResponseWriter, r *http.Request) {
+	rt.dispatcher.ServeHTTP(w, r)
 }
 
 // postCmd POSTs a typed ClientCommand to handleCommand and returns the recorder.
@@ -83,7 +83,7 @@ func postCmd(t *testing.T, h *Runtime, cmd vibekit.ClientCommand) *httptest.Resp
 // inspection surface is a parameterless snapshot).
 func bufferedSince(h *Runtime, sinceID uint64) []sse.ReplayEvent {
 	var out []sse.ReplayEvent
-	for _, e := range h.bus.hub.Buffered() {
+	for _, e := range h.bus.fanout.Buffered() {
 		if e.ID > sinceID {
 			out = append(out, e)
 		}

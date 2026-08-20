@@ -36,16 +36,16 @@ func resolveSwitchModel(chat *vibekit.Chat, p vibekit.SwitchModelCommand) (model
 	return p.Model, true
 }
 
-// hubResponseOK is the canonical success response shape for hub
+// responseOK2 is the canonical success response shape for hub
 // commands that go through the dedup cache via h.respond.
-var hubResponseOK = map[string]bool{"ok": true}
+var responseOK2 = map[string]bool{"ok": true}
 
 // errModelNotServed is the 409 body for a pick this account cannot run. A
 // conflict rather than a bad request: the id is well-formed and was legal for
 // some account, so the refusal is about this session's entitlement state.
 var errModelNotServed = errors.New("that model is not available on this account")
 
-func (h *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientCommand) (any, error) {
+func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrMissingChatID)
 	}
@@ -60,7 +60,7 @@ func (h *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientCommand
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrInvalidPayload)
 	}
 
-	chat, ok := h.chatStore.Get(ctx, cmd.ChatID)
+	chat, ok := rt.chatStore.Get(ctx, cmd.ChatID)
 	if !ok {
 		return nil, command.StatusError(http.StatusNotFound, command.ErrChatNotFound)
 	}
@@ -71,16 +71,16 @@ func (h *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientCommand
 	// in-session model swap on the running bridge. Both live under one isSwitch
 	// because both are only meaningful for a real change of model.
 	if isSwitch {
-		if err := h.refuseUnservedModel(ctx, cmd.ChatID, chat, model); err != nil {
+		if err := rt.refuseUnservedModel(ctx, cmd.ChatID, chat, model); err != nil {
 			return nil, err
 		}
-		if h.coord.TryFastModelSwitch(ctx, cmd.ChatID, model) {
-			h.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
-			return hubResponseOK, nil
+		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model) {
+			rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
+			return responseOK2, nil
 		}
 	}
 
-	return h.switchByRestart(ctx, cmd, chat, model, isSwitch)
+	return rt.switchByRestart(ctx, cmd, chat, model, isSwitch)
 }
 
 // switchByRestart is the fallback when the in-session swap did not take: tear the
@@ -90,20 +90,20 @@ func (h *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientCommand
 // dispatcher now reads validate, try fast, else restart — and because leaving it
 // inline put that function over the complexity ceiling once the entitlement gate
 // landed. No behaviour moved with it.
-func (h *Runtime) switchByRestart(
+func (rt *Runtime) switchByRestart(
 	ctx context.Context, cmd *vibekit.ClientCommand,
 	chat *vibekit.Chat, model string, isSwitch bool,
 ) (any, error) {
-	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
-	h.coord.CloseBridge(cmd.ChatID)
+	rt.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
+	rt.coord.CloseBridge(cmd.ChatID)
 
-	sb, err := h.coord.OpenBridge(ctx, cmd.ChatID, model)
+	sb, err := rt.coord.OpenBridge(ctx, cmd.ChatID, model)
 	if err != nil {
-		h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
+		rt.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
 		return nil, command.StatusError(http.StatusInternalServerError, err)
 	}
 	if isSwitch {
-		h.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
+		rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
 	}
 
 	sb.mu.Lock()
@@ -121,7 +121,7 @@ func (h *Runtime) switchByRestart(
 			"chat_id", cmd.ChatID, "model", model)
 	}
 
-	return hubResponseOK, nil
+	return responseOK2, nil
 }
 
 // refuseUnservedModel is the LOUD half of the entitlement check: spawnBridge
@@ -140,11 +140,11 @@ func (h *Runtime) switchByRestart(
 // unknowable and vibekit.ModelServed allows it.
 // It answers whether the request was REFUSED, having already written the response
 // and broadcast the banner, so the caller is one guard clause.
-func (h *Runtime) refuseUnservedModel(
+func (rt *Runtime) refuseUnservedModel(
 	ctx context.Context, chatID vibekit.ChatID, chat *vibekit.Chat, model string,
 ) error {
 	served := chat.ServedModelIDs
-	if sb := h.coord.Bridge(chatID); sb != nil {
+	if sb := rt.coord.Bridge(chatID); sb != nil {
 		if live := sb.bridge.ServedModels(); len(live) > 0 {
 			served = live
 		}
@@ -154,7 +154,7 @@ func (h *Runtime) refuseUnservedModel(
 	}
 	slog.Warn("refusing a model switch this account does not serve",
 		"chat_id", chatID, "model", model)
-	h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+	rt.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeModelNotServed,
 		Message: "\"" + model + "\" is not available on this account. Pick another model.",
 	}))

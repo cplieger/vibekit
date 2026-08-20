@@ -99,7 +99,7 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s.getOne(w, r, id)
+		s.writeOne(w, r, id)
 	case http.MethodPut:
 		s.putOne(w, r, id)
 	case http.MethodPatch:
@@ -111,8 +111,8 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// getOne handles GET /api/mcp/{id}: 200 with the masked record, or 404.
-func (s *Store) getOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+// writeOne handles GET /api/mcp/{id}: 200 with the masked record, or 404.
+func (s *Store) writeOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	got := s.Get(r.Context(), id)
 	if got == nil {
 		httpreply.NotFound(w, "server not found")

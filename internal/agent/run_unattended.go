@@ -87,7 +87,7 @@ func workflowIDOf(chatID vibekit.ChatID) string {
 // The request still reaches the client exactly as it would otherwise: the run's
 // page shows the card, and a user with it open can answer inside the budget.
 // What the wrapper adds is a deadline after which vibekit answers for them.
-func (rp *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
+func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 		inner(ctx, chatID, msg)
 
@@ -100,7 +100,7 @@ func (rp *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		// id, so the floor reaches only a parentless run on its own bridge. An
 		// agent-launched run's asks arrive on its chat's real id and are attended
 		// by the person who asked for them.
-		l, held := rp.lease(workflowIDOf(chatID))
+		l, held := rs.lease(workflowIDOf(chatID))
 		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
@@ -108,27 +108,27 @@ func (rp *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		requestID := *msg.ID
 		tool := permissionToolName(msg.Params)
 		// AfterFunc parks no goroutine while waiting, and the timer is a no-op
-		// once the request has been answered: answerUnattendedPermission claims
+		// once the request has been answered: answerUnattended claims
 		// the request from the tracker, and the ordinary response path has
 		// already claimed it.
 		params := msg.Params
 		time.AfterFunc(unattendedApprovalBudget, func() {
-			rp.answerUnattendedPermission(chatID, requestID, scheduleID, tool, params)
+			rs.answerUnattended(chatID, requestID, scheduleID, tool, params)
 		})
 	}
 }
 
-// answerUnattendedPermission settles a still-pending request for an absent
+// answerUnattended settles a still-pending request for an absent
 // user: refuse by default, or approve when the operator opted in.
-func (rp *Runs) answerUnattendedPermission(chatID vibekit.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
-	ctx, cancel := rp.hubContext()
+func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
+	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
-	sb := rp.bridges.get(chatID)
+	sb := rs.bridges.get(chatID)
 	if sb == nil {
 		return
 	}
-	approve := scheduledAutoApprove(ctx, rp.lifecycle.configDir)
+	approve := scheduledAutoApprove(ctx, rs.lifecycle.configDir)
 	outcome := vibekit.PermissionOutcomeCancelled()
 	verb := outcomeRefused
 	if approve {
@@ -154,7 +154,7 @@ func (rp *Runs) answerUnattendedPermission(chatID vibekit.ChatID, requestID int6
 	// Taking it also retires the entry, so nothing below has to, and announces
 	// the answer as the MACHINE's: a card collapsing under a reader who was
 	// deciding must say that a deadline answered it, and which way.
-	if !rp.perms.TakePendingPerm(requestID, vibekit.SettledByUnattended) {
+	if !rs.perms.TakePendingPerm(requestID, vibekit.SettledByUnattended) {
 		return
 	}
 	// A FIXED message with the outcome as a field, not a message built from the
@@ -176,14 +176,14 @@ func (rp *Runs) answerUnattendedPermission(chatID vibekit.ChatID, requestID int6
 	// Surface it. Without this the schedule row still reads "started" while the
 	// run fails the same way every night, which is exactly the silent-repeat
 	// failure this floor exists to make visible.
-	if rp.schedules == nil || scheduleID == "" {
+	if rs.schedules == nil || scheduleID == "" {
 		return
 	}
 	reason := "failed: needed approval for " + tool + " with nobody watching — add a permission rule to allow it"
 	if tool == "" {
 		reason = "failed: needed an approval with nobody watching — add a permission rule to allow it"
 	}
-	if err := rp.schedules.RecordOutcome(ctx, scheduleID, reason); err != nil {
+	if err := rs.schedules.RecordOutcome(ctx, scheduleID, reason); err != nil {
 		slog.Warn("could not record the schedule's outcome", "schedule_id", scheduleID, "error", err)
 	}
 }

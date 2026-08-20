@@ -748,18 +748,18 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 // contributes nothing.
 func TestUtilityLiveSessionID(t *testing.T) {
 	u := newTestUtilityRuntime()
-	if got := u.session.liveSessionID(); got != "" {
-		t.Errorf("liveSessionID before start = %q, want empty", got)
+	if got := u.session.liveID(); got != "" {
+		t.Errorf("liveID before start = %q, want empty", got)
 	}
 	if _, err := u.textgen.UtilityPrompt(t.Context(), "p", ""); err != nil {
 		t.Fatalf("UtilityPrompt error = %v", err)
 	}
-	if got := u.session.liveSessionID(); got == "" {
-		t.Error("liveSessionID after start = empty, want the fake session id")
+	if got := u.session.liveID(); got == "" {
+		t.Error("liveID after start = empty, want the fake session id")
 	}
 	u.session.Stop()
-	if got := u.session.liveSessionID(); got != "" {
-		t.Errorf("liveSessionID after Stop = %q, want empty", got)
+	if got := u.session.liveID(); got != "" {
+		t.Errorf("liveID after Stop = %q, want empty", got)
 	}
 }
 

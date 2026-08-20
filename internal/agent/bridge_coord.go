@@ -26,10 +26,14 @@ type BridgeCoordinator struct {
 	chatStore      bridgeChatRecords
 	broadcast      func(ctx context.Context, e vibekit.ServerEvent)
 	translateEvent func(chatID vibekit.ChatID, msg *vibekit.RPCResponse)
-	push           pushNotifier
-	mcpRegistry    *mcpRegistry
-	lifecycle      *lifetime
-	preBridgeSpawn func(context.Context)
+	// push is optional: WithPush is not passed in tests, and every send site
+	// nil-checks — no push service means no notification, which is the right
+	// degradation rather than a refusal to run.
+	push        pushNotifier `wiring:"optional"`
+	mcpRegistry *mcpRegistry
+	lifecycle   *lifetime
+	// installed later by SetPreBridgeSpawn from the composition root.
+	preBridgeSpawn func(context.Context) `wiring:"optional"`
 	// replayProjection is the session/load replay-projection lifecycle,
 	// injected from the Runtime for the same reason as flushPending: Forward and
 	// tryLoadSession drive it, without the coordinator importing the full Runtime.
@@ -46,7 +50,8 @@ type BridgeCoordinator struct {
 	// every bridge this process ever starts. It gates the
 	// `_meta.kiro.secretStorage` declaration: see vibekit.StartOpts.SecretStorage
 	// for why declaring it without a store breaks an MCP connect.
-	secretStorage func() bool
+	// reports whether a credential store opened; nil means declare it off.
+	secretStorage func() bool `wiring:"optional"`
 	// chatStatus reads a chat's last self-declared status, which is what the
 	// agent-finished push body says instead of a fixed literal. A FUNCTION rather
 	// than the cache itself so the coordinator keeps taking no dependency on the
@@ -74,7 +79,8 @@ type BridgeCoordinator struct {
 	// Set on the CHAT spawns below and deliberately NOT threaded to the utility
 	// bridge, whose work is title generation and catalog fetches — an
 	// `--effort max` there would spend real credits on a two-word summary.
-	acpArgs     []string
+	// operator launch flags; absent is the normal case.
+	acpArgs     []string `wiring:"optional"`
 	primeFromMu sync.Mutex
 }
 
@@ -119,13 +125,13 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		lifecycle:      h.lifecycle,
 		preBridgeSpawn: h.preBridgeSpawn,
 		// h implements replayProjector via load_projection.go.
-		replayProjection: h,
+		replayProjection: h.replay,
 		chatStatus:       h.bus.chatStatus.Get,
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },
 		onSessionRehydrated: func(chatID vibekit.ChatID) {
-			ctx, cancel := h.hubContext()
+			ctx, cancel := h.lifecycle.derivedContext()
 			defer cancel()
 			h.runs.resumeRestartPaused(ctx, chatID)
 		},
@@ -231,7 +237,7 @@ func bridgeSpawnKey(chatID vibekit.ChatID, modelOverride string) string {
 // half-registered bridge back out of the map and returns the error.
 func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Double-check after winning the singleflight race.
-	sb, existed := bc.bridge.mgr.getOrInsert(chatID)
+	sb, existed := bc.bridge.mgr.orInsert(chatID)
 	if existed {
 		return sb, nil
 	}
@@ -514,8 +520,8 @@ func (bc *BridgeCoordinator) Bridge(chatID vibekit.ChatID) *sharedBridge {
 // HasLiveBridge reports whether a chat currently has a bridge, i.e. whether it
 // is in active use. Retention's exemption reads this: a chat with a live bridge
 // is open work and is never purged, however old (see archive.WithLiveChats).
-func (h *Runtime) HasLiveBridge(chatID vibekit.ChatID) bool {
-	return h.bridge.mgr.get(chatID) != nil
+func (rt *Runtime) HasLiveBridge(chatID vibekit.ChatID) bool {
+	return rt.bridge.mgr.get(chatID) != nil
 }
 
 // CloseBridge stops a bridge and removes it from the map.
@@ -946,8 +952,8 @@ func extractStopReason(resp *vibekit.RPCResponse) vibekit.StopReason {
 // because no translate role declares it. Its three callers are all runtime's own
 // (agent_terminal.go, translate.go, run_host.go), and this file already owns
 // reaching a bridge by chat id.
-func (h *Runtime) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error {
-	sb := h.bridge.mgr.get(chatID)
+func (rt *Runtime) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error {
+	sb := rt.bridge.mgr.get(chatID)
 	if sb == nil {
 		return nil
 	}

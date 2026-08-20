@@ -102,12 +102,6 @@ type runPermClaimer interface {
 	TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool
 }
 
-// hubContext derives a cancellable context from the process lifetime, for run
-// work that must outlive the request that started it.
-func (rp *Runs) hubContext() (context.Context, context.CancelFunc) {
-	return context.WithCancel(rp.lifecycle.shutdownCtx)
-}
-
 // Runs exposes the run plane to the composition root, which starts the orphan
 // sweep and hands the plane to the schedule runner as its schedule.Launcher.
 //
@@ -118,4 +112,4 @@ func (rp *Runs) hubContext() (context.Context, context.CancelFunc) {
 // the type is package-internal on purpose and the caller only forwards it on.
 //
 //nolint:revive // unexported-return: same reason as BridgeCoordinator.Bridge —
-func (h *Runtime) Runs() *Runs { return h.runs }
+func (rt *Runtime) Runs() *Runs { return rt.runs }

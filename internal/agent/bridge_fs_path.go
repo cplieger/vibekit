@@ -42,8 +42,8 @@ func (in *inbound) resolveInsideWorkDir(p string) (string, error) {
 
 // resolveInsideWorkDir confines p to the workspace. On the plane that holds
 // workDir, so a collaborator needing it does not need a *Runtime.
-func (lc *lifetime) resolveInsideWorkDir(p string) (string, error) {
-	return workspace.ResolveInsideAbs(lc.workDir, p)
+func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
+	return workspace.ResolveInsideAbs(lt.workDir, p)
 }
 
 // respondFSError writes a JSON-RPC error response for an fs request and

@@ -26,7 +26,7 @@ func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 
-	evts := h.bus.hub.Buffered()
+	evts := h.bus.fanout.Buffered()
 	if len(evts) != 2 {
 		t.Fatalf("replay len = %d, want 2", len(evts))
 	}
@@ -61,7 +61,7 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 	h.bus.emit(vibekit.ServerEvent{Type: "connected"}) // global: empty topic
 
-	got := h.bus.hub.Buffered()
+	got := h.bus.fanout.Buffered()
 	if len(got) != 3 {
 		t.Fatalf("buffered = %d events, want 3", len(got))
 	}

@@ -39,15 +39,15 @@ const policyCallTimeout = 45 * time.Second
 // hooks and the token source, all of which point back into runtime services while
 // those same services lease the utility runtime. Keeping the construction at the
 // wiring site is what keeps that bidirectional edge visible.
-func (h *Runtime) buildUtility() *utilityRuntime {
+func (rt *Runtime) buildUtility() *utilityRuntime {
 	return newUtilityRuntime(
-		h.lifecycle.shutdownCtx, h.bridge.factory, h.Models,
+		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.Models,
 		utilitySessionHooks{
-			onHooksChanged:    h.config.broadcastHooksChanged,
-			onGovernanceState: h.config.cacheGovernanceFromUtility,
-			tokenSource:       h.inbound.kiroAccessTokenResult,
+			onHooksChanged:    rt.config.broadcastHooksChanged,
+			onGovernanceState: rt.config.cacheGovernanceFromUtility,
+			tokenSource:       rt.inbound.kiroAccessTokenResult,
 		},
-		h.secrets,
+		rt.secrets,
 		true, // enableHooks
 	)
 }
@@ -55,14 +55,14 @@ func (h *Runtime) buildUtility() *utilityRuntime {
 // PolicyList returns the native policy rules, optionally filtered to one
 // scope (empty = all scopes). Backed by _kiro/permissions/list on the
 // utility bridge.
-func (cp *Settings) PolicyList(ctx context.Context, scope string) ([]vibekit.PolicyRule, error) {
+func (st *Settings) PolicyList(ctx context.Context, scope string) ([]vibekit.PolicyRule, error) {
 	extra := map[string]any{}
 	if scope != "" {
 		extra["scope"] = scope
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := cp.utility().session.policyRaw(cctx, methodV3PermissionsList, extra)
+	raw, err := st.utility().session.policyRaw(cctx, methodV3PermissionsList, extra)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ type explainWire struct {
 // WITHOUT executing anything or raising a consent prompt (KAS
 // evaluateSingleResource). Exactly one of Capability / ToolID is required;
 // KAS additionally requires a resource for the shell capability.
-func (cp *Settings) PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
+func (st *Settings) PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
 	extra := map[string]any{}
 	switch {
 	case req.Capability != "":
@@ -116,7 +116,7 @@ func (cp *Settings) PolicyExplain(ctx context.Context, req vibekit.PolicyExplain
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := cp.utility().session.policyRaw(cctx, methodV3PermissionsExplain, extra)
+	raw, err := st.utility().session.policyRaw(cctx, methodV3PermissionsExplain, extra)
 	if err != nil {
 		return nil, err
 	}

@@ -45,6 +45,12 @@ func requireCollaborators(h *Runtime) {
 		{"mcpRegistry", h.mcpRegistry},
 		{"runRoutes", h.runRoutes},
 		{"utility", h.utility},
+		{"replay", h.replay},
+		// The coordinator is here because it was the FOURTH site to capture a nil
+		// this way, and the guard missed it: the list held the planes I thought of
+		// rather than everything that binds a collaborator at construction. Any
+		// type built inside New with fields taken from h belongs in it.
+		{"coord", h.coord},
 	} {
 		requirePopulated(plane.name, plane.v)
 	}

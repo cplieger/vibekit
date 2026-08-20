@@ -99,8 +99,8 @@ var errRecipeBusy = errors.New("this recipe already has a live run")
 // Run shortly before 02:00 cannot hold the recipe past 02:00. It stays ATTENDED
 // either way: the slot bounds the run, the unattended permission floor does not
 // apply, and no schedule row is attributed to it.
-func (rp *Runs) Launch(ctx context.Context, source string, inputs map[string]string) (id, name string, err error) {
-	return rp.launch(ctx, source, inputs, manualLaunch())
+func (rs *Runs) Launch(ctx context.Context, source string, inputs map[string]string) (id, name string, err error) {
+	return rs.launch(ctx, source, inputs, manualLaunch())
 }
 
 // LaunchScheduled launches a run on behalf of a schedule, marking it
@@ -116,17 +116,17 @@ func (rp *Runs) Launch(ctx context.Context, source string, inputs map[string]str
 // second bound of its own, so it travels with the launch instead of arming a
 // timer of its own afterwards. Zero means the schedule cannot name its next slot,
 // and the run is then bounded by the ceiling alone.
-func (rp *Runs) LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error) {
-	return rp.launch(ctx, source, nil, scheduledLaunch(scheduleID, slotAt))
+func (rs *Runs) LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error) {
+	return rs.launch(ctx, source, nil, scheduledLaunch(scheduleID, slotAt))
 }
 
 // launch is the shared body of both public launch verbs. The origin carries
 // everything that differs between them.
-func (rp *Runs) launch(ctx context.Context, source string, inputs map[string]string, o launchOrigin) (id, name string, err error) {
+func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]string, o launchOrigin) (id, name string, err error) {
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
 
-	recipe, err := rp.recipeBySource(cctx, source)
+	recipe, err := rs.recipeBySource(cctx, source)
 	if err != nil {
 		return "", "", err
 	}
@@ -135,9 +135,9 @@ func (rp *Runs) launch(ctx context.Context, source string, inputs map[string]str
 		// recipe's next slot, and the slot is only knowable once the recipe is
 		// resolved. Without this the run took the ceiling as its whole bound and
 		// refused every slot underneath it (run_lease.go manualSlot).
-		o.slotAt = rp.manualSlot(recipe.Source)
+		o.slotAt = rs.manualSlot(recipe.Source)
 	}
-	if bErr := rp.recipeIdle(cctx, recipe.Name); bErr != nil {
+	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
 		return "", "", bErr
 	}
 
@@ -147,12 +147,12 @@ func (rp *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	// goroutine can attach after `new` — NotifCh is buffered, and whatever
 	// session/new-time notifications land there are drained once Forward
 	// starts.
-	bridge := rp.bridges.factory()
-	if sErr := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: rp.lifecycle.shutdownCtx}); sErr != nil {
+	bridge := rs.bridges.factory()
+	if sErr := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: rs.lifecycle.shutdownCtx}); sErr != nil {
 		return "", "", fmt.Errorf("run bridge start: %w", sErr)
 	}
 
-	wfID, err := rp.workflowNew(cctx, bridge, recipe.Source, inputs)
+	wfID, err := rs.workflowNew(cctx, bridge, recipe.Source, inputs)
 	if err != nil {
 		bridge.Stop()
 		return "", "", err
@@ -161,24 +161,24 @@ func (rp *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	// Register BEFORE invoke: the first lifecycle frame follows invoke
 	// immediately, and a frame arriving before the map entry would find no
 	// bridge to answer through.
-	rp.bridges.insert(runChatID(wfID), &sharedBridge{bridge: bridge, state: bridgeIdle})
+	rs.bridges.insert(runChatID(wfID), &sharedBridge{bridge: bridge, state: bridgeIdle})
 	// The run's envelope, before anything can execute: the single-run rule's
 	// evidence that this row is vibekit's own, the deadline's inputs, and the
 	// unattended mark the permission floor reads.
-	rp.grantLease(cctx, wfID, recipe.Name, o)
-	go rp.coord.Forward(runChatID(wfID), bridge)
+	rs.grantLease(cctx, wfID, recipe.Name, o)
+	go rs.coord.Forward(runChatID(wfID), bridge)
 
 	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
 		// The run was created but never started; nothing is executing. Tear the
 		// bridge down and surface the failure rather than leaving a zombie row.
-		rp.releaseLease(cctx, wfID)
-		rp.coord.CloseBridge(runChatID(wfID))
+		rs.releaseLease(cctx, wfID)
+		rs.coord.CloseBridge(runChatID(wfID))
 		return "", "", fmt.Errorf("workflow invoke: %w", err)
 	}
 	// The wall clock, for every run this path launches — manual and scheduled
 	// alike (run_bounds.go). After invoke, so a run that never started leaves no
 	// timer, and idempotent with the `run_start` frame's own arm.
-	rp.armDeadline(cctx, wfID)
+	rs.armDeadline(cctx, wfID)
 	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
 	return wfID, recipe.Name, nil
 }
@@ -196,14 +196,14 @@ func (rp *Runs) launch(ctx context.Context, source string, inputs map[string]str
 // cancelled by something that got there first — the gesture's outcome is the one
 // the caller asked for. When the claim is won and the RPC then fails, the claim is
 // handed back, so a later Cancel is not silently refused.
-func (rp *Runs) Cancel(ctx context.Context, workflowID string) error {
+func (rs *Runs) Cancel(ctx context.Context, workflowID string) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
 	}
-	if !rp.claimTermination(workflowID) {
+	if !rs.claimTermination(workflowID) {
 		return nil
 	}
-	return rp.finishTermination(ctx, workflowID, "")
+	return rs.finishTermination(ctx, workflowID, "")
 }
 
 // cancelRPC issues the cancel VERB and nothing else — no claim, no record.
@@ -215,8 +215,8 @@ func (rp *Runs) Cancel(ctx context.Context, workflowID string) error {
 // `run_complete` the cancel eventually produces closes it (see dispatch),
 // because the owning process must live to the node boundary to certify the
 // cancelled state.
-func (rp *Runs) cancelRPC(ctx context.Context, workflowID string) error {
-	return rp.control(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call")
+func (rs *Runs) cancelRPC(ctx context.Context, workflowID string) error {
+	return rs.control(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call")
 }
 
 // Delete removes a run and everything either side keeps about it, on the
@@ -238,16 +238,16 @@ func (rp *Runs) cancelRPC(ctx context.Context, workflowID string) error {
 //
 // A failed verb leaves everything in place: the run still exists in KAS, so
 // forgetting the lease would strand a row vibekit could no longer bound or cancel.
-func (rp *Runs) Delete(ctx context.Context, workflowID string) error {
+func (rs *Runs) Delete(ctx context.Context, workflowID string) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
 	}
-	if err := rp.control(ctx, workflowID, methodKiroWorkflowDelete, "workflow delete call"); err != nil {
+	if err := rs.control(ctx, workflowID, methodKiroWorkflowDelete, "workflow delete call"); err != nil {
 		return err
 	}
-	rp.coord.CloseBridge(runChatID(workflowID))
-	rp.forgetBounds(ctx, workflowID)
-	rp.clearEnd(workflowID)
+	rs.coord.CloseBridge(runChatID(workflowID))
+	rs.forgetBounds(ctx, workflowID)
+	rs.clearEnd(workflowID)
 	slog.Info("workflow run deleted", "workflow_id", workflowID)
 	return nil
 }
@@ -275,8 +275,8 @@ var errRunNotHosted = errors.New(
 // Requires the run's own bridge: KAS's pause reaches `registry.require`, which
 // throws for a run that is not in the live in-memory registry and does NOT
 // rehydrate from disk the way cancel, resume and retry do.
-func (rp *Runs) Pause(ctx context.Context, workflowID string) error {
-	return rp.hostedControl(ctx, workflowID, methodKiroWorkflowPause)
+func (rs *Runs) Pause(ctx context.Context, workflowID string) error {
+	return rs.hostedControl(ctx, workflowID, methodKiroWorkflowPause)
 }
 
 // Resume re-drives a paused run.
@@ -285,10 +285,10 @@ func (rp *Runs) Pause(ctx context.Context, workflowID string) error {
 // run is executing again and gets a FRESH budget rather than the remainder of the
 // one it was holding when it parked. `run_start` re-fires on resume and arms too;
 // whichever lands first wins.
-func (rp *Runs) Resume(ctx context.Context, workflowID string) error {
-	err := rp.hostedControl(ctx, workflowID, methodKiroWorkflowResume)
+func (rs *Runs) Resume(ctx context.Context, workflowID string) error {
+	err := rs.hostedControl(ctx, workflowID, methodKiroWorkflowResume)
 	if err == nil {
-		rp.armDeadline(ctx, workflowID)
+		rs.armDeadline(ctx, workflowID)
 	}
 	return err
 }
@@ -315,7 +315,7 @@ func (rp *Runs) Resume(ctx context.Context, workflowID string) error {
 // Only reachable for a PARENTLESS run (user decision). An agent-parented run's
 // recovery is the agent's own: it reaches these verbs through KAS directly, on a
 // bridge it already has.
-func (rp *Runs) Retry(ctx context.Context, workflowID string) error {
+func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
 	}
@@ -324,14 +324,14 @@ func (rp *Runs) Retry(ctx context.Context, workflowID string) error {
 	// An already-hosted run needs no re-hosting: send on the bridge it has. This
 	// is not the expected path (retry's window implies a closed bridge) but a run
 	// aborted without a terminal frame can still be registered.
-	if sb := rp.bridges.get(chatID); sb != nil {
-		recipe := rp.recipeOf(ctx, workflowID)
+	if sb := rs.bridges.get(chatID); sb != nil {
+		recipe := rs.recipeOf(ctx, workflowID)
 		_, err := sb.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
 		if err == nil {
 			// Only on success, and in this order: a retry KAS refused re-drove
 			// nothing, so the run's previous terminal reason is still the truth
 			// about it and its row must keep saying so.
-			rp.rearmRetried(ctx, workflowID, recipe)
+			rs.rearmRetried(ctx, workflowID, recipe)
 		}
 		return err
 	}
@@ -343,17 +343,17 @@ func (rp *Runs) Retry(ctx context.Context, workflowID string) error {
 	// list is the only place a re-hosted run's recipe is available to this process,
 	// and it has to be read while the run is still listed under its pre-retry
 	// state rather than after the lease is needed.
-	recipe := rp.recipeOf(cctx, workflowID)
+	recipe := rs.recipeOf(cctx, workflowID)
 
-	bridge := rp.bridges.factory()
-	if err := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: rp.lifecycle.shutdownCtx}); err != nil {
+	bridge := rs.bridges.factory()
+	if err := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: rs.lifecycle.shutdownCtx}); err != nil {
 		return fmt.Errorf("retry bridge start: %w", err)
 	}
 	// Register BEFORE the call, for the same reason Launch does: retry's first
 	// lifecycle frame follows it immediately, and a frame arriving before the map
 	// entry would find no bridge to answer through.
-	rp.bridges.insert(chatID, &sharedBridge{bridge: bridge, state: bridgeIdle})
-	go rp.coord.Forward(chatID, bridge)
+	rs.bridges.insert(chatID, &sharedBridge{bridge: bridge, state: bridgeIdle})
+	go rs.coord.Forward(chatID, bridge)
 
 	// The lease before the verb, exactly as a fresh launch grants between `new`
 	// and `invoke`: retry's own `run_start` can arrive before the call returns, and
@@ -361,8 +361,8 @@ func (rp *Runs) Retry(ctx context.Context, workflowID string) error {
 	// list's and would depend on the frame having one at all. Granting first makes
 	// the retried run's envelope independent of that race.
 	minted := false
-	if _, held := rp.lease(workflowID); !held {
-		rp.grantLease(cctx, workflowID, recipe, manualLaunch())
+	if _, held := rs.lease(workflowID); !held {
+		rs.grantLease(cctx, workflowID, recipe, manualLaunch())
 		minted = true
 	}
 
@@ -371,16 +371,16 @@ func (rp *Runs) Retry(ctx context.Context, workflowID string) error {
 		// process hosting a run it failed to restart, and give back a lease this
 		// call minted for a run that never re-drove.
 		if minted {
-			rp.releaseLease(cctx, workflowID)
+			rs.releaseLease(cctx, workflowID)
 		}
-		rp.coord.CloseBridge(chatID)
+		rs.coord.CloseBridge(chatID)
 		return fmt.Errorf("workflow retry: %w", err)
 	}
 	// A fresh clock and a clean row, both only now that the retry has landed: the
 	// run is executing again, so its recorded termination is no longer a fact
 	// about it — and the client deliberately lets a recognised end_reason outrank
 	// live status, so leaving it would render the running retry as aborted.
-	rp.rearmRetried(cctx, workflowID, recipe)
+	rs.rearmRetried(cctx, workflowID, recipe)
 	slog.Info("workflow run retried", "workflow_id", workflowID, "recipe", recipe)
 	return nil
 }
@@ -395,8 +395,8 @@ func (rp *Runs) Retry(ctx context.Context, workflowID string) error {
 // Best-effort — "" when the list cannot be read or does not carry the run — because
 // a retry must not fail over a name. A nameless lease still bounds the run; it is
 // only invisible to the single-run rule's comparison.
-func (rp *Runs) recipeOf(ctx context.Context, workflowID string) string {
-	runs, err := rp.listRaw(ctx)
+func (rs *Runs) recipeOf(ctx context.Context, workflowID string) string {
+	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("could not read a retried run's recipe, so its lease carries none",
 			"workflow_id", workflowID, "error", err)
@@ -417,14 +417,14 @@ func (rp *Runs) recipeOf(ctx context.Context, workflowID string) string {
 // difference from Retry: this verb acts on a step that is IN FLIGHT, so a run
 // with no live bridge has no in-flight step to mark and the request is a
 // mistake rather than something to rehydrate for.
-func (rp *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status string) error {
+func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status string) error {
 	if nodeID == "" {
 		return errors.New("missing node id")
 	}
 	if status != runStepCompleted && status != runStepFailed {
 		return fmt.Errorf("step status must be %q or %q", runStepCompleted, runStepFailed)
 	}
-	sb := rp.bridges.get(runChatID(workflowID))
+	sb := rs.bridges.get(runChatID(workflowID))
 	if sb == nil {
 		return errRunNotHosted
 	}
@@ -468,8 +468,8 @@ const (
 //
 // That is why the 409 says "no live bridge" rather than naming a server: the run
 // may well be executing, on a connection these verbs cannot address.
-func (rp *Runs) hostedControl(ctx context.Context, workflowID, method string) error {
-	sb := rp.bridges.get(runChatID(workflowID))
+func (rs *Runs) hostedControl(ctx context.Context, workflowID, method string) error {
+	sb := rs.bridges.get(runChatID(workflowID))
 	if sb == nil {
 		return errRunNotHosted
 	}
@@ -487,13 +487,13 @@ func (rp *Runs) hostedControl(ctx context.Context, workflowID, method string) er
 // because cancel rehydrates from disk and then only WRITES state; it never
 // re-drives execution, so a text-only session is a sufficient carrier for it.
 // The verbs that do execute use hostedControl instead.
-func (rp *Runs) control(ctx context.Context, workflowID, method, logLabel string) error {
+func (rs *Runs) control(ctx context.Context, workflowID, method, logLabel string) error {
 	params := map[string]any{keyWorkflowID: workflowID}
-	if sb := rp.bridges.get(runChatID(workflowID)); sb != nil {
+	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil {
 		resp, err := sb.bridge.Call(ctx, method, params)
 		return runCallErr(resp, err)
 	}
-	_, err := rp.utility().session.rawCall(ctx, logLabel, method, callerParams(params))
+	_, err := rs.utility().session.rawCall(ctx, logLabel, method, callerParams(params))
 	return err
 }
 
@@ -521,17 +521,17 @@ func (rp *Runs) control(ctx context.Context, workflowID, method, logLabel string
 //     transcript — the run tab renders from `inspect` refetches — and buffering
 //     into the synthetic id would open a phantom assistant message on a chat
 //     that must never exist.
-func (h *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if msg.ID != nil {
-		h.dispatchRequest(ctx, chatID, msg)
+		rt.dispatchRequest(ctx, chatID, msg)
 		return
 	}
 	if strings.HasPrefix(msg.Method, "_kiro/workflow/") {
-		if fn, ok := h.chatHandlers[msg.Method]; ok {
+		if fn, ok := rt.chatHandlers[msg.Method]; ok {
 			fn(ctx, "", msg)
 		}
 		if msg.Method == methodWFRunComplete {
-			h.closeFinishedBridge(chatID, msg)
+			rt.closeFinishedBridge(chatID, msg)
 		}
 		return
 	}
@@ -545,18 +545,18 @@ func (h *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vibe
 // mirrors translateACPEvent's request half minus the chat-only concerns; an
 // unmatched request is REFUSED rather than dropped, because an unanswered
 // request wedges the step's turn.
-func (h *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	switch {
-	case h.inbound.handleFSRequest(ctx, chatID, msg),
-		h.inbound.handleKiroFSRequest(ctx, chatID, msg),
-		h.inbound.handleKiroClientRequest(ctx, chatID, msg),
-		h.inbound.handleKiroSecretRequest(ctx, chatID, msg):
+	case rt.inbound.handleFSRequest(ctx, chatID, msg),
+		rt.inbound.handleKiroFSRequest(ctx, chatID, msg),
+		rt.inbound.handleKiroClientRequest(ctx, chatID, msg),
+		rt.inbound.handleKiroSecretRequest(ctx, chatID, msg):
 		return
 	case strings.HasPrefix(msg.Method, methodTermPrefix):
-		h.handleTerminalRequest(ctx, chatID, msg.Method, msg)
+		rt.handleTerminalRequest(ctx, chatID, msg.Method, msg)
 		return
 	}
-	if fn, ok := h.chatHandlers[msg.Method]; ok &&
+	if fn, ok := rt.chatHandlers[msg.Method]; ok &&
 		(msg.Method == vibekit.MethodRequestPermission ||
 			msg.Method == vibekit.MethodElicitationCreate ||
 			msg.Method == vibekit.MethodKiroUserInput) {
@@ -564,7 +564,7 @@ func (h *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, ms
 		return
 	}
 	slog.Warn("run bridge: refusing unexpected request", "method", msg.Method, "chat_id", chatID)
-	_ = h.BridgeRespond(ctx, chatID, *msg.ID, nil, &vibekit.RPCError{
+	_ = rt.BridgeRespond(ctx, chatID, *msg.ID, nil, &vibekit.RPCError{
 		Code:    vibekit.RPCCodeMethodNotFound,
 		Message: "unsupported on a run bridge: " + msg.Method,
 	})
@@ -579,7 +579,7 @@ func (h *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, ms
 // The close runs in a goroutine because this is called FROM the bridge's own
 // forward loop, and CloseBridge → Stop closes the channel that loop ranges
 // over.
-func (h *Runtime) closeFinishedBridge(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) closeFinishedBridge(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		Status string `json:"status"`
 	}
@@ -590,7 +590,7 @@ func (h *Runtime) closeFinishedBridge(chatID vibekit.ChatID, msg *vibekit.RPCRes
 	// The run's LEASE is not released here. forgetBounds owns that, on the same
 	// terminal frame, because it is the one site every origin reaches — an
 	// agent-parented run has no bridge of its own to close.
-	go h.coord.CloseBridge(chatID)
+	go rt.coord.CloseBridge(chatID)
 }
 
 // terminalRunStatus mirrors KAS's isTerminalWorkflowStatus: paused is the one
@@ -600,11 +600,11 @@ func terminalRunStatus(s string) bool {
 }
 
 // recipeBySource resolves a launch source against the CURRENT recipe list.
-func (rp *Runs) recipeBySource(ctx context.Context, source string) (vibekit.Recipe, error) {
+func (rs *Runs) recipeBySource(ctx context.Context, source string) (vibekit.Recipe, error) {
 	if source == "" {
 		return vibekit.Recipe{}, errors.New("missing recipe source")
 	}
-	recipes, err := rp.listRecipes(ctx)
+	recipes, err := rs.listRecipes(ctx)
 	if err != nil {
 		return vibekit.Recipe{}, err
 	}
@@ -628,8 +628,8 @@ func (rp *Runs) recipeBySource(ctx context.Context, source string) (vibekit.Reci
 // itself owns and left behind (run_orphan.go). This is the backstop half of the
 // orphan clearing; the boot sweep is the half that makes a restart leave the system
 // idle without waiting for someone to try a launch.
-func (rp *Runs) recipeIdle(ctx context.Context, name string) error {
-	runs, err := rp.list(ctx, nil)
+func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
+	runs, err := rs.list(ctx, nil)
 	if err != nil {
 		// The guard needs the list; launching blind would let a second live
 		// run of the recipe exist, which the Run ⇄ Cancel row cannot represent.
@@ -639,7 +639,7 @@ func (rp *Runs) recipeIdle(ctx context.Context, name string) error {
 		if runs[i].Name != name || terminalRunStatus(runs[i].Status) {
 			continue
 		}
-		if rp.clearBlockingOrphan(ctx, runs[i].WorkflowID, runs[i].Status) {
+		if rs.clearBlockingOrphan(ctx, runs[i].WorkflowID, runs[i].Status) {
 			slog.Info("cleared a restart-orphaned run that was holding its recipe",
 				"workflow_id", runs[i].WorkflowID, "recipe", name)
 			continue
@@ -662,12 +662,12 @@ type kasRecipe struct {
 
 // listRecipes fetches the launchable recipe list (bundled + workspace) through
 // the utility session — a pure read, safe on the shared connection.
-func (rp *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
-	u := rp.utility()
+func (rs *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
+	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 	raw, err := u.session.rawCall(cctx, "workflow listRecipes call", methodKiroWorkflowListRecipes,
-		callerParams(map[string]any{keyWorkspacePaths: []string{rp.lifecycle.workDir}}))
+		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +695,7 @@ func (rp *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
 }
 
 // workflowNew creates the run on the given bridge and returns its id.
-func (rp *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string) (string, error) {
+func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string) (string, error) {
 	// inputs is always a map, never nil: KAS requires the key ("inputs is not
 	// iterable" without it), and an input-less recipe takes {}.
 	in := map[string]any{}
@@ -704,7 +704,7 @@ func (rp *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string
 	}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowNew, map[string]any{
 		"workflowPath":    source,
-		keyWorkspacePaths: []string{rp.lifecycle.workDir},
+		keyWorkspacePaths: []string{rs.lifecycle.workDir},
 		"inputs":          in,
 	})
 	if cErr := runCallErr(resp, err); cErr != nil {
@@ -753,8 +753,8 @@ const stalePauseReason = "Interrupted by agent restart; the previously running s
 // resumeAll, which would sweep runs other chats or the TUI paused on purpose),
 // and to the restart pauseReason literal (a deliberately-paused run stays
 // paused).
-func (rp *Runs) resumeRestartPaused(ctx context.Context, chatID vibekit.ChatID) {
-	chat, ok := rp.chats.Get(ctx, chatID)
+func (rs *Runs) resumeRestartPaused(ctx context.Context, chatID vibekit.ChatID) {
+	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return
 	}
@@ -764,7 +764,7 @@ func (rp *Runs) resumeRestartPaused(ctx context.Context, chatID vibekit.ChatID) 
 		chain[id] = true
 	}
 
-	runs, err := rp.listRaw(ctx)
+	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("rehydrate: run list unavailable, skipping resume sweep", "chat_id", chatID, "error", err)
 		return
@@ -774,7 +774,7 @@ func (rp *Runs) resumeRestartPaused(ctx context.Context, chatID vibekit.ChatID) 
 		if r.Status != "paused" || !chain[r.ParentSessionID] {
 			continue
 		}
-		rp.resumeIfRestartPaused(ctx, chatID, r.WorkflowID)
+		rs.resumeIfRestartPaused(ctx, chatID, r.WorkflowID)
 	}
 }
 
@@ -782,15 +782,15 @@ func (rp *Runs) resumeRestartPaused(ctx context.Context, chatID vibekit.ChatID) 
 // reason is the restart literal. Resumed on the CHAT's bridge, so the chat's
 // process becomes the run's owner again — which is where an agent-launched
 // run's frames belong.
-func (rp *Runs) resumeIfRestartPaused(ctx context.Context, chatID vibekit.ChatID, workflowID string) {
+func (rs *Runs) resumeIfRestartPaused(ctx context.Context, chatID vibekit.ChatID, workflowID string) {
 	// The same predicate the orphan sweep reads, inverted in action: that one
 	// CANCELS what this one RESUMES. One function rather than two copies of a
 	// literal comparison, so the two cannot drift into disagreeing about which
 	// runs a dead process left behind.
-	if !rp.restartPaused(ctx, workflowID) {
+	if !rs.restartPaused(ctx, workflowID) {
 		return
 	}
-	sb := rp.bridges.get(chatID)
+	sb := rs.bridges.get(chatID)
 	if sb == nil {
 		return
 	}
@@ -804,12 +804,12 @@ func (rp *Runs) resumeIfRestartPaused(ctx context.Context, chatID vibekit.ChatID
 
 // listRaw lists runs with their raw parent session ids, for callers
 // that scope by session chain rather than by resolved chat.
-func (rp *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
-	u := rp.utility()
+func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
+	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		callerParams(map[string]any{keyWorkspacePaths: []string{rp.lifecycle.workDir}}))
+		callerParams(map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err
 	}
@@ -828,8 +828,8 @@ func (rp *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 // Best-effort throughout: a run list failure or a per-run cancel failure is
 // logged and the close proceeds. Blocking a tab close on a workflow RPC would
 // invert the gesture's meaning — the user said stop, not wait.
-func (rp *Runs) CancelForChat(ctx context.Context, chatID vibekit.ChatID) {
-	chat, ok := rp.chats.Get(ctx, chatID)
+func (rs *Runs) CancelForChat(ctx context.Context, chatID vibekit.ChatID) {
+	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return
 	}
@@ -838,7 +838,7 @@ func (rp *Runs) CancelForChat(ctx context.Context, chatID vibekit.ChatID) {
 	for _, id := range chat.PriorACPSessionIDs {
 		chain[id] = true
 	}
-	runs, err := rp.listRaw(ctx)
+	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		slog.Warn("close: run list unavailable, skipping run cancel", "chat_id", chatID, "error", err)
 		return
@@ -848,7 +848,7 @@ func (rp *Runs) CancelForChat(ctx context.Context, chatID vibekit.ChatID) {
 		if terminalRunStatus(r.Status) || !chain[r.ParentSessionID] {
 			continue
 		}
-		if cErr := rp.Cancel(ctx, r.WorkflowID); cErr != nil {
+		if cErr := rs.Cancel(ctx, r.WorkflowID); cErr != nil {
 			slog.Warn("close: run cancel failed", "workflow_id", r.WorkflowID, "chat_id", chatID, "error", cErr)
 			continue
 		}

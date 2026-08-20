@@ -160,14 +160,14 @@ func (sm *ShellManager) handleShellWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleShellWS is the Runtime method registered at /api/shell/ws.
-func (h *Runtime) handleShellWS(w http.ResponseWriter, r *http.Request) {
-	h.shellMgr.handleShellWS(w, r)
+func (rt *Runtime) handleShellWS(w http.ResponseWriter, r *http.Request) {
+	rt.shellMgr.handleShellWS(w, r)
 }
 
 // handleShellRestart kills the PTY and installs a fresh one. POST because it
 // destroys running processes; the client confirms before calling it.
-func (h *Runtime) handleShellRestart(w http.ResponseWriter, _ *http.Request) {
-	h.shellMgr.restart()
+func (rt *Runtime) handleShellRestart(w http.ResponseWriter, _ *http.Request) {
+	rt.shellMgr.restart()
 	webhttp.Ok(w)
 }
 

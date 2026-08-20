@@ -59,8 +59,8 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		// The false direction is the one that matters: an unknown terminal must
 		// report not-known, because adoption logs a miss on exactly that.
 		r := newRoles(t)
-		if _, _, ok := r.Terminals.TerminalOutput("term-never-created"); ok {
-			t.Error("TerminalOutput(unknown) reported ok, want false")
+		if _, _, ok := r.Terminals.Output("term-never-created"); ok {
+			t.Error("Output(unknown) reported ok, want false")
 		}
 	})
 

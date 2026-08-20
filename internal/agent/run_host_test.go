@@ -28,7 +28,7 @@ func bufferedEvents(h *Runtime) []struct {
 		Type   string `json:"type"`
 		ChatID string `json:"chat_id"`
 	}
-	for _, e := range h.bus.hub.Buffered() {
+	for _, e := range h.bus.fanout.Buffered() {
 		var evt struct {
 			Type   string `json:"type"`
 			ChatID string `json:"chat_id"`

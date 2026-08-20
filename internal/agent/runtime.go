@@ -91,8 +91,8 @@ type lifetime struct {
 // that must outlive the request that started it. Runtime's hubContext() is the same
 // two lines; this is the copy the planes use, so a plane does not need a *Runtime to
 // ask a question about the lifetime this struct owns.
-func (lc *lifetime) derivedContext() (context.Context, context.CancelFunc) {
-	return context.WithCancel(lc.shutdownCtx)
+func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
+	return context.WithCancel(lt.shutdownCtx)
 }
 
 // TurnContext returns the context a turn runs under, plus the teardown its
@@ -119,9 +119,9 @@ func (lc *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 // subprocesses under context.WithCancel(context.WithoutCancel(ctx)) +
 // AfterFunc(shutdownCtx, cancel) for the same reason: a per-request ctx must not
 // tear down longer-lived work.
-func (lc *lifetime) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+func (lt *lifetime) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
-	stop := context.AfterFunc(lc.shutdownCtx, cancel)
+	stop := context.AfterFunc(lt.shutdownCtx, cancel)
 	return ctx, func() {
 		stop()
 		cancel()
@@ -129,13 +129,13 @@ func (lc *lifetime) TurnContext(reqCtx context.Context) (context.Context, contex
 }
 
 // InflightAdd increments the inflight counter Shutdown waits on.
-func (lc *lifetime) InflightAdd(delta int) {
-	lc.inflight.Add(delta)
+func (lt *lifetime) InflightAdd(delta int) {
+	lt.inflight.Add(delta)
 }
 
 // InflightDone decrements the inflight counter.
-func (lc *lifetime) InflightDone() {
-	lc.inflight.Done()
+func (lt *lifetime) InflightDone() {
+	lt.inflight.Done()
 }
 
 // bridges groups Runtime fields related to ACP bridge management.
@@ -154,7 +154,7 @@ type bridges struct {
 // ring, Last-Event-ID resume, keepalives, eviction) is webhttp/sse's hub;
 // vibekit layers chat-topic filtering and pending-state replay on top.
 type bus struct {
-	hub          *sse.Hub
+	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
 	// chatStatus holds each chat's last self-declared status, the one
 	// turn_state input that lives on no message and in no replay
@@ -190,6 +190,7 @@ type Runtime struct {
 	runs          *Runs
 	runRoutes     *runRoutes
 	inbound       *inbound
+	replay        *replay
 	utility       *utilityLease
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
@@ -210,10 +211,8 @@ type Runtime struct {
 	// to the pre-capability behaviour rather than failing an MCP connect.
 	secrets *secretstore.Store
 
-	// In-flight session/load replay projections (load_projection.go).
 	// Embedded ahead of the scalars below to keep govet fieldalignment happy:
 	// it carries pointers, so it must not sit after ciBusy.
-	projectionState
 
 	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
 	ciGate func() bool
@@ -344,7 +343,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		assistantBufs: buffer.NewStore(),
 	}
 	sseP := &bus{
-		hub:          sseHub,
+		fanout:       sseHub,
 		pendingPerms: newPendingPermsTracker(),
 		chatStatus:   newChatStatusCache(),
 	}
@@ -383,6 +382,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.utility = &utilityLease{build: h.buildUtility}
 	h.runRoutes = &runRoutes{runs: runs}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
+	h.replay = &replay{chats: chatStore, lifetime: lc, projections: map[vibekit.ChatID]*loadProjection{}}
 	h.coord = newBridgeCoordinator(h)
 	// The inbound ladder is built here rather than in the struct literal because
 	// two of its collaborators (coord, and the ignore matcher the configDir block
@@ -397,7 +397,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// A settled session/load replay becomes the chat's transcript. Assigned here
 	// (not in the struct literal) because it is a method value on the fully-built
 	// Runtime; see load_projection.go.
-	h.onProjection = h.swapProjectedTranscript
+	h.replay.onProjection = h.replay.swapProjectedTranscript
 	// Both planes take the LEASE's own accessor, not a Runtime method value. A
 	// thunk is still needed — the runtime is built lazily, and its build closes
 	// over two Settings hooks — but pointing it at the lease is what leaves
@@ -442,15 +442,15 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 // Its consumers declare the one-method contract themselves (internal/server and
 // internal/git); this is not used for chat titles, which come from KAS (see
 // translate/focus.go).
-func (h *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
-	return h.utility.get().textgen.UtilityPrompt(ctx, prompt, effort)
+func (rt *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
+	return rt.utility.get().textgen.UtilityPrompt(ctx, prompt, effort)
 }
 
 // MCPRegistry returns the in-memory registry of currently-connected MCP servers
 // as a RouteRegistrar — route mounting is the only surface the composition root
 // needs from it, and returning the concrete type would leak an unexported name
 // from an exported method.
-func (h *Runtime) MCPRegistry() RouteRegistrar { return h.mcpRegistry }
+func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 
 // MCPSnapshot returns a stable-ordered snapshot of the runtime registry
 // so callers outside hub (e.g. the steering generator) can read it
@@ -458,8 +458,8 @@ func (h *Runtime) MCPRegistry() RouteRegistrar { return h.mcpRegistry }
 // connected state are included: the steering file presents the list as
 // "Connected integrations", and a failed or OAuth-pending server has no
 // live tools for the agent to call.
-func (h *Runtime) MCPSnapshot() []vibekit.MCPSnapshotServer {
-	snap := h.mcpRegistry.Snapshot()
+func (rt *Runtime) MCPSnapshot() []vibekit.MCPSnapshotServer {
+	snap := rt.mcpRegistry.Snapshot()
 	out := make([]vibekit.MCPSnapshotServer, 0, len(snap))
 	for i := range snap {
 		if snap[i].State != mcpStateConnected {
@@ -474,7 +474,7 @@ func (h *Runtime) MCPSnapshot() []vibekit.MCPSnapshotServer {
 // registry changes (server connected, OAuth needed, bridges closed).
 // Used by main.go to re-run steering.Generate() so environment.md
 // tracks the live integration set.
-func (h *Runtime) SetMCPOnChange(fn func()) { h.mcpRegistry.SetOnChange(fn) }
+func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.SetOnChange(fn) }
 
 // SetPreBridgeSpawn wires a callback fired right before any kiro-cli
 // bridge starts (both fresh `session/new` and `session/load` paths in
@@ -486,26 +486,26 @@ func (h *Runtime) SetMCPOnChange(fn func()) { h.mcpRegistry.SetOnChange(fn) }
 // on client disconnection. It runs synchronously on the spawn path, so
 // it must be fast (the existing steering.Generate is bounded by the
 // workspace walk + skip-if-unchanged write — typically a few ms).
-func (h *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { h.preBridgeSpawn = fn }
+func (rt *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { rt.preBridgeSpawn = fn }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
 // /api/shell/ws (WebSocket PTY).
-func (h *Runtime) RegisterRoutes(mux *http.ServeMux) {
+func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	// Both of these refuse once Shutdown has flipped draining, and only these
 	// two: see refuseWhenDraining for why the gate is a route wrapper rather
 	// than a member of the global middleware chain.
-	mux.Handle("/api/events", h.refuseWhenDraining(http.HandlerFunc(h.handleSSE)))
-	mux.Handle("/api/command", h.refuseWhenDraining(h.dispatcher))
-	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
-	mux.HandleFunc("POST /api/shell/restart", h.handleShellRestart)
-	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
-	h.config.registerKnowledgeRoutes(mux)
-	h.config.registerHooksRoutes(mux)
-	h.config.registerGovernanceRoutes(mux)
-	h.runRoutes.register(mux)
+	mux.Handle("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE)))
+	mux.Handle("/api/command", rt.refuseWhenDraining(rt.dispatcher))
+	mux.HandleFunc("/api/shell/ws", rt.handleShellWS)
+	mux.HandleFunc("POST /api/shell/restart", rt.handleShellRestart)
+	mux.HandleFunc("/api/file-changes", rt.handleFileChanges)
+	rt.config.registerKnowledgeRoutes(mux)
+	rt.config.registerHooksRoutes(mux)
+	rt.config.registerGovernanceRoutes(mux)
+	rt.runRoutes.register(mux)
 	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).
-	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
-	mux.HandleFunc("GET /api/sessions", h.handleSessionList)
+	mux.HandleFunc("GET /api/config-template", rt.handleConfigTemplate)
+	mux.HandleFunc("GET /api/sessions", rt.handleSessionList)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges, bounded by ctx.
@@ -516,23 +516,23 @@ func (h *Runtime) RegisterRoutes(mux *http.ServeMux) {
 // ctx is the only bound on those waits, and it must be: webhttp.Run's pre-drain
 // hook, where this runs, is synchronous, so an unbounded wait spends the grace
 // the HTTP drain needed. The error names the FIRST wait to exceed the budget.
-func (h *Runtime) Shutdown(ctx context.Context) error {
-	slog.Info("hub draining")
-	h.lifecycle.draining.Store(true)
+func (rt *Runtime) Shutdown(ctx context.Context) error {
+	slog.Info("agent runtime draining")
+	rt.lifecycle.draining.Store(true)
 
 	// 0. Stop background tickers first so they can't race bridge
 	//    teardown with a late cull Stop() or session sweep under the
 	//    mutex we're about to acquire.
 	select {
-	case <-h.lifecycle.done:
+	case <-rt.lifecycle.done:
 		// already closed (re-entrant shutdown in tests)
 	default:
-		close(h.lifecycle.done)
+		close(rt.lifecycle.done)
 	}
-	h.lifecycle.shutdownCancel()
+	rt.lifecycle.shutdownCancel()
 
 	// 1. Stop every bridge so in-flight Calls unblock.
-	bridges := h.bridge.mgr.drain()
+	bridges := rt.bridge.mgr.drain()
 	for _, sb := range bridges {
 		sb.bridge.Stop()
 	}
@@ -547,40 +547,40 @@ func (h *Runtime) Shutdown(ctx context.Context) error {
 	// browser-push HTTP round-trips unblock via context cancellation
 	// rather than draining their 10s client Timeout one-by-one. The
 	// fan-out sites (bridge_buffer, bridge_fs, translate_permission)
-	// launch Send goroutines under h.lifecycle.inflight; without this step
+	// launch Send goroutines under rt.lifecycle.inflight; without this step
 	// inflight.Wait below would serialise across their full timeout
 	// budget on a wedged vendor.
-	if h.push != nil {
-		h.push.Close()
+	if rt.push != nil {
+		rt.push.Close()
 	}
 
 	// Each wait below is bounded by ctx, and an expired one is ABANDONED rather
 	// than cancelled: the process is exiting, and the runtime reclaims it.
 
 	// 2. Wait for in-flight prompt handlers to clean up.
-	teardownErr := awaitBounded(ctx, "in-flight handlers", h.lifecycle.inflight.Wait)
+	teardownErr := awaitBounded(ctx, "in-flight handlers", rt.lifecycle.inflight.Wait)
 
 	// 2b. Join the background loops New started. Step 0 signalled them; this is
 	// the wait that makes "the runtime has stopped" true of them.
 	if teardownErr == nil {
-		teardownErr = awaitBounded(ctx, "background loops", h.lifecycle.loops.Wait)
+		teardownErr = awaitBounded(ctx, "background loops", rt.lifecycle.loops.Wait)
 	}
 
 	// 3. Stop utility bridge.
-	h.stopUtilityBridge()
+	rt.stopUtilityBridge()
 
 	// 4b. Kill all agent terminal subprocesses. Their exit waiters decrement
 	// inflight, so this is instant once step 2 returned — and carries its own
 	// bound for the case where step 2 did not.
 	if teardownErr == nil {
-		teardownErr = awaitBounded(ctx, "agent terminals", h.agentTerms.drainAll)
+		teardownErr = awaitBounded(ctx, "agent terminals", rt.agentTerms.drainAll)
 	}
 
 	// 5. Tear down shell + SSE clients. These run whatever the budget did: the
 	// PTY child and the SSE clients must be told to go even when nothing is left
 	// to watch them leave with — kill signals first and only then waits on ctx.
-	h.shellMgr.kill(ctx)
-	h.bus.hub.Shutdown()
+	rt.shellMgr.kill(ctx)
+	rt.bus.fanout.Shutdown()
 	if teardownErr != nil {
 		return teardownErr
 	}
@@ -620,11 +620,11 @@ const bridgeIdleTimeout = 30 * time.Minute
 // endpoint. An app-facing forward for the same reason Broadcast is one: the latch
 // belongs to the inbound ladder that writes it, and internal/composition should
 // not have to know that to ask a readiness question.
-func (h *Runtime) AuthTokenUnavailable() bool {
-	if h.inbound == nil {
+func (rt *Runtime) AuthTokenUnavailable() bool {
+	if rt.inbound == nil {
 		return false
 	}
-	return h.inbound.AuthTokenUnavailable()
+	return rt.inbound.AuthTokenUnavailable()
 }
 
 // Broadcast sends a ServerEvent to every connected SSE client.
@@ -638,8 +638,8 @@ func (h *Runtime) AuthTokenUnavailable() bool {
 // runtime is the topology this refactor removes. Used by the
 // chat store (chat_created / chat_updated / message_* etc.) and by the runtime
 // itself for turn_ended / permission_needed / error.
-func (h *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
-	h.bus.emit(evt)
+func (rt *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+	rt.bus.emit(evt)
 }
 
 // refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
@@ -655,23 +655,15 @@ func (h *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 // true at the start of hub.Shutdown, the library's gate when srv.Shutdown begins,
 // and the window between the two is the last-instant-reconnect race. The library
 // gate remains the backstop after this one.
-func (h *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
+func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h.lifecycle.draining.Load() {
+		if rt.lifecycle.draining.Load() {
 			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				httpreply.ErrorJSON("shutting down"))
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// hubContext returns a context derived from the runtime's shutdownCtx.
-// Cancelled when Shutdown fires. Replaces the per-event goroutine
-// pattern (context.WithCancel + go select{<-h.lifecycle.done}) with a zero-
-// allocation child context.
-func (h *Runtime) hubContext() (context.Context, context.CancelFunc) {
-	return context.WithCancel(h.lifecycle.shutdownCtx)
 }
 
 // sweepSessionsInterval is how often the orphan-session sweep runs after
@@ -684,19 +676,19 @@ const sweepSessionsInterval = 1 * time.Hour
 // install — the direct Reap on chat delete handles the common case. The
 // goroutine exits immediately when the reaper is unwired (e.g. tests), and
 // on h.lifecycle.done otherwise.
-func (h *Runtime) sweepSessionsLoop() {
-	if h.sessionReaper == nil || h.sessionRefs == nil {
+func (rt *Runtime) sweepSessionsLoop() {
+	if rt.sessionReaper == nil || rt.sessionRefs == nil {
 		return
 	}
-	h.sweepSessionsOnce()
+	rt.sweepSessionsOnce()
 	ticker := time.NewTicker(sweepSessionsInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-h.lifecycle.done:
+		case <-rt.lifecycle.done:
 			return
 		case <-ticker.C:
-			h.sweepSessionsOnce()
+			rt.sweepSessionsOnce()
 		}
 	}
 }
@@ -718,10 +710,10 @@ func (h *Runtime) sweepSessionsLoop() {
 // A sweep is SKIPPED entirely when the keep-list is incomplete. Sweeping with
 // a partial list deletes the sessions of whatever chat could not be read; not
 // sweeping only postpones reclaiming disk until the next hour.
-func (h *Runtime) sweepSessionsOnce() {
-	ctx, cancel := h.hubContext()
+func (rt *Runtime) sweepSessionsOnce() {
+	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
-	refs, complete := h.sessionRefs(ctx)
+	refs, complete := rt.sessionRefs(ctx)
 	if !complete {
 		slog.Warn("kirosession: skipping orphan sweep, keep-list incomplete (a chat file could not be read)")
 		return
@@ -729,23 +721,23 @@ func (h *Runtime) sweepSessionsOnce() {
 	if refs == nil {
 		refs = map[string]struct{}{}
 	}
-	for _, id := range h.liveSessionIDs() {
+	for _, id := range rt.liveSessionIDs() {
 		refs[id] = struct{}{}
 	}
-	h.sessionReaper.Sweep(refs)
+	rt.sessionReaper.Sweep(refs)
 }
 
 // liveSessionIDs returns the ACP session id of every bridge vibekit currently
 // holds: each chat bridge plus the utility session. These are exempt from the
 // sweep at any age — a live subprocess is using the directory.
-func (h *Runtime) liveSessionIDs() []string {
+func (rt *Runtime) liveSessionIDs() []string {
 	var ids []string
-	for _, sb := range h.bridge.mgr.all() {
+	for _, sb := range rt.bridge.mgr.all() {
 		if id := string(sb.bridge.SessionID()); id != "" {
 			ids = append(ids, id)
 		}
 	}
-	if id := h.utilityLiveSessionID(); id != "" {
+	if id := rt.utilityLiveSessionID(); id != "" {
 		ids = append(ids, id)
 	}
 	return ids
@@ -759,12 +751,12 @@ func (h *Runtime) liveSessionIDs() []string {
 // session it is inspecting. It was also the goroutine on the losing side of the
 // race — it read the field under the lifetime mutex while the builder wrote it
 // under a sync.Once, which orders nothing against a reader that never builds.
-func (h *Runtime) utilityLiveSessionID() string {
-	u := h.utility.peek()
+func (rt *Runtime) utilityLiveSessionID() string {
+	u := rt.utility.peek()
 	if u == nil {
 		return ""
 	}
-	return u.session.liveSessionID()
+	return u.session.liveID()
 }
 
 // stopUtilityBridge stops the utility session if one was built.
@@ -774,8 +766,8 @@ func (h *Runtime) utilityLiveSessionID() string {
 // after the inflight wait, so an in-flight turn holds a lease on the session
 // being stopped only when that wait ran out of budget — the same degradation the
 // cull path takes, where a lease-held chunk channel just closes.
-func (h *Runtime) stopUtilityBridge() {
-	if u := h.utility.take(); u != nil {
+func (rt *Runtime) stopUtilityBridge() {
+	if u := rt.utility.take(); u != nil {
 		u.session.Stop()
 	}
 }
@@ -789,15 +781,15 @@ func (h *Runtime) stopUtilityBridge() {
 // its turn, or its runs, and closing the tab kills all of it. The utility
 // session is the one bridge with no tab to own it — it is a pool of one-shot
 // text generators — so an idle timer is the right bound there and only there.
-func (h *Runtime) cullIdleUtilityBridge() {
+func (rt *Runtime) cullIdleUtilityBridge() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-h.lifecycle.done:
+		case <-rt.lifecycle.done:
 			return
 		case <-ticker.C:
-			h.cullIdleUtilityBridgeOnce()
+			rt.cullIdleUtilityBridgeOnce()
 		}
 	}
 }
@@ -809,8 +801,8 @@ func (h *Runtime) cullIdleUtilityBridge() {
 // sweep that BUILT a utility bridge in order to check whether one was idle would
 // be creating work forever. Lowercase rather than inlined so the sweep is
 // testable without driving a real ticker.
-func (h *Runtime) cullIdleUtilityBridgeOnce() {
-	u := h.utility.peek()
+func (rt *Runtime) cullIdleUtilityBridgeOnce() {
+	u := rt.utility.peek()
 	if u != nil && u.session.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {
 		slog.Info("culled idle utility bridge")
 	}

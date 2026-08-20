@@ -46,6 +46,35 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// replay owns the session/load transcript projection: the in-flight rebuild of a
+// chat's history from KAS's own replay, and the swap that makes it the record.
+//
+// The cleanest extraction left on the Runtime, and the reason is the direction.
+// Three of its four fields are exclusively its own (projMu, projections,
+// onProjection), its only outward reach is the chat store and the process
+// lifetime, and just two callers reach in — the translator with a frame, and the
+// constructor installing the settle hook. Nothing here calls back.
+//
+// The coordinator consumes it through the in-package replayProjector interface,
+// which has no external consumer, so the seam moved with no signature change
+// anywhere.
+type replay struct {
+	// chats is where a settled projection lands. It needs Mutate, not just Get,
+	// so it takes the translator's 3-method contract rather than the run
+	// surface's read-only one.
+	chats translate.ChatRecords
+	// lifetime supplies the context the swap runs under, since a settle outlives
+	// the frame that triggered it.
+	lifetime *lifetime
+	// projections are the rebuilds in flight, keyed by chat.
+	projections map[vibekit.ChatID]*loadProjection
+	// onProjection receives a settled transcript. Called WITHOUT projMu held: the
+	// swap writes the chat store, and holding the projection lock across that
+	// would let a store mutation and a replay frame deadlock against each other.
+	onProjection func(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string)
+	projMu       sync.Mutex
+}
+
 // loadProjection is one in-flight session/load's accumulating transcript.
 // Guarded by Runtime.projMu; the fields are not independently safe.
 type loadProjection struct {
@@ -60,35 +89,35 @@ type loadProjection struct {
 // OpenReplayProjection starts a projection for a chat about to session/load.
 // A projection already open for that chat is discarded: the only way to reach
 // this twice is a re-load (model-switch fallback), whose replay supersedes.
-func (h *Runtime) OpenReplayProjection(chatID vibekit.ChatID) {
-	h.projMu.Lock()
-	defer h.projMu.Unlock()
-	if h.projections == nil {
-		h.projections = make(map[vibekit.ChatID]*loadProjection)
+func (rp *replay) OpenReplayProjection(chatID vibekit.ChatID) {
+	rp.projMu.Lock()
+	defer rp.projMu.Unlock()
+	if rp.projections == nil {
+		rp.projections = make(map[vibekit.ChatID]*loadProjection)
 	}
-	if _, dup := h.projections[chatID]; dup {
+	if _, dup := rp.projections[chatID]; dup {
 		slog.Debug("replay projection: superseding an open one", "chat_id", chatID)
 	}
-	h.projections[chatID] = &loadProjection{proj: translate.NewProjection(newMessageID)}
+	rp.projections[chatID] = &loadProjection{proj: translate.NewProjection(newMessageID)}
 }
 
 // MarkReplayLoadDone records that the session/load RPC has returned, which is
 // half of the settle condition. Called from the spawn goroutine.
-func (h *Runtime) MarkReplayLoadDone(chatID vibekit.ChatID) {
-	h.projMu.Lock()
-	defer h.projMu.Unlock()
-	if lp := h.projections[chatID]; lp != nil {
+func (rp *replay) MarkReplayLoadDone(chatID vibekit.ChatID) {
+	rp.projMu.Lock()
+	defer rp.projMu.Unlock()
+	if lp := rp.projections[chatID]; lp != nil {
 		lp.loadDone = true
 	}
 }
 
 // DiscardReplayProjection drops a chat's projection unsettled. Used when the
 // load failed, so a half-built transcript cannot be adopted later.
-func (h *Runtime) DiscardReplayProjection(chatID vibekit.ChatID) {
-	h.projMu.Lock()
-	defer h.projMu.Unlock()
-	if _, open := h.projections[chatID]; open {
-		delete(h.projections, chatID)
+func (rp *replay) DiscardReplayProjection(chatID vibekit.ChatID) {
+	rp.projMu.Lock()
+	defer rp.projMu.Unlock()
+	if _, open := rp.projections[chatID]; open {
+		delete(rp.projections, chatID)
 		slog.Debug("replay projection: discarded", "chat_id", chatID)
 	}
 }
@@ -96,10 +125,10 @@ func (h *Runtime) DiscardReplayProjection(chatID vibekit.ChatID) {
 // ingestReplayFrame folds one replay-tagged frame into the chat's open
 // projection. Reports whether a projection consumed it, so the caller can fall
 // back to dropping when a replay arrives with no load in flight.
-func (h *Runtime) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdateKind, raw json.RawMessage) bool {
-	h.projMu.Lock()
-	defer h.projMu.Unlock()
-	lp := h.projections[chatID]
+func (rp *replay) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdateKind, raw json.RawMessage) bool {
+	rp.projMu.Lock()
+	defer rp.projMu.Unlock()
+	lp := rp.projections[chatID]
 	if lp == nil {
 		return false
 	}
@@ -115,15 +144,15 @@ func (h *Runtime) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdat
 // of the channel depth, for the bridge-exit call.
 //
 // It is a no-op when no projection is open, so callers may call it per frame.
-func (h *Runtime) SettleReplayProjection(chatID vibekit.ChatID, buffered int, force bool) {
-	h.projMu.Lock()
-	lp := h.projections[chatID]
+func (rp *replay) SettleReplayProjection(chatID vibekit.ChatID, buffered int, force bool) {
+	rp.projMu.Lock()
+	lp := rp.projections[chatID]
 	if lp == nil || !lp.loadDone || (buffered > 0 && !force) {
-		h.projMu.Unlock()
+		rp.projMu.Unlock()
 		return
 	}
-	delete(h.projections, chatID)
-	h.projMu.Unlock()
+	delete(rp.projections, chatID)
+	rp.projMu.Unlock()
 
 	msgs := lp.proj.Messages()
 	slog.Info("replay projection settled",
@@ -133,8 +162,8 @@ func (h *Runtime) SettleReplayProjection(chatID vibekit.ChatID, buffered int, fo
 		"watermark", lp.proj.Watermark,
 		"forced", force)
 
-	if h.onProjection != nil {
-		h.onProjection(chatID, msgs, lp.proj.Watermark)
+	if rp.onProjection != nil {
+		rp.onProjection(chatID, msgs, lp.proj.Watermark)
 	}
 }
 
@@ -151,9 +180,9 @@ func (h *Runtime) SettleReplayProjection(chatID vibekit.ChatID, buffered int, fo
 // Connected clients that are looking at a stale copy of a chat they did not
 // touch will not see the correction until they refetch, which is the same
 // window the gap/refetch path already covers.
-func (h *Runtime) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string) {
+func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string) {
 	var before, after int
-	err := h.chatStore.Mutate(h.lifecycle.shutdownCtx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	err := rp.chats.Mutate(rp.lifetime.shutdownCtx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -178,20 +207,6 @@ func (h *Runtime) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.
 	// seeing: it means the replay covered turns the record no longer holds.
 	slog.Info("replay projection: transcript swapped",
 		"chat_id", chatID, "was", before, "now", after, "projected", len(msgs))
-}
-
-// projectionState is the Runtime state behind the calls above. Embedded rather than
-// spread across Runtime's field list so the mutex cannot drift from what it guards.
-// Field order is govet fieldalignment's: the pointer-bearing fields first, the
-// pointer-free mutex last.
-type projectionState struct {
-	projections map[vibekit.ChatID]*loadProjection
-	// onProjection receives a settled transcript. Nil until the swap lands, so
-	// today a settle only logs. Called WITHOUT projMu held: the swap writes the
-	// chat store, and holding the projection lock across that would let a store
-	// mutation and a replay frame deadlock against each other.
-	onProjection func(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string)
-	projMu       sync.Mutex
 }
 
 // mergeProjection decides the transcript to persist after a replay: the

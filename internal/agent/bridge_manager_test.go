@@ -21,8 +21,8 @@ func newTestBridgeManager() *bridgeManager {
 // given one: a mismatch is a no-op, a match removes and reports true.
 func TestBridgeManager_RemoveIfSame(t *testing.T) {
 	bm := newTestBridgeManager()
-	sb1, _ := bm.getOrInsert("c1")
-	sb2, _ := bm.getOrInsert("c2")
+	sb1, _ := bm.orInsert("c1")
+	sb2, _ := bm.orInsert("c2")
 
 	// Mismatch must NOT remove and must return false.
 	if removed := bm.removeIfSame("c1", sb2); removed {
@@ -45,7 +45,7 @@ func TestBridgeManager_RemoveIfSame(t *testing.T) {
 // matches the given one.
 func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 	bm := newTestBridgeManager()
-	sb, _ := bm.getOrInsert("c1")
+	sb, _ := bm.orInsert("c1")
 	stored := sb.bridge
 	other := newFakeBridge()
 
@@ -72,7 +72,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 	// Pre-populate with some bridges so "exists" path is exercised.
 	for i := range 100 {
-		sb, existed := bm.getOrInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i)))
+		sb, existed := bm.orInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i)))
 		if !existed {
 			sb.state = bridgeIdle
 		}
@@ -82,7 +82,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {
-				bm.getOrInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i%100)))
+				bm.orInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i%100)))
 				i++
 			}
 		})
@@ -101,7 +101,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 				id := fmt.Sprintf("new-%d", counter)
 				mu.Unlock()
 
-				sb, existed := bm2.getOrInsert(vibekit.ChatID(id))
+				sb, existed := bm2.orInsert(vibekit.ChatID(id))
 				if !existed {
 					sb.state = bridgeIdle
 				}

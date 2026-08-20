@@ -38,9 +38,9 @@ const codeIntelInitBudget = 2 * time.Minute
 // workspace's .kiro/settings/lsp.json, gate reports whether any
 // lsp-marked tool is enabled and installed. Called once at composition;
 // both empty/nil in tests that don't exercise activation.
-func (h *Runtime) SetCodeIntelligence(lspConfigPath string, gate func() bool) {
-	h.ciPath = lspConfigPath
-	h.ciGate = gate
+func (rt *Runtime) SetCodeIntelligence(lspConfigPath string, gate func() bool) {
+	rt.ciPath = lspConfigPath
+	rt.ciGate = gate
 }
 
 // EnsureCodeIntelligence initializes workspace code intelligence when
@@ -49,27 +49,27 @@ func (h *Runtime) SetCodeIntelligence(lspConfigPath string, gate func() bool) {
 // that re-arms on failure so a transient error retries on the next
 // trigger. Never blocks the caller beyond the stat + gate check when
 // nothing is to do.
-func (h *Runtime) EnsureCodeIntelligence(ctx context.Context) {
-	if h.ciPath == "" || h.ciGate == nil {
+func (rt *Runtime) EnsureCodeIntelligence(ctx context.Context) {
+	if rt.ciPath == "" || rt.ciGate == nil {
 		return // not wired (tests, or activation disabled)
 	}
-	if _, err := os.Stat(h.ciPath); err == nil {
+	if _, err := os.Stat(rt.ciPath); err == nil {
 		return // workspace already initialized
 	}
-	if !h.ciGate() {
+	if !rt.ciGate() {
 		return // no enabled+installed language server: init would find nothing
 	}
-	if !h.ciBusy.CompareAndSwap(false, true) {
+	if !rt.ciBusy.CompareAndSwap(false, true) {
 		return // an init is already in flight
 	}
-	defer h.ciBusy.Store(false)
+	defer rt.ciBusy.Store(false)
 	ctx, cancel := context.WithTimeout(ctx, codeIntelInitBudget)
 	defer cancel()
-	msg, err := h.utility.get().session.codeIntelligenceInit(ctx)
+	msg, err := rt.utility.get().session.codeIntelligenceInit(ctx)
 	if err != nil {
 		slog.Warn("code intelligence init failed; will retry on the next trigger",
 			"error", err)
 		return
 	}
-	slog.Info("code intelligence initialized", "detail", msg, "config", h.ciPath)
+	slog.Info("code intelligence initialized", "detail", msg, "config", rt.ciPath)
 }

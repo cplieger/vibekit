@@ -143,8 +143,8 @@ func (t *pendingPermsTracker) List(chatFilter vibekit.ChatID) []vibekit.ServerEv
 
 // ClearPendingPermsForChat drops every unresolved permission_needed entry owned
 // by chatID.
-func (s *bus) ClearPendingPermsForChat(chatID vibekit.ChatID) {
-	s.pendingPerms.ClearForChat(chatID)
+func (b *bus) ClearPendingPermsForChat(chatID vibekit.ChatID) {
+	b.pendingPerms.ClearForChat(chatID)
 }
 
 // TakePendingPerm claims an unanswered decision so exactly one surface can
@@ -163,8 +163,8 @@ func (s *bus) ClearPendingPermsForChat(chatID vibekit.ChatID) {
 // ("this request is now settled") told to two audiences, and splitting them
 // would let a new answer path claim a request while leaving every other surface
 // showing a live card for it.
-func (s *bus) TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool {
-	evt, ok := s.pendingPerms.TakeIfPresent(requestID)
+func (b *bus) TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool {
+	evt, ok := b.pendingPerms.TakeIfPresent(requestID)
 	if !ok {
 		return false
 	}
@@ -178,7 +178,7 @@ func (s *bus) TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool
 			"type", evt.Type, "request_id", requestID)
 		return true
 	}
-	s.emit(vibekit.NewEvent(vibekit.EventDecisionSettled, evt.ChatID, vibekit.DecisionSettledPayload{
+	b.emit(vibekit.NewEvent(vibekit.EventDecisionSettled, evt.ChatID, vibekit.DecisionSettledPayload{
 		RequestID: requestID,
 		Kind:      kind,
 		SettledBy: settledBy,

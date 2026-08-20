@@ -50,4 +50,4 @@ func newSettings(lc *lifetime, broadcast func(context.Context, vibekit.ServerEve
 // the caller only forwards it on.
 //
 //nolint:revive // unexported-return: the type is package-internal on purpose and
-func (h *Runtime) Config() *Settings { return h.config }
+func (rt *Runtime) Config() *Settings { return rt.config }

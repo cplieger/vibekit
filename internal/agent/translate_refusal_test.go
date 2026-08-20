@@ -140,7 +140,7 @@ func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
 // the wrong reason.
 func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
-	ctx, cancel := h.hubContext()
+	ctx, cancel := h.lifecycle.derivedContext()
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		t.Fatalf("a fresh runtime's context is already done (%v); the refusal tests would be vacuous", err)

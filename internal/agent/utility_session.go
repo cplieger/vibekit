@@ -58,8 +58,8 @@ type utilityRuntime struct {
 }
 
 // newUtilityRuntime wires a session and its agent.
-func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
-	session := newUtilitySession(shutdownCtx, factory, hubModels, hooks, secrets, enableHooks)
+func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
+	session := newUtilitySession(shutdownCtx, factory, models, hooks, secrets, enableHooks)
 	return &utilityRuntime{session: session, textgen: newUtilityAgent(session)}
 }
 
@@ -92,7 +92,7 @@ type utilitySession struct {
 	// must outlive it.
 	shutdownCtx   context.Context
 	bridgeFactory ACPBridgeFactory
-	hubModels     func() []vibekit.SessionModel
+	models        func() []vibekit.SessionModel
 	// secrets is the runtime's credential store, shared not copied, so a
 	// registration obtained on any bridge is visible from every other one.
 	// Nil when the runtime has no configDir; see bridge_v3_secret.go.
@@ -122,11 +122,11 @@ type utilitySession struct {
 //
 // shutdownCtx is required, positionally: it is the session's lifetime, and every
 // default for a lifetime is a lifetime nothing can cancel.
-func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
+func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,
 		bridgeFactory: factory,
-		hubModels:     hubModels,
+		models:        models,
 		secrets:       secrets,
 		hooks:         hooks,
 		enableHooks:   enableHooks,
@@ -170,7 +170,7 @@ func (us *utilitySession) ensureStarted(ctx context.Context) error {
 // startLocked spawns a fresh subprocess + session. Caller holds us.mu.
 func (us *utilitySession) startLocked(ctx context.Context) error {
 	bridge := us.bridgeFactory()
-	model := cheapestModel(ctx, us.hubModels())
+	model := cheapestModel(ctx, us.models())
 
 	// The forward goroutine must be draining NotifCh BEFORE Start: on v3
 	// (KAS) session/new blocks until the host answers the
@@ -273,12 +273,12 @@ func (us *utilitySession) stopIfIdle(cutoff time.Time) bool {
 	return shouldStop
 }
 
-// liveSessionID returns the ACP session id of the running session, or ""
+// liveID returns the ACP session id of the running session, or ""
 // when stopped. Used by the runtime's orphan-session sweep to exempt the live
 // utility session's on-disk KAS state: it is referenced by no chat, so
 // without this the hourly sweep could delete the session dir out from
 // under the live subprocess once it idles past the reaper's age guard.
-func (us *utilitySession) liveSessionID() string {
+func (us *utilitySession) liveID() string {
 	us.mu.Lock()
 	defer us.mu.Unlock()
 	if !us.started {

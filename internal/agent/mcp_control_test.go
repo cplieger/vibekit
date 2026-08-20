@@ -20,7 +20,7 @@ import (
 // insertLiveBridge inserts a live bridge for chatID and returns its fake.
 func insertLiveBridge(t *testing.T, h *Runtime, chatID vibekit.ChatID) *fakeBridge {
 	t.Helper()
-	sb, _ := h.bridge.mgr.getOrInsert(chatID)
+	sb, _ := h.bridge.mgr.orInsert(chatID)
 	fb, ok := sb.bridge.(*fakeBridge)
 	if !ok {
 		t.Fatalf("bridge is %T, want *fakeBridge", sb.bridge)

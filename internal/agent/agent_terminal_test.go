@@ -229,7 +229,7 @@ type ringEvent struct {
 func captureTerminalEvents(t *testing.T, h *Runtime) []ringEvent {
 	t.Helper()
 	var out []ringEvent
-	for _, e := range h.bus.hub.Buffered() {
+	for _, e := range h.bus.fanout.Buffered() {
 		var env struct {
 			Type    string `json:"type"`
 			Payload struct {
@@ -455,7 +455,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 			data = data[:512] // keep this iteration's emits under the 1024-event ring cap
 		}
 		chunkSize := int(chunkRaw)%8 + 1
-		_, preSeq := h.bus.hub.Bounds()
+		_, preSeq := h.bus.fanout.Bounds()
 		term := newAgentTerminal(nil, "c1", 1<<20)
 		h.agentTerms.pumpOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
 
