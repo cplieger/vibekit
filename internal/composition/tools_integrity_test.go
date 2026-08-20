@@ -152,7 +152,6 @@ func mkdirMode(t *testing.T, path string, mode os.FileMode) {
 // The condition is persistent-volume state this process neither created nor may
 // repair, and the container is the operator's only way in to fix it -- so
 // aborting here would strand a box that a chmod from inside would have healed.
-// See the vibekit steering doc's invariant 6.
 func TestBuildToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 	tests := map[string]struct {
 		// plant introduces the defect and returns the paths the check must

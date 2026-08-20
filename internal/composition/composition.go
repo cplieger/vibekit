@@ -742,9 +742,9 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 // Degraded, not dead, because an unfit root is persistent-volume state this
 // process neither created nor may repair (the check reports only, deliberately),
 // and refusing to boot on it would take away the only way IN to fix it: the
-// operator reaches /config through this container. See the vibekit steering doc's
-// invariant 6 — the entrypoint aborts on ONE condition, a /config that is absent
-// or unwritable, and everything else warns and continues.
+// operator reaches /config through this container. The entrypoint aborts on ONE
+// condition, a /config that is absent or unwritable, and everything else warns
+// and continues.
 func toolsEngineFailure(err error) error {
 	if !errors.Is(err, toolbelt.ErrRootIntegrity) {
 		return fmt.Errorf("tools engine: %w", err)
