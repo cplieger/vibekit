@@ -2,6 +2,7 @@ package buffer
 
 import (
 	"container/heap"
+	"slices"
 	"strings"
 	"sync"
 
@@ -126,6 +127,14 @@ func (lt *LineTracker) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.To
 }
 
 // Get returns the line ranges for a file in a chat.
+//
+// A COPY, for the same reason Snapshot clones its three slices: the production
+// caller is an HTTP handler (agent/line_tracker.go) that reads the result after
+// this returns and drops the read lock, while the dispatch loop keeps calling
+// Record on the same key. Handing out the tracker's own slice made the handler's
+// read depend on Record's growth pattern — today's appends only ever write at or
+// past the returned length, so nothing overlapped, but that is a property of the
+// current eviction code rather than of this contract.
 func (lt *LineTracker) Get(chatID vibekit.ChatID, filePath string) []LineRange {
 	lt.mu.RLock()
 	defer lt.mu.RUnlock()
@@ -133,7 +142,7 @@ func (lt *LineTracker) Get(chatID vibekit.ChatID, filePath string) []LineRange {
 	if state == nil {
 		return nil
 	}
-	return state.ranges[filePath]
+	return slices.Clone(state.ranges[filePath])
 }
 
 // Clear removes all tracking data for a chat.
