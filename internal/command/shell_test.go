@@ -205,8 +205,6 @@ func (fakeBusyBridge) BeginPromptCall(context.CancelFunc) uint64        { return
 func (fakeBusyBridge) EndPromptCall()                                   {}
 func (fakeBusyBridge) PromptGeneration() uint64                         { return 0 }
 func (fakeBusyBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
-func (fakeBusyBridge) IsPrimed() bool                                   { return true }
-func (fakeBusyBridge) SetPrimed()                                       {}
 
 // busyGuardDeps overrides GetBridge on the bench stub to hand back a
 // bridge whose turn lock is already held.

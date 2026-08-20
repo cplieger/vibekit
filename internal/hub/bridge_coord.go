@@ -570,9 +570,23 @@ func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 	}
 }
 
-// PrimeIfNeeded sends the chat history as an ephemeral priming prompt on
-// the current bridge.
-func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge) {
+// PrimeIfNeeded sends the chat history as an ephemeral priming prompt on the
+// current bridge, unless this session already has it.
+//
+// The primed flag is claimed HERE rather than by the caller. It used to be the
+// prompt handler's three-step check-then-set-then-prime over a Bridge interface,
+// which put the decision in the command package and forced the hub to assert the
+// interface back down to *sharedBridge on the way in. Claiming it here means one
+// owner for the flag and no assertion: a chat with no bridge is simply nothing
+// to prime.
+func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID) {
+	sb := bc.bridge.mgr.get(chatID)
+	if sb == nil {
+		return
+	}
+	if !sb.claimPriming() {
+		return
+	}
 	// Preambles live in translate (PrimePreamble*) because the focus-title
 	// derivation filter must recognise a title KAS derives from this prime
 	// text — one definition keeps the filter and the prime in lockstep.

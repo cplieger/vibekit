@@ -31,7 +31,7 @@ func TestTurnContext_SurvivesRequestCancel(t *testing.T) {
 	defer cancelLifetime()
 
 	reqCtx, reqCancel := context.WithCancel(t.Context())
-	turnCtx, cleanup := h.TurnContext(reqCtx)
+	turnCtx, cleanup := h.lifecycle.TurnContext(reqCtx)
 	defer cleanup()
 
 	// Simulate a mid-turn client disconnect.
@@ -53,7 +53,7 @@ func TestTurnContext_SurvivesRequestCancel(t *testing.T) {
 func TestTurnContext_CancelsOnShutdown(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	turnCtx, cleanup := h.TurnContext(t.Context())
+	turnCtx, cleanup := h.lifecycle.TurnContext(t.Context())
 	defer cleanup()
 
 	shutdownHub(t, h)
@@ -72,7 +72,7 @@ func TestTurnContext_CancelsOnShutdown(t *testing.T) {
 func TestTurnContext_CancelsOnAppLifetimeEnd(t *testing.T) {
 	h, cancelLifetime := hubOnLifetime(t)
 
-	turnCtx, cleanup := h.TurnContext(t.Context())
+	turnCtx, cleanup := h.lifecycle.TurnContext(t.Context())
 	defer cleanup()
 
 	cancelLifetime()
@@ -92,7 +92,7 @@ func TestTurnContext_CleanupCancels(t *testing.T) {
 	h, cancelLifetime := hubOnLifetime(t)
 	defer cancelLifetime()
 
-	turnCtx, cleanup := h.TurnContext(t.Context())
+	turnCtx, cleanup := h.lifecycle.TurnContext(t.Context())
 	cleanup()
 	select {
 	case <-turnCtx.Done():
@@ -111,7 +111,7 @@ func TestTurnContext_PreservesValues(t *testing.T) {
 	const k ctxKey = "trace-id"
 	reqCtx := context.WithValue(t.Context(), k, "abc123")
 
-	turnCtx, cleanup := h.TurnContext(reqCtx)
+	turnCtx, cleanup := h.lifecycle.TurnContext(reqCtx)
 	defer cleanup()
 
 	if got := turnCtx.Value(k); got != "abc123" {

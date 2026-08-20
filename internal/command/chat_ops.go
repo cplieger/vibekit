@@ -96,7 +96,7 @@ func CmdCancel(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess, ter
 	// the command running, owned by nobody, streaming into a turn that no
 	// longer existed. Scoped to the turn's own terminals; a background command
 	// an earlier turn started on purpose is not this gesture's to kill.
-	terms.KillTurnTerminals(cmd.ChatID)
+	terms.KillForTurn(cmd.ChatID)
 
 	sb := bridges.GetBridge(cmd.ChatID)
 	if sb == nil {

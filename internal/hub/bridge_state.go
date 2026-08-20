@@ -178,14 +178,16 @@ func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelFunc, b
 	return sb.promptCancel, true
 }
 
-func (sb *sharedBridge) IsPrimed() bool {
+// claimPriming reports whether the caller won the right to prime this session,
+// setting the flag if so. Test-and-set under one lock: the two separate
+// IsPrimed/SetPrimed methods this replaced were called back to back by the one
+// consumer, so the gap between them was a window with no purpose.
+func (sb *sharedBridge) claimPriming() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	return sb.primed
-}
-
-func (sb *sharedBridge) SetPrimed() {
-	sb.mu.Lock()
+	if sb.primed {
+		return false
+	}
 	sb.primed = true
-	sb.mu.Unlock()
+	return true
 }

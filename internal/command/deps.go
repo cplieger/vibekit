@@ -90,24 +90,20 @@ type promptSlot interface {
 	PromptGeneration() uint64
 }
 
-// bridgePriming is whether this bridge's session has already been given the
-// chat's transcript. 2 of 12, read and written only by the prompt path.
-type bridgePriming interface {
-	// IsPrimed reports whether the bridge has been primed.
-	IsPrimed() bool
-	// SetPrimed marks the bridge as primed.
-	SetPrimed()
-}
-
-// Bridge is the per-chat ACP bridge as a whole: all 12 methods, composed from
-// the three seams above. Only a handler that owns a chat for the length of a
-// turn needs it — the helpers take a narrower parameter.
+// Bridge is the per-chat ACP bridge as a whole: all 10 methods, composed from
+// the two seams above. Only a handler that owns a chat for the length of a turn
+// needs it — the helpers take a narrower parameter.
+//
+// Priming is deliberately NOT here. It used to carry IsPrimed and SetPrimed so
+// the prompt path could run check-then-set-then-prime itself, which meant this
+// package decided when a session gets its transcript — a bridge-lifecycle
+// question it has no other stake in, and one PrimeIfNeeded's own name already
+// claims to answer.
 //
 // Exported because BridgeAccess returns it and hub's dispatcher wiring names it.
 type Bridge interface {
 	bridgeRPC
 	promptSlot
-	bridgePriming
 }
 
 // BridgeAccess provides bridge lifecycle operations needed by prompt,
@@ -116,7 +112,13 @@ type BridgeAccess interface {
 	GetBridge(chatID vibekit.ChatID) Bridge
 	GetOrCreateBridge(ctx context.Context, chatID vibekit.ChatID, model string) (Bridge, error)
 	CloseBridge(chatID vibekit.ChatID)
-	PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID, b Bridge)
+	// PrimeIfNeeded gives the chat's current session its transcript, if that
+	// session has not had it yet. It takes no Bridge: it looks the bridge up
+	// itself, which is what lets the whole primed-or-not decision live in one
+	// place. Passing one back in forced a type assertion on the far side (the
+	// concrete bridge round-tripping through this interface) whose failure branch
+	// could only log.
+	PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID)
 	// PrimeFromChat notes that chatID's FIRST session should be primed with
 	// another chat's transcript. The tangent's fallback (command/fork.go): a
 	// refused session/fork leaves the new chat with no inherited session, so the
@@ -212,7 +214,7 @@ type TerminalAccess interface {
 	// KillTurnTerminals kills the terminals the chat's CURRENT turn created,
 	// and nothing else — a background command an earlier turn left running
 	// on purpose is not the cancel's to kill.
-	KillTurnTerminals(chatID vibekit.ChatID)
+	KillForTurn(chatID vibekit.ChatID)
 }
 
 // Workspace carries the two paths handlers resolve against: the hook writer and
@@ -260,7 +262,7 @@ type LifecycleAccess interface {
 // MCPAccess is the MCP readiness gate a prompt waits on, so a first turn does
 // not reach the model before the workspace's MCP servers have connected.
 type MCPAccess interface {
-	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
+	WaitForReady(ctx context.Context, timeout time.Duration) bool
 }
 
 // TurnStats is a finished turn's two measurements.

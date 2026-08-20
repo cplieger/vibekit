@@ -304,14 +304,12 @@ func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.Re
 	roles.lifecycle.InflightAdd(1)
 	defer roles.lifecycle.InflightDone()
 
-	// 3. Prime with history if the bridge needs it.
-	if !sb.IsPrimed() {
-		sb.SetPrimed()
-		roles.bridges.PrimeIfNeeded(ctx, cmd.ChatID, sb)
-	}
+	// 3. Prime with history if this session has not had it yet. The "if needed"
+	// is the callee's: it owns the flag.
+	roles.bridges.PrimeIfNeeded(ctx, cmd.ChatID)
 
 	// 4. Send the prompt to kiro-cli.
-	if !roles.mcp.MCPWaitForReady(ctx, 30*time.Second) {
+	if !roles.mcp.WaitForReady(ctx, 30*time.Second) {
 		slog.Warn("MCP readiness timeout, proceeding anyway", "chat_id", cmd.ChatID)
 	}
 	var creditsBeforeTurn float64

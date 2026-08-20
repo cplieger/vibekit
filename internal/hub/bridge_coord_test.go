@@ -208,7 +208,7 @@ func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
 	sb.primeReason = primeReasonSwitch
 
 	logs := captureLogs(t)
-	h.coord.PrimeIfNeeded(ctx, "c1", sb)
+	h.coord.PrimeIfNeeded(ctx, "c1")
 	if got := logs.String(); strings.Contains(got, "prime failed") {
 		t.Errorf("unexpected error log on prime success: %s", got)
 	}

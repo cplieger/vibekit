@@ -34,7 +34,7 @@ func TestPrimeIfNeeded_NoneIsNoOp(t *testing.T) {
 	before := append([]string(nil), br.calls...)
 	br.mu.Unlock()
 
-	h.coord.PrimeIfNeeded(t.Context(), "c1", sb)
+	h.coord.PrimeIfNeeded(t.Context(), "c1")
 
 	br.mu.Lock()
 	after := append([]string(nil), br.calls...)
@@ -61,7 +61,7 @@ func TestPrimeIfNeeded_SwitchSendsPromptWithHistory(t *testing.T) {
 	}
 	sb.primeReason = primeReasonSwitch
 
-	h.coord.PrimeIfNeeded(t.Context(), "c1", sb)
+	h.coord.PrimeIfNeeded(t.Context(), "c1")
 
 	br.mu.Lock()
 	calls := append([]string(nil), br.calls...)
@@ -88,7 +88,7 @@ func TestPrimeIfNeeded_EmptyHistoryEarlyReturn(t *testing.T) {
 	before := len(br.calls)
 	br.mu.Unlock()
 
-	h.coord.PrimeIfNeeded(t.Context(), "c1", sb)
+	h.coord.PrimeIfNeeded(t.Context(), "c1")
 
 	br.mu.Lock()
 	after := len(br.calls)
@@ -155,7 +155,7 @@ func TestPrimeIfNeeded_ForkPrimesFromTheParentChat(t *testing.T) {
 	sb.primeReason = primeReasonFork
 	sb.primeFrom = "c-parent"
 
-	h.coord.PrimeIfNeeded(t.Context(), "c-tangent", sb)
+	h.coord.PrimeIfNeeded(t.Context(), "c-tangent")
 
 	text := promptText(t, br)
 	if !strings.HasPrefix(text, translate.PrimePreambleTangent) {
@@ -184,7 +184,7 @@ func TestPrimeIfNeeded_ForkWithoutASourceReadsItsOwnChat(t *testing.T) {
 	sb.primeReason = primeReasonFork
 	sb.primeFrom = ""
 
-	h.coord.PrimeIfNeeded(t.Context(), "c1", sb)
+	h.coord.PrimeIfNeeded(t.Context(), "c1")
 
 	if text := promptText(t, br); !strings.Contains(text, "its own history") {
 		t.Errorf("prime did not read the bridge's own chat; got %.200q", text)

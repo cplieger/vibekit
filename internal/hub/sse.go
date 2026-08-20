@@ -22,21 +22,21 @@ import (
 // buffer already holds the turn and now snapshots it (buffer.Buffer.Snapshot),
 // so the only thing left to record here is the status, which lives on no
 // message and in no replay.
-func (h *Hub) emit(evt vibekit.ServerEvent) {
+func (s *ssePlane) emit(evt vibekit.ServerEvent) {
 	switch evt.Type {
 	case vibekit.EventChatStatus:
 		if p, ok := evt.Payload.(vibekit.ChatStatusPayload); ok {
-			h.sse.chatStatus.Set(evt.ChatID, p)
+			s.chatStatus.Set(evt.ChatID, p)
 		}
 	case vibekit.EventTurnEnded:
-		h.sse.chatStatus.Clear(evt.ChatID)
+		s.chatStatus.Clear(evt.ChatID)
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
 		slog.Error("emit marshal", "type", evt.Type, "error", err)
 		return
 	}
-	h.sse.hub.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
+	s.hub.Publish(sse.Event{Topic: string(evt.ChatID), Data: data})
 }
 
 // handleSSE is the /api/events handler: opens a long-lived server-sent

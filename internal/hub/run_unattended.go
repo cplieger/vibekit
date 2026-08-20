@@ -154,7 +154,7 @@ func (h *Hub) answerUnattendedPermission(chatID vibekit.ChatID, requestID int64,
 	// Taking it also retires the entry, so nothing below has to, and announces
 	// the answer as the MACHINE's: a card collapsing under a reader who was
 	// deciding must say that a deadline answered it, and which way.
-	if !h.TakePendingPerm(requestID, vibekit.SettledByUnattended) {
+	if !h.sse.TakePendingPerm(requestID, vibekit.SettledByUnattended) {
 		return
 	}
 	// A FIXED message with the outcome as a field, not a message built from the

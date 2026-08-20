@@ -71,7 +71,7 @@ func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 			_, head := h.replayBounds()
 			h.sse.pendingPerms.Add(9, vibekit.NewEvent(tc.event, "c1", vibekit.PermissionNeededPayload{RequestID: 9}))
 
-			if !h.TakePendingPerm(9, tc.settledBy) {
+			if !h.sse.TakePendingPerm(9, tc.settledBy) {
 				t.Fatal("TakePendingPerm refused a pending request")
 			}
 
@@ -94,12 +94,12 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.sse.pendingPerms.Add(9, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
 		vibekit.PermissionNeededPayload{RequestID: 9}))
-	if !h.TakePendingPerm(9, vibekit.SettledByUser) {
+	if !h.sse.TakePendingPerm(9, vibekit.SettledByUser) {
 		t.Fatal("first claim refused")
 	}
 
 	_, head := h.replayBounds()
-	if h.TakePendingPerm(9, vibekit.SettledByUser) {
+	if h.sse.TakePendingPerm(9, vibekit.SettledByUser) {
 		t.Error("second claim on one request id succeeded, want refused")
 	}
 	if got := settledEvents(t, bufferedSince(h, head)); len(got) != 0 {

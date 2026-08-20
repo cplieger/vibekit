@@ -21,7 +21,7 @@ import (
 // paths. There is no staging queue to flush and no per-turn trust to clear —
 // both went with internal/pending.
 func (h *Hub) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
-	h.clearPendingPermsForChat(chatID)
+	h.sse.ClearPendingPermsForChat(chatID)
 	h.coord.CloseBridge(chatID)
 	h.agentTerms.KillForChat(chatID)
 	h.lifecycle.mu.Lock()
@@ -53,10 +53,4 @@ func (h *Hub) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
 	for _, id := range c.SessionChain() {
 		h.sessionReaper.Reap(id)
 	}
-}
-
-// clearPendingPermsForChat drops every unresolved permission_needed
-// entry owned by chatID.
-func (h *Hub) clearPendingPermsForChat(chatID vibekit.ChatID) {
-	h.sse.pendingPerms.ClearForChat(chatID)
 }

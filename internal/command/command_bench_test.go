@@ -35,9 +35,9 @@ func (d *benchDeps) InflightDone()                                         {}
 func (d *benchDeps) CleanupChatState(context.Context, vibekit.ChatID)      {}
 func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)        {}
 func (d *benchDeps) CancelChatRuns(context.Context, vibekit.ChatID)        {}
-func (d *benchDeps) KillTurnTerminals(vibekit.ChatID)                      {}
-func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool   { return true }
-func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID, Bridge) {}
+func (d *benchDeps) KillForTurn(vibekit.ChatID)                            {}
+func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool      { return true }
+func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)         {}
 func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)          {}
 func (d *benchDeps) IsEmptyTurn(*vibekit.RPCResponse, vibekit.ChatID) bool { return false }
 func (d *benchDeps) EmitTurnEndedWithStats(context.Context, vibekit.ChatID, *vibekit.RPCResponse, TurnStats) {
@@ -58,7 +58,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	} else {
 		cancel()
 	}
-	if !d.MCPWaitForReady(t.Context(), time.Millisecond) {
+	if !d.WaitForReady(t.Context(), time.Millisecond) {
 		t.Error("MCPWaitForReady returned false")
 	}
 
@@ -70,7 +70,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.CleanupChatState(t.Context(), "x")
-	d.PrimeIfNeeded(t.Context(), "x", nil)
+	d.PrimeIfNeeded(t.Context(), "x")
 	d.LatchTurnModel("x", "sonnet-4")
 }
 
@@ -108,7 +108,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.InflightAdd(1)
 		d.InflightDone()
 		d.CleanupChatState(t.Context(), "x")
-		d.PrimeIfNeeded(t.Context(), "x", nil)
+		d.PrimeIfNeeded(t.Context(), "x")
 		if d.IsEmptyTurn(nil, "x") {
 			t.Error("IsEmptyTurn should be false")
 		}

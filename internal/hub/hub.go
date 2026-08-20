@@ -87,6 +87,49 @@ type lifecyclePlane struct {
 	draining atomic.Bool
 }
 
+// TurnContext returns the context a turn runs under, plus the teardown its
+// handler must defer.
+//
+// It replaced an exported ShutdownCtx() accessor, and the replacement is the
+// point: a command handler never wanted the raw lifetime context, it wanted a
+// turn context derived from it, and handing out the lifetime made every consumer
+// responsible for deriving one correctly. This plane is what holds the lifetime,
+// so the derivation lives on it. It was a Hub method forwarding to
+// h.lifecycle.shutdownCtx, which put the hub in the path of a question only this
+// struct's own fields can answer.
+//
+// The turn is DETACHED from reqCtx's cancellation while keeping its values: the
+// prompt POST's context dies when the handler returns, and a turn that died with
+// it failed before it could finalize and persist the assistant buffer, even
+// though kiro-cli kept running the turn to completion. Cancellation is
+// re-attached to the shutdown context via AfterFunc so the turn still dies on
+// shutdown; the returned cancel tears it down on handler return and unregisters
+// that AfterFunc so it cannot leak. Explicit user cancellation is unaffected —
+// it goes through session/cancel (Notify), not this context.
+//
+// This mirrors the pattern in agent_terminal.go, which runs agent-spawned
+// subprocesses under context.WithCancel(context.WithoutCancel(ctx)) +
+// AfterFunc(shutdownCtx, cancel) for the same reason: a per-request ctx must not
+// tear down longer-lived work.
+func (lc *lifecyclePlane) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
+	stop := context.AfterFunc(lc.shutdownCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// InflightAdd increments the inflight counter Shutdown waits on.
+func (lc *lifecyclePlane) InflightAdd(delta int) {
+	lc.inflight.Add(delta)
+}
+
+// InflightDone decrements the inflight counter.
+func (lc *lifecyclePlane) InflightDone() {
+	lc.inflight.Done()
+}
+
 // bridgePlane groups Hub fields related to ACP bridge management
 // and the utility runtime (session + text-gen agent).
 type bridgePlane struct {
@@ -329,9 +372,11 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		RunOrigin:  h,
 		RunBounds:  h,
 	})
-	h.dispatcher = command.New()
-	h.registerCommandHandlers()
-	h.initDispatch()
+	// Collaborators are constructed BEFORE the dispatch wiring below, because
+	// the Roles literal binds some of them into role interfaces by value. A
+	// field read at wiring time must already hold its collaborator; when the
+	// roles all named h instead, the reads happened per call and this order did
+	// not matter, which is exactly what let the wiring drift up here.
 	h.mcpRegistry = newMCPRegistry(h)
 	// A settled session/load replay becomes the chat's transcript. Assigned
 	// here (not in the struct literal) because it is a method value on the
@@ -341,6 +386,9 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals()
+	h.dispatcher = command.New()
+	h.registerCommandHandlers()
+	h.initDispatch()
 	if lc.configDir != "" {
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
 		// Best-effort: a store that cannot be opened leaves h.secrets nil, and
@@ -557,7 +605,7 @@ const bridgeIdleTimeout = 30 * time.Minute
 // chat store (chat_created / chat_updated / message_* etc.) and by the hub
 // itself for turn_ended / permission_needed / error.
 func (h *Hub) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
-	h.emit(evt)
+	h.sse.emit(evt)
 }
 
 // Draining reports whether the server is shutting down.
