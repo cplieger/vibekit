@@ -58,6 +58,11 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	// repo-wide gosec G204 exclusion already suppresses the warning;
 	// no //nolint needed.
 	cmd := exec.CommandContext(ctx, h.cliPath(), "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
+	// Honour WhoamiTimeout rather than the child's lifetime. Without this the
+	// handler returned only when the last grandchild holding stdout exited — see
+	// boundChild, and note this endpoint fires on every page load and SSE
+	// reconnect.
+	boundChild(cmd)
 	stderr := procout.NewBuffer(stderrCap)
 	stdoutBuf := procout.NewBuffer(whoamiMaxOutput)
 	// Bounded stderr capture so a runaway or hostile kiro-cli can't

@@ -6,12 +6,15 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/buffer"
@@ -72,6 +75,18 @@ const (
 	maxProviderLen = 2048
 	maxRegionLen   = 32
 )
+
+// childWaitDelay bounds how long Wait may spend past the context's deadline on
+// two things it cannot otherwise interrupt: a child that has not exited, and a
+// child that has exited but left its I/O pipes held open by someone else.
+//
+// It is a BACKSTOP, not the mechanism. boundChild's Cancel kills the whole
+// process group, which closes the pipes at once (measured: Run returned 50ms
+// after a 50ms deadline, with none of this delay spent), so the delay is only
+// reached by a descendant that escaped the group or a process in an
+// uninterruptible sleep. One second bounds the handler's overshoot while leaving
+// far more time than any legitimate kiro-cli flush needs.
+const childWaitDelay = time.Second
 
 // awsRegionRe matches AWS region ids across all partitions: commercial
 // (us-east-1), China (cn-north-1), GovCloud (us-gov-west-1), ISO
@@ -163,6 +178,41 @@ func stderrAttr(stderr *procout.Buffer) []any {
 		return nil
 	}
 	return []any{"stderr", s}
+}
+
+// boundChild makes a subprocess honour ITS CONTEXT'S deadline rather than the
+// child's own lifetime, and it is a correctness fix rather than a tuning knob.
+//
+// exec.CommandContext's default cancellation SIGKILLs the parent PID only. Every
+// kiro-cli invocation here is a bun/Node wrapper that forks helpers, and a fork
+// inherits the stdout and stderr pipe write ends — so cmd.Run, which waits for
+// its output goroutines to see EOF, does not return until the LAST descendant
+// exits. Both /api/whoami and /api/logout document a wall-clock cap that "can't
+// pin the HTTP handler indefinitely", and neither delivered one.
+//
+// Measured on go1.27.0 against a /bin/sh fake CLI running `sleep 10` under a 50ms
+// context: Run returned after 10.001s with the default cancellation AND with
+// Setpgid alone, because the group kill both handlers already had only ran after
+// Run returned. With a group-killing Cancel plus WaitDelay it returned after
+// 50ms. WaitDelay alone came back at 1.051s — bounded, but the orphan lives out
+// its own lifetime — so both halves are load-bearing and neither is redundant.
+//
+// /api/whoami fires on every page load and every SSE reconnect, which is what
+// makes this an exhaustion path rather than a latency wart: one pinned handler
+// goroutine per page load, for as long as some grandchild happens to live.
+func boundChild(cmd *exec.Cmd) {
+	setLoginProcAttr(cmd)
+	cmd.Cancel = func() error {
+		err := loginKill(cmd)
+		// Mirror os.Process.Kill's own mapping so an already-reaped child leaves
+		// Wait's error untouched: exec treats a Cancel error equivalent to
+		// os.ErrProcessDone as "nothing to report".
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	cmd.WaitDelay = childWaitDelay
 }
 
 // loginReap bundles the state handed off from handleLogin to the reap

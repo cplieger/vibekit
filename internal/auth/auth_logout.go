@@ -40,14 +40,12 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.LogoutTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, h.cliPath(), "logout") //nolint:gosec // G204: binary path from config
-	// Put the logout subprocess in its own process group so the
-	// timeout branch can reap the whole tree (bun + Node helper
-	// children) via killLoginProcess. CommandContext's default
-	// cancel only SIGKILLs the parent PID, which leaves orphans
-	// holding stdout/stderr pipes open when a future kiro-cli
-	// changes its confirmation prompt and our "y\n" no longer
-	// advances the flow. Mirror the login path.
-	setLoginProcAttr(cmd)
+	// Honour LogoutTimeout rather than the child's lifetime. Setpgid alone did
+	// NOT do this: the group kill below runs after cmd.Run has already returned,
+	// so measured on go1.27.0 against a `sleep 10` fake CLI under a 50ms budget
+	// Run still came back at 10.001s. boundChild moves the group kill onto
+	// cmd.Cancel, where the context fires it, and adds WaitDelay as the backstop.
+	boundChild(cmd)
 	cmd.Stdin = strings.NewReader("y\n")
 	// Bounded combined stdout+stderr capture so a runaway CLI
 	// can't OOM the container. Use a single procout.Buffer for
@@ -67,10 +65,8 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			// Reap the whole process group eagerly so orphan
-			// bun/Node helpers don't survive the timeout
-			// holding pipes open.
-			killLoginProcess(cmd)
+			// boundChild's Cancel has already killed the group by the time Run
+			// returns, so there is nothing left to reap here.
 			slog.Warn("logout: kiro-cli timed out",
 				"timeout", h.cfg.LogoutTimeout, "output_bytes", len(out))
 			result["error"] = "logout timed out"
