@@ -46,7 +46,7 @@ const (
 // Returns true if msg was one of them (so translateACPEvent stops),
 // false otherwise. Safe to call for every incoming request regardless of
 // engine: v1/v2 never send these methods.
-func (h *Runtime) handleKiroClientRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroGetAccessToken:
 		// kiroauth.Token can perform a blocking (<=15s) SSO-OIDC refresh
@@ -59,17 +59,17 @@ func (h *Runtime) handleKiroClientRequest(ctx context.Context, chatID vibekit.Ch
 		// answered on the forward goroutine, after Start() returns, so the
 		// bridge is already registered in the manager; respondBridge (used
 		// by respondKiroAccessToken) resolves it the same as the sync path.
-		h.lifecycle.inflight.Go(func() {
-			actx, cancel := h.hubContext()
+		in.lifetime.inflight.Go(func() {
+			actx, cancel := in.lifetime.derivedContext()
 			defer cancel()
-			h.respondKiroAccessToken(actx, chatID, msg)
+			in.respondKiroAccessToken(actx, chatID, msg)
 		})
 		return true
 	case methodKiroShellType:
-		h.respondBridge(ctx, chatID, msg, kiroShellTypeResult(), nil)
+		in.respondBridge(ctx, chatID, msg, kiroShellTypeResult(), nil)
 		return true
 	case methodKiroOpenExternalURL:
-		h.respondKiroOpenExternalURL(ctx, chatID, msg)
+		in.respondKiroOpenExternalURL(ctx, chatID, msg)
 		return true
 	default:
 		return false
@@ -88,7 +88,7 @@ func (h *Runtime) handleKiroClientRequest(ctx context.Context, chatID vibekit.Ch
 // an open_external_url event; the client renders a clickable affordance
 // the user activates. Only http/https URLs are accepted — any other
 // scheme is rejected with an RPC error and not broadcast.
-func (h *Runtime) respondKiroOpenExternalURL(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		URL string `json:"url"`
 	}
@@ -97,15 +97,15 @@ func (h *Runtime) respondKiroOpenExternalURL(ctx context.Context, chatID vibekit
 	}
 	if !isSafeExternalURL(p.URL) {
 		slog.Warn("v3 openExternalUrl: rejecting unsafe scheme", "chat_id", chatID)
-		h.respondBridge(ctx, chatID, msg, nil, &vibekit.RPCError{
+		in.respondBridge(ctx, chatID, msg, nil, &vibekit.RPCError{
 			Code:    -32602,
 			Message: "openExternalUrl: only http/https URLs are allowed",
 		})
 		return
 	}
 	// Ack first so the agent's OAuth redirect isn't blocked on the UI.
-	h.respondBridge(ctx, chatID, msg, map[string]any{"success": true}, nil)
-	h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventOpenExternalURL, chatID, vibekit.OpenExternalURLPayload{URL: p.URL}))
+	in.respondBridge(ctx, chatID, msg, map[string]any{"success": true}, nil)
+	in.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventOpenExternalURL, chatID, vibekit.OpenExternalURLPayload{URL: p.URL}))
 }
 
 // isSafeExternalURL reports whether u parses and uses the http or https
@@ -155,11 +155,11 @@ func (l *authTokenLatch) record(err error) {
 // AuthTokenUnavailable reports whether the last attempt to vend a KAS access
 // token failed. The readiness handler's sign-in leg (internal/server) reads
 // this; it is one atomic load and spawns nothing.
-func (h *Runtime) AuthTokenUnavailable() bool {
-	if h.authLatch == nil {
+func (in *inbound) AuthTokenUnavailable() bool {
+	if in.authLatch == nil {
 		return false
 	}
-	return h.authLatch.failed.Load()
+	return in.authLatch.failed.Load()
 }
 
 // respondKiroAccessToken vends the get-kas-token result. On failure it
@@ -167,23 +167,23 @@ func (h *Runtime) AuthTokenUnavailable() bool {
 // than hanging, and broadcasts the failure so the browser can offer a
 // sign-in: KAS's own answer to this error is to run unauthenticated, which
 // looks like a session that opens and then fails every turn.
-func (h *Runtime) respondKiroAccessToken(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	result, err := h.kiroAccessTokenResult(ctx)
+func (in *inbound) respondKiroAccessToken(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+	result, err := in.kiroAccessTokenResult(ctx)
 	if err != nil {
 		slog.Error("v3 auth: token unavailable", "chat_id", chatID, "error", err)
-		h.respondBridge(ctx, chatID, msg, nil, err)
+		in.respondBridge(ctx, chatID, msg, nil, err)
 		// The message is kiro-cli's own text, not a rendering of it: it names
 		// which leg of the login chain is dead (expired refresh token, no
 		// profile, a missing binary), and no wording invented here could be more
 		// specific. Broadcast AFTER the RPC error so the agent's request is never
 		// waiting on a client fan-out.
-		h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		in.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeAuthTokenUnavailable,
 			Message: err.Error(),
 		}))
 		return
 	}
-	h.respondBridge(ctx, chatID, msg, result, nil)
+	in.respondBridge(ctx, chatID, msg, result, nil)
 }
 
 // kiroAccessTokenResult vends the result for the v3 _kiro/auth/getAccessToken
@@ -192,19 +192,19 @@ func (h *Runtime) respondKiroAccessToken(ctx context.Context, chatID vibekit.Cha
 // bridge (answerHostRequest) so the wire keys live in exactly one place — which
 // is also why the latch is written HERE rather than in the responder above:
 // both callers vend through this function, so both outcomes reach readiness.
-func (h *Runtime) kiroAccessTokenResult(ctx context.Context) (map[string]any, error) {
-	result, err := h.vendKiroAccessToken(ctx)
-	if h.authLatch != nil {
-		h.authLatch.record(err)
+func (in *inbound) kiroAccessTokenResult(ctx context.Context) (map[string]any, error) {
+	result, err := in.vendKiroAccessToken(ctx)
+	if in.authLatch != nil {
+		in.authLatch.record(err)
 	}
 	return result, err
 }
 
-func (h *Runtime) vendKiroAccessToken(ctx context.Context) (map[string]any, error) {
-	if h.kiroToken == nil {
+func (in *inbound) vendKiroAccessToken(ctx context.Context) (map[string]any, error) {
+	if in.kiroToken == nil {
 		return nil, kiroauth.ErrNoSource
 	}
-	return h.kiroToken.Token(ctx)
+	return in.kiroToken.Token(ctx)
 }
 
 // kiroShellTypeResult is the answer to the v3 _kiro/terminal/shell_type host

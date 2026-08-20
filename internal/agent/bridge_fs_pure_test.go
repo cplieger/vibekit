@@ -31,10 +31,10 @@ func TestCurrentMessageCount(t *testing.T) {
 		return true
 	})
 
-	if got := h.currentMessageCount(t.Context(), "c1"); got != 3 {
+	if got := h.inbound.currentMessageCount(t.Context(), "c1"); got != 3 {
 		t.Errorf("currentMessageCount(existing) = %d, want 3", got)
 	}
-	if got := h.currentMessageCount(t.Context(), "no-such-chat"); got != 0 {
+	if got := h.inbound.currentMessageCount(t.Context(), "no-such-chat"); got != 0 {
 		t.Errorf("currentMessageCount(missing) = %d, want 0", got)
 	}
 }

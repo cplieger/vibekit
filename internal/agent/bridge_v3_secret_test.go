@@ -165,7 +165,7 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 			msg := &vibekit.RPCResponse{Method: tc.method, ID: &id}
 			// No bridge is registered, so respondBridge logs and drops the
 			// write; the return value is the whole contract under test.
-			if got := h.handleKiroSecretRequest(t.Context(), "c1", msg); got != tc.want {
+			if got := h.inbound.handleKiroSecretRequest(t.Context(), "c1", msg); got != tc.want {
 				t.Errorf("handleKiroSecretRequest(%q) = %v, want %v", tc.method, got, tc.want)
 			}
 		})

@@ -29,26 +29,26 @@ import (
 // ordinary fs/write_text_file. Do not gate, stage, snapshot or attribute that
 // write as agent work: it would double-count the changed-files ledger, and
 // under any surviving gate it would deadlock.
-func (h *Runtime) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
-		h.respondFSError(ctx, chatID, msg, fmt.Errorf("parse params: %w", err))
+		in.respondFSError(ctx, chatID, msg, fmt.Errorf("parse params: %w", err))
 		return
 	}
 	if p.Path == "" {
-		h.respondFSError(ctx, chatID, msg, errors.New("path is required"))
+		in.respondFSError(ctx, chatID, msg, errors.New("path is required"))
 		return
 	}
 	if len(p.Content) > fsWriteCap {
-		h.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsWriteCap))
+		in.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsWriteCap))
 		return
 	}
-	abs, err := h.resolveInsideWorkDir(p.Path)
+	abs, err := in.lifetime.resolveInsideWorkDir(p.Path)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 
@@ -61,7 +61,7 @@ func (h *Runtime) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg
 	// left empty directories behind. With no reject path here that ordering
 	// constraint is gone; KAS restores rejected files from its own snapshots.
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 
@@ -72,7 +72,7 @@ func (h *Runtime) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg
 	mode := os.FileMode(0o644)
 	if info, statErr := os.Lstat(abs); statErr == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			h.respondFSError(ctx, chatID, msg, errors.New("refusing to write through a symlink"))
+			in.respondFSError(ctx, chatID, msg, errors.New("refusing to write through a symlink"))
 			return
 		}
 		mode = info.Mode().Perm()
@@ -83,12 +83,12 @@ func (h *Runtime) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg
 	// this doesn't. Behaviour is identical for normal (non-symlink) writes.
 	f, openErr := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, mode)
 	if openErr != nil {
-		h.respondFSError(ctx, chatID, msg, openErr)
+		in.respondFSError(ctx, chatID, msg, openErr)
 		return
 	}
 	if _, wErr := f.WriteString(p.Content); wErr != nil {
 		_ = f.Close()
-		h.respondFSError(ctx, chatID, msg, wErr)
+		in.respondFSError(ctx, chatID, msg, wErr)
 		return
 	}
 	// Sync before Close: without it a crash between the write and the kernel's
@@ -97,14 +97,14 @@ func (h *Runtime) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg
 	// the new bytes is the whole guard.
 	if sErr := f.Sync(); sErr != nil {
 		_ = f.Close()
-		h.respondFSError(ctx, chatID, msg, sErr)
+		in.respondFSError(ctx, chatID, msg, sErr)
 		return
 	}
 	if cErr := f.Close(); cErr != nil {
-		h.respondFSError(ctx, chatID, msg, cErr)
+		in.respondFSError(ctx, chatID, msg, cErr)
 		return
 	}
-	h.respondBridge(ctx, chatID, msg, map[string]any{}, nil)
+	in.respondBridge(ctx, chatID, msg, map[string]any{}, nil)
 }
 
 // THERE IS NO WRITE GATE. applySupervisedWriteGate held every agent write in
@@ -120,8 +120,8 @@ func (h *Runtime) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg
 // currentMessageCount returns the number of persisted messages for
 // chatID, or 0 if the chat isn't found. Used as the restore watermark
 // on every snapshot.
-func (h *Runtime) currentMessageCount(ctx context.Context, chatID vibekit.ChatID) int {
-	if c, ok := h.chatStore.Get(ctx, chatID); ok {
+func (in *inbound) currentMessageCount(ctx context.Context, chatID vibekit.ChatID) int {
+	if c, ok := in.chats.Get(ctx, chatID); ok {
 		return len(c.Messages)
 	}
 	return 0

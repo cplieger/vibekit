@@ -101,10 +101,15 @@ type mcpRegistry struct {
 	bus *bus
 	// lifetime supplies the done channel the debounce loop exits on.
 	lifetime *lifetime
-	// config is the enabled/known name sets vibekit itself configured.
-	config   mcpNameSets
-	servers  map[string]*mcpServerRuntime
-	onChange func()
+	// config is the enabled/known name sets vibekit itself configured. Optional:
+	// WithMCPConfig is not passed in tests, and every reader nil-checks — a
+	// registry with no config classifies every server as unconfigured, which is
+	// the right answer when vibekit configured none.
+	config  mcpNameSets `wiring:"optional"`
+	servers map[string]*mcpServerRuntime
+	// onChange is installed later by SetMCPOnChange from the composition root, so
+	// it is optional at construction by design rather than by omission.
+	onChange func() `wiring:"optional"`
 	// notifyCh coalesces rapid-fire onChange callbacks into a single
 	// debounced invocation. Capacity 1 means multiple signals within
 	// the debounce window collapse into one cb() call.

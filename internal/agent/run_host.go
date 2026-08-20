@@ -547,10 +547,10 @@ func (h *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vibe
 // request wedges the step's turn.
 func (h *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	switch {
-	case h.handleFSRequest(ctx, chatID, msg),
-		h.handleKiroFSRequest(ctx, chatID, msg),
-		h.handleKiroClientRequest(ctx, chatID, msg),
-		h.handleKiroSecretRequest(ctx, chatID, msg):
+	case h.inbound.handleFSRequest(ctx, chatID, msg),
+		h.inbound.handleKiroFSRequest(ctx, chatID, msg),
+		h.inbound.handleKiroClientRequest(ctx, chatID, msg),
+		h.inbound.handleKiroSecretRequest(ctx, chatID, msg):
 		return
 	case strings.HasPrefix(msg.Method, methodTermPrefix):
 		h.handleTerminalRequest(ctx, chatID, msg.Method, msg)

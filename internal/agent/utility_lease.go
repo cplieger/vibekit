@@ -24,8 +24,10 @@ type utilityLease struct {
 	// over here because the hooks it injects point back into runtime services —
 	// a bidirectional edge that must stay visible at the wiring site.
 	build func() *utilityRuntime
-	rt    *utilityRuntime
-	mu    sync.Mutex
+	// rt is nil until first use — the whole point of the lease. Optional at
+	// construction by design, not by omission.
+	rt *utilityRuntime `wiring:"optional"`
+	mu sync.Mutex
 }
 
 // get returns the utility runtime, building it on first use.

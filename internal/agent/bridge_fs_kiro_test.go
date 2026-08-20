@@ -44,7 +44,7 @@ func TestKiroFSStat(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
 			h, br := hubForFSTest(t, work)
-			h.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, tc.path))
+			h.inbound.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, tc.path))
 			<-br.done
 			if br.response.err != nil {
 				t.Fatalf("err = %v, want nil", br.response.err)
@@ -93,7 +93,7 @@ func TestKiroFSStatConfinesPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, t.TempDir())
-	h.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, target))
+	h.inbound.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, target))
 	<-br.done
 	if br.response.err == nil {
 		t.Error("err = nil for an existing path outside the work dir, want an error")
@@ -111,9 +111,9 @@ func TestKiroFSStatIsNotIgnoreFiltered(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	h.perm.ignore = matcherFor(t, work, "secret.env")
+	h.inbound.ignore = matcherFor(t, work, "secret.env")
 
-	h.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, "secret.env"))
+	h.inbound.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, "secret.env"))
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("err = %v, want nil: stat must stay honest for an ignored path", br.response.err)
@@ -137,7 +137,7 @@ func TestKiroFSReadDirectory(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 	h, br := hubForFSTest(t, work)
-	h.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "."))
+	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "."))
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("err = %v, want nil", br.response.err)
@@ -169,9 +169,9 @@ func TestKiroFSReadDirectoryAppliesIgnoreFilter(t *testing.T) {
 		}
 	}
 	h, br := hubForFSTest(t, work)
-	h.perm.ignore = matcherFor(t, work, ".env.dec")
+	h.inbound.ignore = matcherFor(t, work, ".env.dec")
 
-	h.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "."))
+	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "."))
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("err = %v, want nil", br.response.err)
@@ -201,7 +201,7 @@ func TestKiroFSReadDirectoryAppliesIgnoreFilter(t *testing.T) {
 // an optional directory look like a failure.
 func TestKiroFSReadDirectoryMissingIsEmptyNotError(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
-	h.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "no-such-dir"))
+	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "no-such-dir"))
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("err = %v, want nil for a missing directory", br.response.err)
@@ -237,7 +237,7 @@ func TestKiroFSDeleteFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	h.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "gone.txt"))
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "gone.txt"))
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("err = %v, want nil", br.response.err)
@@ -260,7 +260,7 @@ func TestKiroFSDeleteDirectoryRecurses(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	h.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "tree"))
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "tree"))
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("err = %v, want nil", br.response.err)
@@ -278,7 +278,7 @@ func TestKiroFSDeleteRefusesWorkDirRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	h.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "."))
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "."))
 	<-br.done
 	// Asserted against the SENTINEL, not merely "an error": with the guard
 	// removed this path reaches os.RemoveAll, which on Linux happens to refuse
@@ -315,7 +315,7 @@ func TestKiroFSDeleteConfinesPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, t.TempDir())
-	h.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, victim))
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, victim))
 	<-br.done
 	if br.response.err == nil {
 		t.Error("err = nil for an absolute path outside the work dir, want an error")
@@ -335,7 +335,7 @@ func TestKiroFSDeleteSuccessCarriesNoMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	h.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "f"))
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "f"))
 	<-br.done
 	data, err := json.Marshal(br.response.result)
 	if err != nil {
@@ -364,7 +364,7 @@ func TestKiroFSDeleteDoesNotStage(t *testing.T) {
 		return true
 	})
 
-	h.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "f"))
+	h.inbound.respondKiroFSDelete(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSDelete, "f"))
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("err = %v, want nil", br.response.err)
@@ -396,7 +396,7 @@ func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.method, func(t *testing.T) {
 			msg := kiroFSMsg(t, 9, tc.method, "x")
-			if got := h.handleKiroFSRequest(t.Context(), "c1", msg); got != tc.want {
+			if got := h.inbound.handleKiroFSRequest(t.Context(), "c1", msg); got != tc.want {
 				t.Errorf("handleKiroFSRequest(%q) = %v, want %v", tc.method, got, tc.want)
 			}
 		})

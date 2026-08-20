@@ -163,17 +163,11 @@ type bus struct {
 	chatStatus *chatStatusCache
 }
 
-// perms groups Runtime fields related to permissions and supervision.
-type perms struct {
-	ignore *ignore.Matcher
-}
-
 // Runtime is the central coordinator.
 type Runtime struct {
 	lifecycle *lifetime
 	bridge    *bridges
 	bus       *bus
-	perm      *perms
 	coord     *BridgeCoordinator
 
 	push               pushService
@@ -195,6 +189,7 @@ type Runtime struct {
 	// touched (see run_plane.go). Runtime reaches it like any collaborator.
 	runs          *Runs
 	runRoutes     *runRoutes
+	inbound       *inbound
 	utility       *utilityLease
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
@@ -270,7 +265,7 @@ func WithPush(p pushService) Option {
 	return func(h *Runtime) { h.push = p }
 }
 
-// WithMCPConfig wires the MCP configuration store. The hub reads the three
+// WithMCPConfig wires the MCP configuration store. The registry reads the three
 // name sets to classify a status notification's origin and to drop the frames
 // of a server the user switched off.
 //
@@ -367,7 +362,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		bus:          sseP,
 		runs:         runs,
 		config:       configP,
-		perm:         &perms{},
 		chatStore:    chatStore,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		authLatch:    &authTokenLatch{},
@@ -390,6 +384,13 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.runRoutes = &runRoutes{runs: runs}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.coord = newBridgeCoordinator(h)
+	// The inbound ladder is built here rather than in the struct literal because
+	// two of its collaborators (coord, and the ignore matcher the configDir block
+	// below installs) do not exist yet at that point.
+	h.inbound = &inbound{
+		lifetime: lc, coord: h.coord, chats: chatStore,
+		bus: sseP, kiroToken: h.kiroToken, authLatch: h.authLatch,
+	}
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast)
@@ -412,7 +413,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.registerCommandHandlers()
 	h.initDispatch()
 	if lc.configDir != "" {
-		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
+		h.inbound.ignore = ignore.NewMatcher(lc.configDir, workDir)
 		// Best-effort: a store that cannot be opened leaves h.secrets nil, and
 		// bridges then do NOT declare `_meta.kiro.secretStorage` (see
 		// vibekit.StartOpts.SecretStorage), so KAS never asks and MCP OAuth
@@ -425,6 +426,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 			h.secrets = secrets
 		}
 	}
+	requireCollaborators(h)
 	lc.loops.Go(h.cullIdleUtilityBridge)
 	lc.loops.Go(h.sweepSessionsLoop)
 	return h
@@ -613,6 +615,17 @@ func awaitBounded(ctx context.Context, what string, wait func()) error {
 const bridgeIdleTimeout = 30 * time.Minute
 
 // --- Broadcast ---
+
+// AuthTokenUnavailable reports the last SSO token failure, for the readiness
+// endpoint. An app-facing forward for the same reason Broadcast is one: the latch
+// belongs to the inbound ladder that writes it, and internal/composition should
+// not have to know that to ask a readiness question.
+func (h *Runtime) AuthTokenUnavailable() bool {
+	if h.inbound == nil {
+		return false
+	}
+	return h.inbound.AuthTokenUnavailable()
+}
 
 // Broadcast sends a ServerEvent to every connected SSE client.
 //

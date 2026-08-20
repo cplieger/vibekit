@@ -233,24 +233,24 @@ func (h *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCRespo
 // nothing below in the caller does. That is also why the caller's fallthrough is
 // a refusal rather than a log — see its comment.
 func (h *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
-	if h.handleFSRequest(ctx, chatID, msg) {
+	if h.inbound.handleFSRequest(ctx, chatID, msg) {
 		return true
 	}
 	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}). Separate from
 	// handleFSRequest because they are a different rung of KAS's adapter ladder
 	// with different shapes — and because these execute rather than stage.
-	if h.handleKiroFSRequest(ctx, chatID, msg) {
+	if h.inbound.handleKiroFSRequest(ctx, chatID, msg) {
 		return true
 	}
 	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
 	// _kiro/terminal/shell_type).
-	if h.handleKiroClientRequest(ctx, chatID, msg) {
+	if h.inbound.handleKiroClientRequest(ctx, chatID, msg) {
 		return true
 	}
 	// v3 (KAS) credential storage (_kiro/secret/*). Must be answered: KAS
 	// rethrows a store/delete failure into the MCP connect path, and an
 	// UNANSWERED request wedges the turn.
-	if h.handleKiroSecretRequest(ctx, chatID, msg) {
+	if h.inbound.handleKiroSecretRequest(ctx, chatID, msg) {
 		return true
 	}
 	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.).

@@ -33,32 +33,32 @@ import (
 // via integer overflow on attacker-influenced line/limit params; the
 // immediate bug is fixed in sliceByLines but this wrapper forecloses
 // the whole class.
-func (h *Runtime) handleFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+func (in *inbound) handleFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	var handler func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)
 	switch msg.Method {
 	case vibekit.MethodFSRead:
-		handler = h.respondFSRead
+		handler = in.respondFSRead
 	case vibekit.MethodFSWrite:
-		handler = h.respondFSWrite
+		handler = in.respondFSWrite
 	default:
 		return false
 	}
-	h.lifecycle.inflight.Go(func() {
+	in.lifetime.inflight.Go(func() {
 		// Derive a fresh runtime-scoped context: translateACPEvent cancels the
 		// per-event ctx via its defer the instant it returns, which is
 		// BEFORE this async handler runs its Respond. Bridge.Respond drops
 		// the write when its ctx is already cancelled, so the agent's
 		// fs read/write Call would hang forever. The fresh ctx lives until
-		// this goroutine finishes or the runtime shuts down (h.lifecycle.done),
+		// this goroutine finishes or the runtime shuts down (in.lifetime.done),
 		// so Respond succeeds AND shutdown still cancels it. Mirrors the
 		// chat_summary goroutine in runtime.go. Shadows the passed-in ctx.
-		ctx, cancel := h.hubContext()
+		ctx, cancel := in.lifetime.derivedContext()
 		defer cancel()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("fs handler panic",
 					"chat_id", chatID, "method", msg.Method, "panic", r)
-				h.respondBridge(ctx, chatID, msg, nil, errors.New("internal error"))
+				in.respondBridge(ctx, chatID, msg, nil, errors.New("internal error"))
 			}
 		}()
 		handler(ctx, chatID, msg)
@@ -72,23 +72,23 @@ func (h *Runtime) handleFSRequest(_ context.Context, chatID vibekit.ChatID, msg 
 //
 // Response: { content: "..." }. Per ACP, line/limit are 1-indexed +
 // inclusive; we slice the read content to that window.
-func (h *Runtime) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		Line  *int   `json:"line,omitempty"`
 		Limit *int   `json:"limit,omitempty"`
 		Path  string `json:"path"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
-		h.respondFSError(ctx, chatID, msg, fmt.Errorf("parse params: %w", err))
+		in.respondFSError(ctx, chatID, msg, fmt.Errorf("parse params: %w", err))
 		return
 	}
 	if p.Path == "" {
-		h.respondFSError(ctx, chatID, msg, errors.New("path is required"))
+		in.respondFSError(ctx, chatID, msg, errors.New("path is required"))
 		return
 	}
-	abs, err := h.resolveInsideWorkDir(p.Path)
+	abs, err := in.lifetime.resolveInsideWorkDir(p.Path)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	// Single stat for both the ignore-check (isDir) and the size guard.
@@ -100,8 +100,8 @@ func (h *Runtime) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg 
 	// ignored files stay writable). The ignore matcher re-parses on
 	// its own if the files change, so toggles take effect without a
 	// bridge restart.
-	if h.perm.ignore != nil {
-		rel, relErr := workspace.RelPath(h.lifecycle.workDir, abs)
+	if in.ignore != nil {
+		rel, relErr := workspace.RelPath(in.lifetime.workDir, abs)
 		if relErr != nil {
 			// Rel should never fail after resolveInsideWorkDir
 			// anchored abs under workDir, but if it does we fail
@@ -111,8 +111,8 @@ func (h *Runtime) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg 
 				"chat_id", chatID, "path", p.Path, "abs", abs, "error", relErr)
 		} else {
 			isDir := statErr == nil && info.IsDir()
-			if h.perm.ignore.Matches(ctx, rel, isDir) {
-				h.respondFSError(ctx, chatID, msg, errIgnored)
+			if in.ignore.Matches(ctx, rel, isDir) {
+				in.respondFSError(ctx, chatID, msg, errIgnored)
 				return
 			}
 		}
@@ -122,20 +122,20 @@ func (h *Runtime) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg 
 	// can lie about sparse/remote files, but the post-read guard
 	// below catches the residual case.
 	if statErr == nil && info.Size() > fsReadCap {
-		h.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsReadCap))
+		in.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsReadCap))
 		return
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	if len(data) > fsReadCap {
-		h.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsReadCap))
+		in.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsReadCap))
 		return
 	}
 	content := sliceByLines(string(data), p.Line, p.Limit)
-	h.respondBridge(ctx, chatID, msg, map[string]any{"content": content}, nil)
+	in.respondBridge(ctx, chatID, msg, map[string]any{"content": content}, nil)
 }
 
 // sliceByLines returns content[line-1 : line-1+limit] (1-indexed,

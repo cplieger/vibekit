@@ -68,7 +68,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 		// handleKiroClientRequest must claim the method (return true) so it
 		// never falls through to the unhandled-extension debug log.
 		h, _, _ := newTestHub()
-		if !h.handleKiroClientRequest(t.Context(), "c1", openExternalURLMsg(t, 3, "https://x.example")) {
+		if !h.inbound.handleKiroClientRequest(t.Context(), "c1", openExternalURLMsg(t, 3, "https://x.example")) {
 			t.Fatal("handleKiroClientRequest should handle _kiro/openExternalUrl")
 		}
 	})
@@ -89,7 +89,7 @@ func TestAuthTokenLatchTracksTheLastVend(t *testing.T) {
 
 	// A hub with no token source is the ErrNoSource path, which is the same
 	// failure shape as an expired login as far as readiness is concerned.
-	if _, err := h.kiroAccessTokenResult(t.Context()); err == nil {
+	if _, err := h.inbound.kiroAccessTokenResult(t.Context()); err == nil {
 		t.Fatal("kiroAccessTokenResult with no source should fail")
 	}
 	if !h.AuthTokenUnavailable() {
@@ -107,12 +107,18 @@ func TestAuthTokenLatchTracksTheLastVend(t *testing.T) {
 // without the latch (a test double, a partially-wired composition) must read as
 // signed-in rather than panicking inside a health probe.
 func TestAuthTokenLatchIsNilSafe(t *testing.T) {
-	h := &Runtime{}
-	if h.AuthTokenUnavailable() {
-		t.Error("a runtime with no latch must not report a dead sign-in")
+	// A bare Runtime, which is the partially-wired case the readiness option's
+	// method value can be taken from.
+	if (&Runtime{}).AuthTokenUnavailable() {
+		t.Error("a runtime with no inbound ladder must not report a dead sign-in")
+	}
+	// A bare ladder, which is the case that survives the latch itself being nil.
+	in := &inbound{}
+	if in.AuthTokenUnavailable() {
+		t.Error("a ladder with no latch must not report a dead sign-in")
 	}
 	// The vend path must also survive it, since the latch is written there.
-	if _, err := h.kiroAccessTokenResult(t.Context()); err == nil {
+	if _, err := in.kiroAccessTokenResult(t.Context()); err == nil {
 		t.Fatal("expected the no-source error")
 	}
 }
@@ -129,7 +135,7 @@ func TestAccessTokenFailureBroadcastsTheAuthError(t *testing.T) {
 
 	// kiroToken is nil on a test hub, so the vend fails with ErrNoSource.
 	id := int64(7)
-	h.respondKiroAccessToken(t.Context(), "c1", &vibekit.RPCResponse{
+	h.inbound.respondKiroAccessToken(t.Context(), "c1", &vibekit.RPCResponse{
 		Method: methodKiroGetAccessToken,
 		ID:     &id,
 	})

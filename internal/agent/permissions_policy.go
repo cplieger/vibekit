@@ -45,7 +45,7 @@ func (h *Runtime) buildUtility() *utilityRuntime {
 		utilitySessionHooks{
 			onHooksChanged:    h.config.broadcastHooksChanged,
 			onGovernanceState: h.config.cacheGovernanceFromUtility,
-			tokenSource:       h.kiroAccessTokenResult,
+			tokenSource:       h.inbound.kiroAccessTokenResult,
 		},
 		h.secrets,
 		true, // enableHooks

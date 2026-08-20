@@ -101,26 +101,26 @@ type kiroReadDirBody struct {
 // per-event ctx is cancelled by translateACPEvent's defer the moment it returns,
 // and Bridge.Respond drops a write on a cancelled ctx, which would hang the
 // agent's Call forever (KAS's `extMethod` has NO timeout: no deadline, no abort).
-func (h *Runtime) handleKiroFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+func (in *inbound) handleKiroFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	var handler func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)
 	switch msg.Method {
 	case methodKiroFSStat:
-		handler = h.respondKiroFSStat
+		handler = in.respondKiroFSStat
 	case methodKiroFSReadDirectory:
-		handler = h.respondKiroFSReadDirectory
+		handler = in.respondKiroFSReadDirectory
 	case methodKiroFSDelete:
-		handler = h.respondKiroFSDelete
+		handler = in.respondKiroFSDelete
 	default:
 		return false
 	}
-	h.lifecycle.inflight.Go(func() {
-		ctx, cancel := h.hubContext()
+	in.lifetime.inflight.Go(func() {
+		ctx, cancel := in.lifetime.derivedContext()
 		defer cancel()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("kiro fs handler panic",
 					"chat_id", chatID, "method", msg.Method, "panic", r)
-				h.respondBridge(ctx, chatID, msg, nil, errors.New("internal error"))
+				in.respondBridge(ctx, chatID, msg, nil, errors.New("internal error"))
 			}
 		}()
 		handler(ctx, chatID, msg)
@@ -130,12 +130,12 @@ func (h *Runtime) handleKiroFSRequest(_ context.Context, chatID vibekit.ChatID, 
 
 // kiroFSPath decodes and confines the request's path. The single place the
 // containment gain is realised, so all three verbs share it.
-func (h *Runtime) kiroFSPath(msg *vibekit.RPCResponse) (abs string, err error) {
+func (in *inbound) kiroFSPath(msg *vibekit.RPCResponse) (abs string, err error) {
 	var p kiroFSParams
 	if pErr := parseRequest(msg, &p); pErr != nil {
 		return "", fmt.Errorf("decode %s params: %w", msg.Method, pErr)
 	}
-	return h.resolveInsideWorkDir(p.Path)
+	return in.lifetime.resolveInsideWorkDir(p.Path)
 }
 
 // respondKiroFSStat answers `_kiro/fs/stat` with `{type, size}`.
@@ -147,10 +147,10 @@ func (h *Runtime) kiroFSPath(msg *vibekit.RPCResponse) (abs string, err error) {
 // agent's next move on a false "absent" is to CREATE it, clobbering the very
 // file the user asked to keep out of the way. An honest stat is the safer answer;
 // the listing is where the discovery vector actually is.
-func (h *Runtime) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	abs, err := h.kiroFSPath(msg)
+func (in *inbound) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+	abs, err := in.kiroFSPath(msg)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	// os.Stat follows symlinks, matching KAS's own fs.stat. Its symlink branch
@@ -158,14 +158,14 @@ func (h *Runtime) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID, 
 	// read_directory DOES reach it.
 	info, err := os.Stat(abs)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	body := kiroStatBody{Type: fsTypeFile, Size: info.Size()}
 	if info.IsDir() {
 		body.Type = fsTypeDirectory
 	}
-	h.respondBridge(ctx, chatID, msg, body, nil)
+	in.respondBridge(ctx, chatID, msg, body, nil)
 }
 
 // respondKiroFSReadDirectory answers `_kiro/fs/read_directory` with `{entries}`,
@@ -178,23 +178,23 @@ func (h *Runtime) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID, 
 // A missing directory answers with an empty list rather than an error, matching
 // KAS's NodeFileSystem (it swallows ENOENT and returns []). Diverging would make
 // a probe for an optional directory look like a failure.
-func (h *Runtime) respondKiroFSReadDirectory(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	abs, err := h.kiroFSPath(msg)
+func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+	abs, err := in.kiroFSPath(msg)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	dirEntries, err := os.ReadDir(abs)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			h.respondBridge(ctx, chatID, msg, kiroReadDirBody{Entries: []kiroDirEntry{}}, nil)
+			in.respondBridge(ctx, chatID, msg, kiroReadDirBody{Entries: []kiroDirEntry{}}, nil)
 			return
 		}
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	h.respondBridge(ctx, chatID, msg, kiroReadDirBody{
-		Entries: h.filterDirEntries(ctx, chatID, abs, dirEntries),
+	in.respondBridge(ctx, chatID, msg, kiroReadDirBody{
+		Entries: in.filterDirEntries(ctx, chatID, abs, dirEntries),
 	}, nil)
 }
 
@@ -205,7 +205,7 @@ func (h *Runtime) respondKiroFSReadDirectory(ctx context.Context, chatID vibekit
 // matching the read handler: resolveInsideWorkDir has already anchored abs under
 // workDir so Rel cannot fail in practice, and dropping a listing silently on an
 // impossible error would be the harder failure to diagnose.
-func (h *Runtime) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, abs string, dirEntries []os.DirEntry) []kiroDirEntry {
+func (in *inbound) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, abs string, dirEntries []os.DirEntry) []kiroDirEntry {
 	out := make([]kiroDirEntry, 0, len(dirEntries))
 	for _, e := range dirEntries {
 		entryType := fsTypeFile
@@ -217,12 +217,12 @@ func (h *Runtime) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, a
 			// withFileTypes, so unlike stat this branch is live.
 			entryType = fsTypeSymlink
 		}
-		if h.perm.ignore != nil {
-			rel, relErr := workspace.RelPath(h.lifecycle.workDir, filepath.Join(abs, e.Name()))
+		if in.ignore != nil {
+			rel, relErr := workspace.RelPath(in.lifetime.workDir, filepath.Join(abs, e.Name()))
 			if relErr != nil {
 				slog.Warn("ignore check skipped: filepath.Rel failed",
 					"chat_id", chatID, "dir", abs, "entry", e.Name(), "error", relErr)
-			} else if h.perm.ignore.Matches(ctx, rel, e.IsDir()) {
+			} else if in.ignore.Matches(ctx, rel, e.IsDir()) {
 				continue
 			}
 		}
@@ -243,10 +243,10 @@ func (h *Runtime) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, a
 // write-class and writes follow git semantics (an ignored file stays writable);
 // not gated because KAS checkpoints before the unlink and reviews after it, and a
 // second gate here would intercept its restore write. See the file header.
-func (h *Runtime) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	abs, err := h.kiroFSPath(msg)
+func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+	abs, err := in.kiroFSPath(msg)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	// Absoluteness is asserted, not assumed. resolveInsideWorkDir returns an
@@ -255,16 +255,16 @@ func (h *Runtime) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID
 	// target resolved against the SERVER's cwd. Cheap, and it forecloses the
 	// worst blast radius on this path.
 	if !filepath.IsAbs(abs) {
-		h.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: resolved path is not absolute", errRefusedWorkDirRoot))
+		in.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: resolved path is not absolute", errRefusedWorkDirRoot))
 		return
 	}
-	if filepath.Clean(abs) == filepath.Clean(h.lifecycle.workDir) {
-		h.respondFSError(ctx, chatID, msg, errRefusedWorkDirRoot)
+	if filepath.Clean(abs) == filepath.Clean(in.lifetime.workDir) {
+		in.respondFSError(ctx, chatID, msg, errRefusedWorkDirRoot)
 		return
 	}
 	info, err := os.Lstat(abs)
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	if info.IsDir() {
@@ -273,12 +273,12 @@ func (h *Runtime) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID
 		err = os.Remove(abs)
 	}
 	if err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
+		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
 	slog.Info("agent deleted a path", "chat_id", chatID, "dir", info.IsDir())
 	// KAS's isFSDeleteCapabilityResponse accepts any object, and it THROWS a
 	// non-empty `message` field as an error — so the success answer must be an
 	// empty object, never one carrying a status string.
-	h.respondBridge(ctx, chatID, msg, struct{}{}, nil)
+	in.respondBridge(ctx, chatID, msg, struct{}{}, nil)
 }

@@ -53,7 +53,7 @@ func (b *respondingBridge) Respond(_ context.Context, id int64, result any, err 
 }
 
 // hubForFSTest returns a runtime wired with a respondingBridge so the fs
-// handlers can complete through h.respondBridge.
+// handlers can complete through h.inbound.respondBridge.
 func hubForFSTest(t *testing.T, workDir string) (*Runtime, *respondingBridge) {
 	t.Helper()
 	cs := newFakeChatStore()
@@ -162,7 +162,7 @@ func TestResolveInsideWorkDir(t *testing.T) {
 				tc.setupFn(t, work)
 			}
 			h, _ := hubForFSTest(t, work)
-			got, err := h.resolveInsideWorkDir(tc.input)
+			got, err := h.lifecycle.resolveInsideWorkDir(tc.input)
 			if tc.wantErr {
 				if err == nil {
 					t.Error("expected error")
@@ -195,7 +195,7 @@ func TestRespondFSRead_Success(t *testing.T) {
 		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hello.txt"}),
 	}
-	h.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	res, ok := br.response.result.(map[string]any)
@@ -212,7 +212,7 @@ func TestRespondFSRead_MissingPath(t *testing.T) {
 		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{}),
 	}
-	h.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil {
@@ -232,7 +232,7 @@ func TestRespondFSRead_LineLimitWindow(t *testing.T) {
 		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "file.txt", "line": 2, "limit": 2}),
 	}
-	h.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	res, ok := br.response.result.(map[string]any)
@@ -254,7 +254,7 @@ func TestRespondFSRead_SizeCapRejects(t *testing.T) {
 		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "big.txt"}),
 	}
-	h.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil || !strings.Contains(br.response.err.Error(), "cap") {
@@ -273,7 +273,7 @@ func TestRespondFSWrite_Success(t *testing.T) {
 		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": "written"}),
 	}
-	h.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err != nil {
@@ -297,7 +297,7 @@ func TestRespondFSWrite_CreatesParentDirs(t *testing.T) {
 		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "nested/deeply/out.txt", "content": "ok"}),
 	}
-	h.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err != nil {
@@ -329,7 +329,7 @@ func TestRespondFSWrite_RejectsSymlinkEscape(t *testing.T) {
 		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "escape.txt", "content": "HIJACKED"}),
 	}
-	h.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil {
@@ -355,7 +355,7 @@ func TestRespondFSWrite_CapRejects(t *testing.T) {
 		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": huge}),
 	}
-	h.respondFSWrite(t.Context(), "c1", msg)
+	h.inbound.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil || !strings.Contains(br.response.err.Error(), "cap") {
@@ -369,7 +369,7 @@ func TestHandleFSRequest_ReturnsFalseForNonFSMethod(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(9)
 	msg := &vibekit.RPCResponse{ID: &id, Method: "session/update", Params: json.RawMessage(`{}`)}
-	if h.handleFSRequest(t.Context(), "c1", msg) {
+	if h.inbound.handleFSRequest(t.Context(), "c1", msg) {
 		t.Error("handleFSRequest claimed non-fs method")
 	}
 }
@@ -386,7 +386,7 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hi.txt"}),
 	}
-	if !h.handleFSRequest(t.Context(), "c1", msg) {
+	if !h.inbound.handleFSRequest(t.Context(), "c1", msg) {
 		t.Fatal("handleFSRequest returned false for fs/read_text_file")
 	}
 	<-br.done
@@ -407,7 +407,7 @@ func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "ghost.txt"}),
 	}
-	h.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 	if br.response.err == nil {
 		t.Errorf("respondFSRead(missing file) err = nil, want a not-found error")
@@ -429,7 +429,7 @@ func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
 		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "exact.txt"}),
 	}
-	h.respondFSRead(t.Context(), "c1", msg)
+	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("respondFSRead(exact cap) err = %v, want nil (boundary is strict >)", br.response.err)
@@ -460,7 +460,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 			Method: vibekit.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "dir-target", "content": "x"}),
 		}
-		h.respondFSWrite(t.Context(), "c1", msg)
+		h.inbound.respondFSWrite(t.Context(), "c1", msg)
 		select {
 		case <-br.done:
 		case <-time.After(3 * time.Second):
@@ -483,7 +483,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 			Method: vibekit.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "ok.txt", "content": "hello"}),
 		}
-		h.respondFSWrite(t.Context(), "c1", msg)
+		h.inbound.respondFSWrite(t.Context(), "c1", msg)
 		select {
 		case <-br.done:
 		case <-time.After(3 * time.Second):
@@ -513,7 +513,7 @@ func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
 	msg := &vibekit.RPCResponse{ID: &id, Method: vibekit.MethodFSRead, Params: mustJSON(t, map[string]any{})}
 
 	logs := captureLogs(t)
-	h.respondBridge(t.Context(), "c1", msg, map[string]any{"ok": true}, nil)
+	h.inbound.respondBridge(t.Context(), "c1", msg, map[string]any{"ok": true}, nil)
 	if got := logs.String(); strings.Contains(got, "fs response write failed") {
 		t.Errorf("unexpected respond-failure error log on success: %s", got)
 	}

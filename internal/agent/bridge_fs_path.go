@@ -36,8 +36,8 @@ var (
 // that escape via `..`, and symlink-based escape — both the parent
 // directory and the final target are evaluated. Delegates to
 // workspace.ResolveInsideAbs (skips redundant filepath.Abs since h.lifecycle.workDir is already absolute).
-func (h *Runtime) resolveInsideWorkDir(p string) (string, error) {
-	return h.lifecycle.resolveInsideWorkDir(p)
+func (in *inbound) resolveInsideWorkDir(p string) (string, error) {
+	return in.lifetime.resolveInsideWorkDir(p)
 }
 
 // resolveInsideWorkDir confines p to the workspace. On the plane that holds
@@ -51,13 +51,13 @@ func (lc *lifetime) resolveInsideWorkDir(p string) (string, error) {
 // policy rejections (ignore-list denial, cap-exceeded) stay at Debug and
 // don't trip operator alert dashboards that key off Warn+. Real OS /
 // parse failures remain at Warn for triage.
-func (h *Runtime) respondFSError(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, err error) {
+func (in *inbound) respondFSError(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, err error) {
 	if fsErrorIsRoutine(err) {
 		slog.Debug("fs request denied", "chat_id", chatID, "method", msg.Method, "error", err)
 	} else {
 		slog.Warn("fs request failed", "chat_id", chatID, "method", msg.Method, "error", err)
 	}
-	h.respondBridge(ctx, chatID, msg, nil, err)
+	in.respondBridge(ctx, chatID, msg, nil, err)
 }
 
 // fsErrorIsRoutine reports whether err is an expected policy denial or
@@ -75,12 +75,12 @@ func fsErrorIsRoutine(err error) bool {
 // respondBridge routes a response back to the bridge that issued the
 // request. msg.ID is required; if the bridge is gone, we drop silently
 // (the agent's Call will time out on its side).
-func (h *Runtime) respondBridge(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any, err error) {
+func (in *inbound) respondBridge(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any, err error) {
 	if msg.ID == nil {
 		slog.Warn("fs request missing id", "chat_id", chatID, "method", msg.Method)
 		return
 	}
-	sb := h.coord.Bridge(chatID)
+	sb := in.coord.Bridge(chatID)
 	if sb == nil {
 		slog.Warn("fs response dropped: no bridge", "chat_id", chatID, "method", msg.Method)
 		return

@@ -57,18 +57,18 @@ type secretGetBody struct {
 // with no network call and no blocking refresh, and KAS issues these inside its
 // MCP connect path — dispatching them async would reorder a store against the
 // get that follows it.
-func (h *Runtime) handleKiroSecretRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroSecretGet:
-		h.respondBridge(ctx, chatID, msg, secretGetResult(h.secrets, msg.Params), nil)
+		in.respondBridge(ctx, chatID, msg, secretGetResult(in.secrets, msg.Params), nil)
 		return true
 	case methodKiroSecretStore:
-		result, err := secretStoreResult(ctx, h.secrets, msg.Params)
-		h.respondBridge(ctx, chatID, msg, result, err)
+		result, err := secretStoreResult(ctx, in.secrets, msg.Params)
+		in.respondBridge(ctx, chatID, msg, result, err)
 		return true
 	case methodKiroSecretDelete:
-		result, err := secretDeleteResult(ctx, h.secrets, msg.Params)
-		h.respondBridge(ctx, chatID, msg, result, err)
+		result, err := secretDeleteResult(ctx, in.secrets, msg.Params)
+		in.respondBridge(ctx, chatID, msg, result, err)
 		return true
 	default:
 		return false

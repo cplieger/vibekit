@@ -41,12 +41,16 @@ type Runs struct {
 
 	// schedules is the durable schedule store, nil when scheduling is off.
 	// Unlike leases there IS a "scheduling off" mode, so every reader checks.
-	schedules *schedule.Store
+	schedules *schedule.Store `wiring:"optional"`
 	// leases is what vibekit knows about the runs it put on the wire. Reach it
 	// through leaseStore(), which supplies an in-memory registry when the
 	// durable store was not wired: a lease carries the run's wall clock, so
 	// there is no "leases off" mode.
-	leases *runlease.Store
+	//
+	// Optional at the FIELD and required at the READ, which is why leaseStore()
+	// exists — the fallback is the reason a nil here is not the wiring mistake the
+	// guard hunts.
+	leases *runlease.Store `wiring:"optional"`
 	// bounds holds the ceiling arms, the termination claims and the recorded
 	// abnormal terminations that let a run's row say what happened to it.
 	bounds runBoundsState
