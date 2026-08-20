@@ -293,6 +293,14 @@ def rule_test_only_production(report):
             continue
         if TEST_SEAM_DOC.search(_doc_comment(p, line)):
             continue
+        # Only report a symbol whose callers MUST be in this repo: an unexported
+        # one, or an exported one under internal/. An EXPORTED symbol in an
+        # importable package is public API whose callers are downstream by design —
+        # running this on cplieger/auth reported forty of them, RequireAuth,
+        # SetSessionCookie and GeneratePKCE among them. Same boundary
+        # rule_unreferenced_interface_method already uses for published contracts.
+        if name[:1].isupper() and "internal" not in p.relative_to(ROOT).parts:
+            continue
         if prod[name] == 0 and test[name] > 0:
             rel = p.relative_to(ROOT)
             report(
