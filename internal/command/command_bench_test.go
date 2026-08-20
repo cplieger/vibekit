@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -126,8 +125,8 @@ func TestBenchDeps_Contract(t *testing.T) {
 // benchmarked with it.
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	d := New()
-	d.Register("create_chat", func(_ context.Context, w http.ResponseWriter, _ *vibekit.ClientCommand) {
-		httpreply.WriteRawJSON(w, []byte(`{"ok":true}`))
+	d.Register("create_chat", func(context.Context, *vibekit.ClientCommand) (any, error) {
+		return responseOK, nil
 	})
 
 	body, _ := json.Marshal(vibekit.ClientCommand{

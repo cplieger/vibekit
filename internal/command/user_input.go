@@ -26,16 +26,14 @@ type userInputResult struct {
 
 // CmdUserInputResponse forwards the user's answer to kiro-cli as the
 // _kiro/userInput response.
-func CmdUserInputResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
 	sb := bridges.GetBridge(cmd.ChatID)
 	if sb == nil {
-		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
-		return
+		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}
 	var p vibekit.UserInputResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// An "answered" action needs answer text (KAS ignores an empty answer
 	// and would advance anyway — reject so the client bug is visible);
@@ -43,20 +41,17 @@ func CmdUserInputResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPerm
 	switch p.Action {
 	case vibekit.UserInputActionAnswered:
 		if p.Answer == "" {
-			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-			return
+			return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 		}
 	case vibekit.UserInputActionDismissed:
 	default:
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// Take before responding, as CmdPermission does: the agent advances on the
 	// FIRST answer it receives, so a second tab's answer is both discarded and
 	// invisible, and the question the user actually answered stops being knowable.
 	if !perms.TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
-		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
-		return
+		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
 	result := userInputResult{Action: p.Action}
 	if p.Action == vibekit.UserInputActionAnswered {
@@ -65,5 +60,5 @@ func CmdUserInputResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPerm
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
 		slog.Error("user input response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.RespondOK(w)
+	return responseOK, nil
 }

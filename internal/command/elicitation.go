@@ -27,27 +27,23 @@ func validElicitationAction(a string) bool {
 
 // CmdElicitationResponse forwards the user's elicitation form answer to
 // kiro-cli as the elicitation/create response.
-func CmdElicitationResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdElicitationResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
 	sb := bridges.GetBridge(cmd.ChatID)
 	if sb == nil {
-		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
-		return
+		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}
 	var p vibekit.ElicitationResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if !validElicitationAction(p.Action) {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// Take before responding, for the same reason CmdPermission does: an
 	// elicitation form open in two tabs can be submitted twice, and the second
 	// ElicitResult is dropped by the MCP server's caller without a word.
 	if !perms.TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
-		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
-		return
+		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
 	result := vibekit.ElicitationResult{Action: p.Action}
 	// Content only travels on accept; decline/cancel carry no values.
@@ -57,5 +53,5 @@ func CmdElicitationResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPe
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
 		slog.Error("elicitation response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.RespondOK(w)
+	return responseOK, nil
 }

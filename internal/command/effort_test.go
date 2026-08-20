@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/testsupport"
@@ -35,13 +34,12 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	b := &recordingBridge{result: map[string]any{}, sessionID: "sess-1"}
-	d, host := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSetEffort(d, host, host, t.Context(), w, effortReq(t, "c1", "high"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "high"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -67,10 +65,10 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	seedEmptyChat(t, store, "c2")
-	d, host := newBridgeDispatcher(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
+	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	CmdSetEffort(d, host, host, t.Context(), httptest.NewRecorder(), effortReq(t, "c1", "low"))
-	CmdSetEffort(d, host, host, t.Context(), httptest.NewRecorder(), effortReq(t, "c2", "max"))
+	_, _ = CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "low"))
+	_, _ = CmdSetEffort(t.Context(), host, host, effortReq(t, "c2", "max"))
 
 	c1, _ := store.Get(t.Context(), "c1")
 	c2, _ := store.Get(t.Context(), "c2")
@@ -93,13 +91,11 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
-	d := New()
-	w := httptest.NewRecorder()
 
-	CmdSetEffort(d, host, host, t.Context(), w, effortReq(t, "c1", "medium"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "medium"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Effort != "medium" {
@@ -113,13 +109,11 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
-	d := New()
-	w := httptest.NewRecorder()
 
-	CmdSetEffort(d, host, host, t.Context(), w, effortReq(t, "c-brand-new", "xhigh"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c-brand-new", "xhigh"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, ok := store.Get(t.Context(), "c-brand-new")
 	if !ok {
@@ -140,13 +134,12 @@ func TestCmdSetEffort_ARefusedLiveSwitchIsNotPersisted(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	b := &recordingBridge{callErr: errors.New("no such config option"), sessionID: "sess-1"}
-	d, host := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSetEffort(d, host, host, t.Context(), w, effortReq(t, "c1", "max"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "max"))
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502", w.Code)
+	if statusOf(err) != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", statusOf(err))
 	}
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Effort != "" {
@@ -160,13 +153,12 @@ func TestCmdSetEffort_RejectsAnUnknownLevel(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedEmptyChat(t, store, "c1")
 			b := &recordingBridge{result: map[string]any{}, sessionID: "s"}
-			d, host := newBridgeDispatcher(store, b)
-			w := httptest.NewRecorder()
+			host := newBridgeHost(store, b)
 
-			CmdSetEffort(d, host, host, t.Context(), w, effortReq(t, "c1", level))
+			_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", level))
 
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d, want 400", w.Code)
+			if statusOf(err) != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", statusOf(err))
 			}
 			if b.callCount != 0 {
 				t.Error("an invalid level reached the bridge")

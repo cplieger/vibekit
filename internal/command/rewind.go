@@ -43,40 +43,35 @@ import (
 // ("Cannot revert while the agent is still running"), and refuses a concurrent
 // revert per session — so both races are settled upstream and vibekit forwards
 // the reason instead of reimplementing the guard.
-func CmdRewindChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.RewindChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.MessageID == "" {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
 	chat, ok := chats.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
-		return
+		return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 	}
 	idx := userMessageIndex(chat.Messages, p.MessageID)
 	if idx < 0 {
-		d.RespondErr(w, http.StatusBadRequest, errRewindTargetNotFound)
-		return
+		return nil, StatusError(http.StatusBadRequest, errRewindTargetNotFound)
 	}
 
 	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
 		// No live session to revert. The files and the transcript move together
 		// or not at all, so truncating the record alone is not an option.
-		d.RespondErr(w, http.StatusConflict, errNoBridge)
-		return
+		return nil, StatusError(http.StatusConflict, errNoBridge)
 	}
 
 	result, status, err := revertToMessage(ctx, bridge, p.MessageID)
 	if err != nil {
 		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status, keyError, err)
-		d.RespondErr(w, status, err)
-		return
+		return nil, StatusError(status, err)
 	}
 
 	// Cut at idx, not idx+1: the addressed message is discarded WITH its
@@ -94,17 +89,16 @@ func CmdRewindChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx co
 		return true
 	}); mErr != nil {
 		slog.Error("rewind: truncate record", "chat", cmd.ChatID, keyError, mErr)
-		d.RespondErr(w, http.StatusInternalServerError, mErr)
-		return
+		return nil, StatusError(http.StatusInternalServerError, mErr)
 	}
 
 	slog.Info("chat rewound",
 		"chat", cmd.ChatID, "message", p.MessageID,
 		"dropped_messages", len(chat.Messages)-idx,
 		"restored_files", len(result.AffectedFiles), "total_files", result.TotalFiles)
-	d.Respond(w, responseWith(map[string]any{
+	return responseWith(map[string]any{
 		"restored_files": result.AffectedFiles,
-	}))
+	}), nil
 }
 
 // revertResult is KAS's reply to a revert. affectedFiles are the paths it put
@@ -179,14 +173,13 @@ func userMessageIndex(messages []vibekit.Message, id string) int {
 // instead. Auto-create mirrors CmdSetMode for the same reason — a fresh chat is
 // client-side only until its first prompt, so without it every pick before the
 // first message 404'd and the control rolled back.
-func CmdSetEffort(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.SetEffortCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !p.Level.Valid() {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
 	// Switch live first (fail fast) when a bridge is running, so a refusal is
@@ -197,8 +190,7 @@ func CmdSetEffort(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx con
 			"value":    string(p.Level),
 		})); err != nil {
 			slog.Warn("set_effort: bridge call failed", "chat", cmd.ChatID, keyError, err)
-			d.RespondErr(w, http.StatusBadGateway, err)
-			return
+			return nil, StatusError(http.StatusBadGateway, err)
 		}
 	}
 
@@ -214,10 +206,9 @@ func CmdSetEffort(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx con
 		c.Effort = string(p.Level)
 		return true
 	}); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
-	d.Respond(w, responseWith(map[string]any{"level": p.Level}))
+	return responseWith(map[string]any{"level": p.Level}), nil
 }

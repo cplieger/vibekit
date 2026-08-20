@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"testing"
@@ -223,17 +222,15 @@ func (d *busyGuardDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
 // bench stub is sufficient.
 func TestHandleShellInterception_BusyReturns409(t *testing.T) {
 	deps := &busyGuardDeps{benchDeps: newBenchDeps(), bridge: fakeBusyBridge{}}
-	d := New()
-	w := httptest.NewRecorder()
 	cmd := &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}
 	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
-	HandleShellInterception(d, promptRolesOf(deps), t.Context(), w, cmd, p)
+	_, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p)
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (busy)", w.Code)
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (busy)", statusOf(err))
 	}
-	if !strings.Contains(w.Body.String(), "busy") {
-		t.Errorf("body = %q, want it to mention busy", w.Body.String())
+	if !strings.Contains(errText(err), "busy") {
+		t.Errorf("body = %q, want it to mention busy", errText(err))
 	}
 }

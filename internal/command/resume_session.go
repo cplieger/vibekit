@@ -26,31 +26,26 @@ import (
 
 // CmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened.
-//
-//nolint:revive // context-as-argument: dispatcher handler signature
-func CmdResumeSession(d *Dispatcher, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdResumeSession(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// The session id reaches a filesystem path inside KAS and vibekit's own
 	// reaper keep-list, so it is validated on the same pattern as a chat id
 	// rather than trusted from the client.
 	if !ids.ValidSessionID(p.SessionID) {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	name := p.Name
 	if name == "" {
 		name = vibekit.DefaultChatName
 	}
 	if len(name) > vibekit.MaxChatNameBytes {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
 	err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
@@ -69,10 +64,9 @@ func CmdResumeSession(d *Dispatcher, chats ChatAccess, ctx context.Context, w ht
 		return true
 	})
 	if err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	slog.Info("session resumed into a new chat",
 		"chat_id", cmd.ChatID, "acp_session", p.SessionID)
-	d.RespondOK(w)
+	return responseOK, nil
 }

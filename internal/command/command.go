@@ -35,7 +35,52 @@ import (
 const maxCommandBody = webhttp.MaxJSONBody
 
 // Handler is the signature for a command handler function.
-type Handler func(ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand)
+//
+// A handler RETURNS its outcome; it is handed no http.ResponseWriter and no
+// Dispatcher. Two things follow that were not true when it wrote its own
+// response. A handler cannot forget to answer — a bare return used to send an
+// empty 200 — and it cannot answer twice. And it needs no reference to the
+// router that called it: the whole reason every handler took a *Dispatcher was
+// to reach three response helpers on it.
+//
+// The body is marshalled by the dispatcher. A nil error means 200 with that
+// body; an error carrying a status (see StatusError) sets it, and a bare error
+// is a 500.
+type Handler func(ctx context.Context, cmd *vibekit.ClientCommand) (any, error)
+
+// statusError carries the HTTP status a handler chose for a failure.
+//
+// The status rides the error per-SITE rather than being derived from the error
+// value, because the same sentinel legitimately means different statuses in
+// different places: ErrChatNotFound is a 409 when a shell command finds no chat
+// to attach to and a 404 when set_mode is asked to configure one. A
+// sentinel-to-status table would have to pick one and be wrong at the other.
+type statusError struct {
+	code int
+	err  error
+}
+
+func (e *statusError) Error() string { return e.err.Error() }
+func (e *statusError) Unwrap() error { return e.err }
+
+// StatusError wraps err with the HTTP status the dispatcher should answer with.
+// Exported because Handler is: the hub registers cmdSwitchModel directly and
+// needs the same vocabulary as the handlers in this package.
+func StatusError(code int, err error) error {
+	return &statusError{code: code, err: err}
+}
+
+// statusOf reports the status a handler outcome is answered with: 200 for
+// success, the status the error named, and 500 for an error that named none.
+func statusOf(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	if se, ok := errors.AsType[*statusError](err); ok {
+		return se.code
+	}
+	return http.StatusInternalServerError
+}
 
 // Dispatcher holds the command dispatch table and serves the
 // POST /api/command HTTP endpoint.
@@ -58,18 +103,6 @@ func (d *Dispatcher) Register(t vibekit.CommandType, h Handler) {
 	d.mu.Unlock()
 }
 
-// Respond writes a JSON body. Caching for idempotent replay is the header
-// middleware's, which buffers what the handler writes.
-func (d *Dispatcher) Respond(w http.ResponseWriter, body any) {
-	webhttp.WriteJSON(w, body)
-}
-
-// RespondOK writes the standard {"ok":true} success response. Shorthand for
-// the most common command success case.
-func (d *Dispatcher) RespondOK(w http.ResponseWriter) {
-	d.Respond(w, responseOK)
-}
-
 // errorResponse is the typed wire shape for JSON error responses.
 // Using a struct instead of map[string]string makes the shape explicit,
 // enables json.Marshal's cached struct encoder, and provides a single
@@ -78,25 +111,23 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
-// RespondErr writes a JSON error response with the given status code.
+// writeErr writes a JSON error response at the status the handler chose.
 //
 // The body goes through rpcerr.Text rather than err.Error() because four of
 // the handlers reaching here (compact, mode, rewind, steer) forward a bridge Call
 // failure verbatim, and on a -32603 the error string is KAS's literal "Internal
 // error" while the cause sits unread in `error.data`. RPCErrorText is a no-op for
 // every ordinary Go error, so the one call covers both populations.
-func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	webhttp.WriteJSONStatus(w, code, errorResponse{Error: rpcerr.Text(err)})
+func writeErr(w http.ResponseWriter, err error) {
+	webhttp.WriteJSONStatus(w, statusOf(err), errorResponse{Error: rpcerr.Text(err)})
 }
 
-// RequireChatID validates that cmd.ChatID is non-empty and writes a
-// 400 response if not. Returns true when the chat ID is present.
-func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *vibekit.ClientCommand) bool {
+// requireChatID returns the 400 for a command that needs a chat and named none.
+func requireChatID(cmd *vibekit.ClientCommand) error {
 	if cmd.ChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
-		return false
+		return StatusError(http.StatusBadRequest, ErrMissingChatID)
 	}
-	return true
+	return nil
 }
 
 // ServeHTTP is the POST /api/command HTTP handler.
@@ -128,11 +159,23 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.RLock()
 	fn, ok := d.handlers[cmd.Type]
 	d.mu.RUnlock()
-	if ok {
-		fn(r.Context(), w, &cmd)
-	} else {
+	if !ok {
 		httpreply.BadRequest(w, "unknown command: "+string(cmd.Type))
+		return
 	}
+
+	body, err := fn(r.Context(), &cmd)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	// A handler that succeeded with nothing to say still owes the client the
+	// standard success body: {"ok":true} is what every such handler used to
+	// write by hand through RespondOK.
+	if body == nil {
+		body = responseOK
+	}
+	webhttp.WriteJSON(w, body)
 }
 
 // SessionParams builds the base ACP parameter map with the "sessionId"

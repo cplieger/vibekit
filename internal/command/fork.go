@@ -51,30 +51,24 @@ var errForkParentUnknown = errors.New("the chat this tangent came from no longer
 var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens into")
 
 // CmdForkChat opens a tangent off another chat.
-//
-//nolint:revive // context-as-argument: dispatcher handler signature
-func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ws Workspace, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, ws Workspace, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.ForkChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > vibekit.MaxChatNameBytes {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if p.ParentChatID == cmd.ChatID {
-		d.RespondErr(w, http.StatusBadRequest, errForkParentIsSelf)
-		return
+		return nil, StatusError(http.StatusBadRequest, errForkParentIsSelf)
 	}
 
 	parent, ok := chats.ChatStore().Get(ctx, p.ParentChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errForkParentUnknown)
-		return
+		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
 	}
 
 	// The parent's model and mode ride along so the tangent's answers come from
@@ -107,8 +101,7 @@ func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ws Works
 		}
 		return true
 	}); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	if outcome == vibekit.ForkOutcomePrimed {
@@ -120,10 +113,10 @@ func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ws Works
 	slog.Info("tangent opened",
 		"chat", cmd.ChatID, "parent", p.ParentChatID,
 		"outcome", outcome, "acp_session", sessionID)
-	d.Respond(w, responseWith(map[string]any{
+	return responseWith(map[string]any{
 		"outcome":    outcome,
 		"session_id": sessionID,
-	}))
+	}), nil
 }
 
 // forkSession asks KAS to branch the parent's session and returns the new

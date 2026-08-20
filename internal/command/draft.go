@@ -25,18 +25,16 @@ import (
 // abandoned message is cleared. The reply carries the byte length rather than
 // the text, because echoing a draft back would put the user's unsent words in
 // the response body of a request that already carried them.
-func CmdSetDraft(d *Dispatcher, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdSetDraft(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.SetDraftCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if len(p.Text) > vibekit.MaxDraftBytes {
-		d.RespondErr(w, http.StatusRequestEntityTooLarge, errDraftTooLong)
-		return
+		return nil, StatusError(http.StatusRequestEntityTooLarge, errDraftTooLong)
 	}
 	// No UTF-8 check here, deliberately: encoding/json replaces every invalid
 	// byte sequence in a string literal with U+FFFD while decoding, so a draft
@@ -46,13 +44,12 @@ func CmdSetDraft(d *Dispatcher, chats ChatAccess, ctx context.Context, w http.Re
 	// message content.
 
 	if err := chats.ChatStore().SetDraft(ctx, cmd.ChatID, p.Text); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	// Debug, not Info: this fires every 600ms of typing, and the one thing an
 	// operator would want from it (that saves are landing) is answered by the
 	// chat file. Never log the text.
 	slog.Debug("draft set", "chat", cmd.ChatID, "bytes", len(p.Text))
-	d.Respond(w, responseWith(map[string]any{"bytes": len(p.Text)}))
+	return responseWith(map[string]any{"bytes": len(p.Text)}), nil
 }

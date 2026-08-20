@@ -3,7 +3,6 @@ package command
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/testsupport"
@@ -19,10 +18,9 @@ type storeDeps struct {
 
 func (d *storeDeps) ChatStore() ChatStore { return d.store }
 
-func newTestDispatcher(t *testing.T, store ChatStore) (*Dispatcher, hostDouble) {
+func newTestHost(t *testing.T, store ChatStore) hostDouble {
 	t.Helper()
-	host := &storeDeps{benchDeps: newBenchDeps(), store: store}
-	return New(), host
+	return &storeDeps{benchDeps: newBenchDeps(), store: store}
 }
 
 // resumeReq builds a resume_session command envelope.
@@ -45,14 +43,13 @@ func resumeReq(t *testing.T, chatID vibekit.ChatID, sessionID, name string) *vib
 // copies no messages.
 func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d, host := newTestDispatcher(t, store)
+	host := newTestHost(t, store)
 	ctx := t.Context()
-	w := httptest.NewRecorder()
 
-	CmdResumeSession(d, host, ctx, w, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
+	_, err := CmdResumeSession(ctx, host, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, ok := store.Get(ctx, "c1")
 	if !ok {
@@ -90,10 +87,9 @@ func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	d, host := newTestDispatcher(t, store)
-	w := httptest.NewRecorder()
+	host := newTestHost(t, store)
 
-	CmdResumeSession(d, host, ctx, w, resumeReq(t, "c1", "sess_other", "Hijack"))
+	_, _ = CmdResumeSession(ctx, host, resumeReq(t, "c1", "sess_other", "Hijack"))
 
 	c, _ := store.Get(ctx, "c1")
 	if c.ACPSessionID != "sess_original" {
@@ -133,13 +129,12 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 	for name, sid := range cases {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
-			d, host := newTestDispatcher(t, store)
-			w := httptest.NewRecorder()
+			host := newTestHost(t, store)
 
-			CmdResumeSession(d, host, t.Context(), w, resumeReq(t, "c1", sid, ""))
+			_, err := CmdResumeSession(t.Context(), host, resumeReq(t, "c1", sid, ""))
 
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d for session id %q, want 400", w.Code, sid)
+			if statusOf(err) != http.StatusBadRequest {
+				t.Errorf("status = %d for session id %q, want 400", statusOf(err), sid)
 			}
 			if _, ok := store.Get(t.Context(), "c1"); ok {
 				t.Errorf("a chat was created for invalid session id %q", sid)

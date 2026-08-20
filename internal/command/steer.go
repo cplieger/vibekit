@@ -73,35 +73,29 @@ var (
 // precondition — a steer with no turn to join would sit in KAS's buffer until
 // some later turn happened to pick it up, which is a worse outcome than a clear
 // refusal. The client only reaches this path while a turn is streaming.
-func CmdSteer(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdSteer(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.SteerCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	text := strings.TrimSpace(p.Text)
 	switch {
 	case text == "":
-		d.RespondErr(w, http.StatusBadRequest, errEmptyPrompt)
-		return
+		return nil, StatusError(http.StatusBadRequest, errEmptyPrompt)
 	case len(text) > maxSteerBytes:
-		d.RespondErr(w, http.StatusRequestEntityTooLarge, errPromptTooLong)
-		return
+		return nil, StatusError(http.StatusRequestEntityTooLarge, errPromptTooLong)
 	case !ValidMessageID(p.MessageID):
-		d.RespondErr(w, http.StatusBadRequest, errMissingMessageID)
-		return
+		return nil, StatusError(http.StatusBadRequest, errMissingMessageID)
 	case notificationPrefix.MatchString(text):
-		d.RespondErr(w, http.StatusBadRequest, errSteerLooksLikeNotification)
-		return
+		return nil, StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
 	}
 
 	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
-		d.RespondErr(w, http.StatusConflict, errSteerNoTurn)
-		return
+		return nil, StatusError(http.StatusConflict, errSteerNoTurn)
 	}
 
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteer, SessionParams(bridge, map[string]any{
@@ -113,8 +107,7 @@ func CmdSteer(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.R
 		// message, both of which this handler has already ruled out — so an error
 		// here is a transport or session-liveness failure, not a validation one.
 		slog.Warn("steer: bridge call failed", "chat", cmd.ChatID, keyError, err)
-		d.RespondErr(w, http.StatusBadGateway, err)
-		return
+		return nil, StatusError(http.StatusBadGateway, err)
 	}
 
 	var result struct {
@@ -131,8 +124,7 @@ func CmdSteer(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.R
 		// reached the model. 409 rather than 502 — nothing broke, the window closed,
 		// and the client's answer is to send it as an ordinary prompt.
 		slog.Info("steer dropped", "chat", cmd.ChatID, "reason", result.Dropped)
-		d.RespondErr(w, http.StatusConflict, errSteerDropped)
-		return
+		return nil, StatusError(http.StatusConflict, errSteerDropped)
 	}
 
 	// No event is broadcast here. KAS answers a successful steer with its own
@@ -140,7 +132,7 @@ func CmdSteer(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.R
 	// that into the SSE the chip row renders from — so emitting one here would
 	// double-report, and would report it to only the device that sent it.
 	slog.Info("steer queued", "chat", cmd.ChatID, "steer_id", result.MessageID)
-	d.Respond(w, responseWith(map[string]any{"steer_id": result.MessageID}))
+	return responseWith(map[string]any{"steer_id": result.MessageID}), nil
 }
 
 // CmdSteerClear drops every steer still queued for the chat's session.
@@ -149,23 +141,21 @@ func CmdSteer(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.R
 // steers go away. That is KAS's semantic and it is the right one for this
 // command: discarding a message you changed your mind about should not also
 // throw away the work in flight.
-func CmdSteerClear(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdSteerClear(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
 		// Nothing to clear without a session, and no buffer survives a bridge, so
 		// this is success rather than a refusal: the caller's desired state holds.
-		d.Respond(w, responseWith(map[string]any{"cleared": []string{}}))
-		return
+		return responseWith(map[string]any{"cleared": []string{}}), nil
 	}
 
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteerClear, SessionParams(bridge))
 	if err != nil {
 		slog.Warn("steer_clear: bridge call failed", "chat", cmd.ChatID, keyError, err)
-		d.RespondErr(w, http.StatusBadGateway, err)
-		return
+		return nil, StatusError(http.StatusBadGateway, err)
 	}
 	var result struct {
 		MessageIDs []string `json:"messageIds"`
@@ -177,5 +167,5 @@ func CmdSteerClear(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w h
 	// As with a steer, the visible effect arrives as KAS's own `steering_cleared`
 	// frame; the ids come back here only so the caller knows what it dropped.
 	slog.Info("steers cleared", "chat", cmd.ChatID, "count", len(result.MessageIDs))
-	d.Respond(w, responseWith(map[string]any{"cleared": result.MessageIDs}))
+	return responseWith(map[string]any{"cleared": result.MessageIDs}), nil
 }

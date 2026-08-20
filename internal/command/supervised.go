@@ -31,14 +31,13 @@ import (
 // with until the next session, which is the kind of silent lag that makes a
 // safety toggle untrustworthy. On a chat with no bridge yet the persisted value
 // is enough — `spawnBridge` passes it at `session/new`.
-func CmdSetSupervisedMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.SetSupervisedModeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
 	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
@@ -48,8 +47,7 @@ func CmdSetSupervisedMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess,
 		c.SupervisedMode = p.Enabled
 		return true
 	}); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	// Best-effort on the live session, and logged at ERROR when it fails while
@@ -70,5 +68,5 @@ func CmdSetSupervisedMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess,
 	}
 
 	slog.Info("supervised mode set", "chat", cmd.ChatID, "enabled", p.Enabled)
-	d.Respond(w, responseWith(map[string]any{"enabled": p.Enabled}))
+	return responseWith(map[string]any{"enabled": p.Enabled}), nil
 }

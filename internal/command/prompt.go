@@ -83,7 +83,7 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 }
 
 // recoverEmptyTurn handles empty turn recovery: recreate session and retry.
-func recoverEmptyTurn(bridges BridgeAccess, chats ChatAccess, outcome TurnOutcomeAccess, ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse { //nolint:revive // context-as-argument: dispatcher handler signature
+func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatAccess, outcome TurnOutcomeAccess, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse {
 	// A verb KAS answers itself produces no content BY DESIGN, so an empty turn
 	// is the correct outcome and recovery is pure damage: it would close the
 	// bridge the launched run is parented on, detach the session, badge the turn
@@ -190,7 +190,7 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(chats ChatAccess, ws Workspace, ctx context.Context, chatID vibekit.ChatID, p *vibekit.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+func appendUserMessage(ctx context.Context, chats ChatAccess, ws Workspace, chatID vibekit.ChatID, p *vibekit.PromptCommand) error {
 	supervisedDefault := supervisedDefaultSetting(ctx, ws.ConfigDir)
 	err := chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
@@ -249,28 +249,24 @@ func hasMessageID(c *vibekit.Chat, id string) bool {
 }
 
 // CmdPrompt handles the prompt command.
-func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrMissingChatID)
 	}
 	p, code, vErr := validatePromptPayload(cmd)
 	if vErr != nil {
-		d.RespondErr(w, code, vErr)
-		return
+		return nil, StatusError(code, vErr)
 	}
 
 	// Shell command interception.
 	if strings.HasPrefix(p.Text, "!") {
-		HandleShellInterception(d, roles, ctx, w, cmd, &p)
-		return
+		return HandleShellInterception(ctx, roles, cmd, &p)
 	}
 
 	// 1. Ensure the chat exists and append the user message, naming the chat
 	// from its first prompt.
-	if err := appendUserMessage(roles.chats, roles.workspace, ctx, cmd.ChatID, &p); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+	if err := appendUserMessage(ctx, roles.chats, roles.workspace, cmd.ChatID, &p); err != nil {
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	// 2. Ensure the bridge exists and serialize per-chat prompts. The turn
@@ -283,12 +279,10 @@ func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.Re
 	sb, err := roles.bridges.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
 		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if !sb.TryAcquireForPrompt() {
-		d.RespondErr(w, http.StatusConflict, errBusy)
-		return
+		return nil, StatusError(http.StatusConflict, errBusy)
 	}
 	defer sb.ReleaseAfterPrompt()
 
@@ -346,13 +340,12 @@ func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.Re
 		reason := promptFailureReason(err)
 		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
 			vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
-		d.RespondErr(w, http.StatusInternalServerError, errors.New(reason))
-		return
+		return nil, StatusError(http.StatusInternalServerError, errors.New(reason))
 	}
 	slog.Info("prompt complete", "chat_id", cmd.ChatID, "elapsed", elapsed)
 
 	// Empty turn recovery.
-	resp = recoverEmptyTurn(roles.bridges, roles.chats, roles.turnOutcome, ctx, cmd.ChatID, resp, &p, promptParams)
+	resp = recoverEmptyTurn(ctx, roles.bridges, roles.chats, roles.turnOutcome, cmd.ChatID, resp, &p, promptParams)
 
 	// Compute credit delta for the turn summary.
 	var creditsDelta float64
@@ -363,7 +356,7 @@ func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.Re
 		CreditsDelta: creditsDelta,
 		ElapsedMs:    float64(elapsed.Milliseconds()),
 	})
-	d.RespondOK(w)
+	return responseOK, nil
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map. Takes

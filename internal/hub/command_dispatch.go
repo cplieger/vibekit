@@ -1,12 +1,8 @@
 package hub
 
 import (
-	"net/http"
-
 	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp"
 )
 
 // registerCommandHandlers populates the dispatcher with the concrete
@@ -38,24 +34,4 @@ func (h *Hub) registerCommandHandlers() {
 
 	// Register handlers that remain on Hub (complex internal coupling).
 	h.dispatcher.Register(vibekit.CmdSwitchModel, h.cmdSwitchModel)
-}
-
-// respond writes a JSON body. Idempotent replay is the Idempotency-Key
-// middleware's, which buffers whatever the handler writes.
-func (h *Hub) respond(w http.ResponseWriter, body any) {
-	webhttp.WriteJSON(w, body)
-}
-
-func (h *Hub) respondErr(w http.ResponseWriter, code int, err error) {
-	webhttp.WriteJSONStatus(w, code, httpreply.ErrorJSON(err.Error()))
-}
-
-// requireChatID validates that cmd.ChatID is non-empty and writes a
-// 400 response if not.
-func (h *Hub) requireChatID(w http.ResponseWriter, cmd *vibekit.ClientCommand) bool {
-	if cmd.ChatID == "" {
-		h.respondErr(w, http.StatusBadRequest, command.ErrMissingChatID)
-		return false
-	}
-	return true
 }

@@ -22,14 +22,13 @@ import (
 // yet (empty chat, first prompt not sent) there is nothing to switch
 // live — the mode is persisted and applied when the bridge's session/new
 // completes (spawnBridge threads chat.CurrentModeID into StartOpts.Mode).
-func CmdSetMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	var p vibekit.SetModeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.ModeID == "" {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
 	// Switch live first (fail fast) when a bridge is running. When there
@@ -37,8 +36,7 @@ func CmdSetMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx conte
 	if bridge := bridges.GetBridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetMode, SessionParams(bridge, map[string]any{"modeId": p.ModeID})); err != nil {
 			slog.Warn("set_mode: bridge call failed", "chat", cmd.ChatID, keyError, err)
-			d.RespondErr(w, http.StatusBadGateway, err)
-			return
+			return nil, StatusError(http.StatusBadGateway, err)
 		}
 	}
 
@@ -63,20 +61,18 @@ func CmdSetMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx conte
 		changed = true
 		return true
 	}); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if !changed {
 		if _, ok := chats.ChatStore().Get(ctx, cmd.ChatID); !ok {
 			// Only reachable for a tombstoned id (Mutate refuses to
 			// resurrect a just-deleted chat).
-			d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
-			return
+			return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 		}
 	}
 	if changed {
 		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
-	d.Respond(w, responseWith(map[string]any{"mode_id": p.ModeID}))
+	return responseWith(map[string]any{"mode_id": p.ModeID}), nil
 }

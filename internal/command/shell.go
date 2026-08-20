@@ -72,12 +72,11 @@ func appendShellUserMessage(ctx context.Context, chats ChatAccess, chatID vibeki
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
-func HandleShellInterception(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand, p *vibekit.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientCommand, p *vibekit.PromptCommand) (any, error) {
 	shellCmd := strings.TrimPrefix(p.Text, "!")
 	shellCmd = strings.TrimSpace(shellCmd)
 	if shellCmd == "" {
-		d.RespondErr(w, http.StatusBadRequest, errEmptyPrompt)
-		return
+		return nil, StatusError(http.StatusBadRequest, errEmptyPrompt)
 	}
 
 	// Busy-guard: serialize against a real streaming turn on the same
@@ -91,8 +90,7 @@ func HandleShellInterception(d *Dispatcher, roles *promptRoles, ctx context.Cont
 	// when we own the turn (locked) or when there is no bridge at all.
 	if sb := roles.bridges.GetBridge(cmd.ChatID); sb != nil {
 		if !sb.TryAcquireForPrompt() {
-			d.RespondErr(w, http.StatusConflict, errBusy)
-			return
+			return nil, StatusError(http.StatusConflict, errBusy)
 		}
 		defer sb.ReleaseAfterPrompt()
 	}
@@ -107,12 +105,10 @@ func HandleShellInterception(d *Dispatcher, roles *promptRoles, ctx context.Cont
 	}
 	persisted, err := appendShellUserMessage(ctx, roles.chats, cmd.ChatID, &userMsg, p.Text)
 	if err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if !persisted {
-		d.RespondErr(w, http.StatusConflict, ErrChatNotFound)
-		return
+		return nil, StatusError(http.StatusConflict, ErrChatNotFound)
 	}
 
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
@@ -158,7 +154,7 @@ func HandleShellInterception(d *Dispatcher, roles *promptRoles, ctx context.Cont
 		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
 		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
 	}
-	d.RespondOK(w)
+	return responseOK, nil
 }
 
 // renderShellResult wraps sanitized command output in a Markdown code

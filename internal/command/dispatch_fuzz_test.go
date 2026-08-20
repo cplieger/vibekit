@@ -21,8 +21,8 @@ func FuzzDispatcherServeHTTP(f *testing.F) {
 	f.Add([]byte(`not json at all`))
 
 	d := New()
-	d.Register("test_cmd", func(_ context.Context, w http.ResponseWriter, _ *vibekit.ClientCommand) {
-		w.WriteHeader(http.StatusOK)
+	d.Register("test_cmd", func(context.Context, *vibekit.ClientCommand) (any, error) {
+		return responseOK, nil
 	})
 
 	f.Fuzz(func(t *testing.T, data []byte) {

@@ -37,21 +37,19 @@ var errCompactRefused = errors.New("can't compact right now — finish or cancel
 // Requires a LIVE RESIDENT session: compaction operates on the session's own
 // message log, so there is nothing to compact without a bridge, and KAS throws
 // rather than answering for a session it does not hold.
-func CmdCompact(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
 	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
-		d.RespondErr(w, http.StatusConflict, errNoBridge)
-		return
+		return nil, StatusError(http.StatusConflict, errNoBridge)
 	}
 
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionCompact, SessionParams(bridge))
 	if err != nil {
 		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
-		d.RespondErr(w, http.StatusBadGateway, err)
-		return
+		return nil, StatusError(http.StatusBadGateway, err)
 	}
 	var result struct {
 		Success bool `json:"success"`
@@ -61,8 +59,7 @@ func CmdCompact(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http
 	}
 	if !result.Success {
 		slog.Info("compact refused", "chat", cmd.ChatID)
-		d.RespondErr(w, http.StatusConflict, errCompactRefused)
-		return
+		return nil, StatusError(http.StatusConflict, errCompactRefused)
 	}
 
 	// No event is broadcast here. The summarization frames arrive on the session
@@ -70,5 +67,5 @@ func CmdCompact(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http
 	// the watermark — so emitting anything from this handler would double-report
 	// a completion KAS is already announcing.
 	slog.Info("chat compacted", "chat", cmd.ChatID)
-	d.Respond(w, responseWith(nil))
+	return responseWith(nil), nil
 }
