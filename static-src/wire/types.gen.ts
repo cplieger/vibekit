@@ -1559,7 +1559,7 @@ export interface ToolDenialRule {
  * ToolDiff is a before/after text change from a write tool call. Sent
  * by kiro-cli in tool_call notifications for edit operations. Path is
  * workspace-relative (absolute paths from kiro-cli are normalised via
- * hub.relPath before being stored here); OldText/NewText are the
+ * agent.relPath before being stored here); OldText/NewText are the
  * changed fragments, not full-file contents.
  */
 export interface ToolDiff {
