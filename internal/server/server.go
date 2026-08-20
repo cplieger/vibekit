@@ -305,6 +305,40 @@ func (s *Server) ListenAndServe() error {
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, MaxHeaderBytes 1 MiB, and
 	// Read/WriteTimeout left unset for the SSE, WebSocket, and streaming-zip
 	// responses).
+	//
+	// Server.MaxHeaderValueCount (Go 1.27) is deliberately LEFT AT ITS DEFAULT,
+	// and this is the one place in the app that could set it — webhttp.NewServer
+	// hands back the *http.Server, so `srv.MaxHeaderValueCount = n` is already
+	// reachable and a library option for it would be pure added surface.
+	//
+	// What the default buys, measured on go1.27.0: DefaultMaxHeaderValueCount is
+	// 500, counting total header VALUES per request including Host, identically
+	// for repeated and distinct names (499 extra headers plus Host passes, 500
+	// extra answers 431). Parsing the worst request it admits costs 77.9 µs and
+	// 88 KB for 5.9 KB on the wire — a 13x allocation amplification and 21.6x
+	// the 3.6 µs a realistic 21-value browser request costs. With the cap off,
+	// which is all the 1 MiB MaxHeaderBytes bounded before 1.27, a full 1 MiB
+	// header block carries 209,708 values and parses in 22.8 ms for 20.2 MB —
+	// 19x the wire. So the default cut the worst case by 293x on CPU and 229x on
+	// allocation with no code here.
+	//
+	// What a LOWER cap would buy, and why it is refused: 64 values (still ~2.5x
+	// vibekit's real ceiling — a Chrome navigation is ~16, plus ~6 for a
+	// WebSocket handshake and whatever the reverse proxy appends) parses in
+	// 11.2 µs / 11.8 KB, so the saving is 67 µs and 76 KB on a request nothing
+	// legitimate sends. Against that, the 431 is answered BELOW the middleware
+	// chain — measured: the access logger never runs, SecurityHeaders sets
+	// nothing on it, and the response carries only Content-Type and
+	// Connection: close. So a cap tuned even slightly under a future proxy's
+	// header count refuses requests with no access-log line, no request id and
+	// no client_ip: exactly the silent-in-both-directions failure canonicalAPIPath
+	// exists to stop, bought for 67 µs. The knob would trade a visible cost for
+	// an invisible refusal.
+	//
+	// Consequence worth knowing when reading logs rather than code: the 431 is
+	// unobservable in the access stream at ANY cap, default included. A client
+	// whose requests vanish above 500 header values leaves no trace here; the
+	// evidence is on its side of the wire.
 	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := webhttp.NewServer(handler)
 	srv.Addr = ":" + port
