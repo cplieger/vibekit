@@ -178,18 +178,6 @@ func drainLeftoverChunks(chunks <-chan utilityChunkPayload) {
 	}
 }
 
-// drainAndResetTimer stops t, drains its channel if it had already fired
-// (so a stale tick can't fire spuriously), then rearms it to d.
-func drainAndResetTimer(t *time.Timer, d time.Duration) {
-	if !t.Stop() {
-		select {
-		case <-t.C:
-		default:
-		}
-	}
-	t.Reset(d)
-}
-
 // drainResponse reads the prompt response and collects assistant
 // text from the forwarded response channel. Returns the concatenated text.
 //
@@ -238,8 +226,12 @@ func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, r
 				return text.String(), nil
 			}
 			text.WriteString(chunk.Content.Text)
-			// Reset the idle timer on every chunk we accepted.
-			drainAndResetTimer(idle, idleDebounce)
+			// Rearm the idle window on every chunk we accepted. No Stop and no
+			// drain: a chan-based timer's channel is unbuffered as of Go 1.23, so
+			// Reset alone guarantees no receive corresponding to the previous
+			// setting (time.Timer.Reset's own doc says so), and Go 1.27 removed
+			// the asynctimerchan GODEBUG that could have reverted it.
+			idle.Reset(idleDebounce)
 		case <-idle.C:
 			// No chunks for idleDebounce → all chunks drained.
 			return text.String(), nil
