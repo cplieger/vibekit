@@ -466,6 +466,25 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "http://169.254.169.254:41234/oauth/callback?code=abc&state=" + state,
 			want:   errRelayNotLoopback,
 		},
+		// The ORDER is the property, which is why the expected error is the byte
+		// gate rather than the loopback gate. isLoopbackHost lowercases its input
+		// before matching an ALLOW-LIST, and a widening fold on an allow-list
+		// fails OPEN — the class that shipped a live Host-header widening in
+		// webhttp. Measured on go1.27.0 (Unicode 17.0.0): strings.ToLower maps
+		// exactly two already-assigned runes into pure ASCII, U+0130 -> "i" and
+		// U+212A -> "k", and none of this gate's three literals ("127.0.0.1",
+		// "::1", "localhost") contains an i or a k, so 0 of the ~1.11M non-ASCII
+		// one-rune substitutions across them are accepted. That makes the site
+		// provably unlaunderable on any Unicode version, not merely on this one.
+		// isPrintableASCII running FIRST is a second, independent proof (it
+		// admits 0 non-ASCII bytes at all, and url.Parse admits 0 non-ASCII runes
+		// into a scheme), and this case is what keeps the two in that order:
+		// moving the byte gate after the host check would change this error
+		// identity while leaving every other case green.
+		"a non-ASCII host never reaches the loopback allow-list": {
+			pasted: "http://\u212Aocalhost:41234/oauth/callback?code=abc&state=" + state,
+			want:   errRelayBadBytes,
+		},
 		"https is a different address, not a nicer one": {
 			pasted: "https://" + host + "/oauth/callback?code=abc&state=" + state,
 			want:   errRelayNotHTTP,
