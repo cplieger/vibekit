@@ -59,10 +59,10 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 func TestHandleGovernance_ServesWarmCache(t *testing.T) {
 	h, _, _ := newTestHub()
 	// Pre-seed the cache so the handler serves it directly (no bridge warm-up).
-	h.SetGovernance(sampleGovernance())
+	h.config.SetGovernance(sampleGovernance())
 
 	rec := httptest.NewRecorder()
-	h.handleGovernance(rec, httptest.NewRequest(http.MethodGet, "/api/governance", nil))
+	h.config.handleGovernance(rec, httptest.NewRequest(http.MethodGet, "/api/governance", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -85,9 +85,9 @@ func TestCacheGovernanceFromUtility(t *testing.T) {
 		`"contentCollection":true,"promptLogging":false,"codeReferenceTracker":false,` +
 		`"autonomousAgents":true}}`)
 
-	h.cacheGovernanceFromUtility(raw)
+	h.config.cacheGovernanceFromUtility(raw)
 
-	got, ok := h.governance.get()
+	got, ok := h.config.governance.get()
 	if !ok || !got.Known {
 		t.Fatalf("cache not populated from utility copy: %+v ok=%v", got, ok)
 	}
@@ -99,8 +99,8 @@ func TestCacheGovernanceFromUtility(t *testing.T) {
 	}
 
 	// An invalid copy must be ignored (no panic, cache unchanged).
-	h.cacheGovernanceFromUtility(json.RawMessage("{"))
-	if got2, _ := h.governance.get(); got2.DisabledReason != "org policy" {
+	h.config.cacheGovernanceFromUtility(json.RawMessage("{"))
+	if got2, _ := h.config.governance.get(); got2.DisabledReason != "org policy" {
 		t.Error("invalid utility copy clobbered the cache")
 	}
 }

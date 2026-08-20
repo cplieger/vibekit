@@ -68,7 +68,7 @@ func TestHookScopeAndPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("home dir: %v", err)
 	}
-	h := &Hub{lifecycle: &lifecyclePlane{workDir: work}}
+	h := &configPlane{lifecycle: &lifecyclePlane{workDir: work}}
 	tests := []struct {
 		name      string
 		abs       string
@@ -105,7 +105,7 @@ func TestHookScopeRankOrdersWorkspaceFirst(t *testing.T) {
 
 func TestToHookInfo(t *testing.T) {
 	work := t.TempDir()
-	h := &Hub{lifecycle: &lifecyclePlane{workDir: work}}
+	h := &configPlane{lifecycle: &lifecyclePlane{workDir: work}}
 	fp := filepath.Join(work, ".kiro", "hooks", "greet.json")
 
 	// No timeout in the fixture: KAS's list projection emits {type, command}

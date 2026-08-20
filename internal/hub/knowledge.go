@@ -100,8 +100,8 @@ type knowledgeMessageResponse struct {
 // AccountUsage/UtilityPrompt) and issues one _kiro/knowledge request with a
 // bounded timeout. params carry the subcommand and its arguments; sessionId is
 // intentionally never set (global default store).
-func (h *Hub) knowledgeCall(ctx context.Context, params map[string]any) (json.RawMessage, error) {
-	u := h.ensureUtility()
+func (cp *configPlane) knowledgeCall(ctx context.Context, params map[string]any) (json.RawMessage, error) {
+	u := cp.utility()
 	cctx, cancel := context.WithTimeout(ctx, knowledgeCallTimeout)
 	defer cancel()
 	return u.session.knowledgeRaw(cctx, params)
@@ -121,8 +121,8 @@ func parseKnowledgeResult(raw json.RawMessage) (*kasKnowledgeResult, error) {
 
 // knowledgeShow lists the global store's contexts + any in-flight indexing
 // operations.
-func (h *Hub) knowledgeShow(ctx context.Context) ([]knowledgeContext, error) {
-	raw, err := h.knowledgeCall(ctx, map[string]any{keySubcommand: "show"})
+func (cp *configPlane) knowledgeShow(ctx context.Context) ([]knowledgeContext, error) {
+	raw, err := cp.knowledgeCall(ctx, map[string]any{keySubcommand: "show"})
 	if err != nil {
 		return nil, err
 	}
@@ -146,11 +146,11 @@ func (h *Hub) knowledgeShow(ctx context.Context) ([]knowledgeContext, error) {
 // relative path resolves against the workspace dir; an absolute path is
 // cleaned and used as-is. Sending an absolute path to KAS removes any
 // ambiguity about which cwd its file enumerator resolves against.
-func (h *Hub) resolveKnowledgePath(p string) string {
+func (cp *configPlane) resolveKnowledgePath(p string) string {
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
 	}
-	return filepath.Join(h.lifecycle.workDir, p)
+	return filepath.Join(cp.lifecycle.workDir, p)
 }
 
 // cleanKnowledgeMsg trims a KAS message for surfacing as an HTTP error,
@@ -168,10 +168,10 @@ func cleanKnowledgeMsg(s string) string {
 // handleKnowledgeList: GET /api/knowledge → the global store's contexts +
 // in-flight indexing operations. The client polls this while any entry is
 // still indexing.
-func (h *Hub) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
-	ctxs, err := h.knowledgeShow(r.Context())
+func (cp *configPlane) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
+	ctxs, err := cp.knowledgeShow(r.Context())
 	if err != nil {
-		h.writeKnowledgeErr(w, err)
+		cp.writeKnowledgeErr(w, err)
 		return
 	}
 	webhttp.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
@@ -186,7 +186,7 @@ type knowledgeAddReq struct {
 // index of a directory. Name defaults to the path's base name. Returns the
 // KAS confirmation message on success (200); a usage / bad-path failure is a
 // 400 with the KAS message.
-func (h *Hub) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
+func (cp *configPlane) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 	var body knowledgeAddReq
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
@@ -196,18 +196,18 @@ func (h *Hub) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "path required")
 		return
 	}
-	abs := h.resolveKnowledgePath(path)
+	abs := cp.resolveKnowledgePath(path)
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		name = filepath.Base(abs)
 	}
-	res, err := h.knowledgeMutate(r.Context(), map[string]any{
+	res, err := cp.knowledgeMutate(r.Context(), map[string]any{
 		keySubcommand: "add",
 		"name":        name,
 		"path":        abs,
 	})
 	if err != nil {
-		h.writeKnowledgeErr(w, err)
+		cp.writeKnowledgeErr(w, err)
 		return
 	}
 	if !res.Success {
@@ -219,18 +219,18 @@ func (h *Hub) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 
 // handleKnowledgeRemove: DELETE /api/knowledge/{name} → drop a context by name
 // (KAS matches path first, then name). A missing target is a 404.
-func (h *Hub) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
+func (cp *configPlane) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		httpreply.BadRequest(w, "name required")
 		return
 	}
-	res, err := h.knowledgeMutate(r.Context(), map[string]any{
+	res, err := cp.knowledgeMutate(r.Context(), map[string]any{
 		keySubcommand: "remove",
 		"target":      name,
 	})
 	if err != nil {
-		h.writeKnowledgeErr(w, err)
+		cp.writeKnowledgeErr(w, err)
 		return
 	}
 	if !res.Success {
@@ -242,8 +242,8 @@ func (h *Hub) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
 
 // knowledgeMutate issues a mutating subcommand (add/remove/…) and parses the
 // {success, message} reply.
-func (h *Hub) knowledgeMutate(ctx context.Context, params map[string]any) (*kasKnowledgeResult, error) {
-	raw, err := h.knowledgeCall(ctx, params)
+func (cp *configPlane) knowledgeMutate(ctx context.Context, params map[string]any) (*kasKnowledgeResult, error) {
+	raw, err := cp.knowledgeCall(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -254,14 +254,14 @@ func (h *Hub) knowledgeMutate(ctx context.Context, params map[string]any) (*kasK
 // message (details logged, not leaked). There is no errNoLiveBridge case: the
 // utility bridge is auto-started, so a failure here is a backend fault, not a
 // "open a chat first" condition.
-func (h *Hub) writeKnowledgeErr(w http.ResponseWriter, err error) {
+func (cp *configPlane) writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }
 
 // registerKnowledgeRoutes wires the knowledge-base management endpoints.
-func (h *Hub) registerKnowledgeRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/knowledge", h.handleKnowledgeList)
-	mux.HandleFunc("POST /api/knowledge", h.handleKnowledgeAdd)
-	mux.HandleFunc("DELETE /api/knowledge/{name}", h.handleKnowledgeRemove)
+func (cp *configPlane) registerKnowledgeRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/knowledge", cp.handleKnowledgeList)
+	mux.HandleFunc("POST /api/knowledge", cp.handleKnowledgeAdd)
+	mux.HandleFunc("DELETE /api/knowledge/{name}", cp.handleKnowledgeRemove)
 }

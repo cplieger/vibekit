@@ -119,7 +119,7 @@ func TestHub_TranslateRolesContract(t *testing.T) {
 			Streaming:  h,
 			Perms:      h,
 			MCP:        h.MCPRecorder(),
-			Governance: h,
+			Governance: h.config,
 			RunOrigin:  h.runs,
 			RunBounds:  h.runs,
 		}

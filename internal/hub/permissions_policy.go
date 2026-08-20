@@ -59,8 +59,8 @@ func (h *Hub) ensureUtility() *utilityRuntime {
 		h.bridge.utility = newUtilityRuntime(
 			h.lifecycle.shutdownCtx, h.bridge.factory, h.Models,
 			utilitySessionHooks{
-				onHooksChanged:    h.broadcastHooksChanged,
-				onGovernanceState: h.cacheGovernanceFromUtility,
+				onHooksChanged:    h.config.broadcastHooksChanged,
+				onGovernanceState: h.config.cacheGovernanceFromUtility,
 				tokenSource:       h.kiroAccessTokenResult,
 			},
 			h.secrets,
@@ -73,14 +73,14 @@ func (h *Hub) ensureUtility() *utilityRuntime {
 // PolicyList returns the native policy rules, optionally filtered to one
 // scope (empty = all scopes). Backed by _kiro/permissions/list on the
 // utility bridge.
-func (h *Hub) PolicyList(ctx context.Context, scope string) ([]vibekit.PolicyRule, error) {
+func (cp *configPlane) PolicyList(ctx context.Context, scope string) ([]vibekit.PolicyRule, error) {
 	extra := map[string]any{}
 	if scope != "" {
 		extra["scope"] = scope
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := h.ensureUtility().session.policyRaw(cctx, methodV3PermissionsList, extra)
+	raw, err := cp.utility().session.policyRaw(cctx, methodV3PermissionsList, extra)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ type explainWire struct {
 // WITHOUT executing anything or raising a consent prompt (KAS
 // evaluateSingleResource). Exactly one of Capability / ToolID is required;
 // KAS additionally requires a resource for the shell capability.
-func (h *Hub) PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
+func (cp *configPlane) PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
 	extra := map[string]any{}
 	switch {
 	case req.Capability != "":
@@ -134,7 +134,7 @@ func (h *Hub) PolicyExplain(ctx context.Context, req vibekit.PolicyExplainReques
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := h.ensureUtility().session.policyRaw(cctx, methodV3PermissionsExplain, extra)
+	raw, err := cp.utility().session.policyRaw(cctx, methodV3PermissionsExplain, extra)
 	if err != nil {
 		return nil, err
 	}

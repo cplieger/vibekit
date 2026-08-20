@@ -287,7 +287,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithTools(toolsEngine),
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
-		server.WithPolicy(h),
+		server.WithPolicy(h.Config()),
 		server.WithStaticFS(static),
 		server.WithCLIPath(kiro.cliPath),
 		server.WithKiroReady(kiro.ready),

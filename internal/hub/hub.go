@@ -187,6 +187,9 @@ type Hub struct {
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
+	// config owns the KAS configuration surface (knowledge, hooks, governance,
+	// policy), all of it over the utility bridge. See config_plane.go.
+	config *configPlane
 	// runs owns the workflow-run surface: 74 methods and the four fields only it
 	// touched (see run_plane.go). Hub reaches it like any collaborator.
 	runs          *runPlane
@@ -342,6 +345,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		pendingPerms: newPendingPermsTracker(),
 		chatStatus:   newChatStatusCache(),
 	}
+	configP := newConfigPlane(lc, nil) // broadcast assigned below, with the rest
 	runs := &runPlane{
 		bridges:   bridgeP.mgr,
 		lifecycle: lc,
@@ -354,10 +358,10 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		bridge:       bridgeP,
 		sse:          sseP,
 		runs:         runs,
+		config:       configP,
 		perm:         &permPlane{},
 		chatStore:    chatStore,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
-		governance:   newGovernanceCache(),
 		authLatch:    &authTokenLatch{},
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
@@ -371,11 +375,13 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// sync.Once whose hooks call back into hub surfaces, so the plane must ask for
 	// it at use rather than hold one built here.
 	runs.utility = h.ensureUtility
+	configP.utility = h.ensureUtility
+	configP.broadcast = h.Broadcast
 	h.translator = translate.New(&translate.Roles{
 		Streaming:  h,
 		Perms:      h,
 		MCP:        h.MCPRecorder(),
-		Governance: h,
+		Governance: h.config,
 		RunOrigin:  h.runs,
 		RunBounds:  h.runs,
 	})
@@ -484,9 +490,9 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
 	mux.HandleFunc("POST /api/shell/restart", h.handleShellRestart)
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
-	h.registerKnowledgeRoutes(mux)
-	h.registerHooksRoutes(mux)
-	h.registerGovernanceRoutes(mux)
+	h.config.registerKnowledgeRoutes(mux)
+	h.config.registerHooksRoutes(mux)
+	h.config.registerGovernanceRoutes(mux)
 	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).
 	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", h.handleSessionList)

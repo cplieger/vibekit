@@ -59,13 +59,13 @@ func TestParseKnowledgeResult(t *testing.T) {
 
 func TestResolveKnowledgePath(t *testing.T) {
 	h, _, _ := newTestHub() // workDir = /tmp/work
-	if got := h.resolveKnowledgePath("docs"); got != "/tmp/work/docs" {
+	if got := h.config.resolveKnowledgePath("docs"); got != "/tmp/work/docs" {
 		t.Errorf("relative resolve = %q, want /tmp/work/docs", got)
 	}
-	if got := h.resolveKnowledgePath("a/../b"); got != "/tmp/work/b" {
+	if got := h.config.resolveKnowledgePath("a/../b"); got != "/tmp/work/b" {
 		t.Errorf("relative clean = %q, want /tmp/work/b", got)
 	}
-	if got := h.resolveKnowledgePath("/abs/path"); got != "/abs/path" {
+	if got := h.config.resolveKnowledgePath("/abs/path"); got != "/abs/path" {
 		t.Errorf("absolute passthrough = %q, want /abs/path", got)
 	}
 }
@@ -84,7 +84,7 @@ func TestHandleKnowledgeList_OK(t *testing.T) {
 		`{"name":"big","id":"op1","item_count":0,"items_display":"42%","indexing":true}]}`)
 
 	rec := httptest.NewRecorder()
-	h.handleKnowledgeList(rec, httptest.NewRequest(http.MethodGet, "/api/knowledge", nil))
+	h.config.handleKnowledgeList(rec, httptest.NewRequest(http.MethodGet, "/api/knowledge", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -117,7 +117,7 @@ func TestHandleKnowledgeList_BridgeError(t *testing.T) {
 	seedKnowledge(br, `{"success":false,"message":"boom"}`)
 
 	rec := httptest.NewRecorder()
-	h.handleKnowledgeList(rec, httptest.NewRequest(http.MethodGet, "/api/knowledge", nil))
+	h.config.handleKnowledgeList(rec, httptest.NewRequest(http.MethodGet, "/api/knowledge", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("code = %d, want 502 (%s)", rec.Code, rec.Body.String())
 	}
@@ -125,7 +125,7 @@ func TestHandleKnowledgeList_BridgeError(t *testing.T) {
 
 func TestHandleKnowledgeAdd_MissingPath(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postJSON(h.handleKnowledgeAdd, "/api/knowledge", `{"path":""}`)
+	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":""}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", rec.Code)
 	}
@@ -136,7 +136,7 @@ func TestHandleKnowledgeAdd_OK_ResolvesPathAndDerivesName(t *testing.T) {
 	t.Cleanup(h.stopUtilityBridge)
 	seedKnowledge(br, `{"success":true,"message":"Indexing 'docs' in background\nFiles: 3"}`)
 
-	rec := postJSON(h.handleKnowledgeAdd, "/api/knowledge", `{"path":"docs"}`)
+	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":"docs"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -161,7 +161,7 @@ func TestHandleKnowledgeAdd_ExplicitName(t *testing.T) {
 	t.Cleanup(h.stopUtilityBridge)
 	seedKnowledge(br, `{"success":true,"message":"Indexing 'Project docs' in background"}`)
 
-	rec := postJSON(h.handleKnowledgeAdd, "/api/knowledge", `{"path":"/abs/docs","name":"Project docs"}`)
+	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":"/abs/docs","name":"Project docs"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -176,7 +176,7 @@ func TestHandleKnowledgeAdd_Failure(t *testing.T) {
 	t.Cleanup(h.stopUtilityBridge)
 	seedKnowledge(br, `{"success":false,"message":"Usage: /knowledge add <name> <path>"}`)
 
-	rec := postJSON(h.handleKnowledgeAdd, "/api/knowledge", `{"path":"docs"}`)
+	rec := postJSON(h.config.handleKnowledgeAdd, "/api/knowledge", `{"path":"docs"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 (%s)", rec.Code, rec.Body.String())
 	}
@@ -186,7 +186,7 @@ func TestHandleKnowledgeRemove_MissingName(t *testing.T) {
 	h, _, _ := newTestHub()
 	req := httptest.NewRequest(http.MethodDelete, "/api/knowledge/", nil)
 	rec := httptest.NewRecorder()
-	h.handleKnowledgeRemove(rec, req) // no path value set
+	h.config.handleKnowledgeRemove(rec, req) // no path value set
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", rec.Code)
 	}
@@ -200,7 +200,7 @@ func TestHandleKnowledgeRemove_OK(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/knowledge/docs", nil)
 	req.SetPathValue("name", "docs")
 	rec := httptest.NewRecorder()
-	h.handleKnowledgeRemove(rec, req)
+	h.config.handleKnowledgeRemove(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -221,7 +221,7 @@ func TestHandleKnowledgeRemove_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/knowledge/gone", nil)
 	req.SetPathValue("name", "gone")
 	rec := httptest.NewRecorder()
-	h.handleKnowledgeRemove(rec, req)
+	h.config.handleKnowledgeRemove(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("code = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}

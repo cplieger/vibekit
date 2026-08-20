@@ -177,11 +177,11 @@ func decodeHookID(encoded string) (string, error) {
 // separator-precise rule keeps a hook that genuinely lives under a directory
 // whose name merely BEGINS with two dots ("..drafts/build.kiro.hook")
 // classified as the workspace hook it is instead of a global one.
-func (h *Hub) hookScopeAndPath(abs string) (scope, path string) {
+func (cp *configPlane) hookScopeAndPath(abs string) (scope, path string) {
 	if abs == "" {
 		return hookScopeWorkspace, ""
 	}
-	if rel, err := filepath.Rel(h.lifecycle.workDir, abs); err == nil && !pathinside.RelEscapes(rel) {
+	if rel, err := filepath.Rel(cp.lifecycle.workDir, abs); err == nil && !pathinside.RelEscapes(rel) {
 		return hookScopeWorkspace, filepath.ToSlash(rel)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
@@ -195,12 +195,12 @@ func (h *Hub) hookScopeAndPath(abs string) (scope, path string) {
 // hooksListRaw ensures the utility bridge and issues _kiro/hooks/list for the
 // workspace, returning the parsed KAS hooks. workspacePaths is passed
 // explicitly so the entry is loaded even if the session hasn't yet.
-func (h *Hub) hooksListRaw(ctx context.Context) ([]kasHook, error) {
-	u := h.ensureUtility()
+func (cp *configPlane) hooksListRaw(ctx context.Context) ([]kasHook, error) {
+	u := cp.utility()
 	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
 	defer cancel()
 	raw, err := u.session.hooksRaw(cctx, methodKiroHooksList, map[string]any{
-		keyWorkspacePaths: []string{h.lifecycle.workDir},
+		keyWorkspacePaths: []string{cp.lifecycle.workDir},
 		// includeDisabled is load-bearing, not a nicety. Without it
 		// registry.list() filters disabled hooks out of the response, which made
 		// the dashboard toggle a ONE-WAY DOOR: writing enabled:false broadcast
@@ -225,8 +225,8 @@ func (h *Hub) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 }
 
 // toHookInfo flattens a KAS hook into the client-facing shape.
-func (h *Hub) toHookInfo(k *kasHook) hookInfo {
-	scope, path := h.hookScopeAndPath(k.Meta.FilePath)
+func (cp *configPlane) toHookInfo(k *kasHook) hookInfo {
+	scope, path := cp.hookScopeAndPath(k.Meta.FilePath)
 	info := hookInfo{
 		ID:             encodeHookID(k.ID),
 		Name:           k.Name,
@@ -251,15 +251,15 @@ func (h *Hub) toHookInfo(k *kasHook) hookInfo {
 
 // handleHooksList: GET /api/hooks → the workspace's hooks (name, trigger,
 // action summary, enabled). Read-only.
-func (h *Hub) handleHooksList(w http.ResponseWriter, r *http.Request) {
-	hooks, err := h.hooksListRaw(r.Context())
+func (cp *configPlane) handleHooksList(w http.ResponseWriter, r *http.Request) {
+	hooks, err := cp.hooksListRaw(r.Context())
 	if err != nil {
-		h.writeHookErr(w, err)
+		cp.writeHookErr(w, err)
 		return
 	}
 	out := make([]hookInfo, 0, len(hooks))
 	for i := range hooks {
-		out = append(out, h.toHookInfo(&hooks[i]))
+		out = append(out, cp.toHookInfo(&hooks[i]))
 	}
 	// Workspace hooks before global ones (stable within each group) so the
 	// dashboard's canonical order matches the scope grouping on every device.
@@ -284,7 +284,7 @@ type hookEnabledReq struct {
 // handleHookSetEnabled: POST /api/hooks/{id}/enabled {enabled} → flip a hook's
 // enabled flag (persisted to its .kiro/hooks/*.json file by KAS). Broadcasts
 // hooks_changed so every device refetches.
-func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
+func (cp *configPlane) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 	hookID, ok := hookIDFromPath(w, r)
 	if !ok {
 		return
@@ -293,7 +293,7 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
-	u := h.ensureUtility()
+	u := cp.utility()
 	cctx, cancel := context.WithTimeout(r.Context(), hookCallTimeout)
 	defer cancel()
 	raw, err := u.session.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
@@ -301,15 +301,15 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 		"enabled": body.Enabled,
 	})
 	if err != nil {
-		h.writeHookErr(w, err)
+		cp.writeHookErr(w, err)
 		return
 	}
 	res := parseHookResult(raw)
 	if !res.Success {
-		h.writeHookResultErr(w, res)
+		cp.writeHookResultErr(w, res)
 		return
 	}
-	h.broadcastHooksChanged()
+	cp.broadcastHooksChanged()
 	webhttp.Ok(w)
 }
 
@@ -324,8 +324,8 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 // `settings_updated` — the docs scan is memoized behind directory mtime AND entry
 // names, so an in-place body edit changes neither and that endpoint alone would
 // serve a stale trigger forever.
-func (h *Hub) broadcastHooksChanged() {
-	h.Broadcast(context.Background(), vibekit.NewEvent(vibekit.EventHooksChanged, "", vibekit.HooksChangedPayload{}))
+func (cp *configPlane) broadcastHooksChanged() {
+	cp.broadcast(context.Background(), vibekit.NewEvent(vibekit.EventHooksChanged, "", vibekit.HooksChangedPayload{}))
 }
 
 // hookIDFromPath decodes the base64url {id} path segment into a KAS hook id,
@@ -353,7 +353,7 @@ func parseHookResult(raw json.RawMessage) kasHookResult {
 }
 
 // writeHookResultErr maps a {success:false, code} reply to an HTTP status.
-func (h *Hub) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
+func (cp *configPlane) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	if res.Code == "hook_not_found" {
 		httpreply.NotFound(w, "hook not found")
 		return
@@ -369,7 +369,7 @@ func (h *Hub) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 // (details logged, not leaked). Like knowledge.go there is no errNoLiveBridge
 // case: the utility bridge is auto-started, so a failure here is a backend
 // fault, not a "open a chat first" condition.
-func (h *Hub) writeHookErr(w http.ResponseWriter, err error) {
+func (cp *configPlane) writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }
@@ -377,7 +377,7 @@ func (h *Hub) writeHookErr(w http.ResponseWriter, err error) {
 // registerHooksRoutes wires the hooks-state endpoints. TWO routes: there is no
 // POST /api/hooks/{id}/trigger, and adding one back would restore the executeHook
 // shell path along with it.
-func (h *Hub) registerHooksRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/hooks", h.handleHooksList)
-	mux.HandleFunc("POST /api/hooks/{id}/enabled", h.handleHookSetEnabled)
+func (cp *configPlane) registerHooksRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/hooks", cp.handleHooksList)
+	mux.HandleFunc("POST /api/hooks/{id}/enabled", cp.handleHookSetEnabled)
 }

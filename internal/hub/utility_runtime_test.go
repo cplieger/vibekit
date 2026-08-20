@@ -503,7 +503,7 @@ func TestAccountUsage_CallHasTimeout(t *testing.T) {
 func TestPolicyList_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{"rules":[]}`, `{}`)
-	if _, err := h.PolicyList(t.Context(), ""); err != nil {
+	if _, err := h.config.PolicyList(t.Context(), ""); err != nil {
 		t.Fatalf("PolicyList: %v", err)
 	}
 	if !br.callHadDeadline(methodV3PermissionsList) {
@@ -516,7 +516,7 @@ func TestPolicyList_CallHasTimeout(t *testing.T) {
 func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{}`, `{"capability":"fs_write","effect":"ask"}`)
-	if _, err := h.PolicyExplain(t.Context(), vibekit.PolicyExplainRequest{Capability: "fs_write"}); err != nil {
+	if _, err := h.config.PolicyExplain(t.Context(), vibekit.PolicyExplainRequest{Capability: "fs_write"}); err != nil {
 		t.Fatalf("PolicyExplain: %v", err)
 	}
 	if !br.callHadDeadline(methodV3PermissionsExplain) {

@@ -28,7 +28,7 @@ import (
 func TestHooksRoutes_HaveNoTriggerVerb(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
-	(&Hub{}).registerHooksRoutes(mux)
+	(&configPlane{}).registerHooksRoutes(mux)
 
 	for _, tc := range []struct {
 		name    string
