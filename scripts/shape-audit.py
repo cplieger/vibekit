@@ -13,8 +13,6 @@ until the exit code is 0.
     python3 scripts/shape-audit.py --quiet    # exit code only
 
 Sources:
-  R1  receiver method count      .kiro architecture.md (stdlib ceiling: net/http
-                                 Transport 43, database/sql DB 53)
   R2  name repeats receiver      google.github.io/styleguide/go/best-practices
                                  ("do not repeat the name of the method receiver")
   R3  Get prefix                 go.dev/wiki/CodeReviewComments (getters)
@@ -33,7 +31,6 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CEILING = 53
 
 # Concept words a method name must not repeat from its receiver's type name.
 # Keyed by type, valued by the substrings that would be repetition.
@@ -101,43 +98,24 @@ def methods():
                 yield p, i, m.group(1), m.group(2), m.group(3)
 
 
-# A receiver over the ceiling whose cut was ATTEMPTED and refused on measurement
-# is a ruling, not an outstanding finding. The value is where the refusal is
-# written down, so the next reader re-checks the reasoning rather than the count.
-RULED = {
-    "internal/agent.Runs": "internal/agent/run_routes.go",
-}
-
-
-def rule_receiver_width(f):
-    counts = collections.Counter()
-    for p, _, _, typ, _ in methods():
-        counts[(str(p.parent.relative_to(ROOT)), typ)] += 1
-    for (pkg, typ), n in counts.most_common():
-        if n <= CEILING:
-            continue
-        key = f"{pkg}.{typ}"
-        if where := RULED.get(key):
-            # The exemption is only good while the reasoning is still there.
-            if (ROOT / where).exists() and "coupling test" in (
-                ROOT / where
-            ).read_text():
-                continue
-            f(
-                "R1",
-                f"{key} is over the ceiling and its recorded refusal in {where} is gone",
-            )
-            continue
-        f("R1", f"{key} has {n} methods (stdlib ceiling {CEILING})")
-
-
+# There is deliberately NO method-count rule here, and the one that was here is
+# deleted rather than tuned. It flagged a receiver over 53 methods, a figure this
+# fleet derived by measuring two stdlib packages; no authority states any such
+# limit, and the standard library fails it in four places (reflect.Value 97,
+# go/types.Checker 195, os.File 73, time.Time 60 — while database/sql.DB is 46,
+# not the 53 quoted). A gate the stdlib fails is not a rule, and chasing it splits
+# types that were right.
+#
+# Cohesion is the property that actually discriminates, and it does not reduce to
+# a pass/fail line, so it lives in scripts/cohesion.py as a report to read rather
+# than a check to satisfy.
 def camel_words(name):
     """Split a Go identifier into its CamelCase components.
 
-    Whole words, not substrings: a naive `in` test reported
-    Runs.answerUnattended as repeating "Run", because "answe(run)attended"
-    contains those three letters. A checker that cries wolf teaches its reader
-    to skip findings, which is worse than not having it.
+    Whole words, not substrings: a naive `in` test reported Runs.answerUnattended
+    as repeating "Run", because "answe(run)attended" contains those three letters.
+    A checker that cries wolf teaches its reader to skip findings, which is worse
+    than not having it.
     """
     return re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|^[a-z0-9]+", name)
 
@@ -254,7 +232,6 @@ def rule_stale_vocabulary(f):
 # read as a capitalised sentence — which is the argument against writing them at
 # all. This file's job is the SHAPE rules no linter knows about.
 RULES = [
-    rule_receiver_width,
     rule_name_repeats_receiver,
     rule_get_prefix,
     rule_one_receiver_per_type,
