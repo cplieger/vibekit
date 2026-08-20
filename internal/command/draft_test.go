@@ -24,10 +24,9 @@ func draftReq(t *testing.T, chatID vibekit.ChatID, text string) *vibekit.ClientC
 		t.Fatalf("marshal: %v", err)
 	}
 	return &vibekit.ClientCommand{
-		Type:      vibekit.CmdSetDraft,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+		Type:    vibekit.CmdSetDraft,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 
@@ -99,10 +98,9 @@ func TestCmdSetDraft_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 	// Raw bytes, not json.Marshal: marshalling would sanitize them before the
 	// handler ever saw them, which is the same coercion under test.
 	CmdSetDraft(d, host, t.Context(), w, &vibekit.ClientCommand{
-		Type:      vibekit.CmdSetDraft,
-		ChatID:    "c1",
-		RequestID: "r1",
-		Payload:   append(append([]byte(`{"text":"`), 0xff, 0xfe), []byte(`"}`)...),
+		Type:    vibekit.CmdSetDraft,
+		ChatID:  "c1",
+		Payload: append(append([]byte(`{"text":"`), 0xff, 0xfe), []byte(`"}`)...),
 	})
 
 	if w.Code != http.StatusOK {
@@ -133,10 +131,9 @@ func TestCmdSetDraft_RejectsAMalformedPayload(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	CmdSetDraft(d, host, t.Context(), w, &vibekit.ClientCommand{
-		Type:      vibekit.CmdSetDraft,
-		ChatID:    "c1",
-		RequestID: "r1",
-		Payload:   json.RawMessage(`{"text":42}`),
+		Type:    vibekit.CmdSetDraft,
+		ChatID:  "c1",
+		Payload: json.RawMessage(`{"text":42}`),
 	})
 
 	if w.Code != http.StatusBadRequest {

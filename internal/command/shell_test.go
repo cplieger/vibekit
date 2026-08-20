@@ -225,9 +225,9 @@ func (d *busyGuardDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
 // bench stub is sufficient.
 func TestHandleShellInterception_BusyReturns409(t *testing.T) {
 	deps := &busyGuardDeps{benchDeps: newBenchDeps(), bridge: fakeBusyBridge{}}
-	d := New(deps)
+	d := New()
 	w := httptest.NewRecorder()
-	cmd := &vibekit.ClientCommand{Type: "prompt", RequestID: "r1", ChatID: "c1"}
+	cmd := &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}
 	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
 	HandleShellInterception(d, promptRolesOf(deps), t.Context(), w, cmd, p)

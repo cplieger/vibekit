@@ -8,9 +8,6 @@ import (
 // maxMessageIDBytes caps the length of client-supplied message ids.
 const maxMessageIDBytes = 128
 
-// maxRequestIDBytes caps client-supplied request_id length.
-const maxRequestIDBytes = 128
-
 // validMessageIDRe restricts client-supplied ids to a safe character set.
 var validMessageIDRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
 
@@ -19,25 +16,6 @@ var validMessageIDRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
 // truth; every boundary that accepts a message id delegates here.
 func ValidMessageID(id string) bool {
 	if id == "" || len(id) > maxMessageIDBytes {
-		return false
-	}
-	return validMessageIDRe.MatchString(id)
-}
-
-// ValidRequestID reports whether the given request_id is safe to use
-// as an idempotency cache key. Empty is valid (field is optional).
-//
-// Deliberately DISTINCT from webhttp.ValidRequestID despite the shared name:
-// that one gates the inbound X-Request-ID header (1..64 chars, no dots or
-// colons, empty invalid), while this one gates the optional client-supplied
-// JSON request_id field on the message-ID charset (dots and colons allowed,
-// up to 128 bytes). Do not unify them — adopting the header rule here would
-// reject idempotency keys existing clients legitimately send.
-func ValidRequestID(id string) bool {
-	if id == "" {
-		return true
-	}
-	if len(id) > maxRequestIDBytes {
 		return false
 	}
 	return validMessageIDRe.MatchString(id)

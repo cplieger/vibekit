@@ -50,7 +50,7 @@ func decisionCommand(t *testing.T, typ vibekit.CommandType, payload any) *vibeki
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: typ, ChatID: "c1", RequestID: "r1", Payload: raw}
+	return &vibekit.ClientCommand{Type: typ, ChatID: "c1", Payload: raw}
 }
 
 const decisionRequestID = int64(7)
@@ -94,7 +94,7 @@ func TestDecisionHandlers_LostClaimIsRefusedAndNotAnswered(t *testing.T) {
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: false}
 			w := httptest.NewRecorder()
 
-			tc.run(New(deps), deps, w)
+			tc.run(New(), deps, w)
 
 			if w.Code != http.StatusConflict {
 				t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
@@ -121,7 +121,7 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
 			w := httptest.NewRecorder()
 
-			tc.run(New(deps), deps, w)
+			tc.run(New(), deps, w)
 
 			if w.Code != http.StatusOK {
 				t.Errorf("status = %d, want %d (body %q)", w.Code, http.StatusOK, w.Body.String())

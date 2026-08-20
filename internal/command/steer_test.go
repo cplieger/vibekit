@@ -34,15 +34,14 @@ func steerReq(t *testing.T, chatID vibekit.ChatID, text, messageID string) *vibe
 		t.Fatalf("marshal: %v", err)
 	}
 	return &vibekit.ClientCommand{
-		Type:      vibekit.CmdSteer,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+		Type:    vibekit.CmdSteer,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 
 func clearReq(chatID vibekit.ChatID) *vibekit.ClientCommand {
-	return &vibekit.ClientCommand{Type: vibekit.CmdSteerClear, ChatID: chatID, RequestID: "r1"}
+	return &vibekit.ClientCommand{Type: vibekit.CmdSteerClear, ChatID: chatID}
 }
 
 func queuedResult(id string) map[string]any {
@@ -231,7 +230,7 @@ func TestCmdSteer_BroadcastsNothing(t *testing.T) {
 	deps := &countingDeps{
 		bridgeDeps: &bridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}, bridge: b},
 	}
-	d := New(deps)
+	d := New()
 	host := hostDouble(deps)
 	w := httptest.NewRecorder()
 

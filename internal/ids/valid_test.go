@@ -31,28 +31,6 @@ func TestValidMessageID(t *testing.T) {
 	}
 }
 
-func TestValidRequestID(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want bool
-	}{
-		{name: "empty_is_valid", in: "", want: true},
-		{name: "valid", in: "req-abc.123", want: true},
-		{name: "over_128_bytes", in: strings.Repeat("x", 129), want: false},
-		{name: "invalid_chars_space", in: "req 123", want: false},
-		{name: "invalid_chars_slash", in: "req/123", want: false},
-		{name: "128_bytes", in: strings.Repeat("b", 128), want: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := ValidRequestID(tc.in); got != tc.want {
-				t.Errorf("ValidRequestID(%q) = %v, want %v", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestValidChatID(t *testing.T) {
 	cases := []struct {
 		name string

@@ -54,7 +54,7 @@ func CmdCreateChat(d *Dispatcher, chats ChatAccess, ctx context.Context, w http.
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }
 
 // CmdDeleteChat removes a chat: tear down its side effects, then delete the
@@ -80,7 +80,7 @@ func CmdDeleteChat(d *Dispatcher, chats ChatAccess, ctx context.Context, w http.
 		return
 	}
 	slog.Info("chat deleted", "chat_id", cmd.ChatID)
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }
 
 // CmdCancel cancels the active turn, if any.
@@ -100,7 +100,7 @@ func CmdCancel(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess, ter
 
 	sb := bridges.GetBridge(cmd.ChatID)
 	if sb == nil {
-		d.RespondOK(w, cmd.RequestID)
+		d.RespondOK(w)
 		return
 	}
 	if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
@@ -121,7 +121,7 @@ func CmdCancel(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess, ter
 	if !sb.ArmCancelGrace(sb.PromptGeneration(), cancelGrace) {
 		slog.Debug("cancel: no in-flight prompt to arm a grace budget against", "chat_id", cmd.ChatID)
 	}
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }
 
 // CmdCloseChat is the tab-close teardown: the user closed the chat's tab, and
@@ -144,7 +144,7 @@ func CmdCloseChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, perms P
 	}
 	chats.CancelChatRuns(ctx, cmd.ChatID)
 	chats.CloseChatState(ctx, cmd.ChatID)
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
@@ -176,5 +176,5 @@ func CmdPermission(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess,
 	if err := sb.Respond(ctx, p.RequestID, outcome, nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }

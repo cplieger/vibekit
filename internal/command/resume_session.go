@@ -74,5 +74,5 @@ func CmdResumeSession(d *Dispatcher, chats ChatAccess, ctx context.Context, w ht
 	}
 	slog.Info("session resumed into a new chat",
 		"chat_id", cmd.ChatID, "acp_session", p.SessionID)
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }

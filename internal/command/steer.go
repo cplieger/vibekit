@@ -140,7 +140,7 @@ func CmdSteer(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.R
 	// that into the SSE the chip row renders from — so emitting one here would
 	// double-report, and would report it to only the device that sent it.
 	slog.Info("steer queued", "chat", cmd.ChatID, "steer_id", result.MessageID)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"steer_id": result.MessageID}))
+	d.Respond(w, responseWith(map[string]any{"steer_id": result.MessageID}))
 }
 
 // CmdSteerClear drops every steer still queued for the chat's session.
@@ -157,7 +157,7 @@ func CmdSteerClear(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w h
 	if bridge == nil {
 		// Nothing to clear without a session, and no buffer survives a bridge, so
 		// this is success rather than a refusal: the caller's desired state holds.
-		d.Respond(w, cmd.RequestID, responseWith(map[string]any{"cleared": []string{}}))
+		d.Respond(w, responseWith(map[string]any{"cleared": []string{}}))
 		return
 	}
 
@@ -177,5 +177,5 @@ func CmdSteerClear(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w h
 	// As with a steer, the visible effect arrives as KAS's own `steering_cleared`
 	// frame; the ids come back here only so the caller knows what it dropped.
 	slog.Info("steers cleared", "chat", cmd.ChatID, "count", len(result.MessageIDs))
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"cleared": result.MessageIDs}))
+	d.Respond(w, responseWith(map[string]any{"cleared": result.MessageIDs}))
 }

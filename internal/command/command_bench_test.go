@@ -14,14 +14,10 @@ import (
 )
 
 // benchDeps is a minimal host double for benchmarking dispatch overhead.
-type benchDeps struct {
-	dedup map[string][]byte
-}
+type benchDeps struct{}
 
-func newBenchDeps() *benchDeps { return &benchDeps{dedup: make(map[string][]byte)} }
+func newBenchDeps() *benchDeps { return &benchDeps{} }
 
-func (d *benchDeps) CheckDedup(reqID string) ([]byte, bool)         { v, ok := d.dedup[reqID]; return v, ok }
-func (d *benchDeps) RecordDedup(reqID string, data []byte)          { d.dedup[reqID] = data }
 func (d *benchDeps) ChatStore() ChatStore                           { return nil }
 func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent) {}
 func (d *benchDeps) GetBridge(vibekit.ChatID) Bridge                { return nil }
@@ -55,15 +51,6 @@ func (d *benchDeps) LatchTurnModel(vibekit.ChatID, string)               {}
 func TestBenchDeps_NoPanic(t *testing.T) {
 	d := newBenchDeps()
 
-	// Dedup round-trip.
-	if _, ok := d.CheckDedup("unknown"); ok {
-		t.Error("CheckDedup returned true for unknown key")
-	}
-	d.RecordDedup("k", []byte("v"))
-	if got, ok := d.CheckDedup("k"); !ok || string(got) != "v" {
-		t.Errorf("RecordDedup+CheckDedup round-trip failed: got %q, ok=%v", got, ok)
-	}
-
 	// Boolean/scalar returns. The workspace paths are not here any more: they
 	// are a Workspace value, so there is no double method to exercise.
 	if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
@@ -95,13 +82,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 
 	// --- Safe usable values (dispatch path depends on these) ---
 	t.Run("usable_values", func(t *testing.T) {
-		if _, ok := d.CheckDedup("miss"); ok {
-			t.Error("CheckDedup should return false for unknown")
-		}
-		d.RecordDedup("r1", []byte("data"))
-		if got, ok := d.CheckDedup("r1"); !ok || string(got) != "data" {
-			t.Errorf("dedup round-trip failed: %q ok=%v", got, ok)
-		}
 		if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
 			t.Error("TurnContext must return a non-nil context")
 		} else {
@@ -139,44 +119,24 @@ func TestBenchDeps_Contract(t *testing.T) {
 	})
 }
 
+// BenchmarkDispatcherServeHTTP measures the envelope path: decode, validate,
+// table lookup, handler. It had cache_miss / cache_hit sub-benchmarks when the
+// dispatcher ran its own request_id dedup; both now measure the identical path,
+// so there is one. Replay cost belongs to the header middleware and is
+// benchmarked with it.
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
-	deps := newBenchDeps()
-	d := New(deps)
+	d := New()
 	d.Register("create_chat", func(_ context.Context, w http.ResponseWriter, _ *vibekit.ClientCommand) {
 		httpreply.WriteRawJSON(w, []byte(`{"ok":true}`))
 	})
 
 	body, _ := json.Marshal(vibekit.ClientCommand{
-		Type:      "create_chat",
-		RequestID: "req-bench-1",
-		ChatID:    "chat-bench-1",
+		Type:   "create_chat",
+		ChatID: "chat-bench-1",
 	})
 
-	b.Run("cache_miss", func(b *testing.B) {
+	b.Run("dispatch", func(b *testing.B) {
 		b.ReportAllocs()
-		i := 0
-		for b.Loop() {
-			// Use unique request IDs to avoid dedup cache hits.
-			reqBody, _ := json.Marshal(vibekit.ClientCommand{
-				Type:      "create_chat",
-				RequestID: "req-" + string(rune('A'+i%26)) + string(rune('0'+i%10)),
-				ChatID:    "chat-bench-1",
-			})
-			req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(reqBody))
-			w := httptest.NewRecorder()
-			d.ServeHTTP(w, req)
-			i++
-		}
-	})
-
-	b.Run("cache_hit", func(b *testing.B) {
-		// Prime the dedup cache.
-		req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		d.ServeHTTP(w, req)
-
-		b.ReportAllocs()
-		b.ResetTimer()
 		for b.Loop() {
 			req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(body))
 			w := httptest.NewRecorder()
@@ -186,9 +146,8 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 
 	b.Run("unknown_command", func(b *testing.B) {
 		unknownBody, _ := json.Marshal(vibekit.ClientCommand{
-			Type:      "nonexistent_cmd",
-			RequestID: "req-unknown",
-			ChatID:    "chat-bench-1",
+			Type:   "nonexistent_cmd",
+			ChatID: "chat-bench-1",
 		})
 		b.ReportAllocs()
 		for b.Loop() {
@@ -200,13 +159,12 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 }
 
 // hostDouble is what a single all-in-one test double answers: every role a
-// handler declares, plus the envelope seam. It exists ONLY for the doubles in
+// handler declares. It exists ONLY for the doubles in
 // this package's tests — production code has no aggregate over the roles, and
 // the shape pin in shape_test.go reads production files only, for exactly this
 // reason. A double stands in for the whole host, so naming every role once is
 // what lets one value fill every slot a handler asks for.
 type hostDouble interface {
-	DedupGate
 	BridgeAccess
 	ChatAccess
 	PendingPermAccess

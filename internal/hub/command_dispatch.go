@@ -1,8 +1,6 @@
 package hub
 
 import (
-	"encoding/json"
-	"log/slog"
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/command"
@@ -34,16 +32,10 @@ func (h *Hub) registerCommandHandlers() {
 	h.dispatcher.Register(vibekit.CmdSwitchModel, h.cmdSwitchModel)
 }
 
-// respond writes a JSON body and caches it for request_id idempotency.
-func (h *Hub) respond(w http.ResponseWriter, reqID string, body any) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		slog.Error("respond marshal", "error", err)
-		httpreply.InternalError(w, err)
-		return
-	}
-	h.recordDedup(reqID, data)
-	httpreply.WriteRawJSON(w, data)
+// respond writes a JSON body. Idempotent replay is the Idempotency-Key
+// middleware's, which buffers whatever the handler writes.
+func (h *Hub) respond(w http.ResponseWriter, body any) {
+	webhttp.WriteJSON(w, body)
 }
 
 func (h *Hub) respondErr(w http.ResponseWriter, code int, err error) {

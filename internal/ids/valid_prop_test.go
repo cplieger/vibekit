@@ -40,18 +40,3 @@ func TestValidChatID_RapidAcceptCharset(t *testing.T) {
 		}
 	})
 }
-
-func TestValidMessageID_RapidSuperset(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		id := rapid.StringMatching(`[A-Za-z0-9_.\-:]{1,128}`).Draw(t, "id")
-		if ValidMessageID(id) && !ValidRequestID(id) {
-			t.Fatalf("ValidMessageID(%q)=true but ValidRequestID(%q)=false", id, id)
-		}
-	})
-}
-
-func TestValidRequestID_RapidEmptyAlwaysValid(t *testing.T) {
-	if !ValidRequestID("") {
-		t.Fatal("ValidRequestID(\"\") = false, want true")
-	}
-}

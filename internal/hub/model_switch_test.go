@@ -12,7 +12,7 @@ import (
 
 func TestSwitchModel_MissingChatID(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{Type: "switch_model", RequestID: "r1"})
+	rec := postCmd(t, h, vibekit.ClientCommand{Type: "switch_model"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
 	}
@@ -21,7 +21,7 @@ func TestSwitchModel_MissingChatID(t *testing.T) {
 func TestSwitchModel_ChatNotFound(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "nope",
+		Type: "switch_model", ChatID: "nope",
 	})
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("code = %d, want 404", rec.Code)
@@ -42,7 +42,7 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	})
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
 	if rec.Code != http.StatusOK {
@@ -77,7 +77,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 	})
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"claude-sonnet"}`),
 	})
 	if rec.Code != http.StatusOK {
@@ -108,7 +108,7 @@ func TestSwitchModel_PreservesContextSize(t *testing.T) {
 	})
 
 	_ = postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
 
@@ -139,7 +139,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 
 	// Empty payload: bare restart.
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
@@ -155,7 +155,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 
 	// Same-model payload: also bare restart, same invariants.
 	rec2 := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r2", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-same"}`),
 	})
 	if rec2.Code != http.StatusOK {
@@ -183,7 +183,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	})
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"bad<script>"}`),
 	})
 	if rec.Code != http.StatusBadRequest {
@@ -216,7 +216,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	origSessionID := fb.SessionID()
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"new-model"}`),
 	})
 	if rec.Code != http.StatusOK {
@@ -270,7 +270,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	})
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-unentitled"}`),
 	})
 	if rec.Code != http.StatusConflict {
@@ -309,7 +309,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 				return true
 			})
 			rec := postCmd(t, h, vibekit.ClientCommand{
-				Type: "switch_model", RequestID: "r1", ChatID: "c1",
+				Type: "switch_model", ChatID: "c1",
 				Payload: json.RawMessage(`{"model":"m-anything"}`),
 			})
 			if rec.Code != http.StatusOK {
@@ -340,7 +340,7 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	})
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-deprecated"}`),
 	})
 	if rec.Code != http.StatusOK {

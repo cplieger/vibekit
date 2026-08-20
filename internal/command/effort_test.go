@@ -25,10 +25,9 @@ func effortReq(t *testing.T, chatID vibekit.ChatID, level string) *vibekit.Clien
 		t.Fatalf("marshal: %v", err)
 	}
 	return &vibekit.ClientCommand{
-		Type:      vibekit.CmdSetEffort,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+		Type:    vibekit.CmdSetEffort,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 
@@ -94,7 +93,7 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
-	d := New(host)
+	d := New()
 	w := httptest.NewRecorder()
 
 	CmdSetEffort(d, host, host, t.Context(), w, effortReq(t, "c1", "medium"))
@@ -114,7 +113,7 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
-	d := New(host)
+	d := New()
 	w := httptest.NewRecorder()
 
 	CmdSetEffort(d, host, host, t.Context(), w, effortReq(t, "c-brand-new", "xhigh"))

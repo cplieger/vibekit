@@ -478,19 +478,21 @@ export const sendPrompt = defineAction<
       {
         type: "prompt",
         chat_id: chatID,
+        // TOP level, where transportAction puts it and where transport.send
+        // reads it to build the Idempotency-Key header. It used to sit inside
+        // `payload`, which no reader ever looked at on either side — so a
+        // retried prompt was not deduped at all and started a second turn.
+        // Only present when the framework supplied one, so the field never
+        // serializes as undefined.
+        ...(ctx?.idempotencyKey !== undefined
+          ? { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }
+          : {}),
         payload: {
           text,
           message_id: messageID,
           model,
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
-          // Only include the key if the framework provided one (avoids
-          // sending `idempotency_key: undefined` which serializes
-          // inconsistently). Field name shared with transportAction's
-          // injection via the package constant.
-          ...(ctx?.idempotencyKey !== undefined
-            ? { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }
-            : {}),
         },
       },
       { signal, reportSendState: true }, // send-state IS the error surface
@@ -564,11 +566,11 @@ const ALREADY_ANSWERED = "already_answered";
 type DecisionAnswer = "answered" | "superseded";
 
 /** Sends one answer and classifies the outcome. The idempotency key is injected
- *  at the command's TOP level, exactly where transportAction put it, so the wire
- *  is unchanged by this refactor. (That field is inert against vibekit's own
- *  transport — the server dedups on the envelope's request_id and on an
- *  Idempotency-Key HEADER that transport.ts never sets — but preserving it keeps
- *  this a behaviour-preserving change plus one new outcome.) */
+ *  at the command's TOP level, exactly where transportAction puts it, which is
+ *  where transport.send reads it to build the Idempotency-Key header. It was
+ *  inert when this comment first said so — the server deduped on an envelope
+ *  request_id and nothing set the header — and it is live now: the envelope
+ *  field is gone and the header is the one mechanism. */
 async function answerDecision(
   cmd: { type: string; chat_id: string; payload: Record<string, unknown> },
   signal: AbortSignal,
@@ -577,10 +579,10 @@ async function answerDecision(
   const withKey =
     idempotencyKey !== undefined ? { ...cmd, [IDEMPOTENCY_COMMAND_FIELD]: idempotencyKey } : cmd;
   // The cast and `reportSendState: false` both mirror the transport bridge in
-  // actions/boot.ts, which is the path transportAction took. The envelope's
-  // request_id is minted by transport.send, so an action-level command is
-  // legitimately looser than the `Command` union; and send-state is the prompt
-  // button's surface, which an ask's answer must not touch.
+  // actions/boot.ts, which is the path transportAction took. The command carries
+  // an idempotency key transport.send lifts into a header, so an action-level
+  // command is legitimately looser than the `Command` union; and send-state is
+  // the prompt button's surface, which an ask's answer must not touch.
   const r = await transportSend(withKey as Parameters<typeof transportSend>[0], {
     signal,
     reportSendState: false,

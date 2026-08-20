@@ -102,7 +102,7 @@ func CmdRewindChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx co
 		"chat", cmd.ChatID, "message", p.MessageID,
 		"dropped_messages", len(chat.Messages)-idx,
 		"restored_files", len(result.AffectedFiles), "total_files", result.TotalFiles)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{
+	d.Respond(w, responseWith(map[string]any{
 		"restored_files": result.AffectedFiles,
 	}))
 }
@@ -219,5 +219,5 @@ func CmdSetEffort(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx con
 	}
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"level": p.Level}))
+	d.Respond(w, responseWith(map[string]any{"level": p.Level}))
 }

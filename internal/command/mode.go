@@ -78,5 +78,5 @@ func CmdSetMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx conte
 		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"mode_id": p.ModeID}))
+	d.Respond(w, responseWith(map[string]any{"mode_id": p.ModeID}))
 }

@@ -15,12 +15,9 @@ import (
 
 // Hub satisfies each of the command package's role interfaces; the assertions
 // are the ones the Roles literal in command_dispatch.go already forces, so they
-// are not repeated here.
-//
-// The one method whose satisfaction is NOT forced by that literal is the
-// envelope seam, because command.New takes it as a parameter rather than a
-// field.
-var _ command.DedupGate = (*Hub)(nil)
+// are not repeated here. There is no assertion for an envelope seam any more:
+// the dispatcher takes no collaborator at all now that idempotency is the
+// header middleware's.
 
 // ChatStore returns the hub's chat store as the command handlers use it (5 of
 // its 9 methods). Beside ChatRecords() in translate_deps.go, which is the same

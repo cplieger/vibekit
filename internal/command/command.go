@@ -1,7 +1,13 @@
 // Package command implements the POST /api/command dispatch table.
 // Hub registers concrete handler functions; the Dispatcher routes
 // incoming commands by type and handles envelope-level concerns
-// (body parsing, idempotency, validation).
+// (body parsing, validation).
+//
+// Idempotency is NOT here. It is the Idempotency-Key header, handled by one
+// middleware for every mutating route (internal/server/idempotency.go). This
+// package used to run a second dedup cache over a request_id BODY field, which
+// is the reason it could not be middleware; that field is gone from the
+// envelope, so the header middleware now covers this route like any other.
 package command
 
 import (
@@ -31,33 +37,9 @@ const maxCommandBody = webhttp.MaxJSONBody
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand)
 
-// DedupGate is the request_id idempotency cache: replay a repeated command
-// instead of running it twice. Held by the Dispatcher rather than passed to
-// handlers, because replay is an envelope concern the router owns and a handler
-// decides nothing about it.
-//
-// The drain refusal used to live here as a third method and does not any more.
-// It gates TWO routes, commands and the event stream, so it belongs at the
-// routes rather than inside one of them; see hub.refuseWhenDraining. It cannot
-// become a global middleware either, because only those two routes want it and
-// the chain covers health, version and the static assets as well.
-//
-// The key is a BODY field, which is why this is not middleware in the first
-// place: middleware cannot read request_id without buffering and re-parsing the
-// body. vibekit's other idempotency layer keys on the Idempotency-Key header and
-// therefore is middleware; the two are one concept implemented twice, and
-// unifying them is a wire change recorded in specs/go-shape/stage1-residue.md.
-type DedupGate interface {
-	// CheckDedup returns the cached response for reqID, if any.
-	CheckDedup(reqID string) ([]byte, bool)
-	// RecordDedup caches a response for idempotent replay.
-	RecordDedup(reqID string, result []byte)
-}
-
 // Dispatcher holds the command dispatch table and serves the
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
-	gate     DedupGate
 	handlers map[vibekit.CommandType]Handler
 	mu       sync.RWMutex
 }
@@ -65,11 +47,8 @@ type Dispatcher struct {
 // New constructs a Dispatcher over the envelope seam. A handler's own
 // collaborators arrive at registration (see RegisterDefaults), so nothing here
 // can reach the host's wider surface.
-func New(gate DedupGate) *Dispatcher {
-	return &Dispatcher{
-		gate:     gate,
-		handlers: make(map[vibekit.CommandType]Handler),
-	}
+func New() *Dispatcher {
+	return &Dispatcher{handlers: make(map[vibekit.CommandType]Handler)}
 }
 
 // Register adds a handler for the given command type.
@@ -79,23 +58,16 @@ func (d *Dispatcher) Register(t vibekit.CommandType, h Handler) {
 	d.mu.Unlock()
 }
 
-// Respond writes a JSON body and caches it for request_id idempotency.
-func (d *Dispatcher) Respond(w http.ResponseWriter, reqID string, body any) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		slog.Error("respond marshal", keyError, err)
-		httpreply.InternalError(w, err)
-		return
-	}
-	d.gate.RecordDedup(reqID, data)
-	httpreply.WriteRawJSON(w, data)
+// Respond writes a JSON body. Caching for idempotent replay is the header
+// middleware's, which buffers what the handler writes.
+func (d *Dispatcher) Respond(w http.ResponseWriter, body any) {
+	webhttp.WriteJSON(w, body)
 }
 
-// RespondOK writes the standard {"ok":true} success response and
-// caches it for idempotent replay. Shorthand for the most common
-// command success case.
-func (d *Dispatcher) RespondOK(w http.ResponseWriter, reqID string) {
-	d.Respond(w, reqID, responseOK)
+// RespondOK writes the standard {"ok":true} success response. Shorthand for
+// the most common command success case.
+func (d *Dispatcher) RespondOK(w http.ResponseWriter) {
+	d.Respond(w, responseOK)
 }
 
 // errorResponse is the typed wire shape for JSON error responses.
@@ -144,18 +116,6 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpreply.BadRequest(w, "invalid json")
-		return
-	}
-
-	if !validRequestID(cmd.RequestID) {
-		httpreply.BadRequest(w, "invalid request_id")
-		return
-	}
-
-	// Idempotent retries: same request_id → cached response.
-	if cached, ok := d.gate.CheckDedup(cmd.RequestID); ok {
-		slog.Debug("idempotent replay", "request_id", cmd.RequestID, keyType, cmd.Type)
-		httpreply.WriteRawJSON(w, cached)
 		return
 	}
 

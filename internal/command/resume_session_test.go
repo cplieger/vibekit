@@ -22,7 +22,7 @@ func (d *storeDeps) ChatStore() ChatStore { return d.store }
 func newTestDispatcher(t *testing.T, store ChatStore) (*Dispatcher, hostDouble) {
 	t.Helper()
 	host := &storeDeps{benchDeps: newBenchDeps(), store: store}
-	return New(host), host
+	return New(), host
 }
 
 // resumeReq builds a resume_session command envelope.
@@ -33,10 +33,9 @@ func resumeReq(t *testing.T, chatID vibekit.ChatID, sessionID, name string) *vib
 		t.Fatalf("marshal: %v", err)
 	}
 	return &vibekit.ClientCommand{
-		Type:      vibekit.CmdResumeSession,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+		Type:    vibekit.CmdResumeSession,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 

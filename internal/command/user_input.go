@@ -65,5 +65,5 @@ func CmdUserInputResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPerm
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
 		slog.Error("user input response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }

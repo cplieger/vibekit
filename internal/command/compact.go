@@ -70,5 +70,5 @@ func CmdCompact(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http
 	// the watermark — so emitting anything from this handler would double-report
 	// a completion KAS is already announcing.
 	slog.Info("chat compacted", "chat", cmd.ChatID)
-	d.Respond(w, cmd.RequestID, responseWith(nil))
+	d.Respond(w, responseWith(nil))
 }

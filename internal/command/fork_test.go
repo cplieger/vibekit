@@ -40,7 +40,7 @@ func newForkDispatcher(store ChatStore, bridge Bridge) (*Dispatcher, *primeRecor
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
 	}}
-	return New(deps), deps
+	return New(), deps
 }
 
 func forkReq(t *testing.T, newChat, parent vibekit.ChatID, title string) *vibekit.ClientCommand {
@@ -50,10 +50,9 @@ func forkReq(t *testing.T, newChat, parent vibekit.ChatID, title string) *vibeki
 		t.Fatalf("marshal: %v", err)
 	}
 	return &vibekit.ClientCommand{
-		Type:      vibekit.CmdForkChat,
-		ChatID:    newChat,
-		RequestID: "r1",
-		Payload:   payload,
+		Type:    vibekit.CmdForkChat,
+		ChatID:  newChat,
+		Payload: payload,
 	}
 }
 
@@ -420,10 +419,9 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 
 	CmdForkChat(d, host, host, testWorkspace(t), t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
 	CmdCloseChat(d, host, host, host, t.Context(), httptest.NewRecorder(), &vibekit.ClientCommand{
-		Type:      vibekit.CmdCloseChat,
-		ChatID:    "c-tangent",
-		RequestID: "r2",
-		Payload:   json.RawMessage(`{}`),
+		Type:    vibekit.CmdCloseChat,
+		ChatID:  "c-tangent",
+		Payload: json.RawMessage(`{}`),
 	})
 
 	c, ok := store.Get(t.Context(), "c-tangent")

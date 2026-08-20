@@ -54,5 +54,5 @@ func CmdSetDraft(d *Dispatcher, chats ChatAccess, ctx context.Context, w http.Re
 	// operator would want from it (that saves are landing) is answered by the
 	// chat file. Never log the text.
 	slog.Debug("draft set", "chat", cmd.ChatID, "bytes", len(p.Text))
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"bytes": len(p.Text)}))
+	d.Respond(w, responseWith(map[string]any{"bytes": len(p.Text)}))
 }

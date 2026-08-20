@@ -53,39 +53,6 @@ func FuzzValidMessageID(f *testing.F) {
 	})
 }
 
-// FuzzValidRequestID absorbed internal/hub's target for the reason
-// FuzzValidMessageID gives. Empty is VALID here and rejected there, which is
-// the one asymmetry between the two rules worth a target of its own.
-func FuzzValidRequestID(f *testing.F) {
-	for _, s := range []string{
-		"", "req-abc.123", "req/bad", "\x00null",
-		"req-001", "a:b.c_d-e", string(make([]byte, 129)), "has\nnewline",
-	} {
-		f.Add(s)
-	}
-
-	f.Fuzz(func(t *testing.T, id string) {
-		result := ValidRequestID(id)
-		if result && id != "" {
-			// Non-empty accepted IDs must be <= 128 and match safe regex.
-			if len(id) > 128 {
-				t.Errorf("accepted request id with len %d", len(id))
-			}
-			if !safeRe.MatchString(id) {
-				t.Errorf("accepted request id not matching safe regex: %q", id)
-			}
-		}
-		// Empty is always accepted for request IDs.
-		if id == "" && !result {
-			t.Error("empty string rejected for request id")
-		}
-		// Idempotent.
-		if ValidRequestID(id) != result {
-			t.Error("non-idempotent result")
-		}
-	})
-}
-
 func FuzzValidChatID(f *testing.F) {
 	// Seed corpus from TestChatIDPattern cases in chat/store_test.go.
 	seeds := []string{

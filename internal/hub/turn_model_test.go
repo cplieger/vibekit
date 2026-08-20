@@ -172,7 +172,7 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 	go func() {
 		defer close(done)
 		postCmd(t, h, vibekit.ClientCommand{
-			Type: vibekit.CmdPrompt, RequestID: "r-prompt", ChatID: "c1",
+			Type: vibekit.CmdPrompt, ChatID: "c1",
 			Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 		})
 	}()
@@ -180,7 +180,7 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 
 	// The fast in-session switch: no turn needed, no prompt slot taken.
 	if rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: vibekit.CmdSwitchModel, RequestID: "r-switch", ChatID: "c1",
+		Type: vibekit.CmdSwitchModel, ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"opus-4"}`),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("switch_model = %d, body %s", rec.Code, rec.Body.String())

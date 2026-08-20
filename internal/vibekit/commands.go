@@ -38,11 +38,18 @@ const (
 
 // ClientCommand is the envelope for every command the browser posts.
 // Type determines how Payload unmarshals.
+//
+// There is no request_id. Idempotency is the Idempotency-Key HEADER, handled by
+// one middleware for every mutating route (see internal/server/idempotency.go).
+// It used to be a body field here, which forced a second dedup cache inside the
+// command dispatcher — one that had no in-flight marker, so two concurrent
+// duplicates both executed. Payloads that still carry a request_id (permission
+// and elicitation responses) mean something else by it: the ACP request id being
+// answered.
 type ClientCommand struct {
-	Type      CommandType     `json:"type"`
-	RequestID string          `json:"request_id"`
-	ChatID    ChatID          `json:"chat_id,omitempty"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
+	Type    CommandType     `json:"type"`
+	ChatID  ChatID          `json:"chat_id,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // PromptCommand is the payload for type="prompt".

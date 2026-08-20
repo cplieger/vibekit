@@ -11,7 +11,7 @@ import (
 )
 
 func TestDispatcher_MethodNotAllowed(t *testing.T) {
-	d := New(newBenchDeps())
+	d := New()
 	req := httptest.NewRequest(http.MethodGet, "/api/command", nil)
 	w := httptest.NewRecorder()
 	d.ServeHTTP(w, req)
@@ -27,7 +27,7 @@ func TestDispatcher_MethodNotAllowed(t *testing.T) {
 // would bypass the wrapper and pass whether or not it is wired.
 
 func TestDispatcher_InvalidJSON(t *testing.T) {
-	d := New(newBenchDeps())
+	d := New()
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader("{invalid"))
 	w := httptest.NewRecorder()
 	d.ServeHTTP(w, req)
@@ -42,7 +42,7 @@ func TestDispatcher_InvalidJSON(t *testing.T) {
 }
 
 func TestDispatcher_InvalidRequestID(t *testing.T) {
-	d := New(newBenchDeps())
+	d := New()
 	body := `{"type":"test","request_id":"../../etc/passwd"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestDispatcher_InvalidRequestID(t *testing.T) {
 }
 
 func TestDispatcher_InvalidChatID(t *testing.T) {
-	d := New(newBenchDeps())
+	d := New()
 	body := `{"type":"test","chat_id":"has spaces"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -69,7 +69,7 @@ func TestDispatcher_InvalidChatID(t *testing.T) {
 }
 
 func TestDispatcher_UnknownCommand(t *testing.T) {
-	d := New(newBenchDeps())
+	d := New()
 	body := `{"type":"nonexistent_command","chat_id":"abc123"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -80,7 +80,7 @@ func TestDispatcher_UnknownCommand(t *testing.T) {
 }
 
 func TestDispatcher_BodyTooLarge(t *testing.T) {
-	d := New(newBenchDeps())
+	d := New()
 	bigBody := bytes.Repeat([]byte("x"), 2*1024*1024)
 	req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(bigBody))
 	w := httptest.NewRecorder()

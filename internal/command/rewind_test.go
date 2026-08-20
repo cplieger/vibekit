@@ -72,7 +72,7 @@ func newBridgeDispatcher(store ChatStore, bridge Bridge) (*Dispatcher, hostDoubl
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
 	}
-	return New(host), host
+	return New(), host
 }
 
 func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.ClientCommand {
@@ -82,10 +82,9 @@ func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.C
 		t.Fatalf("marshal: %v", err)
 	}
 	return &vibekit.ClientCommand{
-		Type:      vibekit.CmdRewindChat,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+		Type:    vibekit.CmdRewindChat,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 

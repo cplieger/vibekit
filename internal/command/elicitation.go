@@ -57,5 +57,5 @@ func CmdElicitationResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPe
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
 		slog.Error("elicitation response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }

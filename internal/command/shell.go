@@ -158,7 +158,7 @@ func HandleShellInterception(d *Dispatcher, roles *promptRoles, ctx context.Cont
 		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
 		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
 	}
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }
 
 // renderShellResult wraps sanitized command output in a Markdown code

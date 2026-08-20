@@ -1,4 +1,4 @@
-// Package server — REST Idempotency-Key dedup middleware.
+// Package server — the Idempotency-Key dedup middleware.
 //
 // Wraps the mux so a retried mutation (POST/PUT/PATCH/DELETE) carrying
 // a stable `Idempotency-Key` header replays the first response instead
@@ -7,14 +7,14 @@
 // out client-side (but actually succeeded server-side) replays the
 // cached outcome on retry rather than duplicating the mutation.
 //
-// This is the HTTP/REST sibling of the POST /api/command request_id
-// dedup in internal/command (which caches a JSON body keyed by
-// request_id via internal/dedup.Cache). The REST path needs a richer
-// entry — status code + Content-Type + body, plus an in-flight marker
-// — so it carries its own focused cache rather than reusing
-// dedup.Cache (which stores only []byte and has no in-flight concept).
-// The TTL, mutex-guarded map, lazy-eviction-on-access, and periodic
-// janitor goroutine all mirror dedup.Cache.
+// This is the app's ONLY idempotency layer, and it covers POST
+// /api/command like every other mutating route. It used to be one of two:
+// the command dispatcher ran a second cache keyed on a request_id BODY
+// field, which is why it could not be middleware. That cache and the
+// envelope field are deleted. The two differences that made the second one
+// look justified were really its defects — it stored a bare []byte with no
+// status or Content-Type, and it had no in-flight marker, so two concurrent
+// duplicates both executed where this one answers 409.
 package server
 
 import (
@@ -31,14 +31,13 @@ import (
 // idempotency key, set by @cplieger/actions apiAction.
 const idempotencyHeader = "Idempotency-Key"
 
-// idempotencyTTL mirrors dedup.DefaultTTL (the command-path request_id
-// cache): 5 minutes is long enough to cover a client's network-retry
+// idempotencyTTL: 5 minutes is long enough to cover a client's network-retry
 // window after a transient failure, short enough that a stale replay
 // can't outlive the user's intent.
 const idempotencyTTL = 5 * time.Minute
 
 // idempotencyMaxEntries bounds the number of cached entries as a hard
-// memory ceiling between janitor sweeps. Mirrors dedup.DefaultMaxEntries.
+// memory ceiling between janitor sweeps.
 const idempotencyMaxEntries = 10_000
 
 // idempotencyMaxBody caps the response body buffered for replay. A
@@ -53,9 +52,7 @@ const idempotencyMaxBody = 1 << 20 // 1 MiB
 // strings built from args (e.g. "files.rename:dir/old->dir/new"), so the
 // charset legitimately includes '/', ':', '->', and spaces. 256 bytes
 // comfortably fits the
-// composite filename keys while bounding map-key memory. Mirrors the
-// bounded style of ids.ValidRequestID with a wider bound and an opaque
-// charset.
+// composite filename keys while bounding map-key memory.
 const maxIdempotencyKeyBytes = 256
 
 // idempotentMethod reports whether the method participates in dedup.
@@ -141,10 +138,10 @@ func newIdempotencyCache(ttl time.Duration) *idempotencyCache {
 	return c
 }
 
-// janitor runs a periodic sweep of expired COMPLETED entries. Mirrors
-// dedup.Cache.StartCleaner: a 1-minute ticker, stoppable via done. The
-// TTL governs expiry; the tick is just how often the backstop runs
-// (lazy eviction in begin handles the on-access case).
+// janitor runs a periodic sweep of expired COMPLETED entries: a 1-minute
+// ticker, stoppable via done. The TTL governs expiry; the tick is just how
+// often the backstop runs (lazy eviction in begin handles the on-access
+// case).
 func (c *idempotencyCache) janitor() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()

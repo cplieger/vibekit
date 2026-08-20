@@ -33,12 +33,6 @@ func validChatID(id vibekit.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 
-// validRequestID reports whether the given request_id is safe to use
-// as an idempotency cache key. Delegates to ids.ValidRequestID.
-func validRequestID(id string) bool {
-	return ids.ValidRequestID(id)
-}
-
 // ValidMessageID reports whether id is safe to echo on SSE and store
 // on disk as the ID field of a message. Delegates to ids.ValidMessageID.
 func ValidMessageID(id string) bool {

@@ -79,7 +79,7 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *vi
 		}
 		if h.coord.TryFastModelSwitch(ctx, cmd.ChatID, model) {
 			h.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
-			h.respond(w, cmd.RequestID, hubResponseOK)
+			h.respond(w, hubResponseOK)
 			return
 		}
 	}
@@ -126,7 +126,7 @@ func (h *Hub) switchByRestart(
 			"chat_id", cmd.ChatID, "model", model)
 	}
 
-	h.respond(w, cmd.RequestID, hubResponseOK)
+	h.respond(w, hubResponseOK)
 }
 
 // refuseUnservedModel is the LOUD half of the entitlement check: spawnBridge

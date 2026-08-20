@@ -39,9 +39,6 @@ func FuzzClientCommandEnvelopeIntegrity(f *testing.F) {
 		if cmd.ChatID != cmd2.ChatID {
 			t.Fatalf("ChatID changed after round-trip: %q → %q", cmd.ChatID, cmd2.ChatID)
 		}
-		if cmd.RequestID != cmd2.RequestID {
-			t.Fatalf("RequestID changed after round-trip: %q → %q", cmd.RequestID, cmd2.RequestID)
-		}
 
 		// Invariant 2: if Payload is not nil, it must be valid JSON.
 		if cmd.Payload != nil {

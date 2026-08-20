@@ -20,8 +20,7 @@ func FuzzDispatcherServeHTTP(f *testing.F) {
 	f.Add([]byte(`{"command":"unknown"}`))
 	f.Add([]byte(`not json at all`))
 
-	deps := newBenchDeps()
-	d := New(deps)
+	d := New()
 	d.Register("test_cmd", func(_ context.Context, w http.ResponseWriter, _ *vibekit.ClientCommand) {
 		w.WriteHeader(http.StatusOK)
 	})

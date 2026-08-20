@@ -120,7 +120,7 @@ func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ws Works
 	slog.Info("tangent opened",
 		"chat", cmd.ChatID, "parent", p.ParentChatID,
 		"outcome", outcome, "acp_session", sessionID)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{
+	d.Respond(w, responseWith(map[string]any{
 		"outcome":    outcome,
 		"session_id": sessionID,
 	}))

@@ -365,7 +365,7 @@ func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.Re
 		CreditsDelta: creditsDelta,
 		ElapsedMs:    float64(elapsed.Milliseconds()),
 	})
-	d.RespondOK(w, cmd.RequestID)
+	d.RespondOK(w)
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map. Takes

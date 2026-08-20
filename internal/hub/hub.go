@@ -26,7 +26,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/dedup"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kiroauth"
@@ -99,12 +98,11 @@ type bridgePlane struct {
 }
 
 // ssePlane groups Hub fields related to SSE transport, replay,
-// idempotency, and pending permissions. The transport (fan-out, replay
+// and pending permissions. The transport (fan-out, replay
 // ring, Last-Event-ID resume, keepalives, eviction) is webhttp/sse's hub;
 // vibekit layers chat-topic filtering and pending-state replay on top.
 type ssePlane struct {
 	hub          *sse.Hub
-	idempotency  *dedup.Cache
 	pendingPerms *pendingPermsTracker
 	// chatStatus holds each chat's last self-declared status, the one
 	// turn_state input that lives on no message and in no replay
@@ -309,7 +307,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		},
 		sse: &ssePlane{
 			hub:          sseHub,
-			idempotency:  dedup.New(dedup.DefaultTTL, dedup.DefaultMaxEntries, dedup.DefaultMaxResult),
 			pendingPerms: newPendingPermsTracker(),
 			chatStatus:   newChatStatusCache(),
 		},
@@ -332,7 +329,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		RunOrigin:  h,
 		RunBounds:  h,
 	})
-	h.dispatcher = command.New(h)
+	h.dispatcher = command.New()
 	h.registerCommandHandlers()
 	h.initDispatch()
 	h.mcpRegistry = newMCPRegistry(h)
@@ -358,7 +355,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 			h.secrets = secrets
 		}
 	}
-	lc.loops.Go(h.cleanIdempotency)
 	lc.loops.Go(h.cullIdleUtilityBridge)
 	lc.loops.Go(h.sweepSessionsLoop)
 	return h
@@ -462,8 +458,8 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 	h.lifecycle.draining.Store(true)
 
 	// 0. Stop background tickers first so they can't race bridge
-	//    teardown with a late cull Stop() or idempotency sweep under
-	//    the mutex we're about to acquire.
+	//    teardown with a late cull Stop() or session sweep under the
+	//    mutex we're about to acquire.
 	select {
 	case <-h.lifecycle.done:
 		// already closed (re-entrant shutdown in tests)
@@ -564,16 +560,6 @@ func (h *Hub) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	h.emit(evt)
 }
 
-// CheckDedup returns a cached response for the given request ID.
-func (h *Hub) CheckDedup(reqID string) ([]byte, bool) {
-	return h.sse.idempotency.Check(reqID)
-}
-
-// RecordDedup caches a response for idempotent replay.
-func (h *Hub) RecordDedup(reqID string, result []byte) {
-	h.sse.idempotency.Record(reqID, result)
-}
-
 // Draining reports whether the server is shutting down.
 func (h *Hub) Draining() bool {
 	return h.lifecycle.draining.Load()
@@ -621,17 +607,6 @@ func (h *Hub) parentACPSession(chatID vibekit.ChatID) string {
 		return ""
 	}
 	return string(sb.bridge.SessionID())
-}
-
-// --- Idempotency cache ---
-
-func (h *Hub) recordDedup(reqID string, result []byte) {
-	h.sse.idempotency.Record(reqID, result)
-}
-
-// cleanIdempotency runs the idempotency cache's cleaner until shutdown.
-func (h *Hub) cleanIdempotency() {
-	h.sse.idempotency.StartCleaner(h.lifecycle.done)
 }
 
 // sweepSessionsInterval is how often the orphan-session sweep runs after

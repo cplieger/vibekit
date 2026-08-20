@@ -70,5 +70,5 @@ func CmdSetSupervisedMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess,
 	}
 
 	slog.Info("supervised mode set", "chat", cmd.ChatID, "enabled", p.Enabled)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"enabled": p.Enabled}))
+	d.Respond(w, responseWith(map[string]any{"enabled": p.Enabled}))
 }

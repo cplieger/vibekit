@@ -434,3 +434,59 @@ func TestIdempotency_writerBuffersExactlyAtLimit(t *testing.T) {
 		t.Errorf("buffered = %q, want %q", got, "abcd")
 	}
 }
+
+// TestIdempotency_commandRouteParticipates is the test the command-path
+// unification rests on. POST /api/command used to dedup itself, inside the
+// dispatcher, keyed on a request_id BODY field — a second cache with no
+// in-flight marker, so two concurrent duplicates both executed. That cache is
+// deleted and the envelope field with it; the route's only idempotency is this
+// middleware now. So the thing worth pinning is no longer a cache's behaviour
+// (the tests above cover that) but the WIRING: that the command route is inside
+// the production stack's dedup layer, and that a duplicate is answered without
+// the handler running twice.
+//
+// It goes through s.middlewareStack rather than a hand-built chain for the same
+// reason TestMiddlewareStack_GuardOrder does: a stack assembled here would keep
+// passing after someone reorders or drops the real one.
+func TestIdempotency_commandRouteParticipates(t *testing.T) {
+	handler, calls := idemHandler(http.StatusOK, "application/json", `{"ok":true}`)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/command", handler)
+
+	idem := newIdempotencyCache(idempotencyTTL)
+	t.Cleanup(idem.stop)
+	s := New()
+	h := webhttp.Chain(mux, s.middlewareStack(fallbackCSPPolicy(), idem)...)
+
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://example.com/api/command",
+			strings.NewReader(`{"type":"create_chat","chat_id":"c1"}`))
+		req.Header.Set("Content-Type", "application/json")
+		// Same-origin so the CSRF check outside this layer lets it through.
+		req.Header.Set("Origin", "http://example.com")
+		req.Header.Set(idempotencyHeader, "r-abc123")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := post()
+	if first.Code != http.StatusOK {
+		t.Fatalf("first POST = %d, want 200 (body %q)", first.Code, first.Body.String())
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("handler calls after first POST = %d, want 1", got)
+	}
+
+	second := post()
+	if second.Code != http.StatusOK {
+		t.Errorf("replayed POST = %d, want 200", second.Code)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("handler calls after duplicate = %d, want 1 — the command route is "+
+			"outside the idempotency middleware", got)
+	}
+	if first.Body.String() != second.Body.String() {
+		t.Errorf("replay body = %q, want the cached %q", second.Body.String(), first.Body.String())
+	}
+}
