@@ -71,7 +71,13 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 
 	options := make([]vibekit.PermissionOption, len(req.Options))
 	for i, o := range req.Options {
-		options[i] = vibekit.PermissionOption{OptionID: o.OptionID, Name: o.Name, Kind: o.Kind}
+		// Name is the text ON the button the user clicks, so it is as much a
+		// decision surface as the title: a card whose title is safe and whose
+		// "Reject" button reads "Allow" is deceived just the same. OptionID and
+		// Kind are opaque identifiers the client echoes back, not display text,
+		// so they are left exactly as received — sanitizing an identifier would
+		// change what the answer means.
+		options[i] = vibekit.PermissionOption{OptionID: o.OptionID, Name: displayText(o.Name), Kind: o.Kind}
 	}
 
 	// No secondary shell classifier: kiro-cli's native Cedar policy
@@ -100,9 +106,16 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 	// WHO is asking.
 	step := t.steps.refFor(req.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID, vibekit.PermissionNeededPayload{
-		RequestID:    reqID,
-		ToolCallID:   req.ToolCall.ToolCallID,
-		Title:        req.ToolCall.Title,
+		RequestID:  reqID,
+		ToolCallID: req.ToolCall.ToolCallID,
+		// THE TITLE IS A DECISION SURFACE, which is why it is the one string on
+		// this payload that gets defused. It is composed upstream of the tool
+		// call — reachable by an agent that read a poisoned file — and it is the
+		// only description of the action the human is approving. A Bidi override
+		// in it renders `rm -rf /workspace` as an innocuous find command while
+		// the approved action is unchanged, so the card lies about what
+		// pressing Allow does. See displayText for the measured before/after.
+		Title:        displayText(req.ToolCall.Title),
 		Kind:         req.ToolCall.Kind,
 		SubSessionID: subSessionID,
 		RunID:        step.WorkflowID,

@@ -49,9 +49,15 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit
 
 	step := t.steps.refFor(p.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventElicitationNeeded, chatID, vibekit.ElicitationNeededPayload{
-		RequestID:       reqID,
-		Mode:            p.Elicitation.Mode,
-		Message:         p.Elicitation.Message,
+		RequestID: reqID,
+		Mode:      p.Elicitation.Mode,
+		// The message is what the user is accepting or declining, and an MCP
+		// server is further from vibekit's trust than the agent is, so it gets
+		// the same treatment as a permission title. Mode, URL and the requested
+		// schema are not display text: the first two the client resolves, and
+		// the schema's own labels are a nested foreign document whose rendering
+		// is the client's business.
+		Message:         displayText(p.Elicitation.Message),
 		URL:             p.Elicitation.URL,
 		ToolCallID:      p.ToolCallID,
 		SubSessionID:    subSessionID,

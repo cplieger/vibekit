@@ -48,8 +48,11 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID,
 
 	step := t.steps.refFor(p.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventUserInputNeeded, chatID, vibekit.UserInputNeededPayload{
-		RequestID:    reqID,
-		Question:     p.Question,
+		RequestID: reqID,
+		// The question is the other half of the decision surface the options
+		// are: it is what the human is answering, the agent composes it, and
+		// nothing on the wire bounds it. Same rule as a permission title.
+		Question:     displayText(p.Question),
 		Options:      options,
 		ToolCallID:   p.ToolCallID,
 		SubSessionID: subSessionID,
@@ -94,17 +97,33 @@ const (
 	maxUserInputSubOptions = 24
 )
 
-// sanitizeUserInputOptions drops what cannot be answered and bounds what can.
+// sanitizeUserInputOptions drops what cannot be answered, defuses what is shown,
+// and bounds what is left.
 //
 // Dropping rather than refusing the whole question: one unusable option among
 // five still leaves a question worth asking, and refusing outright would leave
 // the agent waiting on a request vibekit had already decided not to show.
+//
+// DISPLAYTEXT RUNS BEFORE TRIMSPACE AND BEFORE THE DEDUP, and that order is
+// load-bearing in both directions. The preset turns each unsafe rune into a
+// SPACE, so a title of nothing but a Bidi override sanitizes to " " — trimming
+// afterwards empties it and the empty-title rule drops it, where trimming first
+// would leave a card rendering as blank space that answers "\u202e" when chosen
+// (measured on runesafe v1.4.2: sanitize-then-trim gives "", trim-then-sanitize
+// gives " "). And two titles differing only in invisible controls dedup to one
+// only if the dedup sees the sanitized form; keyed on the raw text they would
+// both survive as visually identical cards, which is exactly the ambiguity the
+// dedup exists to prevent — the reply carries the title, not an index.
+//
+// That last point is also why sanitizing the title is not merely cosmetic here:
+// the title IS the answer sent back to the agent, so the text the human read and
+// the text the agent receives have to be the same string.
 func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOption {
 	options := make([]vibekit.UserInputOption, 0, min(len(in), maxUserInputOptions))
 	seen := make(map[string]struct{}, len(in))
 	for i := range in {
 		o := &in[i]
-		title := strings.TrimSpace(o.Title)
+		title := strings.TrimSpace(displayText(o.Title))
 		if title == "" {
 			continue
 		}
@@ -114,8 +133,8 @@ func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOptio
 		seen[title] = struct{}{}
 		options = append(options, vibekit.UserInputOption{
 			Title:           title,
-			Description:     o.Description,
-			SubOptionsLabel: o.SubOptionsLabel,
+			Description:     displayText(o.Description),
+			SubOptionsLabel: displayText(o.SubOptionsLabel),
 			SubOptions:      sanitizeUserInputSubOptions(o.SubOptions),
 			Recommended:     o.Recommended,
 		})
@@ -126,13 +145,13 @@ func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOptio
 	return options
 }
 
-// sanitizeUserInputSubOptions applies the same three rules one level down. Split
+// sanitizeUserInputSubOptions applies the same rules one level down. Split
 // out to keep the parent inside the complexity budget.
 func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []vibekit.UserInputSubOption {
 	subs := make([]vibekit.UserInputSubOption, 0, min(len(in), maxUserInputSubOptions))
 	seen := make(map[string]struct{}, len(in))
 	for _, sub := range in {
-		title := strings.TrimSpace(sub.Title)
+		title := strings.TrimSpace(displayText(sub.Title))
 		if title == "" {
 			continue
 		}
@@ -140,7 +159,7 @@ func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []vibekit.UserInpu
 			continue
 		}
 		seen[title] = struct{}{}
-		subs = append(subs, vibekit.UserInputSubOption{Title: title, Description: sub.Description})
+		subs = append(subs, vibekit.UserInputSubOption{Title: title, Description: displayText(sub.Description)})
 		if len(subs) == maxUserInputSubOptions {
 			break
 		}

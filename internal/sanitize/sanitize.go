@@ -18,6 +18,26 @@
 // opposite purpose: ansitext.Parse keeps them, as offset-addressed style spans
 // a transcript can render. Reach for that one when the styling matters and this
 // one when it does not.
+//
+// # Which treatment a surface gets
+//
+// There are three, and the surface decides. Output is for MULTI-LINE content a
+// human reads as a transcript — tool output, a shell capture, an export — where
+// newlines and indentation are the meaning, so a hidden rune is DELETED and the
+// ANSI that would repaint a terminal goes with it.
+//
+// A SINGLE-LINE surface takes runesafe's SanitizeSingleLineBounded instead, not
+// this package: a banner sentence, an identity row, a permission card's title
+// (auth.identityText at 256 bytes, translate.displayText at 512). Two reasons it
+// is the other preset rather than Output. The preset REPLACES each unsafe rune
+// with a space, so on a surface a human uses to make a decision the deception
+// becomes visible whitespace instead of vanishing along with the evidence of it;
+// and a newline is itself a defect there rather than something to preserve.
+// The bound belongs with the caller because it is a property of the surface.
+//
+// Everything else is UNTOUCHED, deliberately: assistant prose and thinking
+// traces are transcripts rendered as markdown, and stripping them would mangle
+// legitimate content to defend a surface nobody approves anything on.
 package sanitize
 
 import (
