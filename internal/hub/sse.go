@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -22,6 +23,20 @@ import (
 // buffer already holds the turn and now snapshots it (buffer.Buffer.Snapshot),
 // so the only thing left to record here is the status, which lives on no
 // message and in no replay.
+// Broadcast publishes evt to every connected client. This is the whole event
+// bus contract, and it is named Broadcast rather than emit because four consumer
+// interfaces spell it that way; it used to be a 3-line Hub forward to emit,
+// which put the hub in the path of every event in the app.
+func (s *ssePlane) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+	s.emit(evt)
+}
+
+// PendingPermsAdd registers an unanswered decision so a reconnecting client gets
+// it replayed.
+func (s *ssePlane) PendingPermsAdd(requestID int64, evt vibekit.ServerEvent) {
+	s.pendingPerms.Add(requestID, evt)
+}
+
 func (s *ssePlane) emit(evt vibekit.ServerEvent) {
 	switch evt.Type {
 	case vibekit.EventChatStatus:

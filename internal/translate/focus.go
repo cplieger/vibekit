@@ -119,7 +119,7 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatI
 	if status == "" && desc == "" {
 		return
 	}
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, chatID, vibekit.ChatStatusPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, chatID, vibekit.ChatStatusPayload{
 		Status:      status,
 		Description: desc,
 	}))
@@ -131,7 +131,7 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatI
 // flips the tab label live.
 func (t *Translator) applyFocusTitle(ctx context.Context, chatID vibekit.ChatID, title string) {
 	renamed := false
-	if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
 			return false
 		}

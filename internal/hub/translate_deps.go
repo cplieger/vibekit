@@ -1,32 +1,25 @@
 package hub
 
-// translate role implementations for Hub.
-// Hub satisfies the translate package's role interfaces so the Translator can
-// access Hub internals without importing the hub package. Satisfaction is forced
-// by the translate.Roles literal in hub.go, so no assertion is repeated here.
+// The two translate roles that are genuinely ADAPTERS rather than forwards.
+//
+// Eight forwards used to live here — ChatRecords, ParentACPSession, WorkDir,
+// PendingPermsAdd, NotifyPush, BufferStore, LineTracker, IsHookStatusEnabled —
+// because translate.Roles bundled them into two composites only a type holding
+// every collaborator could satisfy. Roles is flat now and each field names its
+// owner, so those eight are deleted rather than moved.
+//
+// What remains needs a body: hubMCPRecorder narrows five unexported registry
+// methods to an exported contract, and TerminalOutput renders a terminal's raw
+// ring on demand.
 
 import (
 	"context"
+	"reflect"
 
-	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
-
-// ChatRecords returns the hub's chat store as translate reads it (3 of its 9
-// methods). Separate from ChatStore() below it because internal/command needs 5,
-// and one accessor cannot return two narrow types.
-func (h *Hub) ChatRecords() translate.ChatRecords { return h.chatStore }
-
-// ParentACPSession returns the parent ACP session ID for a chat.
-func (h *Hub) ParentACPSession(chatID vibekit.ChatID) string {
-	return h.parentACPSession(chatID)
-}
-
-// WorkDir returns the workspace root directory.
-func (h *Hub) WorkDir() string { return h.lifecycle.workDir }
 
 // MCPRecorder returns the Hub's MCP state recorder.
 func (h *Hub) MCPRecorder() translate.MCPRecorder {
@@ -56,66 +49,6 @@ func (r *hubMCPRecorder) SignalReady() {
 	r.h.mcpRegistry.signalReady()
 }
 
-// PendingPermsAdd tracks a pending permission event for SSE replay.
-func (h *Hub) PendingPermsAdd(requestID int64, evt vibekit.ServerEvent) {
-	h.sse.pendingPerms.Add(requestID, evt)
-}
-
-// NotifyPush sends a push notification.
-func (h *Hub) NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID) {
-	h.coord.NotifyPush(ctx, body, kind, chatID)
-}
-
-// BufferStore returns the buffer store for streaming handlers.
-func (h *Hub) BufferStore() translate.BufferAccess {
-	return h.bridge.assistantBufs
-}
-
-// LineTracker returns the line tracker for file-change recording.
-func (h *Hub) LineTracker() translate.LineRecorder {
-	return h.lines
-}
-
-// TerminalOutput returns an agent terminal's output for the translate layer to
-// persist onto the owning tool call. See translate.StreamingAccess for why the
-// tool call needs it.
-//
-// It reads the RAW ring and renders on demand rather than returning a
-// pre-accumulated copy. Three things fall out of that. The rendering is
-// derivable, so there is no second buffer to keep in step and no second cap: the
-// ring already bounds the bytes and keeps the tail. It works for a terminal that
-// has already been released, because `retire` kept those bytes under the same id
-// — which matters because KAS releases before it reports the result, so the
-// live registry is empty by the time this is called. And the sanitize-then-parse
-// order here is the same one the live pump uses, so the persisted text and the
-// streamed text cannot disagree about what an escape meant.
-//
-// ok reports whether the terminal is KNOWN, not whether it printed anything. A
-// registered terminal with no output answers ("", nil, true), because a silent
-// command is a different fact from a lost record and only the second one is
-// worth warning about.
-func (h *Hub) TerminalOutput(terminalID string) (string, []vibekit.TextSpan, bool) {
-	h.agentTerms.mu.Lock()
-	term, live := h.agentTerms.terms[terminalID]
-	h.agentTerms.mu.Unlock()
-
-	var raw string
-	if live {
-		raw = term.rawOutput()
-	} else {
-		var known bool
-		raw, known = h.agentTerms.peekRetired(terminalID)
-		if !known {
-			return "", nil, false
-		}
-	}
-	if raw == "" {
-		return "", nil, true
-	}
-	text, spans := ansitext.Parse(sanitize.Unicode(raw))
-	return text, wireSpans(spans), true
-}
-
 // IsScheduledRun reports whether a run was launched by a schedule.
 //
 // The run's LEASE is already the record of that — it is what gates the deny-fast
@@ -128,7 +61,81 @@ func (rp *runPlane) IsScheduledRun(workflowID string) bool {
 	return ok && l.Origin == runlease.OriginScheduled
 }
 
-// IsHookStatusEnabled returns whether hook status display is enabled.
-func (h *Hub) IsHookStatusEnabled() bool {
-	return h.isHookStatusEnabled()
+// translateRoles is the translate wiring, named so it can be asserted rather
+// than only executed. Every role points at its OWNER.
+//
+// Ten of these were Hub forwards behind two composites (translate's
+// StreamingAccess at 8 members and PermissionAccess at 5). A composite spanning
+// the chat store, the event bus, the buffer store, the line tracker, the terminal
+// registry and the bridge lookup can only be satisfied by something holding all
+// six — so the hub grew ten methods it had no other use for and became the one
+// type that qualified. That is how the god object was built, one convenience
+// interface at a time.
+//
+// Every field is read HERE, at construction, so each owner must already exist.
+// requireWired is what holds that, and it is production code rather than a test
+// for a reason: a test that rebuilds this value after New has returned cannot see
+// WHEN New read the fields, which is the entire bug. Checking at the call site
+// catches it at construction, with the field's name, instead of as a nil-receiver
+// panic on the first session update.
+func (h *Hub) translateRoles() *translate.Roles {
+	return requireWired(&translate.Roles{
+		Bus:          h.sse,
+		Chats:        h.chatStore,
+		Buffers:      h.bridge.assistantBufs,
+		Lines:        h.lines,
+		PendingPerms: h.sse,
+		Push:         h.coord,
+		Sessions:     h.coord,
+		Terminals:    h.agentTerms,
+		HookStatus:   h.hookStatus,
+		WorkDir:      h.lifecycle.workDir,
+		MCP:          h.MCPRecorder(),
+		Governance:   h.config,
+		RunOrigin:    h.runs,
+		RunBounds:    h.runs,
+	})
+}
+
+// requireWired panics unless every role in r has an owner.
+//
+// A PANIC, not a logged warning, and not an error: a nil role is a programming
+// mistake in this package's own constructor, fixable only by editing the
+// constructor, and the alternative is a server that boots and then dies on the
+// first frame of the first turn. It is the same refusal hub.New already makes for
+// a nil lifetime context, and it fires at process start in every test.
+//
+// Reflection rather than a hand-written field list, because a list has to be
+// edited exactly when a role is added — which is the moment the mistake is
+// available to make. This has now been made twice, in two constructors: roles
+// bound to an owner BY VALUE capture whatever the field holds at the literal,
+// whereas the forwards they replaced read h per call and so tolerated any order.
+func requireWired(r *translate.Roles) *translate.Roles {
+	v := reflect.ValueOf(r).Elem()
+	for i := range v.NumField() {
+		name := v.Type().Field(i).Name
+		switch f := v.Field(i); f.Kind() {
+		case reflect.String:
+			if f.String() == "" {
+				panic("hub: translate role " + name + " is empty at construction")
+			}
+		case reflect.Interface:
+			// Two nils, and the second is the one that actually shipped. A role
+			// assigned from a nil *T is a non-nil INTERFACE holding a nil pointer,
+			// so IsNil() on the field is false and the check passed while the
+			// receiver was nil — the same typed-nil trap GetBridge normalizes for.
+			// Reaching through with Elem() is what catches it.
+			if f.IsNil() {
+				panic("hub: translate role " + name + " is nil at construction — its owner is " +
+					"assigned after the roles literal in hub.New")
+			}
+			if e := f.Elem(); e.Kind() == reflect.Pointer && e.IsNil() {
+				panic("hub: translate role " + name + " holds a nil " + e.Type().String() +
+					" — its owner is assigned after the roles literal in hub.New")
+			}
+		default:
+			panic("hub: translate role " + name + " has unchecked kind " + f.Kind().String())
+		}
+	}
+	return r
 }

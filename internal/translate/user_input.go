@@ -56,10 +56,10 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID,
 		RunID:        step.WorkflowID,
 		NodeID:       step.NodeID,
 	})
-	t.perms.Broadcast(ctx, evt)
-	t.perms.PendingPermsAdd(reqID, evt)
-	t.perms.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
-	t.perms.NotifyPush(ctx, "The agent has a question", vibekit.PushKindPermission, chatID)
+	t.bus.Broadcast(ctx, evt)
+	t.pendingPerms.PendingPermsAdd(reqID, evt)
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
+	t.push.NotifyPush(ctx, "The agent has a question", vibekit.PushKindPermission, chatID)
 }
 
 // wireUserInputOption / wireUserInputSubOption are KAS's `_kiro/userInput` option

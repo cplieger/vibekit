@@ -92,7 +92,7 @@ func truncationNotices(t *testing.T, contentLen, chunks int) int {
 	t.Helper()
 	const chatID vibekit.ChatID = "c1"
 	deps, events, _ := depsWithStore(t, chatID)
-	buf := deps.BufferStore().GetOrInit(chatID)
+	buf := deps.GetOrInit(chatID)
 	buf.Content.WriteString(strings.Repeat("a", contentLen))
 	buf.Started = true
 	buf.MessageID = "cap-mid"

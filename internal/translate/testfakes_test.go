@@ -3,6 +3,7 @@ package translate
 import (
 	"context"
 
+	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -50,27 +51,51 @@ var _ MCPRecorder = nopMCPRecorder{}
 
 // hostDouble is what a single all-in-one test double answers: every role a
 // Translator takes. It exists ONLY for the doubles below and in the handler
-// tests — production code has no aggregate over the roles, and the shape pin in
+// tests — production wires each role to its own owner, and the shape pin in
 // shape_test.go reads production files only, for exactly this reason. A double
 // stands in for the whole host, so naming every role once is what makes one
 // value fillable into every slot of Roles.
+//
+// It is a flat list because Roles is: the StreamingAccess and PermissionAccess
+// composites it used to embed are gone, and with them the reason a host had to
+// hold six collaborators to be usable here.
 type hostDouble interface {
-	StreamingAccess
-	PermissionAccess
+	Broadcaster
+	PendingPermAdder
+	Pusher
+	SessionResolver
+	TerminalReader
+	HookStatusReader
 	RunOriginAccess
 	RunBoundsAccess
+	ChatRecords
+	GetOrInit(chatID vibekit.ChatID) *buffer.Buffer
+	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
 	MCPRecorder() MCPRecorder
 	SetGovernance(state vibekit.GovernanceStatePayload)
+	// WorkDir is a Roles FIELD in production (a process constant), but the double
+	// still answers it as a method so rolesOf can fill that field per fixture —
+	// relPath's table drives it, and a hardcoded root would make every case pass
+	// or fail together.
+	WorkDir() string
 }
 
-// rolesOf wires one double into every role slot, the way hub wires one *Hub.
+// rolesOf wires one double into every role slot.
 func rolesOf(d hostDouble) *Roles {
 	return &Roles{
-		Streaming:  d,
-		Perms:      d,
-		MCP:        d.MCPRecorder(),
-		Governance: d,
-		RunOrigin:  d,
-		RunBounds:  d,
+		Bus:          d,
+		Chats:        d,
+		Buffers:      d,
+		Lines:        d,
+		PendingPerms: d,
+		Push:         d,
+		Sessions:     d,
+		Terminals:    d,
+		HookStatus:   d,
+		WorkDir:      d.WorkDir(),
+		MCP:          d.MCPRecorder(),
+		Governance:   d,
+		RunOrigin:    d,
+		RunBounds:    d,
 	}
 }

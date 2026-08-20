@@ -17,25 +17,16 @@ func TestStubDeps_Contract(t *testing.T) {
 
 	ctx := t.Context()
 
-	// ChatRecords must be non-nil.
-	if d.ChatRecords() == nil {
-		t.Error("ChatRecords() returned nil")
+	// The chat-store, buffer and line-tracker accessors are gone: Roles holds
+	// each interface directly, so the double implements the methods. What is
+	// worth asserting is that they WORK, not that a getter is non-nil.
+	if _, ok := d.Get(ctx, "no-such-chat"); ok {
+		t.Error("Get on the nop store reported found")
 	}
-
-	// WorkDir must be non-empty.
-	if d.WorkDir() == "" {
-		t.Error("WorkDir() returned empty string")
+	if d.GetOrInit("c1") == nil {
+		t.Error("GetOrInit returned nil")
 	}
-
-	// BufferStore must be non-nil.
-	if d.BufferStore() == nil {
-		t.Error("BufferStore() returned nil")
-	}
-
-	// LineTracker must be non-nil.
-	if d.LineTracker() == nil {
-		t.Error("LineTracker() returned nil")
-	}
+	d.RecordFromDiffs("c1", nil, 0, "")
 
 	// MCPRecorder must be non-nil.
 	if d.MCPRecorder() == nil {
@@ -52,15 +43,18 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	d := newBaseDeps()
 	ctx := t.Context()
 
-	t.Run("ChatRecords_non_nil", func(t *testing.T) {
-		if d.ChatRecords() == nil {
-			t.Error("ChatRecords() returned nil")
+	// The default store is nopChatRecords, so what is assertable here is that the
+	// three promoted methods reach it without panicking and report its no-op
+	// answers. A round-trip belongs to the tests that install a real store.
+	t.Run("chat_store_methods_are_reachable", func(t *testing.T) {
+		if err := d.Mutate(ctx, "c1", func(*vibekit.Chat, bool) bool { return true }); err != nil {
+			t.Errorf("Mutate on the nop store returned %v, want nil", err)
 		}
-	})
-
-	t.Run("WorkDir_non_empty", func(t *testing.T) {
-		if d.WorkDir() == "" {
-			t.Error("WorkDir() returned empty string")
+		if _, ok := d.Get(ctx, "c1"); ok {
+			t.Error("Get on the nop store reported found")
+		}
+		if err := d.AppendMessage(ctx, "c1", &vibekit.Message{}); err != nil {
+			t.Errorf("AppendMessage on the nop store returned %v, want nil", err)
 		}
 	})
 
@@ -91,16 +85,11 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		d.NotifyPush(ctx, "test body", vibekit.PushKindPermission, "")
 	})
 
-	t.Run("BufferStore_non_nil", func(t *testing.T) {
-		if d.BufferStore() == nil {
-			t.Error("BufferStore() returned nil")
+	t.Run("buffer_and_line_methods_work", func(t *testing.T) {
+		if d.GetOrInit("c1") == nil {
+			t.Error("GetOrInit returned nil")
 		}
-	})
-
-	t.Run("LineTracker_non_nil", func(t *testing.T) {
-		if d.LineTracker() == nil {
-			t.Error("LineTracker() returned nil")
-		}
+		d.RecordFromDiffs("c1", nil, 0, "")
 	})
 
 	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {

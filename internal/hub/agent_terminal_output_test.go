@@ -330,7 +330,7 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 	if _, ok := h.agentTerms.release(termID); !ok {
 		t.Fatalf("release(%q) found no terminal", termID)
 	}
-	text, spans, ok := h.TerminalOutput(termID)
+	text, spans, ok := h.agentTerms.TerminalOutput(termID)
 	if !ok {
 		t.Fatal("TerminalOutput found nothing after release: the record was not retired")
 	}
@@ -344,7 +344,7 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 	// A second read must answer the same. KAS can send more than one terminal
 	// status frame for a tool call, and adoption runs on each; a consuming read
 	// makes the second one report the output as missing.
-	if _, _, ok := h.TerminalOutput(termID); !ok {
+	if _, _, ok := h.agentTerms.TerminalOutput(termID); !ok {
 		t.Error("the second read found nothing: adoption is not idempotent," +
 			" so a duplicate completed frame logs a false 'output missing'")
 	}
@@ -352,7 +352,7 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 	// The turn boundary is the eviction point: every tool call in the turn has
 	// settled by then, so a record still here has had its chance.
 	h.agentTerms.AdvanceTurn("c1")
-	if _, _, ok := h.TerminalOutput(termID); ok {
+	if _, _, ok := h.agentTerms.TerminalOutput(termID); ok {
 		t.Error("the record survived the turn boundary, so it grows with the session")
 	}
 }
@@ -370,7 +370,7 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 	termID := onlyTermID(t, h)
 
 	t.Run("Live", func(t *testing.T) {
-		text, spans, ok := h.TerminalOutput(termID)
+		text, spans, ok := h.agentTerms.TerminalOutput(termID)
 		if !ok || text != "" || spans != nil {
 			t.Errorf("TerminalOutput = (%q, %+v, %v), want (\"\", nil, true):"+
 				" a registered terminal that printed nothing is not missing", text, spans, ok)
@@ -380,14 +380,14 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 		if _, ok := h.agentTerms.release(termID); !ok {
 			t.Fatal("release found no terminal")
 		}
-		text, _, ok := h.TerminalOutput(termID)
+		text, _, ok := h.agentTerms.TerminalOutput(termID)
 		if !ok || text != "" {
 			t.Errorf("TerminalOutput = (%q, _, %v), want (\"\", _, true):"+
 				" a silent command's record must be retired like any other", text, ok)
 		}
 	})
 	t.Run("Unknown", func(t *testing.T) {
-		if _, _, ok := h.TerminalOutput("no-such-terminal"); ok {
+		if _, _, ok := h.agentTerms.TerminalOutput("no-such-terminal"); ok {
 			t.Error("an unknown id reported as known, so a genuine miss cannot be diagnosed")
 		}
 	})
@@ -457,7 +457,7 @@ func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.
 	if _, ok := h.agentTerms.release(termID); !ok {
 		t.Fatalf("release(%q) found no terminal", termID)
 	}
-	if _, _, ok := h.TerminalOutput(termID); !ok {
+	if _, _, ok := h.agentTerms.TerminalOutput(termID); !ok {
 		t.Error("TerminalOutput found nothing for a terminal released mid-write")
 	}
 	waitClosed(t, term.done, "terminal")

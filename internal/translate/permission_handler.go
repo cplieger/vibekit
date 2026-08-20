@@ -110,8 +110,8 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		Options:      options,
 		Files:        files,
 	})
-	t.perms.Broadcast(ctx, evt)
-	t.perms.PendingPermsAdd(reqID, evt)
-	t.perms.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelApproval}))
-	t.perms.NotifyPush(ctx, "Permission needed", vibekit.PushKindPermission, chatID)
+	t.bus.Broadcast(ctx, evt)
+	t.pendingPerms.PendingPermsAdd(reqID, evt)
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelApproval}))
+	t.push.NotifyPush(ctx, "Permission needed", vibekit.PushKindPermission, chatID)
 }

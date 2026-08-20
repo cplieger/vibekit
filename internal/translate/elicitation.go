@@ -59,8 +59,8 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit
 		NodeID:          step.NodeID,
 		RequestedSchema: p.Elicitation.RequestedSchema,
 	})
-	t.perms.Broadcast(ctx, evt)
-	t.perms.PendingPermsAdd(reqID, evt)
-	t.perms.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
-	t.perms.NotifyPush(ctx, "Input needed", vibekit.PushKindPermission, chatID)
+	t.bus.Broadcast(ctx, evt)
+	t.pendingPerms.PendingPermsAdd(reqID, evt)
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
+	t.push.NotifyPush(ctx, "Input needed", vibekit.PushKindPermission, chatID)
 }

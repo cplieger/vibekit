@@ -20,13 +20,17 @@ func (r *lineRec) RecordFromDiffs(_ vibekit.ChatID, diffs []vibekit.ToolDiff, _ 
 	r.lastDiffs = diffs
 }
 
-// lineDeps wraps baseDeps and swaps in the recording LineTracker.
+// lineDeps wraps baseDeps and records the line-tracking calls. It overrides
+// RecordFromDiffs directly; it used to override a LineTracker() getter, and that
+// getter is gone with the role composites.
 type lineDeps struct {
 	*baseDeps
 	rec *lineRec
 }
 
-func (d *lineDeps) LineTracker() LineRecorder { return d.rec }
+func (d *lineDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
+	d.rec.RecordFromDiffs(chatID, diffs, turn, kind)
+}
 
 // workDirDeps wraps baseDeps and overrides WorkDir for relPath tests.
 type workDirDeps struct {

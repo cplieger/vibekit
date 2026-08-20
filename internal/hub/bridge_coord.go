@@ -953,3 +953,15 @@ func (h *Hub) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestI
 	}
 	return sb.bridge.Respond(ctx, requestID, result, err)
 }
+
+// ParentACPSession returns the ACP session id of the running bridge
+// for chatID, or "" when no bridge exists. Translator helpers use this
+// to short-circuit notifications whose top-level sessionId belongs to
+// a subagent rather than the parent chat.
+func (bc *BridgeCoordinator) ParentACPSession(chatID vibekit.ChatID) string {
+	sb := bc.bridge.mgr.get(chatID)
+	if sb == nil {
+		return ""
+	}
+	return string(sb.bridge.SessionID())
+}

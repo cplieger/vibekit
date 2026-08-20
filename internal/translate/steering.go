@@ -70,13 +70,13 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		// consumer, and the client got it wrong: an agent's own progress line
 		// rendered inside the message box as something the user had typed.
 		if k.NotificationSeverity != "" {
-			t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventAgentNotice, chatID, vibekit.AgentNoticePayload{
+			t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventAgentNotice, chatID, vibekit.AgentNoticePayload{
 				Severity: k.NotificationSeverity,
 				Text:     k.Content,
 			}))
 			return true
 		}
-		t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerQueued, chatID, vibekit.SteerQueuedPayload{
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerQueued, chatID, vibekit.SteerQueuedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
 		}))
@@ -86,7 +86,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		if k.MessageID == "" {
 			return true
 		}
-		t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
 		}))
@@ -99,7 +99,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 			// Broadcasting it would put one dead event on the wire per turn.
 			return true
 		}
-		t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerCleared, chatID, vibekit.SteerClearedPayload{
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerCleared, chatID, vibekit.SteerClearedPayload{
 			SteerIDs: k.MessageIDs,
 		}))
 		return true

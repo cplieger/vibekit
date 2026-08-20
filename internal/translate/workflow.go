@@ -131,7 +131,7 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID vibekit.ChatID, 
 	// way on purpose: each occurrence is a real launch of the run's remaining
 	// work, and de-duplicating it would need the state this record refuses.
 	logAgentRun("agent-launched workflow run started", p.WorkflowID, p.WorkflowName, p.ParentSessionID)
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStarted, chatID, vibekit.RunStartedPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStarted, chatID, vibekit.RunStartedPayload{
 		WorkflowID: p.WorkflowID,
 		Name:       p.WorkflowName,
 		// Keyed on the workflow id, NOT on chatID: this frame's chat id is empty
@@ -156,7 +156,7 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatI
 	logAgentRun("agent-launched workflow run finished", p.WorkflowID, p.FinalState.WorkflowName,
 		cmp.Or(p.ParentSessionID, p.FinalState.ParentSessionID), "status", p.Status)
 	t.steps.forgetRun(p.WorkflowID)
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunFinished, chatID, vibekit.RunFinishedPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunFinished, chatID, vibekit.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,
 		// The one name this frame carries. It is inside the state rather than at
@@ -188,7 +188,7 @@ func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(conte
 		if kind == vibekit.RunProgressNodeStart && p.SessionID != "" {
 			t.steps.record(p.SessionID, p.WorkflowID, node)
 		}
-		t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID, vibekit.RunProgressPayload{
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID, vibekit.RunProgressPayload{
 			WorkflowID: p.WorkflowID,
 			NodeID:     node,
 			Kind:       kind,

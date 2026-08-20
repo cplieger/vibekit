@@ -14,21 +14,27 @@ import (
 // invokes, which keeps a test stub small enough to be obviously correct and
 // documents each handler file's actual dependency footprint.
 //
-// The Translator holds the roles as separate fields and every method names the
-// one it uses. There is no composite over them, and must not be: a method's
-// reach is the field it names, so widening one is a diff at that line rather
-// than a consequence of the host growing a method.
+// Each role names ONE collaborator, and Roles is flat. It used to bundle them
+// into StreamingAccess (8 members) and PermissionAccess (5), and that shape is
+// what built the host's god object: a composite spanning the chat store, the
+// event bus, the buffer store, the line tracker, the terminal registry and the
+// bridge lookup can only be satisfied by something holding all six, so the host
+// grew ten forwarding methods and became the one type that qualified. A role per
+// collaborator is satisfied by the collaborator itself.
 //
-// The chat-store width arithmetic: this package reads and writes chats through
-// 3 of the 9 methods *chat.Store offers. It never lists chats, never builds a
-// history transcript, never deletes one, never touches a draft and never
-// registers a route.
+// Two consequences. There is no ChatRecords()/BufferStore()/LineTracker()
+// GETTER any more — a method returning an interface was a second indirection
+// for nothing, and Roles carries the interface directly. And WorkDir is a
+// string, not a method: it is a process constant, so nothing is substituted and
+// no host should be in the middle of reading it.
 //
-// The accessor is ChatRecords(), not ChatStore(), and the difference in NAME is
-// load-bearing rather than cosmetic. internal/command also reads the store off
-// the same *hub.Hub, through its own 5-method contract, and Go matches an
-// interface method by exact signature: one accessor cannot return two different
-// narrow types. Two consumers with two contracts therefore need two accessors.
+// The chat-store width arithmetic still holds: this package reads and writes
+// chats through 3 of the 9 methods *chat.Store offers. It never lists chats,
+// never builds a history transcript, never deletes one, never touches a draft
+// and never registers a route. The old note about needing a differently-NAMED
+// accessor than internal/command's is obsolete with the getters gone: both
+// packages now name *chat.Store directly through their own narrow interface,
+// and an interface is satisfied without either side knowing the other exists.
 
 // BufferAccess is the consumer-side interface for buffer store access.
 // Narrows the coupling: translate only needs GetOrInit.
@@ -44,9 +50,6 @@ type LineRecorder interface {
 
 // ChatRecords is the chat store as this package uses it: read a chat, mutate it,
 // append a message. 3 of the 9 methods *chat.Store offers.
-//
-// Exported because StreamingAccess returns it and *hub.Hub has to name this as
-// its ChatRecords() return type.
 type ChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
@@ -65,12 +68,81 @@ type ChatRecords interface {
 // widens as the host grows. Taken by pointer: six interface fields is 96 bytes,
 // and New copies them into its own fields anyway.
 type Roles struct {
-	Streaming  StreamingAccess
-	Perms      PermissionAccess
+	// Bus is the event fan-out, and the busiest role by far (35 call sites).
+	// It was a Broadcast member on BOTH composites, which is what made every
+	// split of the host drag the event bus along with it.
+	Bus Broadcaster
+	// Chats is the chat store at 3 methods.
+	Chats ChatRecords
+	// Buffers is the in-flight assistant-message store at 1 method.
+	Buffers BufferAccess
+	// Lines is the changed-line tracker at 1 method.
+	Lines LineRecorder
+	// PendingPerms registers an unanswered decision for reconnect replay.
+	PendingPerms PendingPermAdder
+	// Push sends a web-push notification.
+	Push Pusher
+	// Sessions resolves a chat's parent ACP session, to tell a subagent's frame
+	// from its parent's.
+	Sessions SessionResolver
+	// Terminals reads an agent terminal's rendered output.
+	Terminals TerminalReader
+	// HookStatus reports whether hook status display is on.
+	HookStatus HookStatusReader
+	// WorkDir is the workspace root. A VALUE: it is a process constant, so there
+	// is nothing to substitute and no reason for a method.
+	WorkDir string
+
 	MCP        MCPRecorder
 	Governance GovernanceAccess
 	RunOrigin  RunOriginAccess
 	RunBounds  RunBoundsAccess
+}
+
+// Broadcaster publishes a domain event to every connected client.
+type Broadcaster interface {
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+}
+
+// PendingPermAdder registers an unanswered decision so a reconnecting client
+// gets it replayed.
+type PendingPermAdder interface {
+	PendingPermsAdd(requestID int64, evt vibekit.ServerEvent)
+}
+
+// Pusher delivers a web-push notification for a chat.
+type Pusher interface {
+	NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID)
+}
+
+// SessionResolver answers a chat's parent ACP session id, or "" when no bridge
+// is running. Used to short-circuit notifications whose top-level sessionId
+// belongs to a subagent rather than the parent chat.
+type SessionResolver interface {
+	ParentACPSession(chatID vibekit.ChatID) string
+}
+
+// HookStatusReader reports whether hook status display is enabled; when it is
+// off, tool calls of kind "hook" are suppressed from the transcript.
+type HookStatusReader interface {
+	IsHookStatusEnabled() bool
+}
+
+// TerminalReader returns an agent terminal's rendered output: plain text with
+// escapes parsed off, plus the spans styling it.
+//
+// ok reports whether the terminal is KNOWN, not whether it printed anything: a
+// registered terminal that produced no output answers ("", nil, true). The
+// distinction is the whole value of the boolean — adoption logs a miss on false,
+// and a silent command reporting as missing would file that warning every turn.
+//
+// This is what makes the tool CARD the durable home of a command's output. KAS
+// puts none of it on the tool call — a successful terminal-backed command's
+// tool_call_update carries no output field at all, so before this every finished
+// command persisted an empty output and the bytes lived only in an ephemeral SSE
+// stream that a page reload discarded.
+type TerminalReader interface {
+	TerminalOutput(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
 }
 
 // GovernanceAccess caches the latest account/workspace governance state so GET
@@ -105,13 +177,21 @@ type MCPRecorder interface {
 // Translator holds stateful translate logic extracted from Hub. Each role is
 // its own field, so a handler method's reach is the field it names.
 type Translator struct {
-	streaming  StreamingAccess
-	perms      PermissionAccess
-	mcp        MCPRecorder
-	governance GovernanceAccess
-	runOrigin  RunOriginAccess
-	runBounds  RunBoundsAccess
-	newMsgID   func() string
+	bus          Broadcaster
+	chats        ChatRecords
+	buffers      BufferAccess
+	lines        LineRecorder
+	pendingPerms PendingPermAdder
+	push         Pusher
+	sessions     SessionResolver
+	terminals    TerminalReader
+	hookStatus   HookStatusReader
+	workDir      string
+	mcp          MCPRecorder
+	governance   GovernanceAccess
+	runOrigin    RunOriginAccess
+	runBounds    RunBoundsAccess
+	newMsgID     func() string
 	// steps maps a workflow step's ACP session id to its run and node. Fed from
 	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
 	steps *stepRegistry
@@ -120,13 +200,21 @@ type Translator struct {
 // New constructs a Translator over the roles the host supplies.
 func New(r *Roles, opts ...Option) *Translator {
 	t := &Translator{
-		streaming:  r.Streaming,
-		perms:      r.Perms,
-		mcp:        r.MCP,
-		governance: r.Governance,
-		runOrigin:  r.RunOrigin,
-		runBounds:  r.RunBounds,
-		steps:      newStepRegistry(),
+		bus:          r.Bus,
+		chats:        r.Chats,
+		buffers:      r.Buffers,
+		lines:        r.Lines,
+		pendingPerms: r.PendingPerms,
+		push:         r.Push,
+		sessions:     r.Sessions,
+		terminals:    r.Terminals,
+		hookStatus:   r.HookStatus,
+		workDir:      r.WorkDir,
+		mcp:          r.MCP,
+		governance:   r.Governance,
+		runOrigin:    r.RunOrigin,
+		runBounds:    r.RunBounds,
+		steps:        newStepRegistry(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -178,50 +266,6 @@ func (t *Translator) deriveSubSession(chatID vibekit.ChatID, sessionID string) s
 // MCP returns the MCP state recorder sub-interface.
 func (t *Translator) MCP() MCPRecorder {
 	return t.mcp
-}
-
-// StreamingAccess provides the methods needed by streaming_content.go /
-// streaming_tools.go for content buffering, partial file recovery, and
-// line tracking.
-type StreamingAccess interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
-	BufferStore() BufferAccess
-	LineTracker() LineRecorder
-	IsHookStatusEnabled() bool
-	ChatRecords() ChatRecords
-	ParentACPSession(chatID vibekit.ChatID) string
-	WorkDir() string
-	// TerminalOutput returns an agent terminal's rendered output: plain text
-	// with escapes parsed off, plus the spans styling it.
-	//
-	// ok reports whether the terminal is KNOWN, not whether it printed
-	// anything: a registered terminal that produced no output answers
-	// ("", nil, true). The distinction is the whole value of the boolean —
-	// adoption logs a miss on false, and a silent command reporting as missing
-	// would file that warning on every turn.
-	//
-	// This is what makes the tool CARD the durable home of a command's output.
-	// KAS puts none of it on the tool call — a successful terminal-backed
-	// command's tool_call_update carries no output field at all, so before this
-	// every finished command persisted an empty output and the bytes lived only
-	// in an ephemeral SSE stream that a page reload discarded.
-	TerminalOutput(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
-}
-
-// PermissionAccess provides the methods needed by permission_handler.go
-// for permission request handling and push notifications. Shell-command
-// authorization is owned by kiro-cli's native Cedar policy: any
-// session/request_permission that reaches vibekit is a genuine ask, so
-// there is no auto-approval surface here. Answering a request is NOT in
-// this surface either: the user's choice arrives as a separate
-// permission_response command and is forwarded to the bridge by
-// internal/command, never from a translate handler.
-type PermissionAccess interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
-	ChatRecords() ChatRecords
-	NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID)
-	ParentACPSession(chatID vibekit.ChatID) string
-	PendingPermsAdd(requestID int64, evt vibekit.ServerEvent)
 }
 
 // RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.

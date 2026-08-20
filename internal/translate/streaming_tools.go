@@ -34,10 +34,10 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	// card. Suppressing the initial tool_call also drops its follow-up
 	// tool_call_update: HandleToolCallUpdate early-returns when the id was
 	// never buffered.
-	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.streaming.IsHookStatusEnabled() {
+	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
-	buf := t.streaming.BufferStore().GetOrInit(chatID)
+	buf := t.buffers.GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
 	// A workflow STEP's tool frames carry KAS's own agentSubtaskId (or none),
 	// while the step's TEXT is keyed by its nodePath — so without this override
@@ -84,11 +84,11 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		isNew := tc.Kind == vibekit.ToolKindEdit && tc.Status == vibekit.ToolPending
 		buf.TrackFileChanges(diffs, isNew)
 		turn := len(buf.ToolCalls)
-		t.streaming.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
+		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCall, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCall, chatID,
 		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }
 
@@ -100,13 +100,13 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 		return
 	}
 	content := t.parseToolUpdateContent(tu.Content)
-	buf := t.streaming.BufferStore().GetOrInit(chatID)
+	buf := t.buffers.GetOrInit(chatID)
 	idx, ok := buf.ToolCallIndex[tu.ToolCallID]
 	if !ok || idx >= len(buf.ToolCalls) {
 		return
 	}
 	t.applyToolCallUpdate(ctx, chatID, buf, idx, &tu, content, subSessionID)
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
 }
 
 // parseToolUpdateContent extracts the sanitized output delta, any file diffs,
@@ -209,7 +209,7 @@ func (t *Translator) applyToolCallStatus(
 	}
 	tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
 	t.adoptTerminalOutput(chatID, tc)
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelThinking}))
 }
 
@@ -225,7 +225,7 @@ func (t *Translator) applyToolCallDiffs(
 	tc.Diffs = append(tc.Diffs, diffs...)
 	buf.TrackFileChanges(diffs, false)
 	turn := len(buf.ToolCalls)
-	t.streaming.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
+	t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 }
 
 // adoptTerminalOutput copies a finished terminal's output onto its tool call, so
@@ -266,7 +266,7 @@ func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.Tool
 	if tc.TerminalID == "" {
 		return
 	}
-	text, spans, ok := t.streaming.TerminalOutput(tc.TerminalID)
+	text, spans, ok := t.terminals.TerminalOutput(tc.TerminalID)
 	if !ok {
 		slog.Warn("terminal output missing at completion",
 			"chat_id", chatID, "tool_call_id", tc.ID,
@@ -406,7 +406,7 @@ func localPath(ref string) string {
 // test leaked the absolute path to the client.
 func (t *Translator) relPath(ref string) string {
 	abs := localPath(ref)
-	workDir := t.streaming.WorkDir()
+	workDir := t.workDir
 	if workDir == "" {
 		return abs
 	}
@@ -445,10 +445,10 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatI
 	// no switch can have raced a dispatch that never happened. Dropping it would
 	// leave those turns with no attribution at all.
 	if !buf.HasModel() {
-		if c, ok := t.streaming.ChatRecords().Get(ctx, chatID); ok {
+		if c, ok := t.chats.Get(ctx, chatID); ok {
 			buf.SetModel(c.Model)
 		}
 	}
-	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
 		vibekit.Message{ID: buf.MessageID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

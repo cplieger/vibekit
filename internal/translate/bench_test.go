@@ -63,7 +63,30 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt vibekit.ServerEvent) {
 		d.onBroadcast(ctx, evt)
 	}
 }
-func (d *baseDeps) ChatRecords() ChatRecords               { return d.store }
+
+// The three GETTERS this double used to answer (ChatRecords, BufferStore,
+// LineTracker) are gone with the composites: Roles holds each interface
+// directly, so the double implements the methods instead of handing back a
+// narrower self.
+func (d *baseDeps) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+	return d.store.Get(ctx, id)
+}
+
+func (d *baseDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+	return d.store.Mutate(ctx, id, fn)
+}
+
+func (d *baseDeps) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	return d.store.AppendMessage(ctx, chatID, msg)
+}
+
+func (d *baseDeps) GetOrInit(chatID vibekit.ChatID) *buffer.Buffer {
+	return d.bufStore.GetOrInit(chatID)
+}
+
+func (d *baseDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
+	d.lineTracker.RecordFromDiffs(chatID, diffs, turn, kind)
+}
 func (d *baseDeps) ParentACPSession(vibekit.ChatID) string { return d.parent }
 func (d *baseDeps) IsScheduledRun(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
@@ -96,8 +119,6 @@ func (d *baseDeps) SetGovernance(g vibekit.GovernanceStatePayload) {
 func (d *baseDeps) PendingPermsAdd(int64, vibekit.ServerEvent)                           {}
 func (d *baseDeps) PendingPermsRemove(int64)                                             {}
 func (d *baseDeps) NotifyPush(context.Context, string, vibekit.PushKind, vibekit.ChatID) {}
-func (d *baseDeps) BufferStore() BufferAccess                                            { return d.bufStore }
-func (d *baseDeps) LineTracker() LineRecorder                                            { return d.lineTracker }
 func (d *baseDeps) IsHookStatusEnabled() bool                                            { return false }
 
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)

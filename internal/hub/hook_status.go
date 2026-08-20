@@ -115,6 +115,12 @@ func (c *hookStatusCache) get() bool {
 	return c.field.get()
 }
 
+// IsHookStatusEnabled is the same read under the name translate asks for. The
+// hub used to carry a forward for it.
+func (c *hookStatusCache) IsHookStatusEnabled() bool {
+	return c.get()
+}
+
 // isHookStatusEnabled reads the kiro-cli hooks.showStatus setting.
 // Returns true (show hooks) on any error or when the setting is
 // unset, matching kiro-cli's own default.

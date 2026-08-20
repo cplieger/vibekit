@@ -371,36 +371,32 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	for _, o := range opts {
 		o(h)
 	}
-	// ensureUtility is a thunk, not a value: the utility runtime is built under a
-	// sync.Once whose hooks call back into hub surfaces, so the plane must ask for
-	// it at use rather than hold one built here.
-	runs.utility = h.ensureUtility
-	configP.utility = h.ensureUtility
-	configP.broadcast = h.Broadcast
-	h.translator = translate.New(&translate.Roles{
-		Streaming:  h,
-		Perms:      h,
-		MCP:        h.MCPRecorder(),
-		Governance: h.config,
-		RunOrigin:  h.runs,
-		RunBounds:  h.runs,
-	})
-	runs.translate = h.translator
-	// Collaborators are constructed BEFORE the dispatch wiring below, because
-	// the Roles literal binds some of them into role interfaces by value. A
-	// field read at wiring time must already hold its collaborator; when the
-	// roles all named h instead, the reads happened per call and this order did
-	// not matter, which is exactly what let the wiring drift up here.
+	// CONSTRUCTION, then WIRING, in that order and not interleaved.
+	//
+	// Every role below is bound to its owner BY VALUE, so a field still nil at the
+	// literal stays nil forever — the reads no longer happen per call the way they
+	// did when every role named h. Three roles (coord, lines, agentTerms) were
+	// assigned after the translator and captured nil until this was reordered.
+	// TestNew_EveryTranslateRoleIsWired pins it.
 	h.mcpRegistry = newMCPRegistry(h)
-	// A settled session/load replay becomes the chat's transcript. Assigned
-	// here (not in the struct literal) because it is a method value on the
-	// fully-built Hub; see load_projection.go.
-	h.onProjection = h.swapProjectedTranscript
 	h.coord = newBridgeCoordinator(h)
-	runs.coord = h.coord
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, h.Broadcast)
+	// A settled session/load replay becomes the chat's transcript. Assigned here
+	// (not in the struct literal) because it is a method value on the fully-built
+	// Hub; see load_projection.go.
+	h.onProjection = h.swapProjectedTranscript
+	// ensureUtility is a thunk, not a value: the utility runtime is built under a
+	// sync.Once whose hooks call back into hub surfaces, so a holder must ask for
+	// it at use rather than hold one built here.
+	runs.utility = h.ensureUtility
+	runs.coord = h.coord
+	configP.utility = h.ensureUtility
+	configP.broadcast = h.Broadcast
+
+	h.translator = translate.New(h.translateRoles())
+	runs.translate = h.translator
 	h.dispatcher = command.New()
 	h.registerCommandHandlers()
 	h.initDispatch()
@@ -653,18 +649,6 @@ func (h *Hub) refuseWhenDraining(next http.Handler) http.Handler {
 // allocation child context.
 func (h *Hub) hubContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(h.lifecycle.shutdownCtx)
-}
-
-// parentACPSession returns the ACP session id of the running bridge
-// for chatID, or "" when no bridge exists. Translator helpers use this
-// to short-circuit notifications whose top-level sessionId belongs to
-// a subagent rather than the parent chat.
-func (h *Hub) parentACPSession(chatID vibekit.ChatID) string {
-	sb := h.bridge.mgr.get(chatID)
-	if sb == nil {
-		return ""
-	}
-	return string(sb.bridge.SessionID())
 }
 
 // sweepSessionsInterval is how often the orphan-session sweep runs after
