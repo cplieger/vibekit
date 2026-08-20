@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/slogx/capture"
@@ -799,6 +800,13 @@ done
 }
 
 // --- parseErrTracker state machine tests (tarch-b7-c3-p4, consolidated tarch-b4-c4-p4) ---
+//
+// The count-driven cases are a table; the two CLOCK-driven ones are synctest
+// bubbles below it. The window case used to sit in this table and reach in to
+// assign tr.windowStart directly, which asserted the branch without ever
+// exercising the comparison that selects it; the decay branch had no case at all,
+// because a real-clock test for it costs five minutes. Both are now driven
+// through time.Now on the bubble's synthetic clock at zero real cost.
 
 func TestParseErrTracker(t *testing.T) {
 	cases := []struct {
@@ -822,17 +830,6 @@ func TestParseErrTracker(t *testing.T) {
 			},
 			calls:      1,
 			wantAction: parseErrSuppress,
-		},
-		{
-			name: "summarize after window expires",
-			setup: func(tr *parseErrTracker) {
-				for range parseErrBurst {
-					tr.Record()
-				}
-				tr.windowStart = time.Now().Add(-parseErrWindow - time.Second)
-			},
-			calls:      1,
-			wantAction: parseErrSummarize,
 		},
 		{
 			name:       "circuit break at consecutive threshold",
@@ -879,6 +876,90 @@ func TestParseErrTracker(t *testing.T) {
 		}
 		if got := tr.SummaryCount(); got != extra {
 			t.Errorf("SummaryCount() = %d, want %d", got, extra)
+		}
+	})
+}
+
+// TestParseErrTracker_WindowCadenceIsDrivenByTheClock exercises the comparison
+// that selects parseErrSummarize, rather than assigning the field it reads.
+//
+// The case this replaces did `tr.windowStart = time.Now().Add(-parseErrWindow -
+// time.Second)`, which reaches past the state machine to stage its own answer: a
+// Record that stopped consulting windowStart at all would still have passed.
+// Here the clock moves and Record decides.
+func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var tr parseErrTracker
+		for range parseErrBurst {
+			if got := tr.Record(); got != parseErrLog {
+				t.Fatalf("burst Record() = %v, want parseErrLog", got)
+			}
+		}
+		// Inside the window: suppressed, however many arrive.
+		synctest.Sleep(parseErrWindow / 2)
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Errorf("Record() inside the window = %v, want parseErrSuppress", got)
+		}
+		// Past it: exactly one summary line, then suppressed again — the window
+		// restarts from this instant, so a second summary must not follow.
+		synctest.Sleep(parseErrWindow)
+		if got := tr.Record(); got != parseErrSummarize {
+			t.Errorf("Record() past the window = %v, want parseErrSummarize", got)
+		}
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Errorf("Record() straight after a summary = %v, want parseErrSuppress: "+
+				"the window must restart at the summary, or a storm emits one line per frame", got)
+		}
+	})
+}
+
+// TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker covers the
+// parseErrDecay branch, which had no test — a real-clock one costs five minutes —
+// and pins the half the old comment got wrong.
+//
+// Decay resets the storm WINDOW, so a bridge that saw a storm hours ago gets its
+// verbatim burst back instead of staying summary-only for the life of the
+// process. It deliberately leaves `consecutive` alone: Reset clears that on every
+// frame that parses, so parseErrMaxConsecutive frames with not one valid frame
+// between them is a dead stream at any pace, and decaying the count would stop
+// the breaker firing on a stream that fails totally but slowly. The old comment
+// claimed decay prevented "false circuit-breaks", which is the opposite of what
+// the second half asserts here.
+func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var tr parseErrTracker
+		for range parseErrBurst + 5 {
+			tr.Record()
+		}
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Fatalf("Record() past the burst = %v, want parseErrSuppress", got)
+		}
+
+		synctest.Sleep(parseErrDecay + time.Second)
+
+		// The burst is back: the storm window was reset, so this line is emitted
+		// verbatim rather than suppressed.
+		if got := tr.Record(); got != parseErrLog {
+			t.Errorf("Record() after %v of quiet = %v, want parseErrLog: "+
+				"decay must restart the burst", parseErrDecay, got)
+		}
+		if tr.total != 1 {
+			t.Errorf("total = %d after decay, want 1", tr.total)
+		}
+
+		// The breaker is NOT back. consecutive has counted every error, decay
+		// included, so one more than the ceiling away from it still trips.
+		if tr.consecutive != parseErrBurst+7 {
+			t.Fatalf("consecutive = %d, want %d: decay must not touch the breaker's count",
+				tr.consecutive, parseErrBurst+7)
+		}
+		for range parseErrMaxConsecutive - tr.consecutive - 1 {
+			tr.Record()
+		}
+		if got := tr.Record(); got != parseErrCircuitBreak {
+			t.Errorf("Record() at consecutive=%d = %v, want parseErrCircuitBreak: "+
+				"decay must not spare a stream that fails totally but slowly",
+				tr.consecutive, got)
 		}
 	})
 }
