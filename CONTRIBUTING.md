@@ -42,8 +42,9 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   `internal/ansitext`.
 - `internal/chat/`: persistence, one JSON file per chat, written atomically.
   `Mutate` is the only write path.
-- `internal/hub/`: command dispatch, SSE broadcast, ACP-to-domain event
-  translation, bridge buffer aggregation, and the global PTY shell.
+- `internal/agent/`: command dispatch, SSE broadcast, ACP-to-domain event
+  translation, bridge buffer aggregation, and the global PTY shell. Named for the
+  per-chat agent runtime it coordinates; the type is `agent.Runtime`.
 - `internal/bridge/`: `kiro-cli acp` subprocess lifecycle, capability
   handshake, and the filesystem read/write handlers. The binary it runs is
   resolved once per bridge, from the install manager, so a version switch reaches
@@ -76,11 +77,9 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 - `internal/translate/`: ACP notification handlers that turn raw `kiro-cli`
   events into vibekit domain events.
 - `internal/command/`: handlers for each `POST /api/command` type.
-- `internal/checkpoint/`: content-addressed file-snapshot store with a
-  two-phase atomic restore.
-- `internal/permissions/`, `internal/forges/`, `internal/git/`,
+- `internal/forges/`, `internal/git/`,
   `internal/mcp/`, `internal/push/`, `internal/auth/`,
-  `internal/server/`: feature subsystems (tool-approval policy, forge CLI
+  `internal/server/`: feature subsystems (forge CLI
   orchestration, git handlers, MCP, web push, kiro-cli identity endpoints, HTTP
   middleware and routing).
 - The tools engine is the external
