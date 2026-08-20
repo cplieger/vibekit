@@ -169,19 +169,26 @@ func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListStat
 // a guess presented as a fact.
 func parsePRs(data []byte) ([]PR, error) {
 	var raw []struct {
-		Base      struct{ Ref string }      `json:"base"`
-		Title     string                    `json:"title"`
-		Body      string                    `json:"body"`
-		State     string                    `json:"state"`
-		User      struct{ Login string }    `json:"user"`
-		Head      struct{ Ref, Sha string } `json:"head"`
-		HTMLURL   string                    `json:"html_url"`
-		CreatedAt string                    `json:"created_at"`
-		UpdatedAt string                    `json:"updated_at"`
-		Number    int                       `json:"number"`
-		Mergeable bool                      `json:"mergeable"`
-		Draft     bool                      `json:"draft"`
-		Merged    bool                      `json:"merged"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		State string `json:"state"`
+		User  struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Head struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		} `json:"head"`
+		HTMLURL   string `json:"html_url"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		Number    int    `json:"number"`
+		Mergeable bool   `json:"mergeable"`
+		Draft     bool   `json:"draft"`
+		Merged    bool   `json:"merged"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("tea pulls: decode: %w", err)
@@ -202,7 +209,7 @@ func parsePRs(data []byte) ([]PR, error) {
 			SourceBranch: r.Head.Ref,
 			TargetBranch: r.Base.Ref,
 			URL:          r.HTMLURL,
-			HeadSHA:      r.Head.Sha,
+			HeadSHA:      r.Head.SHA,
 			MergeBlocked: giteaMergeBlock(r.Mergeable, r.Draft),
 			CreatedAt:    parseRFC3339Millis(r.CreatedAt),
 			UpdatedAt:    parseRFC3339Millis(r.UpdatedAt),
@@ -374,15 +381,19 @@ func (p *giteaProvider) ListIssues(ctx context.Context, repo string, state ListS
 
 func parseIssues(data []byte) ([]Issue, error) {
 	var raw []struct {
-		Title     string                  `json:"title"`
-		Body      string                  `json:"body"`
-		State     string                  `json:"state"`
-		User      struct{ Login string }  `json:"user"`
-		HTMLURL   string                  `json:"html_url"`
-		CreatedAt string                  `json:"created_at"`
-		UpdatedAt string                  `json:"updated_at"`
-		Labels    []struct{ Name string } `json:"labels"`
-		Number    int                     `json:"number"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		State string `json:"state"`
+		User  struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		HTMLURL   string `json:"html_url"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		Labels    []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		Number int `json:"number"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("tea issues: decode: %w", err)

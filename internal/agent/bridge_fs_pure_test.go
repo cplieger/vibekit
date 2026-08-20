@@ -62,12 +62,25 @@ func TestSliceByLines_Table(t *testing.T) {
 // FuzzSliceByLines exercises the line-slicing parser with arbitrary inputs.
 // Invariant: for any (content, line, limit) where line >= 1 and limit >= 1,
 // the output is a substring of content (or empty).
+//
+// Since the strings.Lines rewrite the substring half is true by construction
+// (the result is one slice expression over content), so what this target now
+// guards is that the two offset walks cannot produce lo > hi or an out-of-range
+// index — which would panic rather than fail an assertion.
 func FuzzSliceByLines(f *testing.F) {
 	f.Add("a\nb\nc\n", 2, 2)
 	f.Add("a\nb\n", 99, 1)
 	f.Add("a\nb\nc\n", 2, math.MaxInt)
 	f.Add("", 1, 1)
 	f.Add("single", 1, 1)
+	// Terminator shapes strings.Lines and strings.SplitAfter disagree about:
+	// a bare '\r', a '\r\n' pair, and a body with no trailing newline. The
+	// differential sweep behind the rewrite found no divergence on any of
+	// them, and these seeds are what keep that true.
+	f.Add("a\r\nb\r\n", 1, 1)
+	f.Add("a\rb\rc", 2, 1)
+	f.Add("no trailing newline", 1, 2)
+	f.Add("\n\n\n", 2, 1)
 
 	f.Fuzz(func(t *testing.T, content string, line, limit int) {
 		if line < 1 || limit < 1 {

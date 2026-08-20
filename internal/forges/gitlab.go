@@ -29,22 +29,24 @@ type gitlabProvider struct {
 // of it is empty on every row, and fetching it per PR is the N-call
 // fan-out this work exists to avoid.
 type gitlabMR struct {
-	Title               string                    `json:"title"`
-	Description         string                    `json:"description"`
-	State               string                    `json:"state"`
-	Author              struct{ Username string } `json:"author"`
-	SourceBranch        string                    `json:"source_branch"`
-	TargetBranch        string                    `json:"target_branch"`
-	WebURL              string                    `json:"web_url"`
-	CreatedAt           string                    `json:"created_at"`
-	UpdatedAt           string                    `json:"updated_at"`
-	MergeStatus         string                    `json:"merge_status"`
-	DetailedMergeStatus string                    `json:"detailed_merge_status"`
-	SHA                 string                    `json:"sha"`
-	IID                 int                       `json:"iid"`
-	Draft               bool                      `json:"draft"`
-	HasConflicts        bool                      `json:"has_conflicts"`
-	AutoMerge           bool                      `json:"merge_when_pipeline_succeeds"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	State       string `json:"state"`
+	Author      struct {
+		Username string `json:"username"`
+	} `json:"author"`
+	SourceBranch        string `json:"source_branch"`
+	TargetBranch        string `json:"target_branch"`
+	WebURL              string `json:"web_url"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at"`
+	MergeStatus         string `json:"merge_status"`
+	DetailedMergeStatus string `json:"detailed_merge_status"`
+	SHA                 string `json:"sha"`
+	IID                 int    `json:"iid"`
+	Draft               bool   `json:"draft"`
+	HasConflicts        bool   `json:"has_conflicts"`
+	AutoMerge           bool   `json:"merge_when_pipeline_succeeds"`
 }
 
 func (r *gitlabMR) toPR() PR {
@@ -391,15 +393,17 @@ func (p *gitlabProvider) ListIssues(ctx context.Context, repo string, state List
 		return nil, err
 	}
 	var raw []struct {
-		Title       string                    `json:"title"`
-		Description string                    `json:"description"`
-		State       string                    `json:"state"`
-		Author      struct{ Username string } `json:"author"`
-		WebURL      string                    `json:"web_url"`
-		CreatedAt   string                    `json:"created_at"`
-		UpdatedAt   string                    `json:"updated_at"`
-		Labels      []string                  `json:"labels"`
-		IID         int                       `json:"iid"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		State       string `json:"state"`
+		Author      struct {
+			Username string `json:"username"`
+		} `json:"author"`
+		WebURL    string   `json:"web_url"`
+		CreatedAt string   `json:"created_at"`
+		UpdatedAt string   `json:"updated_at"`
+		Labels    []string `json:"labels"`
+		IID       int      `json:"iid"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("glab issue list: decode: %w", err)
@@ -447,15 +451,17 @@ func (p *gitlabProvider) CreateIssue(ctx context.Context, repo string, params Cr
 func (p *gitlabProvider) viewIssue(ctx context.Context, repo string, number int) (*Issue, error) {
 	args := p.withHost("issue", "view", strconv.Itoa(number), "--repo", repo, "--output", "json")
 	var r struct {
-		Title       string                    `json:"title"`
-		Description string                    `json:"description"`
-		State       string                    `json:"state"`
-		Author      struct{ Username string } `json:"author"`
-		WebURL      string                    `json:"web_url"`
-		CreatedAt   string                    `json:"created_at"`
-		UpdatedAt   string                    `json:"updated_at"`
-		Labels      []string                  `json:"labels"`
-		IID         int                       `json:"iid"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		State       string `json:"state"`
+		Author      struct {
+			Username string `json:"username"`
+		} `json:"author"`
+		WebURL    string   `json:"web_url"`
+		CreatedAt string   `json:"created_at"`
+		UpdatedAt string   `json:"updated_at"`
+		Labels    []string `json:"labels"`
+		IID       int      `json:"iid"`
 	}
 	if err := runJSON(ctx, CmdTimeout, &r, "glab", args...); err != nil {
 		return nil, err
@@ -524,12 +530,14 @@ func (p *gitlabProvider) ListReleases(ctx context.Context, repo string) ([]Relea
 		return nil, err
 	}
 	var raw []struct {
-		TagName     string                `json:"tag_name"`
-		Name        string                `json:"name"`
-		Description string                `json:"description"`
-		Links       struct{ Self string } `json:"_links"`
-		ReleasedAt  string                `json:"released_at"`
-		UpcomingRel bool                  `json:"upcoming_release"`
+		TagName     string `json:"tag_name"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Links       struct {
+			Self string `json:"self"`
+		} `json:"_links"`
+		ReleasedAt  string `json:"released_at"`
+		UpcomingRel bool   `json:"upcoming_release"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("glab release list: decode: %w", err)
