@@ -20,6 +20,7 @@ package server
 import (
 	"bytes"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -205,9 +206,13 @@ func (c *idempotencyCache) begin(key string) (*idempotencyEntry, bool) {
 // complete replaces the in-flight marker with a cached response. Only
 // called for status < 500 within the body cap. The body is copied so a
 // later reuse of the handler's buffer can't alias the cached bytes.
+//
+// slices.Clone rather than make+copy: identical for a non-empty body, and for an
+// empty one it hands back nil where make+copy handed back an empty non-nil
+// slice — which writeIdempotentReplay treats the same, since w.Write(nil) and
+// w.Write([]byte{}) both write nothing.
 func (c *idempotencyCache) complete(key string, status int, ct string, body []byte) {
-	cp := make([]byte, len(body))
-	copy(cp, body)
+	cp := slices.Clone(body)
 	c.mu.Lock()
 	c.entries[key] = &idempotencyEntry{ts: time.Now(), status: status, ct: ct, body: cp}
 	c.mu.Unlock()

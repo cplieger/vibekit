@@ -2,6 +2,7 @@ package server
 
 import (
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -83,32 +84,30 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 // Deliberately not a filter on what may be WRITTEN: a capability absent from
 // both the snapshot and the current rules is still writable (see SanitizeRule),
 // it just is not suggested.
+//
+// Sorted as ONE list, not suggestions-then-extras: the dropdown is alphabetical,
+// and a reader looking for "hooks" should not have to know whether vibekit
+// shipped knowing about it. slices.Sorted(maps.Keys(…)) (Go 1.23) is that in one
+// expression; the set is the only intermediate, which is what removes the
+// separate duplicate test and the `added` flag that existed solely to skip
+// re-sorting fifteen strings.
+//
+// The result is non-empty for any input because the snapshot seeds it, so the
+// `capabilities` wire field never degrades from [] to null.
+// TestPickerCapabilities_NoRulesIsTheSuggestedSet asserts that rather than
+// leaving it to the reader.
 func pickerCapabilities(rules []vibekit.PolicyRule) []string {
-	out := policyfile.Capabilities()
-	seen := make(map[string]struct{}, len(out)+len(rules))
-	for _, c := range out {
+	suggested := policyfile.Capabilities()
+	seen := make(map[string]struct{}, len(suggested)+len(rules))
+	for _, c := range suggested {
 		seen[c] = struct{}{}
 	}
-	added := false
 	for i := range rules {
-		c := rules[i].Capability
-		if c == "" {
-			continue
+		if c := rules[i].Capability; c != "" {
+			seen[c] = struct{}{}
 		}
-		if _, dup := seen[c]; dup {
-			continue
-		}
-		seen[c] = struct{}{}
-		out = append(out, c)
-		added = true
 	}
-	if added {
-		// Sorted as ONE list, not suggestions-then-extras: the dropdown is
-		// alphabetical, and a reader looking for "hooks" should not have to know
-		// whether vibekit shipped knowing about it.
-		slices.Sort(out)
-	}
-	return out
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // policyRulesFromFiles reads the user + workspace permissions.yaml directly

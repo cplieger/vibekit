@@ -227,10 +227,24 @@ func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
 
 // TestPickerCapabilities_NoRulesIsTheSuggestedSet: a fresh install with no rules
 // must still populate the dropdown.
+//
+// The non-EMPTY leg is the wire assertion, and slices.Equal cannot make it:
+// slices.Equal(nil, []string{}) is true, so comparing against the suggested set
+// would pass if both were empty, and an empty picker marshals `"capabilities":
+// null` rather than `[]` (the field carries no omitzero/omitempty). Since
+// pickerCapabilities now returns slices.Sorted(maps.Keys(…)), whose answer for an
+// empty set IS nil, the invariant "the snapshot always seeds it" is what keeps
+// the wire shape stable — so it is asserted here rather than assumed.
 func TestPickerCapabilities_NoRulesIsTheSuggestedSet(t *testing.T) {
 	got := pickerCapabilities(nil)
+	if len(got) == 0 {
+		t.Fatal("picker is empty; the capabilities wire field would marshal as null, not []")
+	}
 	if !slices.Equal(got, policyfile.Capabilities()) {
 		t.Errorf("picker = %v, want the suggested set", got)
+	}
+	if !slices.IsSorted(got) {
+		t.Errorf("picker = %v, want one alphabetical list", got)
 	}
 }
 

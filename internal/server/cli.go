@@ -151,10 +151,22 @@ func safeKiroSettingValueFor(v string, kind settingKind) string {
 	return ""
 }
 
+// parseKiroSettingOutput strips the scope suffix kiro-cli appends to every
+// non-empty setting value ("true (global)", "0 (local)") and returns the bare
+// value.
+//
+// strings.CutLast (Go 1.27) rather than LastIndexByte plus a manual slice: the
+// operation IS a split around the last separator, keeping the before half.
+// `before != ""` is the same guard as the old `i > 0` — before is empty exactly
+// when the "(" is at index 0 — and it says why the guard exists (a value that is
+// entirely parenthesized is a value, not a suffix) instead of leaving a reader to
+// infer it from an index comparison. found is required as well: on no match
+// CutLast returns the whole input as before, which would strip nothing but would
+// re-TrimSpace an already-trimmed string.
 func parseKiroSettingOutput(s string) string {
 	s = strings.TrimSpace(s)
-	if i := strings.LastIndexByte(s, '('); i > 0 {
-		s = strings.TrimSpace(s[:i])
+	if before, _, found := strings.CutLast(s, "("); found && before != "" {
+		s = strings.TrimSpace(before)
 	}
 	return s
 }
