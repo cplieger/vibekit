@@ -56,7 +56,7 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, for
 	if len(dirs) > 0 && !isRoot {
 		b.WriteString("### Directories\n\n")
 		for _, d := range dirs {
-			fmt.Fprintf(b, "- `%s/`\n", d)
+			fmt.Fprintf(b, "- `%s/`\n", defuse(d))
 		}
 		b.WriteString("\n")
 	}
@@ -64,10 +64,16 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, for
 
 func writeRepoEntry(b *strings.Builder, workDir, r string, forgeKinds map[string]bool) {
 	repoDir := filepath.Join(workDir, r)
+	// One defusal per repo, threaded into every writer below, rather than one
+	// per interpolation: a directory name is arbitrary bytes (the agent creates
+	// directories and clones into them), and defusing at each `%s` is the shape
+	// that already lost a channel. `r` itself stays raw because it is also a
+	// path component.
+	label := defuse(r)
 	origin := readGitOrigin(repoDir)
 	branch := readGitBranch(repoDir)
 	desc := readFirstLine(filepath.Join(repoDir, "README.md"))
-	fmt.Fprintf(b, "- `%s/`", r)
+	fmt.Fprintf(b, "- `%s/`", label)
 	if branch != "" {
 		fmt.Fprintf(b, " on `%s`", branch)
 	}
@@ -90,19 +96,19 @@ func writeRepoEntry(b *strings.Builder, workDir, r string, forgeKinds map[string
 	b.WriteString("\n")
 	docs := findRepoDocs(repoDir)
 	if len(docs) > 0 {
-		writeRepoSteering(b, r, docs)
+		writeRepoSteering(b, label, docs)
 	}
 	skills := findRepoSkills(repoDir)
 	if len(skills) > 0 {
-		writeRepoSkills(b, r, skills)
+		writeRepoSkills(b, label, skills)
 	}
 	agents := findRepoAgents(repoDir)
 	if len(agents) > 0 {
-		writeRepoAgents(b, r, agents)
+		writeRepoAgents(b, label, agents)
 	}
 	hooks := findRepoHooks(repoDir)
 	if len(hooks) > 0 {
-		writeRepoHooks(b, r, hooks)
+		writeRepoHooks(b, label, hooks)
 	}
 }
 
@@ -170,28 +176,82 @@ func readGitOrigin(repoDir string) string {
 // readGitBranch returns the current branch name of a git repo by
 // reading `.git/HEAD`. Same rationale as readGitOrigin: no subprocess.
 // Detached-HEAD repos return "" (HEAD points at a sha, not a ref).
+//
+// The value is cut at the FIRST line and defused, because `.git/HEAD` is a file
+// this package reads directly rather than a name git validated. TrimSpace over
+// the whole file leaves interior newlines alone, so a HEAD whose second line is
+// "## Capabilities" made vibekit write a steering section the agent then read as
+// its own — measured. A branch is one line by definition, so the cut costs
+// nothing that could have been a branch name.
 func readGitBranch(repoDir string) string {
 	data, err := readCappedFile(filepath.Join(repoDir, ".git", "HEAD"), 1024)
 	if err != nil {
 		return ""
 	}
-	s := strings.TrimSpace(string(data))
+	first, _, _ := strings.Cut(string(data), "\n")
+	s := strings.TrimSpace(first)
 	const refsPrefix = "ref: refs/heads/"
 	if branch, ok := strings.CutPrefix(s, refsPrefix); ok {
-		return branch
+		return defuse(branch)
 	}
 	return ""
 }
 
 // hostFromGitURL extracts the host from a git remote URL. Handles
 // both https:// and scp-style git@host:path forms. Returns "" for
-// shapes we don't recognise (file://, ext::, etc).
+// shapes we don't recognise (file://, ext::, etc) and for anything that is not
+// SHAPED like a host — see isHostShaped, which is what makes the two callers'
+// downstream reasoning sound.
 func hostFromGitURL(url string) string {
 	url = strings.TrimSpace(url)
+	var host string
 	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
-		return hostFromHTTPURL(url)
+		host = hostFromHTTPURL(url)
+	} else {
+		host = hostFromSCPURL(url)
 	}
-	return hostFromSCPURL(url)
+	if !isHostShaped(host) {
+		return ""
+	}
+	return host
+}
+
+// isHostShaped reports whether s could be a DNS host or an IPv4 literal with an
+// optional port: ASCII letters, digits, dot, dash, underscore and colon, and
+// nothing else.
+//
+// It is a REFUSAL rather than a defusal, and it is load-bearing twice over.
+//
+// A `.git/config` url is a line from a file in a tree the agent writes, so
+// without it a backtick or a bracket reached environment.md inside the
+// parenthesised host annotation. And kindFromHost lowercases this value before
+// matching it against `github`, `gitlab`, `gitea` — a MATCH list, which fails
+// OPEN. Exactly two already-assigned runes lowercase into ASCII under Unicode
+// simple case mapping (U+0130 -> "i", U+212A -> "k") and three of those literals
+// contain an `i`, so `g\u0130thub.com` folded to `github.com` and the generator
+// advertised `gh` for a host that is not GitHub (measured on go1.27.0, both
+// before and after this gate). Restricting the alphabet upstream settles the
+// site instead of bounding it: with only ASCII reaching it, strings.ToLower is
+// provably an ASCII fold on any Unicode version. The ORDER is therefore the
+// property, which is why TestHostGateGuardsTheFold pins it.
+//
+// Cost, stated: an IPv6-literal remote (`https://[::1]/x`) loses its host
+// annotation, because `[` and `]` are markdown-significant and no git remote in
+// this container uses one. The repo still renders, without the parenthesis.
+func isHostShaped(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.', c == '-', c == '_', c == ':':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // hostFromHTTPURL extracts the host from an http(s):// git URL, stripping
