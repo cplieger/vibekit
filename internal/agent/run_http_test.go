@@ -20,7 +20,7 @@ import (
 func TestHandleRun_RejectsNonGET(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
-	h.runs.handleRun(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1", nil))
+	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST /api/runs/{id} = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
@@ -31,7 +31,7 @@ func TestHandleRun_RejectsAMissingID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	// No path value set: the route cannot match this, but a hand-built request
 	// can, and answering 400 beats calling KAS with an empty id.
-	h.runs.handleRun(rec, httptest.NewRequest(http.MethodGet, "/api/runs/", nil))
+	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodGet, "/api/runs/", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("GET with no id = %d, want %d", rec.Code, http.StatusBadRequest)
 	}

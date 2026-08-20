@@ -194,6 +194,7 @@ type Runtime struct {
 	// runs owns the workflow-run surface: 74 methods and the four fields only it
 	// touched (see run_plane.go). Runtime reaches it like any collaborator.
 	runs          *Runs
+	runRoutes     *runRoutes
 	utility       *utilityLease
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
@@ -386,6 +387,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// assigned after the translator and captured nil until this was reordered.
 	// TestNew_EveryTranslateRoleIsWired pins it.
 	h.utility = &utilityLease{build: h.buildUtility}
+	h.runRoutes = &runRoutes{runs: runs}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.coord = newBridgeCoordinator(h)
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
@@ -498,19 +500,10 @@ func (h *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	h.config.registerKnowledgeRoutes(mux)
 	h.config.registerHooksRoutes(mux)
 	h.config.registerGovernanceRoutes(mux)
+	h.runRoutes.register(mux)
 	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).
 	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", h.handleSessionList)
-	mux.HandleFunc("GET /api/runs/{id}", h.runs.handleRun)
-	mux.HandleFunc("POST /api/runs", h.runs.handleLaunch)
-	mux.HandleFunc("POST /api/runs/{id}/cancel", h.runs.handleCancel)
-	mux.HandleFunc("POST /api/runs/{id}/pause", h.runs.handlePause)
-	mux.HandleFunc("POST /api/runs/{id}/resume", h.runs.handleResume)
-	mux.HandleFunc("POST /api/runs/{id}/retry", h.runs.handleRetry)
-	mux.HandleFunc("DELETE /api/runs/{id}", h.runs.handleDelete)
-	mux.HandleFunc("POST /api/runs/{id}/step", h.runs.handleStepStatus)
-	mux.HandleFunc("GET /api/recipes", h.runs.handleRecipes)
-	h.runs.registerScheduleRoutes(mux)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges, bounded by ctx.

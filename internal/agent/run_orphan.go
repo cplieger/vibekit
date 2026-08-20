@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/runlease"
+	"github.com/cplieger/vibekit/internal/workflow"
 )
 
 // runStatusPaused is KAS's one non-terminal status a stopped run reports, and the
@@ -270,4 +271,22 @@ func (rp *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState
 		return inspectRunState{}, false
 	}
 	return res, true
+}
+
+// rawInspect issues `_kiro/workflow/inspect` for one run and TYPES its failure
+// at the boundary: an unregistered verb comes back wrapping
+// workflow.ErrUnknownMethod, so callers ask errors.Is instead of re-reading KAS's
+// error text. One helper rather than a copy per caller because the classification
+// has to happen where the RPC error still carries its `error.data` — a caller
+// that wrapped first and asked second would be sniffing its own message.
+func (rp *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMessage, error) {
+	u := rp.utility()
+	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
+	defer cancel()
+	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
+		callerParams(map[string]any{keyWorkflowID: workflowID}))
+	if err != nil {
+		return nil, workflow.Classify(err)
+	}
+	return raw, nil
 }
