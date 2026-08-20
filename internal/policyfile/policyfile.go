@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v3"
@@ -427,7 +428,21 @@ func sanitizePatterns(in []string) ([]string, error) {
 	return out, nil
 }
 
-func isCtrl(r rune) bool { return r < 0x20 || r == 0x7f }
+// isCtrl reports whether r is a control character, which a capability token or a
+// match pattern may not contain.
+//
+// unicode.IsControl rather than the `r < 0x20 || r == 0x7f` this used to be: that
+// form covered C0 and DEL and left the whole C1 block (U+0080-U+009F) through,
+// 32 runes the gate's own doc says it rejects. Measured on go1.27.0 —
+// unicode.Cc has 65 members and the hand-rolled predicate matched 33 of them.
+// The direction of that gap is what makes it worth closing: this is a REFUSE
+// gate, so a missed rune fails OPEN and the pattern lands in permissions.yaml,
+// where U+0085 NEXT LINE is a line break to a good many renderers.
+//
+// Version-stable by construction, so this does not trade one exposure for
+// another: Cc is the fixed set U+0000-U+001F plus U+007F-U+009F, it cannot gain
+// members, and the changelog's Unicode 15-to-17 diff measures it unmoved at 65.
+func isCtrl(r rune) bool { return unicode.IsControl(r) }
 
 // Signature is the dedup/equality key for a rule: capability + effect +
 // sorted match + sorted exclude. Mirrors KAS ruleSignature so vibekit's
