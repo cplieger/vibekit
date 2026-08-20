@@ -15,7 +15,7 @@
 //
 // Nothing here imports another vibekit package. The one shape it needs is
 // reached through detailer rather than through *vibekit.RPCError, so an error is
-// found by errors.As at any wrapping depth and this package stays a leaf.
+// found by errors.AsType at any wrapping depth and this package stays a leaf.
 package rpcerr
 
 import (
@@ -36,10 +36,27 @@ import (
 const maxTextBytes = 2048
 
 // detailer is satisfied by an error carrying KAS's `error.data`. An interface
-// rather than *RPCError so a wrapped error is found by errors.As at any depth.
+// rather than *RPCError so a wrapped error is found at any depth.
+//
+// It EMBEDS error, which is what lets Details read it with errors.AsType.
+// errors.AsType's type parameter is constrained to error, so a capability-only
+// interface does not compile against it — measured on go1.27.0: `bare does not
+// satisfy error (missing method Error)`. The declaration was strictly wider than
+// the set of values that can inhabit it: this is read ONLY by walking an error
+// tree, every node of such a tree is an error by construction, and no non-error
+// implementation was ever reachable. net.Error is the stdlib's answer to the same
+// question and embeds error for the same reason.
+//
+// Consumer cost is zero: the sole implementation is *vibekit.RPCError, which had
+// to have an Error method to be in a chain at all.
 type detailer interface {
+	error
 	ErrorData() json.RawMessage
 }
+
+// Stated as an assertion rather than left to Details' call of errors.AsType so a
+// future widening of the interface fails here, next to the reason.
+var _ error = detailer(nil)
 
 // Details extracts the text KAS put in `error.data`, or "" when there is
 // none.
@@ -50,8 +67,13 @@ type detailer interface {
 // half specifically, and matching its marker against the message too would widen
 // it to any error that merely quotes KAS.
 func Details(err error) string {
-	var d detailer
-	if !errors.As(err, &d) {
+	// errors.AsType rather than errors.As: one expression, no var declaration, and
+	// no addressable target to get wrong. Note go fix could not have found this
+	// site — its errorsastype modernizer only fires on a bare POSITIVE
+	// `if errors.As(...)`, so the negated guard this replaces was invisible to
+	// both the fixer and golangci-lint's copy of the same analyzer.
+	d, ok := errors.AsType[detailer](err)
+	if !ok {
 		return ""
 	}
 	raw := d.ErrorData()
@@ -66,9 +88,14 @@ func Details(err error) string {
 		return obj.Details
 	}
 	// The other shape: a Zod issue array. Its messages are what a caller wants.
+	//
+	// Only Message is decoded. The struct used to carry a `Path []any` beside it
+	// that nothing ever read, so every issue in every failure allocated a slice
+	// and an interface box per path element for a field with no consumer — on the
+	// path whose whole reason for existing is a Zod failure over a large params
+	// object.
 	var issues []struct {
 		Message string `json:"message"`
-		Path    []any  `json:"path"`
 	}
 	if json.Unmarshal(raw, &issues) == nil && len(issues) > 0 {
 		msgs := make([]string, 0, len(issues))
