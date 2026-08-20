@@ -43,18 +43,23 @@ func validatePromptPayload(cmd *vibekit.ClientCommand) (vibekit.PromptCommand, i
 	return p, 0, nil
 }
 
-// retryWithBackoff retries fn up to maxAttempts times with a fixed delay.
-func retryWithBackoff(ctx context.Context, maxAttempts int, delay time.Duration, shouldRetry func(error) bool, fn func() (*vibekit.RPCResponse, error)) (*vibekit.RPCResponse, error) {
+// retry re-invokes fn up to maxAttempts more times, delay apart, for as long as
+// shouldRetry keeps saying yes. The delay is FIXED — there is no backoff, and
+// the name used to claim one.
+//
+// A bare `time.After` in the loop rather than one reused timer: since Go 1.23 a
+// timer is collected as soon as it is unreachable even if it never fired and
+// Stop was never called, so the reuse this used to do (NewTimer, defer Stop,
+// Reset per iteration) bought nothing but a redundant re-arm on the first pass.
+// At maxAttempts of 2 against a 2s delay the allocation is not measurable.
+func retry(ctx context.Context, maxAttempts int, delay time.Duration, shouldRetry func(error) bool, fn func() (*vibekit.RPCResponse, error)) (*vibekit.RPCResponse, error) {
 	result, err := fn()
 	if err == nil || !shouldRetry(err) {
 		return result, err
 	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		timer.Reset(delay)
+	for range maxAttempts {
 		select {
-		case <-timer.C:
+		case <-time.After(delay):
 		case <-ctx.Done():
 			return result, err
 		}
@@ -71,7 +76,7 @@ func retryWithBackoff(ctx context.Context, maxAttempts int, delay time.Duration,
 // old single-boolean version logged "prompt retry" for a dead bridge and nothing
 // at all for a throttle, which is exactly backwards from what a reader needs.
 func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID vibekit.ChatID) (*vibekit.RPCResponse, error) {
-	return retryWithBackoff(ctx, 2, 2*time.Second, func(err error) bool {
+	return retry(ctx, 2, 2*time.Second, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
 		slog.Warn("prompt failure",

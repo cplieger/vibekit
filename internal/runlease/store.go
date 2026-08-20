@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -131,13 +133,8 @@ func (s *Store) List() []Lease {
 
 func (s *Store) sortedLocked() []Lease {
 	out := make([]Lease, 0, len(s.leases))
-	for id := range s.leases {
+	for _, id := range slices.Sorted(maps.Keys(s.leases)) {
 		out = append(out, s.leases[id])
-	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].WorkflowID < out[j-1].WorkflowID; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
 	}
 	return out
 }

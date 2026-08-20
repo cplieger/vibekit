@@ -41,17 +41,15 @@ func Bounded[T any](ctx context.Context, items []T, maxWorkers int, fn func(i in
 	}
 	close(work)
 	var wg sync.WaitGroup
-	wg.Add(workers)
 	for range workers {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for idx := range work {
 				if ctx.Err() != nil {
 					return
 				}
 				fn(idx, items[idx])
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

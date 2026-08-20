@@ -15,6 +15,7 @@ package command
 // messages, because it no longer owns them.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -40,10 +41,7 @@ func CmdResumeSession(ctx context.Context, chats ChatStore, cmd *vibekit.ClientC
 	if !ids.ValidSessionID(p.SessionID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	name := p.Name
-	if name == "" {
-		name = vibekit.DefaultChatName
-	}
+	name := cmp.Or(p.Name, vibekit.DefaultChatName)
 	if len(name) > vibekit.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}

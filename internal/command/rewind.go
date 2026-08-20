@@ -12,6 +12,7 @@ package command
 // files move together, because KAS moves them together.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -131,11 +132,7 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 		_ = json.Unmarshal(resp.Result, &result)
 	}
 	if !result.Success {
-		reason := result.Error
-		if reason == "" {
-			reason = "revert failed"
-		}
-		return result, http.StatusConflict, errors.New(reason)
+		return result, http.StatusConflict, errors.New(cmp.Or(result.Error, "revert failed"))
 	}
 	return result, http.StatusOK, nil
 }
