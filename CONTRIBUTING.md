@@ -231,7 +231,7 @@ $VIBEKIT_TOOLS_DIR/kiro-cli-versions/<version>/
 export VIBEKIT_TOOLS_DIR=/tmp/vibekit-tools KIRO_CLI_VERSION=2.14.2
 # Both digests are validated when the manager is CONSTRUCTED, before it knows
 # whether it has anything to download, so they must be 64 lowercase hex
-# characters each — but nothing is fetched here, so the values are arbitrary.
+# characters each, but nothing is fetched here, so the values are arbitrary.
 export KIRO_CLI_SHA256=0000000000000000000000000000000000000000000000000000000000000000
 export KIRO_CLI_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000
 V="$VIBEKIT_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
