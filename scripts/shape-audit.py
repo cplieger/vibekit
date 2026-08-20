@@ -27,10 +27,10 @@ Sources:
                                  has only moved the problem
 """
 
+import collections
+import pathlib
 import re
 import sys
-import pathlib
-import collections
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CEILING = 53
@@ -56,11 +56,23 @@ CONCEPTS = {
 # Receiver abbreviation expected for a type: derived, with explicit exceptions
 # for the stdlib-style one-letter cases.
 RECEIVER = {
-    "Runtime": "rt", "Runs": "rs", "Settings": "st", "bus": "b", "lifetime": "lt",
-    "mcpRegistry": "reg", "runRoutes": "rr", "inbound": "in",
-    "BridgeCoordinator": "bc", "agentTerminals": "at", "bridgeManager": "bm",
-    "sharedBridge": "sb", "utilityLease": "l", "utilitySession": "us",
-    "utilityAgent": "ua", "ShellManager": "sm", "mcpRecorder": "r",
+    "Runtime": "rt",
+    "Runs": "rs",
+    "Settings": "st",
+    "bus": "b",
+    "lifetime": "lt",
+    "mcpRegistry": "reg",
+    "runRoutes": "rr",
+    "inbound": "in",
+    "BridgeCoordinator": "bc",
+    "agentTerminals": "at",
+    "bridgeManager": "bm",
+    "sharedBridge": "sb",
+    "utilityLease": "l",
+    "utilitySession": "us",
+    "utilityAgent": "ua",
+    "ShellManager": "sm",
+    "mcpRecorder": "r",
 }
 
 # Identifiers that named a type or package this module has renamed away from.
@@ -104,15 +116,19 @@ def rule_receiver_width(f):
     for (pkg, typ), n in counts.most_common():
         if n <= CEILING:
             continue
-        key = "%s.%s" % (pkg, typ)
+        key = f"{pkg}.{typ}"
         if where := RULED.get(key):
             # The exemption is only good while the reasoning is still there.
-            if (ROOT / where).exists() and "coupling test" in (ROOT / where).read_text():
+            if (ROOT / where).exists() and "coupling test" in (
+                ROOT / where
+            ).read_text():
                 continue
-            f("R1", "%s is over the ceiling and its recorded refusal in %s is gone"
-                    % (key, where))
+            f(
+                "R1",
+                f"{key} is over the ceiling and its recorded refusal in {where} is gone",
+            )
             continue
-        f("R1", "%s has %d methods (stdlib ceiling %d)" % (key, n, CEILING))
+        f("R1", f"{key} has {n} methods (stdlib ceiling {CEILING})")
 
 
 def camel_words(name):
@@ -131,7 +147,7 @@ def rule_name_repeats_receiver(f):
         words = {w.lower() for w in camel_words(name)}
         for concept in CONCEPTS.get(typ, []):
             if concept.lower() in words and name.lower() != concept.lower():
-                f("R2", "%s:%d %s.%s repeats %s" % (p.name, ln, typ, name, concept))
+                f("R2", f"{p.name}:{ln} {typ}.{name} repeats {concept}")
                 break
 
 
@@ -143,7 +159,7 @@ def rule_get_prefix(f):
         if re.match(r"^[Gg]etOr[A-Z]", name):
             continue
         if re.match(r"^[Gg]et[A-Z]", name):
-            f("R3", "%s:%d %s.%s uses a Get prefix" % (p.name, ln, typ, name))
+            f("R3", f"{p.name}:{ln} {typ}.{name} uses a Get prefix")
 
 
 def rule_one_receiver_per_type(f):
@@ -156,14 +172,17 @@ def rule_one_receiver_per_type(f):
         seen[(str(p.parent.relative_to(ROOT)), typ)].add(recv)
     for (pkg, typ), recvs in sorted(seen.items()):
         if len(recvs) > 1:
-            f("R4", "%s.%s has %d receiver names: %s" % (pkg, typ, len(recvs), ", ".join(sorted(recvs))))
+            f(
+                "R4",
+                f"{pkg}.{typ} has {len(recvs)} receiver names: {', '.join(sorted(recvs))}",
+            )
 
 
 def rule_receiver_matches_type(f):
     for p, ln, recv, typ, _ in methods():
         want = RECEIVER.get(typ)
         if want and recv != want:
-            f("R5", "%s:%d %s receiver is %s, want %s" % (p.name, ln, typ, recv, want))
+            f("R5", f"{p.name}:{ln} {typ} receiver is {recv}, want {want}")
 
 
 def rule_wide_interfaces(f):
@@ -186,16 +205,21 @@ def rule_wide_interfaces(f):
     for p in go_files():
         text = p.read_text()
         lines = text.split("\n")
-        for m in re.finditer(r"type (\w+) interface \{(.*?)\n\}", text, re.S):
+        for m in re.finditer(r"type (\w+) interface \{(.*?)\n\}", text, re.DOTALL):
             body = m.group(2)
-            n = len(re.findall(r"^\t\w+\(", body, re.M)) + len(re.findall(r"^\t[A-Z]\w+$", body, re.M))
+            n = len(re.findall(r"^\t\w+\(", body, re.MULTILINE)) + len(
+                re.findall(r"^\t[A-Z]\w+$", body, re.MULTILINE)
+            )
             if n <= 5:
                 continue
             ln = text[: m.start()].count("\n") + 1
             if ln >= 2 and lines[ln - 2].lstrip().startswith("//"):
                 continue
-            f("R9", "%s:%d interface %s has %d members and no doc comment "
-                    "explaining the width" % (p.name, ln, m.group(1), n))
+            f(
+                "R9",
+                f"{p.name}:{ln} interface {m.group(1)} has {n} members and no doc "
+                "comment explaining the width",
+            )
 
 
 def rule_nolint_explained(f):
@@ -206,7 +230,7 @@ def rule_nolint_explained(f):
             if line.lstrip().startswith("//"):
                 continue
             if "//nolint" in line and "//" not in line.split("//nolint")[1]:
-                f("R10", "%s:%d nolint with no reason" % (p.name, i))
+                f("R10", f"{p.name}:{i} nolint with no reason")
 
 
 def rule_stale_vocabulary(f):
@@ -215,8 +239,10 @@ def rule_stale_vocabulary(f):
             if STALE_EXEMPT.search(line):
                 continue
             for word, why in STALE.items():
-                if re.search(r"\b\w*" + word + r"\w*\b", line) and not line.lstrip().startswith("//"):
-                    f("R11", "%s:%d stale %s in code (%s)" % (p.name, i, word, why))
+                if re.search(
+                    r"\b\w*" + word + r"\w*\b", line
+                ) and not line.lstrip().startswith("//"):
+                    f("R11", f"{p.name}:{i} stale {word} in code ({why})")
                     break
 
 
@@ -228,9 +254,14 @@ def rule_stale_vocabulary(f):
 # read as a capitalised sentence — which is the argument against writing them at
 # all. This file's job is the SHAPE rules no linter knows about.
 RULES = [
-    rule_receiver_width, rule_name_repeats_receiver, rule_get_prefix,
-    rule_one_receiver_per_type, rule_receiver_matches_type, rule_wide_interfaces,
-    rule_nolint_explained, rule_stale_vocabulary,
+    rule_receiver_width,
+    rule_name_repeats_receiver,
+    rule_get_prefix,
+    rule_one_receiver_per_type,
+    rule_receiver_matches_type,
+    rule_wide_interfaces,
+    rule_nolint_explained,
+    rule_stale_vocabulary,
 ]
 
 
@@ -248,12 +279,12 @@ def main():
     if not quiet:
         for rule in sorted(found):
             msgs = found[rule]
-            print("%s  %d finding(s)" % (rule, len(msgs)))
+            print(f"{rule}  {len(msgs)} finding(s)")
             for m in msgs[:12]:
                 print("    " + m)
             if len(msgs) > 12:
-                print("    ... and %d more" % (len(msgs) - 12))
-        print("\nTOTAL: %d" % total)
+                print(f"    ... and {len(msgs) - 12} more")
+        print(f"\nTOTAL: {total}")
     return 1 if total else 0
 
 
