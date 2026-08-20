@@ -133,7 +133,7 @@ func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]vib
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	return rt.toResumable(claimed, list.Sessions), nil
+	return toResumable(claimed, list.Sessions), nil
 }
 
 // claimedSessions maps every KAS session a vibekit chat owns to that chat.
@@ -186,7 +186,7 @@ func (rt *Runtime) claimedSessions(ctx context.Context) map[string]vibekit.ChatI
 // chat was deleted while KAS still held it. Neither is reachable from this UI now,
 // and the trade is deliberate — an unclaimed row was indistinguishable from
 // vibekit's own machinery, and every instance a user actually met was machinery.
-func (rt *Runtime) toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibekit.ResumableSession {
+func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibekit.ResumableSession {
 	out := make([]vibekit.ResumableSession, 0, len(rows))
 	for i := range rows {
 		row := &rows[i]

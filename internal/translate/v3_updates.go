@@ -153,7 +153,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 		// No recognised sub-block and no usage percentage. Most sub-kinds
 		// legitimately land here, but an UNKNOWN one is worth a line — see
 		// logUnconsumedInfoKind.
-		t.logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
+		logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
 		return
 	}
 	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
@@ -193,7 +193,7 @@ var knownSessionInfoKinds = map[string]struct{}{
 // most likely a KAS addition vibekit has not looked at yet, and the whole
 // failure mode of a multiplexed carrier is that new payloads vanish without
 // a trace. A known-but-ignored kind logs at Debug: expected, not news.
-func (t *Translator) logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
+func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 	if kind == "" {
 		return
 	}

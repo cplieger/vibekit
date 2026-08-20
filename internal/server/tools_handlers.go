@@ -31,7 +31,7 @@ var statusBinaries = []string{
 //
 // Bare PATH presence probes for the well-known binaries feature panels
 // gate on (e.g. the MCP modal's "Setting up Node..." spinner).
-func (s *Server) handleToolStatus(w http.ResponseWriter, _ *http.Request) {
+func handleToolStatus(w http.ResponseWriter, _ *http.Request) {
 	out := make(map[string]bool, len(statusBinaries))
 	for _, b := range statusBinaries {
 		_, err := exec.LookPath(b)

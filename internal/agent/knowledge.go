@@ -171,7 +171,7 @@ func cleanKnowledgeMsg(s string) string {
 func (st *Settings) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	ctxs, err := st.knowledgeShow(r.Context())
 	if err != nil {
-		st.writeKnowledgeErr(w, err)
+		writeKnowledgeErr(w, err)
 		return
 	}
 	webhttp.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
@@ -207,7 +207,7 @@ func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 		"path":        abs,
 	})
 	if err != nil {
-		st.writeKnowledgeErr(w, err)
+		writeKnowledgeErr(w, err)
 		return
 	}
 	if !res.Success {
@@ -230,7 +230,7 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 		"target":      name,
 	})
 	if err != nil {
-		st.writeKnowledgeErr(w, err)
+		writeKnowledgeErr(w, err)
 		return
 	}
 	if !res.Success {
@@ -254,7 +254,7 @@ func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) 
 // message (details logged, not leaked). There is no errNoLiveBridge case: the
 // utility bridge is auto-started, so a failure here is a backend fault, not a
 // "open a chat first" condition.
-func (st *Settings) writeKnowledgeErr(w http.ResponseWriter, err error) {
+func writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }

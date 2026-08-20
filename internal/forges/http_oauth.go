@@ -8,7 +8,7 @@ import (
 	"github.com/cplieger/webhttp"
 )
 
-func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {
+func handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return

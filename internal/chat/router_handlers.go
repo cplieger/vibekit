@@ -98,7 +98,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	// response: this is the one request a client makes when it opens a chat it
 	// has no local draft for, which is exactly when it needs the server's copy.
 	webhttp.WriteJSON(w, map[string]any{
-		"chat":     rt.store.header(r.Context(), c),
+		"chat":     c.Header(),
 		"messages": window,
 		"has_more": start > 0,
 		"draft":    c.Draft,

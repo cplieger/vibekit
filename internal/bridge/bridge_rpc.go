@@ -48,7 +48,7 @@ func (b *Bridge) readLoop() {
 			b.reportDroppedFrame(dropped)
 		}
 		if err != nil {
-			b.logReadError(err)
+			logReadError(err)
 			break
 		}
 		if dropped > 0 {
@@ -186,7 +186,7 @@ func (b *Bridge) dispatch(msg *vibekit.RPCResponse) {
 // ordinary teardown and logs nothing; an exhausted drain budget gets a distinct
 // message, because that one says the stream stopped being newline-delimited JSON
 // rather than that the process went away.
-func (b *Bridge) logReadError(err error) {
+func logReadError(err error) {
 	if err == nil || errors.Is(err, io.EOF) {
 		return
 	}

@@ -531,7 +531,7 @@ func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
 	t.Run("GiteaNotifiesNothing", func(t *testing.T) {
 		const payload = `[{"number":4,"title":"Ready","state":"open","mergeable":true,
 		  "head":{"ref":"feat","sha":"aaaaaaa1111"},"base":{"ref":"main"}}]`
-		prs, err := newGitea(KindGitea, "gitea.example").parsePRs([]byte(payload))
+		prs, err := parsePRs([]byte(payload))
 		if err != nil {
 			t.Fatalf("parsePRs: %v", err)
 		}

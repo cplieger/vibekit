@@ -303,7 +303,7 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID vibekit.ChatID, c 
 	if !exists {
 		evt = vibekit.EventChatCreated
 	}
-	s.broadcast.Broadcast(ctx, vibekit.NewEvent(evt, chatID, s.header(ctx, c)))
+	s.broadcast.Broadcast(ctx, vibekit.NewEvent(evt, chatID, c.Header()))
 }
 
 // SetDraft persists the chat's unsent composer text. Deliberately not a Mutate

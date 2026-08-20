@@ -155,7 +155,7 @@ func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListStat
 	if err != nil {
 		return nil, err
 	}
-	return p.parsePRs(out)
+	return parsePRs(out)
 }
 
 // parsePRs decodes Gitea's own PR objects. `tea pulls list -o json`
@@ -167,7 +167,7 @@ func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListStat
 // an absent chip — one extra statuses request per PR (the N-call fan-out
 // this work rejects) or a chip inferred from `mergeable`, which would be
 // a guess presented as a fact.
-func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
+func parsePRs(data []byte) ([]PR, error) {
 	var raw []struct {
 		Base      struct{ Ref string }      `json:"base"`
 		Title     string                    `json:"title"`
@@ -270,7 +270,7 @@ func (p *giteaProvider) viewPR(ctx context.Context, repo string, number int) (*P
 	if err != nil {
 		return nil, err
 	}
-	prs, err := p.parsePRs(append([]byte("["), append(out, ']')...))
+	prs, err := parsePRs(append([]byte("["), append(out, ']')...))
 	if err != nil || len(prs) == 0 {
 		return nil, fmt.Errorf("tea view pr: parse single: %v", err)
 	}
@@ -369,10 +369,10 @@ func (p *giteaProvider) ListIssues(ctx context.Context, repo string, state ListS
 	if err != nil {
 		return nil, err
 	}
-	return p.parseIssues(out)
+	return parseIssues(out)
 }
 
-func (p *giteaProvider) parseIssues(data []byte) ([]Issue, error) {
+func parseIssues(data []byte) ([]Issue, error) {
 	var raw []struct {
 		Title     string                  `json:"title"`
 		Body      string                  `json:"body"`
@@ -451,7 +451,7 @@ func (p *giteaProvider) viewIssue(ctx context.Context, repo string, number int) 
 	if err != nil {
 		return nil, err
 	}
-	issues, err := p.parseIssues(append([]byte("["), append(out, ']')...))
+	issues, err := parseIssues(append([]byte("["), append(out, ']')...))
 	if err != nil || len(issues) == 0 {
 		return nil, fmt.Errorf("tea view issue: parse single: %v", err)
 	}
@@ -654,20 +654,20 @@ func (p *giteaProvider) doAPI(ctx context.Context, method, endpoint string, body
 	if err != nil {
 		return nil, err
 	}
-	data, status, err := p.doAPIWith(ctx, token, method, endpoint, body)
+	data, status, err := doAPIWith(ctx, token, method, endpoint, body)
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		teaTokenCache.Delete(p.host)
 		fresh, tokErr := teaHelperToken(ctx, p.host)
 		if tokErr != nil {
 			return data, err
 		}
-		data, _, err = p.doAPIWith(ctx, fresh, method, endpoint, body)
+		data, _, err = doAPIWith(ctx, fresh, method, endpoint, body)
 	}
 	return data, err
 }
 
 // doAPIWith is doAPI's single-attempt core, bound to one token.
-func (p *giteaProvider) doAPIWith(ctx context.Context, token, method, endpoint string, body []byte) (data []byte, status int, err error) {
+func doAPIWith(ctx context.Context, token, method, endpoint string, body []byte) (data []byte, status int, err error) {
 	var reqBody io.Reader
 	if body != nil {
 		reqBody = bytes.NewReader(body)

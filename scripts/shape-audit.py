@@ -26,11 +26,20 @@ Sources:
 """
 
 import collections
+import os
 import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+from shape_rules_reach import REACH_RULES
+
+# The repo to audit. Defaults to this script's own repo and is overridable with
+# SHAPE_AUDIT_ROOT so the rules can be pointed at a sibling repo — the same fix
+# cohesion.py needed. A checker that can only ever see one tree is how a whole
+# codebase goes unmeasured while the report reads clean.
+ROOT = pathlib.Path(
+    os.environ.get("SHAPE_AUDIT_ROOT", pathlib.Path(__file__).resolve().parent.parent)
+)
 
 # Concept words a method name must not repeat from its receiver's type name.
 # Keyed by type, valued by the substrings that would be repetition.
@@ -232,6 +241,7 @@ def rule_stale_vocabulary(f):
 # read as a capitalised sentence — which is the argument against writing them at
 # all. This file's job is the SHAPE rules no linter knows about.
 RULES = [
+    *REACH_RULES,
     rule_name_repeats_receiver,
     rule_get_prefix,
     rule_one_receiver_per_type,

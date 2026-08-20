@@ -108,7 +108,7 @@ func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/forges", h.handleForgesList)
 	mux.HandleFunc("/api/forges/", h.handleForgeItem)
 	mux.HandleFunc("/api/forges/refresh", h.handleRefresh)
-	mux.HandleFunc("/api/forges/oauth/github/start", h.handleGitHubDeviceStart)
+	mux.HandleFunc("/api/forges/oauth/github/start", handleGitHubDeviceStart)
 	mux.HandleFunc("/api/forges/oauth/github/poll", h.handleGitHubDevicePoll)
 }
 
@@ -263,7 +263,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 }
 
 // writeOpsError maps ForgeOps errors to HTTP status codes.
-func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
+func writeOpsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotInstalled):
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,

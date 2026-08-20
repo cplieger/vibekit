@@ -254,7 +254,7 @@ func (st *Settings) toHookInfo(k *kasHook) hookInfo {
 func (st *Settings) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	hooks, err := st.hooksListRaw(r.Context())
 	if err != nil {
-		st.writeHookErr(w, err)
+		writeHookErr(w, err)
 		return
 	}
 	out := make([]hookInfo, 0, len(hooks))
@@ -301,12 +301,12 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 		"enabled": body.Enabled,
 	})
 	if err != nil {
-		st.writeHookErr(w, err)
+		writeHookErr(w, err)
 		return
 	}
 	res := parseHookResult(raw)
 	if !res.Success {
-		st.writeHookResultErr(w, res)
+		writeHookResultErr(w, res)
 		return
 	}
 	st.broadcastHooksChanged()
@@ -353,7 +353,7 @@ func parseHookResult(raw json.RawMessage) kasHookResult {
 }
 
 // writeHookResultErr maps a {success:false, code} reply to an HTTP status.
-func (st *Settings) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
+func writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	if res.Code == "hook_not_found" {
 		httpreply.NotFound(w, "hook not found")
 		return
@@ -369,7 +369,7 @@ func (st *Settings) writeHookResultErr(w http.ResponseWriter, res kasHookResult)
 // (details logged, not leaked). Like knowledge.go there is no errNoLiveBridge
 // case: the utility bridge is auto-started, so a failure here is a backend
 // fault, not a "open a chat first" condition.
-func (st *Settings) writeHookErr(w http.ResponseWriter, err error) {
+func writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }

@@ -229,7 +229,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	args := []string{"fetch", "origin", fmt.Sprintf(refShape, body.Number) + ":" + local}
 	slog.Info("git pr-fetch", "repo", body.Repo, "number", body.Number, "local", local)
-	out, err := h.gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, remote, args...)
+	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, remote, args...)
 	writeCmdResult(w, out, err)
 }
 

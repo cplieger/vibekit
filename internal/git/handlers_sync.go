@@ -45,7 +45,7 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 	decodePostBodyOptional(w, r, &body)
 	dir := h.repoDir(body.Repo)
 	slog.Info("git push", "repo", body.Repo)
-	out, err := h.gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "push")
+	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "push")
 	writeCmdResult(w, out, err)
 }
 
@@ -57,7 +57,7 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 	decodePostBodyOptional(w, r, &body)
 	dir := h.repoDir(body.Repo)
 	slog.Info("git pull", "repo", body.Repo)
-	out, err := h.gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "pull", "--ff-only")
+	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "pull", "--ff-only")
 	writeCmdResult(w, out, err)
 }
 

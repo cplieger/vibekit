@@ -14,10 +14,6 @@ import (
 
 // --- Unexported Store methods ---
 
-func (s *Store) header(_ context.Context, c *vibekit.Chat) vibekit.ChatHeader {
-	return c.Header()
-}
-
 // lock returns the per-chat mutex for chatID, creating it lazily. Entries
 // are never removed from the map: removing an entry races with any caller
 // that already fetched the *sync.Mutex pointer, which would let two

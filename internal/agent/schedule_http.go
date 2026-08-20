@@ -70,7 +70,7 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 	entries := rr.runs.schedules.List()
 	out := make([]scheduleView, 0, len(entries))
 	for i := range entries {
-		out = append(out, rr.scheduleViewOf(&entries[i]))
+		out = append(out, scheduleViewOf(&entries[i]))
 	}
 	webhttp.WriteJSON(w, map[string]any{"schedules": out})
 }
@@ -78,7 +78,7 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 // scheduleViewOf resolves an entry's next run for display. A spec that cannot
 // be computed yields no next run rather than an error: the row still renders so
 // the user can fix or delete it.
-func (rr *runRoutes) scheduleViewOf(e *schedule.Entry) scheduleView {
+func scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
 		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,
 		LastResult: e.LastResult, Enabled: e.Enabled,
@@ -135,7 +135,7 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("schedule saved", "id", logField(entry.ID), "recipe", logField(recipe.Name),
 		"freq", logField(string(entry.Spec.Freq)), "enabled", entry.Enabled)
-	webhttp.WriteJSON(w, rr.scheduleViewOf(&entry))
+	webhttp.WriteJSON(w, scheduleViewOf(&entry))
 }
 
 // handleScheduleDelete: DELETE /api/schedules/{id}.

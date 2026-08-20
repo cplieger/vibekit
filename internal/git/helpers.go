@@ -71,7 +71,7 @@ func writeCmdResult(w http.ResponseWriter, out string, err error) {
 // credential helpers configured by each forge CLI's setup-git
 // (e.g. `gh auth setup-git`), so no per-call env injection is
 // needed — git picks them up from ~/.gitconfig and the helper.
-func (h *Handler) gitCmdWithCreds(ctx context.Context, timeout time.Duration, dir, _ string, args ...string) (string, error) {
+func gitCmdWithCreds(ctx context.Context, timeout time.Duration, dir, _ string, args ...string) (string, error) {
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := gitExec(tctx, dir, args...)

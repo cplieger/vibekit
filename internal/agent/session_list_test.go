@@ -64,7 +64,7 @@ func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 	h := ownedBy(t, map[string][]string{
 		"c1": {"sess_a"}, "c2": {"sess_b"}, "c3": {"sess_wf"},
 	})
-	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
+	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		row("sess_a", "A real conversation", "2026-08-02T10:00:00.000Z", false),
 		row("sess_wf", "workflow step 3", "2026-08-02T11:00:00.000Z", true),
 		row("sess_b", "Another conversation", "2026-08-02T12:00:00.000Z", false),
@@ -90,7 +90,7 @@ func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 // hide the bug until a timezone or precision difference appeared.
 func TestToResumable_NewestFirst(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"old"}, "c2": {"new"}, "c3": {"mid"}})
-	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
+	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		row("old", "older", "2026-08-01T10:00:00.000Z", false),
 		row("new", "newer", "2026-08-02T10:00:00.000Z", false),
 		row("mid", "middle", "2026-08-01T22:00:00.000Z", false),
@@ -135,7 +135,7 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	}
 
 	h := &Runtime{chatStore: store, runs: &Runs{}}
-	got := h.toResumable(h.claimedSessions(ctx), []kasSessionRow{
+	got := toResumable(h.claimedSessions(ctx), []kasSessionRow{
 		row("sess_current", "current", "2026-08-02T12:00:00.000Z", false),
 		row("sess_retired", "retired", "2026-08-02T11:00:00.000Z", false),
 		row("sess_orphan", "never seen by vibekit", "2026-08-02T10:00:00.000Z", false),
@@ -184,7 +184,7 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 // that never ran a turn, so an equality test does not separate them either.
 func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_real"}})
-	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
+	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		// Newest, so without the rule it sorts first — which is where the user met it.
 		row("sess_utility_live", "New Session", "2026-08-02T13:00:00.000Z", false),
 		row("sess_real", "A real conversation", "2026-08-02T12:00:00.000Z", false),
@@ -274,7 +274,7 @@ func TestStepSessionsAreNotRuns(t *testing.T) {
 		rows = append(rows, r)
 	}
 
-	got := h.toResumable(h.claimedSessions(t.Context()), rows)
+	got := toResumable(h.claimedSessions(t.Context()), rows)
 	if len(got) != 1 {
 		t.Fatalf("got %d entries, want 1: 76 step sessions leaked into the chat list", len(got))
 	}

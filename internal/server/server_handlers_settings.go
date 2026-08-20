@@ -203,7 +203,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 	webhttp.Ok(w)
 	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(patch)
-	s.syncDebugLogs(patch)
+	syncDebugLogs(patch)
 }
 
 // syncPushPreferences reads notification preference toggles from the settings
@@ -263,7 +263,7 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 
 // syncDebugLogs flips the process-wide slog level when the user
 // toggles the Debug logs setting.
-func (s *Server) syncDebugLogs(patch map[string]json.RawMessage) {
+func syncDebugLogs(patch map[string]json.RawMessage) {
 	v, ok := patch[settings.KeyDebugLogs]
 	if !ok {
 		return

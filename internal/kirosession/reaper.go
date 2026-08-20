@@ -231,7 +231,7 @@ func (r *Reaper) sweepCLI(referenced map[string]struct{}, cutoff time.Time) int 
 	}
 	reaped := 0
 	for _, e := range entries {
-		if r.reapOrphanCLIFile(cliDir, e, referenced, cutoff) {
+		if reapOrphanCLIFile(cliDir, e, referenced, cutoff) {
 			reaped++
 		}
 	}
@@ -242,7 +242,7 @@ func (r *Reaper) sweepCLI(referenced map[string]struct{}, cutoff time.Time) int 
 // unreferenced v3 sidecar or a dead v2-engine file, older than the guard.
 // Reports whether a v3 SESSION was reaped (dead v2 files are incidental and
 // not counted).
-func (r *Reaper) reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[string]struct{}, cutoff time.Time) bool {
+func reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[string]struct{}, cutoff time.Time) bool {
 	if e.IsDir() {
 		return false
 	}

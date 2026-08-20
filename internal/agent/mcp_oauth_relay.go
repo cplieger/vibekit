@@ -227,7 +227,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	status, err := reg.replayCallback(req.Context(), target)
+	status, err := replayCallback(req.Context(), target)
 	if err != nil {
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
@@ -259,7 +259,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 }
 
 // replayCallback performs the one GET and returns the listener's status.
-func (reg *mcpRegistry) replayCallback(ctx context.Context, target *url.URL) (int, error) {
+func replayCallback(ctx context.Context, target *url.URL) (int, error) {
 	client, err := relayClientFor(target)
 	if err != nil {
 		return 0, err

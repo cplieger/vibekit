@@ -34,7 +34,7 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 		}
 		repos, err := provider.ListRepos(r.Context())
 		if err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.WriteJSON(w, map[string]any{"repos": repos})
@@ -58,15 +58,15 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 	op, tail, _ := splitFirst(after2)
 	switch op {
 	case "prs":
-		h.handlePRs(w, r, provider, repo, tail)
+		handlePRs(w, r, provider, repo, tail)
 	case "issues":
-		h.handleIssues(w, r, provider, repo, tail)
+		handleIssues(w, r, provider, repo, tail)
 	case "checks":
-		h.handleChecks(w, r, provider, repo)
+		handleChecks(w, r, provider, repo)
 	case "releases":
-		h.handleReleases(w, r, provider, repo)
+		handleReleases(w, r, provider, repo)
 	case "labels":
-		h.handleLabels(w, r, provider, repo)
+		handleLabels(w, r, provider, repo)
 	default:
 		httpreply.NotFound(w, "unknown repo sub-resource")
 	}
@@ -106,23 +106,23 @@ type prOps interface {
 	RerunFailedChecks(ctx context.Context, repo string, number int, headSHA string) error
 }
 
-func (h *HTTPHandler) handlePRs(w http.ResponseWriter, r *http.Request, p prOps, repo, tail string) {
+func handlePRs(w http.ResponseWriter, r *http.Request, p prOps, repo, tail string) {
 	if tail == "" {
-		h.handlePRCollection(w, r, p, repo)
+		handlePRCollection(w, r, p, repo)
 		return
 	}
-	h.handlePRAction(w, r, p, repo, tail)
+	handlePRAction(w, r, p, repo, tail)
 }
 
 // handlePRCollection serves the repo-level PR endpoints: list (GET) and
 // create (POST).
-func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request, p prOps, repo string) {
+func handlePRCollection(w http.ResponseWriter, r *http.Request, p prOps, repo string) {
 	switch r.Method {
 	case http.MethodGet:
 		state := ListState(r.URL.Query().Get("state"))
 		prs, err := p.ListPRs(r.Context(), repo, state)
 		if err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.WriteJSON(w, map[string]any{"prs": prs})
@@ -135,7 +135,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 		}
 		pr, err := p.CreatePR(r.Context(), repo, &params)
 		if err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.WriteJSON(w, pr)
@@ -146,7 +146,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 
 // handlePRAction serves the per-PR action endpoints: merge, close,
 // reopen and rerun. All four are POST-only.
-func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p prOps, repo, tail string) {
+func handlePRAction(w http.ResponseWriter, r *http.Request, p prOps, repo, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
@@ -159,13 +159,13 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p p
 	}
 	switch op {
 	case "merge":
-		h.handlePRMerge(w, r, p, repo, number)
+		handlePRMerge(w, r, p, repo, number)
 	case stateClose:
-		h.writeOpResult(w, p.ClosePR(r.Context(), repo, number))
+		writeOpResult(w, p.ClosePR(r.Context(), repo, number))
 	case "reopen":
-		h.writeOpResult(w, p.ReopenPR(r.Context(), repo, number))
+		writeOpResult(w, p.ReopenPR(r.Context(), repo, number))
 	case "rerun":
-		h.handlePRRerun(w, r, p, repo, number)
+		handlePRRerun(w, r, p, repo, number)
 	default:
 		httpreply.NotFound(w, "unknown PR action")
 	}
@@ -174,7 +174,7 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p p
 // handlePRMerge merges a PR. The merge strategy, the head-commit pin and
 // the auto-merge arm all travel as query parameters, following the
 // ?method= convention this route already carried.
-func (h *HTTPHandler) handlePRMerge(w http.ResponseWriter, r *http.Request, p prOps, repo string, number int) {
+func handlePRMerge(w http.ResponseWriter, r *http.Request, p prOps, repo string, number int) {
 	q := r.URL.Query()
 	headSHA, ok := headPinOrBadRequest(w, q.Get(fieldHeadSHA))
 	if !ok {
@@ -185,7 +185,7 @@ func (h *HTTPHandler) handlePRMerge(w http.ResponseWriter, r *http.Request, p pr
 		HeadSHA: headSHA,
 		Auto:    queryTrue(q.Get(fieldAuto)),
 	}
-	h.writeOpResult(w, p.MergePR(r.Context(), repo, number, opts))
+	writeOpResult(w, p.MergePR(r.Context(), repo, number, opts))
 }
 
 // handlePRRerun re-runs a PR's failed CI, pinned to the head commit the
@@ -195,12 +195,12 @@ func (h *HTTPHandler) handlePRMerge(w http.ResponseWriter, r *http.Request, p pr
 // serves the same purpose on an action with comparable consequences: a re-run
 // can trigger a deployment, so acting on a commit other than the one whose red
 // status the caller was looking at is a wrong action rather than a slow one.
-func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, p prOps, repo string, number int) {
+func handlePRRerun(w http.ResponseWriter, r *http.Request, p prOps, repo string, number int) {
 	headSHA, ok := headPinOrBadRequest(w, r.URL.Query().Get(fieldHeadSHA))
 	if !ok {
 		return
 	}
-	h.writeOpResult(w, p.RerunFailedChecks(r.Context(), repo, number, headSHA))
+	writeOpResult(w, p.RerunFailedChecks(r.Context(), repo, number, headSHA))
 }
 
 // headPinOrBadRequest validates a head_sha query parameter, answering 400 and
@@ -218,9 +218,9 @@ func headPinOrBadRequest(w http.ResponseWriter, raw string) (headSHA string, ok 
 }
 
 // writeOpResult answers a mutation: 200 {"ok":true} or the mapped error.
-func (h *HTTPHandler) writeOpResult(w http.ResponseWriter, err error) {
+func writeOpResult(w http.ResponseWriter, err error) {
 	if err != nil {
-		h.writeOpsError(w, err)
+		writeOpsError(w, err)
 		return
 	}
 	webhttp.Ok(w)
@@ -245,23 +245,23 @@ type issueOps interface {
 	CloseIssue(ctx context.Context, repo string, number int) error
 }
 
-func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p issueOps, repo, tail string) {
+func handleIssues(w http.ResponseWriter, r *http.Request, p issueOps, repo, tail string) {
 	if tail == "" {
-		h.handleIssueCollection(w, r, p, repo)
+		handleIssueCollection(w, r, p, repo)
 		return
 	}
-	h.handleIssueAction(w, r, p, repo, tail)
+	handleIssueAction(w, r, p, repo, tail)
 }
 
 // handleIssueCollection serves the repo-level issue endpoints: list (GET)
 // and create (POST).
-func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Request, p issueOps, repo string) {
+func handleIssueCollection(w http.ResponseWriter, r *http.Request, p issueOps, repo string) {
 	switch r.Method {
 	case http.MethodGet:
 		state := ListState(r.URL.Query().Get("state"))
 		issues, err := p.ListIssues(r.Context(), repo, state)
 		if err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.WriteJSON(w, map[string]any{"issues": issues})
@@ -274,7 +274,7 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 		}
 		issue, err := p.CreateIssue(r.Context(), repo, params)
 		if err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.WriteJSON(w, issue)
@@ -284,7 +284,7 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 }
 
 // handleIssueAction serves the per-issue action endpoints: close.
-func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, p issueOps, repo, tail string) {
+func handleIssueAction(w http.ResponseWriter, r *http.Request, p issueOps, repo, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
@@ -297,7 +297,7 @@ func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		if err := p.CloseIssue(r.Context(), repo, number); err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.Ok(w)
@@ -312,7 +312,7 @@ type checkOps interface {
 	CommitStatus(ctx context.Context, repo, ref string) ([]Check, error)
 }
 
-func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p checkOps, repo string) {
+func handleChecks(w http.ResponseWriter, r *http.Request, p checkOps, repo string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -324,7 +324,7 @@ func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p che
 	}
 	checks, err := p.CommitStatus(r.Context(), repo, ref)
 	if err != nil {
-		h.writeOpsError(w, err)
+		writeOpsError(w, err)
 		return
 	}
 	webhttp.WriteJSON(w, map[string]any{"checks": checks})
@@ -339,12 +339,12 @@ type releaseOps interface {
 	CreateRelease(ctx context.Context, repo string, p CreateReleaseParams) (*Release, error)
 }
 
-func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p releaseOps, repo string) {
+func handleReleases(w http.ResponseWriter, r *http.Request, p releaseOps, repo string) {
 	switch r.Method {
 	case http.MethodGet:
 		releases, err := p.ListReleases(r.Context(), repo)
 		if err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.WriteJSON(w, map[string]any{"releases": releases})
@@ -357,7 +357,7 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p r
 		}
 		release, err := p.CreateRelease(r.Context(), repo, params)
 		if err != nil {
-			h.writeOpsError(w, err)
+			writeOpsError(w, err)
 			return
 		}
 		webhttp.WriteJSON(w, release)
@@ -372,14 +372,14 @@ type labelOps interface {
 	ListLabels(ctx context.Context, repo string) ([]Label, error)
 }
 
-func (h *HTTPHandler) handleLabels(w http.ResponseWriter, r *http.Request, p labelOps, repo string) {
+func handleLabels(w http.ResponseWriter, r *http.Request, p labelOps, repo string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	labels, err := p.ListLabels(r.Context(), repo)
 	if err != nil {
-		h.writeOpsError(w, err)
+		writeOpsError(w, err)
 		return
 	}
 	webhttp.WriteJSON(w, map[string]any{"labels": labels})

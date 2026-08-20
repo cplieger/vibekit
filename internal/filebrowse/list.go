@@ -67,7 +67,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string]any{
 		respPath:   reqPath,
 		"files":    files,
-		"writable": h.isWritable(l),
+		"writable": isWritable(l),
 	})
 }
 
@@ -138,7 +138,7 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 // (probe file leaked — operator may want to sweep). The probe prefix
 // is named so a future startup sweeper can scan for ".vibekit-probe-*"
 // leftovers.
-func (h *Handler) isWritable(l loc) bool {
+func isWritable(l loc) bool {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		// crypto/rand cannot fail on supported platforms; treat an

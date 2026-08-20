@@ -206,7 +206,7 @@ func (reg *mcpRegistry) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := reg.promptFor(r.Context(), body.Server, body.Prompt, body.Arguments)
 	if err != nil {
-		reg.writeFetchErr(w, err)
+		writeFetchErr(w, err)
 		return
 	}
 	writeMCPResult(w, res)
@@ -238,7 +238,7 @@ func (reg *mcpRegistry) handleResource(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := reg.resourceFor(r.Context(), body.Server, body.URI)
 	if err != nil {
-		reg.writeFetchErr(w, err)
+		writeFetchErr(w, err)
 		return
 	}
 	writeMCPResult(w, res)
@@ -258,7 +258,7 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 // errNoLiveBridge → 409 (open a chat first); any other error is a bridge /
 // MCP-server failure → 502 with a generic message (the raw RPC message is
 // often just "Internal error" and the useful detail is logged, not leaked).
-func (reg *mcpRegistry) writeFetchErr(w http.ResponseWriter, err error) {
+func writeFetchErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errNoLiveBridge) {
 		httpreply.Conflict(w, "no active chat session — open a chat to use MCP prompts and resources")
 		return

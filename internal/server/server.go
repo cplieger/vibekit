@@ -260,7 +260,7 @@ func (s *Server) ListenAndServe() error {
 		mux.Handle("/api/tools", toolsAPI)
 		mux.Handle("/api/tools/", toolsAPI)
 	}
-	mux.HandleFunc("GET /api/tools/status", s.handleToolStatus)
+	mux.HandleFunc("GET /api/tools/status", handleToolStatus)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)

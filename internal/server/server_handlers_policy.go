@@ -234,9 +234,9 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	case "add":
 		s.policyRuleAdd(w, r, &body, path)
 	case "remove":
-		s.policyRuleRemove(w, r, &body, path)
+		policyRuleRemove(w, r, &body, path)
 	case "update":
-		s.policyRuleUpdate(w, r, &body, path)
+		policyRuleUpdate(w, r, &body, path)
 	default:
 		httpreply.BadRequest(w, "op must be add, remove, or update")
 	}
@@ -326,7 +326,7 @@ func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *po
 	return true
 }
 
-func (s *Server) policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
+func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
 	if !policyfile.ValidEffect(body.Effect) {
 		httpreply.BadRequest(w, "effect required to remove a rule")
 		return
@@ -370,7 +370,7 @@ func (s *Server) policyRuleRemove(w http.ResponseWriter, r *http.Request, body *
 // could half-apply. A widening change (deny→ask, deny→allow, ask→allow)
 // grants the agent more than it had, so it requires confirm=true, same as
 // removing a deny.
-func (s *Server) policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
+func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
 	if !policyfile.ValidEffect(body.Effect) {
 		httpreply.BadRequest(w, "effect required to identify the rule")
 		return
