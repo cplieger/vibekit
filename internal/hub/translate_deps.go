@@ -28,15 +28,6 @@ func (h *Hub) ParentACPSession(chatID vibekit.ChatID) string {
 // WorkDir returns the workspace root directory.
 func (h *Hub) WorkDir() string { return h.lifecycle.workDir }
 
-// BridgeRespond sends a response to the bridge for the given chat.
-func (h *Hub) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error {
-	sb := h.bridge.mgr.get(chatID)
-	if sb == nil {
-		return nil
-	}
-	return sb.bridge.Respond(ctx, requestID, result, err)
-}
-
 // MCPRecorder returns the Hub's MCP state recorder.
 func (h *Hub) MCPRecorder() translate.MCPRecorder {
 	return &hubMCPRecorder{h: h}

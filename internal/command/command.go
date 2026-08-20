@@ -31,16 +31,23 @@ const maxCommandBody = webhttp.MaxJSONBody
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand)
 
-// DedupGate is the request-envelope seam: whether the server still accepts
-// commands, and the request_id idempotency cache. Held by the Dispatcher rather
-// than passed to handlers, because all three are envelope-level concerns the
-// router owns — a handler decides nothing about draining or replay.
+// DedupGate is the request_id idempotency cache: replay a repeated command
+// instead of running it twice. Held by the Dispatcher rather than passed to
+// handlers, because replay is an envelope concern the router owns and a handler
+// decides nothing about it.
 //
-// The three are one protocol: a command is refused while draining, replayed from
-// the cache when its request_id repeats, and recorded there when it answers.
+// The drain refusal used to live here as a third method and does not any more.
+// It gates TWO routes, commands and the event stream, so it belongs at the
+// routes rather than inside one of them; see hub.refuseWhenDraining. It cannot
+// become a global middleware either, because only those two routes want it and
+// the chain covers health, version and the static assets as well.
+//
+// The key is a BODY field, which is why this is not middleware in the first
+// place: middleware cannot read request_id without buffering and re-parsing the
+// body. vibekit's other idempotency layer keys on the Idempotency-Key header and
+// therefore is middleware; the two are one concept implemented twice, and
+// unifying them is a wire change recorded in specs/go-shape/stage1-residue.md.
 type DedupGate interface {
-	// Draining reports whether the server is shutting down.
-	Draining() bool
 	// CheckDedup returns the cached response for reqID, if any.
 	CheckDedup(reqID string) ([]byte, bool)
 	// RecordDedup caches a response for idempotent replay.
@@ -126,11 +133,6 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	if d.gate.Draining() {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
-		return
-	}
-
 	webhttp.LimitBody(w, r, maxCommandBody)
 	var cmd vibekit.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {

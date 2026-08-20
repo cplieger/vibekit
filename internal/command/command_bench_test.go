@@ -22,7 +22,6 @@ func newBenchDeps() *benchDeps { return &benchDeps{dedup: make(map[string][]byte
 
 func (d *benchDeps) CheckDedup(reqID string) ([]byte, bool)         { v, ok := d.dedup[reqID]; return v, ok }
 func (d *benchDeps) RecordDedup(reqID string, data []byte)          { d.dedup[reqID] = data }
-func (d *benchDeps) Draining() bool                                 { return false }
 func (d *benchDeps) ChatStore() ChatStore                           { return nil }
 func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent) {}
 func (d *benchDeps) GetBridge(vibekit.ChatID) Bridge                { return nil }
@@ -69,9 +68,6 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	}
 
 	// Boolean/scalar returns.
-	if d.Draining() {
-		t.Error("Draining() = true, want false")
-	}
 	if d.WorkDir() == "" {
 		t.Error("WorkDir() returned empty")
 	}
@@ -113,9 +109,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.RecordDedup("r1", []byte("data"))
 		if got, ok := d.CheckDedup("r1"); !ok || string(got) != "data" {
 			t.Errorf("dedup round-trip failed: %q ok=%v", got, ok)
-		}
-		if d.Draining() {
-			t.Error("Draining must be false for benchmarks")
 		}
 		if d.WorkDir() == "" {
 			t.Error("WorkDir must be non-empty")

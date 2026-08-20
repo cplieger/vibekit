@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -202,18 +203,67 @@ func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 	}
 }
 
-func TestHandleSSE_DrainingGate(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.lifecycle.draining.Store(true)
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
-	rec := httptest.NewRecorder()
-	h.handleSSE(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503 while draining", rec.Code)
+// TestRegisterRoutes_DrainingGate asserts the drain refusal through the MUX, not
+// by calling a handler directly. That is the whole point: the gate is a route
+// wrapper applied at registration (hub.refuseWhenDraining), so a test that calls
+// handleSSE or the dispatcher directly would bypass it and pass whether or not it
+// is wired. Both gated routes are checked, and one ungated route is checked too,
+// because the gate must NOT become global — the middleware chain also covers
+// /api/health and the static assets, and a health probe during wind-down is what
+// reports the wind-down.
+func TestRegisterRoutes_DrainingGate(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"event stream", http.MethodGet, "/api/events", ""},
+		{"command", http.MethodPost, "/api/command", `{"type":"create_chat","request_id":"r1"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := newTestHub()
+			mux := http.NewServeMux()
+			h.RegisterRoutes(mux)
+			h.lifecycle.draining.Store(true)
+
+			var body io.Reader
+			if tc.body != "" {
+				body = strings.NewReader(tc.body)
+			}
+			// A bounded context so a REGRESSION fails fast instead of hanging:
+			// without the gate the event stream opens and blocks forever, which
+			// would turn this test into a 10-minute timeout rather than a failure
+			// naming the status it got.
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			req := httptest.NewRequest(tc.method, tc.path, body).WithContext(ctx)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Errorf("status = %d, want 503 while draining", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "shutting down") {
+				t.Errorf("body = %q, want vibekit's shutting-down envelope", rec.Body.String())
+			}
+		})
 	}
-	if !strings.Contains(rec.Body.String(), "shutting down") {
-		t.Errorf("body = %q, want vibekit's shutting-down envelope", rec.Body.String())
-	}
+
+	t.Run("an ungated route still answers while draining", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		mux := http.NewServeMux()
+		h.RegisterRoutes(mux)
+		h.lifecycle.draining.Store(true)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/config-template", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code == http.StatusServiceUnavailable {
+			t.Error("an ungated route answered 503: the drain gate has become global")
+		}
+	})
 }
 
 // --- Helper: a ResponseWriter with no Flusher ---

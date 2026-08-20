@@ -6,9 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp"
 	"github.com/cplieger/webhttp/sse"
 )
 
@@ -48,14 +46,6 @@ func (h *Hub) emit(evt vibekit.ServerEvent) {
 // handshake carrying the replay bounds, and the initial per-client state
 // replay (pending permissions, staged writes, per-turn trust).
 func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
-	// Gate new SSE connections once Shutdown has flipped draining, with
-	// vibekit's own envelope (the library's drain gate 503s as a backstop
-	// after hub.Shutdown, closing the last-instant-reconnect race).
-	if h.lifecycle.draining.Load() {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
-		return
-	}
-
 	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
 	lastRaw := r.Header.Get("Last-Event-ID")
 	slog.Info("SSE connected", "chat_filter", chatFilter, "last_event_id", lastRaw)

@@ -27,6 +27,7 @@ import (
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/dedup"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/kirosession"
@@ -422,8 +423,11 @@ func (h *Hub) SetPreBridgeSpawn(fn func(context.Context)) { h.preBridgeSpawn = f
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
 // /api/shell/ws (WebSocket PTY).
 func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/events", h.handleSSE)
-	mux.Handle("/api/command", h.dispatcher)
+	// Both of these refuse once Shutdown has flipped draining, and only these
+	// two: see refuseWhenDraining for why the gate is a route wrapper rather
+	// than a member of the global middleware chain.
+	mux.Handle("/api/events", h.refuseWhenDraining(http.HandlerFunc(h.handleSSE)))
+	mux.Handle("/api/command", h.refuseWhenDraining(h.dispatcher))
 	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
 	mux.HandleFunc("POST /api/shell/restart", h.handleShellRestart)
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
@@ -573,6 +577,30 @@ func (h *Hub) RecordDedup(reqID string, result []byte) {
 // Draining reports whether the server is shutting down.
 func (h *Hub) Draining() bool {
 	return h.lifecycle.draining.Load()
+}
+
+// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
+// routes that must stop accepting work before the HTTP drain begins: commands and
+// the event stream.
+//
+// It is a ROUTE wrapper, not a member of the global middleware chain, because the
+// chain covers /api/health, /api/version and the static assets too and none of
+// those should start failing while the process winds down — a health probe in
+// particular is what reports the wind-down.
+//
+// It is needed at all because webhttp's own drain gate flips LATER: draining goes
+// true at the start of hub.Shutdown, the library's gate when srv.Shutdown begins,
+// and the window between the two is the last-instant-reconnect race. The library
+// gate remains the backstop after this one.
+func (h *Hub) refuseWhenDraining(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.lifecycle.draining.Load() {
+			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+				httpreply.ErrorJSON("shutting down"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // hubContext returns a context derived from the hub's shutdownCtx.

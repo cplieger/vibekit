@@ -923,3 +923,19 @@ func extractStopReason(resp *vibekit.RPCResponse) vibekit.StopReason {
 	}
 	return result.StopReason
 }
+
+// BridgeRespond answers an ACP request on the chat's bridge, and is a no-op when
+// that chat has none: a response to a request whose bridge already went away has
+// nowhere to go and is not an error.
+//
+// It lives here rather than in translate_deps.go, where it sat until 2026-08-19,
+// because no translate role declares it. Its three callers are all hub's own
+// (agent_terminal.go, translate.go, run_host.go), and this file already owns
+// reaching a bridge by chat id.
+func (h *Hub) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error {
+	sb := h.bridge.mgr.get(chatID)
+	if sb == nil {
+		return nil
+	}
+	return sb.bridge.Respond(ctx, requestID, result, err)
+}

@@ -20,26 +20,11 @@ func TestDispatcher_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestDispatcher_Draining(t *testing.T) {
-	deps := newBenchDeps()
-	d := New(deps)
-	// Override Draining via a wrapper
-	dd := &drainingDeps{benchDeps: deps}
-	d2 := New(dd)
-	body := `{"type":"test","chat_id":"c1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	d2.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("got %d, want 503", w.Code)
-	}
-	_ = d // suppress unused
-}
-
-// drainingDeps wraps benchDeps with Draining() = true.
-type drainingDeps struct{ *benchDeps }
-
-func (d *drainingDeps) Draining() bool { return true }
+// The drain refusal is NOT tested here any more, because it is not this
+// package's behaviour any more: it moved to a route wrapper covering both gated
+// routes (hub.refuseWhenDraining), and hub.TestRegisterRoutes_DrainingGate asserts
+// it through the mux, which is stronger — a test calling this dispatcher directly
+// would bypass the wrapper and pass whether or not it is wired.
 
 func TestDispatcher_InvalidJSON(t *testing.T) {
 	d := New(newBenchDeps())
