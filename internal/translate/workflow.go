@@ -179,10 +179,7 @@ func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(conte
 		if !ok || p.WorkflowID == "" {
 			return
 		}
-		node := p.NodeID
-		if node == "" {
-			node = p.LoopID
-		}
+		node := cmp.Or(p.NodeID, p.LoopID)
 		// The ONE frame that announces a step's session id. Recorded before the
 		// broadcast so a permission ask racing the event still classifies.
 		if kind == vibekit.RunProgressNodeStart && p.SessionID != "" {

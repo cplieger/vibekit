@@ -5,6 +5,7 @@ package translate
 // handleV3Summarization), which calls the handleCompaction* helpers here.
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 
@@ -41,9 +42,7 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 // handleCompactionFailed persists a compaction-failed event and broadcasts
 // a typed error to the client.
 func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.ChatID, errMsg string) {
-	if errMsg == "" {
-		errMsg = "compaction failed"
-	}
+	errMsg = cmp.Or(errMsg, "compaction failed")
 	evt := t.newEventMessage(vibekit.EventCompactFailed, errMsg)
 	if err := t.chats.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
