@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/wiregen/v2"
+	"github.com/cplieger/wiregen/v3"
 )
 
 // The bug class these tests exist for: an SSE event vibekit broadcasts whose
@@ -256,5 +256,41 @@ func TestPayloadExemptions_AreNotStale(t *testing.T) {
 					list.name, name)
 			}
 		}
+	}
+}
+
+// TestRegistry_DeclaresNoTypeOrDecoderMappings is the guard for a defect that
+// has no symptom: a mapping keyed on a stdlib type name that the stdlib turns
+// into an alias.
+//
+// wiregen's TypeMappings and DecoderMappings are keyed by the resolved
+// importpath.Type that go/types reports, and go/types resolves an alias past its
+// own name. json.RawMessage was a named type in encoding/json through Go 1.26
+// and is an ALIAS for encoding/json/jsontext.Value from Go 1.27, so a consumer
+// entry spelled "encoding/json.RawMessage" — the only spelling its own source
+// ever shows — silently stopped matching on the toolchain bump: no error, and a
+// wire field emitted with the built-in fallback type instead of the mapped one.
+//
+// Measured with go/packages on go1.27.0 against vibekit's own types: ToolCall.Input,
+// Recipe.Plan and RPCError.Data are each a *types.Alias whose own key is
+// "encoding/json.RawMessage" and whose resolved key is
+// "encoding/json/jsontext.Value". So the precondition is live here; what makes
+// vibekit immune is that it registers no mapping at all, which is a property of
+// the registry VALUE and therefore worth asserting rather than grepping for.
+// Both artifacts regenerate byte-identically across the library fix, confirming
+// nothing depended on either map.
+//
+// If a mapping is ever needed, register BOTH spellings. wiregen v2 matches the
+// alias name too, but only when one of the maps holds it, so a single stale key
+// is still a silent miss on the next stdlib alias.
+func TestRegistry_DeclaresNoTypeOrDecoderMappings(t *testing.T) {
+	r := Registry()
+	if len(r.TypeMappings) != 0 {
+		t.Errorf("Registry().TypeMappings has %d entries, want 0; a key naming a stdlib type "+
+			"must carry both the alias spelling and the resolved one: %v", len(r.TypeMappings), r.TypeMappings)
+	}
+	if len(r.DecoderMappings) != 0 {
+		t.Errorf("Registry().DecoderMappings has %d entries, want 0; same rule: %v",
+			len(r.DecoderMappings), r.DecoderMappings)
 	}
 }

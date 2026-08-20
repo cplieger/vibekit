@@ -29,7 +29,7 @@ import (
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/wiregen/v2"
+	"github.com/cplieger/wiregen/v3"
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration
