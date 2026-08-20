@@ -4,8 +4,7 @@ services:
     image: ghcr.io/cplieger/vibekit:latest
     container_name: vibekit
     restart: unless-stopped
-    # Override with PUID/PGID in .env; defaults to 1000:1000.
-    user: "${PUID:-1000}:${PGID:-1000}"  # match your host user
+    user: "${PUID:-1000}:${PGID:-1000}"  # from .env; must own the /config and /workspace host dirs
 
     ports:
       - "9847:9847"

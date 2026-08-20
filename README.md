@@ -11,7 +11,7 @@
 
 A browser-based front-end for the **Kiro CLI**: chat with an AI coding agent from any device, with a live terminal, a file editor, and git/forge workflows in the same tab.
 
-Vibekit runs `kiro-cli` as an Agent Client Protocol (ACP) subprocess and wraps it in a full workspace UI. The **server is the single source of truth**: every action is persisted and echoed to all connected clients over Server-Sent Events, so a conversation open on your phone and your desktop stays in sync with no drift. One `kiro-cli` bridge backs each chat and is shared by every tab and device viewing it.
+Vibekit runs `kiro-cli` as an Agent Client Protocol (ACP) subprocess and wraps it in a full workspace UI. The **server is the single source of truth**: every action is persisted and echoed to every connected client over Server-Sent Events, so a conversation open on your phone and your desktop stays in sync.
 
 Published as a multi-arch (amd64 + arm64) container image on **GHCR** (`ghcr.io/cplieger/vibekit`) and **Docker Hub** (`cplieger/vibekit`).
 
@@ -32,17 +32,16 @@ services:
   vibekit:
     image: ghcr.io/cplieger/vibekit:latest
     container_name: vibekit
-    # Override with PUID/PGID in .env; defaults to 1000:1000.
-    user: "${PUID:-1000}:${PGID:-1000}"  # match your host user
+    user: "${PUID:-1000}:${PGID:-1000}"  # from .env; must own the bind mounts
     ports:
       - "9847:9847"
     volumes:
-      - ./config:/config # chats, kiro-cli auth/state, tools
-      - ./workspace:/workspace # your repos
+      - "./config:/config"  # chats, kiro-cli auth/state, tools
+      - "./workspace:/workspace"  # your repos
     restart: unless-stopped
 ```
 
-Before the first start, create and own the bind-mount directories. The container runs as the UID from `user:` (1000 unless you set `PUID`/`PGID`), and the entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
+Before the first start, create the bind-mount directories and give them to that UID (1000 unless you set `PUID`/`PGID`). The entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
 
 ```bash
 mkdir -p ./config ./workspace
@@ -51,160 +50,101 @@ chown -R "${PUID:-1000}:${PGID:-1000}" ./config ./workspace
 
 To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
 
-Open <http://localhost:9847>. The UI comes up right away; `kiro-cli` is downloaded and verified in the background on first boot (it is not redistributed in the image, per the AWS Customer Agreement). Until that finishes, health reports `503` and chats say so; files, git, settings and the shell already work. Then sign in to `kiro-cli` and start chatting.
+Open <http://localhost:9847>. The UI comes up right away, and `kiro-cli` is downloaded and verified in the background on first boot. Until that finishes, health reports `503` and chats say so, while files, git, settings and the shell already work. Then sign in to `kiro-cli` and start chatting.
 
 ## Capabilities
 
-Vibekit is a full workspace in the browser. Everything below is reachable from any device viewing the same server.
+Vibekit is a full workspace in the browser, and everything below is reachable from any device viewing the same server.
 
-**Chat**, from any device and always in sync:
+**Chat:** conversations kept in sync across devices over SSE, with full history in one file per chat, streaming markdown responses, and collapsible reasoning ("thinking") blocks. Send mid-turn and your message joins the running turn. Prefix a message with `!` to run a shell command. `/compact` compacts the context now, `/drop` ends a wedged turn, and `/goal` sets an objective the agent works toward across turns until it meets the goal or its iteration budget runs out. Attach files by drag-drop, paste, or the composer's `+` menu; PDF, CSV and Office documents reach the agent as documents, images as images, and anything else as a path it opens with its file tools. Also find-in-chat, per-chat export, a cross-chat search, a History view over past conversations and workflow runs, and configurable chat retention.
 
-- Multi-device conversations kept in sync live over SSE; full history, one file per chat.
-- Streaming markdown responses with collapsible reasoning ("thinking") blocks.
-- Steering: send while the agent is working and your message joins the turn already running instead of waiting for the next one. Queued messages show as chips until the agent reads them, and you can drop the unread ones without cancelling the turn.
-- Inline shell: prefix a message with `!` to run a command locally.
-- A few typed commands: `/compact` to compact the context now, `/drop` to end a wedged turn, and `/goal` to set an objective the agent works toward across turns until it verifies the goal is met or its iteration budget runs out.
-- File attachments by drag-drop, paste, or the composer's `+` menu. PDF, CSV and Office documents are sent to the agent as documents, images as images, and anything else as a path it opens with its file tools.
-- Find-in-chat (Ctrl-F) and per-chat export to Markdown or JSON.
-- On-demand and automatic context compaction; configurable chat retention, with a History view over past conversations and workflow runs and a search across every chat for the one you are thinking of.
+**Agent control:** switch modes (Default, Spec, Quick Spec, Bug Fix, Plan, Autonomous, plus your own workspace agents from `.kiro/agents/`), switch models mid-conversation, set reasoning effort from low to max, answer permission prompts, structured questions and MCP elicitation forms, and fork a tangent that leaves the original chat untouched. Subagent work renders as collapsible cards, and the agent's own terminals get tabs in the shell panel.
 
-**Agent control** over models, modes, and turns:
+**Editing, files and terminal:** a file browser, a recursive content search with include and exclude patterns, a syntax-highlighted editor with deep links to a line (`#L<n>`), diffs against the last save or against git `HEAD`, a merge-conflict resolver that takes ours, theirs or both per hunk, and a PTY shell (via [web-terminal-engine](https://github.com/cplieger/web-terminal-engine)) that survives sleep and network drops.
 
-- Switch modes/roles: bundled workflow modes (Default, Spec, Quick Spec, Bug Fix, Plan, Autonomous) and your own workspace agents from `.kiro/agents/`.
-- Switch models on the fly, with per-model credit multipliers.
-- Set reasoning effort (low through max).
-- Approve or deny tool-call permission prompts; answer the agent's structured questions and MCP input (elicitation) forms.
-- Tangents: fork a side conversation carrying everything said so far, and leave the original chat untouched from that point on. It opens as a sub-tab of the chat it came from.
-- Subagents render as collapsible cards with the delegate's own reasoning, tool calls and diffs inside, and a rolling tail of its last lines while it works. The agent's own terminals get tabs in the shell panel.
-
-**Editing and files** in the browser:
-
-- File browser: navigate, rename, delete, download, and upload (dialog or drag-drop).
-- Find in files (Ctrl+F from the file browser or the editor): a recursive search of file contents under the folder you are looking at, with optional include/exclude patterns. A pattern without a slash matches the file name at any depth (`*.go`); one with a slash matches the path under the folder searched (`src/*.go`); an exclude also skips a whole folder (`node_modules`). There is no index, so the scan is capped and the result says how many files it opened and whether it stopped early.
-- Syntax-highlighted editor with edit/save and deep links to a line (`#L<n>`).
-- Diff view against the last save or against git `HEAD`.
-- Merge-conflict resolver: accept ours/theirs/both per hunk, with an AI "suggest" merge.
-- Gutter markers on the lines the agent changed.
-
-**A real terminal** in the browser:
-
-- A PTY shell (via [web-terminal-engine](https://github.com/cplieger/web-terminal-engine)) that survives sleep and network drops, with a mobile key toolbar.
-
-**Version control and forges** for GitHub, GitLab, Codeberg, and Gitea/Forgejo:
-
-- Git panel: stage, commit (with an AI-written message), diff, and switch branches.
-- Pull requests: list, create (with an AI-written description), merge, and close.
-- Connect forge accounts via OAuth device flow or a token (driven by the `gh` / `glab` / `tea` CLIs).
+**Version control and forges** for GitHub, GitLab, Codeberg, and Gitea/Forgejo: stage, commit, diff and switch branches; list, create, merge and close pull requests, with AI-written commit messages and descriptions; connect accounts by OAuth device flow or a token, driven by the `gh` / `glab` / `tea` CLIs.
 
 **Safety nets** around the agent's file edits:
 
-- Rewind: send the whole conversation back to any earlier message of yours. The agent's file edits roll back with the transcript, from snapshots the agent runtime takes on its own, independently of git.
-- Supervised mode: hold the whole turn for review instead of approving each write. You get one approval listing every file the turn touched, and you keep or discard each one; discarding restores it. Renames and deletes are reviewable too, not just writes.
-- Permissions: a Cedar policy editor (allow/deny/ask per capability, with path scoping) and a "test a decision" explainer; one policy governs every tool call, shell commands included.
-- Scope: rewind and supervised review cover the agent's file-write channel. Changes made through shell commands or terminals (the agent's or yours) are approved via permissions but not snapshotted; use git for those. A held write does land on disk while you review it, so a watcher or dev server sees it before you decide.
+- Rewind: send the conversation back to an earlier message of yours. The agent's file edits roll back with the transcript, from snapshots the agent runtime takes independently of git.
+- Supervised mode: hold the whole turn for review instead of approving each write. One approval lists every file the turn touched, renames and deletes included, and you keep or discard each one.
+- Permissions: a Cedar policy editor (allow/deny/ask per capability, with path scoping) and a "test a decision" explainer. One policy governs every tool call, shell commands included.
+- Scope: rewind and supervised review cover the agent's file-write channel. Changes made through shell commands or terminals go through the policy but are not snapshotted, so use git for those. A held write does land on disk while you review it, so a watcher or dev server sees it before you decide.
 
-**MCP** server management:
+**MCP:** add, edit and remove servers (local, or remote over HTTP/SSE), with per-server auto-approve, live reconnect, and prompt and resource browsing. For a server that needs OAuth, vibekit registers itself automatically or takes a client id and secret you already have, then shows a sign-in link.
 
-- Add, edit, and remove MCP servers (local, or remote over HTTP/SSE) from the UI.
-- OAuth for servers that need it: vibekit registers itself with the server automatically, or takes a client id and secret you already have, then surfaces a sign-in link. Plus per-server auto-approve, live reconnect, and prompt/resource browsing.
+**Workspace tools:** install runtimes, language servers and CLIs from a catalog of ~700 (compiled from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog)), in the background, pinned to a version or with an install command of your own. When you enable a language server, vibekit also activates kiro-cli [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace: LSP-backed navigation, rename and diagnostics, live chats included, no restart. It freezes the detected-language set into `/workspace/.kiro/settings/lsp.json` at first activation, so after you add a language to the workspace, delete that file; vibekit re-initializes it on the next boot.
 
-**Workspace tools** and agent configuration:
+**Workspace configuration** on the `/docs` page: the whole `.kiro` inventory with its front-matter (steering docs, skills, agents, specs, hooks), knowledge bases you index, hooks you enable, and workflow runs you launch, pause, resume, cancel or schedule. Settings holds global custom instructions, per-device layout with light and dark themes, account usage, a context and credit meter, and a copyable diagnostics report.
 
-- Manage installed tools: search a catalog of ~700 runtimes, language servers, and CLIs (compiled from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog)), install them in the background with streamed progress, pin versions, or bring your own install command. The catalog refreshes itself on a schedule (`VIBEKIT_TOOL_CATALOG_REFRESH`, see the table below), keeping the last good copy on any failure, with a manual Refresh button in Settings → Tools. Every tool has an enable/disable switch: disabling uninstalls it but keeps the entry as a template, and fresh installs start with language-server templates (Go, TypeScript, Python, Rust) ready to switch on. Enabling a language server also activates kiro-cli's [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace automatically: LSP-backed navigation, rename, and diagnostics, live chats included, no restart. The detected-language set is frozen into `/workspace/.kiro/settings/lsp.json` at first activation; after adding a new language to the workspace, delete that file and vibekit re-initializes it on the next boot or language-server install.
-- Knowledge bases: index workspace directories, with live progress.
-- Configuration browser (`/docs`): the whole `.kiro` inventory with its front-matter, one tab per kind: steering docs with the badge saying whether they load every session, skills, agents with their model and tool count, specs grouped by feature, and hooks.
-- Hooks: list, enable or disable, and create one from chat context.
-- Workflows: launch a recipe with its declared inputs, watch the run in its own tab with pause, resume and cancel, or put it on a schedule and read the outcome afterwards.
-- Edit global custom instructions and manage knowledge bases.
-
-**Notifications** and PWA install:
-
-- Installable as a PWA, with a home-screen icon and a share target.
-- Web-push notifications when a turn finishes, a pull request's checks settle, or the agent needs permission, even with the tab closed. The turn and pull-request kinds each have their own switch; the permission notice has none, because off-screen there is nothing else to tell you a turn is blocked waiting on you.
-
-**Settings** and per-device preferences:
-
-- Per-device layout (tabs, open files, shell) with light and dark themes.
-- Account/subscription usage, a per-session context/credit meter, build versions, and a copyable diagnostics report.
+**Notifications:** installable as a PWA, with web-push notifications when a turn finishes, a pull request's checks settle, or the agent needs permission, even with the tab closed. The turn and pull-request kinds each have their own switch; the permission notice has none, because nothing else tells you off-screen that a turn waits on you.
 
 ## Configuration reference
 
 The image ships working defaults; most setups only choose the volumes and how to expose the port.
 
 - **Port:** `9847` (HTTP + SSE + the shell WebSocket).
-- **Volumes:** `/config` persists chats, kiro-cli auth/state, installed tools, and settings; `/workspace` is your repositories.
-- **User:** the compose above runs as `1000:1000` (see the first-boot ownership note). Run as root (`user: "0:0"`) to skip managing host ownership.
-- **Health:** `GET /api/health` reports healthy once the server is up **and** the pinned `kiro-cli` is installed, runnable at that exact version, and has its auto-update switched off. Anything short of that answers `503` with the reason: `kiro-cli installing` during the first-boot download, `kiro-cli install retrying` between attempts, `kiro-cli unavailable` once they are exhausted, `kiro-cli required settings not enforced` when the pin could not be enforced. The web UI still starts in every one of those states (files, git, settings and the shell all work) and shows a banner; only chats wait. The install retries itself with backoff, so a failed download usually needs no action. To fix one by hand, repair `/config/tools/kiro-cli-versions` inside the container and run `curl -X POST localhost:9847/api/kiro-cli/rescan` (loopback only) to pick it up without a restart.
+- **Volumes:** `/config` persists chats, kiro-cli auth and state, installed tools, and settings; `/workspace` is your repositories.
+- **User:** the compose above runs as `1000:1000`; see the first-boot ownership note.
+- **Health:** `GET /api/health` reports healthy once the server is up **and** the pinned `kiro-cli` is installed, runnable at that exact version, and has its auto-update switched off. Anything short of that answers `503` with a reason: `kiro-cli installing`, `kiro-cli install retrying`, `kiro-cli unavailable` once the attempts are exhausted, or `kiro-cli required settings not enforced`. The UI still starts in every one of those states and shows a banner; only chats wait, and the install retries itself with backoff. To repair one by hand, fix `/config/tools/kiro-cli-versions` inside the container and `curl -X POST localhost:9847/api/kiro-cli/rescan` (loopback only) to pick it up without a restart.
 
 ### Behind a reverse proxy (`TRUSTED_PROXIES`)
 
-The access log and the login/logout audit logs record a `client_ip`. How that address is resolved depends on how you expose vibekit:
+The access log and the login/logout audit logs record a `client_ip`. Leave `TRUSTED_PROXIES` unset when vibekit is directly exposed: `client_ip` is then the connecting socket's address, which a client cannot forge, and any `X-Forwarded-For` header it sends is ignored. Behind a reverse proxy, set it to the address range of every hop, comma-separated CIDRs (a bare IP counts as a single host), so `client_ip` shows the real client:
 
-- **Directly exposed** (no reverse proxy in front): leave `TRUSTED_PROXIES` unset. `client_ip` is the address of the connecting socket, which cannot be forged at this layer. Any `X-Forwarded-For` header a client sends is ignored.
-- **Behind a reverse proxy**: set `TRUSTED_PROXIES` to your proxy's address range so `client_ip` shows the real client instead of the proxy's own address. It is a comma-separated list of CIDRs (bare IPs are accepted as single hosts), for example:
+```yaml
+environment:
+  TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
+```
 
-  ```yaml
-  environment:
-    TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
-  ```
-
-`X-Forwarded-For` is honored **only** when the connecting peer falls inside `TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer, and never trusts a client-supplied header.
+`X-Forwarded-For` is honored **only** when the connecting peer falls inside the list. An empty, unset, or malformed value falls back to the socket peer, so the default is spoof-safe.
 
 ### Host allowlist (`ALLOWED_HOSTS`)
 
-Set `ALLOWED_HOSTS` to the exact hostnames/IPs you browse vibekit at (comma-separated, e.g. `ALLOWED_HOSTS: "localhost,192.168.1.5,vibekit.example.com"`); a request with any other `Host` header is rejected with 403.
+Set `ALLOWED_HOSTS` to the exact hostnames and IPs you browse vibekit at (comma-separated, for example `ALLOWED_HOSTS: "localhost,192.168.1.5,vibekit.example.com"`); a request with any other `Host` header is rejected with 403.
 
-This blocks **DNS rebinding**: an attacker's page makes its own hostname resolve to your vibekit address, and because `Origin` and `Host` then agree, same-origin checks pass. The attack rides your own browser, so it reaches even a loopback- or LAN-bound deployment. An exact-`Host` allowlist breaks that chain. Requests made from the container itself (loopback socket peer with a loopback `Host`) are always admitted, so the image's healthcheck keeps working under any allowlist. Unset accepts every `Host` (and logs a startup warning); set it for any long-running deployment.
+Set it for any long-running deployment, because it is what blocks **DNS rebinding**: an attacker's page makes its own hostname resolve to your vibekit address, `Origin` and `Host` then agree, and the same-origin check passes. That attack rides your own browser, so it reaches even a loopback- or LAN-bound deployment. Requests from the container itself are always admitted, so the image's healthcheck keeps working. Unset accepts every `Host` and warns at startup.
 
 ### Trusted install uids (`TRUSTED_INSTALL_UIDS`)
 
-Before installing kiro-cli, vibekit checks who can write each directory on the way to its install tree under `/config/tools`, and refuses to install when another identity can, because what lands there is later executed by this container. Leave this **unset** (the default) and that check applies in full; that is the right setting for almost every deployment.
-
-Set it only when the check refuses a volume you know is safe, typically a shared or network mount whose permissions grant an account you control:
+Before it installs kiro-cli, vibekit checks who can write each directory on the way to its install tree under `/config/tools`, and refuses the install when another identity can, because this container later executes what lands there. Leave this **unset** (the default) for almost every deployment, and set it only when the check refuses a volume you know is safe, typically a shared or network mount whose permissions grant an account you control:
 
 ```yaml
 environment:
   TRUSTED_INSTALL_UIDS: "3000"
 ```
 
-Each uid you list is an assertion that the account is **already at least as privileged as this server**, so its write access gains it nothing. That is true of an administrator who already holds root on the host; it is false of an unprivileged account, and listing one of those hands it a way in instead of closing one. Entries that are not whole numbers above `0` are skipped with a warning naming the variable and how many were dropped, never their content. Sister app web-terminal-kiro reads the same variable for the same reason, which is why it carries no app-specific prefix.
+Each uid you list is an assertion that the account is **already at least as privileged as this server**, so its write access gains it nothing. That is true of an administrator who already holds root on the host; it is false of an unprivileged account, and listing one of those hands it a way in instead of closing one. An entry that is not a whole number above `0` is skipped with a warning that names the variable and the count, never the content.
 
 ### Extra browse roots (`VIBEKIT_BROWSE_ROOTS`)
 
-The file browser sees exactly the granted roots (`/workspace` and `/config` by default) and nothing else in the container. Anything outside the grants (system directories, the image's own install tree, paths that don't exist yet) is denied by default rather than hidden by an enumerated block-list. To browse additional mounts, grant them explicitly with a colon-separated list of absolute paths:
+The file browser sees the granted roots (`/workspace` and `/config` by default) and nothing else in the container. To browse another mount, grant it with a colon-separated list of absolute paths:
 
 ```yaml
 environment:
   VIBEKIT_BROWSE_ROOTS: "/tmp:/data"
 ```
 
-Each grant must exist in the container (mount it via `volumes:` first); a malformed or missing entry is logged and skipped, never fatal. Credential and internal state files under `/config` (SSH keys, cloud tokens, chat store, MCP config) stay blocked regardless of grants.
+Mount each grant with `volumes:` first; a missing or malformed entry is skipped with a warning, never fatal. Credential and internal state files under `/config` (SSH keys, cloud tokens, chat store, MCP config) stay blocked whatever you grant.
 
 ### Extra kiro-cli launch flags (`VIBEKIT_KIRO_ACP_ARGS`)
 
-An escape hatch for reaching a `kiro-cli acp` flag vibekit does not pass yet, without waiting for a release. Whitespace-separated, appended to every chat's launch command:
+An escape hatch for a `kiro-cli acp` flag vibekit does not pass yet, without waiting for a release. Whitespace-separated, appended to every chat's launch command:
 
 ```yaml
 environment:
   VIBEKIT_KIRO_ACP_ARGS: "-v"
 ```
 
-Only the values are appended; nothing is interpreted as a shell command. Five flags are refused with a logged reason:
+Only the values are appended; nothing is interpreted as a shell command. Five flags are refused with a logged reason, because each one breaks a chat or does nothing: `--agent-engine` (vibekit speaks only the v3 wire), `--trust-all-tools` and `--trust-tools` (inert on v3, where tool approval is the policy you edit in **Settings → Permissions**), and `--model` and `--effort` (kiro-cli rejects both on the v3 wire and exits before the session opens; pick them per chat in the composer instead).
 
-- `--agent-engine`: vibekit speaks only the v3 wire, so selecting v1 or v2 would leave every chat unable to start.
-- `--trust-all-tools` / `--trust-tools`: these have no effect on v3. Tool approval is the policy you edit in **Settings → Permissions**, so setting them here would look like turning approvals off without doing so.
-- `--model` / `--effort`: kiro-cli rejects both on the v3 wire and exits before the session opens, so either one here would stop every chat in the container from starting. Pick the model and the reasoning effort per chat in the composer instead, where you can also change them mid-conversation.
-
-Anything else you set is a starting value that the UI still overrides afterwards. Flags are logged by count only, never by value, so a mistyped value cannot leak into the logs. Not applied to the small background helper vibekit uses for commit messages, pull-request descriptions and error explanations.
+Anything else you set is a starting value the UI still overrides. Flags are logged by count only, never by value, so a mistyped value cannot leak into the logs.
 
 ### Agent-launched workflow runs (`VIBEKIT_AGENT_WORKFLOWS`)
 
-The chat agent can start a workflow run itself. It has the workflow tools (`run_workflow`, `inspect_workflow`, `update_workflow`, `validate_workflow`, `send_message`) and the workflow instructions, so a request like "run the publish workflow" starts the run instead of describing it. Runs you start yourself from **Workflows** on the `/docs` page are unaffected either way.
+The chat agent can start a workflow run itself: it holds the workflow tools (`run_workflow`, `inspect_workflow`, `update_workflow`, `validate_workflow`, `send_message`), so a request like "run the publish workflow" starts the run instead of describing it. Runs you launch yourself from **Workflows** on `/docs` are unaffected.
 
-Two rough edges on an agent-launched run, both cosmetic and both the first thing you will notice:
-
-- **Its progress notes replay as your own message.** A note the run posts back to the chat renders as a user bubble containing the note's text after a reload. The transcript is complete and nothing is lost; the attribution on those bubbles is wrong.
-- **Its controls are unreachable.** Pause, resume, and retry work on a run you started from the Workflows tab, but not on one the agent started. Stop still works, and the run's page shows its live state.
+An agent-launched run has two cosmetic rough edges: after a reload, a progress note the run posts back renders as a user bubble, and pause, resume and retry work only on a run you started from the Workflows tab, though Stop always works.
 
 To switch the capability off, set the variable to `false` (also `0`, `no`, or `off`):
 
@@ -213,15 +153,11 @@ environment:
   VIBEKIT_AGENT_WORKFLOWS: "false"
 ```
 
-The agent then loses the workflow tools and answers about workflows in prose instead of starting one; everything you launch yourself keeps working. A value that cannot be read as a boolean logs a warning and leaves the capability **on**, so a typo cannot disable it by accident. Changing it takes effect on the next chat, so restart the container to apply it everywhere.
+The agent then loses the workflow tools and answers about workflows in prose; everything you launch yourself keeps working. A value that cannot be read as a boolean warns and leaves the capability **on**, so a typo cannot disable it by accident. The change takes effect on the next chat, so restart the container to apply it everywhere.
 
 ### Agent environment variables (`VIBEKIT_ALLOW_AGENT_ENV`)
 
-When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary: `CGO_ENABLED`, `GOFLAGS`, `TERM`. A few are not: they don't carry data, they change what a program _executes_. `LD_PRELOAD` loads code into any program that starts. `GIT_SSH_COMMAND` replaces the command git runs. `BASH_ENV` runs a script before your script.
-
-vibekit refuses those, because approving a command is meant to approve **that** command. Otherwise you could approve a harmless `tar -xf backup.tar` and get something else, since the agent's variables take precedence over vibekit's own.
-
-The refusal names the variable, so the agent can retry without it. The list is kiro-cli's own, so an agent behaves the same here as it does in the terminal, and a value that cannot do harm is still accepted. `GIT_PAGER=cat` and `PAGER=` are the normal way to stop git paging, and they keep working.
+When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary (`CGO_ENABLED`, `GOFLAGS`, `TERM`), but a few carry no data and instead change what a program _executes_: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. vibekit refuses those, because approving a command must approve **that** command, and the agent's variables take precedence over vibekit's own. The refused list is kiro-cli's own, a harmless value is still accepted (`GIT_PAGER=cat` and `PAGER=` keep working), and the refusal names the variable so the agent can retry without it.
 
 If you genuinely need one (a profiler that preloads a library, a vendored `NODE_PATH`), name it:
 
@@ -230,17 +166,13 @@ environment:
   VIBEKIT_ALLOW_AGENT_ENV: "LD_PRELOAD,NODE_PATH"
 ```
 
-Comma-separated, one entry per variable name, and it grants only the names you list. This applies to what the **agent** asks for; variables you set on the container yourself are unaffected.
+Comma-separated, granting only the names you list. It applies to what the **agent** asks for, not to variables you set on the container yourself.
 
 ### Credentials in the container environment (`VIBEKIT_ALLOW_BRIDGE_ENV`)
 
-The other direction. Whatever you put in the container's `environment:` is inherited by kiro-cli and by everything it runs, so a `GITHUB_TOKEN` you added for some unrelated reason is a credential every agent turn can read and use.
+The other direction: kiro-cli and everything it runs inherit whatever you put in the container's `environment:`, so a `GITHUB_TOKEN` you added for some unrelated reason is a credential every agent turn can read and use.
 
-vibekit drops credential-shaped names on the way down and logs which ones, by name only. Two shapes cover almost everything: a name ending in `_TOKEN` or `_SECRET`, plus the AWS long-term credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`). Ordinary variables are untouched, including `AWS_REGION` and `AWS_PROFILE` and every build variable your toolchain reads.
-
-This is a second line rather than a wall. The right answer is still to keep credentials out of the container environment: forge tokens belong in `gh` / `glab` / `tea`'s own stores, which is where the git panel puts them.
-
-If you have a variable whose name merely reads like a credential, name it:
+vibekit drops credential-shaped names on the way down and logs which ones, by name only: a name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Ordinary variables are untouched, `AWS_REGION` and `AWS_PROFILE` included. Keep credentials out of the container environment anyway: forge tokens belong in `gh` / `glab` / `tea`'s own stores, which is where the git panel puts them. If a variable's name merely reads like a credential, name it:
 
 ```yaml
 environment:
@@ -249,32 +181,20 @@ environment:
 
 ### OS packages (`APT_PACKAGES`)
 
-The tools engine installs language servers, runtimes and CLIs onto `/config`, but it does not install OS packages, and that boundary is deliberate. Everything it manages survives a container recreate because it lives on the volume; an `apt` package lives in the container layer and does not, so an engine that recorded one as installed would be wrong after every recreate. A shared library also ships no binary, and the engine proves an install by running it.
-
-So OS packages are this variable's job. They are `apt-get install`ed at every container start, whitespace-separated:
+The tools engine installs language servers, runtimes and CLIs onto `/config`, but not OS packages: an `apt` package lives in the container layer, so it does not survive a recreate the way everything on the volume does. OS packages are this variable's job, `apt-get install`ed at every container start, whitespace-separated:
 
 ```yaml
 environment:
   APT_PACKAGES: "gcc libc6-dev"
 ```
 
-Two things need it in practice. Go work that runs `go test -race` needs a C compiler, and the image ships none. And a runtime the engine installs can link a shared library the image does not carry, in which case the tool installs and then refuses to start; the tools panel names the missing library on the runtime's own row, and adding its package here fixes it without waiting for a new image.
+Two cases need it. Go work that runs `go test -race` needs a C compiler the image does not ship. And a runtime the engine installs can link a shared library the image lacks, so the tool installs and then refuses to start; the tools panel names the missing library on that runtime's row.
 
-Plain package names only. A version pin (`pkg=1.2`), `pkg:arch`, `pkg/release`, a trailing `-` (apt reads that as a removal), a name absent from the package index (so a typo like `python3.` cannot expand into hundreds of packages), and a pure virtual package such as `awk` (name a concrete provider such as `mawk`) are each skipped with a warning in the container log. An install failure warns without blocking startup.
-
-### Runtime profiles
-
-`GET /debug/pprof/` serves Go's standard runtime profiles, behind the same loopback check as the `kiro-cli` repair hook (`POST /api/kiro-cli/rescan`): the socket peer and the `Host` header must both be loopback, and requests carrying proxy or browser headers are refused. So it is reachable from inside the container and nowhere else, which also means a browser tab gets a 403 and `curl` is how you read it:
-
-```sh
-docker exec vibekit curl -s 'http://127.0.0.1:9847/debug/pprof/goroutine?debug=2'
-```
-
-The goroutine dump is the useful one: every stack, what it is waiting on, and how long. `heap`, `allocs`, `block`, `mutex` and `threadcreate` are there too. The CPU profile and the execution trace are deliberately absent, because both hold the server for their whole sample window.
+Plain package names only. A version pin (`pkg=1.2`), `pkg:arch`, `pkg/release`, a trailing `-` (apt reads that as a removal), a name absent from the package index, and a pure virtual package such as `awk` (name a concrete provider such as `mawk`) are each skipped with a warning in the container log. An install failure warns without blocking startup.
 
 ### Environment variable reference
 
-Every knob, including the ones detailed above. A malformed duration value logs a warning and falls back to its default.
+Every knob, the ones detailed above included. A malformed duration warns and falls back to its default.
 
 | Variable | Description | Default |
 | --- | --- | --- |
@@ -283,18 +203,18 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | `TRUSTED_INSTALL_UIDS` | Numeric uids whose write access to the kiro-cli install tree does not refuse the install. See [Trusted install uids](#trusted-install-uids-trusted_install_uids). | _(unset)_ |
 | `VIBEKIT_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). | _(unset)_ |
 | `VIBEKIT_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-vibekit_kiro_acp_args). | _(unset)_ |
-| `VIBEKIT_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. Set `false` to withhold the workflow tools. See [Agent-launched workflow runs](#agent-launched-workflow-runs-vibekit_agent_workflows). | `true` |
-| `VIBEKIT_ALLOW_AGENT_ENV` | Environment variable names the agent may set for its own commands despite redirecting execution, comma-separated. See [Agent environment variables](#agent-environment-variables-vibekit_allow_agent_env). | _(unset)_ |
+| `VIBEKIT_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. See [Agent-launched workflow runs](#agent-launched-workflow-runs-vibekit_agent_workflows). | `true` |
+| `VIBEKIT_ALLOW_AGENT_ENV` | Execution-redirecting variable names the agent can set for its own commands, comma-separated. See [Agent environment variables](#agent-environment-variables-vibekit_allow_agent_env). | _(unset)_ |
 | `VIBEKIT_ALLOW_BRIDGE_ENV` | Credential-shaped names to inherit into kiro-cli anyway, comma-separated. See [Credentials in the container environment](#credentials-in-the-container-environment-vibekit_allow_bridge_env). | _(unset)_ |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
 | `APT_PACKAGES` | OS packages `apt-get install`ed at every container start, whitespace-separated. See [OS packages](#os-packages-apt_packages). | _(unset)_ |
 | `VIBEKIT_TOOLS_DIR` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
-| `VIBEKIT_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a successfully fetched catalog replaces it. | `/opt/vibekit/tool-catalog.json` |
-| `VIBEKIT_TOOL_CATALOG_URL` | Where catalog refreshes fetch from. Point it at a fork or mirror to decouple from the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
-| `VIBEKIT_TOOL_CATALOG_REFRESH` | Catalog refresh cadence (Go duration, clamped to 1h-30d); `off` or `0` disables the schedule while the manual Refresh button and API stay available. | `24h` |
-| `VIBEKIT_TOOL_CATALOG_OVERLAY` | Image-internal: display-patch overlay re-applied to every loaded catalog. An explicitly set path that does not resolve logs a warning and overlays are skipped. | `/opt/vibekit/catalog-overlays.json` |
+| `VIBEKIT_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a fetched catalog replaces it. | `/opt/vibekit/tool-catalog.json` |
+| `VIBEKIT_TOOL_CATALOG_URL` | Where catalog refreshes fetch from; point it at a fork or mirror to leave the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
+| `VIBEKIT_TOOL_CATALOG_REFRESH` | Catalog refresh cadence (Go duration, clamped to 1h-30d); `off` or `0` disables the schedule and keeps the manual refresh. | `24h` |
+| `VIBEKIT_TOOL_CATALOG_OVERLAY` | Image-internal display-patch overlay applied to every loaded catalog. An explicit path that does not resolve warns and is skipped. | `/opt/vibekit/catalog-overlays.json` |
 | `VAPID_SUBJECT` | Contact URI embedded in the Web Push (VAPID) keys used for chat notifications. | `mailto:vibekit@noreply.invalid` |
 | `VIBEKIT_AUTH_LOGIN_URL_TIMEOUT` | How long to wait for `kiro-cli login` to print the sign-in URL. | `10s` |
 | `VIBEKIT_AUTH_LOGIN_TIMEOUT` | Wall-clock timeout for a whole login attempt, device-flow confirmation included. | `16m` |
@@ -303,8 +223,8 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 
 ## Security
 
-- **No built-in authentication**: put vibekit behind an authenticating reverse proxy and/or a private network (see the warning above).
-- **No outbound telemetry.** vibekit reports nothing about you or your code to anyone. Every outbound request it makes is one you asked for: the AI provider `kiro-cli` is signed in to, any MCP server you configure yourself, the forge APIs (`gh` / `glab` / `tea`) when you use the git panel, and the public MCP registry when you search it from Settings → Tools. `kiro-cli`'s own telemetry is seeded **off** and is a toggle in Settings → General.
+- **No built-in authentication**: see the warning above.
+- **No outbound telemetry.** Every outbound request vibekit makes is one you asked for: the AI provider `kiro-cli` is signed in to, any MCP server you configure, the forge APIs (`gh` / `glab` / `tea`) when you use the git panel, and the public MCP registry when you search it. `kiro-cli`'s own telemetry is seeded **off** and is a toggle in Settings → General.
 - Web push uses an SSRF-hardened transport.
 - Debian base: a shell and the `kiro-cli` subprocess are required, so this is intentionally not distroless.
 - Images are published with cosign signatures and SBOM attestations.
@@ -313,17 +233,13 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 
 `kiro-cli` is downloaded and pinned on first boot rather than baked into the image (the AWS Customer Agreement governs redistribution, so you accept it by booting the container). Upgrades arrive by pulling a newer image tag; there is no in-place self-update.
 
-The server owns that install. It fetches the pinned archive, checks its SHA-256 against the digest for your architecture, and unpacks it into its own directory under `/config/tools/kiro-cli-versions/<version>/`, published by a single rename once every file is on disk. An interrupted install leaves a directory with no completion marker, which the next boot deletes instead of trusting. Each boot also re-probes the binary it is about to use and requires it to report the pinned version, so a replaced or half-restored install is rejected rather than run.
-
-One previous version is kept. If a new version turns out to be broken, the predecessor is still on the volume; anything older is pruned after the switch, along with the superseded agent-runtime trees that would otherwise grow by ~240 MB per version.
-
-`docker exec <container> kiro-cli --version` keeps working: `/config/tools/bin/kiro-cli` is maintained as a symlink to the active version. It is a convenience for you, not part of the install; vibekit itself always runs the absolute versioned path.
+The server owns that install. It verifies the pinned archive's SHA-256 against the digest for your architecture, installs it under `/config/tools/kiro-cli-versions/<version>/`, and re-probes it on every boot, so a replaced or half-restored install is rejected rather than run. The previous version stays on the volume as the fallback for a broken new one. `docker exec <container> kiro-cli --version` keeps working, because `/config/tools/bin/kiro-cli` is a symlink to the active version; vibekit itself always runs the absolute versioned path.
 
 ## Related projects
 
 - [web-terminal-kiro](https://github.com/cplieger/web-terminal-kiro): the sister app, a raw browser terminal that drives kiro-cli's own TUI instead of this chat-first UI.
 - [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind vibekit's shell.
-- [pinstall](https://github.com/cplieger/pinstall): the digest-pinned install library that downloads, verifies and activates the `kiro-cli` release described above.
+- [pinstall](https://github.com/cplieger/pinstall): the digest-pinned install library behind the `kiro-cli` install above.
 - [actions](https://github.com/cplieger/actions): the client-side action framework vibekit's UI is built on.
 
 ## Contributing

@@ -30,12 +30,12 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 ### Server (repo root)
 
 - `main.go` / `embed.go`: the composition root. Load config, construct the
-  store, hub, bridge, and push service, register HTTP routes, embed the
+  store, agent runtime, bridge, and push service, register HTTP routes, embed the
   compiled static assets. Wiring only.
 - `internal/vibekit/`: the wire and domain TYPE vocabulary (chat, message, tool call,
   plan, usage) plus the constructors and mappers over it. No interfaces, no
   behaviour: the contracts are declared at their consumers, and the helpers that
-  used to live here moved to packages named for what they do — `internal/httpreply`
+  used to live here moved to packages named for what they do: `internal/httpreply`
   (JSON replies), `internal/sanitize` (ANSI + hidden Unicode), `internal/ids`
   (identifier minting and validation), `internal/rpcerr` (JSON-RPC error text),
   `internal/modeltext` (model tag policy, markdown fences), `internal/procout`,
@@ -63,12 +63,12 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   declaration is the one that can withhold readiness: the library refuses to
   install into a tree another identity can write, and reads access-control lists
   to find that out. `TrustedUIDs` carries the identities a deployment vouches
-  for, and it is deliberately NOT a compiled-in value — it comes from
+  for, and it is deliberately NOT a compiled-in value; it comes from
   `TRUSTED_INSTALL_UIDS` (parsed by `parseTrustedInstallUIDs` in
   `internal/composition/config.go`), because only the deployment knows which
   account on its volume already holds at least this process's privilege. The
   image ships it unset, which leaves the check fully enforcing. `Untrusted`
-  stays deliberately unset here — vibekit has no hardening pass that could make
+  stays deliberately unset here: vibekit has no hardening pass that can make
   that observation.
 
   Nothing in this file exits the process: every failure degrades readiness
@@ -92,8 +92,8 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   `internal/workspace/`, `internal/kiroauth/`, `internal/version/`, and the
   other small packages: focused helpers.
 
-Server dependencies flow one direction: composition root → hub → API contracts
-→ feature packages. No reverse imports.
+Server dependencies flow one direction: composition root → agent runtime → wire
+types → feature packages. No reverse imports.
 
 ### Client (`static-src/`, compiled to `static/`)
 
@@ -266,6 +266,23 @@ chain) is designed to run in the container. The image is built from the
 multi-stage `Dockerfile`, and `compose.yaml` wires up the persistent `/config`
 volume and exposes the UI on port `9847`.
 
+### Runtime profiles
+
+`GET /debug/pprof/` serves Go's standard runtime profiles behind a loopback
+check: the socket peer and the `Host` header must both be loopback, and a
+request carrying proxy or browser headers is refused. A browser tab therefore
+gets a 403, so read a profile with `curl` from inside the container:
+
+```sh
+docker exec vibekit curl -s 'http://127.0.0.1:9847/debug/pprof/goroutine?debug=2'
+```
+
+The goroutine dump is the useful one: every stack, what it is waiting on, and
+how long. `goroutineleak`, `heap`, `allocs`, `block`, `mutex` and
+`threadcreate` are there too. The CPU profile and the execution trace are
+deliberately absent, because both hold the server for their whole sample
+window.
+
 ### Frontend assets
 
 The browser bundle is **produced during the Docker build, not committed**. The
@@ -374,7 +391,7 @@ Tests live beside the code they cover, standard for both ecosystems:
 
 - **Go**: `foo.go` → `foo_test.go` in the same package. Property-based tests use
   `pgregory.net/rapid`. Run the race detector (`go test -race ./...`) on changes
-  to concurrent code (the hub, bridge, chat store, checkpoints).
+  to concurrent code (the agent runtime, bridge, chat store, buffers).
 - **TypeScript**: `foo.ts` → `foo.test.ts`, co-located. The runner is vitest;
   property-based tests use `fast-check`. DOM-dependent tests opt into happy-dom
   with `// @vitest-environment happy-dom` at the file top. For action tests, mock
