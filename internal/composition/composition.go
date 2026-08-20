@@ -408,19 +408,31 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 // configDir is swept with WithRecursive, which removes the maintenance hazard in the
 // previous shape: it enumerated configDir, configDir/chats and configDir/chats/<archive>
 // by hand, so every new location that writes atomically had to be added to that list or
-// its orphans were never reaped — and there are eleven such locations under configDir
-// today, including checkpoints/blobs, which the list never covered. Widening the sweep is
-// safe by construction: only atomicfile's own ".atomicfile-<digits>.tmp" shape is ever a
-// candidate, so a caller-owned file is never touched.
+// its orphans were never reaped. Widening the sweep is safe by construction: only
+// atomicfile's own ".atomicfile-<digits>.tmp" shape is ever a candidate, so a caller-owned
+// file is never touched. (An earlier version of this comment named checkpoints/blobs as
+// the motivating unlisted location. It is not one: nothing writes under
+// configDir/checkpoints any more -- KAS owns snapshots -- and Build os.RemoveAll's that
+// whole directory a few lines above this call, so the sweep never sees it. The maintenance
+// argument stands on the locations that are live.)
 //
 // workDir is swept flat on purpose. It is the user's working tree, which can be an
 // arbitrarily large checkout; descending it on every startup would walk the whole repo to
 // find temps that only ever land at its top level.
 //
 // ctx bounds the walk. The recursive configDir sweep is the one leg here that can take
-// real time -- it descends eleven writing locations including checkpoints/blobs -- and it
+// real time -- it descends every location under configDir that writes atomically -- and it
 // runs on the startup path, so a shutdown arriving mid-sweep should abandon it rather than
 // hold the boot open.
+//
+// The two non-zero counts are reported because they are different operator problems and
+// only the operator can fix either. Failed means a temp was found and could not be
+// unlinked, so orphans are ACCUMULATING on a persistent volume -- a disk-fill precursor
+// with no self-healing path. Unreadable means a subdirectory could not be entered at all,
+// so it may be hiding orphans nobody has counted, which is the shape a widened ACL or a
+// mode drift takes on this fleet's volumes. Removed stays at Debug: a sweep that worked is
+// not news. Folding the two together would leave an operator unable to tell which one to
+// go fix, which is exactly why atomicfile returns them apart instead of logging a summary.
 func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 	const tempMaxAge = time.Hour
 	for _, sweep := range []struct {
@@ -430,9 +442,20 @@ func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 		{configDir, []atomicfile.Option{atomicfile.WithRecursive(true)}},
 		{workDir, nil},
 	} {
-		if _, err := atomicfile.CleanupStaleTemps(ctx, sweep.dir, tempMaxAge, sweep.opts...); err != nil {
+		res, err := atomicfile.CleanupStaleTemps(ctx, sweep.dir, tempMaxAge, sweep.opts...)
+		if err != nil {
 			slog.Debug("stale temp cleanup failed", "dir", sweep.dir, "error", err)
 		}
+		if res.Failed > 0 {
+			slog.Warn("stale temp cleanup could not reclaim every orphan; they are accumulating on the volume",
+				"dir", sweep.dir, "failed", res.Failed,
+				"hint", "check ownership and mode on the paths logged at debug level")
+		}
+		if res.Unreadable > 0 {
+			slog.Warn("stale temp cleanup could not enter every subdirectory; it may be hiding uncounted orphans",
+				"dir", sweep.dir, "unreadable", res.Unreadable)
+		}
+		slog.Debug("stale temp cleanup done", "dir", sweep.dir, "removed", res.Removed)
 	}
 }
 
@@ -743,8 +766,8 @@ func toolsEngineFailure(err error) error {
 // that does not go through the host. The log plus an absent /api/tools
 // mount is the signal.
 func logRootIntegrityRefusal(err error) {
-	var refusal *toolbelt.RootIntegrityError
-	if !errors.As(err, &refusal) {
+	refusal, ok := errors.AsType[*toolbelt.RootIntegrityError](err)
+	if !ok {
 		// Classified by the sentinel but not carrying the concrete type
 		// (a future wrapper): report the whole error rather than nothing.
 		slog.Error("tools engine disabled: a managed root failed the integrity check", "error", err)

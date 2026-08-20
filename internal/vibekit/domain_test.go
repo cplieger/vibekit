@@ -123,12 +123,13 @@ func TestRPCError_Error_returns_message_verbatim(t *testing.T) {
 }
 
 func TestRPCError_implements_error_interface(t *testing.T) {
-	// Round-trip through errors.As — the exact pattern bridge.Respond uses.
+	// Round-trip through errors.AsType — the exact pattern bridge.Respond uses
+	// (bridge_rpc.go's `errors.AsType[*vibekit.RPCError](err)`).
 	var err error = &RPCError{Code: -32601, Message: "method not found"}
 
-	var re *RPCError
-	if !errors.As(err, &re) {
-		t.Fatalf("errors.As failed to unwrap RPCError from error interface")
+	re, ok := errors.AsType[*RPCError](err)
+	if !ok {
+		t.Fatalf("errors.AsType failed to unwrap RPCError from error interface")
 	}
 	if re.Code != -32601 {
 		t.Errorf("unwrapped Code = %d, want -32601", re.Code)

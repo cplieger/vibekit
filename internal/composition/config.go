@@ -145,11 +145,7 @@ const defaultCatalogOverlay = "/opt/vibekit/catalog-overlays.json"
 // resolve is an operator mistake and warns loudly instead of silently
 // running overlay-less.
 func overlayFiles(explicit string) []string {
-	path := explicit
-	if path == "" {
-		path = defaultCatalogOverlay
-	}
-	path = filepath.Clean(path)
+	path := filepath.Clean(cmp.Or(explicit, defaultCatalogOverlay))
 	if _, err := os.Stat(path); err != nil {
 		if explicit != "" {
 			slog.Warn("config: VIBEKIT_TOOL_CATALOG_OVERLAY does not resolve; running without catalog overlays",
