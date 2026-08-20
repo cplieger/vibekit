@@ -82,11 +82,10 @@ func TestNew_DefaultKASPathIsUnderKiroHome(t *testing.T) {
 // RECORD (the store holds ordered KeyPairs; KAS's schema is a map).
 func TestWriteKASConfig_StdioShape(t *testing.T) {
 	s, kas := newIsolatedStore(t)
-	srv, err := NewServer(TransportStdio, "gh",
-		WithCommand("npx", "-y", "gh-mcp"),
-		WithEnv([]KeyPair{{Name: "TOKEN", Value: "t1"}, {Name: "MODE", Value: "ro"}}))
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
+	srv := &Server{
+		Transport: TransportStdio, Name: "gh", Enabled: true,
+		Command: "npx", Args: []string{"-y", "gh-mcp"},
+		Env: []KeyPair{{Name: "TOKEN", Value: "t1"}, {Name: "MODE", Value: "ro"}},
 	}
 	if _, err := s.Create(t.Context(), srv); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -121,11 +120,9 @@ func TestWriteKASConfig_StdioShape(t *testing.T) {
 // the UI, validated, persisted, and then silently discarded.
 func TestWriteKASConfig_RemoteCarriesOAuth(t *testing.T) {
 	s, kas := newIsolatedStore(t)
-	srv, err := NewServer(TransportHTTP, "slack",
-		WithURL("https://slack.example/mcp"),
-		WithOAuthClientID("cid-123"))
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
+	srv := &Server{
+		Transport: TransportHTTP, Name: "slack", Enabled: true,
+		URL: "https://slack.example/mcp", OAuthClientID: "cid-123",
 	}
 	srv.OAuthClientSecret = "shh"
 	if _, err := s.Create(t.Context(), srv); err != nil {
@@ -153,9 +150,9 @@ func TestWriteKASConfig_RemoteCarriesOAuth(t *testing.T) {
 func TestWriteKASConfig_NoTypeHint(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	for _, tr := range []Transport{TransportHTTP, TransportSSE} {
-		srv, err := NewServer(tr, "srv-"+string(tr), WithURL("https://x.example/mcp"))
-		if err != nil {
-			t.Fatalf("NewServer(%s): %v", tr, err)
+		srv := &Server{
+			Transport: tr, Name: "srv-" + string(tr), Enabled: true,
+			URL: "https://x.example/mcp",
 		}
 		if _, err := s.Create(t.Context(), srv); err != nil {
 			t.Fatalf("Create(%s): %v", tr, err)
@@ -181,10 +178,7 @@ func TestWriteKASConfig_NoTypeHint(t *testing.T) {
 // from the UI instead of reading "disabled".
 func TestWriteKASConfig_DisabledServerStaysWithFlag(t *testing.T) {
 	s, kas := newIsolatedStore(t)
-	srv, err := NewServer(TransportStdio, "off-server", WithCommand("npx"))
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	srv := &Server{Transport: TransportStdio, Name: "off-server", Enabled: true, Command: "npx"}
 	created, err := s.Create(t.Context(), srv)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
