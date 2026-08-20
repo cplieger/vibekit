@@ -136,9 +136,21 @@ func NewServer(transport Transport, name string, opts ...ServerOption) (*Server,
 }
 
 // ServerOption configures a Server during construction via NewServer.
+//
+// NewServer and these four options have no production caller today, and that is
+// worth stating rather than leaving to be rediscovered: production builds a Server
+// by DECODING mcp.json and validates it on the store's write path (store_crud.go
+// calls Validate on every record it takes), so the construct-then-validate
+// constructor is reached only by this package's own tests. It is kept because it
+// is the misuse-resistant shape — validation at construction rather than deferred
+// — and a future caller that builds a server from parts should use it instead of
+// assembling a literal.
 type ServerOption func(*Server)
 
 // WithCommand sets the command for stdio transport servers.
+//
+// Reached only by this package's own tests today; see ServerOption for why the
+// constructor is kept.
 func WithCommand(cmd string, args ...string) ServerOption {
 	return func(s *Server) {
 		s.Command = cmd
@@ -147,11 +159,17 @@ func WithCommand(cmd string, args ...string) ServerOption {
 }
 
 // WithURL sets the URL for HTTP transport servers.
+//
+// Reached only by this package's own tests today; see ServerOption for why the
+// constructor is kept.
 func WithURL(url string) ServerOption {
 	return func(s *Server) { s.URL = url }
 }
 
 // WithOAuthClientID sets the OAuth client ID for HTTP transport servers.
+//
+// Reached only by this package's own tests today; see ServerOption for why the
+// constructor is kept.
 func WithOAuthClientID(id string) ServerOption {
 	return func(s *Server) { s.OAuthClientID = id }
 }

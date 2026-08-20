@@ -116,13 +116,3 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, ms
 // Do not add a second gate. Two gates must not both be on: KAS applies the
 // accepted actions and restores the rejected ones from its own snapshots, and a
 // vibekit-side hold would make its restore operate on content KAS never wrote.
-
-// currentMessageCount returns the number of persisted messages for
-// chatID, or 0 if the chat isn't found. Used as the restore watermark
-// on every snapshot.
-func (in *inbound) currentMessageCount(ctx context.Context, chatID vibekit.ChatID) int {
-	if c, ok := in.chats.Get(ctx, chatID); ok {
-		return len(c.Messages)
-	}
-	return 0
-}

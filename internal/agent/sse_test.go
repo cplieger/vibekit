@@ -46,7 +46,7 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 	for range replayBufSize + 100 {
 		h.bus.emit(vibekit.ServerEvent{Type: "test"})
 	}
-	floor, head := h.replayBounds()
+	floor, head := h.bus.fanout.Bounds()
 	if head-floor+1 != uint64(replayBufSize) {
 		t.Errorf("window = %d, want cap %d", head-floor+1, replayBufSize)
 	}
@@ -109,7 +109,7 @@ func TestHandleSSE_EmitsConnectedHandshake(t *testing.T) {
 
 func TestReplayBounds_EmptyBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
-	floor, head := h.replayBounds()
+	floor, head := h.bus.fanout.Bounds()
 	if floor != 0 {
 		t.Errorf("empty floor = %d, want 0", floor)
 	}
@@ -124,7 +124,7 @@ func TestReplayBounds_FollowsBufferWindow(t *testing.T) {
 	for range replayBufSize + 5 {
 		h.bus.emit(vibekit.ServerEvent{Type: "test"})
 	}
-	floor, head := h.replayBounds()
+	floor, head := h.bus.fanout.Bounds()
 	if floor <= 1 {
 		t.Errorf("floor = %d, want > 1 after overflow", floor)
 	}

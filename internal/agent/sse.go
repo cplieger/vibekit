@@ -173,13 +173,6 @@ func (rt *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chat
 	return nil
 }
 
-// replayBounds returns (floor, head) of the current replay buffer, both
-// inclusive. Floor is the oldest event ID still replayable; head is the
-// newest. Clients with last-seen-id < floor know they missed events.
-func (rt *Runtime) replayBounds() (floor, head uint64) {
-	return rt.bus.fanout.Bounds()
-}
-
 // replayPendingPermissions sends the unresolved permission_needed events to
 // a newly connected SSE client, so permission dialogs survive reconnects
 // even when the ring buffer has wrapped.

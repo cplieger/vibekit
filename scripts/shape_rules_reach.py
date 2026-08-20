@@ -29,6 +29,29 @@ ROOT = pathlib.Path(
     os.environ.get("SHAPE_AUDIT_ROOT", pathlib.Path(__file__).resolve().parent.parent)
 )
 
+# A doc comment that STATES the symbol is a test seam. Same discipline as the
+# wide-interface rule: the author answers in the comment, and the answer is what
+# the rule accepts. It discriminates — the two genuinely dead functions this rule
+# found (checkpoint.countLineDelta, Runtime.replayBounds) described an algorithm
+# and a feature, neither claiming a test purpose, while every seam it flags says
+# so outright ("the only caller is this package's own tests", "exists for the
+# store's own tests, which need a synchronous pass").
+TEST_SEAM_DOC = re.compile(
+    # Any statement that the symbol's only reach is a test. Kept broad on purpose:
+    # the author is answering in prose, and a rule that accepts only one phrasing
+    # forces the comment to contort to match the checker.
+    r"only (caller|callers|reached|used|consumer)[^.]{0,60}tests?\b"
+    r"|reached only by[^.]{0,60}tests?\b"
+    r"|for (this package's own |the store's own )?tests?\b"
+    r"|ForTest\b"
+    r"|tests? (that|which) need",
+    re.IGNORECASE,
+)
+
+# A package whose whole purpose is to be imported by tests. Its exported surface
+# having no production caller is the design.
+TEST_SUPPORT = re.compile(r"(^|/)(testsupport|\w*test)$")
+
 # Names that are called by something other than Go source in this repo: the
 # runtime, the test framework, or a generated file.
 ENTRY = re.compile(r"^(main|init|Test|Benchmark|Fuzz|Example)")
@@ -228,12 +251,27 @@ def _reference_counts():
                 continue
             if re.match(r"^func (\(\w+ \*?\w+\) )?\w+\(", ln):
                 continue
-            keep.append(ln)
+            # A doc comment NAMES its symbol, by the convention revive enforces, so
+            # counting comment text made every documented symbol look referenced.
+            # search.WithTimeout is exported, called only by in-package tests, and
+            # takes an unexported interface so no outside package can call it at
+            # all — and it went unreported because its own doc comment mentions it.
+            keep.append(re.sub(r"//.*$", "", ln))
         body = "\n".join(keep)
         counter = test if p.name.endswith("_test.go") else prod
         for ident in re.findall(r"\b([A-Za-z_]\w*)\b", body):
             counter[ident] += 1
     return prod, test
+
+
+def _doc_comment(path, decl_line):
+    """The contiguous // block immediately above decl_line (1-based)."""
+    lines = path.read_text(errors="replace").split("\n")
+    out, i = [], decl_line - 2
+    while i >= 0 and lines[i].lstrip().startswith("//"):
+        out.append(lines[i])
+        i -= 1
+    return "\n".join(reversed(out))
 
 
 def rule_test_only_production(report):
@@ -243,10 +281,17 @@ def rule_test_only_production(report):
     and its production caller was removed — both are findings. `unused` cannot
     see this class because the fleet config counts test usage as usage.
     """
-    iface = _interface_member_names()
+    iface = _interface_member_names() | dependency_interface_members()
     prod, test = _reference_counts()
     for p, line, _kind, name in _declarations():
         if ENTRY.match(name) or name in iface or name in STDLIB_CONTRACT:
+            continue
+        # A *test / testsupport package exists to be called BY tests, and by tests
+        # in other packages, so "no production caller" is its design rather than a
+        # defect. storetest.Suite is the contract suite every engine runs.
+        if TEST_SUPPORT.search(str(p.parent)):
+            continue
+        if TEST_SEAM_DOC.search(_doc_comment(p, line)):
             continue
         if prod[name] == 0 and test[name] > 0:
             rel = p.relative_to(ROOT)
@@ -421,9 +466,81 @@ def rule_stutter(report):
             )
 
 
+def rule_deep_forward(report):
+    """A method whose body forwards through TWO OR MORE hops of the receiver.
+
+    `return rt.bus.fanout.Bounds()` is the shape: a method that exists so a caller
+    can avoid writing one field access. The shallow forward sweep (a script over
+    the AST looking for `recv.field.method()`) does not match it, which is how
+    Runtime.replayBounds survived — a one-line forward to the shared webhttp/sse
+    hub, kept alive by tests after the library started handing production the same
+    pair through its OnConnect callback.
+
+    Reaching deeper is also a Law-of-Demeter signal in its own right: the method
+    names a path through two collaborators, so it knows the shape of a neighbour's
+    neighbour.
+    """
+    iface = _interface_member_names() | dependency_interface_members()
+    owners = _method_names_by_type()
+    # A struct with NO methods is a field GROUP, not an object. Reaching through
+    # one is a single logical hop: vibekit's `bridges` (factory, mgr,
+    # assistantBufs) and `bus` (fanout, pendingPerms, chatStatus) exist only to
+    # keep related collaborators together, and both are shared by two types that
+    # each reach past them. There is no encapsulation to violate, so
+    # `rt.bridge.mgr.get(id)` is not the smell `rt.bus.fanout.Bounds()` was.
+    with_methods = {typ for typs in owners.values() for typ in typs}
+    groups = set()
+    for q in _go_files(include_tests=False):
+        for line in q.read_text(errors="replace").split("\n"):
+            mm = re.match(r"^type (\w+) struct \{", line.strip())
+            if mm and mm.group(1) not in with_methods:
+                groups.add(mm.group(1))
+    field_types = {}
+    for q in _go_files(include_tests=False):
+        for line in q.read_text(errors="replace").split("\n"):
+            fm = re.match(r"^\t(\w+) +\*?(\w+)$", line)
+            if fm:
+                field_types.setdefault(fm.group(1), set()).add(fm.group(2))
+    for p in _go_files(include_tests=False):
+        lines = p.read_text(errors="replace").split("\n")
+        for i, line in enumerate(lines):
+            m = re.match(r"^func \((\w+) \*?(\w+)\) (\w+)\(", line)
+            if not m:
+                continue
+            recv, typ, name = m.groups()
+            if name in iface or name in STDLIB_CONTRACT:
+                continue
+            code = re.sub(r"//.*$", "", line).rstrip()
+            if code.endswith("{"):
+                body, j = [], i + 1
+                while j < len(lines) and lines[j] != "}":
+                    body.append(lines[j])
+                    j += 1
+                blob = "\n".join(body)
+            else:
+                lb = code.rfind("{")
+                blob = code[lb + 1 :].rsplit("}", 1)[0] if lb != -1 else ""
+            real = [
+                b.strip()
+                for b in blob.split("\n")
+                if b.strip() and not b.strip().startswith("//")
+            ]
+            if len(real) != 1:
+                continue
+            hop = re.match(r"^(?:return )?" + recv + r"\.(\w+)\.\w+\.\w+\(", real[0])
+            if hop:
+                if field_types.get(hop.group(1), set()) & groups:
+                    continue  # the first hop is a field group, not an object
+                report(
+                    "deep-forward",
+                    f"{p.relative_to(ROOT)}:{i + 1} {typ}.{name} forwards two hops deep: {real[0]}",
+                )
+
+
 REACH_RULES = [
     rule_test_only_production,
     rule_unreferenced_interface_method,
     rule_method_ignores_receiver,
     rule_stutter,
+    rule_deep_forward,
 ]

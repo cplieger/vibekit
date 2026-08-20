@@ -1,7 +1,7 @@
 package agent
 
 // Pure-function tests extracted from bridge_fs.go. These exercise the
-// slicing, truncation, message-count, and tool-call-id helpers that
+// slicing, truncation, and tool-call-id helpers that
 // bridge_fs uses on every agent fs/* round trip — and that the batch-15
 // review flagged as undertested.
 
@@ -10,34 +10,16 @@ import (
 	"math"
 	"strings"
 	"testing"
-
-	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestTruncateForStaging_Table is GONE with truncateForStaging. It capped the
 // old/new text a staged write carried in its SSE payload, and there is no staged
 // write: KAS holds the content and vibekit's fs handler writes through.
 
-func TestCurrentMessageCount(t *testing.T) {
-	t.Parallel()
-	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Messages = []vibekit.Message{
-			{Role: vibekit.RoleUser, Content: "a"},
-			{Role: vibekit.RoleAssistant, Content: "b"},
-			{Role: vibekit.RoleUser, Content: "c"},
-		}
-		return true
-	})
-
-	if got := h.inbound.currentMessageCount(t.Context(), "c1"); got != 3 {
-		t.Errorf("currentMessageCount(existing) = %d, want 3", got)
-	}
-	if got := h.inbound.currentMessageCount(t.Context(), "no-such-chat"); got != 0 {
-		t.Errorf("currentMessageCount(missing) = %d, want 0", got)
-	}
-}
+// TestCurrentMessageCount is GONE with currentMessageCount. It counted a chat's
+// persisted messages as the "restore watermark on every snapshot", and snapshots
+// are KAS's now — the same deletion that orphaned internal/checkpoint. Nothing in
+// production asked the question, so there is no behaviour left to pin.
 
 // TestSliceByLines_Table consolidates the pure-function edge cases for
 // sliceByLines into a single table-driven test.
