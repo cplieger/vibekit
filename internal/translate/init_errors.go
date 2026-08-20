@@ -6,24 +6,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
-
-// maxNotifyTextBytes bounds one backend-supplied string on its way into banner
-// copy. Every value these four handlers interpolate is chosen upstream: an agent
-// name and a config path from a local file KAS read, and two free-form provider
-// messages. None has a length bound on the wire, and all four land in a banner
-// and a log line, so they get the same treatment as an RPC error's text.
-const maxNotifyTextBytes = 512
-
-// notifyText prepares one upstream string for banner copy: runesafe's
-// single-line preset (C0/C1 controls, DEL, Bidi overrides and the paragraph
-// separators become spaces, so a mangled message cannot forge a log record or
-// reorder a sentence in a viewer) capped on a rune boundary.
-func notifyText(s string) string {
-	return runesafe.SanitizeSingleLineBounded(s, maxNotifyTextBytes)
-}
 
 // HandleAgentNotFound handles the _kiro/customAgent/not_found notification:
 // the requested agent (a mode id on v3) doesn't exist. Persists the
@@ -53,7 +37,7 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID vibekit.Cha
 	}
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeAgentNotFound,
-		Message: "\"" + notifyText(p.Requested) + "\" not found, using \"" + notifyText(p.Fallback) + "\"",
+		Message: "\"" + displayText(p.Requested) + "\" not found, using \"" + displayText(p.Fallback) + "\"",
 	}))
 }
 
@@ -69,7 +53,7 @@ func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID vibekit.
 	}
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeAgentConfigError,
-		Message: notifyText(t.relPath(p.Path)) + ": " + notifyText(p.Error),
+		Message: displayText(t.relPath(p.Path)) + ": " + displayText(p.Error),
 	}))
 }
 
@@ -85,7 +69,7 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID vibekit.ChatID,
 	}
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeRateLimit,
-		Message: notifyText(p.Message),
+		Message: displayText(p.Message),
 	}))
 }
 
@@ -106,6 +90,6 @@ func (t *Translator) HandleSystemNotify(ctx context.Context, chatID vibekit.Chat
 	}
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeRateLimit,
-		Message: notifyText(p.Message),
+		Message: displayText(p.Message),
 	}))
 }
