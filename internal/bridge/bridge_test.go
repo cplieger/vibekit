@@ -612,7 +612,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	respLine := append(respMsg, '\n')
 	notifLine := append(notifMsg, '\n')
 
-	b.ResetTimer()
+	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
 
@@ -1135,12 +1135,28 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 }
 
 func BenchmarkBridgeRespond(b *testing.B) {
-	// Create a Bridge with a pipe-based writer (no real process).
-	_, pw, err := os.Pipe()
+	// A pipe-based writer (no real process), and its read end MUST be drained.
+	// This used to discard it (`_, pw, err := os.Pipe()`), so writeFrame filled
+	// the 64 KiB pipe buffer and blocked forever in os.(*File).Write —
+	// measured: the benchmark completes at -benchtime=10x and HANGS at 50x and
+	// above, so `go test -bench .` on this package never terminated. Nothing
+	// caught it because `go test` without -bench never runs a benchmark.
+	// Draining is also the faithful fixture: a real bridge's stdin is drained by
+	// kiro-cli.
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		b.Fatalf("os.Pipe: %v", err)
 	}
-	defer pw.Close()
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+	b.Cleanup(func() {
+		_ = pw.Close() // EOF for the drain
+		<-drained      // join it, so nothing outlives the benchmark
+		_ = pr.Close()
+	})
 
 	br := &Bridge{
 		stdin:   pw,
@@ -1158,7 +1174,6 @@ func BenchmarkBridgeRespond(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		if err := br.Respond(ctx, 42, result, nil); err != nil {
 			b.Fatalf("Respond: %v", err)
