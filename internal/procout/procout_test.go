@@ -232,3 +232,75 @@ func FuzzBufferNeverExceedsItsCap(f *testing.F) {
 		}
 	})
 }
+
+// TestBuffer_EmptyWriteAtAFullBufferIsNotTruncation is the one behaviour where
+// this type deliberately differs from the ShellCappedBuffer it absorbed.
+//
+// That type set its Truncated flag on ANY write once the cap was reached, a
+// zero-length one included, and had a table case asserting exactly that. A
+// zero-length write dropped no byte, so reporting truncation for it would make
+// the shell interception append "[output truncated at 1 MiB]" to output that lost
+// nothing. Unreachable through os/exec either way — io.Copy skips a zero-length
+// read — which is why the divergence is pinned here rather than left to be
+// rediscovered as a difference.
+func TestBuffer_EmptyWriteAtAFullBufferIsNotTruncation(t *testing.T) {
+	b := NewBuffer(3)
+	if _, err := b.Write([]byte("abc")); err != nil {
+		t.Fatalf("filling write: %v", err)
+	}
+	if b.Truncated() {
+		t.Fatalf("Truncated() = true after an exactly-at-cap write, want false")
+	}
+	if n, err := b.Write(nil); n != 0 || err != nil {
+		t.Fatalf("empty Write = (%d, %v), want (0, nil)", n, err)
+	}
+	if b.Truncated() {
+		t.Errorf("Truncated() = true after a zero-length write at a full buffer, " +
+			"want false: nothing was dropped")
+	}
+}
+
+// FuzzBufferAccumulatesAcrossWrites is the property the two hand-rolled capped
+// writers this type replaced fuzzed and FuzzBufferNeverExceedsItsCap does not:
+// the cap holds across a SEQUENCE of writes, not only within one.
+//
+// It is strictly wider than either predecessor. Both of those pinned the limit at
+// a hardcoded 1 MiB — which meant three seed inputs of a megabyte each in the
+// committed corpus for a property that has nothing to do with the value — and one
+// of them chunked its input at a fixed 137 bytes and asserted no Truncated
+// invariant at all. Here the limit and both chunk boundaries are fuzz inputs.
+func FuzzBufferAccumulatesAcrossWrites(f *testing.F) {
+	f.Add(5, []byte("abc"), []byte("defgh"))
+	f.Add(0, []byte("a"), []byte("b"))
+	f.Add(-1, []byte{}, []byte("x"))
+	f.Add(3, []byte("abc"), []byte{})
+	f.Add(100, []byte("hello"), []byte(" world"))
+
+	f.Fuzz(func(t *testing.T, limit int, first, second []byte) {
+		b := NewBuffer(limit)
+		for i, chunk := range [][]byte{first, second} {
+			n, err := b.Write(chunk)
+			if err != nil {
+				t.Fatalf("Write #%d err = %v, want nil (Buffer never errors)", i, err)
+			}
+			if n != len(chunk) {
+				t.Fatalf("Write #%d returned %d, want len=%d", i, n, len(chunk))
+			}
+			if b.Len() > max(limit, 0) {
+				t.Fatalf("after Write #%d the buffer holds %d bytes, cap was %d", i, b.Len(), limit)
+			}
+		}
+
+		offered := len(first) + len(second)
+		if want := b.Len() < offered; b.Truncated() != want {
+			t.Fatalf("Truncated() = %v, want %v (kept %d of %d offered)",
+				b.Truncated(), want, b.Len(), offered)
+		}
+		// The kept bytes are the PREFIX of the concatenation, so a straddling
+		// write cannot lose the front of the stream or reorder it.
+		whole := string(first) + string(second)
+		if got := string(b.Bytes()); got != whole[:b.Len()] {
+			t.Fatalf("kept %q, want the prefix %q", got, whole[:b.Len()])
+		}
+	})
+}

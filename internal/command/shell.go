@@ -1,7 +1,20 @@
 package command
 
+// The `!cmd` shell interception.
+//
+// Output capture is procout's, not this package's. `ShellCappedBuffer` used to
+// live here and was the THIRD bounded-capture writer in the tree — internal/auth
+// and internal/server already share procout.Buffer, whose whole reason for
+// existing is that the choice should not be a per-site coin flip. Its Write is
+// also the one that is provably right about os/exec: a capping writer reporting
+// the bytes it KEPT makes io.Copy return io.ErrShortWrite, which Cmd.Wait then
+// hands back as the command's error on a child that exited 0. The version here
+// happened to get that right and had no test for it; procout's suite does,
+// alongside an os/exec merged-stream test and a fuzz target parameterised over
+// the cap that the two hand-rolled ones (this package's and the duplicate in
+// internal/agent) each seeded with a 1 MiB literal.
+
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +25,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -23,29 +37,6 @@ const ShellOutputCap = 1 * 1024 * 1024
 // interceptions. Exposed as a package-level constant so tests and
 // future settings overrides can reference the default.
 const ShellTimeout = 30 * time.Second
-
-// ShellCappedBuffer writes to an underlying bytes.Buffer, rejecting
-// bytes past the cap.
-type ShellCappedBuffer struct {
-	Buf       bytes.Buffer
-	Truncated bool
-}
-
-func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
-	remaining := ShellOutputCap - b.Buf.Len()
-	if remaining <= 0 {
-		b.Truncated = true
-		return len(p), nil
-	}
-	if len(p) <= remaining {
-		return b.Buf.Write(p)
-	}
-	b.Truncated = true
-	if _, err := b.Buf.Write(p[:remaining]); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
 
 // appendShellUserMessage persists the user's "!cmd" message and, on the
 // chat's first message, derives an initial chat name from the command text.
@@ -121,13 +112,16 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 
 	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd)
 	shellProc.Dir = roles.workspace.Dir
-	var capped ShellCappedBuffer
-	shellProc.Stdout = &capped
-	shellProc.Stderr = &capped
+	// One *procout.Buffer on both streams is the documented way to merge them:
+	// os/exec compares the two writers and guarantees at most one goroutine
+	// calls Write at a time, so the two copiers do not race.
+	capped := procout.NewBuffer(ShellOutputCap)
+	shellProc.Stdout = capped
+	shellProc.Stderr = capped
 	runErr := shellProc.Run()
 
-	raw := capped.Buf.String()
-	if capped.Truncated {
+	raw := capped.String()
+	if capped.Truncated() {
 		raw += "\n[output truncated at 1 MiB]"
 	}
 	output := sanitize.Output(raw)
@@ -138,7 +132,7 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		"elapsed_ms", time.Since(start).Milliseconds(),
 		"exit_error", runErr != nil,
 		"timed_out", timedOut,
-		"truncated", capped.Truncated)
+		"truncated", capped.Truncated())
 
 	content := renderShellResult(output, runErr, timedOut)
 	msgID := ids.NewMessageID()

@@ -620,37 +620,6 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	}
 }
 
-func TestShellCappedBuffer(t *testing.T) {
-	var b command.ShellCappedBuffer
-	// First write lands fully.
-	if n, err := b.Write([]byte("hello")); n != 5 || err != nil {
-		t.Fatalf("first write n=%d err=%v", n, err)
-	}
-	if b.Truncated {
-		t.Error("truncated=true after small write")
-	}
-	// Crossing the cap sets the flag; returned n matches input for
-	// io.Writer contract even though the buffer clamped.
-	big := make([]byte, command.ShellOutputCap+10)
-	if n, err := b.Write(big); n != len(big) || err != nil {
-		t.Fatalf("big write n=%d err=%v", n, err)
-	}
-	if !b.Truncated {
-		t.Error("truncated=false after exceeding cap")
-	}
-	if b.Buf.Len() > command.ShellOutputCap {
-		t.Errorf("buf.Len() = %d, want <= %d", b.Buf.Len(), command.ShellOutputCap)
-	}
-	// Subsequent writes past the cap are silently dropped.
-	before := b.Buf.Len()
-	if _, err := b.Write([]byte("more")); err != nil {
-		t.Fatal(err)
-	}
-	if b.Buf.Len() != before {
-		t.Errorf("buf grew past cap: %d -> %d", before, b.Buf.Len())
-	}
-}
-
 // --- cmdPrompt busy ---
 
 func TestPrompt_BusyReturns409(t *testing.T) {
