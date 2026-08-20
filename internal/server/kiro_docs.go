@@ -154,8 +154,7 @@ type docsCache struct {
 }
 
 func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
+	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 	docs := s.collectKiroDocs(r.Context())

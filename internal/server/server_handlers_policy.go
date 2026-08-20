@@ -36,6 +36,12 @@ import (
 // user/workspace files directly so the panel + editor still work offline
 // (Available=false signals the baseline scopes are missing).
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
+	// Gated here, not on the ServeMux pattern: a method-pattern mismatch falls
+	// through to the SPA mount and answers 200 with index.html. See
+	// server.go's ListenAndServe.
+	if !httpreply.RequireMethod(w, r, http.MethodGet) {
+		return
+	}
 	scope := r.URL.Query().Get("scope")
 	view := vibekit.PolicyView{
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},

@@ -31,6 +31,12 @@ type acctUsageCache struct {
 // footer. Cached for accountUsageTTL; on a fetch failure it serves the
 // last-known snapshot (marked stale) if any, else 503.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
+	// Gated here, not on the ServeMux pattern: a method-pattern mismatch falls
+	// through to the SPA mount and answers 200 with index.html. See
+	// server.go's ListenAndServe.
+	if !httpreply.RequireMethod(w, r, http.MethodGet) {
+		return
+	}
 	if s.accountUsage == nil {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
 		return

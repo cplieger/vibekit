@@ -28,8 +28,7 @@ func (s *Service) handleVAPIDKey(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
+	if !httpreply.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
@@ -61,8 +60,7 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
+	if !httpreply.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)

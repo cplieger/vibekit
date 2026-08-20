@@ -77,6 +77,8 @@ import (
 	// handlers below are reached only through loopbackOnly and that this process
 	// never serves DefaultServeMux, where the package's init registers.
 	"net/http/pprof"
+
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // pprofPath is the subtree pattern. The trailing slash is load-bearing twice
@@ -99,6 +101,14 @@ const pprofSurface = "the runtime profile endpoint"
 // socket-peer AND Host check rather than a weaker one.
 func pprofHandler() http.Handler {
 	return loopbackOnly(pprofSurface, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// pprof.Index answers any method, so the gate is vibekit's. Inside the
+		// loopback wrapper, so a remote caller keeps the 403 and learns nothing
+		// about the method set. NOT on the ServeMux pattern: a `GET `-prefixed
+		// pattern's mismatch falls through to the SPA mount and answers 200 with
+		// index.html — see server.go's ListenAndServe.
+		if !httpreply.RequireMethod(w, r, http.MethodGet) {
+			return
+		}
 		// A profile is a snapshot of this instant and there is no version of it
 		// that a cache should ever serve twice.
 		w.Header().Set("Cache-Control", "no-store")

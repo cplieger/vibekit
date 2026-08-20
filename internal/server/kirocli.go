@@ -69,6 +69,14 @@ func kiroReasonText(why pinstall.Reason) string {
 // none is: the same verdict /api/health will serve from the next probe, so a
 // caller gets its answer without polling.
 func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
+	// The method gate sits INSIDE the loopback wrapper deliberately: a remote
+	// caller gets the 403 and learns nothing about which methods the endpoint
+	// serves. It is here rather than on the ServeMux pattern because a
+	// `POST `-prefixed pattern's mismatch falls through to the SPA mount — see
+	// ListenAndServe.
+	if !httpreply.RequireMethod(w, r, http.MethodPost) {
+		return
+	}
 	// A rescan probes the candidate binary and reasserts the required settings,
 	// so it is not free; it is also not cacheable under any circumstances.
 	w.Header().Set("Cache-Control", "no-store")

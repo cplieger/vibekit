@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/exec"
 
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -31,7 +32,14 @@ var statusBinaries = []string{
 //
 // Bare PATH presence probes for the well-known binaries feature panels
 // gate on (e.g. the MCP modal's "Setting up Node..." spinner).
-func handleToolStatus(w http.ResponseWriter, _ *http.Request) {
+func handleToolStatus(w http.ResponseWriter, r *http.Request) {
+	// Gated here rather than on the ServeMux pattern: a `GET `-prefixed pattern
+	// stops being an exact match for a non-GET, which hands PATCH/DELETE
+	// /api/tools/status to the /api/tools/ subtree mount — toolbelt's
+	// /api/tools/{name} handlers, with name="status". See ListenAndServe.
+	if !httpreply.RequireMethod(w, r, http.MethodGet) {
+		return
+	}
 	out := make(map[string]bool, len(statusBinaries))
 	for _, b := range statusBinaries {
 		_, err := exec.LookPath(b)

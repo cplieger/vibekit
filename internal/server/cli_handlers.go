@@ -19,8 +19,7 @@ import (
 // 2.14's session-less _kiro/config/template over the utility bridge.
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
+	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 	payload := map[string]string{"vibekit": version.Build}

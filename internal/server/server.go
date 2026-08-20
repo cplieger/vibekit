@@ -229,6 +229,31 @@ func New(opts ...Option) *Server {
 
 // ListenAndServe registers all routes and starts the HTTP server.
 // Blocks until SIGTERM/SIGINT, then shuts down gracefully.
+//
+// # Every route here is a plain path, and the method is gated in the handler
+//
+// ServeMux method patterns ("GET /api/x", Go 1.22) cannot answer 405 in this
+// app, and the reason is structural rather than a matter of taste. ServeMux only
+// synthesises its 405 + Allow when NO pattern matched the request at all
+// (net/http computes allowedMethods on the nil-node path); the "/" SPA mount
+// registered above matches every path and every method, so a method-mismatched
+// request lands there and is answered 200 with index.html.
+//
+// _Measured on go1.27.0_ over a mux carrying "GET /api/permissions",
+// "POST /api/kiro-cli/rescan" and a "/" catch-all: POST /api/permissions,
+// DELETE /api/permissions and GET /api/kiro-cli/rescan all reached the
+// catch-all with an empty Allow header, and only HEAD /api/permissions was
+// served (ServeMux's GET patterns match HEAD). Take the catch-all away and the
+// same three answer 405 with Allow: GET / Allow: POST. So the SPA fallback and a
+// method pattern's 405 are mutually exclusive, and the fallback is not optional
+// (History-API client routing needs it).
+//
+// That is why httpreply.RequireMethod / httpreply.MethodNotAllowed is the whole
+// of vibekit's 405 surface — which is what makes
+// httpreply.TestMethodNotAllowedSetsAllow's "the one place the header format is
+// decided" a provable statement instead of a lucky one. Do not put a method back
+// on a pattern here: it converts an RFC 9110 §15.5.6 405 into a 200 carrying
+// HTML, the same silent-success class canonicalAPIPath exists to refuse.
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
@@ -241,26 +266,33 @@ func (s *Server) ListenAndServe() error {
 	// The kiro-cli repair hook exists only when this server owns the install
 	// (see WithKiroRescan): with no pins in the environment there is nothing to
 	// rescan, so the route is absent rather than answering a misleading 503.
+	//
+	// Registered as a PLAIN PATH with the method gated in the handler, like
+	// every other route here. A `POST `-prefixed pattern is not equivalent: a
+	// method it does not match falls through to the "/" SPA mount, which
+	// answers 200 with index.html — see ListenAndServe's own doc comment.
 	if s.kiroRescan != nil {
-		mux.Handle("POST "+kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
+		mux.Handle(kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
 	}
 	// Runtime profiles, same loopback gate. Unconditional unlike the repair hook
 	// above: that route depends on this server owning the install, while a
 	// goroutine dump is a property of the process and is always answerable. See
 	// pprof.go for which profiles are mounted and which are deliberately not.
-	mux.Handle("GET "+pprofPath, pprofHandler())
+	mux.Handle(pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	// Tools REST surface: the toolbelt httpapi projection, mounted at
 	// the exact prefix and the subtree. /api/tools/status stays
 	// app-owned (vibekit's feature-gating PATH probes); its exact
-	// GET pattern wins over the subtree mount.
+	// pattern wins over the subtree mount for EVERY method, which is
+	// what keeps PATCH/DELETE /api/tools/status out of toolbelt's
+	// /api/tools/{name} handlers with name="status".
 	if s.tools != nil {
 		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
 		mux.Handle("/api/tools", toolsAPI)
 		mux.Handle("/api/tools/", toolsAPI)
 	}
-	mux.HandleFunc("GET /api/tools/status", handleToolStatus)
+	mux.HandleFunc("/api/tools/status", handleToolStatus)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)
@@ -275,12 +307,12 @@ func (s *Server) ListenAndServe() error {
 	if s.forges != nil {
 		s.forges.RegisterRoutes(mux)
 	}
-	mux.HandleFunc("GET /api/permissions", s.handlePolicyView)
+	mux.HandleFunc("/api/permissions", s.handlePolicyView)
 	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
 	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
 	mux.HandleFunc("/api/utility/explain-error", s.handleUtilityExplainError)
 	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
-	mux.HandleFunc("GET /api/account/usage", s.handleAccountUsage)
+	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
 
 	// Compute the CSP once from the embedded index.html so the inline
