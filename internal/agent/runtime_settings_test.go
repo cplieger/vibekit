@@ -7,7 +7,7 @@ import (
 )
 
 // setKiroSettings lays down a kiro-cli-style settings file under a
-// throwaway HOME so isHookStatusEnabled can be exercised deterministically.
+// throwaway HOME so IsHookStatusEnabled can be exercised deterministically.
 // Returns the parent HOME dir so callers can extend it if they need to.
 func setKiroSettings(t *testing.T, body string) string {
 	t.Helper()
@@ -36,7 +36,7 @@ func TestIsHookStatusEnabled_fileMissing(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	h, _, _ := newTestHub()
-	if !h.isHookStatusEnabled() {
+	if !h.hookStatus.IsHookStatusEnabled() {
 		t.Error("missing cli.json: want default true")
 	}
 }
@@ -68,7 +68,7 @@ func TestIsHookStatusEnabled_cases(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			setKiroSettings(t, tc.content)
 			h, _, _ := newTestHub()
-			if got := h.isHookStatusEnabled(); got != tc.want {
+			if got := h.hookStatus.IsHookStatusEnabled(); got != tc.want {
 				t.Errorf("content %q: got %v, want %v", tc.content, got, tc.want)
 			}
 		})

@@ -717,13 +717,14 @@ export function browserAttentionEnv(): AttentionEnv {
  *  precisely the one likely to be below the fold, so a wholesale clear on either
  *  gesture would blank a cue the reader never saw. */
 export function initAttention(): () => void {
+  const surfaces = createAttention(browserAttentionEnv());
   const controller = createAttentionController({
     candidates: cueCandidates,
     activeChatID: getActiveId,
     pageVisible,
     rowsInView: () => rowsInView($.sidebar, $.tabList),
     storage: browserCueSeenStorage(),
-    surfaces: createAttention(browserAttentionEnv()),
+    surfaces,
   });
 
   const stop: (() => void)[] = [subscribeTabCues(controller.refresh)];
@@ -781,6 +782,42 @@ export function initAttention(): () => void {
   drawer.observe($.sidebar, { attributes: true, attributeFilter: ["class"] });
   stop.push(() => {
     drawer.disconnect();
+  });
+
+  // Hand the page's own icon back before the page GOES AWAY, which is a different
+  // question from the page being hidden and needs a different event. A browser
+  // remembers ONE icon per URL and renders it for the bookmark, the history row
+  // and the new-tab tile, so a tab closed while a cue was lit leaves a status
+  // variant standing in for this app until the page is next loaded.
+  //
+  // `pagehide`, and deliberately NOT `freeze`. freeze fires for a background tab
+  // the browser is conserving resources on (Android after five minutes in the
+  // background; desktop for a collapsed tab group and, since Chrome 133, a
+  // CPU-heavy tab under Energy Saver), and that tab is STILL in the strip showing
+  // its icon — restoring there would blank the cue in exactly the case the cue
+  // exists for. pagehide fires on unload, tab close and bfcache entry, where no
+  // strip entry is left to render.
+  //
+  // Through apply() rather than env.setIcon(null), because the sinks are
+  // change-gated on the last applied value: writing behind that memo would leave
+  // it believing the variant is still up, and a page restored from the bfcache
+  // would then never repaint it. Which is what pageshow is for — a bfcache
+  // restore re-runs the fold, so the cue comes back for a page that did not
+  // actually go away. Best-effort on a real unload, where the icon write races
+  // the teardown, and a no-op when nothing was lit.
+  const onPageGone = (): void => {
+    surfaces.apply(NO_ATTENTION);
+  };
+  const onPageBack = (e: PageTransitionEvent): void => {
+    if (e.persisted) {
+      controller.refresh();
+    }
+  };
+  window.addEventListener("pagehide", onPageGone);
+  window.addEventListener("pageshow", onPageBack);
+  stop.push(() => {
+    window.removeEventListener("pagehide", onPageGone);
+    window.removeEventListener("pageshow", onPageBack);
   });
 
   controller.refresh();

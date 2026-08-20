@@ -151,8 +151,12 @@ func (sm *ShellManager) restart() {
 	slog.Info("shell: restarted")
 }
 
-// handleShellWS delegates to the terminal handler's WebSocket endpoint.
-func (sm *ShellManager) handleShellWS(w http.ResponseWriter, r *http.Request) {
+// handleWS serves /api/shell/ws, the terminal handler's WebSocket endpoint.
+//
+// Registered straight off the manager. The runtime used to carry a forward for
+// this and for handleRestart, which put it in the path of two routes whose work
+// is entirely the shell's.
+func (sm *ShellManager) handleWS(w http.ResponseWriter, r *http.Request) {
 	h, retire := sm.current()
 	if retire != nil {
 		retireHandler(context.Background(), retire, "spent")
@@ -160,15 +164,10 @@ func (sm *ShellManager) handleShellWS(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
-// handleShellWS is the Runtime method registered at /api/shell/ws.
-func (rt *Runtime) handleShellWS(w http.ResponseWriter, r *http.Request) {
-	rt.shellMgr.handleShellWS(w, r)
-}
-
-// handleShellRestart kills the PTY and installs a fresh one. POST because it
-// destroys running processes; the client confirms before calling it.
-func (rt *Runtime) handleShellRestart(w http.ResponseWriter, _ *http.Request) {
-	rt.shellMgr.restart()
+// handleRestart kills the PTY and installs a fresh one. POST because it destroys
+// running processes; the client confirms before calling it.
+func (sm *ShellManager) handleRestart(w http.ResponseWriter, _ *http.Request) {
+	sm.restart()
 	webhttp.Ok(w)
 }
 

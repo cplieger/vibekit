@@ -495,8 +495,8 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	// than a member of the global middleware chain.
 	mux.Handle("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE)))
 	mux.Handle("/api/command", rt.refuseWhenDraining(rt.dispatcher))
-	mux.HandleFunc("/api/shell/ws", rt.handleShellWS)
-	mux.HandleFunc("POST /api/shell/restart", rt.handleShellRestart)
+	mux.HandleFunc("/api/shell/ws", rt.shellMgr.handleWS)
+	mux.HandleFunc("POST /api/shell/restart", rt.shellMgr.handleRestart)
 	mux.HandleFunc("/api/file-changes", rt.handleFileChanges)
 	rt.config.registerKnowledgeRoutes(mux)
 	rt.config.registerHooksRoutes(mux)

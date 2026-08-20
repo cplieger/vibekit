@@ -16,9 +16,25 @@ import (
 // the dispatcher takes no collaborator at all now that idempotency is the
 // header middleware's.
 
+// bridgeRole adapts the bridge coordinator to command.BridgeAccess.
+//
+// The interface returns command.Bridge; the coordinator returns *sharedBridge.
+// Go has no covariant returns, so something must convert, and the conversion is
+// not free: a nil *sharedBridge assigned to a command.Bridge produces a NON-NIL
+// interface holding a nil pointer, so each method below checks before returning.
+// That is the same trap requirePopulated exists for, and it is why this cannot
+// just be `Bridges: rt.coord`.
+//
+// A named type rather than five methods on Runtime, which is where they were.
+// The runtime does not own bridges — it was a name in the path performing a type
+// conversion, which is the shape the rest of this pass removed everywhere else.
+// Now the adaptation is one declaration whose only job is the adaptation, and
+// Runtime advertises five fewer operations it does not own.
+type bridgeRole struct{ coord *BridgeCoordinator }
+
 // Bridge returns the active bridge for a chat, or nil.
-func (rt *Runtime) Bridge(chatID vibekit.ChatID) command.Bridge {
-	sb := rt.coord.Bridge(chatID)
+func (b bridgeRole) Bridge(chatID vibekit.ChatID) command.Bridge {
+	sb := b.coord.Bridge(chatID)
 	if sb == nil {
 		return nil
 	}
@@ -26,8 +42,8 @@ func (rt *Runtime) Bridge(chatID vibekit.ChatID) command.Bridge {
 }
 
 // OpenBridge ensures a bridge exists for the chat.
-func (rt *Runtime) OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (command.Bridge, error) {
-	sb, err := rt.coord.OpenBridge(ctx, chatID, model)
+func (b bridgeRole) OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (command.Bridge, error) {
+	sb, err := b.coord.OpenBridge(ctx, chatID, model)
 	if err != nil {
 		return nil, err
 	}
@@ -35,8 +51,17 @@ func (rt *Runtime) OpenBridge(ctx context.Context, chatID vibekit.ChatID, model 
 }
 
 // CloseBridge tears down the bridge for a chat.
-func (rt *Runtime) CloseBridge(chatID vibekit.ChatID) {
-	rt.coord.CloseBridge(chatID)
+func (b bridgeRole) CloseBridge(chatID vibekit.ChatID) { b.coord.CloseBridge(chatID) }
+
+// PrimeIfNeeded primes the chat's session with history if it needs it.
+func (b bridgeRole) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID) {
+	b.coord.PrimeIfNeeded(ctx, chatID)
+}
+
+// PrimeFromChat notes that a chat's first session should be primed with another
+// chat's transcript — the tangent's fork-refused fallback.
+func (b bridgeRole) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
+	b.coord.PrimeFromChat(chatID, sourceChatID)
 }
 
 // DeleteChatState tears down all in-memory state for a chat being permanently
@@ -59,17 +84,6 @@ func (rt *Runtime) DeleteChatState(ctx context.Context, chatID vibekit.ChatID) {
 func (rt *Runtime) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
 	rt.runs.CancelForChat(ctx, chatID)
 	rt.cleanupChatState(ctx, chatID, false)
-}
-
-// PrimeIfNeeded primes the chat's session with history if it needs it.
-func (rt *Runtime) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID) {
-	rt.coord.PrimeIfNeeded(ctx, chatID)
-}
-
-// PrimeFromChat notes that a chat's first session should be primed with another
-// chat's transcript — the tangent's fork-refused fallback.
-func (rt *Runtime) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
-	rt.coord.PrimeFromChat(chatID, sourceChatID)
 }
 
 // IsEmptyTurn checks if a prompt response is an empty turn.

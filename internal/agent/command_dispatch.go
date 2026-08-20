@@ -17,10 +17,11 @@ func (rt *Runtime) registerCommandHandlers() {
 	// and nothing else. Three are irreducibly hub-wide and say so by naming rt:
 	// Chats spans the chat store, the SSE plane and the run list; TurnOutcome is
 	// the seam between the bridge coordinator and the terminal registry (a turn
-	// ending must close its terminal attribution); Bridges is one collaborator's
-	// but needs the *sharedBridge <-> command.Bridge adaptation the runtime performs.
+	// ending must close its terminal attribution). Bridges is the coordinator's,
+	// reached through bridgeRole — the *sharedBridge <-> command.Bridge conversion
+	// has to happen somewhere, and it happens in a type that does only that.
 	command.RegisterDefaults(rt.dispatcher, &command.Roles{
-		Bridges: rt,
+		Bridges: bridgeRole{coord: rt.coord},
 		Chats:   rt.chatStore,
 		Bus:     rt.bus,
 		// Teardown is the runtime's own, and it is the LAST role that has to be:
