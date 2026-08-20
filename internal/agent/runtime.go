@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,9 +75,30 @@ type lifetime struct {
 	shutdownCtx    context.Context
 	done           chan struct{}
 	shutdownCancel context.CancelFunc
-	workDir        string
-	configDir      string
-	inflight       sync.WaitGroup
+	// workRoot is the kernel-confined handle on workDir, and it is what makes
+	// the fs handlers' containment an enforced property rather than a lexical
+	// claim. resolveInsideWorkDir answers "does this name lie inside the
+	// workspace" ONCE; every operation named through this root has each of its
+	// components re-resolved by the kernel at the moment it runs, so an
+	// ancestor directory swapped for a symlink after the check redirects
+	// nothing outside the tree. See confineInWorkDir.
+	//
+	// Opened once, in New. An os.Root holds a descriptor on the directory it
+	// was opened on, so it keeps referring to that directory even if the name
+	// is later renamed or shadowed — which is the property a boundary wants.
+	// It is deliberately NOT closed: a Close after an ABANDONED inflight wait
+	// (Shutdown's budget can expire) would turn a wedged handler's filesystem
+	// error into ErrClosed for no gain, and the one path that ends the lifetime
+	// this handle is scoped to is process exit, which reclaims the descriptor.
+	//
+	// nil when workDir could not be opened. The fs handlers then REFUSE rather
+	// than falling back to ambient os calls: a boundary with nothing behind it
+	// is worse than a withheld capability (vibekit.md invariant 6's shape — the
+	// server still runs, this one capability reports why it cannot).
+	workRoot  *os.Root
+	workDir   string
+	configDir string
+	inflight  sync.WaitGroup
 	// loops covers the background goroutines that exit on done: the two New
 	// starts, plus the MCP registry's debounced notifier, which SetOnChange
 	// starts once from the composition root.
@@ -332,6 +354,16 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		done:    make(chan struct{}),
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
+	// Best-effort, and fail-CLOSED at the handlers rather than at construction:
+	// a missing or unopenable workDir is a deployment fault the operator repairs
+	// from inside the container, and refusing to build the runtime would take the
+	// server that lets them do it (vibekit.md invariant 6).
+	if root, err := os.OpenRoot(workDir); err != nil {
+		slog.Error("workspace root: open failed; agent filesystem requests will be refused",
+			"work_dir", workDir, "error", err)
+	} else {
+		lc.workRoot = root
+	}
 
 	// The collaborators are locals first so the run surface can name the two it depends on
 	// (the bridge registry and the pending-decision tracker) rather than reaching

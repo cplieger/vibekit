@@ -42,10 +42,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
+	"path"
+	"syscall"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // File-type strings KAS's own NodeFileSystem returns, and therefore the only
@@ -128,14 +129,21 @@ func (in *inbound) handleKiroFSRequest(_ context.Context, chatID vibekit.ChatID,
 	return true
 }
 
-// kiroFSPath decodes and confines the request's path. The single place the
+// kiroFSPath decodes the request's path and returns the workspace root together
+// with the root-relative name that addresses it. The single place the
 // containment gain is realised, so all three verbs share it.
-func (in *inbound) kiroFSPath(msg *vibekit.RPCResponse) (abs string, err error) {
+//
+// It returns the confined PAIR rather than an absolute path, because an absolute
+// path is what the three verbs used to act on with ambient os calls — the
+// resolver's containment verdict and the operation had no handle in common, so a
+// directory renamed into a symlink after the verdict redirected the operation,
+// delete included. See lifetime.confineInWorkDir.
+func (in *inbound) kiroFSPath(msg *vibekit.RPCResponse) (root *os.Root, rel string, err error) {
 	var p kiroFSParams
 	if pErr := parseRequest(msg, &p); pErr != nil {
-		return "", fmt.Errorf("decode %s params: %w", msg.Method, pErr)
+		return nil, "", fmt.Errorf("decode %s params: %w", msg.Method, pErr)
 	}
-	return in.lifetime.resolveInsideWorkDir(p.Path)
+	return in.lifetime.confineInWorkDir(p.Path)
 }
 
 // respondKiroFSStat answers `_kiro/fs/stat` with `{type, size}`.
@@ -148,15 +156,15 @@ func (in *inbound) kiroFSPath(msg *vibekit.RPCResponse) (abs string, err error) 
 // file the user asked to keep out of the way. An honest stat is the safer answer;
 // the listing is where the discovery vector actually is.
 func (in *inbound) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	abs, err := in.kiroFSPath(msg)
+	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	// os.Stat follows symlinks, matching KAS's own fs.stat. Its symlink branch
+	// Root.Stat follows symlinks, matching KAS's own fs.stat. Its symlink branch
 	// is therefore unreachable there too; the vocabulary is kept whole because
 	// read_directory DOES reach it.
-	info, err := os.Stat(abs)
+	info, err := root.Stat(rel)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
@@ -179,12 +187,12 @@ func (in *inbound) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID,
 // KAS's NodeFileSystem (it swallows ENOENT and returns []). Diverging would make
 // a probe for an optional directory look like a failure.
 func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	abs, err := in.kiroFSPath(msg)
+	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	dirEntries, err := os.ReadDir(abs)
+	dirEntries, err := readDirInRoot(root, rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			in.respondBridge(ctx, chatID, msg, kiroReadDirBody{Entries: []kiroDirEntry{}}, nil)
@@ -194,18 +202,41 @@ func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID vibeki
 		return
 	}
 	in.respondBridge(ctx, chatID, msg, kiroReadDirBody{
-		Entries: in.filterDirEntries(ctx, chatID, abs, dirEntries),
+		Entries: in.filterDirEntries(ctx, chatID, rel, dirEntries),
 	}, nil)
 }
 
-// filterDirEntries maps os.DirEntry values onto the wire shape, dropping any
-// entry the agent-ignore list matches.
+// readDirInRoot lists the directory at rel inside root.
 //
-// Fails OPEN on a relative-path failure (the entry is kept, with a Warn),
-// matching the read handler: resolveInsideWorkDir has already anchored abs under
-// workDir so Rel cannot fail in practice, and dropping a listing silently on an
-// impossible error would be the harder failure to diagnose.
-func (in *inbound) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, abs string, dirEntries []os.DirEntry) []kiroDirEntry {
+// os.Root has no ReadDir, so the listing is an open plus File.ReadDir — and the
+// two flags on that open are what make it a safe replacement for os.ReadDir
+// rather than a mechanical one. O_DIRECTORY makes the KERNEL refuse anything at
+// the name that is not a directory, so the "is it a directory" question is
+// answered by the same syscall that opens it instead of by a separate stat.
+// O_NONBLOCK is the one that matters operationally: root.Open is a plain
+// O_RDONLY openat, and a reader-less FIFO left at the name blocks that open(2)
+// indefinitely — which here would wedge the handler under lifetime.inflight
+// against a KAS Call that carries no timeout. The flag has no effect on a
+// directory, which is the only thing this can open, so it costs nothing.
+func readDirInRoot(root *os.Root, rel string) ([]os.DirEntry, error) {
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return f.ReadDir(-1)
+}
+
+// filterDirEntries maps os.DirEntry values onto the wire shape, dropping any
+// entry the agent-ignore list matches. dirRel is the listed directory's
+// workspace-relative name ("." for the workspace root itself).
+//
+// There is no fail-open branch left. The old one skipped the filter — and kept
+// the entry — when filepath.Rel failed on the absolute path, which put the
+// discovery vector this filter exists to close behind an error nobody could
+// trigger deliberately but nobody had ruled out either. Joining onto the
+// already-relative dirRel cannot fail, so the case is gone rather than handled.
+func (in *inbound) filterDirEntries(ctx context.Context, _ vibekit.ChatID, dirRel string, dirEntries []os.DirEntry) []kiroDirEntry {
 	out := make([]kiroDirEntry, 0, len(dirEntries))
 	for _, e := range dirEntries {
 		entryType := fsTypeFile
@@ -213,18 +244,14 @@ func (in *inbound) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, 
 		case e.IsDir():
 			entryType = fsTypeDirectory
 		case e.Type()&os.ModeSymlink != 0:
-			// os.ReadDir does not follow symlinks, matching node's
+			// File.ReadDir does not follow symlinks, matching node's
 			// withFileTypes, so unlike stat this branch is live.
 			entryType = fsTypeSymlink
 		}
-		if in.ignore != nil {
-			rel, relErr := workspace.RelPath(in.lifetime.workDir, filepath.Join(abs, e.Name()))
-			if relErr != nil {
-				slog.Warn("ignore check skipped: filepath.Rel failed",
-					"chat_id", chatID, "dir", abs, "entry", e.Name(), "error", relErr)
-			} else if in.ignore.Matches(ctx, rel, e.IsDir()) {
-				continue
-			}
+		// path.Join, not filepath.Join: the matcher documents slash-separated
+		// paths and dirRel already is one (workspace.RelPath normalises it).
+		if in.ignore != nil && in.ignore.Matches(ctx, path.Join(dirRel, e.Name()), e.IsDir()) {
+			continue
 		}
 		out = append(out, kiroDirEntry{Name: e.Name(), Type: entryType})
 	}
@@ -244,33 +271,52 @@ func (in *inbound) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, 
 // not gated because KAS checkpoints before the unlink and reviews after it, and a
 // second gate here would intercept its restore write. See the file header.
 func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	abs, err := in.kiroFSPath(msg)
+	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	// Absoluteness is asserted, not assumed. resolveInsideWorkDir returns an
-	// absolute path today, but the root comparison below is only meaningful
-	// against one — a relative path would slip past it and hand os.RemoveAll a
-	// target resolved against the SERVER's cwd. Cheap, and it forecloses the
-	// worst blast radius on this path.
-	if !filepath.IsAbs(abs) {
-		in.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: resolved path is not absolute", errRefusedWorkDirRoot))
-		return
-	}
-	if filepath.Clean(abs) == filepath.Clean(in.lifetime.workDir) {
+	// The workspace root itself, which is "." once the path is expressed relative
+	// to the root. This replaces a filepath.Clean(abs) == filepath.Clean(workDir)
+	// comparison and the filepath.IsAbs assertion that existed only to make that
+	// comparison meaningful: a root-relative name has exactly one spelling for
+	// the root, so there is nothing left to normalise or to assert.
+	if rel == "." {
 		in.respondFSError(ctx, chatID, msg, errRefusedWorkDirRoot)
 		return
 	}
-	info, err := os.Lstat(abs)
+	// The delete is the one verb whose lost race is unrecoverable, so it does not
+	// settle for os.Root's confinement. atomicfile.OpenParentInRoot descends to
+	// the parent component by component, Lstat-ing each one, REFUSING a symlink
+	// instead of following it, and confirming with os.SameFile that the directory
+	// it opened is the one it inspected. Naming only the final element through
+	// that pinned handle removes every ancestor from the unlink's path: no
+	// in-workspace symlink can redirect it, which plain root.Remove of a
+	// multi-component name still permits because a root follows an in-root link
+	// by design.
+	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
+	defer func() { _ = parent.Close() }()
+
+	info, err := parent.Lstat(base)
+	if err != nil {
+		in.respondFSError(ctx, chatID, msg, err)
+		return
+	}
+	// Recursive for a directory, plain unlink otherwise — including for a
+	// symlink, which Remove unlinks rather than follows. atomicfile's own
+	// RemoveFileInRoot would refuse a symlink with ErrNotRegular; that is the
+	// right rule for a writer sweeping names it created, and the wrong one here,
+	// because this handler exists to CONFINE the delete KAS's NodeFileSystem
+	// would otherwise do itself (fs.rm / unlink, which delete a symlink), and
+	// diverging would make it a behaviour change rather than a confinement.
 	if info.IsDir() {
-		err = os.RemoveAll(abs)
+		err = parent.RemoveAll(base)
 	} else {
-		err = os.Remove(abs)
+		err = parent.Remove(base)
 	}
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)

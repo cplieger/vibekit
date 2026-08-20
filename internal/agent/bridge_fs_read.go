@@ -10,11 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // handleFSRequest dispatches fs/* incoming requests. Returns true if msg
@@ -86,52 +85,50 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg
 		in.respondFSError(ctx, chatID, msg, errors.New("path is required"))
 		return
 	}
-	abs, err := in.lifetime.resolveInsideWorkDir(p.Path)
+	root, rel, err := in.lifetime.confineInWorkDir(p.Path)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	// Single stat for both the ignore-check (isDir) and the size guard.
-	// Eliminates a redundant syscall per read request.
-	info, statErr := os.Stat(abs)
 	// Agent-ignore-files filter: if the user listed ignore files in
 	// Settings → Permissions and this path matches, refuse the read.
 	// Writes are deliberately not blocked (same semantics as git —
 	// ignored files stay writable). The ignore matcher re-parses on
 	// its own if the files change, so toggles take effect without a
 	// bridge restart.
+	//
+	// rel comes from the confinement, so the string the filter judges is the
+	// string the read is named by, and the old fail-OPEN branch (a Rel failure
+	// skipped the filter and read the file anyway) has nowhere left to live.
+	// The stat is confined too, and it exists ONLY for the isDir hint: the size
+	// guard it used to double as is gone, because ReadBoundedInRoot bounds the
+	// read off the OPEN DESCRIPTOR rather than off a pathname that can be
+	// swapped between the stat and the open.
 	if in.ignore != nil {
-		rel, relErr := workspace.RelPath(in.lifetime.workDir, abs)
-		if relErr != nil {
-			// Rel should never fail after resolveInsideWorkDir
-			// anchored abs under workDir, but if it does we fail
-			// open (ignore filter skipped) to preserve reads.
-			// Log so operators see the 3am case.
-			slog.Warn("ignore check skipped: filepath.Rel failed",
-				"chat_id", chatID, "path", p.Path, "abs", abs, "error", relErr)
-		} else {
-			isDir := statErr == nil && info.IsDir()
-			if in.ignore.Matches(ctx, rel, isDir) {
-				in.respondFSError(ctx, chatID, msg, errIgnored)
-				return
-			}
+		isDir := false
+		if info, statErr := root.Stat(rel); statErr == nil {
+			isDir = info.IsDir()
+		}
+		if in.ignore.Matches(ctx, rel, isDir) {
+			in.respondFSError(ctx, chatID, msg, errIgnored)
+			return
 		}
 	}
-	// Size-check before loading so a multi-gigabyte file doesn't pin
-	// the process at peak memory while we decide to reject it. Stat
-	// can lie about sparse/remote files, but the post-read guard
-	// below catches the residual case.
-	if statErr == nil && info.Size() > fsReadCap {
-		in.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsReadCap))
-		return
-	}
-	data, err := os.ReadFile(abs)
+	// One confined, bounded, non-blocking read, replacing os.Stat + os.ReadFile
+	// and both hand-rolled cap checks. Three properties the pair did not have:
+	// the bound is taken from the descriptor being read (a stat on the NAME can
+	// describe a different file than the open that follows it, and the old
+	// post-read length check only caught it after the bytes were in memory); a
+	// named pipe left at the name is REFUSED instead of blocking the handler in
+	// open(2) forever, which matters because KAS's extMethod has no timeout and
+	// this goroutine sits under lifetime.inflight; and every component of rel is
+	// re-resolved inside the root at open time.
+	data, err := atomicfile.ReadBoundedInRoot(ctx, root, rel, fsReadCap)
 	if err != nil {
+		if errors.Is(err, atomicfile.ErrFileTooLarge) {
+			err = fmt.Errorf("%w: %d", errCapExceeded, fsReadCap)
+		}
 		in.respondFSError(ctx, chatID, msg, err)
-		return
-	}
-	if len(data) > fsReadCap {
-		in.respondFSError(ctx, chatID, msg, fmt.Errorf("%w: %d", errCapExceeded, fsReadCap))
 		return
 	}
 	content := sliceByLines(string(data), p.Line, p.Limit)
