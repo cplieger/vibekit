@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -20,7 +22,14 @@ func mustStore(t *testing.T) *Store {
 }
 
 // fakeLauncher records launches and can be made to fail.
+//
+// Guarded by a mutex because the loop tests in runner_loop_test.go drive Run in
+// its own goroutine, so the recording happens off the test goroutine that reads
+// it. The race detector reported that pair the moment those tests landed —
+// synctest.Wait proves the writer is blocked but is not a synchronization edge
+// the detector can see, so the fake has to carry its own.
 type fakeLauncher struct {
+	mu      sync.Mutex
 	sources []string
 	// schedules records the id each launch was attributed to, which is what lets
 	// a later denial land on the right row.
@@ -34,6 +43,8 @@ type fakeLauncher struct {
 func (f *fakeLauncher) LaunchScheduled(
 	_ context.Context, source, scheduleID string, deadline time.Time,
 ) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.sources = append(f.sources, source)
 	f.schedules = append(f.schedules, scheduleID)
 	f.deadlines = append(f.deadlines, deadline)
@@ -41,6 +52,28 @@ func (f *fakeLauncher) LaunchScheduled(
 		return "", "", f.err
 	}
 	return "wf-1", "recipe", nil
+}
+
+// snap returns copies of what the fake has recorded, so a caller reading it
+// never holds a slice the launcher may append to.
+func (f *fakeLauncher) snap() (sources, schedules []string, slots []time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.sources), slices.Clone(f.schedules), slices.Clone(f.deadlines)
+}
+
+// launched is the count, which is what most assertions want.
+func (f *fakeLauncher) launched() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.sources)
+}
+
+// failWith makes every later launch fail.
+func (f *fakeLauncher) failWith(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
 }
 
 // newFixture builds a store with one daily 02:00 schedule anchored yesterday,
@@ -73,8 +106,8 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	r.sweep(t.Context())
 
-	if len(l.sources) != 1 {
-		t.Fatalf("expected one launch, got %d", len(l.sources))
+	if got := l.launched(); got != 1 {
+		t.Fatalf("expected one launch, got %d", got)
 	}
 	got := st.List()[0]
 	if !got.Anchor.Equal(due) {
@@ -85,8 +118,8 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	}
 	// The schedule's id must travel with the launch, or an unattended denial has
 	// no row to report itself on.
-	if len(l.schedules) != 1 || l.schedules[0] != "s1" {
-		t.Errorf("launch must carry the schedule id, got %v", l.schedules)
+	if _, schedules, _ := l.snap(); len(schedules) != 1 || schedules[0] != "s1" {
+		t.Errorf("launch must carry the schedule id, got %v", schedules)
 	}
 }
 
@@ -107,18 +140,19 @@ func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	r.sweep(t.Context())
 
-	if len(l.deadlines) != 1 {
-		t.Fatalf("expected one launch, got %d", len(l.deadlines))
+	_, _, slots := l.snap()
+	if len(slots) != 1 {
+		t.Fatalf("expected one launch, got %d", len(slots))
 	}
 	want, err := NextRun(st.List()[0].Spec, due)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
-	if !l.deadlines[0].Equal(want) {
-		t.Errorf("run bound = %v, want the next slot %v (the interval IS the number)", l.deadlines[0], want)
+	if !slots[0].Equal(want) {
+		t.Errorf("run bound = %v, want the next slot %v (the interval IS the number)", slots[0], want)
 	}
-	if !l.deadlines[0].Equal(due.Add(24 * time.Hour)) {
-		t.Errorf("a daily schedule must bound its run at 24h after the slot, got %v", l.deadlines[0].Sub(due))
+	if !slots[0].Equal(due.Add(24 * time.Hour)) {
+		t.Errorf("a daily schedule must bound its run at 24h after the slot, got %v", slots[0].Sub(due))
 	}
 }
 
@@ -129,8 +163,8 @@ func TestSweep_SkipsASlotMissedWhileOffline(t *testing.T) {
 	st, l, r := newFixture(t, now)
 	r.sweep(t.Context())
 
-	if len(l.sources) != 0 {
-		t.Errorf("a slot missed while offline must not fire: %v", l.sources)
+	if srcs, _, _ := l.snap(); len(srcs) != 0 {
+		t.Errorf("a slot missed while offline must not fire: %v", srcs)
 	}
 	got := st.List()[0]
 	if !got.Anchor.Equal(now) {
@@ -153,8 +187,8 @@ func TestSweep_SkipsASlotMissedWhileOffline(t *testing.T) {
 func TestSweep_DoesNotFireBeforeDue(t *testing.T) {
 	_, l, r := newFixture(t, at(2026, time.August, 4, 1, 59))
 	r.sweep(t.Context())
-	if len(l.sources) != 0 {
-		t.Errorf("fired before its due time: %v", l.sources)
+	if srcs, _, _ := l.snap(); len(srcs) != 0 {
+		t.Errorf("fired before its due time: %v", srcs)
 	}
 }
 
@@ -167,8 +201,8 @@ func TestSweep_FiresOnlyOncePerSlot(t *testing.T) {
 	r.now = func() time.Time { return due.Add(70 * time.Second) }
 	r.sweep(t.Context())
 
-	if len(l.sources) != 1 {
-		t.Errorf("expected exactly one launch across two ticks, got %d", len(l.sources))
+	if got := l.launched(); got != 1 {
+		t.Errorf("expected exactly one launch across two ticks, got %d", got)
 	}
 }
 
@@ -182,8 +216,8 @@ func TestSweep_SkipsDisabled(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	r.sweep(t.Context())
-	if len(l.sources) != 0 {
-		t.Errorf("a disabled schedule must not fire: %v", l.sources)
+	if srcs, _, _ := l.snap(); len(srcs) != 0 {
+		t.Errorf("a disabled schedule must not fire: %v", srcs)
 	}
 }
 
@@ -192,7 +226,7 @@ func TestSweep_SkipsDisabled(t *testing.T) {
 func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(30*time.Second))
-	l.err = errors.New("this recipe already has a live run")
+	l.failWith(errors.New("this recipe already has a live run"))
 	r.sweep(t.Context())
 
 	got := st.List()[0]
@@ -203,8 +237,8 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 		t.Errorf("a failed launch must not record success")
 	}
 	r.sweep(t.Context())
-	if len(l.sources) != 1 {
-		t.Errorf("a failed launch must not be retried on the next tick, got %d attempts", len(l.sources))
+	if got := l.launched(); got != 1 {
+		t.Errorf("a failed launch must not be retried on the next tick, got %d attempts", got)
 	}
 }
 
