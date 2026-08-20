@@ -74,7 +74,7 @@ func writeFakeCLIScript(t *testing.T, body string) string {
 
 // skipIfNotUnix skips the test on Windows. Every subprocess / signal
 // helper in this package is unix-only (process groups, /bin/sh fake
-// CLI, loginKill). Factored so the skip reason doesn't drift across
+// CLI, killGroup). Factored so the skip reason doesn't drift across
 // the 14 tests that need this gate.
 func skipIfNotUnix(t *testing.T) {
 	t.Helper()
@@ -870,13 +870,13 @@ func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// killLoginProcess tests (cycle 2 test-c2-5)
+// killProcessGroup tests (cycle 2 test-c2-5)
 // ---------------------------------------------------------------------------
 
 func TestKillLoginProcess_NilProcess(t *testing.T) {
 	cmd := exec.Command("/bin/true")
 	// Deliberately do NOT call Start; Process stays nil.
-	killLoginProcess(cmd)
+	killProcessGroup(cmd)
 	if cmd.Process != nil {
 		t.Errorf("Process = %v, want nil (Start was not called)", cmd.Process)
 	}
@@ -885,7 +885,7 @@ func TestKillLoginProcess_NilProcess(t *testing.T) {
 func TestKillLoginProcess_AlreadyExited(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
-	setLoginProcAttr(cmd)
+	setProcGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -893,7 +893,7 @@ func TestKillLoginProcess_AlreadyExited(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 	// Process has exited and been reaped; must not panic.
-	killLoginProcess(cmd)
+	killProcessGroup(cmd)
 }
 
 // ---------------------------------------------------------------------------
@@ -1287,16 +1287,16 @@ func TestWhoamiInfo_CapitalEmailFallback(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// loginKill nil-process early return (cycle 3 t-6)
+// killGroup nil-process early return (cycle 3 t-6)
 // ---------------------------------------------------------------------------
 
 func TestLoginKill_NilProcessReturnsESRCH(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
 	// Never call Start; Process is nil.
-	err := loginKill(cmd)
+	err := killGroup(cmd)
 	if !errors.Is(err, syscall.ESRCH) {
-		t.Errorf("loginKill(unstarted) = %v, want syscall.ESRCH", err)
+		t.Errorf("killGroup(unstarted) = %v, want syscall.ESRCH", err)
 	}
 }
 
@@ -1584,12 +1584,12 @@ func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	}
 }
 
-// killLoginProcess logs "login: kill group no-op (already reaped)" at Debug
-// when the subprocess has already exited (loginKill returns ESRCH).
+// killProcessGroup logs "auth: kill group no-op (already reaped)" at Debug
+// when the subprocess has already exited (killGroup returns ESRCH).
 func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
-	setLoginProcAttr(cmd)
+	setProcGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -1597,11 +1597,11 @@ func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 	recs := captureSlogJSON(t, slog.LevelDebug, func() {
-		killLoginProcess(cmd)
+		killProcessGroup(cmd)
 	})
-	if findLogRec(recs, "login: kill group no-op (already reaped)") == nil {
+	if findLogRec(recs, "auth: kill group no-op (already reaped)") == nil {
 		t.Errorf("expected debug log %q for reaped process; logs=%v",
-			"login: kill group no-op (already reaped)", recs)
+			"auth: kill group no-op (already reaped)", recs)
 	}
 }
 

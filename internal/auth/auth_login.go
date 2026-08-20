@@ -173,7 +173,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// bounds the URL-discovery phase at LoginURLTimeout.
 	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginTimeout)
 	cmd := exec.CommandContext(ctx, h.cliPath(), buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
-	setLoginProcAttr(cmd)
+	setProcGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -255,12 +255,12 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// Reap the child eagerly rather than waiting for
 			// the 16-minute hard cap — no user completion is
 			// coming and the device code is wasted either way.
-			killLoginProcess(cmd)
+			killProcessGroup(cmd)
 			<-waitDone
 		}
 		webhttp.WriteJSON(w, result)
 	case <-time.After(h.cfg.LoginURLTimeout):
-		killLoginProcess(cmd)
+		killProcessGroup(cmd)
 		<-waitDone // bounded: Kill → SIGKILL → reap
 		attrs := make([]any, 0, 4)
 		attrs = append(attrs, "timeout", h.cfg.LoginURLTimeout)

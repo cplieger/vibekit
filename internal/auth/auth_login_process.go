@@ -49,7 +49,7 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 		select {
 		case <-r.ctx.Done():
 			if errors.Is(r.ctx.Err(), context.DeadlineExceeded) {
-				killLoginProcess(r.cmd)
+				killProcessGroup(r.cmd)
 			}
 		case <-killOnDeadline:
 		}
@@ -68,7 +68,7 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 	// without ctx expiring but the deadline then fired),
 	// belt-and-braces the group kill.
 	if errors.Is(r.ctx.Err(), context.DeadlineExceeded) {
-		killLoginProcess(r.cmd)
+		killProcessGroup(r.cmd)
 	}
 	r.cancel()
 	switch {
@@ -122,7 +122,7 @@ func extractAuthURL(line string) string {
 // drain is what lets kiro-cli keep writing progress banners after we
 // emitted the URL — without it, the pipe fills at 64 KiB and kiro-cli
 // blocks on write(2) until the 16m hard cap fires. A Copy error here
-// is normal (EPIPE after killLoginProcess, closed pipe on clean exit)
+// is normal (EPIPE after killProcessGroup, closed pipe on clean exit)
 // and already surfaced via cmd.Wait in the reap goroutine; logged at
 // Debug for completeness.
 func scanLoginOutputWithDrain(stdout io.ReadCloser, urlCh chan<- map[string]string) {
@@ -198,7 +198,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// Warn (not Error): EOF after killLoginProcess (a normal
+		// Warn (not Error): EOF after killProcessGroup (a normal
 		// consequence of the URL-timeout branch in handleLogin)
 		// and network flake both land here. Not a page-worthy
 		// event on its own.

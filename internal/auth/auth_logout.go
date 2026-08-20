@@ -93,18 +93,18 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, result)
 }
 
-// killLoginProcess sends SIGKILL to the entire process group of the
-// login subprocess. kiro-cli is a bun/Node wrapper that may spawn
-// helper children; killing only the parent leaves orphans pinning the
-// stdout pipe open and preventing scanner teardown. See
-// login_proc_unix.go / login_proc_other.go for the platform split.
+// killProcessGroup sends SIGKILL to the entire process group of a kiro-cli
+// subprocess. kiro-cli is a bun/Node wrapper that may spawn helper children;
+// killing only the parent leaves orphans pinning the stdout pipe open and
+// preventing scanner teardown. See procgroup_unix.go / procgroup_other.go for the
+// platform split.
 // Idempotent: calling after the process has already been reaped is a
 // no-op (ESRCH and os.ErrProcessDone suppressed at Debug level).
-func killLoginProcess(cmd *exec.Cmd) {
+func killProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
 	}
-	err := loginKill(cmd)
+	err := killGroup(cmd)
 	if err == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func killLoginProcess(cmd *exec.Cmd) {
 	// mean the process is already gone — expected on the
 	// belt-and-braces second call in the reap goroutine.
 	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
-		slog.Debug("login: kill group no-op (already reaped)",
+		slog.Debug("auth: kill group no-op (already reaped)",
 			"group_err", err)
 		return
 	}
@@ -125,10 +125,10 @@ func killLoginProcess(cmd *exec.Cmd) {
 		return
 	}
 	if errors.Is(kerr, syscall.ESRCH) || errors.Is(kerr, os.ErrProcessDone) {
-		slog.Debug("login: kill pid no-op (already reaped)",
+		slog.Debug("auth: kill pid no-op (already reaped)",
 			"group_err", err, "pid_err", kerr)
 		return
 	}
-	slog.Error("login: kill timeout process",
+	slog.Error("auth: kill subprocess group failed",
 		"group_err", err, "pid_err", kerr)
 }

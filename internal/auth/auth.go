@@ -201,9 +201,9 @@ func stderrAttr(stderr *procout.Buffer) []any {
 // makes this an exhaustion path rather than a latency wart: one pinned handler
 // goroutine per page load, for as long as some grandchild happens to live.
 func boundChild(cmd *exec.Cmd) {
-	setLoginProcAttr(cmd)
+	setProcGroup(cmd)
 	cmd.Cancel = func() error {
-		err := loginKill(cmd)
+		err := killGroup(cmd)
 		// Mirror os.Process.Kill's own mapping so an already-reaped child leaves
 		// Wait's error untouched: exec treats a Cancel error equivalent to
 		// os.ErrProcessDone as "nothing to report".
