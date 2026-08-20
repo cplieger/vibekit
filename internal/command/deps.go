@@ -23,12 +23,12 @@ import (
 // assertion anybody has to remember to write.
 //
 // The width arithmetic runs from the inside out: SessionParams needs 1 of the
-// bridge's 12 methods, the prompt retry needs 1, a rewind needs 2, and only a
-// handler that holds the bridge for a whole turn needs all 12. A single Bridge
+// bridge's 10 methods, the prompt retry needs 1, a rewind needs 2, and only a
+// handler that holds the bridge for a whole turn needs all 10. A single Bridge
 // parameter on every one of those made each helper claim the whole surface, so
 // the seams are named and each signature takes the narrowest that fits.
 
-// sessionScoped names the ACP session an RPC is addressed to. 1 of the 12
+// sessionScoped names the ACP session an RPC is addressed to. 1 of the 10
 // methods the bridge offers, and the only one SessionParams — which every RPC
 // helper on this path funnels through — has any use for.
 type sessionScoped interface {
@@ -36,7 +36,7 @@ type sessionScoped interface {
 	SessionID() vibekit.SessionID
 }
 
-// bridgeCaller sends one request to kiro-cli and waits for its answer. 1 of 12:
+// bridgeCaller sends one request to kiro-cli and waits for its answer. 1 of 10:
 // the prompt retry loop re-invokes exactly this and nothing else, so a wider
 // parameter would let a future edit reach the prompt slot from inside a retry.
 type bridgeCaller interface {
@@ -45,14 +45,14 @@ type bridgeCaller interface {
 }
 
 // sessionCaller is the commonest shape on this path: one call, addressed to the
-// bridge's own session. 2 of 12.
+// bridge's own session. 2 of 10.
 type sessionCaller interface {
 	bridgeCaller
 	sessionScoped
 }
 
 // bridgeRPC is the full JSON-RPC surface — request, notification, and the
-// answer to an inbound request from kiro-cli. 4 of 12. It carries no prompt-slot
+// answer to an inbound request from kiro-cli. 4 of 10. It carries no prompt-slot
 // method on purpose: sending a frame and owning the turn are different rights,
 // and the cancel path sends a notification without holding the slot.
 type bridgeRPC interface {
@@ -65,7 +65,7 @@ type bridgeRPC interface {
 }
 
 // promptSlot is the per-chat turn lock and its unresponsive-cancel budget. 6 of
-// 12, and they are one protocol rather than six methods: acquire the slot,
+// 10, and they are one protocol rather than six methods: acquire the slot,
 // register the in-flight call's cancel func against a turn GENERATION, arm the
 // grace budget for that generation, then release. The generation is what stops
 // an expired budget cancelling a turn that started after the one it was armed

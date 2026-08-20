@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -14,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -2025,19 +2025,48 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	})
 
 	grandchild := waitForBridgePID(t, pidFile)
-	if syscall.Kill(grandchild, 0) != nil {
+	if !processAlive(grandchild) {
 		t.Fatalf("bait grandchild %d not alive before cancel; the test proves nothing", grandchild)
 	}
 
 	cancel() // fires cmd.Cancel
 
 	deadline := time.Now().Add(3 * time.Second)
-	for syscall.Kill(grandchild, 0) == nil {
+	for processAlive(grandchild) {
 		if time.Now().After(deadline) {
 			t.Fatalf("grandchild %d survived ctx cancel; Cancel signalled the head without closing stdin, so the tree never saw EOF", grandchild)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// processAlive reports whether pid is a live (non-zombie) process, read from
+// /proc/<pid>/stat.
+//
+// A null-signal poll is NOT usable, and the test above used to be one. `kill(pid,
+// 0)` answers "alive" for a zombie, and the pid here is the bait shell's
+// backgrounded child: the shell reaps it on its next wait, so a null-signal poll
+// asserts the SHELL's reaping latency on top of the property under test. That
+// happens to hold today because the bait ignores SIGTERM and stays alive to reap
+// — one fixture edit that lets the shell die with the group orphans the child onto
+// PID 1 and the poll then measures whatever init this suite runs under, which in
+// the vibekit container never reaps. A zombie already proves the EOF reached the
+// tree, which is the whole property.
+//
+// The state field follows the LAST ')' — comm is parenthesized and may itself
+// contain spaces or parens, so the prefix has to be skipped from the right rather
+// than split on whitespace.
+func processAlive(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
+	if err != nil {
+		return false // no /proc entry: reaped and gone
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return false
+	}
+	return s[i+2] != 'Z'
 }
 
 // waitForBridgePID polls for the bait script's pid file and returns the pid.
