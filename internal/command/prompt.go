@@ -190,8 +190,8 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(chats ChatAccess, workspace WorkspaceAccess, ctx context.Context, chatID vibekit.ChatID, p *vibekit.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
-	supervisedDefault := supervisedDefaultSetting(ctx, workspace.ConfigDir())
+func appendUserMessage(chats ChatAccess, ws Workspace, ctx context.Context, chatID vibekit.ChatID, p *vibekit.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+	supervisedDefault := supervisedDefaultSetting(ctx, ws.ConfigDir)
 	err := chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
 		// is already in the store — e.g. a 409-queued prompt whose first
@@ -370,9 +370,9 @@ func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.Re
 
 // BuildPromptParams constructs the full session/prompt parameter map. Takes
 // sessionScoped, not Bridge: building a parameter map reads an id, nothing more.
-func BuildPromptParams(ctx context.Context, workspace WorkspaceAccess, sb sessionScoped, p *vibekit.PromptCommand) map[string]any {
+func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *vibekit.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
-		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, workspace.ResolveInsideWorkDir),
+		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, ws.ResolveInside),
 	})
 	// Forward the client-generated user message id so KAS stores this turn under
 	// vibekit's own id. That shared id space is what makes rewind addressable:

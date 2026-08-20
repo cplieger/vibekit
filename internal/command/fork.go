@@ -53,7 +53,7 @@ var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens in
 // CmdForkChat opens a tangent off another chat.
 //
 //nolint:revive // context-as-argument: dispatcher handler signature
-func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, workspace WorkspaceAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
+func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ws Workspace, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -81,7 +81,7 @@ func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, workspac
 	// the same agent that produced the conversation it inherited. Read here
 	// rather than sent by the client: the record is the truth about both, and a
 	// client value could be a tab's stale projection.
-	sessionID := forkSession(ctx, bridges, workspace, p, cmd.ChatID)
+	sessionID := forkSession(ctx, bridges, ws, p, cmd.ChatID)
 	outcome := vibekit.ForkOutcomeForked
 	if sessionID == "" {
 		outcome = vibekit.ForkOutcomePrimed
@@ -134,7 +134,7 @@ func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, workspac
 // reasons are still distinguished in the log, since "no bridge" (the parent was
 // never prompted, or its process is gone) and "KAS refused" want different
 // follow-ups.
-func forkSession(ctx context.Context, bridges BridgeAccess, workspace WorkspaceAccess, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
+func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
 	bridge := bridges.GetBridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// No live session to branch. Deliberately NOT started here: spawning a
@@ -151,7 +151,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, workspace WorkspaceA
 		meta["title"] = p.Title
 	}
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionFork, SessionParams(bridge, map[string]any{
-		"cwd":   workspace.WorkDir(),
+		"cwd":   ws.Dir,
 		"_meta": map[string]any{"kiro": meta},
 	}))
 	if err != nil {

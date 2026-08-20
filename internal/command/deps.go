@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // This file is the package's dependency contracts: the role interfaces each
@@ -214,17 +215,29 @@ type TerminalAccess interface {
 	KillTurnTerminals(chatID vibekit.ChatID)
 }
 
-// WorkspaceAccess provides the workspace and config paths handlers resolve
-// against: the hook writer and the shell spawn need the working directory, the
-// prompt reads a setting out of the config directory, and an attachment path is
-// confined to the workspace before it is read.
-type WorkspaceAccess interface {
-	WorkDir() string
-	ConfigDir() string
-	// ResolveInsideWorkDir validates a path is inside the workspace. Passed as a
-	// function value to BuildPromptBlocks, which is why it is here rather than
-	// beside the turn methods: it is a path rule, not a turn rule.
-	ResolveInsideWorkDir(rel string) (string, error)
+// Workspace carries the two paths handlers resolve against: the hook writer and
+// the shell spawn need the working directory, the prompt reads a setting out of
+// the config directory, and an attachment path is confined to the workspace
+// before it is read.
+//
+// It is a VALUE, not an interface, and that is the point. Two of its three former
+// methods returned process constants and the third was one call into
+// internal/workspace, so there was nothing to substitute and never a second
+// implementation — an interface there abstracts a string. Its three methods on
+// Hub went with it, which is three fewer on a receiver that has too many.
+type Workspace struct {
+	// Dir is the workspace root every relative path resolves against.
+	Dir string
+	// ConfigDir is where settings and hook files live.
+	ConfigDir string
+}
+
+// ResolveInside confines rel to the workspace root, refusing anything that
+// escapes it. Passed as a function value to BuildPromptBlocks, which is why it is
+// a method rather than something a caller composes: it is a path rule, and there
+// is exactly one root to apply it against.
+func (w Workspace) ResolveInside(rel string) (string, error) {
+	return workspace.ResolveInsideAbs(w.Dir, rel)
 }
 
 // LifecycleAccess is the process-lifetime seam: the context a turn runs under,
@@ -303,7 +316,7 @@ type Roles struct {
 	Chats       ChatAccess
 	Perms       PendingPermAccess
 	Terminals   TerminalAccess
-	Workspace   WorkspaceAccess
+	Workspace   Workspace
 	Lifecycle   LifecycleAccess
 	MCP         MCPAccess
 	TurnOutcome TurnOutcomeAccess
@@ -317,7 +330,7 @@ type Roles struct {
 type promptRoles struct {
 	bridges     BridgeAccess
 	chats       ChatAccess
-	workspace   WorkspaceAccess
+	workspace   Workspace
 	lifecycle   LifecycleAccess
 	mcp         MCPAccess
 	turnOutcome TurnOutcomeAccess

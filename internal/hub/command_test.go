@@ -353,8 +353,7 @@ func TestCreateHook_RequiresNameAndEventType(t *testing.T) {
 }
 
 func TestCreateHook_WritesFile(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
+	h, _, _ := newTestHubIn(t.TempDir())
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type:      "create_hook",
@@ -429,8 +428,7 @@ func TestCreateHook_WritesFile(t *testing.T) {
 // TestCreateHook_RunCommandBranchWritesCommand pins the runCommand
 // branch distinct from askAgent: v1 action.type=command + action.command.
 func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
+	h, _, _ := newTestHubIn(t.TempDir())
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "create_hook", RequestID: "r1", ChatID: "c1",
@@ -467,8 +465,7 @@ func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
 // name containing /, \, .., NUL, or non-allowlisted characters must
 // be rejected with 400, and no file may appear outside .kiro/hooks/.
 func TestCreateHook_RejectsTraversal(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
+	h, _, _ := newTestHubIn(t.TempDir())
 
 	bad := []string{
 		"../evil",
@@ -505,8 +502,7 @@ func TestCreateHook_RejectsTraversal(t *testing.T) {
 // (maxHookField). A runaway prompt would otherwise slow every chat
 // startup when kiro-cli rescans .kiro/hooks.
 func TestCreateHook_RejectsOversizeField(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
+	h, _, _ := newTestHubIn(t.TempDir())
 	big := strings.Repeat("a", command.MaxHookField+1)
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "create_hook", RequestID: "r1", ChatID: "c1",
@@ -578,8 +574,7 @@ func TestIsEmptyTurn(t *testing.T) {
 // --- MergeLastExchange ---
 
 func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
-	h, cs, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
+	h, cs, _ := newTestHubIn(t.TempDir())
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "prompt", RequestID: "r1", ChatID: "c-sh",
 		Payload: json.RawMessage(`{"text":"!printf hi","message_id":"m-1"}`),
@@ -612,8 +607,7 @@ func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 // as errEmptyPrompt so cmdPrompt doesn't spawn sh -c ” (which would
 // succeed with empty output and confuse the transcript).
 func TestPrompt_ShellInterception_EmptyAfterTrim(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
+	h, _, _ := newTestHubIn(t.TempDir())
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "prompt", RequestID: "r1", ChatID: "c-empty",
 		Payload: json.RawMessage(`{"text":"!   \t","message_id":"m-1"}`),
@@ -627,8 +621,7 @@ func TestPrompt_ShellInterception_EmptyAfterTrim(t *testing.T) {
 // failing command's exit-status string is surfaced below the fenced
 // output so the user sees why their command failed.
 func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
-	h, cs, _ := newTestHub()
-	h.lifecycle.workDir = t.TempDir()
+	h, cs, _ := newTestHubIn(t.TempDir())
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "prompt", RequestID: "r1", ChatID: "c-fail",
 		Payload: json.RawMessage(`{"text":"!false","message_id":"m-1"}`),
@@ -795,13 +788,12 @@ func TestBuildPromptBlocks(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, _ := newTestHub()
-			h.lifecycle.workDir = t.TempDir()
+			h, _, _ := newTestHubIn(t.TempDir())
 			if tc.setupFile != nil {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(t.Context(), tc.text, tc.attachments, h.ResolveInsideWorkDir)
+			got := command.BuildPromptBlocks(t.Context(), tc.text, tc.attachments, h.resolveInsideWorkDir)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}

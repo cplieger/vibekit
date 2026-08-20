@@ -31,8 +31,6 @@ func (d *benchDeps) GetOrCreateBridge(context.Context, vibekit.ChatID, string) (
 func (d *benchDeps) CloseBridge(vibekit.ChatID)                    {}
 func (d *benchDeps) ClearPendingPermsForChat(vibekit.ChatID)       {}
 func (d *benchDeps) TakePendingPerm(int64, vibekit.SettledBy) bool { return true }
-func (d *benchDeps) WorkDir() string                               { return "/tmp" }
-func (d *benchDeps) ConfigDir() string                             { return "/tmp" }
 func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
@@ -43,7 +41,6 @@ func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)        {}
 func (d *benchDeps) CancelChatRuns(context.Context, vibekit.ChatID)        {}
 func (d *benchDeps) KillTurnTerminals(vibekit.ChatID)                      {}
 func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool   { return true }
-func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)           { return "", nil }
 func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID, Bridge) {}
 func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)          {}
 func (d *benchDeps) IsEmptyTurn(*vibekit.RPCResponse, vibekit.ChatID) bool { return false }
@@ -67,13 +64,8 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 		t.Errorf("RecordDedup+CheckDedup round-trip failed: got %q, ok=%v", got, ok)
 	}
 
-	// Boolean/scalar returns.
-	if d.WorkDir() == "" {
-		t.Error("WorkDir() returned empty")
-	}
-	if d.ConfigDir() == "" {
-		t.Error("ConfigDir() returned empty")
-	}
+	// Boolean/scalar returns. The workspace paths are not here any more: they
+	// are a Workspace value, so there is no double method to exercise.
 	if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
 		t.Error("TurnContext() returned a nil context")
 	} else {
@@ -110,9 +102,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		if got, ok := d.CheckDedup("r1"); !ok || string(got) != "data" {
 			t.Errorf("dedup round-trip failed: %q ok=%v", got, ok)
 		}
-		if d.WorkDir() == "" {
-			t.Error("WorkDir must be non-empty")
-		}
 		if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
 			t.Error("TurnContext must return a non-nil context")
 		} else {
@@ -146,9 +135,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.EmitTurnEndedWithStats(t.Context(), "x", nil, TurnStats{})
 		if _, err := d.GetOrCreateBridge(t.Context(), "x", ""); err != nil {
 			t.Errorf("GetOrCreateBridge returned error: %v", err)
-		}
-		if _, err := d.ResolveInsideWorkDir(""); err != nil {
-			t.Errorf("ResolveInsideWorkDir returned error: %v", err)
 		}
 	})
 }
@@ -225,7 +211,6 @@ type hostDouble interface {
 	ChatAccess
 	PendingPermAccess
 	TerminalAccess
-	WorkspaceAccess
 	LifecycleAccess
 	MCPAccess
 	TurnOutcomeAccess
@@ -239,7 +224,7 @@ func promptRolesOf(d hostDouble) *promptRoles {
 	return &promptRoles{
 		bridges:     d,
 		chats:       d,
-		workspace:   d,
+		workspace:   Workspace{Dir: "/tmp", ConfigDir: "/tmp"},
 		lifecycle:   d,
 		mcp:         d,
 		turnOutcome: d,

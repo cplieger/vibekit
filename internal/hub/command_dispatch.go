@@ -18,11 +18,13 @@ func (h *Hub) registerCommandHandlers() {
 	// the Hub under a narrower interface; which handler receives which is
 	// command.RegisterDefaults' table.
 	command.RegisterDefaults(h.dispatcher, &command.Roles{
-		Bridges:     h,
-		Chats:       h,
-		Perms:       h,
-		Terminals:   h,
-		Workspace:   h,
+		Bridges:   h,
+		Chats:     h,
+		Perms:     h,
+		Terminals: h,
+		// A value, not h: the two paths are process constants, so nothing is
+		// substituted and the hub is not in the middle of reading a string.
+		Workspace:   command.Workspace{Dir: h.lifecycle.workDir, ConfigDir: h.lifecycle.configDir},
 		Lifecycle:   h,
 		MCP:         h,
 		TurnOutcome: h,

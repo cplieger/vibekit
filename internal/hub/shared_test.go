@@ -27,10 +27,20 @@ import (
 // every one of the ~200 callers keeps exactly the lifetime it had, and a test
 // that wants the hub torn down calls Shutdown as it always did.
 func newTestHub() (*Hub, *fakeChatStore, *fakeBridge) {
+	return newTestHubIn("/tmp/work")
+}
+
+// newTestHubIn builds a hub rooted at workDir. Tests that need a real directory
+// use this rather than reassigning h.lifecycle.workDir afterwards: the workspace
+// paths are read once at wiring time now (command.Workspace is a value), which is
+// what production does — New assigns workDir and nothing reassigns it — so a test
+// that mutates it after construction is configuring something the wiring has
+// already read.
+func newTestHubIn(workDir string) (*Hub, *fakeChatStore, *fakeBridge) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
 	factory := func() ACPBridge { return br }
-	h := New(context.Background(), "/tmp/work", factory, cs)
+	h := New(context.Background(), workDir, factory, cs)
 	cs.Bus = h
 	// Signal MCP readiness immediately so tests don't wait 30 seconds.
 	h.mcpRegistry.signalReady()

@@ -124,7 +124,7 @@ func HandleShellInterception(d *Dispatcher, roles *promptRoles, ctx context.Cont
 	defer cancel()
 
 	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd)
-	shellProc.Dir = roles.workspace.WorkDir()
+	shellProc.Dir = roles.workspace.Dir
 	var capped ShellCappedBuffer
 	shellProc.Stdout = &capped
 	shellProc.Stderr = &capped

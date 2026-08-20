@@ -96,11 +96,6 @@ func (h *Hub) TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool
 	return true
 }
 
-// ConfigDir returns the configuration directory.
-func (h *Hub) ConfigDir() string {
-	return h.lifecycle.configDir
-}
-
 // TurnContext returns the context a turn runs under, plus the teardown its
 // handler must defer.
 //
@@ -166,11 +161,6 @@ func (h *Hub) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
 // MCPWaitForReady blocks until MCP servers are ready or timeout.
 func (h *Hub) MCPWaitForReady(ctx context.Context, timeout time.Duration) bool {
 	return h.mcpRegistry.WaitForReady(ctx, timeout)
-}
-
-// ResolveInsideWorkDir validates a path is inside the workspace.
-func (h *Hub) ResolveInsideWorkDir(rel string) (string, error) {
-	return h.resolveInsideWorkDir(rel)
 }
 
 // PrimeIfNeeded primes the bridge with history if needed.
