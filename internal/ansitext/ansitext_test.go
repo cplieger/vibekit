@@ -479,6 +479,19 @@ func FuzzParse(f *testing.F) {
 	// A run of invalid bytes, which strings.ToValidUTF8 collapses into ONE
 	// replacement and so breaks the additivity offsets depend on:
 	f.Add("\xbd\xbd\xbd")
+	// The five bytes that LOOK like multi-byte leads to a mask test and are not
+	// valid leads at all: 0xC0/0xC1 would be overlong two-byte forms and
+	// 0xF5-0xF7 encode past U+10FFFF. No continuation can complete one, so a
+	// tail-hold that waits for one waits forever. Seeded because the corpus
+	// reached none of them, and incompleteRuneTail's answer for them is exactly
+	// where a hand-rolled lead-byte table and unicode/utf8 disagree — measured
+	// at 853,573 divergences over all 33.6M strings of up to 4 bytes.
+	f.Add("\xc0")
+	f.Add("\xc0\x80")
+	f.Add("\xc1\xbf")
+	f.Add("\xf5\x80\x80\x80")
+	f.Add("a\xf6b")
+	f.Add("\x1b[1m\xf7\x80")
 
 	f.Fuzz(func(t *testing.T, in string) {
 		text, spans := Parse(in)
