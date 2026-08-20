@@ -22,7 +22,7 @@ import "context"
 // SSE client is ONE method, and its two consumers declare it themselves:
 // internal/chat (chat and message lifecycle) and internal/forges (a forge
 // connection change). internal/command declares the same method as a member of
-// its ChatAccess role. *hub.Hub satisfies all three.
+// its ChatAccess role. *agent.Runtime satisfies all three.
 
 // StartOpts collects the parameters for ACPBridge.Start. Lifetime is
 // REQUIRED; every other field is optional, so a StartOpts carrying nothing but
@@ -122,7 +122,7 @@ type StartOpts struct {
 // parameter builders and the idle culler. *bridge.Bridge satisfies the widest.
 //
 // StartOpts stays here: it is a type, and internal/bridge decodes it on the
-// implementing side without importing the hub.
+// implementing side without importing the agent.
 
 // --- HTTP ---
 
@@ -149,7 +149,7 @@ type StartOpts struct {
 // There is no UtilityPrompter interface here. AI-backed prompt generation is a
 // single method, and its two consumers declare it themselves: internal/server
 // (explain-error, explain-diff) and internal/git (commit message, PR
-// description, branch name). *hub.Hub satisfies both.
+// description, branch name). *agent.Runtime satisfies both.
 
 // --- Pending Changes ---
 

@@ -18,7 +18,7 @@ import (
 // than a consequence of the host growing a method.
 
 // The bridge interfaces below are declared HERE, at the consumer, rather than in
-// a shared contract package. *hub.sharedBridge is what satisfies them, and the
+// a shared contract package. *agent.sharedBridge is what satisfies them, and the
 // check is forced where hub calls SessionParams(sb, …) rather than by an
 // assertion anybody has to remember to write.
 //
@@ -141,7 +141,7 @@ type BridgeAccess interface {
 // response), it cannot BuildHistory (priming is the bridge coordinator's),
 // it cannot UpdateMessage, and it cannot RegisterRoutes.
 //
-// Exported because ChatAccess is exported and *hub.Hub has to name this as its
+// Exported because ChatAccess is exported and *agent.Runtime has to name this as its
 // ChatStore() return type. internal/translate declares its own narrower
 // ChatRecords for the same store — see its deps.go for why the two accessors
 // cannot share one name.
@@ -226,7 +226,7 @@ type TerminalAccess interface {
 // methods returned process constants and the third was one call into
 // internal/workspace, so there was nothing to substitute and never a second
 // implementation — an interface there abstracts a string. Its three methods on
-// Hub went with it, which is three fewer on a receiver that has too many.
+// Runtime went with it, which is three fewer on a receiver that has too many.
 type Workspace struct {
 	// Dir is the workspace root every relative path resolves against.
 	Dir string

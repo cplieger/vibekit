@@ -8,7 +8,7 @@ import (
 
 // Store is a concurrency-safe store for per-chat assistant buffers.
 // It owns its own mutex so buffer operations don't contend with
-// unrelated Hub state.
+// unrelated Runtime state.
 type Store struct {
 	bufs map[vibekit.ChatID]*Buffer
 	mu   sync.Mutex

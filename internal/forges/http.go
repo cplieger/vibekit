@@ -54,10 +54,10 @@ const (
 )
 
 // broadcaster is the SSE fan-out a forge connection change is announced on, so
-// every client's forge UI refetches /api/forges. *hub.Hub satisfies it.
+// every client's forge UI refetches /api/forges. *agent.Runtime satisfies it.
 //
 // Declared HERE, at the consumer, rather than in a shared contract package.
-// 1 method against a *hub.Hub exporting well over a hundred; this package fires
+// 1 method against a *agent.Runtime exporting well over a hundred; this package fires
 // exactly one event kind and needs nothing else from the hub at all.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)

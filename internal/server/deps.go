@@ -34,15 +34,15 @@ type routeHandler interface {
 	RegisterRoutes(mux *http.ServeMux)
 }
 
-// chatHub is the bridge/SSE hub as this package uses it: it mounts /api/events
+// chatEngine is the bridge/SSE hub as this package uses it: it mounts /api/events
 // and /api/command, it is the fan-out this package broadcasts a settings change
-// through, and it is what the shutdown path drains. *hub.Hub satisfies it.
+// through, and it is what the shutdown path drains. *agent.Runtime satisfies it.
 //
-// 3 methods against a *hub.Hub that exports well over a hundred. Exported
+// 3 methods against a *agent.Runtime that exports well over a hundred. Exported
 // methods on the concrete type this package must NOT reach — bridge
 // coordination, the utility runtime, the MCP registry, run hosting — are the
 // reason the narrow spelling matters here more than anywhere else in the file.
-type chatHub interface {
+type chatEngine interface {
 	routeHandler
 
 	// Broadcast fans one event out to every connected SSE client.
@@ -79,10 +79,10 @@ type SteeringGenerator interface {
 
 // AccountUsageProvider fetches account/subscription-level usage (plan,
 // credits, quota) via the KAS _kiro/account/getUsage request on a live bridge,
-// so this package can serve GET /api/account/usage. *hub.Hub satisfies it via
+// so this package can serve GET /api/account/usage. *agent.Runtime satisfies it via
 // the utility bridge.
 //
-// 1 method against a *hub.Hub with well over a hundred: the narrowest possible
+// 1 method against a *agent.Runtime with well over a hundred: the narrowest possible
 // statement of what this endpoint needs. Exported because the composition root
 // names it in server.WithAccountUsage.
 type AccountUsageProvider interface {
@@ -90,7 +90,7 @@ type AccountUsageProvider interface {
 }
 
 // policyProvider READS kiro-cli's native Cedar policy over a live bridge,// backing GET /api/permissions and the pre-flight simulation at
-// POST /api/permissions/explain. *hub.Hub satisfies it.
+// POST /api/permissions/explain. *agent.Runtime satisfies it.
 //
 // 2 methods, and deliberately not a third: policy/check is never called (it
 // can raise a consent prompt), and the rule WRITER at
@@ -102,7 +102,7 @@ type policyProvider interface {
 }
 
 // utilityPrompter is AI-backed text generation for the two endpoints this
-// package serves with it: explain-an-error and explain-a-diff. *hub.Hub
+// package serves with it: explain-an-error and explain-a-diff. *agent.Runtime
 // satisfies it over the long-lived utility bridge.
 //
 // 1 method. internal/git declares its own copy for its own three endpoints

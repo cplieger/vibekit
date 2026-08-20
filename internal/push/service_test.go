@@ -224,7 +224,7 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 }
 
 // TestClose_IsIdempotent — context.CancelFunc is safe to call multiple
-// times. Hub shutdown paths can race parent cancels; Close must
+// times. Runtime shutdown paths can race parent cancels; Close must
 // tolerate that without panic.
 func TestClose_IsIdempotent(t *testing.T) {
 	dir := t.TempDir()

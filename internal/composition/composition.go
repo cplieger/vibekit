@@ -16,6 +16,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/vibekit/internal/agent"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/chat"
@@ -23,7 +24,6 @@ import (
 	"github.com/cplieger/vibekit/internal/filebrowse"
 	"github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
-	"github.com/cplieger/vibekit/internal/hub"
 	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/logctl"
 	"github.com/cplieger/vibekit/internal/mcp"
@@ -40,7 +40,7 @@ import (
 
 // App holds all wired-up services for the vibekit server.
 type App struct {
-	Hub            *hub.Hub
+	Runtime        *agent.Runtime
 	Server         *server.Server
 	purgeScheduler *archive.PurgeScheduler
 	mcpPrewarm     *prewarm.Runner
@@ -58,10 +58,10 @@ type App struct {
 	// merely masked by runMain exiting the process straight afterwards.
 	stopPRPoller func()
 	// stopApp ends the app's LIFETIME: the context every component that must die
-	// with the process is parented on, and the one hub.New requires.
+	// with the process is parented on, and the one agent.New requires.
 	//
 	// It exists because the app's lifetime used to be invented inside the hub
-	// (context.Background() in hub.New) and fetched back out through an exported
+	// (context.Background() in agent.New) and fetched back out through an exported
 	// ShutdownCtx() accessor, which is how four goroutines wired here came to
 	// take their context from a component they are not part of. The composition
 	// root owns the lifetime now and hands the same one down.
@@ -93,7 +93,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Deriving it here rather than inside a component is the point: the hub used
 	// to root its own lifetime at context.Background() and expose it as
 	// ShutdownCtx(), so a goroutine wired in this file took its context out of
-	// the hub. Now the lifetime flows the other way.
+	// the agent. Now the lifetime flows the other way.
 	appCtx, stopApp := context.WithCancel(ctx)
 	// A boot that does not return an App is the one case nothing can call
 	// App.Shutdown, so the lifetime is ended here instead. That includes the
@@ -131,7 +131,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// One bridge per chat, so the resolution happens per SPAWN: the bridge is
 	// this app's long-lived kiro-cli consumer, and resolving once per process
 	// would pin every chat to whatever was installed first.
-	bridgeFactory := func() hub.ACPBridge {
+	bridgeFactory := func() agent.ACPBridge {
 		return bridge.New(kiro.cliPath(), cfg.WorkDir,
 			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
 	}
@@ -150,13 +150,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// pinned to 0/never): reap a chat's session state on delete, and orphans
 	// via a periodic sweep that spares every active/archived chat's session.
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"))
-	h := hub.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
-		hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc),
-		hub.WithACPArgs(cfg.ACPArgs),
-		hub.WithKiroCLIPath(kiro.cliPath, kiro.env),
-		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
-		hub.WithSchedules(scheduleStore),
-		hub.WithRunLeases(leaseStore))
+	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
+		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
+		agent.WithACPArgs(cfg.ACPArgs),
+		agent.WithKiroCLIPath(kiro.cliPath, kiro.env),
+		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
+		agent.WithSchedules(scheduleStore),
+		agent.WithRunLeases(leaseStore))
 	chat.WithBroadcaster(h)(chatStore)
 
 	// Clear the runs a previous process left paused, BEFORE anything can launch.
@@ -273,7 +273,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	srv := server.New(
 		server.WithSteering(steer),
-		server.WithHub(h),
+		server.WithAgent(h),
 		server.WithChats(chatStore),
 		server.WithGit(gitHandler),
 		server.WithGitAI(gitAIHandler),
@@ -301,7 +301,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	built = true
 	return &App{
-		Hub:            h,
+		Runtime:        h,
 		Server:         srv,
 		purgeScheduler: purgeScheduler,
 		mcpPrewarm:     mcpPrewarm,
@@ -337,7 +337,7 @@ func (a *App) Run() error {
 // what lets the lifecycle be asserted through this function rather than through a
 // cancel a test made up.
 func (a *App) Shutdown() {
-	// Before the rest: the poller consults the push service the Hub owns, so
+	// Before the rest: the poller consults the push service the Runtime owns, so
 	// stopping it first is what keeps a sweep from reaching into a closed one.
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopKiro)
@@ -374,12 +374,12 @@ const hubStopGrace = 10 * time.Second
 // dropping it: both callers are terminal paths with nobody above them to return
 // an error to.
 func (a *App) shutdownHub() {
-	if a.Hub == nil {
+	if a.Runtime == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hubStopGrace)
 	defer cancel()
-	if err := a.Hub.Shutdown(ctx); err != nil {
+	if err := a.Runtime.Shutdown(ctx); err != nil {
 		slog.Error("hub shutdown did not finish within the grace period",
 			"grace", hubStopGrace, "error", err)
 	}
@@ -595,7 +595,7 @@ func repoNamesFor(ctx context.Context, kind forges.Kind, host string) []string {
 //
 // appCtx is the app's lifetime, forwarded to buildToolsEngine, which parents
 // the two code-intelligence activations on it.
-func wireToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
+func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*toolbelt.Engine, error) {
 	toolsEngine, err := buildToolsEngine(appCtx, cfg, h)
 	if err != nil {
 		return nil, err
@@ -622,7 +622,7 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt
 // refusal (Config.VerifyRootIntegrity below) returns no engine and no error,
 // and Build carries on tool-less. Every other New failure still returns an
 // error and stops the boot, exactly as it did before the check existed.
-func buildToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
+func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*toolbelt.Engine, error) {
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,
 		Require:  cfg.ToolCatalogRequire,
@@ -802,7 +802,7 @@ func openRunLeaseStore(dir string) *runlease.Store {
 
 // startScheduleRunner starts the schedule sweep when scheduling is available.
 //
-// The runner reuses Hub.LaunchRun, which already launches a PARENTLESS run on
+// The runner reuses Runtime.LaunchRun, which already launches a PARENTLESS run on
 // its own bridge, so a scheduled run needs no host chat and never shows up in
 // the chat list.
 //

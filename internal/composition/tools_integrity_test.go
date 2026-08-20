@@ -38,8 +38,8 @@ import (
 	"time"
 
 	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/vibekit/internal/agent"
 	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/hub"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"
 )
 
@@ -113,17 +113,17 @@ func fitTree(t *testing.T) (configDir, toolsDir string) {
 // what actually broke.
 //
 // The chat store is REAL. It used to be nil on the same "correct code never
-// touches it" reasoning, and hub.New's own role guard refuted that: the store is
+// touches it" reasoning, and agent.New's own role guard refuted that: the store is
 // read at construction to wire the translator, so a nil one is a hub that cannot
 // serve a single chat. Passing nil built one anyway and deferred the crash to the
 // first ACP frame.
-func testHub(t *testing.T) *hub.Hub {
+func testHub(t *testing.T) *agent.Runtime {
 	t.Helper()
 	store, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
 	if err != nil {
 		t.Fatalf("chat store: %v", err)
 	}
-	h := hub.New(t.Context(), t.TempDir(), nil, store)
+	h := agent.New(t.Context(), t.TempDir(), nil, store)
 	t.Cleanup(func() {
 		if err := h.Shutdown(context.Background()); err != nil {
 			t.Errorf("hub shutdown: %v", err)
@@ -268,7 +268,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	// This hub is Shutdown by the App under test, so it is deliberately not
 	// the t.Cleanup-registered testHub.
 	app := &App{
-		Hub:            hub.New(t.Context(), t.TempDir(), nil, chatStore),
+		Runtime:        agent.New(t.Context(), t.TempDir(), nil, chatStore),
 		purgeScheduler: chat.NewPurgeScheduler(chatStore, func() time.Duration { return 0 }),
 		mcpPrewarm:     prewarm.NewRunner(t.Context(), nil),
 		tools:          engine,

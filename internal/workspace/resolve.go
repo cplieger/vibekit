@@ -14,7 +14,7 @@ import (
 
 // ResolveInsideAbs is like ResolveInside but accepts an already-absolute
 // workDir, skipping the filepath.Abs call. Use this when the caller
-// stores workDir as an absolute path set once at startup (e.g. Hub.workDir).
+// stores workDir as an absolute path set once at startup (e.g. Runtime.workDir).
 //
 // The boundary is built ONCE, before anything is compared against it, which is
 // what keeps the three containment questions below from being asked backwards:

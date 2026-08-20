@@ -174,7 +174,7 @@ type MCPRecorder interface {
 	SignalReady()
 }
 
-// Translator holds stateful translate logic extracted from Hub. Each role is
+// Translator holds stateful translate logic extracted from Runtime. Each role is
 // its own field, so a handler method's reach is the field it names.
 type Translator struct {
 	bus          Broadcaster

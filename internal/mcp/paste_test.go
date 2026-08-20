@@ -438,7 +438,7 @@ func TestImport_ReachesTheAgentsConfigFile(t *testing.T) {
 }
 
 // The no-op path must skip the write: a persist re-renders KAS's file, whose
-// watcher emits a status notification straight back into the hub.
+// watcher emits a status notification straight back into the agent.
 func TestImport_UnchangedEntryDoesNotRewriteTheAgentsFile(t *testing.T) {
 	s, mux := newRoutedStore(t)
 

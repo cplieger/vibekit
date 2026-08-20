@@ -27,7 +27,7 @@
 // person who hit it would reach for the override rather than the list.
 //
 // A DROP, not a refusal, and that is the other half of the asymmetry with the
-// hub. There the request has a requester, so refusing it makes the agent's next
+// agent. There the request has a requester, so refusing it makes the agent's next
 // move a corrected one. Here the input is the operator's own container
 // environment and there is nobody to refuse: refusing would mean refusing to
 // start a chat. So the variable is dropped and the drop is LOGGED by name, which

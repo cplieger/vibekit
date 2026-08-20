@@ -91,7 +91,7 @@ func (r *Reaper) Reap(sessionID string) {
 // and archived chat's chain, unioned with every live bridge's session. Age is
 // not evidence that a session is disposable: the guard below is a create-race
 // cushion, not a liveness test. Passing a partial set deletes user history, so
-// the caller skips the sweep rather than narrowing the set (hub.sweepSessionsOnce).
+// the caller skips the sweep rather than narrowing the set (agent.sweepSessionsOnce).
 //
 // PASSING AN EMPTY SET IS REFUSED while the tree holds sessions. A zero-
 // reference keep-list is indistinguishable from a misconfigured one, and the

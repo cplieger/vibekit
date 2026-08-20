@@ -2,7 +2,7 @@
 //
 // The Translator receives raw ACP notifications from kiro-cli bridges
 // and converts them into domain events (SSE broadcasts, chat-store
-// mutations). Hub remains the coordinator; this package owns the
+// mutations). Runtime remains the coordinator; this package owns the
 // protocol-specific decode + dispatch logic.
 package translate
 

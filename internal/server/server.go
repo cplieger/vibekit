@@ -35,7 +35,7 @@ type Server struct {
 	utilityPrompt utilityPrompter
 	accountUsage  AccountUsageProvider
 	policy        policyProvider
-	hub           chatHub
+	agent         chatEngine
 	steering      SteeringGenerator
 	mcpRegistry   routeHandler
 	staticFS      fs.FS
@@ -58,7 +58,7 @@ type Server struct {
 	kiroRescan func(context.Context) (bool, error)
 	// authUnavailable reports whether the last attempt to vend a KAS access
 	// token failed. It reads a LATCH written on the session-creation path
-	// (hub.AuthTokenUnavailable), never a probe: this is consulted per
+	// (agent.AuthTokenUnavailable), never a probe: this is consulted per
 	// /api/health, and a probe here would spawn kiro-cli on a monitor's poll and
 	// could block on an SSO-OIDC refresh. Nil = unwired, no auth leg.
 	authUnavailable func() bool
@@ -90,8 +90,11 @@ type Option func(*Server)
 // WithSteering sets the steering generator used to produce environment.md for kiro-cli.
 func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
 
-// WithHub sets the hub that manages bridge processes and SSE broadcasts.
-func WithHub(h chatHub) Option { return func(s *Server) { s.hub = h } }
+// WithAgent sets the agent runtime that manages bridge processes and SSE
+// broadcasts. It was WithHub over a chatEngine; the dependency is *agent.Runtime
+// now and the name says which collaborator it is rather than what topology it
+// used to be.
+func WithAgent(a chatEngine) Option { return func(s *Server) { s.agent = a } }
 
 // WithChats sets the chat store, whose own router owns the chat HTTP surface.
 //
@@ -229,7 +232,7 @@ func New(opts ...Option) *Server {
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
-	s.hub.RegisterRoutes(mux)
+	s.agent.RegisterRoutes(mux)
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
@@ -342,7 +345,7 @@ func (s *Server) ListenAndServe() error {
 		// SYNCHRONOUSLY before srv.Shutdown: an unbounded hub teardown here
 		// would consume the whole grace and leave the HTTP drain none, so the
 		// budget is passed on rather than discarded.
-		if err := s.hub.Shutdown(drainCtx); err != nil {
+		if err := s.agent.Shutdown(drainCtx); err != nil {
 			slog.Error("hub shutdown did not finish within the grace period", "error", err)
 		}
 	}))

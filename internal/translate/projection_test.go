@@ -49,7 +49,7 @@ func ingestAll(p *Projection, frames [][2]any) {
 // measuredCompactedReplay is the EXACT frame sequence a session/load returns
 // for a two-turn session that was then compacted, captured from kiro-cli
 // 2.16.0 on 2026-08-02. The trailing untagged catalog frames are omitted:
-// hub.handleSessionUpdate routes only replay-tagged frames here.
+// agent.handleSessionUpdate routes only replay-tagged frames here.
 func measuredCompactedReplay(t *testing.T) [][2]any {
 	t.Helper()
 	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {

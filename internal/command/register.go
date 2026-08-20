@@ -7,7 +7,7 @@ import (
 )
 
 // RegisterDefaults populates the dispatcher with the standard command
-// handlers. Called once from Hub construction.
+// handlers. Called once from Runtime construction.
 //
 // It is also the role distribution table: every handler's roles are visible on
 // its own line, so widening one handler's reach is a diff here and not an

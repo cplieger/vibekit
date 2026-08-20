@@ -78,7 +78,7 @@ type v3SafetyPropertiesChanged struct {
 // the tool's own result ("The tool was NOT executed") and never calls the inner
 // executor, so it never issues the fs/write_text_file A→C request to us. Vibekit
 // therefore cannot circumvent an enforced block: its fs write handler
-// (hub.respondFSWrite) only ever writes in response to a KAS request, and a
+// (agent.respondFSWrite) only ever writes in response to a KAS request, and a
 // blocked tool produces no request. This handler's job is to SURFACE the
 // refusal, not to gate a write (there is no write to gate). A block is
 // non-tool-scoped here: the notification's toolId is the tool NAME (fs_write /

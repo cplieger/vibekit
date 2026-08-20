@@ -20,7 +20,7 @@ const TickInterval = time.Minute
 // classified as missed and never run at all.
 const MissGrace = 3 * time.Minute
 
-// Launcher starts one workflow run on behalf of a schedule. Hub satisfies this;
+// Launcher starts one workflow run on behalf of a schedule. Runtime satisfies this;
 // the narrow interface is what lets the runner be tested without a bridge or a
 // subprocess.
 //

@@ -314,7 +314,7 @@ type ToolLocation struct {
 // ToolDiff is a before/after text change from a write tool call. Sent
 // by kiro-cli in tool_call notifications for edit operations. Path is
 // workspace-relative (absolute paths from kiro-cli are normalised via
-// hub.relPath before being stored here); OldText/NewText are the
+// agent.relPath before being stored here); OldText/NewText are the
 // changed fragments, not full-file contents.
 type ToolDiff struct {
 	Path    string `json:"path"`
@@ -761,7 +761,7 @@ type WorkflowRun struct {
 	// A user cancel records NOTHING, so absence is the third value and no
 	// "cancelled_by_user" spelling is needed. Not KAS's field and not persisted:
 	// vibekit keeps it in memory for the runs it stopped in THIS process (see
-	// hub.runBoundsState), so a run stopped before a restart falls back to the
+	// agent.runBoundsState), so a run stopped before a restart falls back to the
 	// plain status. Empty for every run that ended on its own terms.
 	EndReason string `json:"end_reason,omitempty"`
 	UpdatedAt int64  `json:"updated_at"`

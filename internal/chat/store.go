@@ -32,11 +32,11 @@ var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
 
 // broadcaster is the SSE fan-out this store emits chat lifecycle and message
-// events through. *hub.Hub satisfies it.
+// events through. *agent.Runtime satisfies it.
 //
 // Declared HERE, at the consumer, rather than in a shared contract package.
 // 1 method — the whole of what a store needs to say "this happened" — against a
-// *hub.Hub that exports well over a hundred. Nothing about a bridge, a session
+// *agent.Runtime that exports well over a hundred. Nothing about a bridge, a session
 // or a turn is any business of a file writer.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)

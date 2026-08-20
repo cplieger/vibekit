@@ -201,7 +201,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 			"path", path)
 	}
 	webhttp.Ok(w)
-	s.hub.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
+	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(patch)
 	s.syncDebugLogs(patch)
 }

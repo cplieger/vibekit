@@ -98,7 +98,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	// and its stored secrets outright. Returning the existing record instead
 	// preserves them, and skipping the persist matters beyond tidiness: a write
 	// re-renders KAS's config file, whose watcher emits a status notification
-	// back into the hub.
+	// back into the agent.
 	if existing := s.findByNameLocked(rec.Name); existing != nil {
 		if !sameSpec(existing, rec) {
 			s.mu.Unlock()

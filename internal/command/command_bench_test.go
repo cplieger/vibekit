@@ -176,7 +176,7 @@ type hostDouble interface {
 var _ hostDouble = (*benchDeps)(nil)
 
 // promptRolesOf wires one double into the prompt path's role set, the way
-// RegisterDefaults wires the Hub into it.
+// RegisterDefaults wires the Runtime into it.
 func promptRolesOf(d hostDouble) *promptRoles {
 	return &promptRoles{
 		bridges:     d,

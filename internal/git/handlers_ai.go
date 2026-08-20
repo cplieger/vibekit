@@ -17,7 +17,7 @@ import (
 // that takes a prompt and a reasoning-effort level and returns text.
 //
 // Declared here, at the consumer, rather than in a shared contract package.
-// 1 method against the *hub.Hub that satisfies it, which exports well over a
+// 1 method against the *agent.Runtime that satisfies it, which exports well over a
 // hundred — none of the rest is any business of a commit-message endpoint. The
 // effort level is a parameter rather than a second method because the three
 // endpoints below differ only in what they pass: a branch name is cheap

@@ -1,5 +1,5 @@
 // Package command implements the POST /api/command dispatch table.
-// Hub registers concrete handler functions; the Dispatcher routes
+// Runtime registers concrete handler functions; the Dispatcher routes
 // incoming commands by type and handles envelope-level concerns
 // (body parsing, validation).
 //

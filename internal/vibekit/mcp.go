@@ -7,7 +7,7 @@ package vibekit
 
 // There is no MCPConfig interface here. The name census the hub reads is
 // declared at that consumer (internal/hub's mcpNameSets); *mcp.Store implements
-// it and the composition root's hub.WithMCPConfig call forces the check.
+// it and the composition root's agent.WithMCPConfig call forces the check.
 //
 // Two members it never had are worth recording. No ACPServers: vibekit no longer
 // sends servers inline on session/new — it renders KAS's own hot-reloading
@@ -88,7 +88,7 @@ type MCPDisconnectedPayload struct {
 
 // MCPSnapshotServer is one entry in a hub-to-steering MCP registry
 // snapshot. Defined here to keep the steering package decoupled from
-// internal/hub.
+// internal/agent.
 type MCPSnapshotServer struct {
 	Name string `json:"name"`
 }

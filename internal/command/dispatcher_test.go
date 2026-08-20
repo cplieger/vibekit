@@ -26,7 +26,7 @@ func TestDispatcher_MethodNotAllowed(t *testing.T) {
 
 // The drain refusal is NOT tested here any more, because it is not this
 // package's behaviour any more: it moved to a route wrapper covering both gated
-// routes (hub.refuseWhenDraining), and hub.TestRegisterRoutes_DrainingGate asserts
+// routes (agent.refuseWhenDraining), and agent.TestRegisterRoutes_DrainingGate asserts
 // it through the mux, which is stronger — a test calling this dispatcher directly
 // would bypass the wrapper and pass whether or not it is wired.
 
