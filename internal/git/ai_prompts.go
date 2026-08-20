@@ -5,8 +5,18 @@ import (
 	"log/slog"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/modeltext"
+)
+
+// Subject-line shaping bounds, in RUNES. 72 is the conventional git subject
+// length; the ellipsis is reserved out of it so a capped subject is never longer
+// than the cap, which the byte-slicing version this replaced got wrong by three.
+const (
+	subjectMaxRunes     = 72
+	subjectWordBreakMin = 30
+	subjectEllipsis     = "..."
 )
 
 // commitPrefixes is the canonical list of allowed commit-message type
@@ -176,17 +186,47 @@ func stripSurroundingQuotes(msg string) string {
 	}
 }
 
-// capSubject caps the subject line at 72 chars. It prefers breaking at a
-// word boundary past column 30 so short subjects aren't silently
+// capSubject caps the subject line at subjectMaxRunes. It prefers breaking at a
+// word boundary past subjectWordBreakMin so short subjects aren't silently
 // truncated mid-word.
+//
+// The unit is RUNES, not bytes. It used to slice bytes while its doc said
+// "chars", which for a non-ASCII subject cut a multi-byte rune in half and
+// produced invalid UTF-8 — the JSON encoder then replaced the fragment with
+// U+FFFD, so the user saw a replacement character in a suggested commit message.
+// The word-break threshold moved to the same unit for the same reason: a byte
+// index compared against 30 means a different thing in each script.
+//
+// strings.CutLast (1.27) replaces a strings.LastIndex plus a slice at the index
+// it returned. The site qualifies on the rule that decides most of them: the
+// separator is a single LITERAL (" "), and `before` is exactly the prefix the
+// old arithmetic computed. It is not the "last whitespace-separated field" shape
+// that strings.Fields owns — a tab in a commit subject is not a word break this
+// function has ever honoured, and treating it as one would be a behaviour change
+// dressed as a modernization.
 func capSubject(subject string) string {
-	if len(subject) <= 72 {
+	if utf8.RuneCountInString(subject) <= subjectMaxRunes {
 		return subject
 	}
-	if idx := strings.LastIndex(subject[:69], " "); idx > 30 {
-		return subject[:idx] + "..."
+	head := truncateRunes(subject, subjectMaxRunes-len(subjectEllipsis))
+	if before, _, found := strings.CutLast(head, " "); found &&
+		utf8.RuneCountInString(before) > subjectWordBreakMin {
+		return before + subjectEllipsis
 	}
-	return subject[:69] + "..."
+	return head + subjectEllipsis
+}
+
+// truncateRunes returns the first n runes of s, whole. n is assumed
+// non-negative; every caller derives it from a positive constant.
+func truncateRunes(s string, n int) string {
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
 }
 
 // buildBranchPrompt constructs the AI prompt for branch-name suggestion.

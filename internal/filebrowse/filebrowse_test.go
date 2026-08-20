@@ -1740,7 +1740,7 @@ type errReader struct{ err error }
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
 
 func TestCtxReader_Read(t *testing.T) {
-	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancelledCtx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	expiredCtx, expiredCancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
@@ -1871,7 +1871,7 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	}
 
 	// Cancel the context before calling writeUploads.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	uploaded, _, wErr := writeUploads(ctx, locAt(h, dir), files)
@@ -1913,7 +1913,7 @@ func TestAction_Copy_ContextCancelled_CleansUpTemp(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/files/action", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // cancel before the copy starts
 	req = req.WithContext(ctx)
 
@@ -2176,7 +2176,6 @@ func BenchmarkFileAction_Copy(b *testing.B) {
 
 			b.SetBytes(int64(sz.size))
 			b.ReportAllocs()
-			b.ResetTimer()
 
 			for b.Loop() {
 				req := httptest.NewRequest(http.MethodPost, "/api/files/action", strings.NewReader(body))

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/singleflight"
@@ -492,7 +493,10 @@ func TestExtractCommitMessage(t *testing.T) {
 }
 
 func TestExtractCommitMessage_SubjectLineBounded(t *testing.T) {
-	// Subject line must always be <=72 chars after truncation.
+	// Subject line must always be <=72 RUNES after truncation, and must always
+	// be valid UTF-8. The unit matters: this assertion used to count bytes while
+	// its message said "chars", which is the same conflation capSubject itself
+	// had — so a non-ASCII subject cut mid-rune satisfied it.
 	inputs := []string{
 		"",
 		"short",
@@ -500,13 +504,22 @@ func TestExtractCommitMessage_SubjectLineBounded(t *testing.T) {
 		strings.Repeat("a", 73),
 		strings.Repeat("x", 1000),
 		"feat: " + strings.Repeat("word ", 40),
+		// Multi-byte, no spaces: the branch that truncates without a word break.
+		strings.Repeat("日", 200),
+		// Multi-byte with a word break past the minimum.
+		"feat: " + strings.Repeat("変更 ", 60),
+		// A 4-byte rune, so a byte-slice cut lands mid-sequence at more offsets.
+		strings.Repeat("𝄞", 100),
 	}
 	for _, in := range inputs {
 		out := extractCommitMessage(in)
 		firstLine, _, _ := strings.Cut(out, "\n")
-		if len(firstLine) > 72 {
-			t.Errorf("extractCommitMessage(%q): subject %q is %d chars, want <=72",
-				in, firstLine, len(firstLine))
+		if n := utf8.RuneCountInString(firstLine); n > 72 {
+			t.Errorf("extractCommitMessage(%q...): subject is %d runes, want <=72", in[:min(len(in), 20)], n)
+		}
+		if !utf8.ValidString(firstLine) {
+			t.Errorf("extractCommitMessage(%q...): subject %q is not valid UTF-8",
+				in[:min(len(in), 20)], firstLine)
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -153,10 +154,7 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid path")
 		return
 	}
-	ref := r.URL.Query().Get("ref")
-	if ref == "" {
-		ref = refHEAD
-	}
+	ref := cmp.Or(r.URL.Query().Get("ref"), refHEAD)
 	if !isValidGitRef(ref) {
 		slog.Warn("git show: invalid ref rejected", "repo", h.repoDir(repoFromQuery(r)), "ref", ref)
 		httpreply.BadRequest(w, "invalid ref")

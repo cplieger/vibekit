@@ -98,7 +98,7 @@ func TestIsRepo_CancelledContext(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatalf("Mkdir error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if IsRepo(ctx, dir) {
 		t.Error("IsRepo with cancelled context = true, want false (ctx guard must short-circuit the stat)")

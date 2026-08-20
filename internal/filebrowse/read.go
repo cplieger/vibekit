@@ -2,6 +2,7 @@ package filebrowse
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -134,10 +135,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := filepath.Base(l.abs)
-	ct := mime.TypeByExtension(filepath.Ext(name))
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
+	ct := cmp.Or(mime.TypeByExtension(filepath.Ext(name)), "application/octet-stream")
 	w.Header().Set("Content-Type", ct)
 	// `attachment` is a SECURITY CONTROL on this route, not a UX preference, and
 	// the case that makes it one is SVG: mime.TypeByExtension(".svg") is

@@ -1,6 +1,7 @@
 package filebrowse
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -43,10 +44,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	dir := r.FormValue("dir")
-	if dir == "" {
-		dir = defaultUploadDir
-	}
+	dir := cmp.Or(r.FormValue("dir"), defaultUploadDir)
 	dirLoc, ok := h.resolveOrForbid(w, dir)
 	if !ok {
 		return
