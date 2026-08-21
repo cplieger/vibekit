@@ -224,3 +224,68 @@ func TestSearchAll_TakesNoCaseArgument(t *testing.T) {
 // searchAllSignature is the shape handleSearchAll forwards to: a context and a
 // query, and NO case flag.
 type searchAllSignature func(context.Context, string) SearchAllResult
+
+// The ranking formula, at exact values. Every other score test compares two
+// scores, which a formula that returns NaN for every input satisfies: NaN is
+// neither greater nor smaller, so an ordering assertion passes on garbage.
+// Inputs are chosen so the normaliser is exact in binary: docChars of 3 KiB
+// gives sqrt(1+3) = 2.
+func TestScoreChat_MatchesTheDocumentedFormula(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentHits int
+		titleHits   int
+		docChars    int
+		want        float64
+	}{
+		{name: "content_hits_divided_by_the_normaliser", contentHits: 2, titleHits: 0, docChars: 3 * 1024, want: 1},
+		{name: "title_hits_multiplied_by_the_boost", contentHits: 0, titleHits: 3, docChars: 0, want: 30},
+		{name: "both_terms_added", contentHits: 2, titleHits: 1, docChars: 3 * 1024, want: 11},
+		{name: "no_hits_at_all", contentHits: 0, titleHits: 0, docChars: 3 * 1024, want: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scoreChat(tc.contentHits, tc.titleHits, tc.docChars, "")
+			if got != tc.want {
+				t.Errorf("scoreChat(%d, %d, %d) = %v, want %v",
+					tc.contentHits, tc.titleHits, tc.docChars, got, tc.want)
+			}
+		})
+	}
+}
+
+// The row shows the EARLIEST hit, which is where the conversation first touches
+// the subject. Ties within one turn keep the first hit found, so the excerpt a
+// result row shows does not move around between searches.
+func TestBestHit_PicksTheEarliestTurnAndKeepsTheFirstOfATie(t *testing.T) {
+	tests := []struct {
+		name string
+		hits []SearchHit
+		want string
+	}{
+		{
+			name: "lowest_turn_wins_whatever_the_order",
+			hits: []SearchHit{
+				{MessageID: "c", Turn: 3},
+				{MessageID: "a", Turn: 1},
+				{MessageID: "b", Turn: 2},
+			},
+			want: "a",
+		},
+		{
+			name: "a_tie_keeps_the_first",
+			hits: []SearchHit{
+				{MessageID: "first", Turn: 2},
+				{MessageID: "second", Turn: 2},
+			},
+			want: "first",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bestHit(tc.hits).MessageID; got != tc.want {
+				t.Errorf("bestHit(%+v).MessageID = %q, want %q", tc.hits, got, tc.want)
+			}
+		})
+	}
+}

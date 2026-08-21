@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"maps"
 	"slices"
 	"testing"
 
@@ -628,6 +629,52 @@ func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
 			}
 			if tc.Checkpoint != nil {
 				t.Errorf("ToolCall.Checkpoint = %+v, want nil (no file was written)", *tc.Checkpoint)
+			}
+		})
+	}
+}
+
+// A mid-flight update may refine the card's title and kind, and KAS sends both
+// nullish on most updates. So a value the update carries is applied and a value
+// it omits keeps what the initial tool_call set — treating absence as an
+// instruction blanks the label of a card the user is watching.
+func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
+	tests := []struct {
+		name      string
+		update    map[string]any
+		wantTitle string
+		wantKind  vibekit.ToolKind
+	}{
+		{
+			name:      "the_update_refines_both",
+			update:    map[string]any{"title": "readFile(config.yaml)", "kind": "edit"},
+			wantTitle: "readFile(config.yaml)",
+			wantKind:  vibekit.ToolKind("edit"),
+		},
+		{
+			name:      "the_update_omits_both",
+			update:    map[string]any{},
+			wantTitle: "readFile",
+			wantKind:  vibekit.ToolKind("read"),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, _, _, events, chatID := primeToolCall(t)
+			update := map[string]any{"toolCallId": "tc-1", "status": "completed"}
+			maps.Copy(update, tc.update)
+
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, update), "")
+
+			got, ok := lastToolCallUpdate(t, events)
+			if !ok {
+				t.Fatal("no tool_call_update event emitted")
+			}
+			if got.Title != tc.wantTitle {
+				t.Errorf("ToolCall.Title after an update %v = %q, want %q", tc.update, got.Title, tc.wantTitle)
+			}
+			if got.Kind != tc.wantKind {
+				t.Errorf("ToolCall.Kind after an update %v = %q, want %q", tc.update, got.Kind, tc.wantKind)
 			}
 		})
 	}

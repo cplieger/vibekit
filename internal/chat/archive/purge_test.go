@@ -1,10 +1,13 @@
 package archive
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -634,4 +637,63 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 		t.Fatal("purgeAndReschedule returned no timer")
 	}
 	timer.Stop()
+}
+
+// A chat that loads but carries no activity timestamp ages from its file mtime,
+// the same fallback a chat that cannot be read at all gets. Treating a zero
+// UpdatedAt as a real instant dates the chat to the epoch, which purges a file
+// written seconds ago.
+func TestPurge_ChatWithoutAnActivityTimestampAgesFromMtime(t *testing.T) {
+	svc, store, dir := newPurgeTestService(t)
+	// Load succeeds for every id, with no UpdatedAt set.
+	store.loadResult = &vibekit.Chat{}
+
+	freshPath := writeAgedChat(t, dir, "fresh01", 0)
+	stalePath := writeAgedChat(t, dir, "stale01", 48*time.Hour)
+
+	svc.Purge(t.Context(), 24*time.Hour)
+
+	if !exists(t, freshPath) {
+		t.Errorf("chat with UpdatedAt=0 and a fresh mtime was purged: %s", freshPath)
+	}
+	if exists(t, stalePath) {
+		t.Errorf("chat with UpdatedAt=0 and a 48h-old mtime survived a 24h retention: %s", stalePath)
+	}
+}
+
+// capturePurgeLogs redirects the slog default into a buffer for one test. The
+// default logger is process-global, so a test using this must not run in
+// parallel.
+func capturePurgeLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// The end-of-pass summary is the operator's only record of a purge, so it must
+// report what the pass actually did — and a pass in which nothing failed is not
+// announced as a failure.
+func TestPurge_PassSummaryReportsWhatThePassDid(t *testing.T) {
+	svc, _, dir := newPurgeTestService(t)
+	writeAgedChat(t, dir, "gone0001", 48*time.Hour)
+	writeAgedChat(t, dir, "kept0001", 1*time.Hour)
+	buf := capturePurgeLogs(t)
+
+	svc.Purge(t.Context(), 24*time.Hour)
+
+	got := buf.String()
+	for _, want := range []string{"purged=1", "kept=1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("purge summary = %q, want it to contain %q (one stale chat, one live one)", got, want)
+		}
+	}
+	if !strings.Contains(got, "level=INFO") {
+		t.Errorf("purge summary = %q, want it logged at INFO: nothing failed in this pass", got)
+	}
+	if strings.Contains(got, "with errors") {
+		t.Errorf("purge summary = %q, want no error summary: nothing failed in this pass", got)
+	}
 }

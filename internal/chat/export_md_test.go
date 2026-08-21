@@ -29,13 +29,14 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 					{Content: "step three", Status: vibekit.PlanPending},
 				},
 				ToolCalls: []vibekit.ToolCall{{
-					ID:        "t1",
-					Title:     "read file",
-					Kind:      vibekit.ToolKindRead,
-					Status:    vibekit.ToolCompleted,
-					Output:    "file contents here",
-					Input:     json.RawMessage(`{"path":"a.go"}`),
-					Locations: []vibekit.ToolLocation{{Path: "a.go", Line: 3}},
+					ID:         "t1",
+					Title:      "read file",
+					Kind:       vibekit.ToolKindRead,
+					Status:     vibekit.ToolCompleted,
+					Output:     "file contents here",
+					Input:      json.RawMessage(`{"path":"a.go"}`),
+					Locations:  []vibekit.ToolLocation{{Path: "a.go", Line: 3}},
+					DurationMs: 1234,
 				}},
 				Ts: 1_700_000_050_000,
 			},
@@ -47,10 +48,13 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 
 	wants := []string{
 		"# My Chat",
+		"**Chat ID:** `abc123`",
 		"**Model:** claude-x",
 		"**Mode:** vibe",
 		"**Messages:** 3",
-		"UTC", // timestamps rendered
+		"**Created:** 2023-11-14 22:13:20 UTC",
+		"**Updated:** 2023-11-14 22:15:00 UTC",
+		"_2023-11-14 22:14:10 UTC_", // the assistant message's own timestamp
 		"## User",
 		"hello there",
 		"## Assistant",
@@ -62,9 +66,10 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 		"- [ ] step two _(in progress)_",
 		"- [ ] step three",
 		"<summary>Tool: read file — completed</summary>",
+		"Duration: 1234ms",
 		"`a.go:3`",
 		"file contents here",
-		`"path"`, // pretty-printed JSON input
+		"{\n  \"path\": \"a.go\"\n}", // the JSON input, indented rather than raw
 		"## Event: interrupted",
 		"interrupted by restart",
 	}
@@ -143,5 +148,42 @@ func TestMdTimestamp_ZeroIsEmpty(t *testing.T) {
 	}
 	if got := mdTimestamp(1_700_000_000_000); !strings.HasSuffix(got, "UTC") {
 		t.Errorf("mdTimestamp = %q, want UTC-suffixed datetime", got)
+	}
+}
+
+// The export omits what a message does not carry. Rendering an absent plan, a
+// zero duration or a line-less location produces sections and coordinates that
+// were never in the transcript, which is worse than saying nothing.
+func TestRenderChatMarkdown_OmitsWhatTheMessageDoesNotCarry(t *testing.T) {
+	c := &vibekit.Chat{
+		ID:   "c1",
+		Name: "Sparse",
+		Messages: []vibekit.Message{{
+			ID:      "m1",
+			Role:    vibekit.RoleAssistant,
+			Content: "done",
+			ToolCalls: []vibekit.ToolCall{{
+				ID:        "t1",
+				Title:     "grep",
+				Status:    vibekit.ToolCompleted,
+				Locations: []vibekit.ToolLocation{{Path: "whole/file.go"}},
+			}},
+		}},
+	}
+
+	md := renderChatMarkdown(c)
+
+	unwanted := []string{
+		"**Plan**",   // the message carries no plan
+		"Duration:",  // the tool call was never timed
+		"file.go:0`", // a location with no line is a file, not line zero
+	}
+	for _, bad := range unwanted {
+		if strings.Contains(md, bad) {
+			t.Errorf("markdown contains %q for a message that carries none\n---\n%s", bad, md)
+		}
+	}
+	if !strings.Contains(md, "`whole/file.go`") {
+		t.Errorf("markdown missing the bare location path\n---\n%s", md)
 	}
 }

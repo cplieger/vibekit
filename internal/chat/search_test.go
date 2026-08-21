@@ -398,3 +398,66 @@ func TestHandleSearch_CaseParam(t *testing.T) {
 		})
 	}
 }
+
+// `turn:` takes an absolute turn ordinal, and turns are numbered from 1. Turn 0
+// names no turn, so `turn:0` is not a filter — it is the text the user typed.
+func TestSearch_TurnZeroIsNotAFilter(t *testing.T) {
+	msgs := []vibekit.Message{
+		msg("u1", vibekit.RoleUser, "see turn:0 for the trace"),
+		msg("a1", vibekit.RoleAssistant, "acknowledged"),
+	}
+	hits := Search(msgs, "turn:0", false)
+	if len(hits) != 1 {
+		t.Fatalf("Search(%q) returned %d hits, want 1: turn 0 is free text, not a turn filter", "turn:0", len(hits))
+	}
+	if hits[0].MessageID != "u1" {
+		t.Errorf("Search(%q) hit = %+v, want the message containing that text", "turn:0", hits[0])
+	}
+}
+
+// A message whose thinking trace dwarfs its prose is searchable like any other.
+// The two are concatenated before the scan, so the buffer sized for them must
+// account for both.
+func TestSearch_MessageWithMoreThinkingThanProse(t *testing.T) {
+	m := msg("a1", vibekit.RoleAssistant, "ok")
+	m.Reasoning = strings.Repeat("thinking ", 200) + "needle"
+
+	hits := Search([]vibekit.Message{m}, "needle", false)
+	if len(hits) != 1 {
+		t.Fatalf("Search over a message with a %d-byte reasoning trace and a %d-byte body returned %d hits, want 1",
+			len(m.Reasoning), len(m.Content), len(hits))
+	}
+}
+
+// An excerpt marks a cut with an ellipsis and carries a fixed radius of context
+// around the match. A mark on an uncut side claims text was dropped when none
+// was, and a short radius silently loses context the reader needs.
+func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "match_fills_the_whole_text",
+			content: "needle tail",
+			want:    "needle tail",
+		},
+		{
+			name:    "text_continues_past_the_radius",
+			content: "needle" + strings.Repeat(" x", 100),
+			want:    "needle" + strings.Repeat(" x", 30) + "\u2026",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := Search([]vibekit.Message{msg("u1", vibekit.RoleUser, tc.content)}, "needle", false)
+			if len(hits) != 1 {
+				t.Fatalf("Search(%q) returned %d hits, want 1", tc.content, len(hits))
+			}
+			if got := hits[0].Excerpt; got != tc.want {
+				t.Errorf("Search(%q) excerpt = %q, want %q", tc.content, got, tc.want)
+			}
+		})
+	}
+}

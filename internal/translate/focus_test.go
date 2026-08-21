@@ -171,3 +171,85 @@ func TestTitleIsPromptDerived(t *testing.T) {
 		})
 	}
 }
+
+// A title exactly at the rune cap is adopted; one rune past it is not. The cap
+// exists to keep a runaway title out of the chat list, and rejecting a title
+// that sits exactly on it discards a legitimate one.
+func TestHandleSessionInfoUpdate_FocusTitleRuneCapIsInclusive(t *testing.T) {
+	tests := []struct {
+		name     string
+		title    string
+		wantName string
+	}{
+		{name: "exactly_at_the_cap", title: strings.Repeat("t", maxFocusTitleRunes), wantName: strings.Repeat("t", maxFocusTitleRunes)},
+		{name: "one_rune_past_the_cap", title: strings.Repeat("t", maxFocusTitleRunes+1), wantName: "A"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
+				"title": tc.title, "status": "in_progress",
+			}), "")
+
+			c, _ := store.Get(t.Context(), "c1")
+			if c.Name != tc.wantName {
+				t.Errorf("chat name after a %d-rune focus title = %q, want %q",
+					len([]rune(tc.title)), c.Name, tc.wantName)
+			}
+		})
+	}
+}
+
+// chat_status is broadcast when the focus update carries either half of it, and
+// only then. A status with no description is the ordinary turn-completion shape,
+// and an update with neither is the one that must stay silent — a status event
+// with two empty fields blanks the client's status line.
+func TestHandleSessionInfoUpdate_FocusBroadcastsOnlyWhenItHasSomethingToSay(t *testing.T) {
+	tests := []struct {
+		name          string
+		focus         map[string]any
+		wantBroadcast bool
+		wantStatus    string
+	}{
+		{
+			name:          "status_without_a_description",
+			focus:         map[string]any{"status": "completed"},
+			wantBroadcast: true,
+			wantStatus:    "completed",
+		},
+		{
+			name:          "description_without_a_status",
+			focus:         map[string]any{"description": "Step 1 complete."},
+			wantBroadcast: true,
+		},
+		{
+			name:          "neither_status_nor_description",
+			focus:         map[string]any{"title": "Some title"},
+			wantBroadcast: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, events, _ := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, tc.focus), "")
+
+			got := chatStatusPayloads(t, events)
+			if !tc.wantBroadcast {
+				if len(got) != 0 {
+					t.Fatalf("chat_status payloads = %+v, want none for %v", got, tc.focus)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("chat_status payloads = %+v, want exactly one for %v", got, tc.focus)
+			}
+			if got[0].Status != tc.wantStatus {
+				t.Errorf("chat_status status = %q, want %q", got[0].Status, tc.wantStatus)
+			}
+		})
+	}
+}
