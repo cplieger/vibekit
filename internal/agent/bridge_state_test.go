@@ -144,3 +144,87 @@ func TestEndPromptCall_DisarmsTheTimer(t *testing.T) {
 		}
 	})
 }
+
+// TestInterruptTurn_ReleasesTheTurnAndRecordsWhy: the host half of the
+// tool-interruption fix. kiro-cli abandoned the turn without answering it, so the
+// prompt's context is what has to be tripped, and the cause has to survive the
+// trip because the transcript's divider has no other source for it.
+func TestInterruptTurn_ReleasesTheTurnAndRecordsWhy(t *testing.T) {
+	sb, ctx, _ := newPromptingBridge(t)
+
+	const reason = "Stopped by kiro-cli's tool-use security filter"
+	if !sb.interruptTurn(reason) {
+		t.Fatal("interrupting an in-flight turn must be taken")
+	}
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("the prompt context is still live; the blocked Call never returns and the slot stays held")
+	}
+	if got := sb.takeInterruptReason(); got != reason {
+		t.Errorf("takeInterruptReason() = %q, want %q", got, reason)
+	}
+	// TAKE, not read: the reason describes ONE turn, and leaving it set would
+	// relabel the next turn's ordinary failure with this turn's cause.
+	if got := sb.takeInterruptReason(); got != "" {
+		t.Errorf("second takeInterruptReason() = %q, want it cleared by the first read", got)
+	}
+}
+
+// TestInterruptTurn_IsOneShotPerTurn pins the race the latch exists for. A user
+// pressing Cancel and the filter firing land on the same turn's cancel func, and
+// the generation guard stops cross-turn damage without deciding which of them
+// gets the attribution. First writer wins, so a later cause cannot overwrite the
+// reason already recorded — run_bounds.go's claimTermination is the same rule at
+// run scope, and it exists because a bound rewriting a deliberate stop is what it
+// looked like before.
+func TestInterruptTurn_IsOneShotPerTurn(t *testing.T) {
+	sb, _, _ := newPromptingBridge(t)
+
+	if !sb.interruptTurn("first cause") {
+		t.Fatal("the first interrupt must be taken")
+	}
+	if sb.interruptTurn("second cause") {
+		t.Error("a second interrupt was taken; the turn's cause is already decided")
+	}
+	if got := sb.takeInterruptReason(); got != "first cause" {
+		t.Errorf("reason = %q, want the FIRST cause to win", got)
+	}
+}
+
+// TestInterruptTurn_RefusesWithNoTurnInFlight: the sentinel can arrive after a
+// user cancel already ended the same turn, or on a chat whose turn is over. Both
+// are benign races rather than failures, and acting on them would cancel a turn
+// the user had just started.
+func TestInterruptTurn_RefusesWithNoTurnInFlight(t *testing.T) {
+	t.Run("idle bridge", func(t *testing.T) {
+		sb := &sharedBridge{}
+		if sb.interruptTurn("filter") {
+			t.Error("an idle bridge accepted an interrupt")
+		}
+		if got := sb.takeInterruptReason(); got != "" {
+			t.Errorf("a refused interrupt still recorded %q", got)
+		}
+	})
+
+	t.Run("prompting but no prompt call registered", func(t *testing.T) {
+		sb := &sharedBridge{}
+		if !sb.tryAcquireForPrompt() {
+			t.Fatal("fresh bridge must be acquirable")
+		}
+		// The window between TryAcquireForPrompt and BeginPromptCall: there is a
+		// turn, but nothing to cancel yet.
+		if sb.interruptTurn("filter") {
+			t.Error("an interrupt was taken with no prompt context to trip")
+		}
+	})
+
+	t.Run("after the turn ended", func(t *testing.T) {
+		sb, _, _ := newPromptingBridge(t)
+		sb.EndPromptCall()
+		if sb.interruptTurn("filter") {
+			t.Error("an interrupt was taken after the prompt call ended")
+		}
+	})
+}

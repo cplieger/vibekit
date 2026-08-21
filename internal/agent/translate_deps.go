@@ -64,6 +64,9 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Governance:   rt.config,
 		RunOrigin:    rt.runs,
 		RunBounds:    rt.runs,
+		// The coordinator, not rt: ending a turn needs the chat's bridge and its
+		// in-flight prompt cancel, which are the coordinator's to reach.
+		TurnInterrupt: rt.coord,
 	})
 }
 

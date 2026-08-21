@@ -68,6 +68,7 @@ type hostDouble interface {
 	HookStatusReader
 	RunOriginAccess
 	RunBoundsAccess
+	TurnInterruptAccess
 	ChatRecords
 	GetOrInit(chatID vibekit.ChatID) *buffer.Buffer
 	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
@@ -83,19 +84,20 @@ type hostDouble interface {
 // rolesOf wires one double into every role slot.
 func rolesOf(d hostDouble) *Roles {
 	return &Roles{
-		Bus:          d,
-		Chats:        d,
-		Buffers:      d,
-		Lines:        d,
-		PendingPerms: d,
-		Push:         d,
-		Sessions:     d,
-		Terminals:    d,
-		HookStatus:   d,
-		WorkDir:      d.WorkDir(),
-		MCP:          d.MCPRecorder(),
-		Governance:   d,
-		RunOrigin:    d,
-		RunBounds:    d,
+		Bus:           d,
+		Chats:         d,
+		Buffers:       d,
+		Lines:         d,
+		PendingPerms:  d,
+		Push:          d,
+		Sessions:      d,
+		Terminals:     d,
+		HookStatus:    d,
+		WorkDir:       d.WorkDir(),
+		MCP:           d.MCPRecorder(),
+		Governance:    d,
+		RunOrigin:     d,
+		RunBounds:     d,
+		TurnInterrupt: d,
 	}
 }
