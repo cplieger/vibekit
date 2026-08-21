@@ -365,6 +365,17 @@ describe("ghost chats (a client-minted id the server has not acknowledged)", () 
     setSessions([makeSession("g3")]); // what loadList does
     expect(isGhostChat("g3")).toBe(false);
   });
+
+  it("does not churn the session when the mark is already standing", () => {
+    // Every New chat click mints one id and marks it; a re-entrant call (a
+    // restore, a second seeding pass) must not fire the chat's signal again, or
+    // the sidebar row repaints for a fact that has not changed.
+    setSessions([makeSession("g4")]);
+    markGhostChat("g4");
+    const marked = get("g4");
+    markGhostChat("g4");
+    expect(get("g4")).toBe(marked);
+  });
 });
 
 describe("parseContextSize (table-driven)", () => {
@@ -849,5 +860,1277 @@ describe("Store message attachments (merge allowlist)", () => {
     resetStore("chat-att4");
     appendMessage("chat-att4", { id: "m-1", role: "user", ts: 1, content: "just a question" });
     expect(get("chat-att4")?.messages[0]?.attachments).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The render signal: one bump per list change, coalesced.
+//
+// `messagesVersion` is the renderer's only coarse "the list changed" input, and
+// the streaming paths deliberately do NOT bump it per delta — the per-block and
+// per-message signals carry those. So the two things worth pinning are that a
+// list change bumps it exactly once, and that several changes arriving in one
+// tick still bump it exactly once. A per-event bump would repaint the whole
+// transcript for every chunk of every turn.
+// ---------------------------------------------------------------------------
+
+import {
+  messagesVersion,
+  emitMessages,
+  isThinking,
+  defaultUsage,
+  setTurnFailed,
+  clearTurnFailed,
+  clearTurnDone,
+  tabStatusFor,
+  setAgentStatus,
+  setCurrentMode,
+  setSupervisedMode,
+  setEffort,
+  normalizeMessage,
+  setTurnSummary,
+  reinsertSession,
+  setCodeReferences,
+  rebuildMsgIndex,
+} from "./store.js";
+import { ensureBlockTextSig, ensureBlockThinkingSig, clearAllBlockSigs } from "./store-signals.js";
+
+/** Let the queueMicrotask coalescer run. A macrotask, so every pending
+ *  microtask has drained by the time it resolves. */
+function tick(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
+}
+
+describe("messagesVersion", () => {
+  it("counts up by one per explicit emit", () => {
+    const before = messagesVersion.peek();
+    emitMessages();
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("coalesces two new messages arriving in one tick into one render", async () => {
+    resetStore("mv-1");
+    const before = messagesVersion.peek();
+    appendChunk("mv-1", "m-a", "a", false, 0, "");
+    appendChunk("mv-1", "m-b", "b", false, 0, "");
+    // Deferred: the coalescer owns the microtask, so nothing has repainted yet.
+    expect(messagesVersion.peek()).toBe(before);
+    await tick();
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("schedules again once the deferred render has run", async () => {
+    resetStore("mv-2");
+    appendChunk("mv-2", "m-a", "a", false, 0, "");
+    await tick();
+    const between = messagesVersion.peek();
+    appendChunk("mv-2", "m-b", "b", false, 0, "");
+    await tick();
+    // The guard has to reset, or the second turn of any chat never repaints.
+    expect(messagesVersion.peek()).toBe(between + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseContextSize: the whitespace the model catalog's prose actually carries.
+//
+// The table above covers the shapes we have seen; these cover the tolerance the
+// `\s*` in both patterns exists for. The input is upstream prose from the model
+// catalog, so "128K context", "128K  context" and "128Kcontext" are all the same
+// claim, and a multi-digit M size must not be read one digit at a time.
+// ---------------------------------------------------------------------------
+
+describe("parseContextSize tolerates the spacing upstream prose varies on", () => {
+  const cases: { input: string; expected: number | undefined }[] = [
+    { input: "128K  context", expected: 128_000 },
+    { input: "128Kcontext", expected: 128_000 },
+    { input: "2M  context", expected: 2_000_000 },
+    { input: "10M context", expected: 10_000_000 },
+    { input: "100 M context", expected: 100_000_000 },
+  ];
+
+  for (const { input, expected } of cases) {
+    it(`parseContextSize(${JSON.stringify(input)}) → ${String(expected)}`, () => {
+      expect(parseContextSize(input)).toBe(expected);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The latches, and the no-churn discipline they share.
+//
+// Every mutator here is driven by an SSE frame that an interrupted stream can
+// replay, so "already in that state" has to be a no-op rather than a rewrite:
+// a rewrite fires the chat's per-entity signal, and every subscriber of that
+// chat repaints for a frame that said nothing new. Object identity is the only
+// way to assert that from outside, which is why these read `toBe`.
+// ---------------------------------------------------------------------------
+
+describe("Store defaults for a chat it has never heard of", () => {
+  it("reports no turn in flight", () => {
+    setSessions([]);
+    expect(isThinking("nobody")).toBe(false);
+  });
+
+  it("seeds usage as not-yet-measured", () => {
+    // The flag is what stops the context ring presenting a fresh chat's zeroes as
+    // a measurement; flipping it would make "0 credits used" look observed.
+    expect(defaultUsage().has_real_data).toBe(false);
+  });
+});
+
+describe("Store failure latch", () => {
+  it("latches a failed turn", () => {
+    resetStore("tf-1");
+    setTurnFailed("tf-1");
+    expect(get("tf-1")?.turn_failed).toBe(true);
+    expect(tabStatusFor(get("tf-1"))).toBe("failed");
+  });
+
+  it("does not churn the session on a replayed error frame", () => {
+    resetStore("tf-2");
+    setTurnFailed("tf-2");
+    const latched = get("tf-2");
+    setTurnFailed("tf-2");
+    expect(get("tf-2")).toBe(latched);
+  });
+
+  it("clears on request without a turn starting", () => {
+    resetStore("tf-3");
+    setTurnFailed("tf-3");
+    clearTurnFailed("tf-3");
+    expect(get("tf-3")?.turn_failed).toBeUndefined();
+    expect(tabStatusFor(get("tf-3"))).toBe("idle");
+  });
+
+  it("does not churn the session clearing a latch that was never set", () => {
+    resetStore("tf-4");
+    const before = get("tf-4");
+    clearTurnFailed("tf-4");
+    expect(get("tf-4")).toBe(before);
+  });
+});
+
+describe("Store finished latch", () => {
+  it("does not churn the session clearing a latch that was never set", () => {
+    resetStore("td-1");
+    const before = get("td-1");
+    clearTurnDone("td-1");
+    expect(get("td-1")).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setAgentStatus: the agent's own words about what it is doing.
+//
+// Two fields, one frame, and an empty string is a CLEAR rather than a value —
+// the fields are deleted so a cleared session compares equal to one that never
+// had a status, which is what keeps the tab strip from repainting on every
+// turn boundary.
+// ---------------------------------------------------------------------------
+
+describe("Store agent status", () => {
+  it("records the status and its description", () => {
+    resetStore("as-1");
+    setAgentStatus("as-1", "waiting_on_user", "which file did you mean?");
+    expect(get("as-1")?.agent_status).toBe("waiting_on_user");
+    expect(get("as-1")?.agent_status_text).toBe("which file did you mean?");
+  });
+
+  it("does not churn the session on a repeated frame", () => {
+    resetStore("as-2");
+    setAgentStatus("as-2", "in_progress", "reading the parser");
+    const settled = get("as-2");
+    setAgentStatus("as-2", "in_progress", "reading the parser");
+    expect(get("as-2")).toBe(settled);
+  });
+
+  it("takes a new description under an unchanged status", () => {
+    resetStore("as-3");
+    setAgentStatus("as-3", "in_progress", "reading the parser");
+    setAgentStatus("as-3", "in_progress", "writing the patch");
+    expect(get("as-3")?.agent_status_text).toBe("writing the patch");
+  });
+
+  it("takes a new status under an unchanged description", () => {
+    resetStore("as-4");
+    setAgentStatus("as-4", "in_progress", "reading the parser");
+    setAgentStatus("as-4", "completed", "reading the parser");
+    expect(get("as-4")?.agent_status).toBe("completed");
+  });
+
+  it("reads an empty status as a clear, and deletes the field", () => {
+    resetStore("as-5");
+    setAgentStatus("as-5", "completed", "all done");
+    setAgentStatus("as-5", "", "all done");
+    expect(get("as-5")?.agent_status).toBeUndefined();
+  });
+
+  it("reads an empty description as a clear, and deletes the field", () => {
+    resetStore("as-6");
+    setAgentStatus("as-6", "completed", "all done");
+    setAgentStatus("as-6", "completed", "");
+    expect(get("as-6")?.agent_status_text).toBeUndefined();
+  });
+
+  it("does not churn a chat that never had one when both fields arrive empty", () => {
+    // The `?? ""` on both reads is what makes this a no-op: an absent field and a
+    // cleared one are the same state, so the clearing frame says nothing new.
+    resetStore("as-7");
+    const before = get("as-7");
+    setAgentStatus("as-7", "", "");
+    expect(get("as-7")).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertHeader: a SERVER-authoritative re-sync that must not lose what only the
+// client knows. `chat_updated` arrives on every write to any field of the chat,
+// so this runs constantly and each `??` in it is a decision about who wins.
+// ---------------------------------------------------------------------------
+
+describe("Store upsertHeader re-sync", () => {
+  it("never lowers a message count the client has already seen", () => {
+    // The header's count is the server's; `messages` is the paginated window. A
+    // header built before the last turn was flushed would otherwise walk the
+    // count backwards and make a chat with history look empty.
+    setSessions([{ ...makeSession("uh-1"), message_count: 5 }]);
+    upsertHeader({ ...headerFor("uh-1"), message_count: 2 });
+    expect(get("uh-1")?.message_count).toBe(5);
+  });
+
+  it("does not read an empty model string as a clear either", () => {
+    // Same rule as an absent model, one step further along: "" is what a header
+    // built from a record the server has no model for looks like once the field
+    // is present at all.
+    setSessions([makeSession("uh-2")]);
+    setModel("uh-2", "claude-opus-5");
+    upsertHeader({ ...headerFor("uh-2"), model: "" });
+    expect(get("uh-2")?.model).toBe("claude-opus-5");
+  });
+
+  it("leaves supervised mode off when the header does not mention it", () => {
+    setSessions([makeSession("uh-3")]);
+    upsertHeader(headerFor("uh-3"));
+    expect(get("uh-3")?.supervised_mode).toBe(false);
+  });
+
+  it("adopts a compaction watermark", () => {
+    setSessions([makeSession("uh-4")]);
+    upsertHeader({ ...headerFor("uh-4"), compaction_watermark: "msg-42" });
+    expect(get("uh-4")?.compaction_watermark).toBe("msg-42");
+  });
+
+  it("drops the watermark when the header stops carrying one", () => {
+    setSessions([makeSession("uh-5")]);
+    upsertHeader({ ...headerFor("uh-5"), compaction_watermark: "msg-42" });
+    upsertHeader(headerFor("uh-5"));
+    expect(get("uh-5")?.compaction_watermark).toBeUndefined();
+  });
+
+  it("seeds a brand-new chat as idle and unsupervised", () => {
+    setSessions([]);
+    upsertHeader(headerFor("uh-6"));
+    expect(get("uh-6")?.thinking).toBe(false);
+    expect(get("uh-6")?.supervised_mode).toBe(false);
+  });
+
+  it("seeds a brand-new chat with history as having more to fetch", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("uh-7"), message_count: 3 });
+    expect(get("uh-7")?.has_more).toBe(true);
+  });
+
+  it("seeds a brand-new empty chat as having nothing to fetch", () => {
+    setSessions([]);
+    upsertHeader(headerFor("uh-8"));
+    expect(get("uh-8")?.has_more).toBe(false);
+  });
+
+  it("carries a watermark onto a brand-new chat", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("uh-9"), compaction_watermark: "msg-7" });
+    expect(get("uh-9")?.compaction_watermark).toBe("msg-7");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removeChat and reinsertSession: the optimistic-delete pair.
+//
+// `chat.delete` removes the row before the server answers and puts it back if
+// the command fails, so which chat becomes active and where the row lands are
+// both user-visible.
+// ---------------------------------------------------------------------------
+
+describe("Store removeChat", () => {
+  it("activates the next remaining chat when the active one goes", () => {
+    setSessions([makeSession("rm-a"), makeSession("rm-b")]);
+    setActive("rm-a");
+    removeChat("rm-a");
+    expect(getActiveId()).toBe("rm-b");
+  });
+
+  it("leaves the active chat alone when a different one goes", () => {
+    setSessions([makeSession("rm-a"), makeSession("rm-b"), makeSession("rm-c")]);
+    setActive("rm-c");
+    removeChat("rm-a");
+    expect(getActiveId()).toBe("rm-c");
+  });
+
+  it("does not switch chats for an id that has no row", () => {
+    // An id can be active before its session arrives (the ghost case above), and
+    // removing something that was never there must not move the user.
+    setSessions([makeSession("rm-a"), makeSession("rm-b")]);
+    setActive("rm-ghost");
+    removeChat("rm-ghost");
+    expect(getActiveId()).toBe("rm-ghost");
+  });
+
+  it("drops the removed chat's message index with it", () => {
+    setSessions([makeSession("rm-i")]);
+    appendMessage("rm-i", { id: "m-1", role: "user", ts: 1, content: "one" });
+    appendMessage("rm-i", { id: "m-2", role: "user", ts: 2, content: "two" });
+    removeChat("rm-i");
+    upsertHeader(headerFor("rm-i"));
+    // A surviving index would report m-2 as already resident at slot 1 of an
+    // empty list, and the message would be silently dropped.
+    appendMessage("rm-i", { id: "m-2", role: "user", ts: 2, content: "two" });
+    expect(get("rm-i")?.messages).toHaveLength(1);
+    expect(get("rm-i")?.messages[0]?.id).toBe("m-2");
+  });
+});
+
+describe("Store reinsertSession", () => {
+  it("restores a removed chat at the index it held", () => {
+    setSessions([makeSession("ri-a"), makeSession("ri-b"), makeSession("ri-c")]);
+    const gone = get("ri-b")!;
+    removeChat("ri-b");
+    reinsertSession(gone, 1);
+    expect(getSessions().map((s) => s.id)).toEqual(["ri-a", "ri-b", "ri-c"]);
+  });
+
+  it("puts it at the head when no index is named", () => {
+    setSessions([makeSession("ri-a"), makeSession("ri-b")]);
+    reinsertSession(makeSession("ri-z"));
+    expect(getSessions().map((s) => s.id)).toEqual(["ri-z", "ri-a", "ri-b"]);
+  });
+
+  it("clamps an index past the end to the end", () => {
+    setSessions([makeSession("ri-a"), makeSession("ri-b")]);
+    reinsertSession(makeSession("ri-z"), 99);
+    expect(getSessions().map((s) => s.id)).toEqual(["ri-a", "ri-b", "ri-z"]);
+  });
+
+  it("clamps a negative index to the head", () => {
+    setSessions([makeSession("ri-a")]);
+    reinsertSession(makeSession("ri-z"), -5);
+    expect(getSessions().map((s) => s.id)).toEqual(["ri-z", "ri-a"]);
+  });
+
+  it("is idempotent: a chat already present is left where it is", () => {
+    setSessions([makeSession("ri-a"), makeSession("ri-b")]);
+    reinsertSession(makeSession("ri-b"), 0);
+    expect(getSessions().map((s) => s.id)).toEqual(["ri-a", "ri-b"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeMessage: give the renderer ONE path.
+//
+// v3 messages already carry `blocks`; a legacy replay carries content /
+// reasoning / tool_calls and nothing else. The synthesis order is the
+// chronological order the renderer walks — thinking, then text, then one
+// tool_use per call — and anything that already has blocks, or has nothing to
+// synthesize from, must pass through untouched rather than gain an empty array.
+// ---------------------------------------------------------------------------
+
+describe("Store normalizeMessage", () => {
+  it("leaves a user message alone", () => {
+    const m = { id: "n-1", role: "user" as const, ts: 1, content: "hello" };
+    expect(normalizeMessage(m).blocks).toBeUndefined();
+  });
+
+  it("leaves an assistant message that already carries blocks alone", () => {
+    const blocks = [{ type: "text" as const, text: "already" }];
+    const m = { id: "n-2", role: "assistant" as const, ts: 1, content: "ignored", blocks };
+    expect(normalizeMessage(m).blocks).toBe(blocks);
+  });
+
+  it("synthesizes into an assistant message whose blocks array is empty", () => {
+    // What appendChunk mints, and what a v3 message with no content looks like.
+    const m = { id: "n-3", role: "assistant" as const, ts: 1, content: "hi", blocks: [] };
+    expect(normalizeMessage(m).blocks).toEqual([{ type: "text", text: "hi" }]);
+  });
+
+  it("leaves a plan-only assistant message alone", () => {
+    const m = {
+      id: "n-4",
+      role: "assistant" as const,
+      ts: 1,
+      content: "",
+      plan: [{ content: "step one", priority: "high", status: "pending" as const }],
+    };
+    expect(normalizeMessage(m).blocks).toBeUndefined();
+  });
+
+  it("synthesizes a thinking block from reasoning alone", () => {
+    const m = { id: "n-5", role: "assistant" as const, ts: 1, reasoning: "let me think" };
+    expect(normalizeMessage(m).blocks).toEqual([{ type: "thinking", thinking: "let me think" }]);
+  });
+
+  it("orders thinking ahead of text", () => {
+    const m = { id: "n-6", role: "assistant" as const, ts: 1, content: "answer", reasoning: "why" };
+    expect(normalizeMessage(m).blocks).toEqual([
+      { type: "thinking", thinking: "why" },
+      { type: "text", text: "answer" },
+    ]);
+  });
+
+  it("synthesizes one tool_use per call, carrying each call's subtask", () => {
+    const m = {
+      id: "n-7",
+      role: "assistant" as const,
+      ts: 1,
+      content: "",
+      tool_calls: [
+        {
+          id: "t-1",
+          title: "readFile",
+          kind: "read" as const,
+          status: "completed" as const,
+          ts: 0,
+        },
+        {
+          id: "t-2",
+          title: "bash",
+          kind: "execute" as const,
+          status: "completed" as const,
+          ts: 0,
+          agent_subtask_id: "sub-1",
+        },
+      ],
+    };
+    expect(normalizeMessage(m).blocks).toEqual([
+      { type: "tool_use", tool_call_id: "t-1" },
+      { type: "tool_use", tool_call_id: "t-2", agent_subtask_id: "sub-1" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeMessage's allowlist, field by field.
+//
+// The rule is one sentence — adopt the incoming's non-empty fields, never
+// clobber a non-empty field with an empty one — and it is a per-field clause
+// rather than a loop, so every field is its own chance to get it wrong. A
+// message is ingested at least twice (its own message_appended, then any
+// refetch or reconnect replay), so a clause that clobbers loses real data on
+// the second pass.
+// ---------------------------------------------------------------------------
+
+describe("Store mergeMessage allowlist", () => {
+  const seededBlocks = () => [{ type: "text" as const, text: "seeded" }];
+
+  function seed(chat: string, over: Record<string, unknown> = {}): void {
+    setSessions([makeSession(chat)]);
+    setActive(chat);
+    appendMessage(chat, {
+      id: "mm-1",
+      role: "assistant",
+      ts: 5,
+      content: "seeded",
+      blocks: seededBlocks(),
+      ...over,
+    });
+  }
+
+  function reingest(chat: string, over: Record<string, unknown> = {}): void {
+    upsertMessage(chat, {
+      id: "mm-1",
+      role: "assistant",
+      ts: 5,
+      content: "seeded",
+      blocks: seededBlocks(),
+      ...over,
+    });
+  }
+
+  function merged(chat: string) {
+    return get(chat)?.messages[0];
+  }
+
+  it("adopts a non-empty incoming reasoning", () => {
+    seed("mg-1", { reasoning: "first pass" });
+    reingest("mg-1", { reasoning: "the sanitized version" });
+    expect(merged("mg-1")?.reasoning).toBe("the sanitized version");
+  });
+
+  it("adopts a non-empty incoming blocks array", () => {
+    seed("mg-2");
+    reingest("mg-2", { blocks: [{ type: "text", text: "final" }] });
+    expect(merged("mg-2")?.blocks).toEqual([{ type: "text", text: "final" }]);
+  });
+
+  it("does not let an empty blocks array wipe the streamed ones", () => {
+    // The message_created shape: an empty assistant bubble arriving after the
+    // stream that filled it. Nothing on it is non-empty, so normalizeMessage
+    // passes it through with its empty array and the merge has to refuse it.
+    seed("mg-3");
+    reingest("mg-3", { content: "", blocks: [] });
+    expect(merged("mg-3")?.blocks).toEqual([{ type: "text", text: "seeded" }]);
+  });
+
+  it("adopts a non-empty incoming tool_calls list", () => {
+    seed("mg-4");
+    reingest("mg-4", {
+      tool_calls: [{ id: "t-1", title: "readFile", kind: "read", status: "completed", ts: 0 }],
+    });
+    expect(merged("mg-4")?.tool_calls).toHaveLength(1);
+  });
+
+  it("does not let an empty tool_calls list wipe the streamed ones", () => {
+    seed("mg-5", {
+      tool_calls: [{ id: "t-1", title: "readFile", kind: "read", status: "pending", ts: 0 }],
+    });
+    reingest("mg-5", { tool_calls: [] });
+    expect(merged("mg-5")?.tool_calls).toHaveLength(1);
+  });
+
+  it("adopts a non-empty incoming plan", () => {
+    seed("mg-6");
+    reingest("mg-6", { plan: [{ content: "step one", priority: "high", status: "pending" }] });
+    expect(merged("mg-6")?.plan).toHaveLength(1);
+  });
+
+  it("does not let an empty plan wipe the one already rendered", () => {
+    seed("mg-7", { plan: [{ content: "step one", priority: "high", status: "pending" }] });
+    reingest("mg-7", { plan: [] });
+    expect(merged("mg-7")?.plan).toHaveLength(1);
+  });
+
+  it("adopts a non-empty incoming code_references list", () => {
+    seed("mg-8");
+    reingest("mg-8", { code_references: [{ license_name: "MIT" }] });
+    expect(merged("mg-8")?.code_references).toEqual([{ license_name: "MIT" }]);
+  });
+
+  it("does not let an empty code_references list wipe the footnote", () => {
+    seed("mg-9", { code_references: [{ license_name: "MIT" }] });
+    reingest("mg-9", { code_references: [] });
+    expect(merged("mg-9")?.code_references).toEqual([{ license_name: "MIT" }]);
+  });
+
+  it("does not let an empty attachments list wipe the turn header's pills", () => {
+    seed("mg-10", { attachments: [{ path: "out/shot.png", name: "shot.png" }] });
+    reingest("mg-10", { attachments: [] });
+    expect(merged("mg-10")?.attachments).toEqual([{ path: "out/shot.png", name: "shot.png" }]);
+  });
+
+  it("adopts a refusal that only the later frame carries", () => {
+    seed("mg-11");
+    reingest("mg-11", { refusal: { category: "policy" } });
+    expect(merged("mg-11")?.refusal).toEqual({ category: "policy" });
+  });
+
+  it("adopts an event_kind that only the later frame carries", () => {
+    seed("mg-12");
+    reingest("mg-12", { event_kind: "compacted" });
+    expect(merged("mg-12")?.event_kind).toBe("compacted");
+  });
+
+  it("adopts a later timestamp", () => {
+    seed("mg-13");
+    reingest("mg-13", { ts: 9 });
+    expect(merged("mg-13")?.ts).toBe(9);
+  });
+
+  it("does not let a zero timestamp overwrite a real one", () => {
+    // A frame that never had a ts decodes as 0, and a message stamped 1970 sorts
+    // to the top of the transcript.
+    seed("mg-14");
+    reingest("mg-14", { ts: 0 });
+    expect(merged("mg-14")?.ts).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ingestMessage's bookkeeping.
+// ---------------------------------------------------------------------------
+
+describe("Store ingestMessage bookkeeping", () => {
+  it("never lowers the server's count when a message lands", () => {
+    setSessions([{ ...makeSession("ig-1"), message_count: 7 }]);
+    appendMessage("ig-1", { id: "m-1", role: "user", ts: 1, content: "one" });
+    expect(get("ig-1")?.message_count).toBe(7);
+  });
+
+  it("repaints when a message lands", () => {
+    resetStore("ig-2");
+    const before = messagesVersion.peek();
+    appendMessage("ig-2", { id: "m-1", role: "user", ts: 1, content: "one" });
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("repaints when an existing message is merged over", () => {
+    resetStore("ig-3");
+    appendMessage("ig-3", { id: "m-1", role: "user", ts: 1, content: "one" });
+    const before = messagesVersion.peek();
+    upsertMessage("ig-3", { id: "m-1", role: "user", ts: 1, content: "one (sanitized)" });
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("indexes messages that arrived with the session, so a replay merges", () => {
+    // The page-load shape: the fetched window is already on the record when the
+    // first ingest happens, so the index has to be built FROM it rather than
+    // accumulated by the ingests. Without that, every message in the window is
+    // appended a second time by the next refetch or reconnect replay.
+    setSessions([
+      {
+        ...makeSession("mi-1"),
+        message_count: 2,
+        messages: [
+          { id: "m-1", role: "user", ts: 1, content: "one" },
+          {
+            id: "m-2",
+            role: "assistant",
+            ts: 2,
+            content: "two",
+            blocks: [{ type: "text", text: "two" }],
+          },
+        ],
+      },
+    ]);
+    upsertMessage("mi-1", {
+      id: "m-2",
+      role: "assistant",
+      ts: 2,
+      content: "two (sanitized)",
+      blocks: [{ type: "text", text: "two (sanitized)" }],
+    });
+    expect(get("mi-1")?.messages).toHaveLength(2);
+    expect(get("mi-1")?.messages[1]?.content).toBe("two (sanitized)");
+  });
+
+  it("re-derives the index after a page of history is prepended", () => {
+    // The load-more path in store-load.ts: it prepends the older page onto
+    // `session.messages` (store-load.ts:181) and then calls rebuildMsgIndex,
+    // which is the only way the index can learn that every resident message
+    // shifted. Without the rebuild the next message_updated for a resident id
+    // merges into whatever now sits at its stale slot — silently rewriting a
+    // different turn.
+    setSessions([makeSession("rb-1")]);
+    appendMessage("rb-1", {
+      id: "m-new",
+      role: "assistant",
+      ts: 9,
+      content: "newest",
+      blocks: [{ type: "text", text: "newest" }],
+    });
+    const session = get("rb-1");
+    if (session === undefined) {
+      throw new Error("session went missing");
+    }
+    session.messages = [
+      { id: "m-old-1", role: "user", ts: 1, content: "oldest" },
+      {
+        id: "m-old-2",
+        role: "assistant",
+        ts: 2,
+        content: "older",
+        blocks: [{ type: "text", text: "older" }],
+      },
+      ...session.messages,
+    ];
+    rebuildMsgIndex("rb-1", session.messages);
+
+    upsertMessage("rb-1", {
+      id: "m-new",
+      role: "assistant",
+      ts: 9,
+      content: "newest (sanitized)",
+      blocks: [{ type: "text", text: "newest (sanitized)" }],
+    });
+
+    expect(get("rb-1")?.messages).toHaveLength(3);
+    expect(get("rb-1")?.messages[2]?.content).toBe("newest (sanitized)");
+    expect(get("rb-1")?.messages[0]?.content).toBe("oldest");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setTurnSummary: the turn footer's ledger.
+//
+// It stamps the chat's LAST ASSISTANT message, which is not the last message —
+// the next user turn can already be on the record when a background turn's
+// summary arrives. Every field is guarded on being present AND meaningful,
+// because a zero credit count or an empty changed-files map would render a
+// footer claiming a measurement nobody made.
+// ---------------------------------------------------------------------------
+
+describe("Store setTurnSummary", () => {
+  function chatWithTurn(chat: string): void {
+    setSessions([makeSession(chat)]);
+    appendMessage(chat, {
+      id: "t-a",
+      role: "assistant",
+      ts: 1,
+      content: "first",
+      blocks: [{ type: "text", text: "first" }],
+    });
+    appendMessage(chat, {
+      id: "t-b",
+      role: "assistant",
+      ts: 2,
+      content: "second",
+      blocks: [{ type: "text", text: "second" }],
+    });
+    appendMessage(chat, { id: "t-c", role: "user", ts: 3, content: "next question" });
+  }
+
+  it("walks back past a trailing user message to the assistant's", () => {
+    chatWithTurn("ts-1");
+    setTurnSummary("ts-1", { credits: 4 });
+    expect(get("ts-1")?.messages[1]?.turn_credits).toBe(4);
+    expect(get("ts-1")?.messages[2]?.turn_credits).toBeUndefined();
+  });
+
+  it("stamps the credits and repaints", () => {
+    chatWithTurn("ts-2");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-2", { credits: 12 });
+    expect(get("ts-2")?.messages[1]?.turn_credits).toBe(12);
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("ignores a zero credit count rather than stamping one", () => {
+    chatWithTurn("ts-3");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-3", { credits: 0 });
+    expect(get("ts-3")?.messages[1]?.turn_credits).toBeUndefined();
+    expect(messagesVersion.peek()).toBe(before);
+  });
+
+  it("stamps the elapsed time and repaints", () => {
+    chatWithTurn("ts-4");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-4", { elapsedMs: 250 });
+    expect(get("ts-4")?.messages[1]?.turn_elapsed_ms).toBe(250);
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("ignores a zero elapsed time", () => {
+    chatWithTurn("ts-5");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-5", { elapsedMs: 0 });
+    expect(get("ts-5")?.messages[1]?.turn_elapsed_ms).toBeUndefined();
+    expect(messagesVersion.peek()).toBe(before);
+  });
+
+  it("stamps the changed files and repaints", () => {
+    chatWithTurn("ts-6");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-6", {
+      changedFiles: { "src/parser.ts": { lines_added: 3, lines_removed: 1 } },
+    });
+    expect(get("ts-6")?.messages[1]?.changed_files).toEqual({
+      "src/parser.ts": { lines_added: 3, lines_removed: 1 },
+    });
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("ignores an empty changed-files map", () => {
+    chatWithTurn("ts-7");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-7", { changedFiles: {} });
+    expect(get("ts-7")?.messages[1]?.changed_files).toBeUndefined();
+    expect(messagesVersion.peek()).toBe(before);
+  });
+
+  it("stamps the model and repaints", () => {
+    chatWithTurn("ts-8");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-8", { model: "claude-opus-5" });
+    expect(get("ts-8")?.messages[1]?.turn_model).toBe("claude-opus-5");
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("does not repaint for a summary carrying nothing", () => {
+    chatWithTurn("ts-9");
+    const before = messagesVersion.peek();
+    setTurnSummary("ts-9", {});
+    expect(messagesVersion.peek()).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The per-chat switches. Each is a set-once control whose SSE echo arrives
+// after the optimistic local write, so "already that value" is the common case
+// and has to be a no-op.
+// ---------------------------------------------------------------------------
+
+describe("Store per-chat switches", () => {
+  it("setCurrentMode applies a new mode", () => {
+    resetStore("sw-1");
+    setCurrentMode("sw-1", "plan");
+    expect(get("sw-1")?.current_mode_id).toBe("plan");
+  });
+
+  it("setCurrentMode does not churn on the mode it already has", () => {
+    resetStore("sw-2");
+    setCurrentMode("sw-2", "plan");
+    const settled = get("sw-2");
+    setCurrentMode("sw-2", "plan");
+    expect(get("sw-2")).toBe(settled);
+  });
+
+  it("setSupervisedMode applies a new value", () => {
+    resetStore("sw-3");
+    setSupervisedMode("sw-3", true);
+    expect(get("sw-3")?.supervised_mode).toBe(true);
+  });
+
+  it("setSupervisedMode does not churn on the value it already has", () => {
+    resetStore("sw-4");
+    const settled = get("sw-4");
+    setSupervisedMode("sw-4", false);
+    expect(get("sw-4")).toBe(settled);
+  });
+
+  it("setEffort applies a level", () => {
+    resetStore("sw-5");
+    setEffort("sw-5", "high");
+    expect(get("sw-5")?.effort).toBe("high");
+  });
+
+  it("setEffort does not churn on the level it already has", () => {
+    resetStore("sw-6");
+    setEffort("sw-6", "high");
+    const settled = get("sw-6");
+    setEffort("sw-6", "high");
+    expect(get("sw-6")).toBe(settled);
+  });
+
+  it("setEffort reads an absent level as empty, so clearing an unset one is a no-op", () => {
+    resetStore("sw-7");
+    const before = get("sw-7");
+    setEffort("sw-7", "");
+    expect(get("sw-7")).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// appendChunk: the delta lands in three places at once — the message's flat
+// content/reasoning string, the chronological block at the server's block
+// index, and whichever signal is mounted over that block. The block array is
+// what the renderer walks, so a delta that reaches the string and not the block
+// is invisible.
+// ---------------------------------------------------------------------------
+
+describe("Store appendChunk blocks", () => {
+  it("puts the first text delta in the block the server named", () => {
+    resetStore("ac-1");
+    appendChunk("ac-1", "m-1", "hello", false, 0, "");
+    expect(get("ac-1")?.messages[0]?.blocks).toEqual([{ type: "text", text: "hello" }]);
+  });
+
+  it("appends a second text delta to the same block", () => {
+    resetStore("ac-2");
+    appendChunk("ac-2", "m-1", "hel", false, 0, "");
+    appendChunk("ac-2", "m-1", "lo", false, 0, "");
+    expect(get("ac-2")?.messages[0]?.blocks?.[0]?.text).toBe("hello");
+  });
+
+  it("accumulates thinking on a reasoning block rather than replacing it", () => {
+    resetStore("ac-3");
+    appendChunk("ac-3", "m-1", "let ", true, 0, "");
+    appendChunk("ac-3", "m-1", "me think", true, 0, "");
+    expect(get("ac-3")?.messages[0]?.blocks?.[0]?.thinking).toBe("let me think");
+  });
+
+  it("keeps text and thinking on separate blocks", () => {
+    resetStore("ac-4");
+    appendChunk("ac-4", "m-1", "why", true, 0, "");
+    appendChunk("ac-4", "m-1", "because", false, 1, "");
+    expect(get("ac-4")?.messages[0]?.blocks).toEqual([
+      { type: "thinking", thinking: "why" },
+      { type: "text", text: "because" },
+    ]);
+  });
+
+  it("pads the gap when the server's block index runs ahead", () => {
+    resetStore("ac-5");
+    appendChunk("ac-5", "m-1", "third", false, 2, "");
+    const blocks = get("ac-5")?.messages[0]?.blocks;
+    expect(blocks).toHaveLength(3);
+    expect(blocks?.[2]?.text).toBe("third");
+  });
+
+  it("stamps a delegated block with its subtask id", () => {
+    resetStore("ac-6");
+    appendChunk("ac-6", "m-1", "delegated", false, 0, "sub-7");
+    expect(get("ac-6")?.messages[0]?.blocks?.[0]?.agent_subtask_id).toBe("sub-7");
+  });
+
+  it("keeps the server's message count when a streamed message appears", () => {
+    setSessions([{ ...makeSession("ac-7"), message_count: 9 }]);
+    appendChunk("ac-7", "m-1", "x", false, 0, "");
+    expect(get("ac-7")?.message_count).toBe(9);
+  });
+
+  it("appends a new streaming message rather than writing over a resident one", () => {
+    setSessions([makeSession("ac-8")]);
+    appendMessage("ac-8", { id: "m-old-0", role: "user", ts: 1, content: "q" });
+    appendMessage("ac-8", {
+      id: "m-old-1",
+      role: "assistant",
+      ts: 2,
+      content: "a",
+      blocks: [{ type: "text", text: "a" }],
+    });
+    appendChunk("ac-8", "m-new", "streaming", false, 0, "");
+    expect(get("ac-8")?.messages).toHaveLength(3);
+    expect(get("ac-8")?.messages[1]?.content).toBe("a");
+    expect(get("ac-8")?.messages[2]?.content).toBe("streaming");
+  });
+
+  it("streams into the resident message its index names", () => {
+    setSessions([makeSession("ac-9")]);
+    appendMessage("ac-9", { id: "m-0", role: "user", ts: 1, content: "q" });
+    appendMessage("ac-9", {
+      id: "m-1",
+      role: "assistant",
+      ts: 2,
+      content: "par",
+      blocks: [{ type: "text", text: "par" }],
+    });
+    appendChunk("ac-9", "m-1", "tial", false, 0, "");
+    expect(get("ac-9")?.messages).toHaveLength(2);
+    expect(get("ac-9")?.messages[1]?.content).toBe("partial");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// appendChunk's repaint discipline: a mounted signal carries the delta and the
+// list must NOT repaint; with nothing mounted the list is the only channel and
+// it must. Getting this backwards is either a dropped delta or a transcript
+// that re-renders per character.
+// ---------------------------------------------------------------------------
+
+describe("Store appendChunk repaint discipline", () => {
+  it("stays off the list when a streaming signal is carrying the text", async () => {
+    resetStore("ar-1");
+    appendChunk("ar-1", "m-1", "hello", false, 0, "");
+    await tick();
+    const sig = ensureStreamingSig("m-1", "hello");
+    const before = messagesVersion.peek();
+    appendChunk("ar-1", "m-1", " world", false, 0, "");
+    await tick();
+    expect(sig.value).toBe("hello world");
+    expect(messagesVersion.peek()).toBe(before);
+    clearStreamingSig("m-1");
+  });
+
+  it("repaints the list when nothing is mounted to carry the text", async () => {
+    resetStore("ar-2");
+    appendChunk("ar-2", "m-1", "hello", false, 0, "");
+    await tick();
+    const before = messagesVersion.peek();
+    appendChunk("ar-2", "m-1", " world", false, 0, "");
+    await tick();
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("routes the text delta to the per-block signal without repainting", async () => {
+    resetStore("ar-3");
+    appendChunk("ar-3", "m-1", "hello", false, 0, "");
+    await tick();
+    const blockSig = ensureBlockTextSig("m-1", 0, "hello");
+    const before = messagesVersion.peek();
+    appendChunk("ar-3", "m-1", " world", false, 0, "");
+    await tick();
+    expect(blockSig.value).toBe("hello world");
+    expect(messagesVersion.peek()).toBe(before);
+    clearAllBlockSigs();
+  });
+
+  it("routes a reasoning delta to its own per-block signal", async () => {
+    resetStore("ar-4");
+    appendChunk("ar-4", "m-1", "why", true, 0, "");
+    await tick();
+    const blockSig = ensureBlockThinkingSig("m-1", 0, "why");
+    const before = messagesVersion.peek();
+    appendChunk("ar-4", "m-1", " not", true, 0, "");
+    await tick();
+    expect(blockSig.value).toBe("why not");
+    expect(messagesVersion.peek()).toBe(before);
+    clearAllBlockSigs();
+  });
+
+  it("repaints for a reasoning delta with nothing mounted", async () => {
+    resetStore("ar-5");
+    appendChunk("ar-5", "m-1", "why", true, 0, "");
+    await tick();
+    const before = messagesVersion.peek();
+    appendChunk("ar-5", "m-1", " not", true, 0, "");
+    await tick();
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("repaints when a refusal is stamped, so the callout can mount", async () => {
+    resetStore("ar-6");
+    appendChunk("ar-6", "m-1", "I can't", false, 0, "");
+    await tick();
+    const sig = ensureStreamingSig("m-1", "I can't");
+    const before = messagesVersion.peek();
+    appendChunk("ar-6", "m-1", " help with that", false, 0, "", 0, { category: "policy" });
+    await tick();
+    expect(get("ar-6")?.messages[0]?.refusal).toEqual({ category: "policy" });
+    // The delta still rides the signal, as it would without a refusal...
+    expect(sig.value).toBe("I can't help with that");
+    // ...but the per-block signal carries text only, so a message-level callout
+    // needs the keyed reconcile as well.
+    expect(messagesVersion.peek()).toBe(before + 1);
+    clearStreamingSig("m-1");
+  });
+
+  it("stamps a refusal once, so a later frame cannot restate it", async () => {
+    resetStore("ar-7");
+    appendChunk("ar-7", "m-1", "a", false, 0, "", 0, { category: "policy" });
+    await tick();
+    appendChunk("ar-7", "m-1", "b", false, 0, "", 0, { category: "something else" });
+    await tick();
+    expect(get("ar-7")?.messages[0]?.refusal).toEqual({ category: "policy" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertToolCall: the same three-way write as a chunk, plus the tool call's own
+// identity. A tool call is updated many times (pending → in_progress →
+// completed), so finding the existing entry is the hot path and appending a
+// duplicate would render the same card twice.
+// ---------------------------------------------------------------------------
+
+describe("Store upsertToolCall", () => {
+  const call = (id: string, status = "pending") => ({
+    id,
+    title: "readFile",
+    kind: "read" as const,
+    status: status as ToolCall["status"],
+    ts: 0,
+  });
+
+  it("mints the assistant message when the tool call arrives first", () => {
+    resetStore("tc-1");
+    upsertToolCall("tc-1", "m-1", call("t-1"), 0);
+    const msg = get("tc-1")?.messages[0];
+    expect(msg?.tool_calls).toEqual([call("t-1")]);
+    expect(msg?.blocks).toEqual([{ type: "tool_use", tool_call_id: "t-1" }]);
+  });
+
+  it("repaints when it mints one", () => {
+    resetStore("tc-2");
+    const before = messagesVersion.peek();
+    upsertToolCall("tc-2", "m-1", call("t-1"), 0);
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("keeps the server's message count when it mints one", () => {
+    setSessions([{ ...makeSession("tc-3"), message_count: 6 }]);
+    upsertToolCall("tc-3", "m-1", call("t-1"), 0);
+    expect(get("tc-3")?.message_count).toBe(6);
+  });
+
+  it("indexes the message it minted, so the next call finds it", () => {
+    resetStore("tc-4");
+    upsertToolCall("tc-4", "m-1", call("t-1"), 0);
+    upsertToolCall("tc-4", "m-1", call("t-2"), 1);
+    expect(get("tc-4")?.messages).toHaveLength(1);
+    expect(get("tc-4")?.messages[0]?.tool_calls).toHaveLength(2);
+  });
+
+  it("updates a call in place rather than appending a duplicate", () => {
+    resetStore("tc-5");
+    upsertToolCall("tc-5", "m-1", call("t-1"), 0);
+    upsertToolCall("tc-5", "m-1", call("t-1", "completed"), 0);
+    expect(get("tc-5")?.messages[0]?.tool_calls).toEqual([call("t-1", "completed")]);
+  });
+
+  it("updates the named call and leaves its siblings alone", () => {
+    resetStore("tc-6");
+    upsertToolCall("tc-6", "m-1", call("t-1"), 0);
+    upsertToolCall("tc-6", "m-1", call("t-2"), 1);
+    upsertToolCall("tc-6", "m-1", call("t-2", "completed"), 1);
+    const calls = get("tc-6")?.messages[0]?.tool_calls;
+    expect(calls?.[0]?.status).toBe("pending");
+    expect(calls?.[1]?.status).toBe("completed");
+  });
+
+  it("pins a new call to the block index the server reported", () => {
+    resetStore("tc-7");
+    appendChunk("tc-7", "m-1", "let me look", false, 0, "");
+    upsertToolCall("tc-7", "m-1", call("t-1"), 2);
+    const blocks = get("tc-7")?.messages[0]?.blocks;
+    expect(blocks).toHaveLength(3);
+    expect(blocks?.[2]).toEqual({ type: "tool_use", tool_call_id: "t-1" });
+  });
+
+  it("leaves a block already standing at that index alone", () => {
+    resetStore("tc-8");
+    appendChunk("tc-8", "m-1", "one", false, 0, "");
+    appendChunk("tc-8", "m-1", "two", false, 1, "");
+    upsertToolCall("tc-8", "m-1", call("t-1"), 1);
+    const blocks = get("tc-8")?.messages[0]?.blocks;
+    expect(blocks).toHaveLength(2);
+    expect(blocks?.[1]).toEqual({ type: "text", text: "two" });
+  });
+
+  it("repaints when a call joins a message already on screen", async () => {
+    resetStore("tc-9");
+    appendMessage("tc-9", { id: "m-1", role: "assistant", ts: 1, content: "", blocks: [] });
+    await tick();
+    const before = messagesVersion.peek();
+    upsertToolCall("tc-9", "m-1", call("t-1"), 0);
+    await tick();
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("fans a later update through the tool's own signal without repainting", async () => {
+    resetStore("tc-10");
+    upsertToolCall("tc-10", "m-1", call("t-1"), 0);
+    await tick();
+    const sig = ensureToolCallSig("t-1", call("t-1"));
+    const before = messagesVersion.peek();
+    upsertToolCall("tc-10", "m-1", call("t-1", "completed"), 0);
+    await tick();
+    expect(sig.value.status).toBe("completed");
+    expect(messagesVersion.peek()).toBe(before);
+    clearToolCallSig("t-1");
+  });
+
+  it("repaints a later update when no tool signal is mounted", async () => {
+    resetStore("tc-11");
+    upsertToolCall("tc-11", "m-1", call("t-1"), 0);
+    await tick();
+    const before = messagesVersion.peek();
+    upsertToolCall("tc-11", "m-1", call("t-1", "completed"), 0);
+    await tick();
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("mints a new message rather than embedding into a resident one", () => {
+    setSessions([makeSession("tc-12")]);
+    appendMessage("tc-12", { id: "m-0", role: "user", ts: 1, content: "q" });
+    appendMessage("tc-12", {
+      id: "m-1",
+      role: "assistant",
+      ts: 2,
+      content: "a",
+      blocks: [{ type: "text", text: "a" }],
+    });
+    upsertToolCall("tc-12", "m-new", call("t-1"), 0);
+    expect(get("tc-12")?.messages).toHaveLength(3);
+    expect(get("tc-12")?.messages[1]?.tool_calls).toBeUndefined();
+  });
+
+  it("embeds into the resident message its index names", () => {
+    setSessions([makeSession("tc-13")]);
+    appendMessage("tc-13", { id: "m-0", role: "user", ts: 1, content: "q" });
+    appendMessage("tc-13", {
+      id: "m-1",
+      role: "assistant",
+      ts: 2,
+      content: "a",
+      blocks: [{ type: "text", text: "a" }],
+    });
+    upsertToolCall("tc-13", "m-1", call("t-1"), 1);
+    expect(get("tc-13")?.messages).toHaveLength(2);
+    expect(get("tc-13")?.messages[1]?.tool_calls).toEqual([call("t-1")]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setCodeReferences: licensed-code attributions arriving mid-turn. The refs
+// persist server-side and render on reload, so a message that has not landed
+// yet is a no-op — but attaching them to whichever message happens to sit at a
+// fallback index would put another turn's attribution under this one.
+// ---------------------------------------------------------------------------
+
+describe("Store setCodeReferences", () => {
+  function chatWithTwo(chat: string): void {
+    setSessions([makeSession(chat)]);
+    appendMessage(chat, { id: "m-1", role: "user", ts: 1, content: "any licensed code?" });
+    appendMessage(chat, {
+      id: "m-2",
+      role: "assistant",
+      ts: 2,
+      content: "here it is",
+      blocks: [{ type: "text", text: "here it is" }],
+    });
+  }
+
+  it("attaches the attributions to the message the id names, and repaints", () => {
+    chatWithTwo("cr-1");
+    const before = messagesVersion.peek();
+    setCodeReferences("cr-1", "m-2", [{ license_name: "MIT" }]);
+    expect(get("cr-1")?.messages[1]?.code_references).toEqual([{ license_name: "MIT" }]);
+    expect(messagesVersion.peek()).toBe(before + 1);
+  });
+
+  it("is a no-op for a message that has not arrived yet", () => {
+    chatWithTwo("cr-2");
+    setCodeReferences("cr-2", "m-not-here", [{ license_name: "MIT" }]);
+    expect(get("cr-2")?.messages[0]?.code_references).toBeUndefined();
+    expect(get("cr-2")?.messages[1]?.code_references).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Steers: the two frames that carry an acknowledgement, and the entry a
+// replayed frame must not touch.
+// ---------------------------------------------------------------------------
+
+describe("Store steer projection, frame by frame", () => {
+  it("refreshes only the replayed steer, leaving its siblings alone", () => {
+    resetStore("st-1");
+    recordSteerQueued("st-1", { id: "s-1", text: "one" });
+    recordSteerQueued("st-1", { id: "s-2", text: "two" });
+    markSteerInjected("st-1", "s-1", "one");
+    recordSteerQueued("st-1", { id: "s-2", text: "two, corrected" });
+    expect(get("st-1")?.steers?.[0]).toEqual({ id: "s-1", text: "one", injected: true });
+    expect(get("st-1")?.steers?.[1]).toEqual({
+      id: "s-2",
+      text: "two, corrected",
+      injected: false,
+    });
+  });
+
+  it("records an acknowledgement that rides the steer's first frame", () => {
+    resetStore("st-2");
+    markSteerInjected("st-2", "s-ghost", "from another tab", "switched the file to tabs");
+    expect(get("st-2")?.steers).toEqual([
+      {
+        id: "s-ghost",
+        text: "from another tab",
+        injected: true,
+        ack: "switched the file to tabs",
+      },
+    ]);
+  });
+
+  it("adds no verdict when a first frame's acknowledgement is empty", () => {
+    // An empty ack is the absence of one. A chip carrying `ack: ""` renders a
+    // verdict row with nothing in it.
+    resetStore("st-3");
+    markSteerInjected("st-3", "s-ghost", "from another tab", "");
+    expect(get("st-3")?.steers).toEqual([
+      { id: "s-ghost", text: "from another tab", injected: true },
+    ]);
+  });
+
+  it("adds no verdict when a read frame's acknowledgement is empty", () => {
+    resetStore("st-4");
+    recordSteerQueued("st-4", { id: "s-1", text: "use tabs" });
+    markSteerInjected("st-4", "s-1", "use tabs", "");
+    expect(get("st-4")?.steers).toEqual([{ id: "s-1", text: "use tabs", injected: true }]);
   });
 });
