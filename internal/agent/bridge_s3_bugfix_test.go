@@ -12,6 +12,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -338,6 +339,14 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 	last, ok := br.lastResponse()
 	if !ok || last.err == nil {
 		t.Errorf("H2: expected an error response for unknown terminalId, got result=%+v err=%v", last.result, last.err)
+	}
+	// The code travels with it. KAS branches on the code, and the JSON-RPC
+	// error range is negative, so a positive one is not an error it recognises.
+	rpcErr, isRPC := errors.AsType[*vibekit.RPCError](last.err)
+	if !isRPC {
+		t.Errorf("H2: response error = %T, want *vibekit.RPCError", last.err)
+	} else if rpcErr.Code != -1 {
+		t.Errorf("H2: response error code = %d, want -1", rpcErr.Code)
 	}
 }
 

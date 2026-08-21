@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/secretstore"
@@ -100,18 +102,29 @@ func TestSecretStoreRejectsBadParams(t *testing.T) {
 	ctx := t.Context()
 
 	cases := []struct {
-		name   string
-		params json.RawMessage
+		name     string
+		params   json.RawMessage
+		wantCode int
 	}{
-		{"no key", rawParams(t, map[string]string{"value": "v"})},
-		{"empty key", rawParams(t, map[string]string{"key": "", "value": "v"})},
-		{"not an object", json.RawMessage(`["key","value"]`)},
-		{"nil params", nil},
+		{"no key", rawParams(t, map[string]string{"value": "v"}), -32602},
+		{"empty key", rawParams(t, map[string]string{"key": "", "value": "v"}), -32602},
+		{"not an object", json.RawMessage(`["key","value"]`), -32602},
+		{"nil params", nil, -32602},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := secretStoreResult(ctx, store, tc.params); err == nil {
+			_, err := secretStoreResult(ctx, store, tc.params)
+			if err == nil {
 				t.Error("secretStoreResult() error = nil, want an error")
+			}
+			// The CODE is the part KAS branches on, and JSON-RPC reserves the
+			// negative range: a bad request must arrive as invalid-params
+			// (-32602), not as some positive number outside the spec.
+			rpcErr, isRPC := errors.AsType[*vibekit.RPCError](err)
+			if !isRPC {
+				t.Errorf("secretStoreResult(%s) error = %T, want *vibekit.RPCError", tc.name, err)
+			} else if rpcErr.Code != tc.wantCode {
+				t.Errorf("secretStoreResult(%s) error code = %d, want %d", tc.name, rpcErr.Code, tc.wantCode)
 			}
 			// The store must be untouched. Asserted through the read path
 			// rather than an entry count, because "the credential is not
@@ -136,8 +149,53 @@ func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
 	}
 	// A store, though, must NOT claim success it cannot deliver — KAS would
 	// then believe the credential is durable.
-	if _, err := secretStoreResult(t.Context(), nil, rawParams(t, map[string]string{"key": probeKey, "value": "v"})); err == nil {
+	_, err := secretStoreResult(t.Context(), nil, rawParams(t, map[string]string{"key": probeKey, "value": "v"}))
+	if err == nil {
 		t.Error("secretStoreResult(nil store) error = nil, want an error")
+	}
+	// Internal-error (-32603), not invalid-params: the request was well formed,
+	// the agent simply has nowhere to put it.
+	rpcErr, isRPC := errors.AsType[*vibekit.RPCError](err)
+	if !isRPC {
+		t.Errorf("secretStoreResult(nil store) error = %T, want *vibekit.RPCError", err)
+	} else if rpcErr.Code != -32603 {
+		t.Errorf("secretStoreResult(nil store) error code = %d, want -32603", rpcErr.Code)
+	}
+}
+
+// TestSecretDeleteRejectsMissingKey covers the delete leg's own key check. KAS
+// issues deletes speculatively, so a keyless one has to come back as
+// invalid-params rather than a success that deleted nothing.
+func TestSecretDeleteRejectsMissingKey(t *testing.T) {
+	store := newSecretStore(t)
+	ctx := t.Context()
+
+	cases := []struct {
+		name     string
+		params   json.RawMessage
+		wantCode int
+	}{
+		{"no_key", rawParams(t, map[string]string{}), -32602},
+		{"empty_key", rawParams(t, map[string]string{"key": ""}), -32602},
+		{"not_an_object", json.RawMessage(`"probe"`), -32602},
+		{"nil_params", nil, -32602},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := secretDeleteResult(ctx, store, tc.params)
+			if err == nil {
+				t.Error("secretDeleteResult() error = nil, want an error")
+			}
+			if result != nil {
+				t.Errorf("secretDeleteResult(%s) result = %v, want nil alongside an error", tc.name, result)
+			}
+			rpcErr, isRPC := errors.AsType[*vibekit.RPCError](err)
+			if !isRPC {
+				t.Errorf("secretDeleteResult(%s) error = %T, want *vibekit.RPCError", tc.name, err)
+			} else if rpcErr.Code != tc.wantCode {
+				t.Errorf("secretDeleteResult(%s) error code = %d, want %d", tc.name, rpcErr.Code, tc.wantCode)
+			}
+		})
 	}
 }
 
@@ -188,4 +246,31 @@ func TestSecretStoreIsSharedAcrossBridges(t *testing.T) {
 	if got := secretGetResult(store, rawParams(t, map[string]string{"key": probeKey})); got.Value == nil || *got.Value != "reg" {
 		t.Errorf("bridge B Value = %v, want %q", got.Value, "reg")
 	}
+}
+
+// TestSecretRequestReportsOnlyUndecodableParams pins the diagnostic on the key
+// decoder both get and delete share. A request whose params cannot be decoded
+// earns a line naming the reason; a well-formed one must stay quiet, because
+// KAS issues a get on every MCP connect and a warning per connect would bury
+// the one that means something.
+//
+// No t.Parallel: captureLogs swaps the process-global slog default.
+func TestSecretRequestReportsOnlyUndecodableParams(t *testing.T) {
+	const wantLine = "v3 secret: undecodable params"
+
+	t.Run("undecodable_params", func(t *testing.T) {
+		logs := captureLogs(t)
+		secretGetResult(nil, json.RawMessage(`["probe"]`))
+		if got := logs.String(); !strings.Contains(got, wantLine) {
+			t.Errorf("secretGetResult(`[\"probe\"]`) logged %q, want a line containing %q", got, wantLine)
+		}
+	})
+
+	t.Run("well_formed_params", func(t *testing.T) {
+		logs := captureLogs(t)
+		secretGetResult(nil, rawParams(t, map[string]string{"key": probeKey}))
+		if got := logs.String(); strings.Contains(got, wantLine) {
+			t.Errorf("secretGetResult(well-formed params) logged %q, want no %q line", got, wantLine)
+		}
+	})
 }

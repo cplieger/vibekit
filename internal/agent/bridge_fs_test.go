@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -517,4 +518,62 @@ func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
 	if got := logs.String(); strings.Contains(got, "fs response write failed") {
 		t.Errorf("unexpected respond-failure error log on success: %s", got)
 	}
+}
+
+// droppingBridge refuses every Respond, standing in for a bridge whose stdin
+// has already gone away.
+type droppingBridge struct {
+	*fakeBridge
+}
+
+func (b *droppingBridge) Respond(_ context.Context, _ int64, _ any, _ error) error {
+	return errors.New("bridge stdin closed")
+}
+
+// TestRespondHelpersReportADroppedWrite pins the diagnostic on the two ACP
+// response helpers the terminal handlers answer through. A response the bridge
+// refused leaves the agent waiting until its own Call times out, and this log
+// line is the only place that is visible — so it has to be emitted when the
+// write fails, and stay absent when it succeeds.
+//
+// No t.Parallel: captureLogs swaps the process-global slog default.
+func TestRespondHelpersReportADroppedWrite(t *testing.T) {
+	id := int64(904)
+	msg := &vibekit.RPCResponse{ID: &id, Method: methodTermOutput}
+
+	t.Run("respondOK_write_refused", func(t *testing.T) {
+		h := hubWithBridge(t, t.TempDir(), &droppingBridge{fakeBridge: newFakeBridge()})
+		logs := captureLogs(t)
+		respondOK(t.Context(), h.bridge.mgr, "c1", msg, map[string]any{"ok": true})
+		if got := logs.String(); !strings.Contains(got, "respondOK: bridge respond failed") {
+			t.Errorf("respondOK(refused write) logged %q, want a respond-failed line", got)
+		}
+	})
+
+	t.Run("respondOK_write_accepted", func(t *testing.T) {
+		h := hubWithBridge(t, t.TempDir(), newFakeBridge())
+		logs := captureLogs(t)
+		respondOK(t.Context(), h.bridge.mgr, "c1", msg, map[string]any{"ok": true})
+		if got := logs.String(); strings.Contains(got, "respondOK: bridge respond failed") {
+			t.Errorf("respondOK(accepted write) logged %q, want no respond-failed line", got)
+		}
+	})
+
+	t.Run("respondErr_write_refused", func(t *testing.T) {
+		h := hubWithBridge(t, t.TempDir(), &droppingBridge{fakeBridge: newFakeBridge()})
+		logs := captureLogs(t)
+		respondErr(t.Context(), h.bridge.mgr, "c1", msg, "terminal not found")
+		if got := logs.String(); !strings.Contains(got, "respondErr: bridge respond failed") {
+			t.Errorf("respondErr(refused write) logged %q, want a respond-failed line", got)
+		}
+	})
+
+	t.Run("respondErr_write_accepted", func(t *testing.T) {
+		h := hubWithBridge(t, t.TempDir(), newFakeBridge())
+		logs := captureLogs(t)
+		respondErr(t.Context(), h.bridge.mgr, "c1", msg, "terminal not found")
+		if got := logs.String(); strings.Contains(got, "respondErr: bridge respond failed") {
+			t.Errorf("respondErr(accepted write) logged %q, want no respond-failed line", got)
+		}
+	})
 }

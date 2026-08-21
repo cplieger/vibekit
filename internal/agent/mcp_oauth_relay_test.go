@@ -453,6 +453,40 @@ func TestValidateRelayAddress(t *testing.T) {
 			pasted: "http://" + host + "/oauth/callback?code=abc&state=" + state + "&iss=https%3A%2F%2Fp.example",
 			want:   nil,
 		},
+		// relayMinPort is the FLOOR the relay accepts, not the first value it
+		// refuses, and 65535 is the last. KAS binds an ephemeral port, and the
+		// ephemeral range's edges are legitimate places for it to land.
+		"the lowest unprivileged port is accepted": {
+			pasted: "http://127.0.0.1:1024/oauth/callback?code=abc&state=" + state,
+			auth: "https://provider.example/authorize?" + url.Values{
+				"redirect_uri": {"http://127.0.0.1:1024/oauth/callback"},
+				"state":        {state},
+			}.Encode(),
+			want: nil,
+		},
+		"the highest port is accepted": {
+			pasted: "http://127.0.0.1:65535/oauth/callback?code=abc&state=" + state,
+			auth: "https://provider.example/authorize?" + url.Values{
+				"redirect_uri": {"http://127.0.0.1:65535/oauth/callback"},
+				"state":        {state},
+			}.Encode(),
+			want: nil,
+		},
+		"a port above the 16-bit range is refused": {
+			pasted: "http://127.0.0.1:65536/oauth/callback?code=abc&state=" + state,
+			auth: "https://provider.example/authorize?" + url.Values{
+				"redirect_uri": {"http://127.0.0.1:65536/oauth/callback"},
+				"state":        {state},
+			}.Encode(),
+			want: errRelayBadPort,
+		},
+		// DEL is the top of the excluded range, and it is excluded for the same
+		// reason as CR and LF: this address is replayed into another program's
+		// HTTP handler.
+		"a DEL byte is refused": {
+			pasted: "http://" + host + "/oauth/callback?code=a\x7f&state=" + state,
+			want:   errRelayBadBytes,
+		},
 		// --- the address is not a loopback callback ---
 		"a remote host is refused": {
 			pasted: "http://evil.example:41234/oauth/callback?code=abc&state=" + state,
@@ -807,5 +841,47 @@ func TestRelayClientForRefusesBadPorts(t *testing.T) {
 				t.Errorf("relayClientFor(%q) = nil error, want the port refused", tc.raw)
 			}
 		})
+	}
+}
+
+// TestParseLoopbackCallback_LengthCap pins relayURLCap as the longest address
+// ACCEPTED rather than the first one refused. The cap bounds a paste; an
+// authorization code close to it is ordinary, so shaving a byte off the limit
+// refuses a callback that should have been relayed and the user has no way to
+// shorten it.
+func TestParseLoopbackCallback_LengthCap(t *testing.T) {
+	t.Parallel()
+
+	const prefix = "http://127.0.0.1:41234/oauth/callback?code="
+	atCap := prefix + strings.Repeat("a", relayURLCap-len(prefix))
+	// The fixture is only meaningful at the exact boundary, so it says so
+	// instead of trusting the arithmetic above.
+	if len(atCap) != relayURLCap {
+		t.Fatalf("fixture is %d bytes, want exactly relayURLCap (%d)", len(atCap), relayURLCap)
+	}
+
+	if _, err := parseLoopbackCallback(atCap); err != nil {
+		t.Errorf("parseLoopbackCallback(%d-byte address) error = %v, want it accepted at the cap", len(atCap), err)
+	}
+	overCap := atCap + "a"
+	if _, err := parseLoopbackCallback(overCap); !errors.Is(err, errRelayTooLong) {
+		t.Errorf("parseLoopbackCallback(%d-byte address) error = %v, want %v", len(overCap), err, errRelayTooLong)
+	}
+}
+
+// The relay's port floor is inclusive: relayMinPort is the lowest port it will
+// build a client for, not the first it refuses. KAS binds an ephemeral port and
+// the bottom of that range is a legitimate place for it to land, so a client
+// refused here is a callback that cannot be relayed at all.
+func TestRelayClientForAcceptsTheLowestUnprivilegedPort(t *testing.T) {
+	t.Parallel()
+
+	raw := "http://127.0.0.1:" + strconv.Itoa(relayMinPort) + "/callback"
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("url.Parse(%q) error = %v", raw, err)
+	}
+	if _, err := relayClientFor(u); err != nil {
+		t.Errorf("relayClientFor(%q) error = %v, want a client at the port floor", raw, err)
 	}
 }
