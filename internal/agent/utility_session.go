@@ -188,6 +188,15 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	// per-request ctx is only used for the model pick above). Runs v3
 	// (KAS) like every chat bridge — without the engine it would default
 	// to v2, which vibekit can no longer talk to.
+	//
+	// Passing a process-lifetime context as the HANDSHAKE ctx is safe because
+	// Start bounds the handshake itself (bridge.handshakeBudget). It was not
+	// always: this call runs under us.mu, so before that budget existed a
+	// session/new KAS never answered held the utility mutex for the life of the
+	// process, and every utility-backed endpoint — the config template,
+	// governance, knowledge, hooks — hung behind it with no error and no log
+	// line. Do not "tidy" this to a per-request ctx: the subprocess would then
+	// die with the request that happened to start it.
 	if err := bridge.Start(us.shutdownCtx, &vibekit.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil}); err != nil {
 		return err
 	}

@@ -24,7 +24,9 @@ import (
 // per bridge instance.
 //
 // ctx bounds the startup handshake only; opts.Lifetime bounds the subprocess
-// and is required.
+// and is required. The handshake is additionally bounded HERE, by
+// handshakeBudget or replayBudget, so a caller that passes a timer-free context
+// (every caller does) still gets a bounded handshake.
 func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	// The subprocess outlives this call. Start's ctx bounds the handshake
 	// below; opts.Lifetime bounds the process. See vibekit.StartOpts.Lifetime for
@@ -48,19 +50,59 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	if err := b.startProcess(opts.AgentEngine); err != nil {
 		return err
 	}
-	if err := b.initialize(ctx); err != nil {
+	// A turn may legitimately run for hours; a HANDSHAKE may not. Bridge.Call
+	// carries no client-side deadline by design (see its doc comment), and with a
+	// live subprocess its only other exits are the response arriving and the
+	// bridge dying — so an initialize or a session/new that never answers blocks
+	// here until the process is killed or the whole runtime shuts down. The
+	// caller sees nothing at all in the meantime: spawnBridge has already
+	// registered this bridge as starting, so the chat answers 409 busy to every
+	// later Send and the singleflight key folds those callers onto this same
+	// wedged spawn. Start's contract above has always claimed its ctx bounded the
+	// handshake; the timer is what makes the claim true.
+	//
+	// Bounded per PHASE, because the two phases bound different work. A resume
+	// streams the entire prior transcript as notifications BEFORE the load
+	// response resolves, so its ceiling has to admit a replay whose length is a
+	// property of the chat's history; a fresh session pays none of that.
+	budget, phase := handshakeBudget, "session start"
+	if opts.SessionID != "" {
+		budget, phase = replayBudget, "session resume"
+	}
+	hctx, cancelHandshake := context.WithTimeout(ctx, budget)
+	defer cancelHandshake()
+	if err := b.initialize(hctx); err != nil {
 		b.Stop()
-		return err
+		return handshakeTimeout(err, phase, budget)
 	}
 	var err error
 	if opts.SessionID != "" {
-		err = b.loadSession(ctx, opts.SessionID, opts.Model)
+		err = b.loadSession(hctx, opts.SessionID, opts.Model)
 	} else {
-		err = b.newSession(ctx, opts)
+		err = b.newSession(hctx, opts)
+		// Fail CLOSED when the budget expired inside newSession. Its appliers are
+		// best-effort by design — each logs and returns rather than failing
+		// session creation, because refusing to open a chat over a model
+		// preference is worse than opening it on the default — and an expired
+		// budget silently converts that into a session in the wrong mode, on the
+		// wrong model, and, the one that matters, in autopilot for a chat the user
+		// marked supervised, since applySupervised runs last and its whole job is
+		// to make writes ask first.
+		//
+		// So an expiry is the one case where the best-effort contract does not
+		// hold. Checked rather than reordering applySupervised to the front: that
+		// would protect one applier and would rest on an untested assumption about
+		// whether a later set_mode disturbs a config option KAS already stored.
+		// The cost of checking is that a handshake which finishes in the last
+		// microseconds of its budget is failed anyway; the recovery is the next
+		// Send, which is the same recovery every other start failure has.
+		if err == nil {
+			err = hctx.Err()
+		}
 	}
 	if err != nil {
 		b.Stop()
-		return err
+		return handshakeTimeout(err, phase, budget)
 	}
 	// Lifecycle breadcrumb so operators correlating Loki logs can
 	// see which bridge a subsequent Stop / error belongs to without
@@ -107,6 +149,60 @@ func (b *Bridge) Stop() {
 			_ = b.cmd.Wait()
 		}
 	})
+}
+
+// handshakeBudget bounds a session START: initialize, session/new, and the
+// config-option calls that follow it. NOT a setting, on the same reasoning
+// run_bounds.go states for the run ceiling — a backstop the user can raise stops
+// being a backstop, and no caller supplies one. It is a var rather than a const
+// only so a test can shorten it; nothing in production writes either budget.
+//
+// Sized for the one component of that window vibekit does not bound and cannot:
+// on a first chat after a kiro-cli version change, the KAS runtime tree (~240 MB)
+// is unpacked during this handshake, on a container volume. The 15s SSO-OIDC
+// token refresh vibekit itself answers on the same critical path
+// (_kiro/auth/getAccessToken) plus the four appliers sit inside it too.
+//
+// Deliberately NOT sized against the MCP-server initialization KiroCrew's own 90s
+// floor was chosen for: vibekit sends `mcpServers: []` and KAS reads the user's
+// servers from its own config file, so that work is out of band here and is
+// already bounded by the prompt path's own 30s readiness wait.
+//
+// It must also stay well under the client's command timeout, so the SERVER is
+// what answers first and the user gets vibekit's own actionable message rather
+// than a bare browser abort.
+var handshakeBudget = 120 * time.Second
+
+// replayBudget bounds a session RESUME instead of a start, and is larger for a
+// reason rather than for comfort: KAS begins replaying as soon as it accepts
+// session/load and streams the whole prior transcript as notifications BEFORE
+// the load response resolves. That length is a property of the chat's history,
+// which nothing here bounds, whereas every component of handshakeBudget's window
+// is bounded. One number for both phases would have to be this one, and spending
+// five minutes before reporting the far commoner fresh-start failure is worse.
+//
+// If a real transcript ever exceeds this, the fix is an activity-reset deadline
+// in the frame reader (which already sees every frame) rather than a bigger flat
+// number. It is NOT a timer on the replay projection's settle barrier, which is a
+// correctness argument and needs none — see internal/agent/load_projection.go.
+var replayBudget = 300 * time.Second
+
+// handshakeTimeout rewrites an expired handshake budget into something a person
+// can act on, and returns every other failure exactly as it was.
+//
+// Left raw, the error is `session/new: context deadline exceeded`: it names an
+// internal concept, reads as a backend fault, and says nothing about the one
+// thing the user needs to know, which is that pressing Send again is the whole
+// recovery (the failed start reaps the subprocess and clears the registration, so
+// the next Send spawns a fresh bridge). The wrap keeps
+// errors.Is(err, context.DeadlineExceeded) true, so a caller that classifies
+// still can, and it keeps the raw cause as the tail for diagnosis.
+func handshakeTimeout(err error, phase string, budget time.Duration) error {
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("%s did not finish within %s. kiro-cli stopped answering during the handshake. Send again to retry, and check /api/health if it keeps happening: %w",
+		phase, budget, err)
 }
 
 // buildACPArgs assembles the kiro-cli `acp` invocation arguments. Kept

@@ -34,6 +34,12 @@ package agent
 // than leaking a projection. A load that never returned leaves loadDone false
 // and the projection is discarded, which is right: a failed session/load has no
 // transcript to adopt.
+//
+// The barrier still needs no timeout. What DID need one is the session/load RPC
+// above it: bridge.replayBudget bounds that call, which is what makes "a load
+// that never returned" a state this code reaches at all rather than a wait with
+// no end. Do not move that budget down here — the settle is a correctness
+// argument and a timer on it would only turn a sound barrier into a guess.
 
 import (
 	"cmp"
