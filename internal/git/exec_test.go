@@ -2,6 +2,7 @@ package git
 
 import (
 	"testing"
+	"time"
 )
 
 func TestScrubAuth(t *testing.T) {
@@ -285,5 +286,31 @@ func TestParseSCPStyle_extractsHostAfterAt(t *testing.T) {
 	}
 	if path != "foo" {
 		t.Errorf("parseSCPStyle(%q) path = %q, want %q", in, path, "foo")
+	}
+}
+
+// Every operation class in the default policy gets a usable budget, and the
+// budget widens with how much work the operation does: a zero or collapsed
+// budget would abort the subprocess before git had a chance to run at all.
+func TestDefaultTimeouts_budgetsEachOperationClass(t *testing.T) {
+	t.Parallel()
+	policy := defaultTimeouts()
+	tests := []struct {
+		field string
+		got   time.Duration
+		want  time.Duration
+	}{
+		{field: "Plumbing", got: policy.Plumbing, want: 5 * time.Second},
+		{field: "Fetch", got: policy.Fetch, want: 5 * time.Second},
+		{field: "Push", got: policy.Push, want: 60 * time.Second},
+		{field: "Clone", got: policy.Clone, want: 2 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			t.Parallel()
+			if tt.got != tt.want {
+				t.Errorf("defaultTimeouts().%s = %v, want %v", tt.field, tt.got, tt.want)
+			}
+		})
 	}
 }

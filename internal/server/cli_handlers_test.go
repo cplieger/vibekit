@@ -217,3 +217,37 @@ func TestExecCLIRunner_RunStdoutCapped_Truncates(t *testing.T) {
 		t.Errorf("out = %q, want prefix %q", out, "ABCDEFGHIJ")
 	}
 }
+
+// Stderr is captured but not returned, so the log is the only place it goes. It
+// is the diagnostic for a kiro-cli invocation that failed with nothing useful on
+// stdout — and a run that wrote nothing to stderr must not produce a line, or the
+// channel fills with empty records and stops being worth reading.
+//
+// Not parallel: it swaps the process-wide slog default.
+func TestExecCLIRunner_RunStdoutCapped_LogsCapturedStderr(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	r := &execCLIRunner{cliPath: func() string { return sh }}
+
+	t.Run("stderr_is_logged", func(t *testing.T) {
+		logs := captureLogs(t)
+		if _, _, err := r.RunStdoutCapped(t.Context(), 1024, "-c", "printf OUT; printf ERRLINE 1>&2"); err != nil {
+			t.Fatalf("RunStdoutCapped: %v", err)
+		}
+		if !strings.Contains(logs.String(), "ERRLINE") {
+			t.Errorf("captured stderr never reached the log:\n%s", logs.String())
+		}
+	})
+
+	t.Run("a_silent_run_logs_nothing", func(t *testing.T) {
+		logs := captureLogs(t)
+		if _, _, err := r.RunStdoutCapped(t.Context(), 1024, "-c", "printf OUT"); err != nil {
+			t.Fatalf("RunStdoutCapped: %v", err)
+		}
+		if strings.Contains(logs.String(), "cli stderr captured") {
+			t.Errorf("a run with no stderr logged a capture:\n%s", logs.String())
+		}
+	})
+}

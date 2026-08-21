@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1067,5 +1068,63 @@ func TestNew_RefusesNilContext(t *testing.T) {
 	}
 	if s != nil {
 		t.Errorf("New(nil ctx) returned a non-nil store (%p) alongside its error", s)
+	}
+}
+
+// A store that boots cleanly says nothing. The boot reconcile logs at ERROR
+// because a failed KAS write means the agent runs on a stale server set, so an
+// error line on every healthy start would train the reader to ignore the one
+// that matters.
+//
+// Not parallel: it swaps the process-wide slog default.
+func TestNew_CleanBootIsSilent(t *testing.T) {
+	logs := captureSlog(t)
+	dir := t.TempDir()
+	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if strings.Contains(logs.String(), "initial kas config write failed") {
+		t.Errorf("a clean boot reported a failed kas config write:\n%s", logs.String())
+	}
+}
+
+// The import log carries how many entries it actually created, which is what
+// distinguishes a paste that landed from a re-paste that matched the stored set.
+//
+// Not parallel: it swaps the process-wide slog default.
+func TestImportServers_LogsTheCreatedCount(t *testing.T) {
+	s := newTestStore(t)
+	logs := captureSlog(t)
+	in := []*Server{
+		{Name: "one", Transport: TransportStdio, Command: "x"},
+		{Name: "two", Transport: TransportStdio, Command: "y"},
+	}
+	if _, err := s.ImportServers(t.Context(), in); err != nil {
+		t.Fatalf("ImportServers: %v", err)
+	}
+	if !strings.Contains(logs.String(), "created=2") {
+		t.Errorf("import of %d new servers did not log created=2:\n%s", len(in), logs.String())
+	}
+}
+
+// An import naming exactly as many servers as the cap allows lands. The cap
+// bounds what is too much, so its own boundary value has to be accepted.
+func TestImportServers_AcceptsExactlyTheCap(t *testing.T) {
+	s := newTestStore(t)
+	in := make([]*Server, 0, maxImportServers)
+	for i := range maxImportServers {
+		in = append(in, &Server{
+			Name:      fmt.Sprintf("srv%c%c", 'a'+rune(i/26), 'a'+rune(i%26)),
+			Transport: TransportStdio,
+			Command:   "x",
+		})
+	}
+	results, err := s.ImportServers(t.Context(), in)
+	if err != nil {
+		t.Fatalf("ImportServers(%d servers): %v", maxImportServers, err)
+	}
+	if len(results) != maxImportServers {
+		t.Errorf("ImportServers(%d servers) returned %d results, want %d",
+			maxImportServers, len(results), maxImportServers)
 	}
 }

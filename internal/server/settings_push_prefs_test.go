@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -142,5 +143,49 @@ func TestSyncPushPreferences_MergedPatchNeedsNoDiskRead(t *testing.T) {
 
 	if mp.prefs[vibekit.PushKindAgentFinished] || mp.prefs[vibekit.PushKindPRStatus] {
 		t.Errorf("prefs = %+v, want both false: a key the patch carries must not be re-read from disk", mp.prefs)
+	}
+}
+
+// The size cap bounds what a PATCH merges, and its own boundary value is inside
+// the bound: a file exactly at the cap is still merged, so the keys the patch
+// does not name survive. Treating it as oversize would silently drop every
+// untouched setting on the write that follows.
+func TestReadExistingSettings_SizeCapIsInclusive(t *testing.T) {
+	// Trailing whitespace is legal JSON, so the padding leaves the document
+	// parseable at any size.
+	seed := func(t *testing.T, size int) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.json")
+		doc := `{"theme":"dark"}`
+		if len(doc) > size {
+			t.Fatalf("seed document is %d bytes, over the %d target", len(doc), size)
+		}
+		data := append([]byte(doc), bytes.Repeat([]byte(" "), size-len(doc))...)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return path
+	}
+
+	tests := []struct {
+		name      string
+		size      int
+		wantKeys  int
+		wantTheme string
+	}{
+		{name: "at_the_cap", size: maxSettingsBytes, wantKeys: 1, wantTheme: `"dark"`},
+		{name: "one_past_the_cap", size: maxSettingsBytes + 1, wantKeys: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := readExistingSettings(seed(t, tt.size))
+			if len(got) != tt.wantKeys {
+				t.Fatalf("readExistingSettings of a %d-byte file returned %d keys, want %d",
+					tt.size, len(got), tt.wantKeys)
+			}
+			if tt.wantTheme != "" && string(got["theme"]) != tt.wantTheme {
+				t.Errorf("theme = %s, want %s", got["theme"], tt.wantTheme)
+			}
+		})
 	}
 }

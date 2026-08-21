@@ -72,6 +72,17 @@ func nameDoorTable() []nameDoorCase {
 			name: "OverIDBound", in: "a" + strings.Repeat("b", IDMaxLen), okName: true, okID: false,
 			why: "one past the id bound, still inside the name bound",
 		},
+		// The charset's own edges. Every rule here is a range, and a range is
+		// where an off-by-one hides: a name is refused for holding the last
+		// letter or the last digit of a range that is supposed to include it.
+		{
+			name: "LeadIsTheLastUpperLetter", in: "Zulu", okName: true, okID: true,
+			why: "Z closes the upper-case range",
+		},
+		{
+			name: "HoldsBothDigitEdges", in: "a09", okName: true, okID: true,
+			why: "0 and 9 close the digit range",
+		},
 	}
 }
 

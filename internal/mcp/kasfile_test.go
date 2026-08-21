@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -274,4 +275,84 @@ func TestPairsRecord_LastDuplicateWins(t *testing.T) {
 	if pairsRecord(nil) != nil {
 		t.Error("pairsRecord(nil) should stay nil so the field is omitted")
 	}
+}
+
+// The negative half of TestWriteKASConfig_RemoteCarriesOAuth: a remote server the
+// user configured without credentials must carry no `oauth` block at all. An
+// empty one is worse than none — KAS would read a client id and secret that are
+// both the empty string and attempt the flow with them, which fails at the
+// provider with nothing in vibekit's own UI to explain why.
+func TestWriteKASConfig_RemoteWithoutOAuthCarriesNoBlock(t *testing.T) {
+	s, kas := newIsolatedStore(t)
+	srv := &Server{
+		Transport: TransportHTTP, Name: "plain", Enabled: true,
+		URL: "https://plain.example/mcp",
+	}
+	if _, err := s.Create(t.Context(), srv); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	entry, ok := readKASServers(t, kas)["plain"]
+	if !ok {
+		t.Fatal("the server was not rendered")
+	}
+	if got, present := entry["oauth"]; present {
+		t.Errorf("oauth = %v, want the key absent for a server with no credentials", got)
+	}
+}
+
+// The size cap bounds the RE-READ of a file vibekit shares with KAS, so its two
+// sides have different consequences: a file at the cap is still merged with (its
+// foreign keys survive a write), and one past it is skipped — silently, because
+// being too big to merge is not a stat failure and reporting it as one sends the
+// reader looking for a broken path.
+//
+// Not parallel: it swaps the process-wide slog default.
+func TestReadKASConfig_SizeCapIsInclusive(t *testing.T) {
+	// Trailing whitespace is legal JSON, so the padding keeps the document
+	// parseable at any size.
+	seed := func(t *testing.T, size int) string {
+		t.Helper()
+		dir := t.TempDir()
+		kas := filepath.Join(dir, "mcp.json")
+		doc := `{"powers":{"mcpServers":{"kept":{"command":"keepme"}}}}`
+		if len(doc) > size {
+			t.Fatalf("seed document is %d bytes, over the %d target", len(doc), size)
+		}
+		data := append([]byte(doc), bytes.Repeat([]byte(" "), size-len(doc))...)
+		if err := os.WriteFile(kas, data, 0o600); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return kas
+	}
+
+	t.Run("at_the_cap", func(t *testing.T) {
+		kas := seed(t, kasFileMaxBytes)
+		if _, err := New(t.Context(), filepath.Dir(kas), nil, WithKASConfigPath(kas)); err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		doc := readKAS(t, kas)
+		powers, ok := doc[kasPowersKey]
+		if !ok {
+			t.Fatalf("a file of exactly %d bytes lost its %q block; it was skipped rather than read",
+				kasFileMaxBytes, kasPowersKey)
+		}
+		if !strings.Contains(string(powers), "keepme") {
+			t.Errorf("%s = %s, want the seeded entry preserved", kasPowersKey, powers)
+		}
+	})
+
+	t.Run("one_past_the_cap", func(t *testing.T) {
+		logs := captureSlog(t)
+		kas := seed(t, kasFileMaxBytes+1)
+		if _, err := New(t.Context(), filepath.Dir(kas), nil, WithKASConfigPath(kas)); err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if _, ok := readKAS(t, kas)[kasPowersKey]; ok {
+			t.Errorf("a file past the %d-byte cap was merged with anyway", kasFileMaxBytes)
+		}
+		if strings.Contains(logs.String(), "stat failed") {
+			t.Errorf("an oversized file was reported as a stat failure:\n%s", logs.String())
+		}
+	})
 }

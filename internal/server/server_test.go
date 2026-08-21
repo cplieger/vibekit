@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -765,4 +767,16 @@ func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
 	if !hasKiroConfigItem(items, "agent", "baz") {
 		t.Errorf("scanKiroDirFS missing agent item 'baz'; got %+v", items)
 	}
+}
+
+// captureLogs swaps the slog default to a buffer-backed debug handler for the
+// duration of the test and restores it on cleanup. The default is process-wide,
+// so a test using it must not run in parallel.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
 }

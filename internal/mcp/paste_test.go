@@ -794,3 +794,119 @@ func FuzzParseImportBody(f *testing.F) {
 		}
 	})
 }
+
+// A block naming exactly as many servers as the cap allows installs. The cap is
+// a limit on what is too much, so the boundary value itself has to land — and
+// there are two of them on this path, the translator's and the store's, either
+// of which would turn a legal paste into a 400 nobody could explain.
+func TestImport_AcceptsExactlyTheServerCap(t *testing.T) {
+	_, mux := newRoutedStore(t)
+
+	var b strings.Builder
+	b.WriteString(`{"mcpServers":{`)
+	for i := range maxImportServers {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `"srv%c%c":{"command":"x"}`, 'a'+rune(i/26), 'a'+rune(i%26))
+	}
+	b.WriteString(`}}`)
+
+	rec := postImport(t, mux, b.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a paste of %d servers: status = %d, want 200; body %s",
+			maxImportServers, rec.Code, rec.Body.String())
+	}
+	var resp importResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := len(resp.Results); got != maxImportServers {
+		t.Errorf("installed %d servers, want %d", got, maxImportServers)
+	}
+}
+
+// The key cap is a limit too, so a block sitting exactly on it is diagnosed by
+// what is actually wrong with it rather than by its size — and a block one key
+// past it is refused by size. A cap that refused its own boundary value would
+// report "128 keys (max 128)", which tells the reader nothing they can act on.
+func TestImport_KeyCapIsInclusive(t *testing.T) {
+	keys := func(n int) string {
+		var b strings.Builder
+		b.WriteString(`{"name":"x","command":"srv"`)
+		for i := range n - 2 {
+			fmt.Fprintf(&b, `,"k%d":"v"`, i)
+		}
+		b.WriteByte('}')
+		return b.String()
+	}
+
+	t.Run("at_the_cap", func(t *testing.T) {
+		_, err := parseImportBody([]byte(keys(maxImportBlockKeys)))
+		if err == nil {
+			t.Fatal("a block of unknown keys was accepted")
+		}
+		if !strings.Contains(err.Error(), "unknown key") {
+			t.Errorf("error = %q, want the first unknown key named rather than the key count", err)
+		}
+	})
+
+	t.Run("one_past_the_cap", func(t *testing.T) {
+		_, err := parseImportBody([]byte(keys(maxImportBlockKeys + 1)))
+		if err == nil {
+			t.Fatal("a block past the key cap was accepted")
+		}
+		if !strings.Contains(err.Error(), "max") {
+			t.Errorf("error = %q, want the cap named", err)
+		}
+	})
+}
+
+// A guess is only worth making when it is close. Past the threshold the key is
+// reported without one, because a confidently wrong "did you mean" sends the
+// reader to rename a key that was never the problem.
+func TestImport_NoSuggestionBeyondTheEditThreshold(t *testing.T) {
+	// Three edits from "clientId" and further still from "clientSecret", so
+	// nothing in the oauth key set is within reach.
+	body := `{"name":"x","url":"https://x.test/mcp","type":"http","oauth":{"clientIdent":"z"}}`
+	_, err := parseImportBody([]byte(body))
+	if err == nil {
+		t.Fatal("an unknown oauth key was accepted")
+	}
+	if !strings.Contains(err.Error(), "clientIdent") {
+		t.Errorf("error = %q, want the offending key named", err)
+	}
+	if strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("error = %q, want no suggestion for a key %d edits away",
+			err, importSuggestDistance+1)
+	}
+}
+
+// editDistance is the measure every suggestion is chosen by, so a wrong answer
+// here is a wrong suggestion or a missing one at every call site.
+func TestEditDistance(t *testing.T) {
+	tests := []struct {
+		name string
+		a    string
+		b    string
+		want int
+	}{
+		{name: "both_empty", a: "", b: "", want: 0},
+		{name: "identical", a: "command", b: "command", want: 0},
+		{name: "empty_against_a_word", a: "", b: "abc", want: 3},
+		{name: "a_word_against_empty", a: "abc", b: "", want: 3},
+		{name: "one_letter_against_empty", a: "a", b: "", want: 1},
+		{name: "one_deletion", a: "comand", b: "command", want: 1},
+		{name: "one_substitution", a: "commamd", b: "command", want: 1},
+		{name: "trailing_letter_dropped", a: "commandx", b: "command", want: 1},
+		{name: "transposition_costs_two", a: "commadn", b: "command", want: 2},
+		{name: "textbook", a: "kitten", b: "sitting", want: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := editDistance(tt.a, tt.b); got != tt.want {
+				t.Errorf("editDistance(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
