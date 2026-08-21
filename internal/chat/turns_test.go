@@ -259,3 +259,60 @@ func TestFirstLineNormalisesInvalidUTF8LikeJSONWould(t *testing.T) {
 		t.Error("result is not valid UTF-8")
 	}
 }
+
+// A rail label is bounded by RUNES, and the collapsed spaces count against that
+// bound like any other rune — otherwise a pasted paragraph of short words gets
+// through the budget a long word is cut by.
+func TestProjectTurnSummaries_FirstLineBoundIncludesCollapsedSpaces(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "many_short_words",
+			content: strings.Repeat("ab ", 100),
+			want:    strings.Repeat("ab ", turnFirstLineMax/3) + "\u2026",
+		},
+		{
+			name:    "one_long_word_then_more_text",
+			content: strings.Repeat("a", turnFirstLineMax) + " tail",
+			want:    strings.Repeat("a", turnFirstLineMax) + "\u2026",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := projectTurnSummaries([]vibekit.Message{user("u1", tc.content, 100)}, false)
+			if len(got) != 1 {
+				t.Fatalf("projectTurnSummaries returned %d summaries, want 1", len(got))
+			}
+			if got[0].FirstLine != tc.want {
+				t.Errorf("first line of %d runes of %q = %q, want %q",
+					len([]rune(tc.content)), tc.name, got[0].FirstLine, tc.want)
+			}
+		})
+	}
+}
+
+// A turn the agent opened owns the message that opened it, so a terminal marker
+// on that very message decides the turn's outcome. Reading the outcome off a
+// body that excludes the opener paints an interrupted turn as completed.
+func TestProjectTurnSummaries_AgentOpenedTurnCountsItsOwnMessage(t *testing.T) {
+	got := projectTurnSummaries([]vibekit.Message{{
+		ID:        "e1",
+		Role:      vibekit.RoleEvent,
+		EventKind: vibekit.EventInterrupted,
+		Content:   "interrupted by restart",
+		Ts:        100,
+	}}, false)
+
+	if len(got) != 1 {
+		t.Fatalf("projectTurnSummaries returned %d turns, want 1", len(got))
+	}
+	if !got[0].AgentInitiated {
+		t.Errorf("turn = %+v, want it marked agent-initiated", got[0])
+	}
+	if want := vibekit.TurnOutcomeInterrupted; got[0].Outcome != want {
+		t.Errorf("outcome of a turn opened by an interrupted event = %q, want %q", got[0].Outcome, want)
+	}
+}

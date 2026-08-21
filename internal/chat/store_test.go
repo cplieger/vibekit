@@ -1680,3 +1680,58 @@ func TestBuildHistory_KeepsTheLastMessageEvenOversize(t *testing.T) {
 		t.Error("an older message was kept while the newest had to be truncated")
 	}
 }
+
+// The priming window keeps the newest run of messages that FITS the budget, and
+// the newest message is admitted whatever its size — a prime without the turn
+// the conversation resumes from is useless. A line that exactly fills the
+// remaining budget fits.
+func TestSelectPrimeWindow_AdmitsWhatFitsAndAlwaysTheNewest(t *testing.T) {
+	tests := []struct {
+		name      string
+		rendered  []string
+		budget    int
+		wantFirst int
+		wantTotal int
+	}{
+		{name: "both_lines_exactly_fill_the_budget", rendered: []string{"aaa", "bbb"}, budget: 6, wantFirst: 0, wantTotal: 6},
+		{name: "one_byte_too_little_for_the_oldest", rendered: []string{"aaa", "bbb"}, budget: 5, wantFirst: 1, wantTotal: 3},
+		{name: "the_newest_alone_busts_the_budget", rendered: []string{"aaa", "bbbbb"}, budget: 2, wantFirst: 1, wantTotal: 5},
+		{name: "an_unrenderable_line_is_skipped", rendered: []string{"", "bbb"}, budget: 6, wantFirst: 1, wantTotal: 3},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			first, total := selectPrimeWindow(tc.rendered, tc.budget)
+			if first != tc.wantFirst || total != tc.wantTotal {
+				t.Errorf("selectPrimeWindow(%q, %d) = (%d, %d), want (%d, %d)",
+					tc.rendered, tc.budget, first, total, tc.wantFirst, tc.wantTotal)
+			}
+		})
+	}
+}
+
+// ?limit= honours the inclusive 1..500 range its doc comment states. Silently
+// substituting the default for a page size at either end of that range is a
+// paging bug the client cannot see: it asked for 500 and got 50.
+func TestParseLimitParam_HonoursTheInclusiveRange(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{name: "absent", query: "", want: 50},
+		{name: "smallest_accepted", query: "?limit=1", want: 1},
+		{name: "largest_accepted", query: "?limit=500", want: 500},
+		{name: "one_past_the_largest", query: "?limit=501", want: 50},
+		{name: "zero", query: "?limit=0", want: 50},
+		{name: "negative", query: "?limit=-3", want: 50},
+		{name: "not_a_number", query: "?limit=many", want: 50},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
+			if got := parseLimitParam(r); got != tc.want {
+				t.Errorf("parseLimitParam(%q) = %d, want %d", tc.query, got, tc.want)
+			}
+		})
+	}
+}

@@ -675,3 +675,125 @@ func TestProjection_WorkflowProgressIsNotUserProse(t *testing.T) {
 		})
 	}
 }
+
+// A compaction that lands before any message still records its summary. The
+// separator arrives at position 0 on a session whose whole history was
+// compacted, which is the one boundary where "no pending compaction" and
+// "compaction pending at the start" are the same number if the guard is off by
+// one — and where reaching back for the previous message's timestamp has
+// nothing to reach.
+func TestProjection_CompactionAtTheStartOfTheTranscript(t *testing.T) {
+	p := NewProjection(seqIDs())
+	sep, sepRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+		map[string]any{"summarizationSeparator": true})
+	p.Ingest(sep, sepRaw)
+	sum, sumRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message",
+		map[string]any{"summaryMessage": map[string]any{"content": "## Goal\nPLUM."}})
+	p.Ingest(sum, sumRaw)
+
+	got := p.Messages()
+	if len(got) != 1 {
+		t.Fatalf("projected %d messages, want 1 compaction event:\n%s", len(got), dumpMessages(got))
+	}
+	if got[0].EventKind != vibekit.EventCompacted {
+		t.Errorf("message 0 kind = %q, want %q", got[0].EventKind, vibekit.EventCompacted)
+	}
+	if got[0].Content != "## Goal\nPLUM." {
+		t.Errorf("message 0 content = %q, want the summary text", got[0].Content)
+	}
+}
+
+// One separator entitles the replay to one summary. A second summary_message
+// with no separator of its own has no boundary to sit at, so it is dropped
+// rather than inserted at whatever position the last one happened to leave
+// behind.
+func TestProjection_SecondSummaryWithoutItsOwnSeparatorIsDropped(t *testing.T) {
+	p := NewProjection(seqIDs())
+	ingestAll(p, probe23Turn(t))
+	sep, sepRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+		map[string]any{"summarizationSeparator": true})
+	p.Ingest(sep, sepRaw)
+	for _, text := range []string{"## Goal\nFIRST.", "## Goal\nSECOND."} {
+		sum, sumRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message",
+			map[string]any{"summaryMessage": map[string]any{"content": text}})
+		p.Ingest(sum, sumRaw)
+	}
+
+	compactions := 0
+	for _, m := range p.Messages() {
+		if m.EventKind == vibekit.EventCompacted {
+			compactions++
+		}
+	}
+	if compactions != 1 {
+		t.Errorf("projected %d compaction events, want 1:\n%s", compactions, dumpMessages(p.Messages()))
+	}
+}
+
+// A replayed tool_call_update refines the card the tool_call opened: a field it
+// carries is applied, and a field it omits leaves what is already there. KAS
+// sends title, kind and locations nullish on an update, so treating absence as
+// an instruction empties a complete card mid-replay.
+func TestProjection_ToolUpdateAppliesPresentFieldsAndKeepsAbsentOnes(t *testing.T) {
+	tests := []struct {
+		name          string
+		update        map[string]any
+		wantTitle     string
+		wantKind      vibekit.ToolKind
+		wantLocations int
+	}{
+		{
+			name:          "the_update_refines_every_field",
+			update:        map[string]any{"title": "Read config.yaml", "kind": "edit", "locations": []map[string]any{{"path": "b.go"}, {"path": "c.go"}}},
+			wantTitle:     "Read config.yaml",
+			wantKind:      vibekit.ToolKind("edit"),
+			wantLocations: 2,
+		},
+		{
+			name:          "the_update_carries_only_a_status",
+			update:        map[string]any{},
+			wantTitle:     "Read File",
+			wantKind:      vibekit.ToolKind("read"),
+			wantLocations: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewProjection(seqIDs())
+			_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
+			p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+			p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
+				"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+				"toolCallId":    "tc-1",
+				"title":         "Read File",
+				"kind":          "read",
+				"status":        "in_progress",
+				"locations":     []map[string]any{{"path": "a.go"}},
+				"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
+			}))
+			update := map[string]any{
+				"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+				"toolCallId":    "tc-1",
+				"status":        "completed",
+				"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
+			}
+			maps.Copy(update, tc.update)
+			p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, update))
+
+			got := p.Messages()
+			if len(got) != 1 || len(got[0].ToolCalls) != 1 {
+				t.Fatalf("projected %d messages, want 1 with 1 tool call:\n%s", len(got), dumpMessages(got))
+			}
+			card := got[0].ToolCalls[0]
+			if card.Title != tc.wantTitle {
+				t.Errorf("tool title after the update = %q, want %q", card.Title, tc.wantTitle)
+			}
+			if card.Kind != tc.wantKind {
+				t.Errorf("tool kind after the update = %q, want %q", card.Kind, tc.wantKind)
+			}
+			if len(card.Locations) != tc.wantLocations {
+				t.Errorf("tool locations after the update = %+v, want %d of them", card.Locations, tc.wantLocations)
+			}
+		})
+	}
+}

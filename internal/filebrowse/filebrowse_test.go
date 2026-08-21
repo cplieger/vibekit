@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -2524,7 +2525,12 @@ func TestHandleDownloadZip_StreamsFilesAndDirs(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Two files in the subdirectory, not one: a directory walk that enumerated
+	// only its first child would archive b.txt and silently drop c.txt.
 	if err := os.WriteFile(filepath.Join(dir, "sub", "b.txt"), []byte("bravo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("charlie"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2556,6 +2562,12 @@ func TestHandleDownloadZip_StreamsFilesAndDirs(t *testing.T) {
 	}
 	if want := filepath.Join("sub", "b.txt"); got[want] != "bravo" {
 		t.Errorf("zip entry %q = %q, want %q (directory must recurse)", want, got[want], "bravo")
+	}
+	// The second child: a walk that enumerated the directory one entry at a
+	// time would archive only the first and drop this one.
+	if want := filepath.Join("sub", "c.txt"); got[want] != "charlie" {
+		t.Errorf("zip entry %q = %q, want %q (every child of a directory must be archived)",
+			want, got[want], "charlie")
 	}
 }
 
@@ -2733,4 +2745,197 @@ func TestWriteFile_StaleWriteGuard(t *testing.T) {
 			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// touch is a no-op on an entry that already exists: O_EXCL refuses the create
+// with EEXIST, which the action reports as success without disturbing the bytes
+// or the mtime. The doc comment on actionTouch rests on exactly this.
+func TestAction_Touch_ExistingFileSucceedsAndKeepsContent(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	const want = "keep me"
+	existing := filepath.Join(dir, "have.txt")
+	if err := os.WriteFile(existing, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postReq(t, h, "/api/files/action", `{"action":"touch","path":"`+prefix+`/have.txt"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("touch on an existing file: status = %d, want %d; body = %s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	got, err := os.ReadFile(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("touch on an existing file: content = %q, want %q", got, want)
+	}
+}
+
+// The synthetic root listing reports each mount's REAL mode and modification
+// time, statted through the mount's own root handle. The entry is seeded with a
+// bare directory placeholder, so a listing that skipped the stat would still
+// look plausible while carrying a zero timestamp.
+func TestListFiles_Root_MountEntriesCarryStattedMetadata(t *testing.T) {
+	dirA := t.TempDir()
+	h, err := New(dirA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := getReq(t, h, "/api/files?path=.")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp struct {
+		Files []fileEntry
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Files) != 1 {
+		t.Fatalf("files = %+v, want exactly the 1 mount", resp.Files)
+	}
+	if got := resp.Files[0].ModTime; got == 0 {
+		t.Errorf("files[0].ModTime = %d for mount %q, want the statted timestamp", got, dirA)
+	}
+	if got := resp.Files[0].Mode; got == os.ModeDir.String() {
+		t.Errorf("files[0].Mode = %q for mount %q, want the statted mode rather than the bare directory placeholder",
+			got, dirA)
+	}
+}
+
+// captureFilebrowseLogs redirects the slog default into a buffer for the
+// duration of one test. The default logger is process-global, so a test using
+// this must not run in parallel.
+func captureFilebrowseLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// A writability probe that works says nothing. Every directory listing runs one,
+// so a probe that logged on the success path would put a line per listing into
+// the operator's log — and its cleanup warning, the one that means a probe file
+// leaked, would be buried among them.
+func TestIsWritable_SucceedsWithoutLogging(t *testing.T) {
+	h, dir, _ := testDir(t)
+	buf := captureFilebrowseLogs(t)
+
+	if got := isWritable(locAt(h, dir)); !got {
+		t.Fatalf("isWritable(%q) = false, want true (a fresh temp dir is writable)", dir)
+	}
+	if got := buf.String(); got != "" {
+		t.Errorf("isWritable(%q) logged %q, want nothing on the success path", dir, got)
+	}
+}
+
+// A touch that creates a file is recorded: the log line is the operator's only
+// trace that the file appeared, and it must survive the close.
+func TestAction_Touch_CreationIsLogged(t *testing.T) {
+	h, dir, _ := testDir(t)
+	buf := captureFilebrowseLogs(t)
+
+	l := locAt(h, filepath.Join(dir, "fresh.txt"))
+	if err := actionTouch(t.Context(), httptest.NewRecorder(), fileAction{}, l, h); err != nil {
+		t.Fatalf("actionTouch(%q) = %v, want nil", l.abs, err)
+	}
+	if got := buf.String(); !strings.Contains(got, "filebrowse: touch") {
+		t.Errorf("actionTouch(%q) logged %q, want a line naming the touch", l.abs, got)
+	}
+}
+
+// The zip stream stops ON its budgets, not one entry past them: the file that
+// takes the running totals to either ceiling is the last one written. Driven at
+// the counters because the real boundary is 500 MB and 10 000 files.
+func TestZipStream_WriteFileStopsOnEachBudget(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "five.txt")
+	if err := os.WriteFile(src, []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name         string
+		bytesBefore  int64
+		filesBefore  int
+		wantContinue bool
+	}{
+		{name: "both_budgets_untouched", wantContinue: true},
+		{name: "one_byte_short_of_the_byte_budget", bytesBefore: maxZipBytes - 6, wantContinue: true},
+		{name: "this_file_reaches_the_byte_budget", bytesBefore: maxZipBytes - 5, wantContinue: false},
+		{name: "two_files_short_of_the_file_budget", filesBefore: maxZipFiles - 2, wantContinue: true},
+		{name: "this_file_reaches_the_file_budget", filesBefore: maxZipFiles - 1, wantContinue: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := os.Open(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = f.Close() }()
+
+			zw := zip.NewWriter(&bytes.Buffer{})
+			z := &zipStream{
+				zw:         zw,
+				flusher:    httptest.NewRecorder(),
+				ctx:        t.Context(),
+				totalBytes: tc.bytesBefore,
+				fileCount:  tc.filesBefore,
+			}
+			got := z.writeFile(f, "five.txt")
+			if err := zw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.wantContinue {
+				t.Errorf("writeFile(five.txt) after %d bytes and %d files = %v, want %v",
+					tc.bytesBefore, tc.filesBefore, got, tc.wantContinue)
+			}
+		})
+	}
+}
+
+// nonFlushingWriter is an http.ResponseWriter that deliberately does NOT
+// implement http.Flusher — the shape any middleware that wraps the writer
+// without forwarding Flush produces.
+type nonFlushingWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	code   int
+}
+
+func (w *nonFlushingWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+	return w.header
+}
+
+func (w *nonFlushingWriter) Write(p []byte) (int, error) { return w.body.Write(p) }
+func (w *nonFlushingWriter) WriteHeader(code int)        { w.code = code }
+
+// The zip download streams over a ResponseWriter that cannot flush. The
+// handler's flusher is an optional type assertion precisely so a wrapped writer
+// does not have to carry Flush, and every entry must still reach the client.
+func TestHandleDownloadZip_WriterWithoutFlushSupport(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("alpha"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/files/download",
+		strings.NewReader(`{"paths":["`+prefix+`/a.txt"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := &nonFlushingWriter{}
+	mux.ServeHTTP(w, req)
+
+	zr, err := zip.NewReader(bytes.NewReader(w.body.Bytes()), int64(w.body.Len()))
+	if err != nil {
+		t.Fatalf("open zip written to a non-flushing writer: %v", err)
+	}
+	if len(zr.File) != 1 || zr.File[0].Name != "a.txt" {
+		t.Fatalf("zip entries = %+v, want just a.txt", zr.File)
+	}
 }

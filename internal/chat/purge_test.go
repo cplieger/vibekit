@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -452,4 +453,46 @@ func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 	if _, err := os.Stat(gonePath); !os.IsNotExist(err) {
 		t.Errorf("chat with stale UpdatedAt survived: stat err = %v", err)
 	}
+}
+
+// The store wires its purge hooks into the retention service the first time one
+// is needed. A hook the store holds but never passes on is a hook that silently
+// does nothing: sessions of a purged chat are never reaped, and a chat open in a
+// live session is deleted under it.
+func TestPurgeExpired_WiresTheStoresHooksIntoTheService(t *testing.T) {
+	t.Run("on_purge_fires_for_a_purged_chat", func(t *testing.T) {
+		s, _ := newTestStore(t)
+		var mu sync.Mutex
+		var purged []vibekit.ChatID
+		WithOnPurge(func(id vibekit.ChatID, _ []string) {
+			mu.Lock()
+			purged = append(purged, id)
+			mu.Unlock()
+		})(s)
+		ctx := t.Context()
+		_ = s.Mutate(ctx, "gone", func(c *vibekit.Chat, _ bool) bool { c.Name = "G"; return true })
+		ageChat(t, s, "gone", 72*time.Hour)
+
+		s.purgeExpired(ctx, 24*time.Hour)
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(purged) != 1 || purged[0] != "gone" {
+			t.Errorf("onPurge fired for %v, want [gone]", purged)
+		}
+	})
+
+	t.Run("a_live_chat_is_never_purged", func(t *testing.T) {
+		s, _ := newTestStore(t)
+		WithLive(func(id vibekit.ChatID) bool { return id == "live" })(s)
+		ctx := t.Context()
+		_ = s.Mutate(ctx, "live", func(c *vibekit.Chat, _ bool) bool { c.Name = "L"; return true })
+		ageChat(t, s, "live", 72*time.Hour)
+
+		s.purgeExpired(ctx, 24*time.Hour)
+
+		if _, err := os.Stat(filepath.Join(s.dir, "live.json")); err != nil {
+			t.Errorf("a chat the live predicate claims is open was purged: %v", err)
+		}
+	})
 }

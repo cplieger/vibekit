@@ -3,6 +3,7 @@ package filebrowse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -846,5 +847,195 @@ func TestSearch_DepthCapStopsAndSaysSo(t *testing.T) {
 	}
 	if !res.Truncated {
 		t.Error("truncated = false after refusing to descend: files were left unread")
+	}
+}
+
+// Each of the walk's three budgets is INCLUSIVE: the scan that has spent one is
+// finished, and finishing that way makes the answer partial. Driven at the
+// counters, because the real budgets are 5 000 files, 20 000 directories and
+// 200 matches.
+func TestFileScan_BudgetsAreInclusiveAndMarkTheAnswerPartial(t *testing.T) {
+	tests := []struct {
+		name          string
+		files         int
+		dirs          int
+		matched       int
+		wantCapped    bool
+		wantTruncated bool
+	}{
+		{name: "nothing_spent", wantCapped: false, wantTruncated: false},
+		{name: "one_file_below_the_file_budget", files: maxSearchFiles - 1, wantCapped: false, wantTruncated: false},
+		{name: "file_budget_spent", files: maxSearchFiles, wantCapped: true, wantTruncated: true},
+		{name: "one_directory_below_the_directory_budget", dirs: maxSearchDirs - 1, wantCapped: false, wantTruncated: false},
+		{name: "directory_budget_spent", dirs: maxSearchDirs, wantCapped: true, wantTruncated: true},
+		{name: "one_match_below_the_match_budget", matched: maxSearchMatches - 1, wantCapped: false, wantTruncated: false},
+		{name: "match_budget_spent", matched: maxSearchMatches, wantCapped: true, wantTruncated: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := newFileScan(t.Context(), "needle", false, nil, nil)
+			sc.files, sc.dirs, sc.matched = tc.files, tc.dirs, tc.matched
+
+			if got := sc.capped(); got != tc.wantCapped {
+				t.Errorf("capped() with files=%d dirs=%d matched=%d = %v, want %v",
+					tc.files, tc.dirs, tc.matched, got, tc.wantCapped)
+			}
+			if got := sc.truncated; got != tc.wantTruncated {
+				t.Errorf("capped() with files=%d dirs=%d matched=%d left truncated = %v, want %v",
+					tc.files, tc.dirs, tc.matched, got, tc.wantTruncated)
+			}
+		})
+	}
+}
+
+// Entering a directory spends a directory, so a walk that arrives with its
+// budget one short does not enumerate what it opens: it stops and reports the
+// answer as partial rather than reading the file inside.
+func TestWalkDir_LastDirectoryOfTheBudgetIsNotEnumerated(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hit.txt"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// walkDir closes the handle on the way out.
+
+	sc := newFileScan(t.Context(), "needle", false, nil, nil)
+	sc.dirs = maxSearchDirs - 1
+	if sc.walkDir(searchDir{f: f, abs: dir}) {
+		t.Error("walkDir returned true (keep scanning) with the directory budget spent")
+	}
+	res := sc.results()
+	if len(res.Matches) != 0 {
+		t.Errorf("matches = %+v, want none: the directory that spent the budget must not be read", res.Matches)
+	}
+	if !res.Truncated {
+		t.Error("truncated = false after the directory budget stopped the walk")
+	}
+}
+
+// atCeiling builds content of exactly maxSearchFileSize bytes whose final line
+// is the needle, unterminated. A read that stopped one byte short would leave a
+// word that no longer matches, which is the difference between a bounded read
+// and a silently truncated one.
+func atCeiling() string {
+	const tail = "needle"
+	return strings.Repeat("a", maxSearchFileSize-len(tail)-1) + "\n" + tail
+}
+
+// A file at exactly the per-file ceiling is searched, to its last byte, whether
+// it is reached by walking a directory or named directly as the search root.
+func TestSearch_FileAtExactCeilingIsSearchedWhole(t *testing.T) {
+	t.Run("named_as_the_search_root", func(t *testing.T) {
+		h, dir, prefix := testDir(t)
+		writeTree(t, dir, map[string]string{"big.txt": atCeiling()})
+
+		res := decodeSearch(t, searchReq(t, h,
+			map[string]string{"path": filepath.Join(prefix, "big.txt"), "q": "needle"}))
+		if len(res.Matches) != 1 || res.Matches[0].Line != 2 {
+			t.Fatalf("matches = %+v, want one hit on line 2 of a %d-byte file", res.Matches, maxSearchFileSize)
+		}
+		if res.Scanned != 1 {
+			t.Errorf("scanned = %d, want 1: the root file was opened and read", res.Scanned)
+		}
+	})
+
+	t.Run("reached_by_walking_its_directory", func(t *testing.T) {
+		h, dir, prefix := testDir(t)
+		writeTree(t, dir, map[string]string{"sub/big.txt": atCeiling()})
+
+		res := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
+		if len(res.Matches) != 1 || res.Matches[0].Line != 2 {
+			t.Fatalf("matches = %+v, want one hit on line 2 of a %d-byte file", res.Matches, maxSearchFileSize)
+		}
+	})
+}
+
+// readSearchFile enforces the per-file ceiling on the bytes it actually reads,
+// so a file that grew past the ceiling between the stat and the read is
+// REPORTED rather than searched as a truncated prefix.
+func TestReadSearchFile_CeilingAppliesToWhatWasRead(t *testing.T) {
+	tests := []struct {
+		name     string
+		size     int
+		wantErr  bool
+		wantRead int
+	}{
+		{name: "exactly_at_the_ceiling", size: maxSearchFileSize, wantErr: false, wantRead: maxSearchFileSize},
+		{name: "one_byte_past_the_ceiling", size: maxSearchFileSize + 1, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "f.txt")
+			if err := os.WriteFile(path, []byte(strings.Repeat("a", tc.size)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = f.Close() }()
+
+			data, err := readSearchFile(t.Context(), f, int64(tc.size))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("readSearchFile(a %d-byte file) error = %v, want error %v", tc.size, err, tc.wantErr)
+			}
+			if tc.wantErr {
+				if !errors.Is(err, atomicfile.ErrFileTooLarge) {
+					t.Errorf("readSearchFile(a %d-byte file) error = %v, want ErrFileTooLarge", tc.size, err)
+				}
+				return
+			}
+			if len(data) != tc.wantRead {
+				t.Errorf("readSearchFile(a %d-byte file) read %d bytes, want %d", tc.size, len(data), tc.wantRead)
+			}
+		})
+	}
+}
+
+// A blank line is a line: the match after one is reported at the line it is
+// really on, and everything past the blank line is still searched.
+func TestSearch_BlankLinesAreCounted(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	writeTree(t, dir, map[string]string{"gap.txt": "alpha\n\nneedle\n"})
+
+	res := decodeSearch(t, searchReq(t, h,
+		map[string]string{"path": filepath.Join(prefix, "gap.txt"), "q": "needle"}))
+	if len(res.Matches) != 1 {
+		t.Fatalf("matches = %+v, want exactly one hit", res.Matches)
+	}
+	if got := res.Matches[0].Line; got != 3 {
+		t.Errorf("match line = %d, want 3 (the blank second line counts)", got)
+	}
+	if got := res.Matches[0].Excerpt; got != "needle" {
+		t.Errorf("match excerpt = %q, want %q", got, "needle")
+	}
+}
+
+// The depth budget names the deepest directory the walk still ENTERS: a file
+// sitting at exactly that depth is found, and finding it is not a partial
+// answer. The refusal one level deeper is pinned separately.
+func TestSearch_FileAtExactDepthBudgetIsFound(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	deep := dir
+	for range maxSearchDepth {
+		deep = filepath.Join(deep, "d")
+	}
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	buried := filepath.Join(deep, "buried.txt")
+	if err := os.WriteFile(buried, []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := decodeSearch(t, searchReq(t, h, map[string]string{"path": prefix, "q": "needle"}))
+	if got := matchPaths(res); len(got) != 1 || got[0] != buried {
+		t.Fatalf("matches = %v, want the file at depth %d", got, maxSearchDepth)
+	}
+	if res.Truncated {
+		t.Error("truncated = true after a walk that read every file it should have")
 	}
 }
