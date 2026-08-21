@@ -56,13 +56,12 @@ func TestValidateHookPayload(t *testing.T) {
 		{name: "description at max", p: hookCreatePayload{Name: validName, EventType: validEvent, ActionType: "askAgent", Prompt: "p", Description: atMax}, wantCode: 0, wantErr: false},
 		{name: "description over max", p: hookCreatePayload{Name: validName, EventType: validEvent, ActionType: "askAgent", Prompt: "p", Description: overMax}, wantCode: http.StatusRequestEntityTooLarge, wantErr: true},
 
-		// event_type: non-empty, no regex -> at max passes.
-		// event_type has no at-max accept row: a field-length probe needs a value
-		// of exactly MaxHookField, and no real trigger name is that long, so the
-		// row could only ever assert that an over-long UNKNOWN trigger is
-		// rejected for the wrong reason. The over-max row below still pins the
-		// size gate, and it must be rejected for SIZE rather than for being an
-		// unknown trigger, which is why it stays first in validateHookPayload.
+		// event_type: the size gate runs before the trigger check, so at
+		// exactly MaxHookField the field must survive the size gate and be
+		// refused as an unknown trigger instead -> 400, not 413. No real
+		// trigger name is that long, so an accept row is impossible; the code
+		// it does NOT return is what pins the boundary.
+		{name: "event_type at max", p: hookCreatePayload{Name: validName, EventType: atMax, ActionType: "askAgent", Prompt: "p"}, wantCode: http.StatusBadRequest, wantErr: true},
 		{name: "event_type over max", p: hookCreatePayload{Name: validName, EventType: overMax, ActionType: "askAgent", Prompt: "p"}, wantCode: http.StatusRequestEntityTooLarge, wantErr: true},
 
 		// action_type: at max is not a valid action -> switch default 400; over max -> 413.

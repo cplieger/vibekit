@@ -336,3 +336,61 @@ func TestGLabProjectPath(t *testing.T) {
 		})
 	}
 }
+
+// Mergeable is GitLab's own merge_status verdict, and only can_be_merged means
+// yes. cannot_be_merged and the recheck-pending variant are both "not yet",
+// which is not something to paint as ready.
+func TestGitLabListPRs_MergeableIsTheExactVerdict(t *testing.T) {
+	const out = `printf '%s' '[
+	  {"iid":1,"title":"clean","state":"opened","sha":"aaa","merge_status":"can_be_merged","detailed_merge_status":"mergeable"},
+	  {"iid":2,"title":"conflicted","state":"opened","sha":"bbb","merge_status":"cannot_be_merged","detailed_merge_status":"conflict"},
+	  {"iid":3,"title":"rechecking","state":"opened","sha":"ccc","merge_status":"cannot_be_merged_recheck","detailed_merge_status":"checking"}
+	]'`
+	p, _ := newGitLabWithStub(t, out)
+
+	prs, err := p.ListPRs(t.Context(), "grp/proj", StateOpen)
+	if err != nil {
+		t.Fatalf("ListPRs: %v", err)
+	}
+	if len(prs) != 3 {
+		t.Fatalf("ListPRs returned %d MRs, want 3", len(prs))
+	}
+	want := map[int]bool{1: true, 2: false, 3: false}
+	for _, pr := range prs {
+		if pr.Mergeable != want[pr.Number] {
+			t.Errorf("MR %d (%s) Mergeable = %t, want %t", pr.Number, pr.Title, pr.Mergeable, want[pr.Number])
+		}
+	}
+}
+
+// glab targets a host with --hostname, so the host a provider was built with
+// has to reach the argv. An explicit host silently replaced by gitlab.com sends
+// a self-hosted user's request to the public site.
+func TestNewGitLab_TargetsTheHostItWasGiven(t *testing.T) {
+	cases := []struct {
+		name     string
+		host     string
+		wantHost string
+	}{
+		{name: "empty means the public host", host: "", wantHost: "gitlab.com"},
+		{name: "a self hosted host is kept", host: "git.example.com", wantHost: "git.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := stubPath(t)
+			recPath := dir + "/rec"
+			stubCLI(t, dir, "glab", recordingScript(recPath)+"\nprintf '%s' '[]'")
+			p := newGitLab(tc.host)
+
+			if _, err := p.ListPRs(t.Context(), "grp/proj", StateOpen); err != nil {
+				t.Fatalf("ListPRs: %v", err)
+			}
+
+			argv := recordLines(readRecord(t, recPath), "argv:")
+			want := flagHostname + " " + tc.wantHost
+			if len(argv) != 1 || !strings.Contains(argv[0], want) {
+				t.Errorf("glab argv = %v, want it to carry %q", argv, want)
+			}
+		})
+	}
+}

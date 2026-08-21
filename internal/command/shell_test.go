@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/testsupport"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -220,5 +221,77 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 	// whole 1100 KiB the child produced.
 	if len(body) > ShellOutputCap+1024 {
 		t.Errorf("assistant body is %d bytes, want at most the cap plus the trailer", len(body))
+	}
+}
+
+// A `!cmd` on a fresh chat names the chat after the command, on the same rule
+// the prompt path uses: only the first message, only while the chat still
+// carries the default name. The ellipsis is appended exactly when the command
+// text was cut, so a name is never marked as truncated when it is complete.
+func TestAppendShellUserMessage_DerivesTheChatNameFromTheCommand(t *testing.T) {
+	const eighty = "12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+	cases := []struct {
+		name     string
+		seed     bool
+		text     string
+		wantName string
+	}{
+		{name: "the command becomes the name", text: "!go test ./...", wantName: "!go test ./..."},
+		{name: "eighty runes is the last length kept whole", text: eighty, wantName: eighty},
+		{name: "longer text is cut and marked", text: eighty + " and then some more", wantName: eighty + "..."},
+		{name: "a chat that already has a name keeps it", seed: true, text: "!go test ./...", wantName: "a chat"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testsupport.NewInMemoryChatStore()
+			if tc.seed {
+				seedEmptyChat(t, store, "c1")
+			}
+			deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
+			msg := &vibekit.Message{ID: "m-1", Role: vibekit.RoleUser, Content: tc.text}
+
+			persisted, err := appendShellUserMessage(t.Context(), deps, deps, "c1", msg, tc.text)
+			if err != nil {
+				t.Fatalf("appendShellUserMessage: %v", err)
+			}
+			if !persisted {
+				t.Fatal("persisted = false, want the message stored")
+			}
+
+			c, ok := store.Get(t.Context(), "c1")
+			if !ok {
+				t.Fatal("chat vanished")
+			}
+			if c.Name != tc.wantName {
+				t.Errorf("name after a %d-byte command = %q, want %q", len(tc.text), c.Name, tc.wantName)
+			}
+		})
+	}
+}
+
+// The interception's summary line is what an operator reads after the fact, so
+// the two facts it carries about a command that SUCCEEDED have to be true: the
+// command did not exit with an error, and persisting its output did not fail.
+// A summary that reports a failure the run did not have sends the next reader
+// looking at the wrong thing.
+func TestHandleShellInterception_SuccessLogsTheOutcomeHonestly(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("sh not available: %v", err)
+	}
+	logs := captureLogs(t)
+	deps := &shellStoreDeps{benchDeps: newBenchDeps()}
+	cmd := &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}
+	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
+
+	if _, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p); err != nil {
+		t.Fatalf("HandleShellInterception = %v, want it to succeed", err)
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, "exit_error=false") {
+		t.Errorf("summary does not report exit_error=false: %s", out)
+	}
+	if strings.Contains(out, "level=ERROR") {
+		t.Errorf("a successful interception logged an error: %s", out)
 	}
 }

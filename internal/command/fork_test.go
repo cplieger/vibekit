@@ -428,3 +428,35 @@ func testWorkspace(t *testing.T) Workspace {
 	t.Helper()
 	return Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}
 }
+
+// A title of exactly MaxChatNameBytes is legal: the oversized-title row in
+// TestCmdForkChat_Rejects pins the refusal one byte above it, and this pins
+// that the last accepted length really is accepted and reaches KAS verbatim.
+func TestCmdForkChat_AcceptsATitleAtTheCap(t *testing.T) {
+	atCap := strings.Repeat("t", vibekit.MaxChatNameBytes)
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
+	host := newForkHost(store, br)
+
+	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", atCap))
+	if err != nil {
+		t.Fatalf("CmdForkChat with a %d-byte title = %v, want it accepted", len(atCap), err)
+	}
+	if _, ok := store.Get(t.Context(), "c-tangent"); !ok {
+		t.Fatal("no tangent was created for an accepted title")
+	}
+	meta, ok := br.gotParams["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("_meta = %T, want a map", br.gotParams["_meta"])
+	}
+	kiro, ok := meta["kiro"].(map[string]any)
+	if !ok {
+		t.Fatalf("_meta.kiro = %T, want a map", meta["kiro"])
+	}
+	title, _ := kiro["title"].(string)
+	if title != atCap {
+		t.Errorf("title reached KAS as %d bytes, want the %d-byte title as given",
+			len(title), len(atCap))
+	}
+}

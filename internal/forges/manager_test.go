@@ -190,3 +190,32 @@ func TestManagerRefresh_NoConfigsNoRows(t *testing.T) {
 		t.Errorf("want empty list, got %+v", list)
 	}
 }
+
+// The forge list is cached for a TTL, so a client that asks twice in quick
+// succession does not shell out to three CLIs twice. Without a TTL every List
+// re-runs the whole discovery, which is the cost the cache exists to avoid.
+func TestManagerList_ServesTheSecondCallFromCache(t *testing.T) {
+	tmp := setConfigHomeTemp(t)
+	dir := stubPath(t)
+	rec := filepath.Join(t.TempDir(), "rec")
+	stubCLI(t, dir, "gh", recordingScript(rec)+`
+echo '{"hosts":{"github.com":[{"state":"success","active":true,"login":"alice"}]}}'`)
+	stubCLI(t, dir, "tea", "echo '[]'")
+	stubCLI(t, dir, "glab", "exit 0")
+	seedGLabConfig(t, tmp, "hosts:\n    gitlab.com:\n        token: glpat-tok\n        user: bob\n")
+
+	m := NewManager()
+	first := m.List(t.Context())
+	second := m.List(t.Context())
+
+	if len(first) == 0 {
+		t.Fatal("List returned nothing on the first call")
+	}
+	if len(first) != len(second) {
+		t.Errorf("List returned %d then %d forges, want the same set", len(first), len(second))
+	}
+	if got := recordLines(readRecord(t, rec), "argv:"); len(got) != 1 {
+		t.Errorf("gh was invoked %d times across two List calls, want 1: the second is inside the cache TTL: %v",
+			len(got), got)
+	}
+}

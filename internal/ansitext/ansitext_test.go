@@ -53,6 +53,20 @@ func TestParse_StripsSequencesFromTheText(t *testing.T) {
 		{name: "dcs", in: "a\x1bPq~~\x1b\\b", want: "ab"},
 		{name: "two byte escape", in: "a\x1bcb", want: "ab"},
 		{name: "lone escape at end becomes U+FFFD", in: "ab\x1b", want: "ab\ufffd"},
+		// A sequence whose LAST byte is also the stream's last byte is
+		// complete and must be dropped, not held and then released as text.
+		// One byte short of complete is the case above; exactly complete is
+		// this one, and the two are one comparison apart.
+		{name: "two byte escape ends the stream", in: "a\x1bc", want: "a"},
+		{name: "charset designation ends the stream", in: "a\x1b(B", want: "a"},
+		{name: "utf8 charset selection ends the stream", in: "a\x1b%G", want: "a"},
+		// The CSI byte ranges ECMA-48 defines, at their edges. A byte the
+		// parser fails to recognise as part of the sequence ends it early and
+		// leaks the remainder into the text as letters and digits.
+		{name: "csi intermediate byte space", in: "a\x1b[2 pb", want: "ab"},
+		{name: "csi intermediate byte solidus", in: "a\x1b[1/pb", want: "ab"},
+		{name: "csi final byte at 0x40", in: "a\x1b[1@b", want: "ab"},
+		{name: "csi final byte at 0x7e", in: "a\x1b[3~b", want: "ab"},
 		// The three-byte forms whose FINAL byte leaks into the text when only
 		// two bytes are consumed. `ESC % G` (select UTF-8) is the plausible
 		// one from a pipe; each of these left a stray capital letter behind.
@@ -208,8 +222,16 @@ func TestApplySGR_Colours(t *testing.T) {
 		{name: "bright bg maps above 8", seq: "101", wantFG: ColorDefault, wantBG: 9},
 		{name: "256 palette fg", seq: "38;5;208", wantFG: 208, wantBG: ColorDefault},
 		{name: "256 palette bg", seq: "48;5;17", wantFG: ColorDefault, wantBG: 17},
+		// The palette's own ends. Index 0 is black, which is a colour and not
+		// "unset", and 255 is the last entry; a range check that excludes
+		// either drops the colour and paints the run with the default instead.
+		{name: "256 palette first index", seq: "38;5;0", wantFG: 0, wantBG: ColorDefault},
+		{name: "256 palette last index", seq: "38;5;255", wantFG: 255, wantBG: ColorDefault},
 		{name: "truecolour fg", seq: "38;2;10;20;30", wantFG: RGB(10, 20, 30), wantBG: ColorDefault},
 		{name: "truecolour bg", seq: "48;2;1;2;3", wantFG: ColorDefault, wantBG: RGB(1, 2, 3)},
+		// Every component at an end of its range, in one colour.
+		{name: "truecolour component extremes", seq: "38;2;0;255;0", wantFG: RGB(0, 255, 0), wantBG: ColorDefault},
+		{name: "truecolour white", seq: "48;2;255;255;255", wantFG: ColorDefault, wantBG: RGB(255, 255, 255)},
 		{name: "39 resets fg only", seq: "31;41;39", wantFG: ColorDefault, wantBG: 1},
 		{name: "49 resets bg only", seq: "31;41;49", wantFG: 1, wantBG: ColorDefault},
 		{name: "fg and bg together", seq: "32;44", wantFG: 2, wantBG: 4},
@@ -266,6 +288,19 @@ func TestApplySGR_UnhonourableParametersDoNotReset(t *testing.T) {
 		wantAttrs: 0, wantFG: 1,
 		reason: "xterm's modifyOtherKeys has an SGR final byte but is not SGR;" +
 			" terminals ignore it, and reading `>4` as 0 wiped the red",
+	}, {
+		name: "sgr mouse report is ignored whole", seq: "\x1b[31m\x1b[<0;1;1mx",
+		wantAttrs: 0, wantFG: 1,
+		reason: "an SGR mouse release report ends in `m` and is not SGR;" +
+			" honouring its coordinates would bold the run on a click",
+	}, {
+		name: "dec private marker is ignored whole", seq: "\x1b[31m\x1b[?1;1mx",
+		wantAttrs: 0, wantFG: 1,
+		reason: "`?` opens a DEC private sequence, the last of the four markers",
+	}, {
+		name: "equals private marker is ignored whole", seq: "\x1b[31m\x1b[=1;1mx",
+		wantAttrs: 0, wantFG: 1,
+		reason: "`=` is a private marker too, so the parameters after it are not SGR",
 	}, {
 		name: "intermediate byte is skipped not zeroed", seq: "\x1b[1m\x1b[2 mx",
 		wantAttrs: AttrBold, wantFG: ColorDefault,
@@ -427,6 +462,119 @@ func TestParser_FlushReleasesHeldBytes(t *testing.T) {
 	}
 }
 
+// A rune split across a chunk boundary must reassemble, not degrade into one
+// replacement character per fragment. The assertion is an oracle over the
+// production path itself — the same input at every possible split has to
+// produce the text one-shot parsing produces — which is what makes it survive
+// later changes to what the path does to its input. Scoped to valid UTF-8 well
+// inside maxPendingBytes, the class where streaming and one-shot must agree.
+func TestParser_MultiByteRuneSplitAcrossWrites(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "two byte rune leads", in: "\u00e9ok", want: "\u00e9ok"},
+		{name: "two byte rune trails", in: "caf\u00e9", want: "caf\u00e9"},
+		{name: "three byte rune leads", in: "\u2502ok", want: "\u2502ok"},
+		{name: "four byte rune leads", in: "\U0001F600!", want: "\U0001F600!"},
+		{name: "mixed widths", in: "a\u00e9\u2502\U0001F600z", want: "a\u00e9\u2502\U0001F600z"},
+		{name: "escape between text and a wide rune", in: "x\x1b[1m\U0001F600", want: "x\U0001F600"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for cut := 0; cut <= len(tc.in); cut++ {
+				t.Run("cut_"+strconv.Itoa(cut), func(t *testing.T) {
+					p := NewParser()
+					head, _ := p.Write(tc.in[:cut])
+					rest, _ := p.Write(tc.in[cut:])
+					tail, _ := p.Flush()
+					if got := head + rest + tail; got != tc.want {
+						t.Errorf("Write(%q)+Write(%q)+Flush() = %q, want %q",
+							tc.in[:cut], tc.in[cut:], got, tc.want)
+					}
+					if got, want := p.Offset(), utf16Len(tc.want); got != want {
+						t.Errorf("Offset() = %d, want %d units for %q", got, want, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+// A style that opens and never covers a character must produce no span. A
+// zero-length span paints nothing, and the client indexes the text by these
+// offsets, so an empty range is a range it has to special-case.
+func TestParse_StyleWithNoTextProducesNoSpan(t *testing.T) {
+	cases := []struct {
+		name      string
+		in        string
+		wantSpans int
+	}{
+		{name: "colour opened and nothing printed", in: "\x1b[31m", wantSpans: 0},
+		{name: "colour opened and immediately reset", in: "\x1b[31m\x1b[0m", wantSpans: 0},
+		{name: "colour opened after the text", in: "ok\x1b[31m", wantSpans: 0},
+		{name: "text only after the second colour", in: "\x1b[31m\x1b[32mx", wantSpans: 1},
+		{name: "colour changed twice mid text", in: "\x1b[31ma\x1b[32m\x1b[33mb", wantSpans: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, spans := Parse(tc.in)
+			if len(spans) != tc.wantSpans {
+				t.Errorf("Parse(%q) returned %d spans, want %d: %+v",
+					tc.in, len(spans), tc.wantSpans, spans)
+			}
+			for i, s := range spans {
+				if s.Start >= s.End {
+					t.Errorf("Parse(%q) span %d = [%d,%d), want a non-empty range",
+						tc.in, i, s.Start, s.End)
+				}
+			}
+		})
+	}
+}
+
+// The held-bytes bound decides whether an unterminated run is still a
+// candidate sequence. At the bound it is held for the next chunk; one byte
+// past it, it is not a sequence any more and is released as text so a command
+// emitting `ESC [` and then gigabytes cannot grow the buffer without limit.
+func TestParser_UnterminatedSequenceIsHeldUpToTheBound(t *testing.T) {
+	atBound := "\x1b[" + strings.Repeat("1", maxPendingBytes-2)
+	overBound := atBound + "1"
+
+	t.Run("at the bound the run is held", func(t *testing.T) {
+		p := NewParser()
+		text, _ := p.Write(atBound)
+		if text != "" {
+			t.Errorf("Write of a %d-byte unterminated sequence emitted %d bytes of text, want it held",
+				len(atBound), len(text))
+		}
+		tail, _ := p.Flush()
+		if tail == "" {
+			t.Error("Flush returned no text, want the held bytes back")
+		}
+		if strings.ContainsRune(tail, 0x1b) {
+			t.Errorf("Flush text carries a raw ESC: %q", tail[:min(len(tail), 32)])
+		}
+	})
+
+	t.Run("past the bound the run is released", func(t *testing.T) {
+		p := NewParser()
+		text, _ := p.Write(overBound)
+		if text == "" {
+			t.Errorf("Write of a %d-byte unterminated sequence held every byte, want it released as text",
+				len(overBound))
+		}
+		if strings.ContainsRune(text, 0x1b) {
+			t.Errorf("released text carries a raw ESC: %q", text[:min(len(text), 32)])
+		}
+		tail, _ := p.Flush()
+		if tail != "" {
+			t.Errorf("Flush = %q, want nothing left held", tail)
+		}
+	})
+}
+
 func TestRGB_RoundTripsAndIsDistinctFromPaletteIndices(t *testing.T) {
 	c := RGB(10, 20, 30)
 	if c < rgbFlag {
@@ -582,6 +730,10 @@ func TestParse_OffsetsAreUTF16CodeUnits(t *testing.T) {
 		{name: "latin1 supplement", lead: "caf\u00e9", want: 4},
 		// U+2502 (box drawing) is 3 bytes, 1 UTF-16 unit.
 		{name: "box drawing", lead: "\u2502\u2502", want: 2},
+		// U+FFFF is the last rune below the surrogate range: 3 bytes, still 1
+		// UTF-16 unit. A parser that counted a pair here would shift every
+		// span after it by one character.
+		{name: "last single unit rune", lead: "\uffff\uffff", want: 2},
 		// U+1F600 is 4 bytes and a SURROGATE PAIR: 2 UTF-16 units.
 		{name: "emoji is a surrogate pair", lead: "\U0001F600", want: 2},
 		{name: "mixed", lead: "a\u00e9\u2502\U0001F600", want: 5},
@@ -634,6 +786,10 @@ func TestUTF16Len(t *testing.T) {
 		{in: "abc", want: 3},
 		{in: "caf\u00e9", want: 4},
 		{in: "\u2502", want: 1},
+		// U+FFFF is the last rune that still costs one code unit; U+10000 is
+		// the first that costs a surrogate pair.
+		{in: "\uffff", want: 1},
+		{in: "\U00010000", want: 2},
 		{in: "\U0001F600", want: 2},
 		{in: "a\U0001F600b", want: 4},
 	}

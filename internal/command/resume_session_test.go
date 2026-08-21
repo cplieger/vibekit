@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/testsupport"
@@ -164,4 +165,43 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A name of exactly MaxChatNameBytes is a legal name and must be stored as
+// given; one byte more is refused. The cap is on the RECORD's name field, so
+// the boundary decides whether a chat is created at all.
+func TestCmdResumeSession_NameLengthCap(t *testing.T) {
+	atCap := strings.Repeat("n", vibekit.MaxChatNameBytes)
+	overCap := strings.Repeat("n", vibekit.MaxChatNameBytes+1)
+
+	t.Run("a name at the cap is accepted", func(t *testing.T) {
+		store := testsupport.NewInMemoryChatStore()
+		host := newTestHost(t, store)
+
+		_, err := CmdResumeSession(t.Context(), host, resumeReq(t, "c1", "sess_abc", atCap))
+		if err != nil {
+			t.Fatalf("CmdResumeSession with a %d-byte name = %v, want it accepted", len(atCap), err)
+		}
+		c, ok := store.Get(t.Context(), "c1")
+		if !ok {
+			t.Fatal("no chat was created for an accepted name")
+		}
+		if c.Name != atCap {
+			t.Errorf("stored name is %d bytes, want the %d-byte name as given", len(c.Name), len(atCap))
+		}
+	})
+
+	t.Run("a name past the cap is refused", func(t *testing.T) {
+		store := testsupport.NewInMemoryChatStore()
+		host := newTestHost(t, store)
+
+		_, err := CmdResumeSession(t.Context(), host, resumeReq(t, "c1", "sess_abc", overCap))
+
+		if statusOf(err) != http.StatusBadRequest {
+			t.Errorf("status = %d for a %d-byte name, want 400", statusOf(err), len(overCap))
+		}
+		if _, ok := store.Get(t.Context(), "c1"); ok {
+			t.Error("a chat was created for an over-long name")
+		}
+	})
 }

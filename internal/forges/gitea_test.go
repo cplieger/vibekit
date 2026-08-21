@@ -324,3 +324,92 @@ func TestGiteaMergeBlock(t *testing.T) {
 		})
 	}
 }
+
+// The Content-Type header travels with a BODY, not with a request. Setting it
+// on a bodyless GET announces a payload that is not there, and omitting it on a
+// POST leaves Gitea to guess at JSON it was told nothing about.
+func TestGiteaAPI_ContentTypeTravelsWithTheBody(t *testing.T) {
+	var gotType, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotType, gotMethod = r.Header.Get("Content-Type"), r.Method
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	p := newGiteaWithToken(t, "leak.example")
+
+	if _, err := p.apiGet(t.Context(), srv.URL+"/api/v1/users/alice"); err != nil {
+		t.Fatalf("apiGet: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Fatalf("server saw %s, want GET", gotMethod)
+	}
+	if gotType != "" {
+		t.Errorf("a bodyless GET carried Content-Type %q, want none", gotType)
+	}
+
+	if err := p.apiPostJSON(t.Context(), srv.URL+"/api/v1/repos/o/r/pulls/1/merge", []byte(`{"Do":"merge"}`)); err != nil {
+		t.Fatalf("apiPostJSON: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("server saw %s, want POST", gotMethod)
+	}
+	if gotType != mimeTypeJSON {
+		t.Errorf("a POST with a body carried Content-Type %q, want %q", gotType, mimeTypeJSON)
+	}
+}
+
+// 2xx is the success range, and 300 is the first status outside it. A
+// redirection reaching this code means the client did not follow it, so the
+// response body is not the resource the caller asked for and treating it as one
+// would parse a redirect page as JSON.
+func TestGiteaAPI_StatusOutsideTwoHundredsIsAnError(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{name: "200 is success", status: http.StatusOK, wantErr: false},
+		{name: "299 is success", status: 299, wantErr: false},
+		{name: "300 is an error", status: http.StatusMultipleChoices, wantErr: true},
+		{name: "404 is an error", status: http.StatusNotFound, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+			p := newGiteaWithToken(t, "leak.example")
+
+			_, err := p.apiGet(t.Context(), srv.URL+"/api/v1/users/alice")
+
+			if (err != nil) != tc.wantErr {
+				t.Errorf("apiGet against status %d = %v, wantErr %t", tc.status, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// The snippet prefers the server's own `message` field and falls back to the
+// raw body only when there is no message to read. Reversing that either buries
+// a readable reason under a JSON dump or reports an empty reason as the reason.
+func TestGiteaAPIErrorSnippet_PrefersTheServersMessage(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "a json message is used", body: `{"message":"pull request not found"}`, want: "pull request not found"},
+		{name: "an empty message falls back to the body", body: `{"message":""}`, want: `{"message":""}`},
+		{name: "a non json body is used verbatim", body: "502 Bad Gateway", want: "502 Bad Gateway"},
+		{name: "json without a message field falls back", body: `{"errors":["nope"]}`, want: `{"errors":["nope"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := apiErrorSnippet([]byte(tc.body)); got != tc.want {
+				t.Errorf("apiErrorSnippet(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
