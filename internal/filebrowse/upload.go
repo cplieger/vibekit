@@ -154,7 +154,7 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 		name := filepath.Base(fh.Filename)
 		if name == "" || name == "." || name == ".." {
 			slog.Warn("filebrowse: upload rejected: invalid filename",
-				"raw_name", logsafe.Field(fh.Filename), "base", logsafe.Field(name), "target_dir", dirLoc.abs)
+				"raw_name", logsafe.Field(fh.Filename), "base", logsafe.Field(name), "target_dir", logsafe.Field(dirLoc.abs))
 			return uploaded, total, fmt.Errorf("%w: %q", errInvalidFilename, fh.Filename)
 		}
 		dest := filepath.Join(dirLoc.abs, name)
