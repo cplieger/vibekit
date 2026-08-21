@@ -73,9 +73,21 @@ type steerAck struct {
 // nothing is lost: every byte is either emitted, withheld for the next call, or
 // part of a marker that was matched in full — and a matched marker's content now
 // leaves through acks rather than being dropped.
+//
+// That suffix property is what the settled boundary below buys, and it is a
+// correctness rule rather than bookkeeping. A `[` sitting BEFORE a complete
+// marker has a complete marker between it and every byte that arrives later, so
+// it can never grow into one: withholding it would splice it onto the next chunk
+// across text that is already gone, and `[STEERING stee` + a removed marker +
+// `r-9: x]` would then be stripped as an acknowledgement of steer-9 that the
+// agent never wrote. KAS's own recordSteeringAcks reads the RAW text and would
+// see no such marker, so neither may this.
 func stripSteerAcks(carry, incoming string) (emit, newCarry string, acks []steerAck) {
 	joined := carry + incoming
 	buf := joined
+	// settled is where the scan for a still-open candidate may begin. Everything
+	// before it is followed by a complete marker, so it is finished text.
+	settled := 0
 	if matches := steerAckRe.FindAllStringSubmatchIndex(joined, -1); matches != nil {
 		var b strings.Builder
 		last := 0
@@ -90,13 +102,15 @@ func stripSteerAcks(carry, incoming string) (emit, newCarry string, acks []steer
 			})
 			last = m[1]
 		}
+		settled = b.Len()
 		b.WriteString(joined[last:])
 		buf = b.String()
 	}
-	// Every complete marker is gone, so any candidate left is still open. Hold
-	// from the first one that could still become a marker; a `[` that cannot is
-	// ordinary text and must not delay the rest of the sentence behind it.
-	for i := 0; i < len(buf); {
+	// Every complete marker is gone, so any candidate left in the tail is still
+	// open. Hold from the first one that could still become a marker; a `[` that
+	// cannot is ordinary text and must not delay the rest of the sentence behind
+	// it.
+	for i := settled; i < len(buf); {
 		j := strings.IndexByte(buf[i:], '[')
 		if j < 0 {
 			break
