@@ -120,11 +120,59 @@ func TestClassifyPromptFailure(t *testing.T) {
 		},
 		"nil is fatal":         {err: nil, want: classFatal},
 		"plain error is fatal": {err: errors.New("something else"), want: classFatal},
+		// A validation refusal is the one -32603 that must not be retried: the
+		// request IS what was refused, so the two extra attempts upload the same
+		// rejected bytes again. One case per shape the backend can refuse on.
+		"oversized image is rejected": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "ImageSizeExceeded: image exceeds 5 MB maximum: 6714372 bytes > 5242880",
+			}),
+			want: classRejected,
+		},
+		"oversized prompt is rejected": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "PromptTooLong",
+			}),
+			want: classRejected,
+		},
+		"unsupported document type is rejected": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "DisallowedFileType",
+			}),
+			want: classRejected,
+		},
+		// The name can also arrive in the MESSAGE rather than in data, so the
+		// predicate must search both halves the way isAuthShaped does.
+		"validation name in the message is rejected": {
+			err:  rpcErr(t, vibekit.RPCCodeInternal, "ImageDimensionExceeded", nil),
+			want: classRejected,
+		},
+		// The other side of the same coin: adding the table must not swallow the
+		// transient arm, which is still the right answer for a -32603 nobody has
+		// classified.
+		"unclassified internal error is still transient": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "upstream connection reset",
+			}),
+			want: classTransient,
+		},
+		// Quota is deliberately NOT in the table: it is not a statement about the
+		// payload, so it must not inherit the shrink-your-prompt remedy. It keeps
+		// whatever the unclassified arm gives it.
+		"a spent monthly allowance is not a validation refusal": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "MonthlyRequestCount limit reached",
+			}),
+			want: classTransient,
+		},
 		// Untyped errors fail CLOSED even when their text looks retryable. The
 		// bridge layer is what types a retryable condition; matching on
 		// substrings here would make the classifier guess from prose.
 		"untyped not-idle text is fatal": {err: errors.New("agent is not idle right now"), want: classFatal},
 		"untyped internal text is fatal": {err: errors.New("Internal error"), want: classFatal},
+		// Even the validation vocabulary must not classify an UNTYPED error: the
+		// name carries no authority outside an RPC error's own payload.
+		"untyped validation text is fatal": {err: errors.New("ImageSizeExceeded"), want: classFatal},
 	}
 
 	for name, tc := range cases {
@@ -237,5 +285,40 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	plain := errors.New("some other failure")
 	if got := promptFailureReason(plain); got != plain.Error() {
 		t.Errorf("promptFailureReason(%v) = %q, want it passed through unchanged", plain, got)
+	}
+}
+
+// TestPromptFailureReason_NamesTheRefusalAsTerminal guards the other half of the
+// validation class: what the user is told.
+//
+// The backend's own account of WHAT was wrong already reaches them through
+// rpcerr.Text. The thing it cannot know, and the thing a user cannot infer, is
+// that this failure is terminal for these bytes — every other prompt failure they
+// have met clears on a second Send, so without a sentence saying otherwise the
+// rational next move is to press Send again and watch it fail identically.
+func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
+	const cause = "ImageSizeExceeded: image exceeds 5 MB maximum: 6714372 bytes > 5242880"
+	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
+	got := promptFailureReason(err)
+
+	// The backend's account survives: it carries the numbers, which is the only
+	// place a user learns how much smaller the attachment has to get.
+	if !strings.Contains(got, cause) {
+		t.Errorf("reason %q dropped the backend's own account of the refusal", got)
+	}
+	for _, want := range []string{"refused as sent", "smaller"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reason %q does not tell the user the refusal is terminal (missing %q)", got, want)
+		}
+	}
+
+	// An unclassified -32603 must NOT gain the advice. It is the retryable class,
+	// so telling that user to shrink their prompt would send them after the wrong
+	// bug — the same defect shape as the throttle regression above, one class over.
+	other := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+		"details": "upstream connection reset",
+	})
+	if reason := promptFailureReason(other); strings.Contains(reason, "refused as sent") {
+		t.Errorf("a transient internal error was told its request was refused: %q", reason)
 	}
 }

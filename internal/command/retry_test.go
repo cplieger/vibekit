@@ -153,3 +153,79 @@ func TestRetry_CancellationAbandonsTheWaitAndKeepsTheUpstreamError(t *testing.T)
 		}
 	})
 }
+
+// countingCaller is a bridgeCaller that answers every Call with one fixed error
+// and records how many times it was asked. The narrowest fake that reaches
+// callPromptWithRetry: that function's whole contract is how many times it
+// invokes this method.
+type countingCaller struct {
+	err   error
+	calls int
+}
+
+func (c *countingCaller) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
+	c.calls++
+	return nil, c.err
+}
+
+// TestCallPromptWithRetry_LadderPerClass asserts the ladder through the REAL
+// function rather than through a mirror of its predicate.
+//
+// prompt_failure_test.go's retriesFor helper restates callPromptWithRetry's
+// expression, which is enough to pin the policy and not enough to pin the wiring:
+// a class constant that is never added to the predicate classifies correctly and
+// still gets retried, and the mirror would agree with it. So each row here sends
+// a real error through the real loop and counts the uploads it costs.
+//
+// The rejected row is the one this test was added for. A validation refusal is a
+// statement about the bytes that were sent, so the two extra attempts re-upload
+// the same rejected payload — on an oversized image, three uploads before the
+// user is told anything.
+func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
+	cases := map[string]struct {
+		err       error
+		wantCalls int
+		wantWait  time.Duration
+	}{
+		"a validation refusal is sent once": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "ImageSizeExceeded: image exceeds 5 MB maximum",
+			}),
+			wantCalls: 1,
+			wantWait:  0,
+		},
+		"an unclassified internal error still spends the ladder": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "upstream connection reset",
+			}),
+			wantCalls: 3,
+			wantWait:  2 * promptRetryDelay,
+		},
+		"a dead bridge is sent once": {
+			err:       &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true},
+			wantCalls: 1,
+			wantWait:  0,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				caller := &countingCaller{err: tc.err}
+				start := time.Now()
+				_, err := callPromptWithRetry(t.Context(), caller, map[string]any{}, "chat-1")
+
+				if err == nil {
+					t.Fatal("callPromptWithRetry() returned no error, want the caller's")
+				}
+				if caller.calls != tc.wantCalls {
+					t.Errorf("callPromptWithRetry() sent the prompt %d times, want %d",
+						caller.calls, tc.wantCalls)
+				}
+				if got := time.Since(start); got != tc.wantWait {
+					t.Errorf("callPromptWithRetry() waited %v, want exactly %v", got, tc.wantWait)
+				}
+			})
+		})
+	}
+}
