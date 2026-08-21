@@ -328,6 +328,61 @@ run, and A4.2's tool-output cap is what bounds the damage when the
 agent chooses otherwise.`,
 	},
 	{
+		key:      "session_title_llm",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		value:    enabled(),
+		send:     true,
+		because: `session_title_llm turns on KAS's LLM session title: one
+fire-and-forget call to its fast model (qdev::simple-task) on a session's
+FIRST prompt, asking for a 3-to-6-word Title Case name for the
+conversation, with a 15s abort budget. It ships dark upstream
+(FEATURES.session_title_llm default false, in-source comment "Ships dark
+… until the experiment ramps"), so without this row nothing generates one.
+
+What it buys is the History page. GET /api/sessions reads each row's title
+straight off _kiro/session/list, which is KAS's OWN stored title and never
+vibekit's chat name, so a closed chat whose agent never called
+update_session_information shows deriveSessionTitle's 80-char truncation of
+the first prompt. This replaces that with a real name.
+
+It also renames the TAB, and that is not separable. The title arrives on the
+shared focus_update channel, and translate/focus.go's applyFocusTitle adopts
+any title titleIsPromptDerived does not recognise — an LLM title is not
+prompt-shaped, so it lands on Chat.Name about a second after the first
+prompt. That is a rung-2 upgrade rather than a precedence change: it
+replaces the local 80-char label and an agent focus title arriving later
+still wins. There is no discriminator that would let History have it alone;
+KAS emits a title-only focus_update here while the
+update_session_information tool usually carries a description or status
+too, but the tool's fields are all optional, so filtering on title-only
+would drop a genuine agent rename to protect a truncation.
+
+MUST be the connection door, and MUST NOT carry the schema's leading
+underscore. KAS installs the bridge that makes this key readable inside
+initialize, from clientCapabilities._meta.kiro.settings, so a session-door
+row would never be consulted. And the authoritative schema
+(@kiro/acp-type-covenant BaseAgentSettingsSchema) declares _sessionRecap
+and friends with an underscore while the agent reads
+isFeatureEnabled("session_title_llm") without one: rawKeys is the client's
+object keys verbatim, so only the string in the call is read. The
+underscore spelling validates and is silently ignored.
+
+Residual cost, accepted rather than gated: the utility bridge shares this
+handshake, so its own first prompt (a commit message, a PR description, an
+error explanation) also generates one title per utility-session lifetime —
+about one extra cheap call per 20 utility operations, since the session
+recycles at maxUtilityPrompts. Suppressing it would need a third Spawn
+boolean, which doubles the exhaustive golden matrix from four rows to
+eight, and the title it produces reaches nothing: the utility session is
+filtered out of History by toResumable, and a focus_update for a chat
+record that does not exist is a no-op inside applyFocusTitle's Mutate.
+
+Turn it off by withholding the row, not by sending false — absent reads as
+false at the isFeatureEnabled site. KIRO_DISABLE_SESSION_TITLE_LLM=true in
+the bridge environment is upstream's own kill switch and overrides this.`,
+	},
+	{
 		key:      "sessionEviction",
 		door:     doorSession,
 		resolver: resolverSetting,
