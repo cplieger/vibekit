@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -122,7 +123,7 @@ func TestAttachmentBlock_ImageInlinesAsImageBlock(t *testing.T) {
 	resolve := func(string) (string, error) { return abs, nil }
 
 	block, spent := attachmentBlock(vibekit.Attachment{Path: abs, Name: "shot.png"},
-		resolve, MaxInlineTurnBytes)
+		resolve, MaxInlineTurnEncodedBytes)
 
 	if got := block[keyType]; got != "image" {
 		t.Fatalf("block type = %v, want image", got)
@@ -136,9 +137,9 @@ func TestAttachmentBlock_ImageInlinesAsImageBlock(t *testing.T) {
 	if _, ok := block["uri"]; ok {
 		t.Error("block carries a uri; KAS's toDataUrl would return it instead of the bytes")
 	}
-	if spent != len(pixels) {
-		t.Errorf("spent = %d, want %d (the image is charged against the turn budget)",
-			spent, len(pixels))
+	if want := base64.StdEncoding.EncodedLen(len(pixels)); spent != want {
+		t.Errorf("spent = %d, want %d (the turn budget is denominated in ENCODED bytes, "+
+			"because that is what the wire carries and the history replays)", spent, want)
 	}
 }
 
@@ -165,7 +166,7 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 
 	t.Run("path_escapes_workspace", func(t *testing.T) {
 		deny := func(string) (string, error) { return "", errors.New("escapes") }
-		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, deny, MaxInlineTurnBytes)
+		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, deny, MaxInlineTurnEncodedBytes)
 		if got := block[keyType]; got != vibekit.ContentTypeText {
 			t.Errorf("block type = %v, want text", got)
 		}
@@ -193,7 +194,7 @@ func TestAttachmentBlock_TextFileTakesPathReference(t *testing.T) {
 	resolve := func(string) (string, error) { return abs, nil }
 
 	block, spent := attachmentBlock(vibekit.Attachment{Path: abs, Name: filepath.Base(abs)},
-		resolve, MaxInlineTurnBytes)
+		resolve, MaxInlineTurnEncodedBytes)
 
 	if got := block[keyType]; got != vibekit.ContentTypeText {
 		t.Fatalf("block type = %v, want text (a path reference)", got)
@@ -210,5 +211,153 @@ func TestAttachmentBlock_TextFileTakesPathReference(t *testing.T) {
 	}
 	if unsupportedDocExts[".txt"] {
 		t.Error(".txt is in unsupportedDocExts; it would carry a misleading binary-format note")
+	}
+}
+
+// TestEncodedCapCannotBeSubsumedByTheFileCap is the whole finding in one
+// assertion, and it is pure arithmetic on the shipped constants.
+//
+// A file that passes MaxDocumentBytes can still exceed MaxInlineEncodedBytes,
+// because base64 inflates by 4/3 and no check measuring file bytes can see that.
+// If this ever stops holding, one of the two caps moved and the encoded gate has
+// become dead code.
+func TestEncodedCapCannotBeSubsumedByTheFileCap(t *testing.T) {
+	if got := base64.StdEncoding.EncodedLen(MaxDocumentBytes); got <= MaxInlineEncodedBytes {
+		t.Errorf("a %d-byte file encodes to %d, which is inside the %d encoded cap: "+
+			"the encoded gate is unreachable and the file cap subsumes it",
+			MaxDocumentBytes, got, MaxInlineEncodedBytes)
+	}
+}
+
+// TestReadForInline_ChargesTheBudgetInEncodedBytes pins the UNIT at the boundary,
+// which is the property a large fixture would only test expensively.
+//
+// The budget is threaded, so the assertion needs no big file: a tiny attachment
+// plus a budget set one byte under its ENCODED length must be refused, and the same
+// attachment with exactly its encoded length must pass. With the budget counted in
+// file bytes instead, the first case has room and inlines — which is the regression
+// this catches.
+func TestReadForInline_ChargesTheBudgetInEncodedBytes(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "shot.png")
+	pixels := make([]byte, 100)
+	if err := os.WriteFile(abs, pixels, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+	encoded := base64.StdEncoding.EncodedLen(len(pixels))
+
+	t.Run("one encoded byte short is refused", func(t *testing.T) {
+		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, encoded-1)
+		if got := block[keyType]; got != "text" {
+			t.Errorf("block type = %v, want a text path reference; the budget is in "+
+				"encoded bytes and %d of them do not fit in %d", got, encoded, encoded-1)
+		}
+		if spent != 0 {
+			t.Errorf("spent = %d on a refused attachment, want 0", spent)
+		}
+	})
+
+	t.Run("exactly the encoded length fits", func(t *testing.T) {
+		// Exactly-at-cap must be ACCEPTED, not refused. An off-by-one here is the
+		// classic mutant, and it is invisible in any test that stays away from the
+		// boundary.
+		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, encoded)
+		if got := block[keyType]; got != "image" {
+			t.Errorf("block type = %v, want the image inlined at exactly its encoded cost", got)
+		}
+		if spent != encoded {
+			t.Errorf("spent = %d, want %d", spent, encoded)
+		}
+	})
+}
+
+// TestReadForInline_RefusesAnOversizedEncodedPayload covers the per-attachment
+// encoded cap with a real file, which is the one case that needs one: the
+// arithmetic above proves the gate is reachable, and this proves it fires.
+//
+// ~3.93 MiB of file is the interesting size — comfortably inside the 10 MiB file
+// cap, and over 5 MiB once encoded. Generated in-test rather than committed: a
+// binary fixture of this size has no business in the repo.
+func TestReadForInline_RefusesAnOversizedEncodedPayload(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "photo.png")
+	// One byte past the largest file whose encoding fits.
+	size := MaxInlineEncodedBytes/4*3 + 1
+	if err := os.WriteFile(abs, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if size > MaxDocumentBytes {
+		t.Fatalf("fixture of %d bytes is over the file cap; it would be refused by the "+
+			"wrong gate and the test would pass for the wrong reason", size)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	block, spent := attachmentBlock(vibekit.Attachment{Path: abs},
+		resolve, MaxInlineTurnEncodedBytes)
+
+	if got := block[keyType]; got != "text" {
+		t.Fatalf("block type = %v, want a text path reference: a %d-byte file encodes to "+
+			"%d, past the %d cap", got, size, base64.StdEncoding.EncodedLen(size), MaxInlineEncodedBytes)
+	}
+	if spent != 0 {
+		t.Errorf("spent = %d on a refused attachment, want 0", spent)
+	}
+	// Fail CLOSED, and the fallback has to be OPENABLE. The agent's only route to
+	// the contents now is its file tools, so the block must carry the full path
+	// rather than a basename.
+	text, _ := block["text"].(string)
+	if !strings.Contains(text, abs) {
+		t.Errorf("fallback text %q does not carry the full path; the agent cannot open it", text)
+	}
+	if !strings.Contains(text, "file tools") {
+		t.Errorf("fallback text %q does not tell the agent what to do instead", text)
+	}
+}
+
+// TestReadForInline_OversizedFileNamesThePath is the message-quality half, and it
+// is a real defect rather than polish: the per-FILE cap's fallback handed the agent
+// `filepath.Base(path)`, so the one branch that most needs to be actionable — the
+// contents can only be reached by opening the file — was the one that did not say
+// where the file is.
+func TestReadForInline_OversizedFileNamesThePath(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "huge.pdf")
+	if err := os.WriteFile(abs, make([]byte, MaxDocumentBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	block, _ := attachmentBlock(vibekit.Attachment{Path: abs},
+		resolve, MaxInlineTurnEncodedBytes)
+
+	text, _ := block["text"].(string)
+	if !strings.Contains(text, abs) {
+		t.Errorf("fallback text %q carries only a basename; a file tool cannot open that", text)
+	}
+}
+
+// TestReadForInline_EncodedCapAppliesToDocumentsToo: the gate lives in the shared
+// gauntlet, not in the image branch, so a spreadsheet is bounded by the same rule.
+// Scoping it to images would leave the document path with the defect the whole
+// change exists to fix.
+func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "book.pdf")
+	size := MaxInlineEncodedBytes/4*3 + 1
+	if err := os.WriteFile(abs, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	block, spent := attachmentBlock(vibekit.Attachment{Path: abs},
+		resolve, MaxInlineTurnEncodedBytes)
+
+	if got := block[keyType]; got != "text" {
+		t.Errorf("block type = %v, want a text path reference; the encoded cap is not "+
+			"image-only", got)
+	}
+	if spent != 0 {
+		t.Errorf("spent = %d on a refused attachment, want 0", spent)
 	}
 }

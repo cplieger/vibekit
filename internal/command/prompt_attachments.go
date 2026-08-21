@@ -82,24 +82,59 @@ var imageExts = map[string]string{
 
 // MaxDocumentBytes caps the size of ONE document or image attachment (10 MiB),
 // which is also KAS's own MAX_IMAGE_SIZE.
+//
+// Kept in FILE bytes deliberately, unlike the two caps below. It is the number a
+// user can predict from a file listing, and it is the cheap pre-read gate that
+// stops an oversized file being allocated at all.
 const MaxDocumentBytes = 10 * 1024 * 1024
 
-// MaxInlineTurnBytes caps the total document bytes one prompt may inline.
+// MaxInlineEncodedBytes caps the BASE64 payload of one inlined attachment.
+//
+// The gate MaxDocumentBytes cannot be. Base64 inflates by 4/3, and that inflation
+// is invisible to every check that measures file bytes: a ~3.9 MiB raster passes
+// the per-file cap and is still refused on the wire, and a full-size 10 MiB image
+// ships ~13.3 MiB with nothing in the process having computed that number. So the
+// check has to run on the ENCODED payload, after the read.
+//
+// Why refusing matters more here than a wasted upload: kiro-cli replays the full
+// conversation history on every turn, so a payload the backend REFUSES sits at a
+// fixed history index and is re-sent on every later turn. The session is wedged
+// permanently, and a follow-up resize cannot evict the original — the only exits
+// are a rewind to that turn or a new chat.
+//
+// THE NUMBER IS INFERRED, not measured here, and that is worth knowing before
+// trusting it. 5 MiB (5 * 1024 * 1024 = 5242880) is the figure KiroCrew read off
+// its own backend's refusal text, `image exceeds 5 MB maximum: 6714372 bytes >
+// 5242880`. Both products front the same vendor's catalogue, which makes it the
+// best available prior, and the error direction settles the rest: erring low ships
+// a smaller image, erring high ships a payload the backend refuses and wedges the
+// session. To replace the inference with a measurement, send a deliberately
+// over-cap image and read the name the backend returns — it will be one of
+// validationErrorNames in prompt.go, most likely `ImageSizeExceeded`, and the
+// message carries the real ceiling in bytes.
+//
+// It bites only on an unresized photograph or a multi-megapixel export: a
+// 2000px-long-edge screenshot, which is what the client's own paste-time downscale
+// produces, weighs well under 1.5 MiB.
+const MaxInlineEncodedBytes = 5 * 1024 * 1024
+
+// MaxInlineTurnEncodedBytes caps the total ENCODED bytes one prompt may inline.
 //
 // A per-attachment cap is not enough, and the reason is a property of the wire
 // rather than of vibekit: kiro-cli REPLAYS the full conversation history on every
 // turn, so an inlined document does not cost its bytes once, it costs them for
-// the life of the session. Ten near-limit spreadsheets pass the per-file check
-// individually and put ~100 MiB of file (~133 MiB after base64, which inflates by
-// 4/3) at a fixed history index that every later turn carries again. That is the
-// same permanent-wedge shape upstream capped image dimensions for, reached by a
-// different door.
+// the life of the session. Several near-limit spreadsheets pass the per-file check
+// individually and put a fixed history index's worth of payload into every later
+// turn. That is the same permanent-wedge shape upstream capped image dimensions
+// for, reached by a different door.
 //
-// 20 MiB is two full-size documents, which covers the real "compare these two
-// spreadsheets" case while refusing the set that wedges a session. It bounds the
-// FILE bytes rather than the encoded bytes because that is the number a user can
-// predict from a file listing; the encoded size is 4/3 of it by construction.
-const MaxInlineTurnBytes = 20 * 1024 * 1024
+// Counted in ENCODED bytes, which is a correction rather than a preference: the
+// cap exists to bound what the history carries, and the history carries the base64
+// payload. The previous 20 MiB of FILE bytes was ~26.7 MiB on the wire, so this
+// tighter-looking number is close to the same real ceiling. The visible effect is
+// on documents: two full-size 10 MiB spreadsheets no longer both inline, and the
+// second becomes a path reference the agent opens with its file tools.
+const MaxInlineTurnEncodedBytes = 15 * 1024 * 1024
 
 // BuildPromptBlocks constructs the ACP prompt content array: a leading text
 // block followed by one block per attachment.
@@ -111,11 +146,11 @@ const MaxInlineTurnBytes = 20 * 1024 * 1024
 // its file tools.
 func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.Attachment, resolve func(string) (string, error)) []map[string]any {
 	blocks := []map[string]any{vibekit.TextBlock(text)}
-	// budget is the turn's remaining inline allowance, spent by each document
-	// actually read. It is threaded rather than global because it describes THIS
-	// prompt: the next turn gets a fresh one, and the history cost of what was
-	// already sent is not something a later prompt can refund.
-	budget := MaxInlineTurnBytes
+	// budget is the turn's remaining inline allowance in ENCODED bytes, spent by
+	// each attachment actually read. It is threaded rather than global because it
+	// describes THIS prompt: the next turn gets a fresh one, and the history cost
+	// of what was already sent is not something a later prompt can refund.
+	budget := MaxInlineTurnEncodedBytes
 	for _, att := range attachments {
 		if ctx.Err() != nil {
 			return blocks
@@ -131,9 +166,10 @@ func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.A
 // supported document type (documentExts) is inlined as an embedded `resource`
 // block; everything else becomes a text path reference the agent reads with
 // its file tools.
-// The second return value is the file bytes this block consumed from the turn's
-// inline budget: zero for every path-reference block, and the document's size for
-// one that was inlined.
+// The second return value is the ENCODED bytes this block consumed from the turn's
+// inline budget: zero for every path-reference block, and the base64 length for one
+// that was inlined. Encoded rather than file bytes because that is what the wire
+// carries and therefore what the history replays; see MaxInlineTurnEncodedBytes.
 func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
 	displayName := filepath.Base(att.Path)
 	ext := strings.ToLower(filepath.Ext(att.Path))
@@ -188,7 +224,7 @@ func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resol
 			"mimeType": mime,
 			"blob":     base64.StdEncoding.EncodeToString(data),
 		},
-	}, len(data)
+	}, base64.StdEncoding.EncodedLen(len(data))
 }
 
 // inlineImageBlock reads an image attachment from disk and returns an ACP
@@ -209,12 +245,17 @@ func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve 
 		keyType:    "image",
 		"data":     base64.StdEncoding.EncodeToString(data),
 		"mimeType": mime,
-	}, len(data)
+	}, base64.StdEncoding.EncodedLen(len(data))
 }
 
 // readForInline runs the gauntlet every inlined attachment must pass — path
-// containment, stat, the per-file cap, the turn's cumulative budget, then the
-// read — and returns either the bytes or the text block to send instead.
+// containment, stat, the per-file cap, the turn's cumulative budget, the read, and
+// finally the encoded-payload cap — and returns either the bytes or the text block
+// to send instead.
+//
+// Note where the last gate sits: three of the checks measure FILE bytes and run
+// before the read, and the encoded one has to run AFTER it, because base64's 4/3
+// inflation is invisible to all of them.
 //
 // It is shared by the document and image paths because the gauntlet is the same
 // for both, and a second copy of it is a second place for the budget accounting
@@ -241,13 +282,21 @@ func readForInline(
 	}
 	if info.Size() > MaxDocumentBytes {
 		slog.Warn("attachment: too large",
-			"path", displayName, "size", info.Size())
-		return "", nil, vibekit.TextBlock("Attached file (too large for inline): " + displayName)
+			"path", displayName, "size", info.Size(), "cap", MaxDocumentBytes)
+		// att.Path, not displayName. This is the one branch that most needs to be
+		// actionable — the agent cannot inline the file, so opening it is the only
+		// way it sees the contents — and a bare basename is not something a file
+		// tool can open. The budget branch below has always had this right.
+		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+			" (too large to inline — read it with your file tools)")
 	}
-	// Checked BEFORE the read so an over-budget set costs no allocation.
-	if int(info.Size()) > budget {
+	// An ESTIMATE against the same encoded unit the budget is denominated in, so
+	// an over-budget set still costs no allocation. The authority is the post-read
+	// check below; EncodedLen of the stat size can only differ from it if the file
+	// changed between the stat and the read.
+	if base64.StdEncoding.EncodedLen(int(info.Size())) > budget {
 		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
-			"path", displayName, "size", info.Size(), "remaining", budget)
+			"path", displayName, "size", info.Size(), "remaining_encoded", budget)
 		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
 			" (not inlined: this turn's attachment budget is spent — read it with your file tools)")
 	}
@@ -256,6 +305,20 @@ func readForInline(
 		slog.Warn("attachment: read failed",
 			"path", displayName, keyError, err)
 		return "", nil, vibekit.TextBlock("Attached file (unreadable): " + displayName)
+	}
+	// The encoded gate, and it must be HERE: after the read, on len(data), and
+	// before the caller encodes. info.Size() cannot answer it (a file can grow
+	// between the stat and the read) and no pre-read check can see base64's 4/3
+	// inflation at all.
+	//
+	// EncodedLen rather than len(EncodeToString(data)): it is exact for
+	// StdEncoding and pure integer arithmetic, so a rejection does not first
+	// allocate the megabytes it is about to throw away.
+	if encoded := base64.StdEncoding.EncodedLen(len(data)); encoded > MaxInlineEncodedBytes {
+		slog.Warn("attachment: encoded payload over cap, sending a path reference",
+			"path", displayName, "size", len(data), "encoded", encoded, "cap", MaxInlineEncodedBytes)
+		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+			" (too large to inline — read it with your file tools)")
 	}
 	return abs, data, nil
 }
