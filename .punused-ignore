@@ -138,6 +138,19 @@ method (*Buffer).Write
 # unknown transport value. Deleting it would silently accept one.
 method (*Server).UnmarshalJSON
 
+# The two wire-census unmarshalers are the same shape, reached the same way:
+# encoding/json calls them on every frame that carries a `_meta.kiro` block,
+# and their job is to run the census over that block's own bytes (see
+# wirecensus.go) before handing the decode back. Nothing calls either by name,
+# and nothing should — calling one directly would probe a block the parser
+# never consumed.
+#
+# Both are listed. A per-DIRECTORY scan of internal/translate reports neither
+# (a directory run under-reports, as the header says), and a per-FILE scan
+# reports both; this file is the union of a per-file scan, so it carries both.
+method (*ACPKiroBlock).UnmarshalJSON
+method (*sessionInfoKiroBlock).UnmarshalJSON
+
 # --- 11. internal/testsupport fakes. This package exists so sibling
 # packages' TEST binaries share one implementation, so EU1001 is its
 # design, not a defect. The EU1002 members are interface-satisfaction
