@@ -301,6 +301,41 @@ export const SUPPORTED_LANGUAGES: ReadonlyMap<string, LangDef> = new Map<string,
       aliases: ["cplusplus", "c++"],
     },
   ],
+  // Dockerfiles have no statements: the instruction set IS the vocabulary, so
+  // the instructions are the whole highlighting. Uppercase only, because the
+  // lookup in tokenize() is `kw.has(word)` — a lowercase `from` stays plain
+  // text, as it does in every other table here.
+  // No aliases: the fenced tag "dockerfile" already resolves through
+  // KNOWN_EXTENSIONS ("dockerfile" -> lang "docker"), which normalizeLang
+  // consults before FENCED_ALIASES, so an alias entry would never be read.
+  [
+    "docker",
+    {
+      keywords: new Set([
+        "FROM",
+        "AS",
+        "RUN",
+        "CMD",
+        "ENTRYPOINT",
+        "COPY",
+        "ADD",
+        "ENV",
+        "ARG",
+        "WORKDIR",
+        "EXPOSE",
+        "VOLUME",
+        "USER",
+        "LABEL",
+        "HEALTHCHECK",
+        "SHELL",
+        "STOPSIGNAL",
+        "ONBUILD",
+        // Deprecated since Docker 1.13, still common in the wild.
+        "MAINTAINER",
+      ]),
+      aliases: [],
+    },
+  ],
 ]);
 
 // Derived reverse-index: alias → internal key (built from SUPPORTED_LANGUAGES).
