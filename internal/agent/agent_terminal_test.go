@@ -487,6 +487,14 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	f.Add([]byte{0xFF, 0x80, 0xE2}, uint8(1)) // invalid + incomplete tail
 	f.Add([]byte("a\u202cb"), uint8(1))       // hidden Unicode the emitter deletes
 	f.Add([]byte("a\x1b[31mred"), uint8(1))   // an escape the parser lifts into a span
+	// A two-byte escape (ESC + a final byte, no CSI) split across the read
+	// boundary: this exercises the PARSER's cross-chunk escape state rather than
+	// the UTF-8 carry, so it is a different mechanism from the seeds above. The
+	// weekly fuzz reached this input class with a chunk size larger than the
+	// input, where chunked and whole are the same single read and the oracle is
+	// vacuous; chunkSize 1 is what makes the boundary real.
+	f.Add([]byte("\x1b0"), uint8(1))
+	f.Add([]byte("a\x1b0b"), uint8(1))
 	h := New(f.Context(), f.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
 	f.Fuzz(func(t *testing.T, data []byte, chunkRaw uint8) {
 		if len(data) > 512 {

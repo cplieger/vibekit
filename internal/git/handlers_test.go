@@ -2109,17 +2109,41 @@ func FuzzExtractCommitMessage(f *testing.F) {
 		strings.Repeat("x", 100),
 		"feat: " + strings.Repeat("word ", 40),
 		"```go\nfeat: refactor\n```",
+		// Rune-boundary seeds. The cap cuts at subjectMaxRunes-len(ellipsis) =
+		// 69, so a multi-byte rune STARTING at byte 68 straddles that index:
+		// slicing bytes there emits half a rune, slicing runes keeps it whole.
+		// No space anywhere, so the word-break arm cannot mask the cut.
+		strings.Repeat("a", 68) + "\u00e9" + strings.Repeat("a", 10),
+		// Same straddle with a 3-byte rune, and with a space early enough that
+		// the word-break arm is rejected (<= subjectWordBreakMin), so this too
+		// reaches the ellipsis arm with the cut inside the rune.
+		"a " + strings.Repeat("b", 66) + "\u0c0b" + strings.Repeat("b", 10),
+		// A 4-byte rune straddling the same index.
+		strings.Repeat("a", 68) + "\U0001f680" + strings.Repeat("a", 10),
 	}
 	for _, s := range seeds {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, data string) {
 		result := extractCommitMessage(data)
-		// Invariant 1: subject line <= 72 chars.
+		// Invariant 1: the subject is capped in RUNES — the unit capSubject
+		// documents and slices in. Counting BYTES here is what the weekly fuzz
+		// caught: a 72-rune subject carrying one 3-byte rune measures 74 bytes,
+		// so a byte count reports a correct cap as a violation. Read the bound
+		// off the production constant so the two cannot desync.
 		firstLine, _, _ := strings.Cut(result, "\n")
-		if len(firstLine) > 72 {
-			t.Errorf("extractCommitMessage(%q): subject %q is %d chars, want <=72",
-				data, firstLine, len(firstLine))
+		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
+			t.Errorf("extractCommitMessage(%q): subject %q is %d runes, want <=%d",
+				data, firstLine, n, subjectMaxRunes)
+		}
+		// Invariant 1b: capping never splits a rune. capSubject used to slice
+		// bytes while its doc said "chars", which cut a multi-byte rune in half;
+		// the JSON encoder then replaced the fragment with U+FFFD and the user
+		// saw a replacement character in a suggested commit message. Moving the
+		// cap to runes closed that, and this is what holds it closed.
+		if utf8.ValidString(data) && !utf8.ValidString(result) {
+			t.Errorf("extractCommitMessage(%q) = %q: valid UTF-8 in, invalid UTF-8 out",
+				data, result)
 		}
 		// Invariant 2: no surrounding quotes in output.
 		trimmed := strings.TrimSpace(result)
