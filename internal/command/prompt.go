@@ -412,7 +412,46 @@ const (
 	// classThrottled is a backend rate limit. NOT retryable here: KAS's own
 	// client already exhausted its adaptive attempts before handing this over.
 	classThrottled
+	// classRejected is a backend VALIDATION refusal, named in the closed
+	// vocabulary of validationErrorNames. Non-retryable by construction, which
+	// is the whole point of separating it from classTransient: the payload IS
+	// what was refused, so resending the identical payload cannot succeed.
+	classRejected
 )
+
+// validationErrorNames are the backend's own names for a request it refused as
+// malformed or oversized. Read off the string table of the `kiro-cli-chat`
+// 2.19.0 binary (the sidecar `kiro-cli acp` re-execs), where they sit together
+// in one enumeration; they are the model service's names, surfaced through KAS.
+//
+// Every member shares one property, and it is the property that makes the class:
+// the refusal is a statement about the bytes that were sent, so a second attempt
+// with the same bytes gets the same answer. Without this table they land on
+// -32603 like everything else, classify as classTransient, and the prompt is
+// resent twice more — on an oversized image, three uploads of the same refused
+// payload before the user is told anything.
+//
+// Deliberately EXCLUDED, though they sit in the same enumeration: the quota and
+// capacity names (`MonthlyRequestCount`, `DailyRequestCount`,
+// `InsufficientModelCapacity`), the model names (`InvalidModelId`) and the `Kms*`
+// family. None of them is a statement about the payload, so none of them shares
+// the remedy this class carries into promptFailureReason, and a user told to
+// shrink their prompt because their monthly allowance ran out is worse off than
+// one told nothing. They are also normally MAPPED (-32000 with a CLIENT_ERROR
+// classification), which already resolves to a non-retried class.
+var validationErrorNames = []string{
+	"ImageSizeExceeded",
+	"ImageDimensionExceeded",
+	"ImageCountExceeded",
+	"ImageFormatUnsupported",
+	"ImageMimeMismatch",
+	"PromptTooLong",
+	"ContentLengthExceedsThreshold",
+	"DisallowedFileType",
+	"DocumentSizeExceeded",
+	"DocumentMaximumPagesExceeded",
+	"DocumentCountExceeded",
+}
 
 // mappedErrorData is the shape KAS puts in `error.data` on a mapped backend
 // error. Every KiroQError lands on -32000 with these fields, so the CLASS is
@@ -484,9 +523,15 @@ func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
 	case vibekit.RPCCodeInternal:
 		// -32603 is KAS's catch-all: a genuine internal fault, and also every
 		// validation failure and every auth failure. Retrying an auth failure is
-		// pure latency, so it is excluded by name.
+		// pure latency, so it is excluded by name. So is a validation refusal,
+		// for a stronger reason: the request is what was refused, so the retry is
+		// not merely wasted latency but a second and third upload of the same
+		// rejected payload.
 		if isAuthShaped(re) {
 			return classFatal
+		}
+		if isValidationShaped(re) {
+			return classRejected
 		}
 		return classTransient
 	}
@@ -532,6 +577,27 @@ func isAuthShaped(re *vibekit.RPCError) bool {
 	return false
 }
 
+// isValidationShaped reports whether an internal error is really the backend
+// refusing the request as sent. Matched on the payload for the same reason
+// isAuthShaped is: KAS collapses this onto the same -32603 as a genuine fault,
+// and the distinguishing token is in `error.data` rather than in the code.
+//
+// Matching a NAME rather than the surrounding prose is what makes this survive a
+// reworded message, and the names are distinctive enough that a false positive
+// would need the model service's own token to appear in unrelated text. A false
+// positive costs one un-retried turn and some advice about attachment size; a
+// false negative is the three-upload retry this exists to stop. That asymmetry is
+// why the table stays a name list and not a looser pattern.
+func isValidationShaped(re *vibekit.RPCError) bool {
+	hay := re.Message + string(re.ErrorData())
+	for _, name := range validationErrorNames {
+		if strings.Contains(hay, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // promptFailureReason renders a failure into something worth showing the user.
 //
 // KAS's own message on a mapped error is `userFacingSessionErrorMessage`, which
@@ -556,7 +622,15 @@ func promptFailureReason(err error) string {
 		// is the literal "Internal error" and whose cause is in `error.data`.
 		// This used to return err.Error(), i.e. that literal, so the real cause
 		// was on the wire and the user was told nothing.
-		return rpcerr.Text(err)
+		text := rpcerr.Text(err)
+		if isValidationShaped(re) {
+			// rpcerr.Text already recovered the backend's own account of WHAT was
+			// wrong. What it cannot know is that this failure is terminal for
+			// these bytes, which is exactly the thing a user cannot infer: every
+			// other prompt failure they have seen clears on a second Send.
+			text += " The request was refused as sent. Resending it unchanged will fail the same way. Make the prompt or its attachments smaller, then send again."
+		}
+		return text
 	}
 	// A MAPPED error is the one case where `error.data` is NOT the text: it is the
 	// machine triplet (errorType / retryErrorType / requestId), and the prose is
@@ -599,6 +673,8 @@ func (c promptFailureClass) String() string {
 		return "transient"
 	case classThrottled:
 		return "throttled"
+	case classRejected:
+		return "rejected"
 	case classFatal:
 		return "fatal"
 	}
