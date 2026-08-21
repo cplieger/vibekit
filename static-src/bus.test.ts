@@ -106,6 +106,18 @@ describe("dispatch (SSE routing)", () => {
     }
   });
 
+  it("unsubscribe removes a handler that already received an event", () => {
+    const handler = vi.fn();
+    const unsub = onSSE("chat_created", handler);
+    // The first dispatch is what builds the cached handler snapshot.
+    // Unsubscribing after it has to invalidate that cache, or the handler goes
+    // on firing for the life of the page.
+    dispatch({ type: "chat_created", chat_id: "c1", payload: { id: "c1", title: "First" } });
+    unsub();
+    dispatch({ type: "chat_created", chat_id: "c2", payload: { id: "c2", title: "Second" } });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it("handler error does not break other handlers", () => {
     const h1 = vi.fn();
     const throwing = vi.fn(() => {

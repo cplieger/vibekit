@@ -37,6 +37,14 @@ describe("guardAction", () => {
       expectedCalls: 1,
     },
     {
+      // The window is exclusive at its end: the guard suppresses a call that
+      // lands INSIDE it, and 400ms after the last fire is no longer inside.
+      name: "call exactly ms after the last fire is allowed through",
+      ms: 400,
+      calls: [{ advanceMs: 0 }, { advanceMs: 400 }],
+      expectedCalls: 2,
+    },
+    {
       name: "custom ms parameter is respected",
       ms: 1000,
       calls: [{ advanceMs: 0 }, { advanceMs: 500 }, { advanceMs: 1001 }],
