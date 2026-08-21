@@ -275,7 +275,6 @@ class ScrollController {
     this.userScrollingUntil = 0;
     requestAnimationFrame(() => {
       this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
-      $.scrollBottom.classList.add("hidden");
     });
   }
 
@@ -320,6 +319,9 @@ class ScrollController {
       return;
     }
     this.state = next;
+    // The single owner of the resume control's visibility: visible ⇔ Reading.
+    // Nothing else writes this class, so a caller that has just moved the
+    // scroller does not need to hide the control itself.
     $.scrollBottom.classList.toggle("hidden", next === "following");
     if (next === "following") {
       this.flushDeferred();
@@ -377,7 +379,6 @@ class ScrollController {
       const anchor = this.anchorProvider?.() ?? null;
       const target = anchor === null ? this.scrollEl.scrollHeight : this.anchorTop(anchor);
       this.scrollEl.scrollTo({ top: target, behavior: "instant" });
-      $.scrollBottom.classList.add("hidden");
     });
   }
 

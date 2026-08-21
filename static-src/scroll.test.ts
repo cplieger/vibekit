@@ -451,12 +451,11 @@ describe("the streaming auto-scroll", () => {
     expect(s.scrollTop).toBe(100);
   });
 
-  it("hides the resume control after an auto-scroll", async () => {
-    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
-    messagesEl.appendChild(document.createElement("div"));
-    await settle();
-    expect(scrollBtn.classList.contains("hidden")).toBe(true);
-  });
+  // The resume control is deliberately not asserted here: setState is its only
+  // owner, so hidden ⇔ Following, and the auto-scroll only ever runs while
+  // already Following. "the resume control > is shown while Reading and hidden
+  // on the return to Following" pins that invariant by driving the real
+  // transition instead.
 
   // The bug this exists for: a tall diff card renders BELOW the sentence being
   // streamed, and pinning to scrollHeight scrolls that sentence off the top.
