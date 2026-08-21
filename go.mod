@@ -16,7 +16,7 @@ require (
 
 require (
 	github.com/cplieger/atomicfile/v3 v3.0.0
-	github.com/cplieger/envx/v2 v2.0.0
+	github.com/cplieger/envx/v2 v2.0.1
 	github.com/cplieger/envx/yamlenv/v2 v2.0.0
 	github.com/cplieger/jsoncap/v2 v2.0.0
 	github.com/cplieger/keyenc v1.0.5
