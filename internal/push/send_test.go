@@ -616,10 +616,28 @@ func TestParseRetryAfter(t *testing.T) {
 // context is already cancelled, push merges it into the request
 // context, so a request to a blocking server is cancelled immediately
 // (context.Canceled) rather than blocking until the caller's deadline.
+//
+// The handler must NOT wait on r.Context().Done() alone. This request
+// carries a body the handler never reads, and net/http defers the
+// background read that detects a client disconnect until the body hits
+// EOF (measured on go1.27.0: unread body, no cancellation; body drained,
+// cancellation is immediate), so the request context stays live for as
+// long as the handler runs. Server.Close then waits for the handler
+// while the handler waits for Close, and the package dies on the 10-minute
+// test timeout. The request only reaches the server on the race where the
+// transport flushes it before it observes the already-cancelled context,
+// which is what made the deadlock intermittent rather than constant.
+// unblock is the test-owned exit: its cleanup registers AFTER the server's,
+// so LIFO ordering closes it before Close starts waiting.
 func TestPush_MergesCancelledServiceCtx(t *testing.T) {
+	unblock := make(chan struct{})
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done() // block until the request ctx is cancelled
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
 	}))
+	t.Cleanup(func() { close(unblock) })
 
 	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
