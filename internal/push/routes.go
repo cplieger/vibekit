@@ -7,7 +7,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // RegisterRoutes wires /api/push/vapid-key, /api/push/subscribe, and

@@ -13,7 +13,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // validateProvider rejects anything that isn't a well-formed HTTPS URL.

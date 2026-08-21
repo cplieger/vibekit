@@ -55,7 +55,7 @@ import (
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // handleRun: GET /api/runs/{workflowId} → one run's full state.

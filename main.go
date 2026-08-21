@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/vibekit/internal/composition"
 	"github.com/cplieger/vibekit/internal/workspace"
 )

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // drainOne reads a single message from urlCh with a sensible budget so the

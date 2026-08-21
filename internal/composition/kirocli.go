@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/pinstall/v2"
-	"github.com/cplieger/pinstall/v2/kirocli"
+	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/pinstall/v3/kirocli"
 )
 
 // The layout facts vibekit brings to the install: where the convenience symlink

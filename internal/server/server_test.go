@@ -10,7 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/pinstall/v2"
+	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"

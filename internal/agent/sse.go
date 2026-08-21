@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/sse"
+	"github.com/cplieger/webhttp/v2/sse"
 )
 
 // emit is the single path for broadcasting an event to SSE clients. It
@@ -74,8 +74,8 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	rt.bus.fanout.Serve(w, r,
 		sse.WithTopic(string(chatFilter)),
-		sse.OnConnect(func(sw *sse.Writer, floor, head uint64) error {
-			return rt.streamInitialState(sw, floor, head, chatFilter)
+		sse.OnConnect(func(sw *sse.Writer, b sse.ReplayBounds) error {
+			return rt.streamInitialState(sw, b.Floor, b.Head, chatFilter)
 		}),
 	)
 	slog.Info("SSE disconnected", "chat_filter", chatFilter)

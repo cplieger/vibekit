@@ -36,8 +36,8 @@ import (
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp"
-	"github.com/cplieger/webhttp/sse"
+	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v2/sse"
 )
 
 const (

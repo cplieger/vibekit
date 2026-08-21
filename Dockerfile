@@ -55,11 +55,11 @@ COPY . ./
 # must resolve for linux amd64+arm64 or the build fails, and the
 # runtime refresh re-runs the same check before every swap.
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json
-# renovate: datasource=go depName=github.com/cplieger/toolbelt/v2
-ARG TOOLBELT_TOOLCATALOG_VERSION=v2.5.2
+# renovate: datasource=go depName=github.com/cplieger/toolbelt/v3
+ARG TOOLBELT_TOOLCATALOG_VERSION=v3.0.1
 # hadolint ignore=DL3062
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
-    go run "github.com/cplieger/toolbelt/v2/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+    go run "github.com/cplieger/toolbelt/v3/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
       verify -catalog /tmp/tool-catalog.json -require required-tools.txt
 
 # Fetch @cplieger/actions TS source from npm registry. The lib publishes

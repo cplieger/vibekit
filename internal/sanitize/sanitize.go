@@ -44,7 +44,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // ansiRe matches the ANSI escape sequences produced by kiro-cli and its

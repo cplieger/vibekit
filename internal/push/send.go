@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/errgroup"
 )

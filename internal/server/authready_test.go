@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pinstall/v2"
+	"github.com/cplieger/pinstall/v3"
 )
 
 // TestAuthReasonIsTheClientContract pins the sign-in reason literal and the one

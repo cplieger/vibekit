@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/sse"
+	"github.com/cplieger/webhttp/v2/sse"
 )
 
 // settledEvents decodes the decision_settled payloads emitted after sinceID.

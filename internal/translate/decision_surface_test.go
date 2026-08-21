@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 

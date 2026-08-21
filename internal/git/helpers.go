@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // requirePOST writes a 405 if the method isn't POST and returns false.

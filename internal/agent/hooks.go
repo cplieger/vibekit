@@ -54,7 +54,7 @@ import (
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // hookCallTimeout bounds a list / setEnabled round-trip. The only slow path is

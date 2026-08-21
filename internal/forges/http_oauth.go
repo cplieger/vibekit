@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 func handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {

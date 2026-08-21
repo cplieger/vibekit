@@ -37,7 +37,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/vibekit/internal/agent"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"

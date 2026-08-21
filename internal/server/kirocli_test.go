@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pinstall/v2"
+	"github.com/cplieger/pinstall/v3"
 )
 
 // TestKiroReasonTextIsTheClientContract pins the four reason literals

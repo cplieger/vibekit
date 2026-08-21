@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // --- /api/files (GET directory listing) ---

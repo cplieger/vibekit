@@ -1,6 +1,6 @@
 // Command wire-codegen generates TypeScript interfaces, validating decoders,
 // and an SSE event→decoder registry from Go wire types using the wiregen
-// library (AST-based; github.com/cplieger/wiregen/v2). Output lands in
+// library (AST-based; github.com/cplieger/wiregen/v3). Output lands in
 // static-src/wire/ and feeds the client's typed SSE/REST decoding.
 //
 // The contract itself — the registered types, enums, name overrides and SSE

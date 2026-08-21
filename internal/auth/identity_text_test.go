@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // The identity row is not a decision surface, but the five strings on it are

@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {

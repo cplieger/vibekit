@@ -28,7 +28,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // configTemplateTimeout bounds the template round-trip. First call may

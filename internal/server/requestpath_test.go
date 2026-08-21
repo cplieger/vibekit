@@ -8,7 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // The fixture mirrors the real mount shape ListenAndServe builds: the SPA/static
@@ -249,7 +249,7 @@ func TestCanonicalAPIPath_RefusalIsVibekitsEnvelope(t *testing.T) {
 // routes it protects.
 func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"vibekit.example.com"},
-		webhttp.WithLoopbackExempt(),
+		webhttp.WithLoopbackExempt(true),
 		webhttp.WithHostAllowlistError("", "host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)

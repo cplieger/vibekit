@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // cliTimeout bounds one get-kas-token invocation. Matches the reference
