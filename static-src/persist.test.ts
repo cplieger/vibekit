@@ -18,7 +18,12 @@ vi.mock("./toast.js", () => ({
   showToast: vi.fn(),
 }));
 
-import { patchSettings, initSettingsTracking, __testResetTracking } from "./persist.js";
+import {
+  patchSettings,
+  initSettingsTracking,
+  loadSettings,
+  __testResetTracking,
+} from "./persist.js";
 
 describe("patchSettings debounce coalescing", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -219,5 +224,203 @@ describe("patchSettings no-op dedup", () => {
     expect(consoleErr).toHaveBeenCalled();
     consoleErr.mockRestore();
     vi.mocked(showSaved).mockReset();
+  });
+});
+
+describe("patchSettings unload flush", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends a still-debounced PATCH when the page is about to unload", async () => {
+    patchSettings({ last_model: "opus" });
+    // Inside the 300ms debounce: nothing has gone out yet, so navigating away
+    // now is where a setting gets silently lost.
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event("beforeunload"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+      last_model: "opus",
+    });
+  });
+
+  it("sends nothing on unload when there is no pending write", async () => {
+    patchSettings({ last_model: "opus" });
+    window.dispatchEvent(new Event("beforeunload"));
+    await vi.advanceTimersByTimeAsync(0);
+    fetchSpy.mockClear();
+
+    // The queue drained on the first unload; a second one must not PATCH an
+    // empty body.
+    window.dispatchEvent(new Event("beforeunload"));
+    await vi.advanceTimersByTimeAsync(350);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not fire a cancelled debounce after the tracking reset", async () => {
+    patchSettings({ last_model: "opus" });
+    __testResetTracking();
+    await vi.advanceTimersByTimeAsync(350);
+    // A timer left running here would fire into whichever test came next.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("patchSettings failure handling", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the error indicator when the server rejects the write", async () => {
+    const { showError } = await import("./save-indicator.js");
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
+    patchSettings({ last_model: "opus" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(showError).toHaveBeenCalled();
+  });
+
+  it("re-sends a value the server rejected instead of filtering it as sent", async () => {
+    initSettingsTracking({ last_model: "claude" });
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
+    patchSettings({ last_model: "opus" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // The failed value was rolled back out of the dedup tracker, so asking for
+    // it again is a change, not a repeat. Without the rollback the retry is
+    // dropped on the floor and the setting never reaches the server.
+    fetchSpy.mockClear();
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    patchSettings({ last_model: "opus" });
+    await vi.advanceTimersByTimeAsync(350);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+      last_model: "opus",
+    });
+  });
+
+  it("keeps the first pre-patch value when a key is written twice before flushing", async () => {
+    initSettingsTracking({ last_model: "claude" });
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
+    // Two writes coalesce into one PATCH; the rollback has to restore the value
+    // the server still holds ("claude"), not the intermediate one.
+    patchSettings({ last_model: "opus" });
+    patchSettings({ last_model: "sonnet" });
+    await vi.advanceTimersByTimeAsync(350);
+
+    fetchSpy.mockClear();
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("{}", { status: 200 })));
+    patchSettings({ last_model: "claude" });
+    await vi.advanceTimersByTimeAsync(350);
+
+    // "claude" is what the server has, so after a correct rollback this is a
+    // no-op. If the rollback stored "opus" instead, this would PATCH.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("flips a checkbox back when the server rejects its write", async () => {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
+
+    patchSettings({ notifications_enabled: true }, box);
+    await vi.advanceTimersByTimeAsync(350);
+
+    // The optimistic record is taken at dispatch time (the user just clicked,
+    // so the previous state is the opposite), and the rollback restores it.
+    expect(box.checked).toBe(false);
+  });
+
+  it("leaves the checkbox alone when the write succeeds", async () => {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+
+    patchSettings({ notifications_enabled: true }, box);
+    await vi.advanceTimersByTimeAsync(350);
+
+    expect(box.checked).toBe(true);
+  });
+});
+
+describe("patchSettings saving indicator", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", fetchSpy);
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("fires once for a batch of changes that will be sent", async () => {
+    const { showSaving } = await import("./save-indicator.js");
+    patchSettings({ last_model: "opus" });
+    patchSettings({ debug_logs: true });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(showSaving).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("loadSettings", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchSpy = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ last_model: "sonnet", chat_retention_days: 30 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    __testResetTracking();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the settings the server sent", async () => {
+    await expect(loadSettings()).resolves.toEqual({
+      last_model: "sonnet",
+      chat_retention_days: 30,
+    });
   });
 });

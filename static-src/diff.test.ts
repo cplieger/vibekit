@@ -235,6 +235,23 @@ describe("windowHunks", () => {
     const got = windowHunks(lines, { context: 2 });
     expect(got.lines.filter((l) => l.text === "only")).toHaveLength(1);
   });
+
+  it("drops trailing context that adjoins no later hunk", () => {
+    const lines = [del(1, "x"), ctx(2, "n1"), ctx(3, "n2"), ctx(4, "n3")];
+    const got = windowHunks(lines, { context: 1 });
+    // Only the side touching the hunk contributes, so the run's tail is not
+    // kept: there is nothing after it for the reader to orient against.
+    expect(got.lines).toEqual([del(1, "x"), ctx(2, "n1")]);
+  });
+
+  it("keeps a hunk that exactly fills the remaining budget", () => {
+    const lines = [del(1, "a"), add(1, "b"), ctx(2, "k1"), ctx(3, "k2"), del(4, "c"), add(4, "d")];
+    // 2 rows of hunk + 2 of context + 2 of hunk === maxRows, so the last hunk
+    // fits precisely. Cutting at the cap rather than past it would drop it and
+    // report a hunk omitted that the reader had room for.
+    const got = windowHunks(lines, { maxRows: 6, context: 1 });
+    expect(got).toEqual({ lines, hunksOmitted: 0 });
+  });
 });
 
 describe("stats", () => {
@@ -380,5 +397,350 @@ describe("lineDiff property-based invariants", () => {
       }),
       { numRuns: 3, interruptAfterTimeLimit: 60_000 },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Minimality, not just validity.
+//
+// The round-trip invariants above (adds+ctx === newText, and replaying the
+// script reproduces it) are satisfied by ANY valid edit script, including
+// "delete everything, add everything". They therefore say nothing about the
+// edit-distance table that decides WHICH lines pair up. These cases pin the
+// script itself on inputs small enough to work the optimum out by hand, which
+// is what catches an off-by-one in the table: the diff stays valid and turns
+// silently worse.
+// ---------------------------------------------------------------------------
+describe("lineDiff minimal edit scripts", () => {
+  const cases: {
+    name: string;
+    old: string;
+    new: string;
+    opts?: { ignoreWhitespace?: boolean };
+    expected: DiffLine[];
+  }[] = [
+    {
+      // Both ends differ, so nothing is trimmed and the whole table is walked.
+      // Reaching the A/B pair costs two adds first, so the walk has to prefer
+      // an add over a del twice while the table still says the pair is coming.
+      name: "adds precede a matching pair when the table says the pair is worth more",
+      old: "X\nA\nB\nY",
+      new: "Q\nC\nA\nB\nZ",
+      expected: [
+        { kind: "del", oldNo: 1, newNo: 0, text: "X" },
+        { kind: "add", oldNo: 0, newNo: 1, text: "Q" },
+        { kind: "add", oldNo: 0, newNo: 2, text: "C" },
+        { kind: "ctx", oldNo: 2, newNo: 3, text: "A" },
+        { kind: "ctx", oldNo: 3, newNo: 4, text: "B" },
+        { kind: "del", oldNo: 4, newNo: 0, text: "Y" },
+        { kind: "add", oldNo: 0, newNo: 5, text: "Z" },
+      ],
+    },
+    {
+      // The first row of the table is the one an "i >= 0" loop bound is easiest
+      // to lose. Here the correct move at the very first cell is an add, so a
+      // missing first row shows up as a deleted A instead.
+      name: "a leading insertion is found from the first row of the table",
+      old: "A\nB\nz",
+      new: "X\nA\nB\nw",
+      expected: [
+        { kind: "add", oldNo: 0, newNo: 1, text: "X" },
+        { kind: "ctx", oldNo: 1, newNo: 2, text: "A" },
+        { kind: "ctx", oldNo: 2, newNo: 3, text: "B" },
+        { kind: "del", oldNo: 3, newNo: 0, text: "z" },
+        { kind: "add", oldNo: 0, newNo: 4, text: "w" },
+      ],
+    },
+    {
+      // "D" appears twice in the new text: anchoring the old D on the second
+      // one costs the B match. Both choices reconstruct the new text, only one
+      // is the shortest script.
+      name: "a repeated line is anchored where it keeps the most context",
+      old: "E\nD\nB",
+      new: "D\nC\nB\nD",
+      expected: [
+        { kind: "del", oldNo: 1, newNo: 0, text: "E" },
+        { kind: "ctx", oldNo: 2, newNo: 1, text: "D" },
+        { kind: "add", oldNo: 0, newNo: 2, text: "C" },
+        { kind: "ctx", oldNo: 3, newNo: 3, text: "B" },
+        { kind: "add", oldNo: 0, newNo: 4, text: "D" },
+      ],
+    },
+    {
+      // The B/A pair is only reachable by skipping past the earlier A and C
+      // copies; taking the first A instead leaves one context line, not two.
+      name: "duplicated old lines do not cost context",
+      old: "C\nA\nC\nB\nA\nD\nB",
+      new: "E\nB\nA",
+      expected: [
+        { kind: "del", oldNo: 1, newNo: 0, text: "C" },
+        { kind: "del", oldNo: 2, newNo: 0, text: "A" },
+        { kind: "del", oldNo: 3, newNo: 0, text: "C" },
+        { kind: "add", oldNo: 0, newNo: 1, text: "E" },
+        { kind: "ctx", oldNo: 4, newNo: 2, text: "B" },
+        { kind: "ctx", oldNo: 5, newNo: 3, text: "A" },
+        { kind: "del", oldNo: 6, newNo: 0, text: "D" },
+        { kind: "del", oldNo: 7, newNo: 0, text: "B" },
+      ],
+    },
+    {
+      // Two trimmed suffix lines, so the suffix loop runs twice and its line
+      // numbers have to climb with it.
+      name: "a two-line common suffix keeps its own line numbers",
+      old: "X\nc\nd",
+      new: "Y\nc\nd",
+      expected: [
+        { kind: "del", oldNo: 1, newNo: 0, text: "X" },
+        { kind: "add", oldNo: 0, newNo: 1, text: "Y" },
+        { kind: "ctx", oldNo: 2, newNo: 2, text: "c" },
+        { kind: "ctx", oldNo: 3, newNo: 3, text: "d" },
+      ],
+    },
+    {
+      // The mirror of "whitespace-only diff with ignoreWhitespace" above: there
+      // the OLD line carried the extra space, so normalizing only the old side
+      // was enough to pass. Here the new side is the one that needs it.
+      name: "ignoreWhitespace normalizes the new side too",
+      old: "a",
+      new: "  a",
+      opts: { ignoreWhitespace: true },
+      expected: [{ kind: "ctx", oldNo: 1, newNo: 1, text: "a" }],
+    },
+    {
+      name: "ignoreWhitespace still separates a real content change",
+      old: "a",
+      new: "b",
+      opts: { ignoreWhitespace: true },
+      expected: [
+        { kind: "del", oldNo: 1, newNo: 0, text: "a" },
+        { kind: "add", oldNo: 0, newNo: 1, text: "b" },
+      ],
+    },
+  ];
+
+  for (const tc of cases) {
+    it(tc.name, () => {
+      expect(lineDiff(tc.old, tc.new, tc.opts)).toEqual(tc.expected);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The linear-space path, with an optimum that is known by CONSTRUCTION.
+//
+// Every case below builds the new text out of the old one by deleting lines and
+// inserting lines that appear nowhere in the old text. A common subsequence can
+// only use retained lines, so the longest one is exactly "old length minus
+// deletions" — no second diff implementation is needed to know the answer, and
+// the counts hold even when the body is full of repeated lines.
+//
+// Each pair is sized just past SPACE_THRESHOLD (4M cells) after the
+// prefix/suffix trim, which is the only way to reach hirschbergDiff at all, and
+// each keeps two shared lines at both ends so the trim is exercised and the
+// recursion's line numbers are offset rather than starting at zero.
+// ---------------------------------------------------------------------------
+describe("lineDiff on the linear-space path", () => {
+  const body = Array.from({ length: 2000 }, (_, i) => `L${String(i).padStart(4, "0")}`);
+  const bodyNew = body
+    .filter((l) => l !== "L0500")
+    .flatMap((l) => (l === "L1500" ? [l, "NEW-LINE"] : [l]));
+  const oldText = [
+    "shared-1",
+    "shared-2",
+    "A-HEAD",
+    ...body,
+    "A-TAIL",
+    "shared-3",
+    "shared-4",
+  ].join("\n");
+  const newText = [
+    "shared-1",
+    "shared-2",
+    "B-HEAD",
+    ...bodyNew,
+    "B-TAIL",
+    "shared-3",
+    "shared-4",
+  ].join("\n");
+  // Computed inside each test rather than in a beforeAll: code a hook runs
+  // executes outside any test, and Stryker's perTest coverage then attributes
+  // the mutants it reaches to no test at all — it reports them "Survived, ran
+  // all tests" while running about one. Same fixture, four calls.
+  const sparseDiff = (): DiffLine[] => lineDiff(oldText, newText);
+
+  it("keeps every line the two files still share", () => {
+    // 2000 body lines minus the one deletion, plus the 4 trimmed shared lines.
+    expect(stats(sparseDiff())).toEqual({ adds: 3, dels: 3, ctx: 2003 });
+  });
+
+  it("numbers an interior deletion and insertion against their own files", () => {
+    const sparse = sparseDiff();
+    expect(sparse.find((l) => l.text === "L0500")).toEqual({
+      kind: "del",
+      oldNo: 504,
+      newNo: 0,
+      text: "L0500",
+    });
+    expect(sparse.find((l) => l.text === "NEW-LINE")).toEqual({
+      kind: "add",
+      oldNo: 0,
+      newNo: 1504,
+      text: "NEW-LINE",
+    });
+  });
+
+  it("numbers a context line that sits at different rows in the two files", () => {
+    // Past the deleted L0500 the two files are one line out of step, which is
+    // the only place a single shared offset would look right and be wrong.
+    expect(sparseDiff().find((l) => l.text === "L1500")).toEqual({
+      kind: "ctx",
+      oldNo: 1504,
+      newNo: 1503,
+      text: "L1500",
+    });
+  });
+
+  it("numbers the trimmed prefix and suffix around the recursion", () => {
+    const sparse = sparseDiff();
+    expect(sparse[0]).toEqual({ kind: "ctx", oldNo: 1, newNo: 1, text: "shared-1" });
+    expect(sparse.find((l) => l.text === "A-HEAD")).toEqual({
+      kind: "del",
+      oldNo: 3,
+      newNo: 0,
+      text: "A-HEAD",
+    });
+    expect(sparse.find((l) => l.text === "B-HEAD")).toEqual({
+      kind: "add",
+      oldNo: 0,
+      newNo: 3,
+      text: "B-HEAD",
+    });
+    expect(sparse.find((l) => l.text === "A-TAIL")).toEqual({
+      kind: "del",
+      oldNo: 2004,
+      newNo: 0,
+      text: "A-TAIL",
+    });
+    expect(sparse.find((l) => l.text === "B-TAIL")).toEqual({
+      kind: "add",
+      oldNo: 0,
+      newNo: 2004,
+      text: "B-TAIL",
+    });
+    expect(sparse[sparse.length - 1]).toEqual({
+      kind: "ctx",
+      oldNo: 2006,
+      newNo: 2006,
+      text: "shared-4",
+    });
+  });
+
+  it("finds every match when a third of the lines changed", () => {
+    // One change every three lines: 668 of 2004 body lines differ, so the
+    // scratch rows are rewritten constantly instead of coasting along a long
+    // diagonal of matches.
+    const changedA = Array.from({ length: 2004 }, (_, i) =>
+      i % 3 === 0 ? `OLD-${String(i)}` : `SAME-${String(i)}`,
+    );
+    const changedB = Array.from({ length: 2004 }, (_, i) =>
+      i % 3 === 0 ? `NEW-${String(i)}` : `SAME-${String(i)}`,
+    );
+    const d = lineDiff(
+      ["shared-1", "shared-2", ...changedA, "shared-3", "shared-4"].join("\n"),
+      ["shared-1", "shared-2", ...changedB, "shared-3", "shared-4"].join("\n"),
+    );
+    expect(stats(d)).toEqual({ adds: 668, dels: 668, ctx: 1340 });
+  });
+
+  it("finds every match when the body is 40 copies of every line", () => {
+    // 2000 lines drawn from 50 values, so almost every cell of the table has a
+    // match to weigh against its neighbours. The three deletions and two
+    // insertions are still counted exactly: FRESH-1/FRESH-2 appear nowhere in
+    // the old text, so no alignment can be longer than 1997 body lines.
+    const dup = Array.from({ length: 2000 }, (_, i) => `D-${String(i % 50)}`);
+    const dropped = new Set([100, 700, 1300]);
+    const dupNew = dup.flatMap((l, i) => {
+      const kept = dropped.has(i) ? [] : [l];
+      if (i === 400) {
+        return [...kept, "FRESH-1"];
+      }
+      if (i === 1600) {
+        return [...kept, "FRESH-2"];
+      }
+      return kept;
+    });
+    const d = lineDiff(
+      ["shared-1", "shared-2", "A-HEAD", ...dup, "A-TAIL", "shared-3", "shared-4"].join("\n"),
+      ["shared-1", "shared-2", "B-HEAD", ...dupNew, "B-TAIL", "shared-3", "shared-4"].join("\n"),
+    );
+    expect(stats(d)).toEqual({ adds: 4, dels: 5, ctx: 2001 });
+    expect(d.find((l) => l.text === "FRESH-1")).toEqual({
+      kind: "add",
+      oldNo: 0,
+      newNo: 404,
+      text: "FRESH-1",
+    });
+  });
+
+  it("reads the same edit distance whichever file is called old", () => {
+    // Two unrelated bodies over the same 50 values: the alignment has thousands
+    // of equally long candidates, so an exact count would only restate what the
+    // implementation happens to pick. What cannot depend on the argument order
+    // is the SIZE of the alignment — the longest common subsequence of two
+    // files is symmetric — so swapping the arguments must swap adds and dels
+    // and leave the context total alone. A scratch row that runs one line too
+    // far is visible here and nowhere else: it biases the split toward whichever
+    // file is walked first.
+    const noise = (seed: number): string[] => {
+      let state = seed;
+      return Array.from({ length: 2002 }, () => {
+        state = (state * 48271) % 2147483647;
+        return `D-${String(state % 50)}`;
+      });
+    };
+    const left = ["shared-1", "shared-2", "A-HEAD", ...noise(1), "A-TAIL", "shared-3"].join("\n");
+    const right = ["shared-1", "shared-2", "B-HEAD", ...noise(7), "B-TAIL", "shared-3"].join("\n");
+    const forward = stats(lineDiff(left, right));
+    const backward = stats(lineDiff(right, left));
+    expect(forward.ctx).toBe(backward.ctx);
+    expect(forward.adds).toBe(backward.dels);
+    expect(forward.dels).toBe(backward.adds);
+    // Non-vacuous: this pair really does share and really does differ.
+    expect(forward.ctx).toBeGreaterThan(100);
+    expect(forward.adds).toBeGreaterThan(1000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Past the time budget the module stops looking for context on purpose. The
+// existing budget test above uses two files with nothing in common, where the
+// coarse script and the minimal one are the same thing; these two use files
+// that share 5000 lines, so going coarse is observable — and it must, because
+// the alternative is an unresponsive tab.
+// ---------------------------------------------------------------------------
+describe("lineDiff past the time budget", () => {
+  const shared = Array.from({ length: 5000 }, (_, i) => `M${String(i).padStart(4, "0")}`);
+  // 5002x5002 = 25,020,004 cells after the trim, just past TIME_BUDGET_CELLS.
+  const coarseDiff = (): DiffLine[] =>
+    lineDiff(
+      ["OLD-FIRST", ...shared, "OLD-LAST"].join("\n"),
+      ["NEW-FIRST", ...shared, "NEW-LAST"].join("\n"),
+    );
+
+  it("gives up on context it could have found, rather than the main thread", () => {
+    expect(stats(coarseDiff())).toEqual({ adds: 5002, dels: 5002, ctx: 0 });
+  });
+
+  it("still numbers the coarse script from the top of each file", () => {
+    const coarse = coarseDiff();
+    expect(coarse[0]).toEqual({ kind: "del", oldNo: 1, newNo: 0, text: "OLD-FIRST" });
+    expect(coarse[5001]).toEqual({ kind: "del", oldNo: 5002, newNo: 0, text: "OLD-LAST" });
+    expect(coarse[5002]).toEqual({ kind: "add", oldNo: 0, newNo: 1, text: "NEW-FIRST" });
+    expect(coarse[coarse.length - 1]).toEqual({
+      kind: "add",
+      oldNo: 0,
+      newNo: 5002,
+      text: "NEW-LAST",
+    });
   });
 });

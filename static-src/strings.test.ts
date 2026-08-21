@@ -256,6 +256,36 @@ describe("windowOutput kept ranges", () => {
   });
 });
 
+describe("windowOutput boundaries", () => {
+  it("keeps exactly 2n lines whole, as one kept range", async () => {
+    const { windowOutput } = await import("./strings.js");
+    // 4 lines with n=2 is the last size that fits. Windowing it anyway would
+    // rebuild the same text out of two ranges: identical to read, and a
+    // different mapping for every span that crosses the seam.
+    expect(windowOutput("l0\nl1\nl2\nl3", 2)).toEqual({
+      text: "l0\nl1\nl2\nl3",
+      elided: 0,
+      kept: [{ from: 0, to: 11, at: 0 }],
+    });
+  });
+
+  it("reads the last line's offset from the source when there is no trailing newline", async () => {
+    const { windowOutput } = await import("./strings.js");
+    // "c" is the remainder after the final newline, so its start offset is
+    // recorded on a different branch from every other line's. At n=1 that
+    // offset IS the tail range, and losing it widens the tail to the whole
+    // text — the elided middle comes back, duplicated.
+    expect(windowOutput("a\nb\nc", 1)).toEqual({
+      text: "a\nc",
+      elided: 1,
+      kept: [
+        { from: 0, to: 1, at: 0 },
+        { from: 4, to: 5, at: 2 },
+      ],
+    });
+  });
+});
+
 describe("windowSpans", () => {
   const span = (start: number, end: number) => ({ start, end, fg: 1, bg: -1, attrs: 0 });
 
@@ -272,6 +302,15 @@ describe("windowSpans", () => {
     const win = windowOutput(text, 3);
     const middle = text.indexOf("line25");
     expect(windowSpans([span(middle, middle + 6)], win.kept)).toEqual([]);
+  });
+
+  it("drops a span that only touches the seams of the elision", async () => {
+    const { windowOutput, windowSpans } = await import("./strings.js");
+    const win = windowOutput("a\nb\nc", 1);
+    // This span is the elided middle plus both boundaries. Clipping it against
+    // each kept range leaves an empty range, which must be dropped rather than
+    // emitted as a zero-width span.
+    expect(windowSpans([span(1, 4)], win.kept)).toEqual([]);
   });
 
   it("splits a span straddling the elision into one piece per side", async () => {
