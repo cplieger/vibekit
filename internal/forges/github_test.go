@@ -507,6 +507,19 @@ func TestGHActionsRunID(t *testing.T) {
 			wantWhy: "not a run id",
 		},
 		{
+			// Run ids start at 1. A zero (or negative) id is not a run
+			// this call could re-run, and accepting it would report a
+			// found run whose id names nothing.
+			name: "a zero id", repo: "o/r",
+			url:     "https://github.com/o/r/actions/runs/0",
+			wantWhy: "run ids start at 1",
+		},
+		{
+			name: "a negative id", repo: "o/r",
+			url:     "https://github.com/o/r/actions/runs/-3",
+			wantWhy: "run ids start at 1",
+		},
+		{
 			name: "empty", repo: "o/r", url: "", wantWhy: "a check run may report no details URL",
 		},
 	}
@@ -518,6 +531,101 @@ func TestGHActionsRunID(t *testing.T) {
 			}
 			if ok && got != tc.want {
 				t.Errorf("ghActionsRunID(%q,%q) = %d, want %d", tc.url, tc.repo, got, tc.want)
+			}
+		})
+	}
+}
+
+// Mergeable is GitHub's own verdict, and only the one word means yes.
+// CONFLICTING and UNKNOWN are both "not mergeable" — UNKNOWN because GitHub is
+// still computing it, which is not a green light.
+func TestGitHubListPRs_MergeableIsTheExactVerdict(t *testing.T) {
+	const out = `printf '%s' '[
+	  {"number":1,"title":"clean","state":"OPEN","headRefOid":"aaa","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","statusCheckRollup":[]},
+	  {"number":2,"title":"conflicted","state":"OPEN","headRefOid":"bbb","mergeable":"CONFLICTING","mergeStateStatus":"DIRTY","statusCheckRollup":[]},
+	  {"number":3,"title":"pending","state":"OPEN","headRefOid":"ccc","mergeable":"UNKNOWN","mergeStateStatus":"UNKNOWN","statusCheckRollup":[]}
+	]'`
+	p, _ := newGitHubWithStub(t, out)
+
+	prs, err := p.ListPRs(t.Context(), "o/r", StateOpen)
+	if err != nil {
+		t.Fatalf("ListPRs: %v", err)
+	}
+	if len(prs) != 3 {
+		t.Fatalf("ListPRs returned %d PRs, want 3", len(prs))
+	}
+	want := map[int]bool{1: true, 2: false, 3: false}
+	for _, pr := range prs {
+		if pr.Mergeable != want[pr.Number] {
+			t.Errorf("PR %d (%s) Mergeable = %t, want %t", pr.Number, pr.Title, pr.Mergeable, want[pr.Number])
+		}
+	}
+}
+
+// An unset state means open, and a state the caller DID supply must reach gh
+// unchanged. Substituting open for an explicit "closed" quietly answers a
+// different question than the one asked.
+func TestGitHubList_StateDefaultsToOpenAndOtherwisePassesThrough(t *testing.T) {
+	cases := []struct {
+		name      string
+		state     ListState
+		wantState string
+	}{
+		{name: "unset means open", state: "", wantState: "--state open"},
+		{name: "closed is passed through", state: StateClosed, wantState: "--state closed"},
+		{name: "all is passed through", state: StateAll, wantState: "--state all"},
+	}
+	for _, tc := range cases {
+		t.Run("prs_"+tc.name, func(t *testing.T) {
+			p, recPath := newGitHubWithStub(t, `printf '%s' '[]'`)
+			if _, err := p.ListPRs(t.Context(), "o/r", tc.state); err != nil {
+				t.Fatalf("ListPRs(%q): %v", tc.state, err)
+			}
+			argv := recordLines(readRecord(t, recPath), "argv:")
+			if len(argv) != 1 || !strings.Contains(argv[0], tc.wantState) {
+				t.Errorf("gh pr list argv = %v, want it to carry %q", argv, tc.wantState)
+			}
+		})
+		t.Run("issues_"+tc.name, func(t *testing.T) {
+			p, recPath := newGitHubWithStub(t, `printf '%s' '[]'`)
+			if _, err := p.ListIssues(t.Context(), "o/r", tc.state); err != nil {
+				t.Fatalf("ListIssues(%q): %v", tc.state, err)
+			}
+			argv := recordLines(readRecord(t, recPath), "argv:")
+			if len(argv) != 1 || !strings.Contains(argv[0], tc.wantState) {
+				t.Errorf("gh issue list argv = %v, want it to carry %q", argv, tc.wantState)
+			}
+		})
+	}
+}
+
+// gh targets a host through GH_HOST, so the host a provider was built with has
+// to reach the subprocess environment. An explicit host silently replaced by
+// github.com sends an enterprise user's request to the public site.
+func TestNewGitHub_TargetsTheHostItWasGiven(t *testing.T) {
+	cases := []struct {
+		name     string
+		host     string
+		wantHost string
+	}{
+		{name: "empty means the public host", host: "", wantHost: "github.com"},
+		{name: "an enterprise host is kept", host: "github.example.com", wantHost: "github.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := stubPath(t)
+			recPath := dir + "/rec"
+			stubCLI(t, dir, "gh", `printf 'host:%s\n' "$GH_HOST" >> `+recPath+`
+printf '%s' '[]'`)
+			p := newGitHub(tc.host)
+
+			if _, err := p.ListPRs(t.Context(), "o/r", StateOpen); err != nil {
+				t.Fatalf("ListPRs: %v", err)
+			}
+
+			hosts := recordLines(readRecord(t, recPath), "host:")
+			if len(hosts) != 1 || hosts[0] != tc.wantHost {
+				t.Errorf("gh saw GH_HOST %v, want [%s]", hosts, tc.wantHost)
 			}
 		})
 	}

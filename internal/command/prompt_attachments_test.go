@@ -361,3 +361,34 @@ func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
 		t.Errorf("spent = %d on a refused attachment, want 0", spent)
 	}
 }
+
+// The companion of TestReadForInline_RefusesAnOversizedEncodedPayload: that one
+// uses the smallest file whose encoding does NOT fit, this one the largest that
+// does. Exactly at the cap must be inlined, and charged at exactly the cap.
+func TestReadForInline_AcceptsAnEncodedPayloadExactlyAtTheCap(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "photo.png")
+	// The largest file whose base64 is exactly MaxInlineEncodedBytes: the cap
+	// is a multiple of 4, so three-quarters of it is a whole number of bytes
+	// and EncodedLen lands on the cap with no padding slack.
+	size := MaxInlineEncodedBytes / 4 * 3
+	if err := os.WriteFile(abs, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if encoded := base64.StdEncoding.EncodedLen(size); encoded != MaxInlineEncodedBytes {
+		t.Fatalf("fixture of %d bytes encodes to %d, want exactly %d; the test is not "+
+			"at the boundary it claims", size, encoded, MaxInlineEncodedBytes)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	block, spent := attachmentBlock(vibekit.Attachment{Path: abs},
+		resolve, MaxInlineTurnEncodedBytes)
+
+	if got := block[keyType]; got != "image" {
+		t.Errorf("block type = %v, want the image inlined: %d bytes encode to exactly "+
+			"the %d cap", got, size, MaxInlineEncodedBytes)
+	}
+	if spent != MaxInlineEncodedBytes {
+		t.Errorf("spent = %d, want %d", spent, MaxInlineEncodedBytes)
+	}
+}

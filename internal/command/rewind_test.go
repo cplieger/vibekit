@@ -316,3 +316,23 @@ func TestUserMessageIndex(t *testing.T) {
 		}
 	}
 }
+
+// How much history a rewind discarded is the one number in its log line that a
+// reader cannot recover from anywhere else: the record has already been cut by
+// the time anyone looks. Reverting to u2 of the four-message transcript drops
+// u2 and a2, so the count is 2.
+func TestCmdRewindChat_LogsHowManyMessagesItDropped(t *testing.T) {
+	logs := captureLogs(t)
+	store := testsupport.NewInMemoryChatStore()
+	seedChat(t, store, "c1")
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := newBridgeHost(store, b)
+
+	if _, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2")); err != nil {
+		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
+	}
+
+	if !strings.Contains(logs.String(), "dropped_messages=2") {
+		t.Errorf("log does not report dropped_messages=2: %s", logs.String())
+	}
+}

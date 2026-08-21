@@ -178,3 +178,21 @@ func TestCLIConfigExists(t *testing.T) {
 		t.Error("tea config should probe true for gitea AND codeberg")
 	}
 }
+
+// gh prints its hosts JSON even when one host's check errored, which is why the
+// stdout is decoded regardless of the exit status. The case that must NOT be
+// swallowed is the other one: output that does not decode at all AND a real
+// failure. Answering with an empty list there tells the user they have no
+// forges configured when what actually happened is that gh broke.
+func TestGHAuthHosts_UndecodableOutputWithARealErrorPropagates(t *testing.T) {
+	dir := stubPath(t)
+	stubCLI(t, dir, "gh", `echo 'not json at all'
+echo 'gh: something broke' >&2
+exit 2`)
+
+	hosts, err := ghAuthHosts(t.Context())
+
+	if err == nil {
+		t.Errorf("ghAuthHosts = %v, nil; want the failure reported rather than an empty list", hosts)
+	}
+}

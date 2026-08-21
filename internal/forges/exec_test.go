@@ -2,9 +2,12 @@ package forges
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 // When Stderr is non-empty, Error() uses the stderr form and includes the
@@ -109,5 +112,76 @@ func TestCappedWriter_truncatesToRemaining(t *testing.T) {
 	}
 	if cw.N != 5 {
 		t.Errorf("N = %d, want 5 (3 + 2 written)", cw.N)
+	}
+}
+
+// captureForgeLogs swaps the slog default to a buffer-backed debug handler for
+// the duration of the test and restores it on cleanup. The default is
+// process-global, so a test using it must not run in parallel — which the
+// stub-PATH tests already cannot.
+func captureForgeLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// The timeout is per command, and 0 means none. Both halves matter: a positive
+// timeout has to actually fire, because a forge CLI that hangs would otherwise
+// hang the request waiting on it; and 0 must not become an instant deadline,
+// because that would fail every command before it started.
+func TestRunCmd_TimeoutIsPerCommandAndZeroMeansNone(t *testing.T) {
+	t.Run("a positive timeout cuts a slow command short", func(t *testing.T) {
+		dir := stubPath(t)
+		// The stub closes the inherited pipes before sleeping. Without that,
+		// Run would block until the sleep exited whatever the deadline did —
+		// the killed shell's child keeps the write end open — and the elapsed
+		// time would measure the fixture rather than the timeout.
+		stubCLI(t, dir, "gh", "exec >/dev/null 2>&1\nsleep 3")
+		start := time.Now()
+
+		_, err := runCmd(t.Context(), 100*time.Millisecond, nil, "gh", "pr", "list")
+
+		if err == nil {
+			t.Fatal("runCmd returned nil for a command that outlived its timeout")
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Errorf("runCmd took %v, want it cut short near its 100ms timeout", elapsed)
+		}
+	})
+
+	t.Run("a zero timeout imposes no deadline", func(t *testing.T) {
+		dir := stubPath(t)
+		stubCLI(t, dir, "gh", `printf 'done'`)
+
+		out, err := runCmd(t.Context(), 0, nil, "gh", "pr", "list")
+		if err != nil {
+			t.Fatalf("runCmd with no timeout = %v, want it to run", err)
+		}
+		if string(out) != "done" {
+			t.Errorf("stdout = %q, want %q", out, "done")
+		}
+	})
+}
+
+// A command that never ran has no exit code, and -1 is how that is reported.
+// Any other default would be indistinguishable from a real status: 0 reads as a
+// clean success the process never had.
+func TestRunCmd_ACommandThatNeverRanReportsNoExitCode(t *testing.T) {
+	dir := stubPath(t)
+	stubCLI(t, dir, "gh", `printf 'unreachable'`)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // the request went away before the subprocess could start
+
+	_, err := runCmd(ctx, CmdTimeout, nil, "gh", "pr", "list")
+
+	var ce *cmdError
+	if !errors.As(err, &ce) {
+		t.Fatalf("runCmd on a cancelled context = %T (%v), want a *cmdError", err, err)
+	}
+	if ce.ExitCode != -1 {
+		t.Errorf("ExitCode = %d, want -1: the process never exited", ce.ExitCode)
 	}
 }

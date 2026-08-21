@@ -215,3 +215,86 @@ func TestErrSentinelsAliasCliexec(t *testing.T) {
 		t.Errorf("missing CLI should map to forges.ErrNotInstalled, got %v", err)
 	}
 }
+
+// The login to delete is the one whose URL names the host being disconnected.
+// A login added by hand can carry any name, so a name match is a FALLBACK for
+// the vibekit-style login whose name IS its host — never a reason to delete
+// somebody else's login, which is what disconnecting the wrong row would do.
+func TestCLILogout_Tea_DeletesTheLoginForTheHostAndNoOther(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := stubPath(t)
+	rec := filepath.Join(t.TempDir(), "rec")
+	// The unrelated login comes FIRST, so a predicate that matches anything
+	// deletes it instead of the one asked for.
+	stubCLI(t, dir, "tea", `case "$1 $2" in
+"logins list") echo '[{"name":"work","url":"https://gitea.other","user":"eve"},{"name":"myforge","url":"https://gitea.example.com","user":"dave"}]' ;;
+"login delete") printf 'deleted:%s\n' "$3" >> `+rec+` ;;
+esac`)
+
+	if err := cliLogout(t.Context(), KindGitea, "gitea.example.com"); err != nil {
+		t.Fatalf("cliLogout: %v", err)
+	}
+
+	got := readRecord(t, rec)
+	if !strings.Contains(got, "deleted:myforge") {
+		t.Errorf("the login for the requested host was not deleted, record:\n%s", got)
+	}
+	if strings.Contains(got, "deleted:work") {
+		t.Errorf("an unrelated login was deleted, record:\n%s", got)
+	}
+}
+
+// A logout that failed must SAY so. Reporting success would tell the user the
+// credential is gone while tea still holds it, and the token stays usable.
+func TestCLILogout_Tea_ReportsAFailedDelete(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := stubPath(t)
+	stubCLI(t, dir, "tea", `case "$1 $2" in
+"logins list") echo '[{"name":"myforge","url":"https://gitea.example.com","user":"dave"}]' ;;
+"login delete") echo "tea: could not write config" >&2; exit 1 ;;
+esac`)
+
+	err := cliLogout(t.Context(), KindGitea, "gitea.example.com")
+
+	if err == nil {
+		t.Error("cliLogout returned nil for a delete that failed, want the failure reported")
+	}
+}
+
+// The credential scrub is best-effort and warns when it fails. Nothing to
+// scrub is not a failure, so a clean disconnect must leave no warning behind:
+// a warning nobody can act on is one an operator learns to skip past.
+func TestCLILogout_Tea_CleanDisconnectLogsNoWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	logs := captureForgeLogs(t)
+	dir := stubPath(t)
+	stubCLI(t, dir, "tea", `case "$1 $2" in
+"logins list") echo '[{"name":"myforge","url":"https://gitea.example.com","user":"dave"}]' ;;
+"login delete") exit 0 ;;
+esac`)
+
+	if err := cliLogout(t.Context(), KindGitea, "gitea.example.com"); err != nil {
+		t.Fatalf("cliLogout: %v", err)
+	}
+
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Errorf("a clean disconnect logged a warning: %s", logs.String())
+	}
+}
+
+// The same on the way in: a login with no stale credential to retire warns
+// about nothing.
+func TestCLILogin_Tea_CleanLoginLogsNoWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	logs := captureForgeLogs(t)
+	dir := stubPath(t)
+	stubCLI(t, dir, "tea", "exit 0")
+
+	if err := cliLogin(t.Context(), KindGitea, "gitea.example.com", "tok"); err != nil {
+		t.Fatalf("cliLogin: %v", err)
+	}
+
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Errorf("a clean login logged a warning: %s", logs.String())
+	}
+}

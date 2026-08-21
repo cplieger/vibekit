@@ -322,3 +322,35 @@ func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 		t.Errorf("a transient internal error was told its request was refused: %q", reason)
 	}
 }
+
+// KAS normally fills both machine fields, but the payload is decoded from the
+// wire and a mapped error carrying only ONE of them is still a mapped error.
+// Treating a half-filled triplet as "no payload at all" loses the throttle
+// class on one side and the only readable token on the other, so each field is
+// enough on its own.
+func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
+	t.Run("retryErrorType alone still classifies the throttle", func(t *testing.T) {
+		err := rpcErr(t, vibekit.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
+			RetryErrorType: "THROTTLING",
+		})
+		if got := classifyPromptFailure(err); got != classThrottled {
+			t.Errorf("classifyPromptFailure(retryErrorType only) = %s, want %s", got, classThrottled)
+		}
+		if got := promptFailureReason(err); !strings.Contains(got, "already retried") {
+			t.Errorf("reason %q does not carry the throttle advice", got)
+		}
+	})
+
+	t.Run("errorType alone still names the failure", func(t *testing.T) {
+		err := rpcErr(t, vibekit.RPCCodeBridgeExited, "", mappedErrorData{
+			ErrorType: "ImprovementServiceUnavailable",
+		})
+		got := promptFailureReason(err)
+		if !strings.Contains(got, "ImprovementServiceUnavailable") {
+			t.Errorf("reason %q does not name the errorType, the only readable token it has", got)
+		}
+		if strings.Contains(got, "{") || strings.Contains(got, "errorType") {
+			t.Errorf("reason %q leaked the raw triplet at the user", got)
+		}
+	})
+}
