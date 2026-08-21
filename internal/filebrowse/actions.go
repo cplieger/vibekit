@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -81,7 +82,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("filebrowse: action failed",
-			"action", body.Action, "path", l.abs, "error", err)
+			"action", logsafe.Field(body.Action), "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(body.Action+" failed"))
 		return

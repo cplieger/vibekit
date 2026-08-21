@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -112,7 +113,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 			httpreply.NotFound(w, "not found")
 			return
 		}
-		slog.Warn("filebrowse: download open failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: download open failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
@@ -120,7 +121,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		slog.Warn("filebrowse: download stat failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: download stat failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
@@ -165,7 +166,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// Debug (not Info): the resolved path can name a workspace file and
 	// this line ships to Loki. http.ServeContent serves from the already-
 	// open, confined fd (handles Range requests + conditional headers too).
-	slog.Debug("filebrowse: download", "path", l.abs, "size", info.Size())
+	slog.Debug("filebrowse: download", "path", logsafe.Field(l.abs), "size", info.Size())
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 
@@ -192,7 +193,7 @@ func readFileError(w http.ResponseWriter, l loc, err error) {
 	case errors.Is(err, atomicfile.ErrFileTooLarge):
 		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON(errFileTooLarge))
 	default:
-		slog.Warn("filebrowse: read failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: read failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(errReadFailed))
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 )
 
 func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +45,7 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 	var body repoBody
 	decodePostBodyOptional(w, r, &body)
 	dir := h.repoDir(body.Repo)
-	slog.Info("git push", "repo", body.Repo)
+	slog.Info("git push", "repo", logsafe.Field(body.Repo))
 	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "push")
 	writeCmdResult(w, out, err)
 }
@@ -56,7 +57,7 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 	var body repoBody
 	decodePostBodyOptional(w, r, &body)
 	dir := h.repoDir(body.Repo)
-	slog.Info("git pull", "repo", body.Repo)
+	slog.Info("git pull", "repo", logsafe.Field(body.Repo))
 	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "pull", "--ff-only")
 	writeCmdResult(w, out, err)
 }

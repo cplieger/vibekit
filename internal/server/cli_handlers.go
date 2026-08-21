@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/version"
 	"github.com/cplieger/webhttp/v2"
@@ -98,7 +99,7 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 			// every failure read as success: the toggle stayed flipped, no toast
 			// fired, and the setting was not written. kiro-cli is the upstream
 			// here and it declined, which is what Bad Gateway means.
-			slog.Warn("kiro-cli settings write refused", "key", key, "error", err)
+			slog.Warn("kiro-cli settings write refused", "key", logsafe.Field(key), "error", logsafe.Field(err.Error()))
 			webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 				httpreply.ErrorJSON(strings.TrimSpace(string(out))))
 			return

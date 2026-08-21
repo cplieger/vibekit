@@ -10,6 +10,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -33,7 +34,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: write body too large",
-				"path", l.abs, "limit", maxFileSize, "error", maxErr)
+				"path", logsafe.Field(l.abs), "limit", maxFileSize, "error", logsafe.Field(maxErr.Error()))
 			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON(errFileTooLarge))
 			return
@@ -87,16 +88,16 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		[]byte(body.Content), atomicfile.WithMode(mode)); err != nil {
 		if errors.Is(err, atomicfile.ErrSymlinkTarget) || errors.Is(err, atomicfile.ErrNotRegular) {
 			slog.Warn("filebrowse: refused a write onto a non-regular target",
-				"path", l.abs, "error", err)
+				"path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 			httpreply.BadRequest(w, "not a regular file")
 			return
 		}
-		slog.Warn("filebrowse: write failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: write failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("write failed"))
 		return
 	}
-	slog.Info("filebrowse: file written", "path", l.abs, "bytes", len(body.Content))
+	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(body.Content))
 	webhttp.Ok(w)
 }
 
@@ -127,7 +128,7 @@ func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, body write
 		return true
 	}
 	if err != nil {
-		slog.Warn("filebrowse: stale-check read failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: stale-check read failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON("write failed"))
 		return false
 	}
@@ -136,7 +137,7 @@ func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, body write
 		return true
 	}
 	slog.Info("filebrowse: refused a stale write",
-		"path", l.abs, "expected", body.ExpectedHash, "actual", got)
+		"path", logsafe.Field(l.abs), "expected", logsafe.Field(body.ExpectedHash), "actual", got)
 	// The current content rides the 409 so the client can show what changed
 	// instead of asking the user to reload and compare by eye.
 	webhttp.WriteJSONStatus(w, http.StatusConflict, map[string]string{

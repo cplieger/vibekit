@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 	"golang.org/x/sync/errgroup"
 )
@@ -150,13 +151,13 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	// tab, ESC) plus DEL so slog/Loki readers see readable values
 	// and no invisible bytes survive into downstream tooling.
 	if !validateFilePath(requested) {
-		slog.Warn("git show: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(requested))
+		slog.Warn("git show: invalid path rejected", "repo", logsafe.Field(h.repoDir(repoFromQuery(r))), "path_len", len(requested))
 		httpreply.BadRequest(w, "invalid path")
 		return
 	}
 	ref := cmp.Or(r.URL.Query().Get("ref"), refHEAD)
 	if !isValidGitRef(ref) {
-		slog.Warn("git show: invalid ref rejected", "repo", h.repoDir(repoFromQuery(r)), "ref", ref)
+		slog.Warn("git show: invalid ref rejected", "repo", logsafe.Field(h.repoDir(repoFromQuery(r))), "ref", ref)
 		httpreply.BadRequest(w, "invalid ref")
 		return
 	}
@@ -193,7 +194,7 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 			webhttp.WriteJSON(w, map[string]string{"content": ""})
 			return
 		}
-		slog.Warn("git show failed", "repo", dir, "ref", ref, "path", file, "error", err, "out", scrubAuth(out))
+		slog.Warn("git show failed", "repo", logsafe.Field(dir), "ref", ref, "path", logsafe.Field(file), "error", logsafe.Field(err.Error()), "out", scrubAuth(out))
 		writeGitError(w, KindShowFailed, scrubAuth(out))
 		return
 	}
@@ -212,7 +213,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
-		slog.Debug("git log failed", "repo", dir, "ref", ref, "error", err, "out", scrubAuth(out))
+		slog.Debug("git log failed", "repo", logsafe.Field(dir), "ref", ref, "error", logsafe.Field(err.Error()), "out", scrubAuth(out))
 		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
 		return
 	}
