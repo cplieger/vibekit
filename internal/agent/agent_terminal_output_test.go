@@ -494,3 +494,225 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 		t.Errorf("ring = %q, want the head's line: the drain dropped it", got)
 	}
 }
+
+// terminalExitedPayloads returns every terminal_exited payload the runtime
+// broadcast, oldest first.
+func terminalExitedPayloads(t *testing.T, h *Runtime) []vibekit.TerminalExitedPayload {
+	t.Helper()
+	type idPayload struct {
+		p  vibekit.TerminalExitedPayload
+		id uint64
+	}
+	var found []idPayload
+	for _, e := range h.bus.fanout.Buffered() {
+		var env struct {
+			Type    string                        `json:"type"`
+			Payload vibekit.TerminalExitedPayload `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
+			t.Fatalf("unmarshal ring event: %v", err)
+		}
+		if env.Type == string(vibekit.EventTerminalExited) {
+			found = append(found, idPayload{p: env.Payload, id: e.ID})
+		}
+	}
+	slices.SortFunc(found, func(a, b idPayload) int { return cmp.Compare(a.id, b.id) })
+	out := make([]vibekit.TerminalExitedPayload, len(found))
+	for i, f := range found {
+		out[i] = f.p
+	}
+	return out
+}
+
+// TestTerminalExited_CleanExitCarriesTheExitCode pins the half of the exit
+// payload a signal death cannot show. The client picks its footer off exactly
+// one of the two fields, so an exit that carries neither leaves the tab reading
+// as still running.
+func TestTerminalExited_CleanExitCarriesTheExitCode(t *testing.T) {
+	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	h.translateACPEvent("c1", termCreateMsgArgs(t, 1, "true", nil))
+	term := singleTerm(t, h)
+	waitClosed(t, term.done, "terminal")
+
+	var payloads []vibekit.TerminalExitedPayload
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		payloads = terminalExitedPayloads(t, h)
+		if len(payloads) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("got %d terminal_exited payloads, want 1", len(payloads))
+	}
+	got := payloads[0]
+	if got.Signal != "" {
+		t.Errorf("terminal_exited Signal = %q for a clean exit, want empty", got.Signal)
+	}
+	if got.ExitCode == nil {
+		t.Fatal("terminal_exited carried neither exit_code nor signal, so the tab never leaves 'running'")
+	}
+	if *got.ExitCode != 0 {
+		t.Errorf("terminal_exited ExitCode = %d, want 0", *got.ExitCode)
+	}
+}
+
+// TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap pins the direction of the
+// output-budget comparison. outputByteLimit is the AGENT's number, so it may
+// only shrink the ring: honouring a larger one would let a request choose how
+// much memory one terminal holds.
+func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
+	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	id := int64(1)
+	// Twice the app's cap, and a command that prints more than the cap so the
+	// ring has to drop something.
+	msg := &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, map[string]any{
+		"command":         "yes a | head -n 40000",
+		"outputByteLimit": 2 * outputBufferLimit,
+	})}
+
+	h.translateACPEvent("c1", msg)
+	term := singleTerm(t, h)
+	waitClosed(t, term.done, "terminal")
+	termID := onlyTermID(t, h)
+
+	text, _, ok := h.agentTerms.Output(termID)
+	if !ok {
+		t.Fatal("Output found nothing for a registered terminal")
+	}
+	if len(text) > outputBufferLimit {
+		t.Errorf("retained %d bytes of output, want at most the app cap %d;"+
+			" an agent-supplied limit must only shrink the ring", len(text), outputBufferLimit)
+	}
+}
+
+// A terminal that outlives the turn it was created in still has its record
+// evicted at the next boundary. Eviction compares the record's CREATION turn
+// against the turn now closing, so a command released two turns after it started
+// must not leave its bytes behind — that is the growth the boundary exists to
+// stop, and the existing same-turn case cannot see it.
+func TestAdvanceTurn_EvictsARecordCreatedInAnEarlierTurn(t *testing.T) {
+	t.Parallel()
+	at := bareTerminals()
+
+	at.AdvanceTurn("c1") // the chat is now past its first turn
+	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
+	at.mu.Lock()
+	term.turnSeq = at.currentTurn("c1") // what termCreate records
+	at.mu.Unlock()
+	term.output.Write([]byte("slow\n"))
+
+	at.AdvanceTurn("c1") // the command is still running across the boundary
+
+	at.mu.Lock()
+	at.retire("t1", term)
+	at.mu.Unlock()
+	if _, ok := at.peekRetired("t1"); !ok {
+		t.Fatal("Setup: the record was not retired, so the eviction below asserts nothing")
+	}
+
+	at.AdvanceTurn("c1")
+	if raw, ok := at.peekRetired("t1"); ok {
+		t.Errorf("peekRetired(t1) = (%q, true) after the boundary, want it evicted;"+
+			" a record from an earlier turn grows with the session", raw)
+	}
+}
+
+// A chunk that renders to nothing must not become an event. A read can land on
+// output consisting only of characters the sanitizer deletes — bidi and
+// zero-width controls, which agent output does carry — and broadcasting an empty
+// terminal_output for each one puts no-op frames on every client's SSE
+// connection and an empty span base into the transcript.
+func TestTerminalEmitter_AChunkThatRendersToNothingIsNotBroadcast(t *testing.T) {
+	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	term := newAgentTerminal(nil, "c1", 4096)
+	emit := h.agentTerms.emitter(t.Context(), term, "t1", "c1")
+
+	emit("\u202c\u200b") // a bidi pop and a zero-width space, both deleted
+
+	if got := terminalOutputPayloads(t, h); len(got) != 0 {
+		t.Errorf("emitter broadcast %d terminal_output payloads for text the sanitizer deletes,"+
+			" want 0: %+v", len(got), got)
+	}
+	// A chunk that does render still goes out, or the guard above would be a mute
+	// button rather than a filter.
+	emit("visible")
+	got := terminalOutputPayloads(t, h)
+	if len(got) != 1 {
+		t.Fatalf("got %d terminal_output payloads after a renderable chunk, want 1: %+v", len(got), got)
+	}
+	if got[0].Data != "visible" {
+		t.Errorf("payload Data = %q, want %q", got[0].Data, "visible")
+	}
+}
+
+// The interrupt's record of what it tore down is reported only when it tore
+// something down. An operator reading the log needs to tell "cancel killed the
+// running command" from "cancel found nothing to kill", and a line that fires
+// either way — or only on the empty case — answers neither question.
+//
+// No t.Parallel: captureLogs swaps the process-global slog default.
+func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
+	const wantLine = "interrupt: killed the turn's terminals"
+
+	t.Run("nothing_to_kill", func(t *testing.T) {
+		at := bareTerminals()
+		logs := captureLogs(t)
+		at.KillForTurn("c1")
+		if got := logs.String(); strings.Contains(got, wantLine) {
+			t.Errorf("KillForTurn(chat with no terminals) logged %q, want no teardown line", got)
+		}
+	})
+
+	t.Run("one_terminal_killed", func(t *testing.T) {
+		at := bareTerminals()
+		term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
+		at.terms["t1"] = term
+		at.byChatID["c1"] = []string{"t1"}
+
+		logs := captureLogs(t)
+		at.KillForTurn("c1")
+		if got := logs.String(); !strings.Contains(got, wantLine) {
+			t.Errorf("KillForTurn(chat with a live terminal) logged %q, want a teardown line", got)
+		}
+		at.mu.Lock()
+		left := len(at.terms)
+		at.mu.Unlock()
+		if left != 0 {
+			t.Errorf("terms size = %d after KillForTurn, want 0", left)
+		}
+	})
+}
+
+// An unimplemented terminal verb must be refused, and a refusal the bridge would
+// not take is the one case that wedges the turn: Bridge.Call carries no
+// client-side deadline, so an unanswered request waits forever and this log line
+// is the only trace of it.
+//
+// No t.Parallel: captureLogs swaps the process-global slog default.
+func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
+	const wantLine = "terminal refusal could not be delivered"
+	id := int64(77)
+	msg := &vibekit.RPCResponse{ID: &id, Method: "terminal/not_a_verb"}
+
+	t.Run("refusal_refused", func(t *testing.T) {
+		h := hubWithBridge(t, t.TempDir(), &droppingBridge{fakeBridge: newFakeBridge()})
+		logs := captureLogs(t)
+		h.handleTerminalRequest(t.Context(), "c1", "terminal/not_a_verb", msg)
+		if got := logs.String(); !strings.Contains(got, wantLine) {
+			t.Errorf("handleTerminalRequest(unimplemented verb, refusing bridge) logged %q,"+
+				" want an undeliverable-refusal line", got)
+		}
+	})
+
+	t.Run("refusal_delivered", func(t *testing.T) {
+		h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+		logs := captureLogs(t)
+		h.handleTerminalRequest(t.Context(), "c1", "terminal/not_a_verb", msg)
+		if got := logs.String(); strings.Contains(got, wantLine) {
+			t.Errorf("handleTerminalRequest(unimplemented verb, accepting bridge) logged %q,"+
+				" want no undeliverable-refusal line", got)
+		}
+	})
+}

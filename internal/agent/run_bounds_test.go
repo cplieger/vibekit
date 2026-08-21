@@ -951,8 +951,11 @@ func TestRecordRunEnd_IsBounded(t *testing.T) {
 	order := len(h.bounds.order)
 	h.mu.Unlock()
 
-	if got > maxRunEndReasons {
-		t.Errorf("kept %d reasons, cap is %d", got, maxRunEndReasons)
+	// Exactly the cap, not merely at-most: the bound is what the map is allowed
+	// to hold, so evicting one entry early quietly shrinks the history a
+	// finished run's row reads.
+	if got != maxRunEndReasons {
+		t.Errorf("kept %d reasons, want exactly the cap %d", got, maxRunEndReasons)
 	}
 	if order != got {
 		t.Errorf("the eviction queue (%d) and the map (%d) disagree", order, got)

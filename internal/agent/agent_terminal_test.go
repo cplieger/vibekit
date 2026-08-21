@@ -607,3 +607,70 @@ func processAlive(pid int) bool {
 	}
 	return s[i+2] != 'Z'
 }
+
+// A stream that ends in the middle of an escape sequence must still deliver the
+// bytes it held. The parser buffers an incomplete sequence waiting for its final
+// byte, and at EOF no final byte is coming — so without the release the tail
+// disappears from the transcript instead of showing as the truncated sequence it
+// is, and a command killed mid-write silently loses its last characters.
+func TestPumpTerminalOutput_ReleasesATruncatedEscapeSequenceAtEOF(t *testing.T) {
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
+
+	// "hi" parses out as text; "\x1b[3" is a CSI sequence with no final byte, so
+	// the parser holds it and neutralizes the ESC on release.
+	_, broadcast := pumpBroadcast(t, h, []byte("hi\x1b[3"), 8)
+
+	const want = "hi\uFFFD[3"
+	if got := string(broadcast); got != want {
+		t.Errorf("pumpOutput broadcast %q for %q, want %q", got, "hi\x1b[3", want)
+	}
+}
+
+// exitStatusFromState must report a clean exit as a code with no signal. Its
+// signal branch exists because ProcessState.ExitCode() is -1 on signal death,
+// and exit code 0 is the value that sits closest to that boundary: reading it as
+// "not a real exit code" would report every successful command as a signal
+// death, which the client paints as a failure.
+func TestExitStatusFromState_CleanExitIsACodeNotASignal(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Setup: sh -c 'exit 0' error = %v", err)
+	}
+	code, signal := exitStatusFromState(cmd.ProcessState)
+	if code != 0 || signal != "" {
+		t.Errorf("exitStatusFromState(exit 0) = (%d, %q), want (0, \"\")", code, signal)
+	}
+
+	cmd = exec.Command("sh", "-c", "exit 7")
+	if err := cmd.Run(); err == nil {
+		t.Fatal("Setup: sh -c 'exit 7' error = nil, want a non-zero exit")
+	}
+	code, signal = exitStatusFromState(cmd.ProcessState)
+	if code != 7 || signal != "" {
+		t.Errorf("exitStatusFromState(exit 7) = (%d, %q), want (7, \"\")", code, signal)
+	}
+}
+
+// Bytes held back as an incomplete rune must still reach the transcript when the
+// stream ends. The pump carries a truncated multi-byte rune forward so no chunk
+// is invalid UTF-8, and at EOF the carry has nowhere left to go — dropping it
+// would silently lose the last characters of any command killed mid-write, while
+// the ring kept them, so the two views of the same output would disagree.
+func TestPumpTerminalOutput_DeliversTheHeldRuneTailAtEOF(t *testing.T) {
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
+
+	// "hi" then the first two bytes of "€": complete text, then a rune whose
+	// third byte never arrives.
+	data := []byte{'h', 'i', 0xE2, 0x82}
+	ring, broadcast := pumpBroadcast(t, h, data, 8)
+
+	if !bytes.Equal(ring, data) {
+		t.Errorf("ring = %x, want the raw input %x", ring, data)
+	}
+	const want = "hi\uFFFD\uFFFD"
+	if got := string(broadcast); got != want {
+		t.Errorf("pumpOutput broadcast %q for %x, want %q (one replacement per held byte)", got, data, want)
+	}
+}
