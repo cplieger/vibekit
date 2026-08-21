@@ -1,7 +1,9 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,5 +262,94 @@ func TestStart_RefusesNilLifetime(t *testing.T) {
 	}
 	if b.SessionID() != "" {
 		t.Errorf("refused Start left a session id (%q); nothing should have been spawned", b.SessionID())
+	}
+}
+
+// A chat that picked a role reaches its new session as a mode switch. v3's
+// session/new always starts in the engine default, so the switch is the only
+// door — a chat opened in a bundled mode or a workspace agent-as-mode would
+// otherwise silently run as vibe.
+func TestNewSession_AppliesRequestedMode(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "requests.log")
+	scriptPath := configOptionFake(t, logPath)
+
+	b := New(scriptPath, dir)
+	t.Cleanup(b.Stop)
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Mode: "spec"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read request log: %v", err)
+	}
+	got := string(raw)
+	for _, want := range []string{`"method":"session/set_mode"`, `"modeId":"spec"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("request log does not contain %s\nlog:\n%s", want, got)
+		}
+	}
+	if mode := b.CurrentMode(); mode != "spec" {
+		t.Errorf("CurrentMode() = %q, want spec", mode)
+	}
+}
+
+// A mode the session is already in costs no round trip.
+func TestNewSession_SkipsRedundantModeSwitch(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "requests.log")
+	scriptPath := configOptionFake(t, logPath)
+
+	b := New(scriptPath, dir)
+	t.Cleanup(b.Stop)
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background()}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read request log: %v", err)
+	}
+	if strings.Contains(string(raw), `"method":"session/set_mode"`) {
+		t.Errorf("an unset mode sent a switch it did not need\nlog:\n%s", raw)
+	}
+}
+
+// The session-config appliers are best-effort and report a failure by logging,
+// so a warning is the only signal the operator gets that a chat is not running
+// the model or the effort it asked for. A start where every call succeeded must
+// stay quiet, or that signal means nothing.
+//
+// Not parallel: it swaps the process-wide slog default.
+func TestNewSession_SuccessfulConfigCallsStayQuiet(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
+
+	logs := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	b := New(scriptPath, dir)
+	t.Cleanup(b.Stop)
+	opts := &vibekit.StartOpts{
+		Lifetime: context.Background(),
+		Model:    "claude-opus-5",
+		Effort:   "high",
+		Mode:     "spec",
+	}
+	if err := b.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	for _, unwanted := range []string{
+		`msg="apply initial session model"`,
+		`msg="apply initial reasoning effort"`,
+		`msg="apply initial session mode"`,
+	} {
+		if strings.Contains(logs.String(), unwanted) {
+			t.Errorf("a successful start logged %q\nlog:\n%s", unwanted, logs.String())
+		}
 	}
 }

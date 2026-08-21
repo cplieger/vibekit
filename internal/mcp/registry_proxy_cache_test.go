@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -148,5 +149,67 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 				})
 			}
 		})
+	})
+}
+
+// The TTL edge belongs to the expired side, and the reader and the evictor have
+// to agree on that. They ask the question in opposite directions — the reader
+// asks whether an entry is still fresh, the evictor whether it has expired — so
+// an entry sitting exactly on the edge is where the two can disagree, and a
+// disagreement means an entry the reader keeps serving that the evictor has
+// already decided is gone.
+//
+// A synthetic clock rather than a real one: the boundary is one instant, and no
+// real-clock test can land on it.
+func TestRegistryCache_theTTLEdgeIsExpired(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := NewRegistryProxy()
+		fetches := 0
+		fetch := func() ([]byte, error) {
+			fetches++
+			return []byte("upstream"), nil
+		}
+
+		p.cache.entries["k"] = registryCacheEntry{insertedAt: time.Now(), body: []byte("cached")}
+
+		// A nanosecond short of the TTL is still fresh, so nothing is fetched.
+		synctest.Sleep(registryCacheTTL - time.Nanosecond)
+		body, cached, err := p.cache.GetOrFetch(t.Context(), "k", fetch)
+		if err != nil {
+			t.Fatalf("GetOrFetch a nanosecond inside the TTL: %v", err)
+		}
+		if !cached || string(body) != "cached" {
+			t.Errorf("GetOrFetch a nanosecond inside the TTL = (%q, cached=%v), want the cached body",
+				body, cached)
+		}
+		if fetches != 0 {
+			t.Errorf("a fresh entry caused %d upstream fetches, want 0", fetches)
+		}
+
+		// On the edge it is stale, so the reader goes upstream.
+		synctest.Sleep(time.Nanosecond)
+		body, _, err = p.cache.GetOrFetch(t.Context(), "k", fetch)
+		if err != nil {
+			t.Fatalf("GetOrFetch exactly on the TTL: %v", err)
+		}
+		if string(body) != "upstream" {
+			t.Errorf("GetOrFetch exactly on the TTL = %q, want a fresh fetch", body)
+		}
+		if fetches != 1 {
+			t.Errorf("an entry exactly on the TTL caused %d upstream fetches, want 1", fetches)
+		}
+
+		// And the evictor agrees: the entry it just replaced is collectable the
+		// instant it reaches the same age.
+		p.cache.entries["old"] = registryCacheEntry{insertedAt: time.Now(), body: []byte("x")}
+		synctest.Sleep(registryCacheTTL)
+		p.cache.mu.Lock()
+		p.cache.evictLocked()
+		_, survived := p.cache.entries["old"]
+		p.cache.mu.Unlock()
+		if survived {
+			t.Errorf("an entry exactly %v old survived eviction; the evictor and the reader "+
+				"disagree about the TTL edge", registryCacheTTL)
+		}
 	})
 }

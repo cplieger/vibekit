@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"testing"
 
@@ -441,5 +442,130 @@ func TestPolicyExplainShellRequiresResource(t *testing.T) {
 	}
 	if len(f.explainReqs) != 0 {
 		t.Errorf("explain forwarded despite missing resource: %+v", f.explainReqs)
+	}
+}
+
+// An update that leaves the effect where it is widens nothing, so it costs no
+// confirmation. The gate exists for a change that grants the agent more than it
+// had; demanding a confirm for a no-op would train the user to send one every
+// time, which is how the gate stops meaning anything.
+func TestPolicyRuleUpdate_UnchangedEffectNeedsNoConfirm(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	t.Setenv("HOME", home)
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+		Rules: []policyfile.Rule{{Capability: "shell", Effect: "ask", Match: []string{"rm *"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{workDir: work}
+
+	rec := postRules(t, s, policyRuleBody{
+		Op: "update", Scope: "workspace", Capability: "shell",
+		Effect: "ask", NewEffect: "ask", Match: []string{"rm *"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; an unchanged effect widens nothing. body=%s",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// The shadowing guard belongs to ALLOW rules and to no other kind. An allow that
+// an explicit ask already covers is silently inert once written, so it is refused
+// instead — and the deny and ask rules that cannot be shadowed that way must not
+// be sent through the same round trip to KAS.
+func TestPolicyRuleAdd_GuardChecksAllowRulesOnly(t *testing.T) {
+	seed := func(t *testing.T) (*Server, *fakePolicy, string) {
+		t.Helper()
+		home := t.TempDir()
+		work := t.TempDir()
+		t.Setenv("HOME", home)
+		f := &fakePolicy{explain: &vibekit.PolicyExplainResult{IsExplicitAsk: true}}
+		wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+		return &Server{workDir: work, policy: f}, f, wp
+	}
+
+	t.Run("an_allow_shadowed_by_an_ask_is_refused", func(t *testing.T) {
+		s, f, wp := seed(t)
+		rec := postRules(t, s, policyRuleBody{
+			Op: "add", Scope: "workspace", Capability: "shell", Effect: "allow",
+			Match: []string{"rm *"}, GuardResource: "rm -rf /",
+		})
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+		}
+		if len(f.explainReqs) != 1 {
+			t.Errorf("the guard consulted the live policy %d times, want 1", len(f.explainReqs))
+		}
+		if _, err := os.Stat(wp); err == nil {
+			t.Error("the refused rule was written anyway")
+		}
+	})
+
+	t.Run("a_deny_is_written_without_consulting_the_live_policy", func(t *testing.T) {
+		s, f, wp := seed(t)
+		rec := postRules(t, s, policyRuleBody{
+			Op: "add", Scope: "workspace", Capability: "shell", Effect: "deny",
+			Match: []string{"rm *"}, GuardResource: "rm -rf /",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if len(f.explainReqs) != 0 {
+			t.Errorf("a deny rule consulted the live policy %d times, want 0", len(f.explainReqs))
+		}
+		file, err := policyfile.Load(wp)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if len(file.Rules) != 1 || file.Rules[0].Effect != "deny" {
+			t.Errorf("written rules = %+v, want one deny rule", file.Rules)
+		}
+	})
+}
+
+// The scope filter keeps a scoped read to its own file. Inverting it would serve
+// the workspace's rules under the user scope and the other way round, which the
+// panel shows as provenance the user then edits the wrong file from.
+func TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	t.Setenv("HOME", home)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
+	if err := policyfile.Save(t.Context(), up, &policyfile.File{
+		Rules: []policyfile.Rule{{Capability: "web_fetch", Effect: "allow"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+		Rules: []policyfile.Rule{{Capability: "fs_write", Effect: "deny", Match: []string{"src/**"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{workDir: work}
+
+	tests := []struct {
+		scope          string
+		wantCapability string
+	}{
+		{scope: policyfile.ScopeUser, wantCapability: "web_fetch"},
+		{scope: policyfile.ScopeWorkspace, wantCapability: "fs_write"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.scope, func(t *testing.T) {
+			got := s.policyRulesFromFiles(tt.scope)
+			if len(got) != 1 {
+				t.Fatalf("policyRulesFromFiles(%q) returned %d rules, want 1: %+v", tt.scope, len(got), got)
+			}
+			if got[0].Capability != tt.wantCapability {
+				t.Errorf("policyRulesFromFiles(%q) capability = %q, want %q",
+					tt.scope, got[0].Capability, tt.wantCapability)
+			}
+			if got[0].Scope != tt.scope {
+				t.Errorf("policyRulesFromFiles(%q) scope = %q, want %q", tt.scope, got[0].Scope, tt.scope)
+			}
+		})
 	}
 }

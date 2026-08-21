@@ -3233,6 +3233,52 @@ func TestSanitizeBranchName(t *testing.T) {
 	}
 }
 
+// Each prompt template renders against the data map its builder passes.
+// template.Must only proves the template PARSES; a field reference the
+// builder does not supply fails at execute time, and the builder answers
+// that by logging and returning whatever it had rendered so far — so a
+// silently truncated prompt reaching the model is visible only in the log.
+func TestPromptBuilders_renderAgainstTheirData(t *testing.T) {
+	t.Run("commit", func(t *testing.T) {
+		logs := captureLogs(t)
+		got := buildCommitPrompt("recent history", "the staged diff")
+		if strings.Contains(logs.String(), "commit prompt template execute failed") {
+			t.Errorf("buildCommitPrompt(%q, %q) logged a template failure: %s",
+				"recent history", "the staged diff", logs.String())
+		}
+		if !strings.Contains(got, "the staged diff") {
+			t.Errorf("buildCommitPrompt(%q, %q) = %q, want it to carry the diff",
+				"recent history", "the staged diff", got)
+		}
+	})
+
+	t.Run("pr", func(t *testing.T) {
+		logs := captureLogs(t)
+		got := buildPRPrompt("the commit log", "the branch diff")
+		if strings.Contains(logs.String(), "pr prompt template execute failed") {
+			t.Errorf("buildPRPrompt(%q, %q) logged a template failure: %s",
+				"the commit log", "the branch diff", logs.String())
+		}
+		if !strings.Contains(got, "the branch diff") {
+			t.Errorf("buildPRPrompt(%q, %q) = %q, want it to carry the diff",
+				"the commit log", "the branch diff", got)
+		}
+	})
+
+	t.Run("branch", func(t *testing.T) {
+		logs := captureLogs(t)
+		got := buildBranchPrompt("main\nfeat/old", "the work in progress")
+		if strings.Contains(logs.String(), "branch prompt template execute failed") {
+			t.Errorf("buildBranchPrompt(%q, %q) logged a template failure: %s",
+				"main\nfeat/old", "the work in progress", logs.String())
+		}
+		if !strings.Contains(got, "the work in progress") {
+			t.Errorf("buildBranchPrompt(%q, %q) = %q, want it to carry the context",
+				"main\nfeat/old", "the work in progress", got)
+		}
+	})
+}
+
 // The branch-name endpoint: the model's raw output is sanitized into the
 // response, and the prompt carries the repo's uncommitted context.
 func TestHandleBranchName(t *testing.T) {

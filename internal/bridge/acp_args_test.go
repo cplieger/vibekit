@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"bytes"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -168,5 +170,27 @@ func TestBuildACPArgsPrecedesExtraArgs(t *testing.T) {
 	// The derived prefix must survive verbatim.
 	if !slices.Equal(full[:len(derived)], derived) {
 		t.Errorf("derived prefix changed: %v, want %v", full[:len(derived)], derived)
+	}
+}
+
+// The counts are the whole diagnostic. Values are deliberately never logged —
+// a compose-expansion mistake or a value-bearing flag could put a secret in the
+// log — so an operator whose flag vanished has nothing but "kept N, refused M"
+// to reconcile against what they set.
+//
+// Not parallel: it swaps the process-wide slog default.
+func TestParseACPArgs_LogsHowManyItKeptAndRefused(t *testing.T) {
+	logs := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const raw = "--agent-engine v2 -v"
+	ParseACPArgs(raw)
+
+	for _, want := range []string{"acp_args_count=1", "refused_count=2"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("ParseACPArgs(%q) log does not contain %s\nlog:\n%s", raw, want, logs.String())
+		}
 	}
 }

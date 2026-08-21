@@ -1,9 +1,16 @@
 package bridge
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // envNames pulls the NAMEs out of a composed environment so a case can assert on
@@ -134,6 +141,20 @@ func TestScreenBridgeEnv_OverlayIsExemptAndStaysLast(t *testing.T) {
 	}
 }
 
+// The overlay is appended whether or not anything was inherited. A server whose
+// inherited environment is empty still has to receive vibekit's own overlay,
+// which is what puts the active install's directory at the front of PATH.
+func TestScreenBridgeEnv_OverlayLandsWithNothingInherited(t *testing.T) {
+	overlay := []string{"PATH=/config/tools/kiro-cli-versions/2.18.1", "VIBEKIT_HOME=/config"}
+	env, dropped := screenBridgeEnv(nil, overlay, nil)
+	if !slices.Equal(env, overlay) {
+		t.Errorf("screenBridgeEnv(nil, %v, nil) env = %v, want %v", overlay, env, overlay)
+	}
+	if len(dropped) != 0 {
+		t.Errorf("screenBridgeEnv(nil, %v, nil) dropped = %v, want nothing", overlay, dropped)
+	}
+}
+
 // The override, which is what keeps a false positive from being a reason to
 // disable the whole screen.
 func TestScreenBridgeEnv_OperatorOverridePassesTheNameThrough(t *testing.T) {
@@ -216,4 +237,75 @@ func FuzzScreenBridgeEnv(f *testing.F) {
 			}
 		}
 	})
+}
+
+// envDumpFake writes a fake kiro-cli that records the environment it was spawned
+// with before answering the handshake, so a test can assert on what the child
+// actually received rather than on what the composer returned.
+func envDumpFake(t *testing.T, dir, dumpPath string) string {
+	t.Helper()
+	script := `#!/bin/sh
+env > "` + dumpPath + `"
+while IFS= read -r line; do
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    session/new)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-env"}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      fi
+      ;;
+  esac
+done
+`
+	scriptPath := filepath.Join(dir, "env-dump-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake script: %v", err)
+	}
+	return scriptPath
+}
+
+// The screen holds through a real spawn, and the operator is told which names it
+// took away. Both halves matter: the unit cases above prove the composer's
+// answer, and this proves the spawn uses it — a screen applied to a value the
+// spawn then ignored would pass every one of them. The log is the only notice an
+// operator gets that a variable they set never reached the agent, so a silent
+// drop is a support call about a tool that "doesn't authenticate".
+//
+// Not parallel: it sets an environment variable and swaps the slog default.
+func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
+	const probe = "VIBEKIT_SPAWN_PROBE_TOKEN"
+	t.Setenv(probe, "shh")
+
+	dir := t.TempDir()
+	dumpPath := filepath.Join(dir, "child.env")
+	scriptPath := envDumpFake(t, dir, dumpPath)
+
+	logs := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	b := New(scriptPath, dir)
+	t.Cleanup(b.Stop)
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background()}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	dump, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read the child environment dump: %v", err)
+	}
+	if strings.Contains(string(dump), probe) {
+		t.Errorf("%s reached the kiro-cli environment; the spawn does not apply the credential screen", probe)
+	}
+	if !strings.Contains(logs.String(), probe) {
+		t.Errorf("the spawn dropped %s without naming it in the log:\n%s", probe, logs.String())
+	}
 }

@@ -10,6 +10,7 @@ package mcp
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -296,20 +297,50 @@ func TestFieldErrors_WalksAWrappedJoin(t *testing.T) {
 // TestFieldErrors_Bounded pins that accumulation cannot be turned into an
 // unbounded allocation by a hostile payload: a paste naming thousands of bad tool
 // names describes one mistake and must not build thousands of messages.
+//
+// Both layers that enforce the cap get their own case, and both assert it
+// EXACTLY. A one-sided "no more than" check passes for a cap that admits one
+// extra entry, and each layer masks the other unless it is handed more failures
+// than the layer beneath it can produce.
 func TestFieldErrors_Bounded(t *testing.T) {
-	tools := make([]string, 0, 400)
-	for range 400 {
-		tools = append(tools, "bad\x01name")
-	}
-	err := Validate(&Server{
-		Name: "ok", Transport: TransportStdio, Command: "bash", DisabledTools: tools,
+	t.Run("accumulating_a_hostile_record", func(t *testing.T) {
+		tools := make([]string, 0, 400)
+		for range 400 {
+			tools = append(tools, "bad\x01name")
+		}
+		// Both lists, so more failures arrive at the outer accumulator than one
+		// sub-validator can hand it.
+		err := Validate(&Server{
+			Name: "ok", Transport: TransportStdio, Command: "bash",
+			DisabledTools: tools, AutoApprove: tools,
+		})
+		if err == nil {
+			t.Fatal("Validate accepted 800 control-bearing tool names")
+		}
+		joined, ok := err.(interface{ Unwrap() []error })
+		if !ok {
+			t.Fatalf("Validate returned %T, want a joined error", err)
+		}
+		if n := len(joined.Unwrap()); n != maxFieldErrors {
+			t.Errorf("Validate accumulated %d failures, want exactly the %d cap", n, maxFieldErrors)
+		}
+		if n := len(FieldErrors(err)); n != maxFieldErrors {
+			t.Errorf("FieldErrors returned %d entries, want exactly the %d cap", n, maxFieldErrors)
+		}
 	})
-	if err == nil {
-		t.Fatal("Validate accepted 400 control-bearing tool names")
-	}
-	if n := len(FieldErrors(err)); n > maxFieldErrors {
-		t.Errorf("FieldErrors returned %d entries, over the %d cap", n, maxFieldErrors)
-	}
+
+	t.Run("flattening_an_oversized_tree", func(t *testing.T) {
+		// FieldErrors is exported and walks whatever it is handed, so its own
+		// bound has to hold for a tree larger than any this package builds.
+		leaves := make([]error, 0, maxFieldErrors*2)
+		for i := range maxFieldErrors * 2 {
+			leaves = append(leaves, &FieldError{Field: "name", Msg: fmt.Sprintf("bad %d", i)})
+		}
+		if n := len(FieldErrors(errors.Join(leaves...))); n != maxFieldErrors {
+			t.Errorf("FieldErrors of a %d-leaf tree returned %d entries, want exactly the %d cap",
+				len(leaves), n, maxFieldErrors)
+		}
+	})
 }
 
 // TestValidate_CleanRecordsStayClean is the guard against an accumulator that

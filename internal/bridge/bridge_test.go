@@ -918,6 +918,44 @@ func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
 			t.Errorf("Record() straight after a summary = %v, want parseErrSuppress: "+
 				"the window must restart at the summary, or a storm emits one line per frame", got)
 		}
+		// The edge belongs to the window it closes: an error arriving exactly one
+		// cadence after the last summary is still inside it, and only the instant
+		// after that is due for the next line. A strict comparison is what keeps
+		// the cadence a floor rather than an approximation.
+		synctest.Sleep(parseErrWindow)
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Errorf("Record() exactly %v after the summary = %v, want parseErrSuppress", parseErrWindow, got)
+		}
+		synctest.Sleep(time.Nanosecond)
+		if got := tr.Record(); got != parseErrSummarize {
+			t.Errorf("Record() a nanosecond past the cadence = %v, want parseErrSummarize", got)
+		}
+	})
+}
+
+// The summary window opens when the verbatim burst ENDS, not when the storm
+// began. A storm that trickles — most of the burst, a long quiet spell, then the
+// last verbatim line — must still get a full window before its first summary; a
+// window anchored earlier would summarize the very next line and lose the
+// cadence for the rest of the storm.
+func TestParseErrTracker_TheWindowOpensWhenTheBurstEnds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var tr parseErrTracker
+		for range parseErrBurst - 1 {
+			if got := tr.Record(); got != parseErrLog {
+				t.Fatalf("burst Record() = %v, want parseErrLog", got)
+			}
+		}
+		// Long enough that a window anchored at the storm's start is already
+		// stale, short enough that the storm has not decayed.
+		synctest.Sleep(parseErrWindow + time.Second)
+		if got := tr.Record(); got != parseErrLog {
+			t.Fatalf("the last verbatim Record() = %v, want parseErrLog", got)
+		}
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Errorf("Record() straight after the burst = %v, want parseErrSuppress: "+
+				"nothing is due to be summarized until a window has passed since the burst ended", got)
+		}
 	})
 }
 
@@ -943,6 +981,15 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 			t.Fatalf("Record() past the burst = %v, want parseErrSuppress", got)
 		}
 
+		// The edge belongs to the storm: quiet for exactly parseErrDecay is not yet
+		// a decayed storm, so this line is still part of it and gets a summary
+		// rather than the verbatim treatment a fresh burst would earn.
+		synctest.Sleep(parseErrDecay)
+		if got := tr.Record(); got != parseErrSummarize {
+			t.Errorf("Record() after exactly %v of quiet = %v, want parseErrSummarize: "+
+				"the burst must not restart until the decay is exceeded", parseErrDecay, got)
+		}
+
 		synctest.Sleep(parseErrDecay + time.Second)
 
 		// The burst is back: the storm window was reset, so this line is emitted
@@ -957,9 +1004,9 @@ func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
 
 		// The breaker is NOT back. consecutive has counted every error, decay
 		// included, so one more than the ceiling away from it still trips.
-		if tr.consecutive != parseErrBurst+7 {
+		if tr.consecutive != parseErrBurst+8 {
 			t.Fatalf("consecutive = %d, want %d: decay must not touch the breaker's count",
-				tr.consecutive, parseErrBurst+7)
+				tr.consecutive, parseErrBurst+8)
 		}
 		for range parseErrMaxConsecutive - tr.consecutive - 1 {
 			tr.Record()

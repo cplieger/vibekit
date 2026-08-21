@@ -322,6 +322,65 @@ func TestScanKiroDocs_PerCategoryCap(t *testing.T) {
 	}
 }
 
+// The cap binds on the entry-listed categories too. They stop at their own
+// counter rather than trimming a finished slice, so an off-by-one there ships
+// the extra row instead of discarding it.
+func TestScanKiroDocs_PerCategoryCapAppliesToSkillsAndAgents(t *testing.T) {
+	fsys := fstest.MapFS{}
+	for i := range maxDocsPerCategory + 25 {
+		fsys[fmt.Sprintf("skills/s%04d/SKILL.md", i)] = &fstest.MapFile{Data: []byte("---\ndescription: x\n---\n")}
+		fsys[fmt.Sprintf("agents/a%04d.md", i)] = &fstest.MapFile{Data: []byte("---\ndescription: x\n---\n")}
+	}
+	docs := scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil)
+	if got := len(docsByCategory(docs, catSkill)); got != maxDocsPerCategory {
+		t.Errorf("skill count = %d, want %d (capped)", got, maxDocsPerCategory)
+	}
+	if got := len(docsByCategory(docs, catAgent)); got != maxDocsPerCategory {
+		t.Errorf("agent count = %d, want %d (capped)", got, maxDocsPerCategory)
+	}
+}
+
+// The spec walk is depth-bounded, and both sides of the bound matter: a feature
+// nested to the limit still contributes its documents, and anything below the
+// limit is not walked at all. A bound that admitted more would walk a workspace's
+// whole source tree if somebody dropped a `specs/` directory at its root.
+func TestScanKiroDocs_SpecWalkDepthBound(t *testing.T) {
+	deepest := strings.Repeat("d/", maxSpecWalkDepth)
+	fsys := fstest.MapFS{
+		"specs/" + deepest + "atlimit.md":     {Data: []byte("# At The Limit\n")},
+		"specs/" + deepest + "over/beyond.md": {Data: []byte("# Beyond\n")},
+	}
+	specs := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil), catSpec)
+	var names []string
+	for _, d := range specs {
+		names = append(names, d.Name)
+	}
+	if !slices.Contains(names, "At The Limit") {
+		t.Errorf("rows = %v, want a document %d directories deep to be walked", names, maxSpecWalkDepth)
+	}
+	if slices.Contains(names, "Beyond") {
+		t.Errorf("rows = %v, want nothing below %d directories deep", names, maxSpecWalkDepth)
+	}
+}
+
+// A walk that finished cleanly says nothing. The warning exists for a tree that
+// could not be read, so one on every render would bury it.
+//
+// Not parallel: it swaps the process-wide slog default.
+func TestScanKiroDocs_CleanWalkIsSilent(t *testing.T) {
+	logs := captureLogs(t)
+	fsys := fstest.MapFS{
+		"steering/a.md":         {Data: []byte("---\ndescription: A\n---\n")},
+		"specs/alpha/design.md": {Data: []byte("# Design\n")},
+	}
+	if docs := scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil); len(docs) != 2 {
+		t.Fatalf("got %d rows, want 2", len(docs))
+	}
+	if strings.Contains(logs.String(), "kiro docs: walk") {
+		t.Errorf("a clean walk reported an error:\n%s", logs.String())
+	}
+}
+
 // TestScanKiroDocs_CancelledContextStops pins that a cancelled request does not
 // keep walking the tree.
 func TestScanKiroDocs_CancelledContextStops(t *testing.T) {
@@ -407,6 +466,21 @@ func TestCollectKiroDocs_CachesOnSignature(t *testing.T) {
 	third := srv.collectKiroDocs(t.Context())
 	if len(third) != 2 {
 		t.Errorf("after adding a doc got %d rows, want 2 (the signature must invalidate)", len(third))
+	}
+
+	// An in-place body edit is the documented limit of the key: it moves neither
+	// a directory mtime nor an entry name, so the cached rows are what comes
+	// back. Asserted rather than left implicit, because it is the only proof
+	// that the cached SLICE is served at all — a cache that silently rescanned
+	// every call would return the same row count and the same signature.
+	writeFile(t, dir, ".kiro/steering/a.md", "---\ndescription: EDITED\n---\n")
+	fourth := srv.collectKiroDocs(t.Context())
+	edited, ok := findDoc(fourth, "a")
+	if !ok {
+		t.Fatalf("the edited doc lost its row: %+v", fourth)
+	}
+	if edited.Description != "A" {
+		t.Errorf("description after an in-place edit = %q, want the cached %q", edited.Description, "A")
 	}
 }
 
