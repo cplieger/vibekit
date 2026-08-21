@@ -136,8 +136,11 @@ describe("tokenize per language", () => {
     {
       lang: "docker",
       input: `# install deps\nRUN npm ci`,
-      expectSpans: [],
-      desc: "Dockerfile: falls through to plain text (no KEYWORDS entry)",
+      expectSpans: [
+        { type: "comment", value: "# install deps" },
+        { type: "keyword", value: "RUN" },
+      ],
+      desc: "Dockerfile: hash comment and an instruction keyword",
     },
     {
       lang: "toml",
@@ -326,6 +329,11 @@ describe("normalizeLang", () => {
     ["ruby", "rb"],
     ["c++", "c"],
     ["cplusplus", "c"],
+    // "docker" is the only language key that is not also its own extension, so
+    // it is the one tag that has to be found in SUPPORTED_LANGUAGES itself.
+    ["docker", "docker"],
+    // The fenced tag, which resolves through the extension registry instead.
+    ["dockerfile", "docker"],
     ["", ""],
     ["  Go  ", "go"],
     ["nonexistent", ""],
@@ -353,7 +361,7 @@ describe("highlightByLang property-based fuzz", () => {
     "json",
     "css",
     "html",
-    "dockerfile",
+    "docker",
     "toml",
     "",
   ];
@@ -587,6 +595,20 @@ describe("language routing", () => {
       { type: "keyword", value: "func" },
       { type: "punctuation", value: "(" },
       { type: "punctuation", value: ")" },
+    ]);
+  });
+
+  // The path the editor takes, and the one that was broken: a Dockerfile has no
+  // extension, so `filename.split(".").pop()` yields the whole name, which the
+  // extension registry maps to the language key "docker". detectLang returning
+  // "docker" proves nothing about what gets rendered — for a long time nothing
+  // held that key, the gate in highlightByLang rejected it, and Dockerfiles came
+  // out as plain escaped text.
+  it("highlights a Dockerfile opened by filename", () => {
+    const spans = extractSpans(highlight("# install deps\nRUN npm ci", "Dockerfile"));
+    expect(spans).toEqual([
+      { type: "comment", value: "# install deps" },
+      { type: "keyword", value: "RUN" },
     ]);
   });
 });

@@ -2,12 +2,14 @@
 // Minimal syntax highlighter: tokenizes source code into spans.
 // No dependencies. Language detected from file extension or fence alias.
 //
-// Three routing tiers (broader than the 10 keyword tables suggest):
-//   1. Dedicated keyword tables (KEYWORDS in highlight-langs.ts): Go,
-//      TS/JS, Python, Shell, YAML, JSON, CSS, HTML, Dockerfile, TOML.
+// Three routing tiers (broader than the keyword tables suggest):
+//   1. Dedicated keyword tables: one per SUPPORTED_LANGUAGES entry carrying a
+//      non-empty keyword set, which is exactly what KEYWORDS in
+//      highlight-langs.ts is derived from. An entry with an empty set (rb, c)
+//      is recognized but falls through to tier 2.
 //   2. Generic tokenizer (GENERIC_KW) for every other recognized
-//      extension/alias — strings, numbers, comments, and a common
-//      keyword set still highlight.
+//      extension/alias — YAML, JSON, CSS, HTML, TOML and the rest still get
+//      strings, numbers, comments and a common keyword set.
 //   3. Escaped passthrough for unknown languages — plain text, safely
 //      HTML-escaped, never mis-tokenized.
 // ---------------------------------------------------------------------------
