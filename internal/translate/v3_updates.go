@@ -31,7 +31,6 @@ import (
 	"reflect"
 
 	"github.com/cplieger/runesafe/v2"
-
 	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
