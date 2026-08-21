@@ -2528,10 +2528,13 @@ func TestExtractCommitMessage_RapidUTF8(t *testing.T) {
 
 		result := extractCommitMessage(input)
 
-		// Invariant 1: subject line <= 72 chars.
+		// Invariant 1: the subject line is capped in RUNES, matching the
+		// contract capSubject implements. Counting bytes here contradicts
+		// that cap: a compliant 72-rune subject of multi-byte runes is far
+		// longer than 72 bytes, which rapid finds on most seeds.
 		firstLine, _, _ := strings.Cut(result, "\n")
-		if len(firstLine) > 72 {
-			rt.Fatalf("subject %q is %d chars, want <=72", firstLine, len(firstLine))
+		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
+			rt.Fatalf("subject %q is %d runes, want <=%d", firstLine, n, subjectMaxRunes)
 		}
 
 		// Invariant 2: no leading/trailing whitespace.
