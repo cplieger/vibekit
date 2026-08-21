@@ -4,7 +4,7 @@
 // test file to get window/document/localStorage/etc. No browser binary
 // needed — happy-dom is a pure JS DOM implementation running in Node.
 // Run: vitest --run (single pass) or vitest (watch mode)
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
@@ -40,8 +40,14 @@ export default defineConfig({
     // Test files co-located with source, named *.test.ts
     include: ["**/*.test.ts"],
 
-    // Exclude compiled output and node_modules symlink
-    exclude: ["../static/**", "node_modules/**"],
+    // Exclude compiled output and node_modules symlink. `**/.stryker-tmp/**`
+    // keeps Stryker's `inPlace: true` backup copy of the suite (and a leftover
+    // sandbox from an interrupted run) from being collected a SECOND time: the
+    // backup holds every .ts file and none of the fixtures beside them, so a
+    // duplicate test file resolves `../css/x.css` inside the backup and fails
+    // ENOENT. Spreading configDefaults.exclude also widens the previous
+    // top-level-only `node_modules/**`.
+    exclude: [...configDefaults.exclude, "../static/**", "**/.stryker-tmp/**"],
 
     // Fail loudly if the include pattern matches nothing.
     passWithNoTests: false,
