@@ -79,8 +79,10 @@ const maxCensusNameBytes = 64
 // (contention is irrelevant) and len() has to be exact for the cap above, which
 // sync.Map cannot give without a second counter.
 type censusLedger struct {
-	mu       sync.Mutex
+	// reported leads: govet fieldalignment wants the pointer-bearing field ahead
+	// of the mutex, and the bool last.
 	reported map[string]struct{}
+	mu       sync.Mutex
 	off      bool
 }
 
@@ -124,7 +126,9 @@ func (l *censusLedger) disabled() bool {
 // censusMeta copies before adding its declined names.
 func knownKeys(t reflect.Type) map[string]struct{} {
 	if cached, ok := knownKeyCache.Load(t); ok {
-		return cached.(map[string]struct{})
+		if set, isSet := cached.(map[string]struct{}); isSet {
+			return set
+		}
 	}
 	derived := knownKeysOf(t)
 	knownKeyCache.Store(t, derived)
@@ -169,8 +173,7 @@ func collectKnownKeys(t reflect.Type, out map[string]struct{}, depth int) {
 	if t.Kind() != reflect.Struct {
 		return
 	}
-	for i := range t.NumField() {
-		f := t.Field(i)
+	for f := range t.Fields() {
 		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 		switch {
 		case name == "-":
