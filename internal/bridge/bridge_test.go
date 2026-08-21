@@ -295,9 +295,9 @@ func TestStop_Idempotent(t *testing.T) {
 // permanent hang.
 func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	// Wire a blocking pipe so writeFrame returns without error (the
-	// write is immediate) but no readLoop reads the framed bytes.
-	// Call parks on select{ch, b.done}.
+	// Wire a pipe so writeFrame succeeds. Nothing plays readLoop, so no
+	// response ever reaches the pending channel and Call parks on
+	// select{ch, b.done}.
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -317,6 +317,14 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 		done <- result{r, e}
 	}()
 	waitPending(t, b, 1)
+	// Read the framed request before stopping. Call registers its pending
+	// entry BEFORE it marshals and writes, so waitPending alone proves only
+	// registration: Stop closing stdin inside that window makes writeFrame
+	// fail with "file already closed" and Call returns that transport error
+	// instead of ever reaching the select this test is about. Draining the
+	// frame is the handshake that proves the write landed. Nothing answers
+	// on the pending channel, so Call stays parked on b.done.
+	readFrame(t, pr)
 	b.Stop()
 	select {
 	case r := <-done:
@@ -1238,6 +1246,22 @@ func readLoopBridge(r io.Reader) *Bridge {
 // inject a response: an empty map leaves ch nil, and a send on a nil channel
 // blocks forever, so the test fails as an unexplained "Call did not return"
 // timeout instead of naming the real cause. Deadline-bounded, fails closed.
+// readFrame drains one newline-delimited frame the bridge wrote to the pipe,
+// so a test can synchronize on the write itself rather than on a state the
+// write only follows. Bounded: a missing write fails the test with a
+// diagnostic instead of hanging until the package timeout.
+func readFrame(t *testing.T, pr *os.File) []byte {
+	t.Helper()
+	if err := pr.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set read deadline on the bridge pipe: %v", err)
+	}
+	line, err := bufio.NewReader(pr).ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("read the framed request from the bridge pipe: %v (read %q)", err, line)
+	}
+	return line
+}
+
 func waitPending(t *testing.T, b *Bridge, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
