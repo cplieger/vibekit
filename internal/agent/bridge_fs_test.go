@@ -258,8 +258,45 @@ func TestRespondFSRead_SizeCapRejects(t *testing.T) {
 	h.inbound.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
-	if br.response.err == nil || !strings.Contains(br.response.err.Error(), "cap") {
-		t.Errorf("expected cap error, got %v", br.response.err)
+	// The sentinel, not a substring of the message: errCapExceeded is what
+	// respondFSError classifies as a routine denial, so matching on it is what
+	// pins the log level too.
+	if !errors.Is(br.response.err, errCapExceeded) {
+		t.Errorf("respondFSWrite(%d bytes) response.err = %v, want %v", fsWriteCap+1, br.response.err, errCapExceeded)
+	}
+}
+
+// The cap is the largest write ACCEPTED, not the first one refused. A file
+// exactly at the limit is an ordinary write the agent has no way to shrink, so
+// shaving a byte off the boundary refuses work that should have gone to disk.
+func TestRespondFSWrite_AcceptsAWriteExactlyAtTheCap(t *testing.T) {
+	work := t.TempDir()
+	h, br := hubForFSTest(t, work)
+	id := int64(9)
+	msg := &vibekit.RPCResponse{
+		ID:     &id,
+		Method: vibekit.MethodFSWrite,
+		Params: mustJSON(t, map[string]any{"path": "at-cap.txt", "content": strings.Repeat("x", fsWriteCap)}),
+	}
+	h.inbound.respondFSWrite(t.Context(), "c1", msg)
+	select {
+	case <-br.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("respondFSWrite did not respond")
+	}
+
+	br.respMu.Lock()
+	gotErr := br.response.err
+	br.respMu.Unlock()
+	if gotErr != nil {
+		t.Fatalf("respondFSWrite(%d bytes) response.err = %v, want nil at the cap", fsWriteCap, gotErr)
+	}
+	data, err := os.ReadFile(filepath.Join(work, "at-cap.txt"))
+	if err != nil {
+		t.Fatalf("read back the at-cap write: %v", err)
+	}
+	if len(data) != fsWriteCap {
+		t.Errorf("wrote %d bytes, want %d", len(data), fsWriteCap)
 	}
 }
 

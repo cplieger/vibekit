@@ -811,3 +811,41 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	close(release)
 	<-turnDone
 }
+
+// The sweep must leave a session that was active a moment ago alone. Its cutoff
+// is NOW MINUS the idle timeout, so a sign error puts the cutoff in the future
+// and every sweep stops the live bridge — which the next prompt then has to
+// respawn, one process per tick.
+func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T) {
+	h, _, _ := newTestHub()
+	u := h.utility.get()
+	if _, err := u.textgen.UtilityPrompt(t.Context(), "warm", ""); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	live, ok := u.session.bridge.(*fakeBridge)
+	if !ok {
+		t.Fatal("utility bridge is not a *fakeBridge")
+	}
+
+	h.cullIdleUtilityBridgeOnce()
+
+	// The cull stops its victim in a goroutine, so a stop would not be visible
+	// immediately; give it the same window the idle-cull test allows before
+	// concluding nothing was stopped.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		live.mu.Lock()
+		stopped := live.stopped
+		live.mu.Unlock()
+		if stopped {
+			t.Fatal("the sweep stopped a bridge used a moment ago; its idle cutoff is in the future")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	u.session.mu.Lock()
+	started := u.session.started
+	u.session.mu.Unlock()
+	if !started {
+		t.Error("session.started = false after a sweep of a recently-active session, want true")
+	}
+}

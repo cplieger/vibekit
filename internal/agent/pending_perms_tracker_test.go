@@ -110,3 +110,52 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 		})
 	}
 }
+
+// ClearForChat drops the closing chat's unresolved cards and only those. Both
+// halves matter and they fail in opposite directions: keeping the closing chat's
+// entries leaves a card the user can never answer, and dropping another chat's
+// entries makes TakeIfPresent refuse an answer that chat is still waiting to
+// give.
+func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	owners := map[int64]vibekit.ChatID{1: "chat-1", 2: "chat-2", 3: "chat-1", 4: "chat-2"}
+	for id, chatID := range owners {
+		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID,
+			vibekit.PermissionNeededPayload{RequestID: id}))
+	}
+
+	tracker.ClearForChat("chat-1")
+
+	if got := listIDs(t, tracker.List("chat-1")); len(got) != 0 {
+		t.Errorf("List(\"chat-1\") = %v after ClearForChat(\"chat-1\"), want none", got)
+	}
+	want := []int64{2, 4}
+	if got := listIDs(t, tracker.List("chat-2")); !slices.Equal(got, want) {
+		t.Errorf("List(\"chat-2\") = %v after ClearForChat(\"chat-1\"), want %v", got, want)
+	}
+	// The surviving chat's answers are still accepted, which is what the entries
+	// are for.
+	if _, ok := tracker.TakeIfPresent(2); !ok {
+		t.Error("TakeIfPresent(2) = false: another chat's clear took chat-2's entry")
+	}
+}
+
+// An empty chat id clears nothing. It is not a wildcard: the one caller that
+// could pass it is a close path with no chat, and treating it as "every chat"
+// would drop every open dialog in the process.
+func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	for _, id := range []int64{1, 2} {
+		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-1",
+			vibekit.PermissionNeededPayload{RequestID: id}))
+	}
+
+	tracker.ClearForChat("")
+
+	want := []int64{1, 2}
+	if got := listIDs(t, tracker.List("")); !slices.Equal(got, want) {
+		t.Errorf("List(\"\") = %v after ClearForChat(\"\"), want %v", got, want)
+	}
+}

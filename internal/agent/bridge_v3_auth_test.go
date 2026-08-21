@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -173,5 +174,30 @@ func TestAccessTokenFailureBroadcastsTheAuthError(t *testing.T) {
 	}
 	if !found {
 		t.Error("no error event was broadcast for a failed token vend")
+	}
+}
+
+// The refusal the peer receives carries invalid-params (-32602). KAS branches on
+// the CODE, and the JSON-RPC error range is negative, so a positive number is not
+// a refusal it recognises: the agent would read the frame as something other than
+// "that URL is not allowed" and could retry it forever.
+func TestHandleOpenExternalURL_UnsafeSchemeIsRefusedWithInvalidParams(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+
+	h.translateACPEvent("c1", openExternalURLMsg(t, 9, "javascript:alert(1)"))
+
+	resp, ok := br.lastResponse()
+	if !ok {
+		t.Fatal("the unsafe URL went unanswered; the agent would block on a request nothing will answer")
+	}
+	if resp.err == nil {
+		t.Fatalf("openExternalUrl(javascript:) was answered with a success (%v), want an error", resp.result)
+	}
+	rpcErr, isRPC := errors.AsType[*vibekit.RPCError](resp.err)
+	if !isRPC {
+		t.Errorf("response error = %T, want *vibekit.RPCError", resp.err)
+	} else if rpcErr.Code != -32602 {
+		t.Errorf("response error code = %d, want -32602", rpcErr.Code)
 	}
 }
