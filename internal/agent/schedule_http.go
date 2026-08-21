@@ -13,32 +13,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/webhttp/v2"
 )
-
-// maxLogFieldBytes bounds one caller-supplied string on its way into a log
-// attribute. A schedule id arrives in a JSON body or a path segment and is
-// checked only for emptiness, so it has no length of its own to respect.
-const maxLogFieldBytes = 256
-
-// logField prepares one untrusted string for a slog attribute: runesafe's
-// single-line preset (C0/C1 controls, DEL, Bidi overrides and the paragraph
-// separators become spaces) capped on a rune boundary.
-//
-// The single-line part is the point. A schedule id is client-chosen and reaches
-// these two log lines unconstrained, so a newline in it forges a whole log
-// record downstream in Loki — the reader cannot tell an injected line from one
-// the server wrote. The recurrence frequency is enum-checked by Spec.Validate
-// before it gets here and the recipe name comes from the workspace rather than
-// the request, but both are routed through the same helper: a reader of this
-// handler should not have to prove which of four attributes is safe, and the
-// cost is one call.
-func logField(s string) string {
-	return runesafe.SanitizeSingleLineBounded(s, maxLogFieldBytes)
-}
 
 // scheduleView is one row as the client sees it: the stored entry plus the
 // resolved next run, which the server computes so the UI never reimplements the
@@ -133,8 +112,8 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	slog.Info("schedule saved", "id", logField(entry.ID), "recipe", logField(recipe.Name),
-		"freq", logField(string(entry.Spec.Freq)), "enabled", entry.Enabled)
+	slog.Info("schedule saved", "id", logsafe.Field(entry.ID), "recipe", logsafe.Field(recipe.Name),
+		"freq", logsafe.Field(string(entry.Spec.Freq)), "enabled", entry.Enabled)
 	webhttp.WriteJSON(w, scheduleViewOf(&entry))
 }
 
@@ -149,6 +128,6 @@ func (rr *runRoutes) handleScheduleDelete(w http.ResponseWriter, r *http.Request
 		httpreply.ServerError(w, "could not delete schedule", err)
 		return
 	}
-	slog.Info("schedule deleted", "id", logField(id))
+	slog.Info("schedule deleted", "id", logsafe.Field(id))
 	webhttp.WriteJSON(w, map[string]any{"ok": true})
 }

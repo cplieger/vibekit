@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"
 )
 
@@ -332,7 +333,7 @@ func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Ser
 	}
 	out := maskedCopy(s.servers[idx])
 	s.mu.Unlock()
-	slog.Info("mcp: server enabled toggled", "id", id, "enabled", enabled)
+	slog.Info("mcp: server enabled toggled", "id", logsafe.Field(string(id)), "enabled", enabled)
 	s.notifyChange()
 	return out, nil
 }

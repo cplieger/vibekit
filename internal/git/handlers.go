@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -175,7 +176,7 @@ func parseGitStatus(ctx context.Context, dir string) []gitFile {
 			slog.Debug("git status canceled", "repo", dir, "cause", ctx.Err())
 			return nil
 		}
-		slog.Warn("git status failed", "repo", dir, "error", err, "out", scrubAuth(string(raw)))
+		slog.Warn("git status failed", "repo", logsafe.Field(dir), "error", logsafe.Field(err.Error()), "out", scrubAuth(string(raw)))
 		return nil
 	}
 	return parseGitStatusOutput(raw)

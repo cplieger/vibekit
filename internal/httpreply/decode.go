@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -18,7 +19,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if ct := r.Header.Get("Content-Type"); ct != "" &&
 		!strings.HasPrefix(ct, MIMETypeJSON) {
 		slog.Debug("httpreply: decode bad content-type",
-			"method", r.Method, "path", r.URL.Path, "content_type", ct)
+			"method", r.Method, "path", logsafe.Field(r.URL.Path), "content_type", logsafe.Field(ct))
 		BadRequest(w, "expected "+MIMETypeJSON)
 		return false
 	}
@@ -28,14 +29,14 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("httpreply: decode body too large",
-				"method", r.Method, "path", r.URL.Path,
+				"method", r.Method, "path", logsafe.Field(r.URL.Path),
 				"limit", webhttp.MaxJSONBody, "error", maxErr)
 			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				map[string]string{JSONKeyError: "request body too large"})
 			return false
 		}
 		slog.Debug("httpreply: decode invalid json",
-			"method", r.Method, "path", r.URL.Path, "error", err)
+			"method", r.Method, "path", logsafe.Field(r.URL.Path), "error", logsafe.Field(err.Error()))
 		BadRequest(w, "invalid json")
 		return false
 	}

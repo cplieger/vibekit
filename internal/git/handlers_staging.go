@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
@@ -94,7 +95,7 @@ func fetchStatus(ctx context.Context, dir string, timeout time.Duration, fetchFl
 	defer cancel()
 	_, _, _ = fetchFlight.Do(dir, func() (any, error) {
 		if out, err := gitCmd(fetchCtx, dir, "fetch", "--quiet"); err != nil {
-			slog.Debug("git fetch during status failed", "repo", dir, "error", err, "out", scrubAuth(out))
+			slog.Debug("git fetch during status failed", "repo", logsafe.Field(dir), "error", logsafe.Field(err.Error()), "out", scrubAuth(out))
 		}
 		return nil, nil
 	})

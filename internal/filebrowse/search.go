@@ -59,6 +59,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/parallel"
 	"github.com/cplieger/webhttp/v2"
 )
@@ -467,14 +468,14 @@ func (s *fileScan) addRoot(l loc) bool {
 		// the other mounts still answer — so the reply would otherwise present a
 		// scan of some mounts as a scan of all of them.
 		s.truncated = true
-		slog.Warn("filebrowse: search open failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: search open failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		return true
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
 		s.truncated = true
-		slog.Warn("filebrowse: search stat failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: search stat failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		return true
 	}
 	if !info.IsDir() {
@@ -536,7 +537,7 @@ func (s *fileScan) walkDir(d searchDir) bool {
 				// never enumerated, so entries the search would have matched are
 				// unaccounted for. EOF is the ordinary end and says nothing.
 				s.truncated = true
-				slog.Warn("filebrowse: search readdir failed", "path", d.abs, "error", err)
+				slog.Warn("filebrowse: search readdir failed", "path", logsafe.Field(d.abs), "error", logsafe.Field(err.Error()))
 			}
 			return true
 		}
@@ -650,7 +651,7 @@ func (s *fileScan) descend(d searchDir, name string) bool {
 	if d.depth+1 > maxSearchDepth {
 		// Refusing to descend leaves files unread, which is what Truncated says.
 		s.truncated = true
-		slog.Debug("filebrowse: search depth cap reached", "path", abs)
+		slog.Debug("filebrowse: search depth cap reached", "path", logsafe.Field(abs))
 		return true
 	}
 	f, err := openChild(d.f, name, abs, searchDirFlags)
@@ -663,7 +664,7 @@ func (s *fileScan) descend(d searchDir, name string) bool {
 		// gets the reason from the log, the caller gets told the answer is partial.
 		if !errors.Is(err, fs.ErrNotExist) && !isSwapRefusal(err) {
 			s.truncated = true
-			slog.Warn("filebrowse: search opendir failed", "path", abs, "error", err)
+			slog.Warn("filebrowse: search opendir failed", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
 		}
 		return true
 	}
@@ -844,10 +845,10 @@ func logSearchReadError(abs string, err error) (lost bool) {
 		return false
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, atomicfile.ErrNotRegular),
 		errors.Is(err, atomicfile.ErrFileTooLarge), isSwapRefusal(err):
-		slog.Debug("filebrowse: search skipped file", "path", abs, "error", err)
+		slog.Debug("filebrowse: search skipped file", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
 		return false
 	default:
-		slog.Warn("filebrowse: search read failed", "path", abs, "error", err)
+		slog.Warn("filebrowse: search read failed", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
 		return true
 	}
 }

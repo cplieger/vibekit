@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -50,7 +51,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			httpreply.NotFound(w, "not found")
 			return
 		}
-		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: readdir failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
@@ -58,7 +59,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	entries, err := f.ReadDir(-1)
 	f.Close()
 	if err != nil {
-		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: readdir failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
@@ -115,7 +116,7 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 			// create noise; operators can flip the level when the
 			// "some files missing from UI" report comes in.
 			slog.Debug("filebrowse: listEntries entry stat failed",
-				"dir", resolved, "name", name, "error", err)
+				"dir", logsafe.Field(resolved), "name", name, "error", logsafe.Field(err.Error()))
 			continue
 		}
 		files = append(files, fileEntry{
@@ -151,10 +152,10 @@ func isWritable(l loc) bool {
 		return false
 	}
 	if closeErr := f.Close(); closeErr != nil {
-		slog.Debug("filebrowse: probe close failed", "path", rel, "error", closeErr)
+		slog.Debug("filebrowse: probe close failed", "path", logsafe.Field(rel), "error", logsafe.Field(closeErr.Error()))
 	}
 	if rmErr := l.m.root.Remove(rel); rmErr != nil {
-		slog.Warn("filebrowse: probe cleanup failed", "path", rel, "error", rmErr)
+		slog.Warn("filebrowse: probe cleanup failed", "path", logsafe.Field(rel), "error", logsafe.Field(rmErr.Error()))
 	}
 	return true
 }

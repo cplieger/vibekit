@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -110,13 +111,13 @@ func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, er
 	}
 	if errors.Is(err, atomicfile.ErrFileTooLarge) {
 		slog.Warn("filebrowse: upload too large",
-			"limit", maxUploadSize, "uploaded", len(uploaded), "error", err)
+			"limit", maxUploadSize, "uploaded", len(uploaded), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			uploadErrorJSON("upload too large", uploaded))
 		return
 	}
 	slog.Warn("filebrowse: upload write failed",
-		"dir", dir, "uploaded", len(uploaded), "error", err)
+		"dir", dir, "uploaded", len(uploaded), "error", logsafe.Field(err.Error()))
 	webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 		uploadErrorJSON("upload failed", uploaded))
 }
@@ -153,7 +154,7 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 		name := filepath.Base(fh.Filename)
 		if name == "" || name == "." || name == ".." {
 			slog.Warn("filebrowse: upload rejected: invalid filename",
-				"raw_name", fh.Filename, "base", name, "target_dir", dirLoc.abs)
+				"raw_name", logsafe.Field(fh.Filename), "base", logsafe.Field(name), "target_dir", dirLoc.abs)
 			return uploaded, total, fmt.Errorf("%w: %q", errInvalidFilename, fh.Filename)
 		}
 		dest := filepath.Join(dirLoc.abs, name)
@@ -165,7 +166,7 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 		// file. Mirrors the rename-destination check in actionRename.
 		if IsSensitive(dest) {
 			slog.Warn("filebrowse: upload rejected: sensitive dest",
-				"raw_name", fh.Filename, "dest", dest)
+				"raw_name", logsafe.Field(fh.Filename), "dest", logsafe.Field(dest))
 			return uploaded, total, fmt.Errorf("%w: %q (protected)", errInvalidFilename, fh.Filename)
 		}
 		n, wErr := writeOneUpload(ctx, loc{m: dirLoc.m, abs: dest}, fh)

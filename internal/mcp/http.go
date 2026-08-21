@@ -8,6 +8,7 @@ import (
 	"path"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -147,7 +148,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	}
 	if patch.Enabled == nil {
 		slog.Debug("mcp: http patch missing enabled field",
-			"path", r.URL.Path)
+			"path", logsafe.Field(r.URL.Path))
 		httpreply.BadRequest(w, "enabled required")
 		return
 	}

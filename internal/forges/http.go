@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2"
 )
@@ -275,7 +276,7 @@ func writeOpsError(w http.ResponseWriter, err error) {
 		webhttp.WriteJSONStatus(w, http.StatusNotImplemented,
 			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
 	default:
-		slog.Debug("forges: ops error", "error", err)
+		slog.Debug("forges: ops error", "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(err.Error()))
 	}

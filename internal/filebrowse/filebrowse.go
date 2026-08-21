@@ -32,6 +32,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 )
 
 const (
@@ -114,7 +115,7 @@ func (h *Handler) resolveOrForbid(w http.ResponseWriter, reqPath string) (loc, b
 	l, err := h.resolvePath(reqPath)
 	if err != nil {
 		slog.Warn("filebrowse: path rejected",
-			"path", reqPath, "reason", err.Error())
+			"path", logsafe.Field(reqPath), "reason", logsafe.Field(err.Error()))
 		httpreply.Forbidden(w, err.Error())
 		return loc{}, false
 	}

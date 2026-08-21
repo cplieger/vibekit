@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2/sse"
 )
@@ -63,7 +64,7 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
 	lastRaw := r.Header.Get("Last-Event-ID")
-	slog.Info("SSE connected", "chat_filter", chatFilter, "last_event_id", lastRaw)
+	slog.Info("SSE connected", "chat_filter", logsafe.Field(string(chatFilter)), "last_event_id", logsafe.Field(lastRaw))
 
 	// A reconnect (any Last-Event-ID) reloads push preferences from disk so
 	// settings edited while SSE was down take effect without a restart
@@ -78,7 +79,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return rt.streamInitialState(sw, b.Floor, b.Head, chatFilter)
 		}),
 	)
-	slog.Info("SSE disconnected", "chat_filter", chatFilter)
+	slog.Info("SSE disconnected", "chat_filter", logsafe.Field(string(chatFilter)))
 }
 
 // streamInitialState writes the connected handshake and then replays the

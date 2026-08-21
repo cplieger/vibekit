@@ -35,6 +35,7 @@ import (
 
 	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/webhttp/v2"
 	"golang.org/x/sync/singleflight"
 )
@@ -139,7 +140,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(s)
 		if err != nil {
 			slog.Debug("mcp: registry search bad limit",
-				"limit", s, "error", err)
+				"limit", logsafe.Field(s), "error", logsafe.Field(err.Error()))
 			httpreply.BadRequest(w, "invalid limit")
 			return
 		}
@@ -174,7 +175,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	normalised := normaliseRegistryResponse(body)
 	slog.Debug("mcp: registry search",
-		"q", q, "limit", limit, "results", len(normalised), "cached", cached)
+		"q", logsafe.Field(q), "limit", limit, "results", len(normalised), "cached", cached)
 	webhttp.WriteJSON(w, map[string]any{"servers": normalised})
 }
 
