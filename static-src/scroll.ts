@@ -270,11 +270,6 @@ class ScrollController {
     this.deferred.push(mutate);
   }
 
-  /** Whether anything is waiting on a return to Following. */
-  hasDeferred(): boolean {
-    return this.deferred.length > 0;
-  }
-
   scrollToBottom(): void {
     this.setState("following");
     this.userScrollingUntil = 0;
@@ -297,11 +292,12 @@ class ScrollController {
    *  so once ~23 resident turns fold to one row each the page can be SHORTER
    *  than the viewport — no overflow, no scroll event, no fetch, and nothing to
    *  click. After a fold pass this restores the trigger.
+   *
+   *  The three preconditions (nothing older, a fetch already in flight, no
+   *  callback) are maybeLoadMore's own and are checked there for every caller,
+   *  so this only has to decide whether the viewport is already full.
    */
   fillViewport(): void {
-    if (!this.hasMoreMessages || this.loadingMore || this.onLoadMore === null) {
-      return;
-    }
     if (this.scrollEl.scrollHeight > this.scrollEl.clientHeight + BOTTOM_TOLERANCE_PX) {
       return;
     }
