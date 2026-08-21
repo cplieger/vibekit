@@ -8,6 +8,7 @@ package translate
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -61,78 +62,111 @@ type ACPToolCallContentBlock struct {
 // the signal HandleToolCall uses to suppress hook cards when the
 // hooks.showStatus setting is off; the contents are opaque here.
 type ACPKiroMeta struct {
-	Kiro struct {
-		// Refusal is present only on the agent_message_chunk carrying a
-		// model-refusal explanation (kiro-cli 2.13+, modelStopReason
-		// "content_filtered"). KAS calls it a progressive-enhancement
-		// marker: plain clients render the text, capable clients key off
-		// it for a distinct refusal affordance. The turn then ends with
-		// core stopReason "refusal".
-		Refusal *ACPRefusalMeta `json:"refusal"`
-		// Checkpoint is KAS's snapshot mapping for a file-writing tool
-		// call. Probed 2026-08-02 (kiro-cli 2.16.0): it arrives ONLY on
-		// the tool_call_update whose status is "completed" — the initial
-		// tool_call and every in_progress/pending update carry none, which
-		// is why the value is folded in on update rather than set once.
-		//
-		// A sibling _meta.kiro.preview on that same frame repeats these
-		// URIs AND carries originalContent/modifiedContent in full. That
-		// is deliberately NOT decoded: persisting whole file bodies per
-		// tool call would bloat every chat file, and the snapshot URIs
-		// address the same bytes on demand.
-		// DisclosedContext identifies the skill or steering document a
-		// `disclose_context` call loaded. KAS persists it (its own comment: "the
-		// resolved skill/steering document. Persisted so the loaded item's type
-		// and source file survive a session reload"), which is what makes it
-		// worth decoding rather than deriving from the tool title.
-		//
-		// This is how a skill's body actually reaches the model on this platform:
-		// the AGENT activates it, under a standing instruction to check for a
-		// match before answering, so a client-side trigger matcher would be a
-		// second and worse guesser competing with that judgement. Decoding this
-		// is what makes the activation visible instead of a generic tool card.
-		DisclosedContext *ACPDisclosedContext `json:"disclosedContext,omitempty"`
-		// PolicyDenial is KAS's structured reason for a tool call the Cedar
-		// policy refused, persisted so the explanation survives a reload. Without
-		// it a refusal is indistinguishable from a broken command, and the two
-		// want opposite reactions: edit the rule, or debug the tool.
-		PolicyDenial   *ACPPolicyDenial   `json:"policyDenial,omitempty"`
-		Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
-		Kind           string             `json:"kind"`
-		AgentSubtaskID string             `json:"agentSubtaskId"`
-		// MessageID and Timestamp are KAS's own identity for the message
-		// record a frame belongs to. Measured on the v3 wire (probe 23,
-		// kiro-cli 2.16.0): present on user_message_chunk (a bare uuid —
-		// vibekit's OWN prompt messageId when vibekit sent one),
-		// agent_message_chunk (`<uuid>-say`), tool_call (`<id>-call`) and
-		// tool_call_update (`<id>-result`). Timestamp is RFC3339 with
-		// milliseconds.
-		//
-		// The replay projection depends on both: without MessageID it
-		// fabricates ids, so the same session projects differently on every
-		// load and nothing can address a message; without Timestamp every
-		// replayed turn is stamped with the load's wall clock and a resumed
-		// transcript claims all its history happened just now.
-		MessageID string `json:"messageId"`
-		Timestamp string `json:"timestamp"`
-		// Notification tags a row KAS wrote onto a chat's transcript on
-		// something else's behalf. kind "workflow-progress" is a workflow
-		// step's progress persisted onto the LAUNCHING chat, which arrives as
-		// a user_message_chunk carrying JSON — see isWorkflowProgress.
-		Notification struct {
-			Kind string `json:"kind"`
-		} `json:"notification"`
-		// Workflow is present on every frame of a workflow STEP's session
-		// (probe 17). It is what makes a step frame self-describing: the frame
-		// arrives on the launching chat's connection with a session id that is
-		// neither the chat's nor a subagent's, and this block is the only thing
-		// on the frame that says which.
-		//
-		// Note the nesting: this is `params.update._meta.kiro.workflow`, not
-		// `params._meta` — `params` carries only `sessionId` and `update`.
-		Workflow *ACPWorkflowMeta `json:"workflow"`
-		HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
-	} `json:"kiro"`
+	Kiro ACPKiroBlock `json:"kiro"`
+}
+
+// ACPKiroBlock is the `kiro` object inside an `_meta`. A NAMED type rather than
+// an anonymous struct so it can carry the wire census below; every field access
+// site is unchanged.
+type ACPKiroBlock struct {
+	// Refusal is present only on the agent_message_chunk carrying a
+	// model-refusal explanation (kiro-cli 2.13+, modelStopReason
+	// "content_filtered"). KAS calls it a progressive-enhancement
+	// marker: plain clients render the text, capable clients key off
+	// it for a distinct refusal affordance. The turn then ends with
+	// core stopReason "refusal".
+	Refusal *ACPRefusalMeta `json:"refusal"`
+	// Checkpoint is KAS's snapshot mapping for a file-writing tool
+	// call. Probed 2026-08-02 (kiro-cli 2.16.0): it arrives ONLY on
+	// the tool_call_update whose status is "completed" — the initial
+	// tool_call and every in_progress/pending update carry none, which
+	// is why the value is folded in on update rather than set once.
+	//
+	// A sibling _meta.kiro.preview on that same frame repeats these
+	// URIs AND carries originalContent/modifiedContent in full. That
+	// is deliberately NOT decoded: persisting whole file bodies per
+	// tool call would bloat every chat file, and the snapshot URIs
+	// address the same bytes on demand.
+	// DisclosedContext identifies the skill or steering document a
+	// `disclose_context` call loaded. KAS persists it (its own comment: "the
+	// resolved skill/steering document. Persisted so the loaded item's type
+	// and source file survive a session reload"), which is what makes it
+	// worth decoding rather than deriving from the tool title.
+	//
+	// This is how a skill's body actually reaches the model on this platform:
+	// the AGENT activates it, under a standing instruction to check for a
+	// match before answering, so a client-side trigger matcher would be a
+	// second and worse guesser competing with that judgement. Decoding this
+	// is what makes the activation visible instead of a generic tool card.
+	DisclosedContext *ACPDisclosedContext `json:"disclosedContext,omitempty"`
+	// PolicyDenial is KAS's structured reason for a tool call the Cedar
+	// policy refused, persisted so the explanation survives a reload. Without
+	// it a refusal is indistinguishable from a broken command, and the two
+	// want opposite reactions: edit the rule, or debug the tool.
+	PolicyDenial   *ACPPolicyDenial   `json:"policyDenial,omitempty"`
+	Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
+	Kind           string             `json:"kind"`
+	AgentSubtaskID string             `json:"agentSubtaskId"`
+	// MessageID and Timestamp are KAS's own identity for the message
+	// record a frame belongs to. Measured on the v3 wire (probe 23,
+	// kiro-cli 2.16.0): present on user_message_chunk (a bare uuid —
+	// vibekit's OWN prompt messageId when vibekit sent one),
+	// agent_message_chunk (`<uuid>-say`), tool_call (`<id>-call`) and
+	// tool_call_update (`<id>-result`). Timestamp is RFC3339 with
+	// milliseconds.
+	//
+	// The replay projection depends on both: without MessageID it
+	// fabricates ids, so the same session projects differently on every
+	// load and nothing can address a message; without Timestamp every
+	// replayed turn is stamped with the load's wall clock and a resumed
+	// transcript claims all its history happened just now.
+	MessageID string `json:"messageId"`
+	Timestamp string `json:"timestamp"`
+	// Notification tags a row KAS wrote onto a chat's transcript on
+	// something else's behalf. kind "workflow-progress" is a workflow
+	// step's progress persisted onto the LAUNCHING chat, which arrives as
+	// a user_message_chunk carrying JSON — see isWorkflowProgress.
+	Notification struct {
+		Kind string `json:"kind"`
+	} `json:"notification"`
+	// Workflow is present on every frame of a workflow STEP's session
+	// (probe 17). It is what makes a step frame self-describing: the frame
+	// arrives on the launching chat's connection with a session id that is
+	// neither the chat's nor a subagent's, and this block is the only thing
+	// on the frame that says which.
+	//
+	// Note the nesting: this is `params.update._meta.kiro.workflow`, not
+	// `params._meta` — `params` carries only `sessionId` and `update`.
+	Workflow *ACPWorkflowMeta `json:"workflow"`
+	HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
+}
+
+// acpKiroBlockShadow strips the UnmarshalJSON method so the real decode can run
+// without recursing into it. The standard shadow-type trick; the alias must have
+// the same layout, which a defined type over the same struct does.
+type acpKiroBlockShadow ACPKiroBlock
+
+// UnmarshalJSON decodes the block and, on the way past, reports any member KAS
+// sent that this type does not read.
+//
+// The census runs HERE rather than at the handlers because encoding/json hands
+// this method exactly the `_meta.kiro` object's bytes: probing a few hundred bytes
+// per frame instead of rescanning a whole tool_call_update, which can carry a
+// multi-megabyte diff. That difference is the reason this is a method at all.
+//
+// The decode's own error is returned verbatim and the census cannot contribute
+// one. Every call site drops the frame on a decode error, so a probe that could
+// fail would stop tool cards from rendering — a diagnostic must never be able to
+// cost a turn.
+func (b *ACPKiroBlock) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, (*acpKiroBlockShadow)(b)); err != nil {
+		return err
+	}
+	// `preview` repeats the checkpoint URIs and adds originalContent and
+	// modifiedContent in full; it is skipped on purpose (see Checkpoint above), so
+	// reporting it would be noise on the first frame of every file write.
+	censusMeta("_meta.kiro", data, reflect.TypeFor[acpKiroBlockShadow](), "preview")
+	return nil
 }
 
 // ACPDisclosedContext is _meta.kiro.disclosedContext on a disclose_context call.

@@ -28,6 +28,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math"
+	"reflect"
+
+	"github.com/cplieger/runesafe/v2"
 
 	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -51,40 +54,67 @@ type v3Summarization struct {
 // none of these and are ignored.
 type sessionInfoUpdate struct {
 	Meta struct {
-		Kiro struct {
-			Summarization   *v3Summarization `json:"summarization"`
-			UsagePercentage *float64         `json:"usagePercentage"`
-			// Workflow marks the frame as a workflow STEP's, which is what
-			// lets a step's metering through the parent-only gate below
-			// while keeping it out of the chat's turn counters.
-			Workflow     *ACPWorkflowMeta `json:"workflow"`
-			ContextUsage struct {
-				UsagePercentage *float64 `json:"usagePercentage"`
-			} `json:"contextUsage"`
-			// Focus is the kind=="focus_update" block: the agent's
-			// self-declared title/description/status (see focus.go).
-			Focus *focusUpdate `json:"focus"`
-			// The steering sub-kinds' fields, FLAT beside Kind rather than in a
-			// sub-block of their own. That is not a modelling choice here: KAS's
-			// buildSessionInfoUpdate spreads the update object straight into
-			// _meta.kiro, and its legacyFields() returns {} for all three
-			// steering kinds — so unlike focus or contextUsage there is no
-			// nested object to key off, and these three must dispatch on the
-			// kind STRING. See handleSteeringUpdate.
-			MessageIDs           []string `json:"messageIds"`
-			MessageID            string   `json:"messageId"`
-			Content              string   `json:"content"`
-			NotificationSeverity string   `json:"notificationSeverity"`
-			Kind                 string   `json:"kind"`
-			// PromptTurnSummaries is KAS's per-turn metering record,
-			// emitted as a session_info_update just before the
-			// session/prompt response returns (verified on the live
-			// 2.12.1 wire): [{unit:"credit", unitPlural:"credits",
-			// usage:0.0619}], beside elapsedTime (ms).
-			PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
-			ElapsedTime         float64             `json:"elapsedTime"`
-		} `json:"kiro"`
+		Kiro sessionInfoKiroBlock `json:"kiro"`
 	} `json:"_meta"`
+}
+
+// sessionInfoKiroBlock is the `kiro` object inside a session_info_update's
+// `_meta`. A NAMED type rather than an anonymous struct so it can carry the wire
+// census; every field access site is unchanged.
+//
+// This is the richest carrier on the wire — 22+ sub-kinds multiplexed under one
+// update type, dispatched on which sub-BLOCK is present rather than on the kind
+// string — so it is also where a KAS addition is least likely to be noticed:
+// logUnconsumedInfoKind reports the KIND, and says nothing about the payload that
+// arrived with it.
+type sessionInfoKiroBlock struct {
+	Summarization   *v3Summarization `json:"summarization"`
+	UsagePercentage *float64         `json:"usagePercentage"`
+	// Workflow marks the frame as a workflow STEP's, which is what
+	// lets a step's metering through the parent-only gate below
+	// while keeping it out of the chat's turn counters.
+	Workflow     *ACPWorkflowMeta `json:"workflow"`
+	ContextUsage struct {
+		UsagePercentage *float64 `json:"usagePercentage"`
+	} `json:"contextUsage"`
+	// Focus is the kind=="focus_update" block: the agent's
+	// self-declared title/description/status (see focus.go).
+	Focus *focusUpdate `json:"focus"`
+	// The steering sub-kinds' fields, FLAT beside Kind rather than in a
+	// sub-block of their own. That is not a modelling choice here: KAS's
+	// buildSessionInfoUpdate spreads the update object straight into
+	// _meta.kiro, and its legacyFields() returns {} for all three
+	// steering kinds — so unlike focus or contextUsage there is no
+	// nested object to key off, and these three must dispatch on the
+	// kind STRING. See handleSteeringUpdate.
+	MessageIDs           []string `json:"messageIds"`
+	MessageID            string   `json:"messageId"`
+	Content              string   `json:"content"`
+	NotificationSeverity string   `json:"notificationSeverity"`
+	Kind                 string   `json:"kind"`
+	// PromptTurnSummaries is KAS's per-turn metering record,
+	// emitted as a session_info_update just before the
+	// session/prompt response returns (verified on the live
+	// 2.12.1 wire): [{unit:"credit", unitPlural:"credits",
+	// usage:0.0619}], beside elapsedTime (ms).
+	PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
+	ElapsedTime         float64             `json:"elapsedTime"`
+}
+
+// sessionInfoKiroShadow strips the UnmarshalJSON method so the real decode can
+// run without recursing into it.
+type sessionInfoKiroShadow sessionInfoKiroBlock
+
+// UnmarshalJSON decodes the block and reports any member KAS sent that this type
+// does not read. Same reasoning as ACPKiroBlock.UnmarshalJSON: the method receives
+// exactly this object's bytes, so the probe is bounded to it, and the census can
+// contribute no error.
+func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, (*sessionInfoKiroShadow)(b)); err != nil {
+		return err
+	}
+	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow]())
+	return nil
 }
 
 // promptTurnSummary is one metering line of a turn-end summary.
@@ -92,6 +122,12 @@ type promptTurnSummary struct {
 	Unit  string  `json:"unit"`
 	Usage float64 `json:"usage"`
 }
+
+// meteringUnitCredit is the one unit persistTurnSummary counts as spend. Named
+// rather than inline because the census reports every OTHER unit, so the two must
+// agree by construction: a rename here that missed the census would silently stop
+// counting and report nothing.
+const meteringUnitCredit = "credit"
 
 // HandleSessionInfoUpdate folds v3 context-usage into the chat's usage so
 // the context ring works on the KAS engine (v2 sourced this from
@@ -197,13 +233,19 @@ func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 	if kind == "" {
 		return
 	}
+	// Sanitized and bounded like every other upstream string this package logs.
+	// The kind is backend-controlled and vibekit logs logfmt, so a raw newline in
+	// it forges a log line and an ANSI sequence repaints the terminal of whoever
+	// tails it. Applied to the KNOWN branch too: membership is decided before the
+	// value is trusted, not by it.
+	safe := runesafe.SanitizeSingleLineBounded(kind, maxCensusNameBytes)
 	if _, known := knownSessionInfoKinds[kind]; known {
 		slog.Debug("session_info_update: known kind carries nothing vibekit consumes",
-			"chat_id", chatID, "kind", kind)
+			"chat_id", chatID, "kind", safe)
 		return
 	}
 	slog.Warn("session_info_update: UNKNOWN kind, dropped — KAS may have added a sub-kind",
-		"chat_id", chatID, "kind", kind)
+		"chat_id", chatID, "kind", safe)
 }
 
 // handleV3Summarization maps the v3 summarization sub-states onto the
@@ -248,9 +290,15 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.C
 func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
-		if summaries[i].Unit == "" || summaries[i].Unit == "credit" {
+		if summaries[i].Unit == "" || summaries[i].Unit == meteringUnitCredit {
 			credits += summaries[i].Usage
+			continue
 		}
+		// A unit this does not sum is either a dimension KAS added or a rename of
+		// the one above, and no field-name probe can see it: `unit` is a field
+		// vibekit reads, so only the LABEL is novel. Reported once per process
+		// because the alternative is a spend line that silently stops counting.
+		censusMeteringUnit(summaries[i].Unit)
 	}
 	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
