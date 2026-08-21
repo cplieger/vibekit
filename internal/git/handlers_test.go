@@ -493,10 +493,10 @@ func TestExtractCommitMessage(t *testing.T) {
 }
 
 func TestExtractCommitMessage_SubjectLineBounded(t *testing.T) {
-	// Subject line must always be <=72 RUNES after truncation, and must always
-	// be valid UTF-8. The unit matters: this assertion used to count bytes while
-	// its message said "chars", which is the same conflation capSubject itself
-	// had — so a non-ASCII subject cut mid-rune satisfied it.
+	// Subject line must always be <=subjectMaxRunes RUNES after truncation, and
+	// must always be valid UTF-8. The unit matters: this assertion used to count
+	// bytes while its message said "chars", which is the same conflation
+	// capSubject itself had — so a non-ASCII subject cut mid-rune satisfied it.
 	inputs := []string{
 		"",
 		"short",
@@ -514,8 +514,9 @@ func TestExtractCommitMessage_SubjectLineBounded(t *testing.T) {
 	for _, in := range inputs {
 		out := extractCommitMessage(in)
 		firstLine, _, _ := strings.Cut(out, "\n")
-		if n := utf8.RuneCountInString(firstLine); n > 72 {
-			t.Errorf("extractCommitMessage(%q...): subject is %d runes, want <=72", in[:min(len(in), 20)], n)
+		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
+			t.Errorf("extractCommitMessage(%q...): subject is %d runes, want <=%d",
+				in[:min(len(in), 20)], n, subjectMaxRunes)
 		}
 		if !utf8.ValidString(firstLine) {
 			t.Errorf("extractCommitMessage(%q...): subject %q is not valid UTF-8",
@@ -2359,18 +2360,21 @@ func TestExtractCommitMessage_PropertyInvariants(t *testing.T) {
 
 		result := extractCommitMessage(input)
 
-		// Invariant 1: subject line <= 72 chars.
+		// Invariant 1: the subject line is capped in RUNES. This generator draws
+		// from an ASCII alphabet, so a byte count agreed here by accident; it is
+		// the cap's own unit that decides the assertion, not the alphabet a
+		// sibling draw happens to use.
 		firstLine, _, _ := strings.Cut(result, "\n")
-		if len(firstLine) > 72 {
-			t.Fatalf("subject %q is %d chars, want <=72", firstLine, len(firstLine))
+		if n := utf8.RuneCountInString(firstLine); n > subjectMaxRunes {
+			t.Fatalf("subject %q is %d runes, want <=%d", firstLine, n, subjectMaxRunes)
 		}
 
-		// Invariant 2: if truncation fired, output ends with "...".
+		// Invariant 2: if truncation fired, output ends with the ellipsis.
 		trimmedSubject := strings.TrimSpace(subject)
-		if wrapper == 0 && len(trimmedSubject) > 72 && result != "" {
+		if wrapper == 0 && utf8.RuneCountInString(trimmedSubject) > subjectMaxRunes && result != "" {
 			subjectOut, _, _ := strings.Cut(result, "\n")
-			if !strings.HasSuffix(subjectOut, "...") {
-				t.Fatalf("truncated subject %q does not end with '...'", subjectOut)
+			if !strings.HasSuffix(subjectOut, subjectEllipsis) {
+				t.Fatalf("truncated subject %q does not end with %q", subjectOut, subjectEllipsis)
 			}
 		}
 
