@@ -13,7 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 func helloMux() http.Handler {
@@ -109,7 +109,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 // compatible).
 func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"vibekit.example.com"},
-		webhttp.WithLoopbackExempt(),
+		webhttp.WithLoopbackExempt(true),
 		webhttp.WithHostAllowlistError("",
 			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {

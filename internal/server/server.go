@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/cplieger/pinstall/v2"
-	"github.com/cplieger/toolbelt/v2"
-	"github.com/cplieger/toolbelt/v2/httpapi"
+	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 const port = "9847"
@@ -453,7 +453,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 			// the 401 from auth. Those are exactly the lines read when a
 			// browser cannot attach a shell, and the path skip this replaced
 			// deleted them along with the noise.
-			webhttp.WithSkipUpgrades(),
+			webhttp.WithSkipUpgrades(true),
 			// /api/health is probed every 30s (Docker HEALTHCHECK curl +
 			// Gatus). The fleet-standard ProbeLogLevel keeps healthy probes
 			// at Debug (out of the shipped stream) and surfaces a failing
@@ -519,7 +519,7 @@ type healthBody struct {
 // or when kiro-cli is unavailable, which is how a failed or still-running
 // install surfaces to `docker ps`, monitoring and the client's degraded banner.
 //
-// The kiro-cli verdict is the install manager's (github.com/cplieger/pinstall/v2,
+// The kiro-cli verdict is the install manager's (github.com/cplieger/pinstall/v3,
 // wired in internal/composition): it is VERSION-AWARE, where the check this
 // replaced only asked whether SOMETHING named kiro-cli was on PATH — so a binary
 // drifted from the pin, or one whose auto-update could not be switched off, now

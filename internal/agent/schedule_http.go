@@ -13,10 +13,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/schedule"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // maxLogFieldBytes bounds one caller-supplied string on its way into a log

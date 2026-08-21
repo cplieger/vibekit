@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/sse"
+	"github.com/cplieger/webhttp/v2/sse"
 )
 
 // --- Runtime construction helpers ---

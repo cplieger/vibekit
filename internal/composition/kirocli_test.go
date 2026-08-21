@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/pinstall/v2"
+	"github.com/cplieger/pinstall/v3"
 )
 
 // TestStartKiroCLIShapes pins the runtimes startKiroCLI can return for a

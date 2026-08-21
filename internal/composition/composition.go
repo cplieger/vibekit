@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/vibekit/internal/agent"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
@@ -701,7 +701,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 		// integrity refusal and (nil, wrapped) for everything else.
 		return nil, toolsEngineFailure(err)
 	}
-	if _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
+	if _, _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
 		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
 	}
 	if _, rerr := toolsEngine.RefreshCatalog(); rerr != nil {

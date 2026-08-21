@@ -2,7 +2,7 @@ package translate
 
 // One rule for every string this package puts on a human-read surface.
 
-import "github.com/cplieger/runesafe"
+import "github.com/cplieger/runesafe/v2"
 
 // maxDisplayTextBytes bounds one upstream string on its way to a banner, a
 // permission card, or a question card. Nothing on the wire bounds any of them:

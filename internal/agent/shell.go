@@ -3,8 +3,8 @@
 // The shell runs in a real pseudo-terminal (creack/pty) so interactive
 // programs (vim, htop, less, tab completion) work correctly. I/O flows
 // over a WebSocket at /api/shell/ws using a compact binary wire protocol
-// (see github.com/cplieger/web-terminal-engine/v4/terminal). The server maintains a VT500
-// screen buffer (github.com/cplieger/web-terminal-engine/v4/vt) and sends only changed rows
+// (see github.com/cplieger/web-terminal-engine/v5/terminal). The server maintains a VT500
+// screen buffer (github.com/cplieger/web-terminal-engine/v5/vt) and sends only changed rows
 // to the client on each flush tick — dramatically reducing bandwidth vs.
 // raw-byte streaming, and enabling a lightweight DOM-based renderer on the
 // client (no xterm.js dependency).
@@ -32,8 +32,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/web-terminal-engine/v4/terminal"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // shutdownBudget bounds one PTY teardown. Sized above the engine's 5s reap

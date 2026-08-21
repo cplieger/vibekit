@@ -8,7 +8,7 @@ import (
 	"path"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // RegisterRoutes wires the MCP config endpoints.

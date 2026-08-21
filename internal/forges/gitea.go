@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // giteaProvider implements ForgeOps via the tea CLI. Used for both

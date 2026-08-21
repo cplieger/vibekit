@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/pinstall/v2"
-	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/filebrowse"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -122,7 +122,8 @@ func ConfigFromEnv() Config {
 		ToolCatalogPath:    cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG"), "/opt/vibekit/tool-catalog.json"),
 		ToolCatalogURL:     cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
-			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH"), "VIBEKIT_TOOL_CATALOG_REFRESH",
+			toolbelt.RefreshEnv(envx.String("VIBEKIT_TOOL_CATALOG_REFRESH")),
+			"VIBEKIT_TOOL_CATALOG_REFRESH",
 		),
 		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
@@ -261,7 +262,7 @@ func parseTrustedInstallUIDs(raw string) []int {
 // browser request would otherwise 403 with no hint why.
 func parseAllowedHosts(raw string) *webhttp.HostPolicy {
 	policy, invalid := webhttp.ParseHostList(strings.Split(raw, ","),
-		webhttp.WithLoopbackExempt(),
+		webhttp.WithLoopbackExempt(true),
 		webhttp.WithHostAllowlistError("",
 			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {

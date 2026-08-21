@@ -31,7 +31,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/cplieger/web-terminal-engine/v4/terminal"
+	"github.com/cplieger/web-terminal-engine/v5/terminal"
 )
 
 // readManifest resolves the client half from the engine artifact's own published
@@ -87,10 +87,13 @@ func run(clientRev, clientMinServer int, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "wirecheck: -client-rev and -client-min-server are required positive integers")
 		return 2
 	}
-	if reason := terminal.WirePairIncompatibility(
-		terminal.WireProtocolVersion, terminal.MinSupportedClientWireVersion,
-		clientRev, clientMinServer,
-	); reason != "" {
+	if reason := terminal.WirePairIncompatibility(terminal.WirePair{
+		Server: terminal.WireEnd{
+			Rev:     terminal.WireProtocolVersion,
+			MinPeer: terminal.MinSupportedClientWireVersion,
+		},
+		Client: terminal.WireEnd{Rev: clientRev, MinPeer: clientMinServer},
+	}); reason != "" {
 		fmt.Fprintf(stderr, "ERROR wire-floor-mismatch: %s\n%s\n", reason, remediation())
 		return 1
 	}

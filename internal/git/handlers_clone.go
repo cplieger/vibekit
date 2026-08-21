@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {

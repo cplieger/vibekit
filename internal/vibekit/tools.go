@@ -8,8 +8,8 @@ package vibekit
 // are aliased here for the same reason.
 
 import (
-	"github.com/cplieger/toolbelt/v2"
-	"github.com/cplieger/toolbelt/v2/httpapi"
+	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/httpapi"
 )
 
 // ToolJob is one tools-engine job: an install/uninstall/disable/

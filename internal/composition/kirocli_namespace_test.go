@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pinstall/v2"
+	"github.com/cplieger/pinstall/v3"
 )
 
 // The pin these tests install, and the toolbelt tool name that collides with it.

@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // repoLister is what handleRepos needs at the collection level: the account's

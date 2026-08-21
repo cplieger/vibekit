@@ -11,10 +11,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/webhttp/v2"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The
