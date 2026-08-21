@@ -51,7 +51,6 @@ function isTokenBoundaryCode(c: number): boolean {
     c === 39 ||
     c === 96 ||
     c === 35 ||
-    c === 47 ||
     isPunctCode(c)
   );
 }
