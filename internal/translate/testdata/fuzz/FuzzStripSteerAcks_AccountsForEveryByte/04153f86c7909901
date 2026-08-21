@@ -1,0 +1,2 @@
+go test fuzz v1
+string("[[STEERING steer-0: 0]")

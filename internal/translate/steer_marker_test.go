@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -111,6 +112,54 @@ func TestStripSteerAcks_RemovesEveryMarkerInAChunk(t *testing.T) {
 	got, carry := feed([]string{in})
 	if want := "a  b  c"; got != want || carry != "" {
 		t.Errorf("emitted %q carry %q, want %q and no carry", got, carry, want)
+	}
+}
+
+// Text in front of a complete marker is finished, so it is emitted rather than
+// withheld. Two things go wrong when it is held instead, and the second is the
+// serious one: the carry stops being a suffix of the input (found by
+// FuzzStripSteerAcks_AccountsForEveryByte, seed f5c17fda28252ee5's sibling
+// 04153f86c7909901), and a candidate held from before a removed marker splices
+// onto the NEXT chunk across text that is already gone.
+//
+// The splice case is the second row. `[STEERING stee` is followed in the stream
+// by a complete marker, so KAS's own reader sees it as prose; joining it to a
+// later `r-9: y]` would strip it as an acknowledgement of a steer the agent
+// never answered, with an id the model does not control either.
+func TestStripSteerAcks_DoesNotHoldTextInFrontOfAMarker(t *testing.T) {
+	tests := map[string]struct {
+		chunks   []string
+		wantEmit string
+		wantIDs  []string
+	}{
+		"bracket before a marker": {
+			chunks:   []string{"[[STEERING steer-0: 0]"},
+			wantEmit: "[",
+			wantIDs:  []string{"steer-0"},
+		},
+		"candidate before a marker cannot splice": {
+			chunks:   []string{"[STEERING stee[STEERING steer-1: x]", "r-9: y]"},
+			wantEmit: "[STEERING steer-9: y]",
+			wantIDs:  []string{"steer-1"},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			emit, carry, acks := feedAcks(tt.chunks)
+			if emit != tt.wantEmit {
+				t.Errorf("emitted %q, want %q", emit, tt.wantEmit)
+			}
+			if carry != "" {
+				t.Errorf("carry = %q, want empty", carry)
+			}
+			var ids []string
+			for _, a := range acks {
+				ids = append(ids, a.SteerID)
+			}
+			if !slices.Equal(ids, tt.wantIDs) {
+				t.Errorf("ack ids = %v, want %v", ids, tt.wantIDs)
+			}
+		})
 	}
 }
 
