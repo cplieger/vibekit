@@ -93,6 +93,8 @@ type Roles struct {
 	Governance GovernanceAccess
 	RunOrigin  RunOriginAccess
 	RunBounds  RunBoundsAccess
+	// TurnInterrupt ends a turn kiro-cli abandoned without answering.
+	TurnInterrupt TurnInterruptAccess
 	// WorkDir is the workspace root. A VALUE: it is a process constant, so there
 	// is nothing to substitute and no reason for a method. Last because a
 	// trailing string ends fieldalignment's leading-pointer count early.
@@ -177,20 +179,21 @@ type MCPRecorder interface {
 // Translator holds stateful translate logic extracted from Runtime. Each role is
 // its own field, so a handler method's reach is the field it names.
 type Translator struct {
-	bus          Broadcaster
-	chats        ChatRecords
-	buffers      BufferAccess
-	lines        LineRecorder
-	pendingPerms PendingPermAdder
-	push         Pusher
-	sessions     SessionResolver
-	terminals    TerminalReader
-	hookStatus   HookStatusReader
-	mcp          MCPRecorder
-	governance   GovernanceAccess
-	runOrigin    RunOriginAccess
-	runBounds    RunBoundsAccess
-	newMsgID     func() string
+	bus           Broadcaster
+	chats         ChatRecords
+	buffers       BufferAccess
+	lines         LineRecorder
+	pendingPerms  PendingPermAdder
+	push          Pusher
+	sessions      SessionResolver
+	terminals     TerminalReader
+	hookStatus    HookStatusReader
+	mcp           MCPRecorder
+	governance    GovernanceAccess
+	runOrigin     RunOriginAccess
+	runBounds     RunBoundsAccess
+	turnInterrupt TurnInterruptAccess
+	newMsgID      func() string
 	// steps maps a workflow step's ACP session id to its run and node. Fed from
 	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
 	steps   *stepRegistry
@@ -200,21 +203,22 @@ type Translator struct {
 // New constructs a Translator over the roles the host supplies.
 func New(r *Roles, opts ...Option) *Translator {
 	t := &Translator{
-		bus:          r.Bus,
-		chats:        r.Chats,
-		buffers:      r.Buffers,
-		lines:        r.Lines,
-		pendingPerms: r.PendingPerms,
-		push:         r.Push,
-		sessions:     r.Sessions,
-		terminals:    r.Terminals,
-		hookStatus:   r.HookStatus,
-		workDir:      r.WorkDir,
-		mcp:          r.MCP,
-		governance:   r.Governance,
-		runOrigin:    r.RunOrigin,
-		runBounds:    r.RunBounds,
-		steps:        newStepRegistry(),
+		bus:           r.Bus,
+		chats:         r.Chats,
+		buffers:       r.Buffers,
+		lines:         r.Lines,
+		pendingPerms:  r.PendingPerms,
+		push:          r.Push,
+		sessions:      r.Sessions,
+		terminals:     r.Terminals,
+		hookStatus:    r.HookStatus,
+		workDir:       r.WorkDir,
+		mcp:           r.MCP,
+		governance:    r.Governance,
+		runOrigin:     r.RunOrigin,
+		runBounds:     r.RunBounds,
+		turnInterrupt: r.TurnInterrupt,
+		steps:         newStepRegistry(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -292,4 +296,23 @@ type RunOriginAccess interface {
 // assume, which is why the name says what happened rather than what to do.
 type RunBoundsAccess interface {
 	StepTurnCapExceeded(workflowID, nodeID string, turns int)
+}
+
+// TurnInterruptAccess ends a turn kiro-cli has abandoned without answering.
+//
+// Same split as RunBoundsAccess, for the same reason: DETECTION belongs here
+// (the sentinel arrives as an assistant text chunk, which passes through this
+// package) and TERMINATION belongs on the host, which owns the bridges and the
+// in-flight prompt's cancel func. This package holds neither, and a turn ends
+// here only by the host acting on what it was told.
+//
+// reason travels because the host cannot derive it. The transcript already shows
+// the sentinel as ordinary assistant text; what the divider needs is the
+// attribution, and only the detector knows which sentinel matched.
+//
+// Advisory in one direction only: the host may decline (no turn in flight, or a
+// user cancel already claimed this one), which is why nothing here reads a
+// result.
+type TurnInterruptAccess interface {
+	InterruptTurn(chatID vibekit.ChatID, reason string)
 }

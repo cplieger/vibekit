@@ -27,6 +27,10 @@ type baseDeps struct {
 	// assert the per-step turn cap fired once and named the right step without a
 	// agent behind it.
 	stepCapBreaches []stepCapBreach
+	// turnInterrupts records every InterruptTurn call, so a test can assert the
+	// sentinel ended the turn exactly once and named its cause, with no bridge
+	// behind it.
+	turnInterrupts []turnInterrupt
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
@@ -102,6 +106,17 @@ type stepCapBreach struct {
 func (d *baseDeps) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
 	d.stepCapBreaches = append(d.stepCapBreaches, stepCapBreach{workflowID, nodeID, turns})
 }
+
+// turnInterrupt is one recorded InterruptTurn call.
+type turnInterrupt struct {
+	chatID vibekit.ChatID
+	reason string
+}
+
+func (d *baseDeps) InterruptTurn(chatID vibekit.ChatID, reason string) {
+	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, reason})
+}
+
 func (d *baseDeps) WorkDir() string { return "/tmp" }
 func (d *baseDeps) BridgeNotify(context.Context, vibekit.ChatID, string, map[string]any) error {
 	return nil

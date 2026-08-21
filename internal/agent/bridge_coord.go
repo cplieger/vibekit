@@ -920,6 +920,13 @@ func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vib
 		Role:      vibekit.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: vibekit.EventInterrupted,
+		// Content is what messages-events.ts renders as the divider's label, so
+		// this is the turn's user-facing account of why it stopped. Empty on the
+		// ordinary failure path ON PURPOSE — a failed prompt already sends its
+		// reason as an error frame and the divider falls back to the generic
+		// label — but a turn kiro-cli abandoned without answering sends no such
+		// frame, so its cause reaches the user here or nowhere.
+		Content: bc.takeInterruptReason(chatID),
 	}
 	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("persist interrupted event", "chat_id", chatID, "error", err)
@@ -929,6 +936,40 @@ func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vib
 }
 
 const stopReasonCancelled = vibekit.StopReasonCancelled
+
+// InterruptTurn ends a turn kiro-cli abandoned without answering it. Satisfies
+// translate.TurnInterruptAccess.
+//
+// The bridge is left ALIVE and the ACP session untouched: only the tool call was
+// cancelled, so tripping the prompt context releases the slot and the chat is
+// immediately promptable again. That is what makes this preferable to a bridge
+// restart, and it is why the recovery costs the user one Send rather than a
+// session.
+//
+// A missing bridge or a turn that is no longer in flight is not a failure: the
+// frame can arrive after a user cancel already ended the same turn. Logged at
+// Debug so the no-op is observable without making a benign race look like one.
+func (bc *BridgeCoordinator) InterruptTurn(chatID vibekit.ChatID, reason string) {
+	sb := bc.bridge.mgr.get(chatID)
+	if sb == nil {
+		slog.Debug("interrupt turn: no bridge", "chat_id", chatID)
+		return
+	}
+	if !sb.interruptTurn(reason) {
+		slog.Debug("interrupt turn: no turn in flight, or another cause claimed it",
+			"chat_id", chatID, "reason", reason)
+	}
+}
+
+// takeInterruptReason reads and clears the interrupt reason for a chat, or
+// returns "" when the turn ended for any other cause.
+func (bc *BridgeCoordinator) takeInterruptReason(chatID vibekit.ChatID) string {
+	sb := bc.bridge.mgr.get(chatID)
+	if sb == nil {
+		return ""
+	}
+	return sb.takeInterruptReason()
+}
 
 func extractStopReason(resp *vibekit.RPCResponse) vibekit.StopReason {
 	if resp == nil || resp.Result == nil {

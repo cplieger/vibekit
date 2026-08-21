@@ -36,9 +36,24 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	// empty. The step's own `_meta.kiro.workflow` supplies an instance-unique
 	// key instead; see ACPWorkflowMeta.SubtaskID.
 	subtask := chunk.Meta.Kiro.AgentSubtaskID
-	if wf := chunk.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
-		subtask = wf
+	workflowSubtask := chunk.Meta.Kiro.Workflow.SubtaskID()
+	if workflowSubtask != "" {
+		subtask = workflowSubtask
 	}
+
+	// kiro-cli's security filter cancelled a tool call: this chunk IS the whole
+	// notice, and no session/prompt response is coming (see interrupt_marker.go).
+	// Detected BEFORE the steer filter so the two never eat each other's text,
+	// and ACTED ON at the very end of this function, because the notice has to
+	// reach the transcript before the turn is torn down.
+	//
+	// Skipped for a workflow STEP frame. A step's chunks arrive on the launching
+	// chat's connection, but vibekit issued no session/prompt for the step, so
+	// there is no prompt call to release and the only stop verb is run-scoped.
+	// The run's own hour ceiling catches it instead — which mis-attributes the
+	// cause on the History row, and is the follow-up rather than a reason to
+	// cancel the parent chat's live turn from a step's frame.
+	interrupted := !isReasoning && workflowSubtask == "" && isInterruptSentinel(chunk.Content.Text)
 
 	// Strip the steering acknowledgement marker before anything reads the text.
 	// All three consumers below — the content builder, the block array and the
@@ -109,6 +124,20 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 			AgentSubtaskID: subtask,
 			Refusal:        refusal,
 		}))
+
+	// LAST, and the ordering is the contract rather than tidiness. The host's
+	// teardown takes the buffer, so anything appended after it is lost — the
+	// notice has to be in the buffer and on the wire before the turn can end, or
+	// the user is left with a turn that stopped and no sentence saying why.
+	//
+	// No nil guard on the role, deliberately: requireWired panics at construction
+	// for an unwired one, and a silently-nil interrupt here would put the wedge
+	// back with nothing to say it had.
+	if interrupted {
+		slog.Warn("kiro-cli interrupted its own tool use; ending the turn",
+			"chat_id", chatID, "reason", interruptReason)
+		t.turnInterrupt.InterruptTurn(chatID, interruptReason)
+	}
 }
 
 // broadcastSteerAcks reports what the agent said it did about each steer whose
