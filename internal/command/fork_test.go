@@ -11,12 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // primeRecorder is bridgeDeps plus the prime-note channel, which is the only way
@@ -25,51 +24,49 @@ import (
 // distinguishes the two paths for the next spawn.
 type primeRecorder struct {
 	*bridgeDeps
-	primed map[api.ChatID]api.ChatID
+	primed map[vibekit.ChatID]vibekit.ChatID
 }
 
-func (d *primeRecorder) PrimeFromChat(chatID, sourceChatID api.ChatID) {
+func (d *primeRecorder) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
 	if d.primed == nil {
-		d.primed = make(map[api.ChatID]api.ChatID, 1)
+		d.primed = make(map[vibekit.ChatID]vibekit.ChatID, 1)
 	}
 	d.primed[chatID] = sourceChatID
 }
 
-func newForkDispatcher(store api.ChatStore, bridge Bridge) (*Dispatcher, *primeRecorder) {
-	deps := &primeRecorder{bridgeDeps: &bridgeDeps{
+func newForkHost(store ChatStore, bridge Bridge) *primeRecorder {
+	return &primeRecorder{bridgeDeps: &bridgeDeps{
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
 	}}
-	return New(deps), deps
 }
 
-func forkReq(t *testing.T, newChat, parent api.ChatID, title string) *api.ClientCommand {
+func forkReq(t *testing.T, newChat, parent vibekit.ChatID, title string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.ForkChatCommand{ParentChatID: parent, Title: title})
+	payload, err := json.Marshal(vibekit.ForkChatCommand{ParentChatID: parent, Title: title})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdForkChat,
-		ChatID:    newChat,
-		RequestID: "r1",
-		Payload:   payload,
+	return &vibekit.ClientCommand{
+		Type:    vibekit.CmdForkChat,
+		ChatID:  newChat,
+		Payload: payload,
 	}
 }
 
 // seedParent writes a parent chat with a transcript, a model, a mode and a live
 // session id — everything the tangent inherits.
-func seedParent(t *testing.T, store api.ChatStore, id api.ChatID) {
+func seedParent(t *testing.T, store ChatStore, id vibekit.ChatID) {
 	t.Helper()
-	if err := store.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
+	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Parent conversation"
 		c.Model = "parent-model"
 		c.CurrentModeID = "plan"
-		c.Effort = string(api.EffortHigh)
+		c.Effort = string(vibekit.EffortHigh)
 		c.RecordSession("sess_parent")
-		c.Messages = []api.Message{
-			{ID: "u1", Role: api.RoleUser, Content: "how does the reaper work", Ts: 100},
-			{ID: "a1", Role: api.RoleAssistant, Content: "it keeps the session chain", Ts: 200},
+		c.Messages = []vibekit.Message{
+			{ID: "u1", Role: vibekit.RoleUser, Content: "how does the reaper work", Ts: 100},
+			{ID: "a1", Role: vibekit.RoleAssistant, Content: "it keeps the session chain", Ts: 200},
 		}
 		return true
 	}); err != nil {
@@ -88,18 +85,17 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 		sessionID: "sess_parent",
 		result:    map[string]any{"sessionId": "sess_tangent"},
 	}
-	d, deps := newForkDispatcher(store, br)
-	w := httptest.NewRecorder()
+	host := newForkHost(store, br)
 
-	CmdForkChat(d, t.Context(), w, forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
+	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	if br.gotMethod != api.MethodSessionFork {
-		t.Errorf("called %q, want %q", br.gotMethod, api.MethodSessionFork)
+	if br.gotMethod != vibekit.MethodSessionFork {
+		t.Errorf("called %q, want %q", br.gotMethod, vibekit.MethodSessionFork)
 	}
-	if got := br.gotParams["sessionId"]; got != api.SessionID("sess_parent") {
+	if got := br.gotParams["sessionId"]; got != vibekit.SessionID("sess_parent") {
 		t.Errorf("forked sessionId = %v, want the PARENT's sess_parent", got)
 	}
 	c, ok := store.Get(t.Context(), "c-tangent")
@@ -120,8 +116,8 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 		t.Errorf("session chain = %v, want [sess_tangent]", chain)
 	}
 	// A forked tangent needs no prime: it HAS the context.
-	if len(deps.primed) != 0 {
-		t.Errorf("a forked tangent was also marked for priming: %v", deps.primed)
+	if len(host.primed) != 0 {
+		t.Errorf("a forked tangent was also marked for priming: %v", host.primed)
 	}
 }
 
@@ -137,10 +133,9 @@ func TestCmdForkChat_SendsTangentMeta(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	host := newForkHost(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(),
-		forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
+	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
 
 	if _, ok := br.gotParams["messageId"]; ok {
 		t.Error("session/fork carried a messageId; a tangent fork names no message")
@@ -156,8 +151,8 @@ func TestCmdForkChat_SendsTangentMeta(t *testing.T) {
 	if !ok {
 		t.Fatalf("_meta.kiro = %T, want a map", meta["kiro"])
 	}
-	if kiro["createdReason"] != api.CreatedReasonTangent {
-		t.Errorf("createdReason = %v, want %q", kiro["createdReason"], api.CreatedReasonTangent)
+	if kiro["createdReason"] != vibekit.CreatedReasonTangent {
+		t.Errorf("createdReason = %v, want %q", kiro["createdReason"], vibekit.CreatedReasonTangent)
 	}
 	if kiro["title"] != "Reaper detour" {
 		t.Errorf("title = %v, want the supplied one", kiro["title"])
@@ -171,9 +166,9 @@ func TestCmdForkChat_OmitsAnEmptyTitle(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	host := newForkHost(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
+	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", ""))
 
 	meta := br.gotParams["_meta"].(map[string]any) //nolint:forcetypeassert // shape pinned by TestCmdForkChat_SendsTangentMeta
 	kiro := meta["kiro"].(map[string]any)          //nolint:forcetypeassert // shape pinned by TestCmdForkChat_SendsTangentMeta
@@ -190,9 +185,9 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	host := newForkHost(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
+	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", ""))
 
 	c, _ := store.Get(t.Context(), "c-tangent")
 	if c.Model != "parent-model" {
@@ -201,13 +196,13 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	if c.CurrentModeID != "plan" {
 		t.Errorf("current_mode_id = %q, want the parent's", c.CurrentModeID)
 	}
-	if c.Effort != string(api.EffortHigh) {
+	if c.Effort != string(vibekit.EffortHigh) {
 		t.Errorf("effort = %q, want the parent's", c.Effort)
 	}
 	// The NAME is deliberately not inherited: it stays the ordinary precedence
 	// (the agent's focus title, else the first prompt's truncation). Copying the
 	// parent's would give two tabs the same label with no way to tell them apart.
-	if c.Name != api.DefaultChatName {
+	if c.Name != vibekit.DefaultChatName {
 		t.Errorf("name = %q, want the default; the parent's name is not inherited", c.Name)
 	}
 }
@@ -234,27 +229,25 @@ func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedParent(t, store, "c-parent")
-			d, deps := newForkDispatcher(store, br)
-			w := httptest.NewRecorder()
+			host := newForkHost(store, br)
 
-			CmdForkChat(d, t.Context(), w, forkReq(t, "c-tangent", "c-parent", ""))
+			body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", ""))
 
-			if w.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200: a refused fork still opens the tangent (body %s)",
-					w.Code, w.Body.String())
+			if statusOf(err) != http.StatusOK {
+				t.Fatalf("status = %d, want 200: a refused fork still opens the tangent (err %v)",
+					statusOf(err), err)
 			}
-			var reply struct {
-				Outcome   string `json:"outcome"`
-				SessionID string `json:"session_id"`
+			// The handler RETURNS its body, so the assertion reads the value
+			// instead of decoding the JSON the dispatcher would have written.
+			reply, ok := body.(map[string]any)
+			if !ok {
+				t.Fatalf("body = %T, want map[string]any", body)
 			}
-			if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
-				t.Fatalf("decode reply: %v", err)
+			if reply["outcome"] != vibekit.ForkOutcomePrimed {
+				t.Errorf("outcome = %v, want %q", reply["outcome"], vibekit.ForkOutcomePrimed)
 			}
-			if reply.Outcome != api.ForkOutcomePrimed {
-				t.Errorf("outcome = %q, want %q", reply.Outcome, api.ForkOutcomePrimed)
-			}
-			if reply.SessionID != "" {
-				t.Errorf("session_id = %q, want empty on the primed path", reply.SessionID)
+			if reply["session_id"] != "" {
+				t.Errorf("session_id = %v, want empty on the primed path", reply["session_id"])
 			}
 			c, ok := store.Get(t.Context(), "c-tangent")
 			if !ok {
@@ -266,7 +259,7 @@ func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
 			// The prime note is what carries the parent's history into the
 			// tangent's first session. Without it that session starts blind on the
 			// conversation the user opened it FROM.
-			if got := deps.primed["c-tangent"]; got != "c-parent" {
+			if got := host.primed["c-tangent"]; got != "c-parent" {
 				t.Errorf("prime note = %q, want c-parent", got)
 			}
 			// The inheritance that does not depend on the fork still happens.
@@ -294,19 +287,18 @@ func TestCmdForkChat_PrimesWhenTheParentHasNoLiveSession(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedParent(t, store, "c-parent")
-			d, deps := newForkDispatcher(store, br)
-			w := httptest.NewRecorder()
+			host := newForkHost(store, br)
 
-			CmdForkChat(d, t.Context(), w, forkReq(t, "c-tangent", "c-parent", ""))
+			_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", ""))
 
-			if w.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+			if statusOf(err) != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 			}
 			if rb, ok := br.(*recordingBridge); ok && rb.callCount != 0 {
 				t.Errorf("made %d calls, want 0: a bridgeless parent is not started to be forked",
 					rb.callCount)
 			}
-			if got := deps.primed["c-tangent"]; got != "c-parent" {
+			if got := host.primed["c-tangent"]; got != "c-parent" {
 				t.Errorf("prime note = %q, want c-parent", got)
 			}
 		})
@@ -320,7 +312,7 @@ func TestCmdForkChat_PrimesWhenTheParentHasNoLiveSession(t *testing.T) {
 func TestCmdForkChat_RefusesToReshapeAnExistingChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
-	if err := store.Mutate(t.Context(), "c-tangent", func(c *api.Chat, _ bool) bool {
+	if err := store.Mutate(t.Context(), "c-tangent", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Existing work"
 		c.RecordSession("sess_existing")
 		return true
@@ -328,9 +320,9 @@ func TestCmdForkChat_RefusesToReshapeAnExistingChat(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_new"}}
-	d, _ := newForkDispatcher(store, br)
+	host := newForkHost(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
+	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", ""))
 
 	c, _ := store.Get(t.Context(), "c-tangent")
 	if c.ACPSessionID != "sess_existing" {
@@ -346,8 +338,8 @@ func TestCmdForkChat_RefusesToReshapeAnExistingChat(t *testing.T) {
 // rather than KAS's, and which must not create a chat.
 func TestCmdForkChat_Rejects(t *testing.T) {
 	cases := map[string]struct {
-		newChat api.ChatID
-		parent  api.ChatID
+		newChat vibekit.ChatID
+		parent  vibekit.ChatID
 		title   string
 		want    int
 		seed    bool
@@ -359,7 +351,7 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 		"empty parent":    {newChat: "c-tangent", parent: "", want: http.StatusBadRequest, seed: true},
 		"unsafe parent":   {newChat: "c-tangent", parent: "../etc", want: http.StatusBadRequest, seed: true},
 		"unknown parent":  {newChat: "c-tangent", parent: "c-missing", want: http.StatusNotFound, seed: false},
-		"oversized title": {newChat: "c-tangent", parent: "c-parent", title: strings.Repeat("t", api.MaxChatNameBytes+1), want: http.StatusBadRequest, seed: true},
+		"oversized title": {newChat: "c-tangent", parent: "c-parent", title: strings.Repeat("t", vibekit.MaxChatNameBytes+1), want: http.StatusBadRequest, seed: true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -368,13 +360,12 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 				seedParent(t, store, "c-parent")
 			}
 			br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-			d, _ := newForkDispatcher(store, br)
-			w := httptest.NewRecorder()
+			host := newForkHost(store, br)
 
-			CmdForkChat(d, t.Context(), w, forkReq(t, tc.newChat, tc.parent, tc.title))
+			_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, tc.newChat, tc.parent, tc.title))
 
-			if w.Code != tc.want {
-				t.Errorf("status = %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
+			if statusOf(err) != tc.want {
+				t.Errorf("status = %d, want %d (body %s)", statusOf(err), tc.want, errText(err))
 			}
 			if tc.newChat != "c-parent" {
 				if _, ok := store.Get(t.Context(), tc.newChat); ok {
@@ -391,17 +382,16 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 // TestCmdForkChat_RejectsAMalformedPayload: the envelope's own failure mode.
 func TestCmdForkChat_RejectsAMalformedPayload(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d, _ := newForkDispatcher(store, nil)
-	w := httptest.NewRecorder()
+	host := newForkHost(store, nil)
 
-	CmdForkChat(d, t.Context(), w, &api.ClientCommand{
-		Type:    api.CmdForkChat,
+	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), &vibekit.ClientCommand{
+		Type:    vibekit.CmdForkChat,
 		ChatID:  "c-tangent",
 		Payload: json.RawMessage(`{"parent_chat_id":`),
 	})
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
+	if statusOf(err) != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", statusOf(err))
 	}
 }
 
@@ -416,15 +406,10 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	host := newForkHost(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
-	CmdCloseChat(d, t.Context(), httptest.NewRecorder(), &api.ClientCommand{
-		Type:      api.CmdCloseChat,
-		ChatID:    "c-tangent",
-		RequestID: "r2",
-		Payload:   json.RawMessage(`{}`),
-	})
+	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), forkReq(t, "c-tangent", "c-parent", ""))
+	_, _ = CmdCloseChat(t.Context(), host, host, host, &vibekit.ClientCommand{Type: vibekit.CmdCloseChat, ChatID: "c-tangent", Payload: json.RawMessage(`{}`)})
 
 	c, ok := store.Get(t.Context(), "c-tangent")
 	if !ok {
@@ -435,4 +420,11 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	if chain := c.SessionChain(); len(chain) == 0 {
 		t.Error("the tangent lost its session chain on close")
 	}
+}
+
+// testWorkspace is a Workspace value over throwaway dirs. It replaced a double
+// method set when command.Workspace stopped being an interface.
+func testWorkspace(t *testing.T) Workspace {
+	t.Helper()
+	return Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}
 }

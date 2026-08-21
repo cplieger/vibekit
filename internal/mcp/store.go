@@ -4,7 +4,7 @@
 // # Storage model
 //
 // A single file at <configDir>/mcp.json, mode 0600, written atomically
-// (temp + rename) via fileutil.SaveBytes. The file holds an ordered array of
+// (temp + rename) via atomicfile.WriteFile. The file holds an ordered array of
 // Server records. Order is the display order; no separate index.
 //
 // # Scope
@@ -37,14 +37,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
-)
-
-// Compile-time interface assertions.
-var (
-	_ api.MCPConfig    = (*Store)(nil)
-	_ api.RouteHandler = (*Store)(nil)
+	"github.com/cplieger/vibekit/internal/filemode"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Transport names the MCP transports vibekit accepts in mcp.json.
@@ -93,8 +87,8 @@ func (t Transport) Valid() bool {
 	}
 }
 
-// SecretMask references the shared api.SecretMask constant.
-const SecretMask = api.SecretMask
+// SecretMask references the shared vibekit.SecretMask constant.
+const SecretMask = vibekit.SecretMask
 
 // Server is one user-configured MCP server. ID is a short stable
 // identifier used in URLs and events (generated at create time);
@@ -117,54 +111,6 @@ type Server struct {
 	UpdatedAt         int64     `json:"updated_at"`
 	Prewarm           bool      `json:"prewarm,omitempty"`
 	Enabled           bool      `json:"enabled"`
-}
-
-// NewServer constructs a Server with validated transport-specific fields.
-// Fields inappropriate for the given transport are rejected at creation
-// time rather than deferred to Validate(). Returns an error if the
-// transport is unknown or if transport-incompatible fields are populated.
-func NewServer(transport Transport, name string, opts ...ServerOption) (*Server, error) {
-	if !transport.Valid() {
-		return nil, fmt.Errorf("unknown transport: %q", transport)
-	}
-	s := &Server{
-		Transport: transport,
-		Name:      name,
-		Enabled:   true,
-	}
-	for _, opt := range opts {
-		opt(s)
-	}
-	if err := Validate(s); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
-// ServerOption configures a Server during construction via NewServer.
-type ServerOption func(*Server)
-
-// WithCommand sets the command for stdio transport servers.
-func WithCommand(cmd string, args ...string) ServerOption {
-	return func(s *Server) {
-		s.Command = cmd
-		s.Args = args
-	}
-}
-
-// WithURL sets the URL for HTTP transport servers.
-func WithURL(url string) ServerOption {
-	return func(s *Server) { s.URL = url }
-}
-
-// WithOAuthClientID sets the OAuth client ID for HTTP transport servers.
-func WithOAuthClientID(id string) ServerOption {
-	return func(s *Server) { s.OAuthClientID = id }
-}
-
-// WithEnv sets environment variables for stdio transport servers.
-func WithEnv(env []KeyPair) ServerOption {
-	return func(s *Server) { s.Env = env }
 }
 
 // KeyPair is an ordered env-var or header entry. Ordered (vs map) so
@@ -201,6 +147,16 @@ type Store struct {
 // KAS file deleted out from under us, is reconciled at boot rather than on the
 // next edit.
 func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {
+	// Required, not defaulted. ctx IS the store's lifetime, and notifyChange
+	// parents fire-and-forget callback work on it (see there). This used to be
+	// accepted as nil and substituted with context.Background() at the point of
+	// use, which meant a caller who forgot it got a goroutine running MCP prewarm
+	// that no shutdown could cancel and nothing waited on — silently, because
+	// the substitution happened deep in an unexported method. Refusing here makes
+	// the mistake a startup error at the one construction site instead.
+	if ctx == nil {
+		return nil, errors.New("mcp: New requires a non-nil ctx: it is the store's lifetime and parents the change callback")
+	}
 	s := &Store{
 		ctx:      ctx,
 		path:     filepath.Join(configDir, "mcp.json"),
@@ -258,7 +214,7 @@ func (s *Store) load() error {
 	}
 	// mcp.json is plaintext API keys in env and header values (see the package
 	// doc), so its 0600 is the whole of its protection — and os.Chmod only ASKS
-	// for that mode. EnforceFileMode re-stats the descriptor it chmod'ed, so a
+	// for that mode. EnforceFile re-stats the descriptor it chmod'ed, so a
 	// filesystem that stores 0660 for the request is reported here instead of
 	// passing as success, and it refuses a symlink at the name rather than
 	// tightening whatever the name currently points at.
@@ -268,7 +224,7 @@ func (s *Store) load() error {
 	// repaired from the UI (vibekit invariant 6 — remove the exposure, do not
 	// brick boot on it). The warning names the consequence because it is now
 	// TRUE: today this line cannot fire on a widening filesystem at all.
-	if _, chErr := fileutil.EnforceFileMode(s.path, 0o600); chErr != nil {
+	if _, chErr := filemode.EnforceFile(s.path, 0o600); chErr != nil {
 		slog.Warn("mcp: mcp.json is not 0600 and could not be made 0600; the API keys in it may be readable by other users on this host",
 			"path", s.path, "error", chErr)
 	}
@@ -300,18 +256,24 @@ func (s *Store) load() error {
 // moment the handler returned — and the production callback runs MCP prewarm,
 // which is exactly the fire-and-forget work that must survive the response.
 // This is the use the ctx field was stored for.
-func (s *Store) notifyChange(context.Context) {
+//
+// It deliberately takes NO context. It used to accept one and discard it (the
+// parameter was unnamed), which read at all five call sites as though the
+// caller's ctx mattered here; it never did, and the signature said the opposite
+// of the doc comment. New now rejects a nil store ctx, so the
+// context.Background() substitution this used to make is gone: that fallback
+// turned a forgotten ctx into a prewarm goroutine no shutdown could cancel and
+// nothing waited on.
+func (s *Store) notifyChange() {
 	s.mu.RLock()
 	cb := s.onChange
 	s.mu.RUnlock()
 	if cb == nil {
 		return
 	}
-	ctx := s.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	go cb(ctx)
+	// s.ctx is write-once in New and never mutated, so it needs no lock;
+	// s.onChange is swappable via SetOnChange, which is why that one does.
+	go cb(s.ctx)
 }
 
 func (s *Store) indexLocked(id ServerID) int {

@@ -125,8 +125,13 @@ func (p *giteaProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 	for i := range raw {
 		r := &raw[i]
 		owner := r.Owner.Login
-		if owner == "" && strings.Contains(r.FullName, "/") {
-			owner = strings.SplitN(r.FullName, "/", 2)[0]
+		if owner == "" {
+			// tea omits the owner object on some responses; the full name
+			// carries it. Cut rather than Contains-then-split: one pass, and
+			// the found bit IS the guard.
+			if head, _, found := strings.Cut(r.FullName, "/"); found {
+				owner = head
+			}
 		}
 		repos = append(repos, Repo{
 			Owner:         owner,
@@ -155,7 +160,7 @@ func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListStat
 	if err != nil {
 		return nil, err
 	}
-	return p.parsePRs(out)
+	return parsePRs(out)
 }
 
 // parsePRs decodes Gitea's own PR objects. `tea pulls list -o json`
@@ -167,21 +172,28 @@ func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListStat
 // an absent chip — one extra statuses request per PR (the N-call fan-out
 // this work rejects) or a chip inferred from `mergeable`, which would be
 // a guess presented as a fact.
-func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
+func parsePRs(data []byte) ([]PR, error) {
 	var raw []struct {
-		Base      struct{ Ref string }      `json:"base"`
-		Title     string                    `json:"title"`
-		Body      string                    `json:"body"`
-		State     string                    `json:"state"`
-		User      struct{ Login string }    `json:"user"`
-		Head      struct{ Ref, Sha string } `json:"head"`
-		HTMLURL   string                    `json:"html_url"`
-		CreatedAt string                    `json:"created_at"`
-		UpdatedAt string                    `json:"updated_at"`
-		Number    int                       `json:"number"`
-		Mergeable bool                      `json:"mergeable"`
-		Draft     bool                      `json:"draft"`
-		Merged    bool                      `json:"merged"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		State string `json:"state"`
+		User  struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Head struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		} `json:"head"`
+		HTMLURL   string `json:"html_url"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		Number    int    `json:"number"`
+		Mergeable bool   `json:"mergeable"`
+		Draft     bool   `json:"draft"`
+		Merged    bool   `json:"merged"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("tea pulls: decode: %w", err)
@@ -202,7 +214,7 @@ func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
 			SourceBranch: r.Head.Ref,
 			TargetBranch: r.Base.Ref,
 			URL:          r.HTMLURL,
-			HeadSHA:      r.Head.Sha,
+			HeadSHA:      r.Head.SHA,
 			MergeBlocked: giteaMergeBlock(r.Mergeable, r.Draft),
 			CreatedAt:    parseRFC3339Millis(r.CreatedAt),
 			UpdatedAt:    parseRFC3339Millis(r.UpdatedAt),
@@ -270,7 +282,7 @@ func (p *giteaProvider) viewPR(ctx context.Context, repo string, number int) (*P
 	if err != nil {
 		return nil, err
 	}
-	prs, err := p.parsePRs(append([]byte("["), append(out, ']')...))
+	prs, err := parsePRs(append([]byte("["), append(out, ']')...))
 	if err != nil || len(prs) == 0 {
 		return nil, fmt.Errorf("tea view pr: parse single: %v", err)
 	}
@@ -369,20 +381,24 @@ func (p *giteaProvider) ListIssues(ctx context.Context, repo string, state ListS
 	if err != nil {
 		return nil, err
 	}
-	return p.parseIssues(out)
+	return parseIssues(out)
 }
 
-func (p *giteaProvider) parseIssues(data []byte) ([]Issue, error) {
+func parseIssues(data []byte) ([]Issue, error) {
 	var raw []struct {
-		Title     string                  `json:"title"`
-		Body      string                  `json:"body"`
-		State     string                  `json:"state"`
-		User      struct{ Login string }  `json:"user"`
-		HTMLURL   string                  `json:"html_url"`
-		CreatedAt string                  `json:"created_at"`
-		UpdatedAt string                  `json:"updated_at"`
-		Labels    []struct{ Name string } `json:"labels"`
-		Number    int                     `json:"number"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		State string `json:"state"`
+		User  struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		HTMLURL   string `json:"html_url"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		Labels    []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		Number int `json:"number"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("tea issues: decode: %w", err)
@@ -451,7 +467,7 @@ func (p *giteaProvider) viewIssue(ctx context.Context, repo string, number int) 
 	if err != nil {
 		return nil, err
 	}
-	issues, err := p.parseIssues(append([]byte("["), append(out, ']')...))
+	issues, err := parseIssues(append([]byte("["), append(out, ']')...))
 	if err != nil || len(issues) == 0 {
 		return nil, fmt.Errorf("tea view issue: parse single: %v", err)
 	}
@@ -654,20 +670,20 @@ func (p *giteaProvider) doAPI(ctx context.Context, method, endpoint string, body
 	if err != nil {
 		return nil, err
 	}
-	data, status, err := p.doAPIWith(ctx, token, method, endpoint, body)
+	data, status, err := doAPIWith(ctx, token, method, endpoint, body)
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		teaTokenCache.Delete(p.host)
 		fresh, tokErr := teaHelperToken(ctx, p.host)
 		if tokErr != nil {
 			return data, err
 		}
-		data, _, err = p.doAPIWith(ctx, fresh, method, endpoint, body)
+		data, _, err = doAPIWith(ctx, fresh, method, endpoint, body)
 	}
 	return data, err
 }
 
 // doAPIWith is doAPI's single-attempt core, bound to one token.
-func (p *giteaProvider) doAPIWith(ctx context.Context, token, method, endpoint string, body []byte) (data []byte, status int, err error) {
+func doAPIWith(ctx context.Context, token, method, endpoint string, body []byte) (data []byte, status int, err error) {
 	var reqBody io.Reader
 	if body != nil {
 		reqBody = bytes.NewReader(body)
@@ -677,10 +693,10 @@ func (p *giteaProvider) doAPIWith(ctx context.Context, token, method, endpoint s
 	if err != nil {
 		return nil, 0, fmt.Errorf("gitea api: build request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", mimeTypeJSON)
 	req.Header.Set("Authorization", "token "+token)
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", mimeTypeJSON)
 	}
 	//nolint:gosec // G704: the URL authority is the user's own configured forge host (constrained to logged-in forges by manager.Get); only the path varies, so this is not attacker-controlled SSRF
 	resp, err := giteaAPIClient.Do(req)
@@ -758,6 +774,3 @@ func mapGiteaConclusion(s string) string {
 	}
 	return ""
 }
-
-// strconv import is unused otherwise — it was used by the removed
-// strconvItoa helper. Keep the import only if other call sites exist.

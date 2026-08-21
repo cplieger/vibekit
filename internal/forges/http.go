@@ -38,7 +38,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 )
 
 // ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.
@@ -51,17 +53,27 @@ const (
 	ForgeErrNotSupported    ForgeErrCode = "not_supported"
 )
 
+// broadcaster is the SSE fan-out a forge connection change is announced on, so
+// every client's forge UI refetches /api/forges. *agent.Runtime satisfies it.
+//
+// Declared HERE, at the consumer, rather than in a shared contract package.
+// 1 method against a *agent.Runtime exporting well over a hundred; this package fires
+// exactly one event kind and needs nothing else from the runtime at all.
+type broadcaster interface {
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+}
+
 // HTTPHandler exposes the forges package over HTTP.
 type HTTPHandler struct {
 	manager      *Manager
-	broadcaster  api.Broadcaster
+	broadcaster  broadcaster
 	onChange     func()
 	probeTimeout time.Duration
 }
 
 // NewHTTPHandler builds an HTTPHandler with the given Manager.
 // broadcaster may be nil; when nil, forge change events are silently dropped.
-func NewHTTPHandler(m *Manager, b api.Broadcaster) *HTTPHandler {
+func NewHTTPHandler(m *Manager, b broadcaster) *HTTPHandler {
 	return &HTTPHandler{
 		manager:      m,
 		broadcaster:  b,
@@ -82,7 +94,7 @@ func (h *HTTPHandler) SetOnChange(fn func()) { h.onChange = fn }
 // callback. No-op parts are skipped when unwired.
 func (h *HTTPHandler) notifyChanged(ctx context.Context) {
 	if h.broadcaster != nil {
-		h.broadcaster.Broadcast(ctx, api.NewEvent(api.EventForgesChanged, "", api.ForgesChangedPayload{}))
+		h.broadcaster.Broadcast(ctx, vibekit.NewEvent(vibekit.EventForgesChanged, "", vibekit.ForgesChangedPayload{}))
 	}
 	if h.onChange != nil {
 		h.onChange()
@@ -90,25 +102,24 @@ func (h *HTTPHandler) notifyChanged(ctx context.Context) {
 }
 
 // Compile-time interface assertion.
-var _ api.RouteHandler = (*HTTPHandler)(nil)
 
 // RegisterRoutes installs the /api/forges/* mux entries.
 func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/forges", h.handleForgesList)
 	mux.HandleFunc("/api/forges/", h.handleForgeItem)
 	mux.HandleFunc("/api/forges/refresh", h.handleRefresh)
-	mux.HandleFunc("/api/forges/oauth/github/start", h.handleGitHubDeviceStart)
+	mux.HandleFunc("/api/forges/oauth/github/start", handleGitHubDeviceStart)
 	mux.HandleFunc("/api/forges/oauth/github/poll", h.handleGitHubDevicePoll)
 }
 
 // handleForgesList returns all configured forges.
 func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	forges := h.manager.List(r.Context())
-	api.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		"forges": forges,
 		"kinds":  AllKinds(),
 		"oauth":  map[string]bool{string(KindGitHub): true}, // device flow is built-in
@@ -117,21 +128,21 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	if err := h.manager.Refresh(r.Context()); err != nil {
-		api.ServerError(w, "refresh failed", err)
+		httpreply.ServerError(w, "refresh failed", err)
 		return
 	}
-	api.Ok(w)
+	webhttp.Ok(w)
 }
 
 // handleForgeItem dispatches to per-forge sub-resources.
 func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	tail := strings.TrimPrefix(r.URL.Path, "/api/forges/")
 	if tail == "" {
-		api.NotFound(w, "missing forge id")
+		httpreply.NotFound(w, "missing forge id")
 		return
 	}
 	// First path segment is either "refresh" / "oauth" (handled
@@ -139,18 +150,18 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	// — the colon could be percent-encoded but we keep it literal.
 	id, sub, _ := splitFirst(tail)
 	if h.manager.Get(id) == nil {
-		api.NotFound(w, "unknown forge id")
+		httpreply.NotFound(w, "unknown forge id")
 		return
 	}
 	if sub == "" {
 		switch r.Method {
 		case http.MethodGet:
 			f := h.manager.Get(id)
-			api.WriteJSON(w, f)
+			webhttp.WriteJSON(w, f)
 		case http.MethodDelete:
 			h.handleDisconnect(w, r, id)
 		default:
-			api.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
+			httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
 		}
 		return
 	}
@@ -163,29 +174,29 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	case "repos":
 		h.handleRepos(w, r, id, rest)
 	default:
-		api.NotFound(w, "unknown forge sub-resource")
+		httpreply.NotFound(w, "unknown forge sub-resource")
 	}
 }
 
 func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, id string) {
 	f := h.manager.Get(id)
 	if f == nil {
-		api.NotFound(w, "unknown forge")
+		httpreply.NotFound(w, "unknown forge")
 		return
 	}
 	if err := Logout(r.Context(), f.Kind, f.Host); err != nil {
-		api.ServerError(w, "disconnect failed", err)
+		httpreply.ServerError(w, "disconnect failed", err)
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
-	api.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.probeTimeout)
@@ -193,14 +204,14 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	err := h.manager.Probe(ctx, id)
 	f := h.manager.Get(id)
 	if err != nil {
-		api.WriteJSONStatus(w, http.StatusOK, map[string]any{
+		webhttp.WriteJSONStatus(w, http.StatusOK, map[string]any{
 			"connected": false,
 			statusError: err.Error(),
 			"forge":     f,
 		})
 		return
 	}
-	api.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		"connected": true,
 		"forge":     f,
 	})
@@ -211,25 +222,25 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 // kind+host are derived from id.
 func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, sub string) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	op, _, _ := splitFirst(sub)
 	if op != "pat" {
-		api.NotFound(w, "unknown login method")
+		httpreply.NotFound(w, "unknown login method")
 		return
 	}
 	kind, host := splitID(id)
 	if !kind.Valid() {
-		api.BadRequest(w, "invalid forge id")
+		httpreply.BadRequest(w, "invalid forge id")
 		return
 	}
 	var body struct {
 		Token string `json:"token"`
 	}
-	api.LimitBody(w, r, api.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		api.BadRequest(w, "invalid json")
+		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	if err := LoginWithPAT(r.Context(), LoginPATParams{
@@ -242,42 +253,42 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		// to null → a generic "Network error.", hiding the real reason (bad
 		// credentials, missing scope, wrong host). On a 2xx the PAT form's
 		// inline error branch surfaces err. (Malformed JSON above stays 400.)
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(err.Error()))
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
-	api.WriteJSON(w, map[string]string{"status": stateComplete})
+	webhttp.WriteJSON(w, map[string]string{"status": stateComplete})
 }
 
 // writeOpsError maps ForgeOps errors to HTTP status codes.
-func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
+func writeOpsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotInstalled):
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			api.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
 	case errors.Is(err, ErrNotLoggedIn):
-		api.WriteJSONStatus(w, http.StatusUnauthorized,
-			api.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
+		webhttp.WriteJSONStatus(w, http.StatusUnauthorized,
+			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
 	case errors.Is(err, ErrNotSupported):
-		api.WriteJSONStatus(w, http.StatusNotImplemented,
-			api.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
+		webhttp.WriteJSONStatus(w, http.StatusNotImplemented,
+			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
 	default:
 		slog.Debug("forges: ops error", "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON(err.Error()))
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON(err.Error()))
 	}
 }
 
-// splitID parses "kind:host" → (kind, host). Returns (KindGitHub, "")
-// for malformed input — the caller should validate Kind.Valid().
+// splitID parses "kind:host" → (kind, host). Returns ("", "") for
+// malformed input — the caller should validate Kind.Valid().
 func splitID(id string) (kind Kind, ref string) {
-	parts := strings.SplitN(id, ":", 2)
-	if len(parts) != 2 {
+	k, host, found := strings.Cut(id, ":")
+	if !found {
 		return "", ""
 	}
-	return Kind(parts[0]), parts[1]
+	return Kind(k), host
 }
 
 // splitFirst splits s at the first '/' separator, returning

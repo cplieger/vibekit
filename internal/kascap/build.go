@@ -3,7 +3,7 @@ package kascap
 import (
 	"maps"
 
-	"github.com/cplieger/envx"
+	"github.com/cplieger/envx/v2"
 )
 
 // settingsKey is the container every resolverSetting row lands in. KAS reads

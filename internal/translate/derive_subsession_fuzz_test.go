@@ -3,7 +3,7 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // FuzzDeriveSubSession exercises the session-routing helper with
@@ -22,8 +22,8 @@ func FuzzDeriveSubSession(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, sessionID, parentSession string) {
 		deps := &stubDeriveSubDeps{parent: parentSession}
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		chatID := api.ChatID("fuzz-chat")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		chatID := vibekit.ChatID("fuzz-chat")
 
 		got := tr.deriveSubSession(chatID, sessionID)
 
@@ -45,6 +45,6 @@ type stubDeriveSubDeps struct {
 	parent string
 }
 
-func (d *stubDeriveSubDeps) ParentACPSession(_ api.ChatID) string {
+func (d *stubDeriveSubDeps) ParentACPSession(_ vibekit.ChatID) string {
 	return d.parent
 }

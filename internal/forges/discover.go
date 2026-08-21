@@ -23,8 +23,6 @@ import (
 	"errors"
 	"net/url"
 	"strings"
-
-	"github.com/cplieger/vibekit/internal/forges/cliexec"
 )
 
 // ghStatusAccount is one account entry in `gh auth status --json hosts`.
@@ -42,14 +40,14 @@ type ghStatusAccount struct {
 // undecodable output with a real error propagates.
 func ghAuthHosts(ctx context.Context) (map[string]string, error) {
 	out, err := runCmd(ctx, CmdTimeout, nil, "gh", "auth", "status", "--json", "hosts")
-	if errors.Is(err, cliexec.ErrNotInstalled) {
+	if errors.Is(err, ErrNotInstalled) {
 		return nil, err
 	}
 	var payload struct {
 		Hosts map[string][]ghStatusAccount `json:"hosts"`
 	}
 	if jsonErr := json.Unmarshal(out, &payload); jsonErr != nil || payload.Hosts == nil {
-		if err != nil && !errors.Is(err, cliexec.ErrNotLoggedIn) {
+		if err != nil && !errors.Is(err, ErrNotLoggedIn) {
 			return nil, err
 		}
 		return map[string]string{}, nil
@@ -93,7 +91,7 @@ func (l teaLoginInfo) host() string {
 func teaLogins(ctx context.Context) ([]teaLoginInfo, error) {
 	out, err := runCmd(ctx, CmdTimeout, nil, cliTea, "logins", "list", "-o", "json")
 	if err != nil {
-		if errors.Is(err, cliexec.ErrNotLoggedIn) {
+		if errors.Is(err, ErrNotLoggedIn) {
 			return nil, nil
 		}
 		return nil, err

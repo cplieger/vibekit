@@ -126,7 +126,13 @@ grep -q '^TOOLS="\$CONFIG_DIR/tools"$' "$ENTRYPOINT" \
   && ok "the entrypoint derives \$TOOLS as \$CONFIG_DIR/tools" \
   || no "entrypoint tools dir" "TOOLS is no longer \$CONFIG_DIR/tools, so it may not be the tree the server installs into"
 
-grep -qF 'envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools"))' "$CONFIG_GO" \
+# Matches the cmp.Or shape envx/v2 requires: String() no longer takes a fallback
+# parameter, so the default is composed at the call site. The property being
+# pinned is unchanged -- both halves must derive <configDir>/tools -- and this
+# grep is deliberately loose about the wrapper so it pins the DERIVATION rather
+# than one spelling of it.
+grep -qF 'envx.String("VIBEKIT_TOOLS_DIR")' "$CONFIG_GO" \
+  && grep -qF 'filepath.Join(configDir, "tools")' "$CONFIG_GO" \
   && ok "the server derives the same tools dir from its config dir" \
   || no "server tools dir" "config.go no longer defaults ToolsDir to <configDir>/tools; the server may install outside the tree this script created"
 

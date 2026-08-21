@@ -144,10 +144,10 @@ func couldBecomeSteerAck(s string) bool {
 // prose (a response ending in `[`), so it goes back into the turn.
 //
 // Released text needs no chunk broadcast: the turn's final message is appended
-// to the chat store whole, and that append broadcasts the complete content. It
-// does need to reach BOTH the content builder and the block array, because those
-// are two independent readers of the turn — the persisted message and the
-// client's block renderer.
+// to the chat store whole, and that append broadcasts the complete content. One
+// call reaches both readers of the turn — AppendTextDelta accumulates into the
+// content builder as well as the block array — which is what keeps the persisted
+// message and the client's block renderer agreeing.
 func FlushSteerCarry(buf *buffer.Buffer) {
 	carry, subtask := buf.SteerCarry()
 	if carry == "" {
@@ -157,6 +157,5 @@ func FlushSteerCarry(buf *buffer.Buffer) {
 	if strings.HasPrefix(carry, steerAckPrefix) {
 		return
 	}
-	buf.Content.WriteString(carry)
 	buf.AppendTextDelta(carry, subtask)
 }

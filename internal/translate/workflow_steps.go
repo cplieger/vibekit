@@ -42,7 +42,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
 )
 
@@ -67,7 +67,7 @@ const (
 // and counts each step instance's tool calls for the turn cap.
 //
 // Written from the bridge-forward goroutine (one per chat) and read from the
-// same, but a hub has many chats and one Translator, so the mutex is real
+// same, but a runtime has many chats and one Translator, so the mutex is real
 // contention protection rather than ceremony.
 type stepRegistry struct {
 	byID  map[string]StepRef
@@ -158,6 +158,23 @@ func (s *stepRegistry) lookup(sessionID string) (StepRef, bool) {
 	return ref, ok
 }
 
+// refFor resolves a frame's session id to its run and node, when it is a step's.
+//
+// The empty StepRef for everything else lets an ask handler stamp
+// unconditionally: a non-step ask stamps two empty strings, which omitempty then
+// keeps off the wire. That is why the miss is not an error.
+//
+// On the registry rather than on the Translator, where it was: it is a guard on
+// the map's key, and the map is here. The three ask handlers that call it reach a
+// field instead of a sibling method.
+func (s *stepRegistry) refFor(sessionID string) StepRef {
+	if sessionID == "" {
+		return StepRef{}
+	}
+	ref, _ := s.lookup(sessionID)
+	return ref
+}
+
 // forgetRun drops every step session and turn count of a terminated run.
 //
 // Bounded growth is the point: a long-lived container running many workflows
@@ -221,8 +238,8 @@ func (t *Translator) RecordRunSteps(raw json.RawMessage) {
 // `workflowMarked` is the frame's own answer when it has one — true when
 // `_meta.kiro.workflow` is present — and is what makes a `session/update` frame
 // classify correctly even on the recovery path where the registry is cold.
-func (t *Translator) ClassifyFrame(chatID api.ChatID, sessionID string, workflowMarked bool) FrameOwner {
-	parent := t.deps.ParentACPSession(chatID)
+func (t *Translator) ClassifyFrame(chatID vibekit.ChatID, sessionID string, workflowMarked bool) FrameOwner {
+	parent := t.sessions.ParentACPSession(chatID)
 	if sessionID == "" || parent == "" || sessionID == parent {
 		return OwnerChat
 	}
@@ -248,7 +265,7 @@ func (t *Translator) ClassifyFrame(chatID api.ChatID, sessionID string, workflow
 // user_input) EMIT either way and only need to know whether to LABEL the ask as
 // a subagent's — which is deriveSubSession's narrower question, and a step must
 // answer no there or its ask is attributed to a subagent that does not exist.
-func (t *Translator) foreignSession(chatID api.ChatID, sessionID string) bool {
+func (t *Translator) foreignSession(chatID vibekit.ChatID, sessionID string) bool {
 	return t.ClassifyFrame(chatID, sessionID, false) != OwnerChat
 }
 
@@ -272,18 +289,6 @@ func (t *Translator) countStepTurn(wf *ACPWorkflowMeta, stepKey string) {
 		return
 	}
 	if turns := t.steps.countTurn(wf.WorkflowID, stepKey); turns == StepTurnCap {
-		t.deps.StepTurnCapExceeded(wf.WorkflowID, wf.NodeID, turns)
+		t.runBounds.StepTurnCapExceeded(wf.WorkflowID, wf.NodeID, turns)
 	}
-}
-
-// stepRef resolves a frame's session id to its run and node, when it is a
-// step's. The empty StepRef for everything else lets an ask handler stamp
-// unconditionally: a non-step ask stamps two empty strings, which omitempty
-// then keeps off the wire.
-func (t *Translator) stepRef(sessionID string) StepRef {
-	if sessionID == "" {
-		return StepRef{}
-	}
-	ref, _ := t.steps.lookup(sessionID)
-	return ref
 }

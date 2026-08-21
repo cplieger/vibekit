@@ -115,7 +115,7 @@ function sameLevels(a: readonly SessionEffortLevel[], b: readonly SessionEffortL
 
 // There is no exported EffortLevel type. Its one consumer was AppSettings'
 // `model_effort` field, which is gone: effort is a per-chat string on the chat
-// record, validated server-side by api.EffortLevel.Valid().
+// record, validated server-side by vibekit.EffortLevel.Valid().
 
 /** Dispatch a reasoning-effort change through the actions framework — the
  *  established command path, never a hand-rolled transport.send.

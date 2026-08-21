@@ -3,25 +3,25 @@ package buffer
 import (
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Store is a concurrency-safe store for per-chat assistant buffers.
 // It owns its own mutex so buffer operations don't contend with
-// unrelated Hub state.
+// unrelated Runtime state.
 type Store struct {
-	bufs map[api.ChatID]*Buffer
+	bufs map[vibekit.ChatID]*Buffer
 	mu   sync.Mutex
 }
 
 // NewStore creates a new buffer store.
 func NewStore() *Store {
-	return &Store{bufs: make(map[api.ChatID]*Buffer)}
+	return &Store{bufs: make(map[vibekit.ChatID]*Buffer)}
 }
 
 // GetOrInit returns the chat's in-flight assistant buffer, creating
 // one if this is the start of a new turn.
-func (bs *Store) GetOrInit(chatID api.ChatID) *Buffer {
+func (bs *Store) GetOrInit(chatID vibekit.ChatID) *Buffer {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	if buf, ok := bs.bufs[chatID]; ok {
@@ -35,7 +35,7 @@ func (bs *Store) GetOrInit(chatID api.ChatID) *Buffer {
 }
 
 // Take returns and removes the chat's assistant buffer.
-func (bs *Store) Take(chatID api.ChatID) (*Buffer, bool) {
+func (bs *Store) Take(chatID vibekit.ChatID) (*Buffer, bool) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	buf, ok := bs.bufs[chatID]
@@ -46,14 +46,14 @@ func (bs *Store) Take(chatID api.ChatID) (*Buffer, bool) {
 }
 
 // Get returns the buffer for a chat without removing it.
-func (bs *Store) Get(chatID api.ChatID) *Buffer {
+func (bs *Store) Get(chatID vibekit.ChatID) *Buffer {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	return bs.bufs[chatID]
 }
 
 // Delete removes the buffer for a chat.
-func (bs *Store) Delete(chatID api.ChatID) {
+func (bs *Store) Delete(chatID vibekit.ChatID) {
 	bs.mu.Lock()
 	delete(bs.bufs, chatID)
 	bs.mu.Unlock()

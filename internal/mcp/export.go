@@ -186,13 +186,15 @@ func guardOriginChange(in, existing *Server) error {
 		}); idx >= 0 {
 			return fmt.Errorf(
 				"url points at a new origin, so the stored %q header was not carried over: re-enter its value for %s",
-				kv.Name, originLabel(in.URL))
+				kv.Name, originLabel(in.URL),
+			)
 		}
 	}
 	if in.OAuthClientSecret == SecretMask && existing.OAuthClientSecret != "" {
 		return fmt.Errorf(
 			"url points at a new origin, so the stored oauth_client_secret was not carried over: re-enter it for %s",
-			originLabel(in.URL))
+			originLabel(in.URL),
+		)
 	}
 	return nil
 }
@@ -235,25 +237,24 @@ var errImportDuplicate = errors.New("names the same server twice")
 // concern — KAS infers the transport from the fields present and negotiates
 // HTTP vs SSE itself.
 //
-// EnabledNames stays: the hub still filters status notifications against the
+// EnabledNames stays: the runtime still filters status notifications against the
 // set of servers the user has enabled.
 
-// EnabledNames satisfies api.MCPConfig, returning the set of enabled
-// server names for the hub's defensive filtering of init notifications.
+// EnabledNames returns the set of enabled server names, for the runtime's
+// defensive filtering of init notifications.
 func (s *Store) EnabledNames(_ context.Context) map[string]struct{} {
 	return s.namesWhere(func(sv *Server) bool { return sv.Enabled })
 }
 
-// ConfiguredNames satisfies api.MCPConfig, returning every server name this
-// store holds regardless of its enabled flag. The hub subtracts EnabledNames
+// ConfiguredNames returns every server name this store holds regardless of
+// its enabled flag. The runtime subtracts EnabledNames
 // from it to identify the one case that still drops a status frame: a server
 // vibekit configured and the user switched off.
 func (s *Store) ConfiguredNames(_ context.Context) map[string]struct{} {
 	return s.namesWhere(func(*Server) bool { return true })
 }
 
-// AllNames satisfies api.MCPConfig: every name reachable through the config file
-// vibekit renders, which is its own servers plus the `powers.mcpServers` block
+// AllNames returns every name reachable through the config file vibekit renders, which is its own servers plus the `powers.mcpServers` block
 // KAS reads out of the same file. A name in here that ConfiguredNames does not
 // hold came from an installed Power.
 //

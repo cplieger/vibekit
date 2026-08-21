@@ -25,8 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-
-	"github.com/cplieger/vibekit/internal/forges/cliexec"
 )
 
 // cliLogin stores token in the kind's CLI credential store via the
@@ -66,7 +64,7 @@ func cliLogout(ctx context.Context, kind Kind, host string) error {
 		return nil
 	}
 	if err := m.Logout(ctx, host); err != nil {
-		if errors.Is(err, cliexec.ErrNotLoggedIn) {
+		if errors.Is(err, ErrNotLoggedIn) {
 			return nil
 		}
 		return fmt.Errorf("%s logout: %w", m.CLI, err)
@@ -125,7 +123,7 @@ func loginTea(ctx context.Context, host, token string) error {
 	// so a leftover cleartext entry would keep answering with a stale
 	// (possibly revoked) token. Best-effort — a scrub failure must not
 	// block the login.
-	if err := scrubGitCredentials(host); err != nil {
+	if err := scrubGitCredentials(ctx, host); err != nil {
 		slog.Warn("forges: git-credentials scrub failed", "host", host, "error", err)
 	}
 	_, err := runCmdEnv(ctx, CmdTimeout, nil,
@@ -160,7 +158,7 @@ func logoutTea(ctx context.Context, host string) error {
 	// Retire any legacy cleartext credential for the host (written by
 	// the pre-CLI-native tea integration, which disconnect never
 	// cleaned up). Best-effort.
-	if err := scrubGitCredentials(host); err != nil {
+	if err := scrubGitCredentials(ctx, host); err != nil {
 		slog.Warn("forges: git-credentials scrub failed", "host", host, "error", err)
 	}
 	return nil

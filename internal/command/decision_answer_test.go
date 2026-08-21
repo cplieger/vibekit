@@ -10,11 +10,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // countingBridge counts the answers that reach the wire. Respond is the only
@@ -29,7 +28,7 @@ func (b *countingBridge) Respond(_ context.Context, id int64, _ any, _ error) er
 	return nil
 }
 
-// takeDeps is a Dependencies whose claim outcome the test scripts.
+// takeDeps is a host double whose claim outcome the test scripts.
 type takeDeps struct {
 	*benchDeps
 	bridge Bridge
@@ -37,20 +36,20 @@ type takeDeps struct {
 	takeOK bool
 }
 
-func (d *takeDeps) GetBridge(api.ChatID) Bridge { return d.bridge }
+func (d *takeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
 
-func (d *takeDeps) TakePendingPerm(requestID int64, _ api.SettledBy) bool {
+func (d *takeDeps) TakePendingPerm(requestID int64, _ vibekit.SettledBy) bool {
 	d.takes = append(d.takes, requestID)
 	return d.takeOK
 }
 
-func decisionCommand(t *testing.T, typ api.CommandType, payload any) *api.ClientCommand {
+func decisionCommand(t *testing.T, typ vibekit.CommandType, payload any) *vibekit.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	return &api.ClientCommand{Type: typ, ChatID: "c1", RequestID: "r1", Payload: raw}
+	return &vibekit.ClientCommand{Type: typ, ChatID: "c1", Payload: raw}
 }
 
 const decisionRequestID = int64(7)
@@ -59,27 +58,27 @@ const decisionRequestID = int64(7)
 // request 7 in the least eventful way its wire allows.
 func decisionCases(t *testing.T) []struct {
 	name string
-	run  func(*Dispatcher, http.ResponseWriter)
+	run  func(hostDouble) (any, error)
 } {
 	t.Helper()
-	perm := decisionCommand(t, api.CmdPermissionResponse,
-		api.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"})
-	elicit := decisionCommand(t, api.CmdElicitationResponse,
-		api.ElicitationResponseCommand{RequestID: decisionRequestID, Action: api.ElicitationActionDecline})
-	input := decisionCommand(t, api.CmdUserInputResponse,
-		api.UserInputResponseCommand{RequestID: decisionRequestID, Action: api.UserInputActionDismissed})
+	perm := decisionCommand(t, vibekit.CmdPermissionResponse,
+		vibekit.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"})
+	elicit := decisionCommand(t, vibekit.CmdElicitationResponse,
+		vibekit.ElicitationResponseCommand{RequestID: decisionRequestID, Action: vibekit.ElicitationActionDecline})
+	input := decisionCommand(t, vibekit.CmdUserInputResponse,
+		vibekit.UserInputResponseCommand{RequestID: decisionRequestID, Action: vibekit.UserInputActionDismissed})
 	return []struct {
 		name string
-		run  func(*Dispatcher, http.ResponseWriter)
+		run  func(hostDouble) (any, error)
 	}{
-		{name: "permission", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdPermission(d, t.Context(), w, perm)
+		{name: "permission", run: func(host hostDouble) (any, error) {
+			return CmdPermission(t.Context(), host, host, perm)
 		}},
-		{name: "elicitation", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdElicitationResponse(d, t.Context(), w, elicit)
+		{name: "elicitation", run: func(host hostDouble) (any, error) {
+			return CmdElicitationResponse(t.Context(), host, host, elicit)
 		}},
-		{name: "user_input", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdUserInputResponse(d, t.Context(), w, input)
+		{name: "user_input", run: func(host hostDouble) (any, error) {
+			return CmdUserInputResponse(t.Context(), host, host, input)
 		}},
 	}
 }
@@ -92,15 +91,14 @@ func TestDecisionHandlers_LostClaimIsRefusedAndNotAnswered(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			bridge := &countingBridge{}
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: false}
-			w := httptest.NewRecorder()
 
-			tc.run(New(deps), w)
+			_, err := tc.run(deps)
 
-			if w.Code != http.StatusConflict {
-				t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
+			if got := statusOf(err); got != http.StatusConflict {
+				t.Errorf("status = %d, want %d", got, http.StatusConflict)
 			}
-			if !strings.Contains(w.Body.String(), "already_answered") {
-				t.Errorf("body = %q, want the already_answered code", w.Body.String())
+			if err == nil || !strings.Contains(err.Error(), "already_answered") {
+				t.Errorf("error = %v, want the already_answered code", err)
 			}
 			if len(bridge.responds) != 0 {
 				t.Errorf("answered kiro-cli %d times after losing the claim, want 0", len(bridge.responds))
@@ -119,12 +117,11 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			bridge := &countingBridge{}
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
-			w := httptest.NewRecorder()
 
-			tc.run(New(deps), w)
+			_, err := tc.run(deps)
 
-			if w.Code != http.StatusOK {
-				t.Errorf("status = %d, want %d (body %q)", w.Code, http.StatusOK, w.Body.String())
+			if got := statusOf(err); got != http.StatusOK {
+				t.Errorf("status = %d, want %d (err %v)", got, http.StatusOK, err)
 			}
 			if len(bridge.responds) != 1 || bridge.responds[0] != decisionRequestID {
 				t.Errorf("answers = %v, want exactly [%d]", bridge.responds, decisionRequestID)

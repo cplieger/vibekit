@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -12,7 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/webhttp"
 )
 
@@ -26,7 +27,7 @@ import (
 // the flow.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	// Audit trail: record every /api/logout POST. See handleLogin
@@ -39,47 +40,43 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.LogoutTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, h.cliPath(), "logout") //nolint:gosec // G204: binary path from config
-	// Put the logout subprocess in its own process group so the
-	// timeout branch can reap the whole tree (bun + Node helper
-	// children) via killLoginProcess. CommandContext's default
-	// cancel only SIGKILLs the parent PID, which leaves orphans
-	// holding stdout/stderr pipes open when a future kiro-cli
-	// changes its confirmation prompt and our "y\n" no longer
-	// advances the flow. Mirror the login path.
-	setLoginProcAttr(cmd)
+	// Honour LogoutTimeout rather than the child's lifetime. Setpgid alone did
+	// NOT do this: the group kill below runs after cmd.Run has already returned,
+	// so measured on go1.27.0 against a `sleep 10` fake CLI under a 50ms budget
+	// Run still came back at 10.001s. boundChild moves the group kill onto
+	// cmd.Cancel, where the context fires it, and adds WaitDelay as the backstop.
+	boundChild(cmd)
 	cmd.Stdin = strings.NewReader("y\n")
 	// Bounded combined stdout+stderr capture so a runaway CLI
-	// can't OOM the container. Use a single limitedWriter for
-	// both streams: os/exec copies stdout and stderr
-	// concurrently, so two writers sharing one bytes.Buffer
-	// would race.
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: logoutMaxOutput}
-	cmd.Stdout = lw
-	cmd.Stderr = lw
+	// can't OOM the container. Use a single procout.Buffer for
+	// both streams: os/exec compares the two writers and drains
+	// them through one pipe with one goroutine when they are the
+	// same value, so this is the documented way to merge the
+	// streams — two separate writers over one buffer would race.
+	buf := procout.NewBuffer(logoutMaxOutput)
+	cmd.Stdout = buf
+	cmd.Stderr = buf
 	err := cmd.Run()
 	out := buf.Bytes()
 	// SanitizeOutput strips ANSI + hidden Unicode (matches the
 	// convention used elsewhere in vibekit for all subprocess
 	// output before it reaches clients).
-	result := map[string]string{"output": api.SanitizeOutput(string(out))}
+	result := map[string]string{"output": sanitize.Output(string(out))}
 	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			// Reap the whole process group eagerly so orphan
-			// bun/Node helpers don't survive the timeout
-			// holding pipes open.
-			killLoginProcess(cmd)
+			// boundChild's Cancel has already killed the group by the time Run
+			// returns, so there is nothing left to reap here.
 			slog.Warn("logout: kiro-cli timed out",
 				"timeout", h.cfg.LogoutTimeout, "output_bytes", len(out))
 			result["error"] = "logout timed out"
-			api.WriteJSONStatus(w, http.StatusGatewayTimeout, result)
+			webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, result)
 			return
 		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
 			slog.Error("logout: kiro-cli binary not found",
 				"cli_path", h.cliPath())
 			result["error"] = "logout unavailable"
-			api.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
+			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
 			return
 		default:
 			// Log err details server-side; return a generic
@@ -88,26 +85,26 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("logout: kiro-cli failed",
 				"error", err, "output_bytes", len(out))
 			result["error"] = "logout failed"
-			api.WriteJSONStatus(w, http.StatusBadGateway, result)
+			webhttp.WriteJSONStatus(w, http.StatusBadGateway, result)
 			return
 		}
 	}
 	slog.Info("logout: completed", "output_bytes", len(out))
-	api.WriteJSON(w, result)
+	webhttp.WriteJSON(w, result)
 }
 
-// killLoginProcess sends SIGKILL to the entire process group of the
-// login subprocess. kiro-cli is a bun/Node wrapper that may spawn
-// helper children; killing only the parent leaves orphans pinning the
-// stdout pipe open and preventing scanner teardown. See
-// login_proc_unix.go / login_proc_other.go for the platform split.
+// killProcessGroup sends SIGKILL to the entire process group of a kiro-cli
+// subprocess. kiro-cli is a bun/Node wrapper that may spawn helper children;
+// killing only the parent leaves orphans pinning the stdout pipe open and
+// preventing scanner teardown. See procgroup_unix.go / procgroup_other.go for the
+// platform split.
 // Idempotent: calling after the process has already been reaped is a
 // no-op (ESRCH and os.ErrProcessDone suppressed at Debug level).
-func killLoginProcess(cmd *exec.Cmd) {
+func killProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
 	}
-	err := loginKill(cmd)
+	err := killGroup(cmd)
 	if err == nil {
 		return
 	}
@@ -116,7 +113,7 @@ func killLoginProcess(cmd *exec.Cmd) {
 	// mean the process is already gone — expected on the
 	// belt-and-braces second call in the reap goroutine.
 	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
-		slog.Debug("login: kill group no-op (already reaped)",
+		slog.Debug("auth: kill group no-op (already reaped)",
 			"group_err", err)
 		return
 	}
@@ -128,10 +125,10 @@ func killLoginProcess(cmd *exec.Cmd) {
 		return
 	}
 	if errors.Is(kerr, syscall.ESRCH) || errors.Is(kerr, os.ErrProcessDone) {
-		slog.Debug("login: kill pid no-op (already reaped)",
+		slog.Debug("auth: kill pid no-op (already reaped)",
 			"group_err", err, "pid_err", kerr)
 		return
 	}
-	slog.Error("login: kill timeout process",
+	slog.Error("auth: kill subprocess group failed",
 		"group_err", err, "pid_err", kerr)
 }

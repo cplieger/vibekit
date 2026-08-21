@@ -477,7 +477,7 @@ export interface GovernanceFeatures {
  * from the v3 (KAS) _kiro/governance/state notification (buildNotification:
  * {sessionId, isEnterprise, features, disabledReason}). The account/workspace
  * feature-flag policy KAS pushes on every session/new + session/load, and
- * re-pushes on a prompt when it changes; vibekit caches the latest hub-side and
+ * re-pushes on a prompt when it changes; vibekit caches the latest runtime-side and
  * also serves it at GET /api/governance so a fresh page load can read it with
  * no chat open. The wire sessionId is used only for subagent-copy dedup and is
  * dropped from this payload — governance is account-global, so the SSE is
@@ -584,7 +584,7 @@ export interface MCPConnectedPayload {
 
 /**
  * MCPDisconnectedPayload is the payload for type="mcp_disconnected".
- * Emitted when the hub's last bridge exits: kiro-cli's MCP subprocesses
+ * Emitted when the runtime's last bridge exits: kiro-cli's MCP subprocesses
  * shut down with it, so no configured server is currently live.
  * Clients use this to clear their runtime-state map.
  */
@@ -749,7 +749,7 @@ export interface MeteringItem {
  * window.open() not driven by a user gesture, so the client surfaces a
  * clickable affordance (a banner link) the user activates rather than
  * auto-opening. Only http/https URLs are broadcast (server-side scheme
- * guard in hub/bridge_v3_auth.go; the client re-checks before rendering).
+ * guard in agent/bridge_v3_auth.go; the client re-checks before rendering).
  */
 export interface OpenExternalURLPayload {
   url: string;
@@ -937,7 +937,11 @@ export interface PolicyView {
   available: boolean;
 }
 
-/** PollResult is the per-poll status during the device flow. */
+/**
+ * PollResult is the per-poll status of the GitHub device flow. Deliberately
+ * tokenless: the access token never leaves the server. pollDeviceToken carries
+ * it as far as `gh auth login --with-token` and no further.
+ */
 export interface PollResult {
   status: string;
   error?: string;
@@ -970,7 +974,7 @@ export interface Recipe {
  * second representation of it here would be one more thing to keep in sync
  * for no gain. Last of the pointer-bearing fields on purpose — a slice's
  * len/cap words end the GC scan region, where a trailing string would extend
- * it (the api.ToolCall.Checkpoint note records the same rule).
+ * it (the vibekit.ToolCall.Checkpoint note records the same rule).
  */
   plan?: unknown;
   built_in?: boolean;
@@ -1369,7 +1373,7 @@ export interface TerminalOutputPayload {
  * TextSpan styles the half-open range [Start,End) of a sibling text field.
  * //
  * It mirrors internal/ansitext.Span; the wire type lives here because
- * internal/api owns every shape codegen projects into TypeScript and
+ * internal/vibekit owns every shape codegen projects into TypeScript and
  * internal/ansitext stays a stdlib-only leaf that knows nothing about the wire.
  * //
  * Attrs values match web-terminal-engine's vt.WireRun.A so the terminal
@@ -1555,7 +1559,7 @@ export interface ToolDenialRule {
  * ToolDiff is a before/after text change from a write tool call. Sent
  * by kiro-cli in tool_call notifications for edit operations. Path is
  * workspace-relative (absolute paths from kiro-cli are normalised via
- * hub.relPath before being stored here); OldText/NewText are the
+ * agent.relPath before being stored here); OldText/NewText are the
  * changed fragments, not full-file contents.
  */
 export interface ToolDiff {
@@ -1675,7 +1679,7 @@ export interface TurnEndedPayload {
 export interface TurnStatePayload {
   /**
  * Message is the in-flight assistant message as accumulated so
- * far — the hub's turn mirror, byte-equivalent to what a
+ * far — the runtime's turn mirror, byte-equivalent to what a
  * never-disconnected client would have rendered. Omitted when the
  * turn hasn't produced content yet (busy signal only).
  */

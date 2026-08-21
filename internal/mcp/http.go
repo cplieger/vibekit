@@ -7,7 +7,8 @@ import (
 	"net/http"
 	"path"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires the MCP config endpoints.
@@ -40,11 +41,11 @@ func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 // read as a silently-dropped field.
 func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var raw json.RawMessage
-	if !decodeJSONBody(w, r, &raw) {
+	if !httpreply.DecodeJSON(w, r, &raw) {
 		return
 	}
 	req, err := parseImportBody(raw)
@@ -58,16 +59,16 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	api.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
+	webhttp.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
 }
 
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		api.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
+		webhttp.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
 	case http.MethodPost:
 		var in Server
-		if !decodeJSONBody(w, r, &in) {
+		if !httpreply.DecodeJSON(w, r, &in) {
 			return
 		}
 		created, err := s.Create(r.Context(), &in)
@@ -75,9 +76,9 @@ func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(w, err)
 			return
 		}
-		api.WriteJSON(w, created)
+		webhttp.WriteJSON(w, created)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -88,17 +89,17 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	// "." on empty input), so only the "mcp" case needs a guard.
 	raw := path.Base(r.URL.Path)
 	if raw == "mcp" {
-		api.NotFound(w, "server not found")
+		httpreply.NotFound(w, "server not found")
 		return
 	}
 	id, err := ParseServerID(raw)
 	if err != nil {
-		api.BadRequest(w, "invalid server id")
+		httpreply.BadRequest(w, "invalid server id")
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s.getOne(w, r, id)
+		s.writeOne(w, r, id)
 	case http.MethodPut:
 		s.putOne(w, r, id)
 	case http.MethodPatch:
@@ -106,25 +107,25 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.deleteOne(w, r, id)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodDelete)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodDelete)
 	}
 }
 
-// getOne handles GET /api/mcp/{id}: 200 with the masked record, or 404.
-func (s *Store) getOne(w http.ResponseWriter, r *http.Request, id ServerID) {
+// writeOne handles GET /api/mcp/{id}: 200 with the masked record, or 404.
+func (s *Store) writeOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	got := s.Get(r.Context(), id)
 	if got == nil {
-		api.NotFound(w, "server not found")
+		httpreply.NotFound(w, "server not found")
 		return
 	}
-	api.WriteJSON(w, got)
+	webhttp.WriteJSON(w, got)
 }
 
 // putOne handles PUT /api/mcp/{id}: replace the record (preserving "***"
 // secret values), or map the store error to its status via writeErr.
 func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	var in Server
-	if !decodeJSONBody(w, r, &in) {
+	if !httpreply.DecodeJSON(w, r, &in) {
 		return
 	}
 	updated, err := s.Update(r.Context(), id, &in)
@@ -132,7 +133,7 @@ func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	api.WriteJSON(w, updated)
+	webhttp.WriteJSON(w, updated)
 }
 
 // patchOne handles PATCH /api/mcp/{id} with body {"enabled": bool}: a
@@ -141,13 +142,13 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	var patch struct {
 		Enabled *bool `json:"enabled"`
 	}
-	if !decodeJSONBody(w, r, &patch) {
+	if !httpreply.DecodeJSON(w, r, &patch) {
 		return
 	}
 	if patch.Enabled == nil {
 		slog.Debug("mcp: http patch missing enabled field",
 			"path", r.URL.Path)
-		api.BadRequest(w, "enabled required")
+		httpreply.BadRequest(w, "enabled required")
 		return
 	}
 	updated, err := s.SetEnabled(r.Context(), id, *patch.Enabled)
@@ -155,7 +156,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	api.WriteJSON(w, updated)
+	webhttp.WriteJSON(w, updated)
 }
 
 // deleteOne handles DELETE /api/mcp/{id}: 200 ok, or map the store error
@@ -165,13 +166,7 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	api.Ok(w)
-}
-
-// decodeJSONBody delegates to api.DecodeJSON for backward compatibility
-// within this package. Existing call sites use the local name.
-func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	return api.DecodeJSON(w, r, v)
+	webhttp.Ok(w)
 }
 
 // writeErr maps package-level sentinel errors to the right HTTP status.
@@ -182,18 +177,18 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		slog.Debug("mcp: http not found", "error", err)
-		api.NotFound(w, err.Error())
+		httpreply.NotFound(w, err.Error())
 	case errors.Is(err, ErrNameConflict):
 		slog.Debug("mcp: http name conflict", "error", err)
-		api.Conflict(w, err.Error())
+		httpreply.Conflict(w, err.Error())
 	case errors.Is(err, ErrPersist):
 		if errors.Is(err, ErrPersistMarshal) {
 			slog.Error("mcp: http persist marshal failure (programmer bug)", "error", err)
 		} else {
 			slog.Warn("mcp: http persist write failure (infra)", "error", err)
 		}
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("persist failed"))
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON("persist failed"))
 	default:
 		slog.Debug("mcp: http bad request", "error", err)
 		writeValidationErr(w, err)
@@ -220,9 +215,9 @@ type validationErrorBody struct {
 func writeValidationErr(w http.ResponseWriter, err error) {
 	fields := FieldErrors(err)
 	if len(fields) == 0 {
-		api.BadRequest(w, err.Error())
+		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	api.WriteJSONStatus(w, http.StatusBadRequest,
+	webhttp.WriteJSONStatus(w, http.StatusBadRequest,
 		validationErrorBody{Error: err.Error(), Fields: fields})
 }

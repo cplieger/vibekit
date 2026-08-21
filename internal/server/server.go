@@ -15,46 +15,29 @@ import (
 	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
 const port = "9847"
 
-// SteeringGenerator generates steering files for kiro-cli. Declared here, at
-// the only consumer, rather than in the api hub: one consumer means the hub
-// would carry a contract nothing else reads. *steering.Generator satisfies it.
-type SteeringGenerator interface {
-	Generate(ctx context.Context)
-	CustomPath() string
-}
-
-// AccountUsageProvider fetches account/subscription-level usage (plan,
-// credits, quota) via the KAS _kiro/account/getUsage request on a live bridge.
-// Narrow by design so this package can serve GET /api/account/usage without
-// depending on the full Hub surface; the concrete *hub.Hub satisfies it via
-// the utility bridge. Declared at the consumer for the same reason as above.
-type AccountUsageProvider interface {
-	AccountUsage(ctx context.Context) (*api.AccountUsage, error)
-}
-
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
-	forges        api.RouteHandler
-	mcpConfig     api.RouteHandler
-	chats         api.ChatStore
-	git           api.RouteHandler
-	gitAI         api.RouteHandler
-	files         api.RouteHandler
-	auth          api.RouteHandler
-	push          api.PushService
-	mcpStatus     api.RouteHandler
-	utilityPrompt api.UtilityPrompter
+	forges        routeHandler
+	mcpConfig     routeHandler
+	chats         routeHandler
+	git           routeHandler
+	gitAI         routeHandler
+	files         routeHandler
+	auth          routeHandler
+	push          pushService
+	mcpStatus     routeHandler
+	utilityPrompt utilityPrompter
 	accountUsage  AccountUsageProvider
-	policy        api.PolicyProvider
-	hub           api.Hub
+	policy        policyProvider
+	agent         chatEngine
 	steering      SteeringGenerator
-	mcpRegistry   api.RouteHandler
+	mcpRegistry   routeHandler
 	staticFS      fs.FS
 	// kiroDocs memoizes the document-oriented .kiro inventory behind a
 	// directory-mtime signature (kiro_docs.go). A pointer so the zero Server
@@ -75,7 +58,7 @@ type Server struct {
 	kiroRescan func(context.Context) (bool, error)
 	// authUnavailable reports whether the last attempt to vend a KAS access
 	// token failed. It reads a LATCH written on the session-creation path
-	// (hub.AuthTokenUnavailable), never a probe: this is consulted per
+	// (agent.AuthTokenUnavailable), never a probe: this is consulted per
 	// /api/health, and a probe here would spawn kiro-cli on a monitor's poll and
 	// could block on an SSO-OIDC refresh. Nil = unwired, no auth leg.
 	authUnavailable func() bool
@@ -86,7 +69,7 @@ type Server struct {
 	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
 	// log the unspoofable socket peer.
 	trustedProxies []*net.IPNet
-	// hostPolicy is the WT_ALLOWED_HOSTS exact-match Host allowlist the
+	// hostPolicy is the ALLOWED_HOSTS exact-match Host allowlist the
 	// security middleware applies before the CSRF check (anti-DNS-rebinding;
 	// see internal/composition parseAllowedHosts). Nil/inactive = any Host
 	// accepted.
@@ -107,45 +90,54 @@ type Option func(*Server)
 // WithSteering sets the steering generator used to produce environment.md for kiro-cli.
 func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
 
-// WithHub sets the hub that manages bridge processes and SSE broadcasts.
-func WithHub(h api.Hub) Option { return func(s *Server) { s.hub = h } }
+// WithAgent sets the agent runtime that manages bridge processes and SSE
+// broadcasts. It was WithHub over a chatEngine; the dependency is *agent.Runtime
+// now and the name says which collaborator it is rather than what topology it
+// used to be.
+func WithAgent(a chatEngine) Option { return func(s *Server) { s.agent = a } }
 
-// WithChats sets the chat store used for reading and writing chat files.
-func WithChats(c api.ChatStore) Option { return func(s *Server) { s.chats = c } }
+// WithChats sets the chat store, whose own router owns the chat HTTP surface.
+//
+// The parameter is routeHandler because mounting those routes is the ONLY thing
+// this package does with the store: 1 of its 9 methods. The chat reads
+// (GET /api/chats, /api/chats/{id}, its search and turns endpoints) are
+// registered and served by internal/chat's own router, so the server neither
+// reads nor writes a chat itself. It used to hold all 9 to call one.
+func WithChats(c routeHandler) Option { return func(s *Server) { s.chats = c } }
 
 // WithGit sets the git handler for non-AI git HTTP endpoints.
-func WithGit(g api.RouteHandler) Option { return func(s *Server) { s.git = g } }
+func WithGit(g routeHandler) Option { return func(s *Server) { s.git = g } }
 
 // WithGitAI sets the route handler for AI-assisted git operations.
-func WithGitAI(r api.RouteHandler) Option { return func(s *Server) { s.gitAI = r } }
+func WithGitAI(r routeHandler) Option { return func(s *Server) { s.gitAI = r } }
 
 // WithFiles sets the file handler for workspace file read/write endpoints.
-func WithFiles(f api.RouteHandler) Option { return func(s *Server) { s.files = f } }
+func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
 
 // WithAuth sets the auth handler for login, logout, and whoami endpoints.
-func WithAuth(a api.RouteHandler) Option { return func(s *Server) { s.auth = a } }
+func WithAuth(a routeHandler) Option { return func(s *Server) { s.auth = a } }
 
 // WithPush sets the push service used for Web Push notification delivery.
-func WithPush(p api.PushService) Option { return func(s *Server) { s.push = p } }
+func WithPush(p pushService) Option { return func(s *Server) { s.push = p } }
 
 // WithMCPConfig sets the route handler for MCP server configuration endpoints.
-func WithMCPConfig(r api.RouteHandler) Option { return func(s *Server) { s.mcpConfig = r } }
+func WithMCPConfig(r routeHandler) Option { return func(s *Server) { s.mcpConfig = r } }
 
 // WithMCPStatus sets the route handler for the MCP runtime status endpoint.
-func WithMCPStatus(r api.RouteHandler) Option { return func(s *Server) { s.mcpStatus = r } }
+func WithMCPStatus(r routeHandler) Option { return func(s *Server) { s.mcpStatus = r } }
 
 // WithMCPRegistry sets the route handler for the MCP registry proxy endpoint.
-func WithMCPRegistry(r api.RouteHandler) Option { return func(s *Server) { s.mcpRegistry = r } }
+func WithMCPRegistry(r routeHandler) Option { return func(s *Server) { s.mcpRegistry = r } }
 
 // WithForges sets the route handler for forge (GitHub/GitLab/Gitea) HTTP endpoints.
-func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges = r } }
+func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r } }
 
 // WithTools sets the tools engine backing the /api/tools surface.
 func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }
 
 // WithUtilityPrompt sets the utility prompter used for AI-assisted tasks
 // (error explanations, commit messages, PR descriptions, conflict resolution).
-func WithUtilityPrompt(p api.UtilityPrompter) Option {
+func WithUtilityPrompt(p utilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }
 
@@ -159,7 +151,7 @@ func WithAccountUsage(p AccountUsageProvider) Option {
 // policy view at GET /api/permissions and the pre-flight simulation at
 // POST /api/permissions/explain. The rule WRITER at POST /api/permissions/rules
 // needs no provider (it is a file write KAS hot-reloads).
-func WithPolicy(p api.PolicyProvider) Option {
+func WithPolicy(p policyProvider) Option {
 	return func(s *Server) { s.policy = p }
 }
 
@@ -216,7 +208,7 @@ func WithTrustedProxies(trusted []*net.IPNet) Option {
 }
 
 // WithHostPolicy sets the exact-match Host allowlist (parsed from
-// WT_ALLOWED_HOSTS) that the security middleware applies before the CSRF
+// ALLOWED_HOSTS) that the security middleware applies before the CSRF
 // check — the anti-DNS-rebinding gate. A nil or inactive policy is a
 // pass-through (any Host accepted, the backward-compatible default).
 func WithHostPolicy(p *webhttp.HostPolicy) Option {
@@ -237,10 +229,35 @@ func New(opts ...Option) *Server {
 
 // ListenAndServe registers all routes and starts the HTTP server.
 // Blocks until SIGTERM/SIGINT, then shuts down gracefully.
+//
+// # Every route here is a plain path, and the method is gated in the handler
+//
+// ServeMux method patterns ("GET /api/x", Go 1.22) cannot answer 405 in this
+// app, and the reason is structural rather than a matter of taste. ServeMux only
+// synthesises its 405 + Allow when NO pattern matched the request at all
+// (net/http computes allowedMethods on the nil-node path); the "/" SPA mount
+// registered above matches every path and every method, so a method-mismatched
+// request lands there and is answered 200 with index.html.
+//
+// _Measured on go1.27.0_ over a mux carrying "GET /api/permissions",
+// "POST /api/kiro-cli/rescan" and a "/" catch-all: POST /api/permissions,
+// DELETE /api/permissions and GET /api/kiro-cli/rescan all reached the
+// catch-all with an empty Allow header, and only HEAD /api/permissions was
+// served (ServeMux's GET patterns match HEAD). Take the catch-all away and the
+// same three answer 405 with Allow: GET / Allow: POST. So the SPA fallback and a
+// method pattern's 405 are mutually exclusive, and the fallback is not optional
+// (History-API client routing needs it).
+//
+// That is why httpreply.RequireMethod / httpreply.MethodNotAllowed is the whole
+// of vibekit's 405 surface — which is what makes
+// httpreply.TestMethodNotAllowedSetsAllow's "the one place the header format is
+// decided" a provable statement instead of a lucky one. Do not put a method back
+// on a pattern here: it converts an RFC 9110 §15.5.6 405 into a 200 carrying
+// HTML, the same silent-success class canonicalAPIPath exists to refuse.
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
-	s.hub.RegisterRoutes(mux)
+	s.agent.RegisterRoutes(mux)
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
@@ -249,26 +266,33 @@ func (s *Server) ListenAndServe() error {
 	// The kiro-cli repair hook exists only when this server owns the install
 	// (see WithKiroRescan): with no pins in the environment there is nothing to
 	// rescan, so the route is absent rather than answering a misleading 503.
+	//
+	// Registered as a PLAIN PATH with the method gated in the handler, like
+	// every other route here. A `POST `-prefixed pattern is not equivalent: a
+	// method it does not match falls through to the "/" SPA mount, which
+	// answers 200 with index.html — see ListenAndServe's own doc comment.
 	if s.kiroRescan != nil {
-		mux.Handle("POST "+kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
+		mux.Handle(kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
 	}
 	// Runtime profiles, same loopback gate. Unconditional unlike the repair hook
 	// above: that route depends on this server owning the install, while a
 	// goroutine dump is a property of the process and is always answerable. See
 	// pprof.go for which profiles are mounted and which are deliberately not.
-	mux.Handle("GET "+pprofPath, pprofHandler())
+	mux.Handle(pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	// Tools REST surface: the toolbelt httpapi projection, mounted at
 	// the exact prefix and the subtree. /api/tools/status stays
 	// app-owned (vibekit's feature-gating PATH probes); its exact
-	// GET pattern wins over the subtree mount.
+	// pattern wins over the subtree mount for EVERY method, which is
+	// what keeps PATCH/DELETE /api/tools/status out of toolbelt's
+	// /api/tools/{name} handlers with name="status".
 	if s.tools != nil {
 		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
 		mux.Handle("/api/tools", toolsAPI)
 		mux.Handle("/api/tools/", toolsAPI)
 	}
-	mux.HandleFunc("GET /api/tools/status", s.handleToolStatus)
+	mux.HandleFunc("/api/tools/status", handleToolStatus)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)
@@ -283,12 +307,12 @@ func (s *Server) ListenAndServe() error {
 	if s.forges != nil {
 		s.forges.RegisterRoutes(mux)
 	}
-	mux.HandleFunc("GET /api/permissions", s.handlePolicyView)
+	mux.HandleFunc("/api/permissions", s.handlePolicyView)
 	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
 	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
 	mux.HandleFunc("/api/utility/explain-error", s.handleUtilityExplainError)
 	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
-	mux.HandleFunc("GET /api/account/usage", s.handleAccountUsage)
+	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
 
 	// Compute the CSP once from the embedded index.html so the inline
@@ -313,6 +337,40 @@ func (s *Server) ListenAndServe() error {
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, MaxHeaderBytes 1 MiB, and
 	// Read/WriteTimeout left unset for the SSE, WebSocket, and streaming-zip
 	// responses).
+	//
+	// Server.MaxHeaderValueCount (Go 1.27) is deliberately LEFT AT ITS DEFAULT,
+	// and this is the one place in the app that could set it — webhttp.NewServer
+	// hands back the *http.Server, so `srv.MaxHeaderValueCount = n` is already
+	// reachable and a library option for it would be pure added surface.
+	//
+	// What the default buys, measured on go1.27.0: DefaultMaxHeaderValueCount is
+	// 500, counting total header VALUES per request including Host, identically
+	// for repeated and distinct names (499 extra headers plus Host passes, 500
+	// extra answers 431). Parsing the worst request it admits costs 77.9 µs and
+	// 88 KB for 5.9 KB on the wire — a 13x allocation amplification and 21.6x
+	// the 3.6 µs a realistic 21-value browser request costs. With the cap off,
+	// which is all the 1 MiB MaxHeaderBytes bounded before 1.27, a full 1 MiB
+	// header block carries 209,708 values and parses in 22.8 ms for 20.2 MB —
+	// 19x the wire. So the default cut the worst case by 293x on CPU and 229x on
+	// allocation with no code here.
+	//
+	// What a LOWER cap would buy, and why it is refused: 64 values (still ~2.5x
+	// vibekit's real ceiling — a Chrome navigation is ~16, plus ~6 for a
+	// WebSocket handshake and whatever the reverse proxy appends) parses in
+	// 11.2 µs / 11.8 KB, so the saving is 67 µs and 76 KB on a request nothing
+	// legitimate sends. Against that, the 431 is answered BELOW the middleware
+	// chain — measured: the access logger never runs, SecurityHeaders sets
+	// nothing on it, and the response carries only Content-Type and
+	// Connection: close. So a cap tuned even slightly under a future proxy's
+	// header count refuses requests with no access-log line, no request id and
+	// no client_ip: exactly the silent-in-both-directions failure canonicalAPIPath
+	// exists to stop, bought for 67 µs. The knob would trade a visible cost for
+	// an invisible refusal.
+	//
+	// Consequence worth knowing when reading logs rather than code: the 431 is
+	// unobservable in the access stream at ANY cap, default included. A client
+	// whose requests vanish above 500 header values leaves no trace here; the
+	// evidence is on its side of the wire.
 	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := webhttp.NewServer(handler)
 	srv.Addr = ":" + port
@@ -337,19 +395,25 @@ func (s *Server) ListenAndServe() error {
 	// included) carries no auth of its own — the exact-Host allowlist is
 	// the gate that closes it (see internal/composition parseAllowedHosts).
 	if !s.hostPolicy.Active() {
-		slog.Warn("WT_ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
-			"hint", "set WT_ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
+		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
+			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
 	}
 
 	// webhttp.Run owns the serve/shutdown sequence (default 5s grace, matching
 	// the previous hand-rolled shutdown timeout). The pre-drain hook preserves
-	// vibekit's hub-before-server ordering: readiness flips, then the hub stops
+	// vibekit's agent-before-server ordering: readiness flips, then the runtime stops
 	// bridges and cancels the SSE/WebSocket streams, and only then does the
 	// HTTP drain run.
-	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(context.Context) {
+	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
-		s.hub.Shutdown()
+		// drainCtx carries the shutdown grace, and Run calls this hook
+		// SYNCHRONOUSLY before srv.Shutdown: an unbounded agent teardown here
+		// would consume the whole grace and leave the HTTP drain none, so the
+		// budget is passed on rather than discarded.
+		if err := s.agent.Shutdown(drainCtx); err != nil {
+			slog.Error("agent runtime shutdown did not finish within the grace period", "error", err)
+		}
 	}))
 	s.ready.Store(false) // no-op on the signal path; covers a serve failure
 	return runErr
@@ -357,7 +421,7 @@ func (s *Server) ListenAndServe() error {
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST
 // FIRST (webhttp.Chain's order): request-id access logging, then panic
-// recovery, then the security layer (dynamic CSP + the WT_ALLOWED_HOSTS host
+// recovery, then the security layer (dynamic CSP + the ALLOWED_HOSTS host
 // allowlist + stdlib CSRF), then the canonical-path gate over the API surface,
 // then the REST idempotency dedup, then the mux.
 //
@@ -369,7 +433,7 @@ func (s *Server) ListenAndServe() error {
 //
 // webhttp.WithClientIP adds a spoof-safe "client_ip" to every access line:
 // with no trusted proxies it is the unspoofable socket peer; when
-// WT_TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
+// TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
 // resolved from a trusted X-Forwarded-For. It costs nothing on the skipped
 // streaming paths.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
@@ -400,7 +464,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 		),
 		webhttp.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
-		// The canonical-path gate (requestpath.go) sits INSIDE the WT_ALLOWED_HOSTS
+		// The canonical-path gate (requestpath.go) sits INSIDE the ALLOWED_HOSTS
 		// allowlist and the CSRF check and OUTSIDE every route: the two
 		// request-authorization gates answer 403 and must not be shadowed by a
 		// 400 about spelling, so a rebound-Host or forged cross-origin request
@@ -419,13 +483,13 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 // only POST, so this specialised wrapper avoids an always-identical
 // method argument at call sites.
 func requirePOST(w http.ResponseWriter, r *http.Request) bool {
-	return api.RequireMethod(w, r, http.MethodPost)
+	return httpreply.RequireMethod(w, r, http.MethodPost)
 }
 
 // decodeBody applies LimitBody, decodes JSON into v, and returns true
 // on success. On failure it writes a 400 response and returns false.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	return api.DecodeBody(w, r, v, "bad request")
+	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
 // healthBody is the readiness envelope handleHealth and the kiro-cli repair
@@ -478,7 +542,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// header, so every app in the fleet answers this the same way.
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 			Status: "unready",
 			Reason: reason,
 		})
@@ -501,5 +565,5 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		unready(reasonSignIn)
 		return
 	}
-	api.WriteJSON(w, healthBody{Status: "ok"})
+	webhttp.WriteJSON(w, healthBody{Status: "ok"})
 }

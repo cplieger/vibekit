@@ -34,12 +34,12 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/singleflight"
 )
 
 // Compile-time interface assertion.
-var _ api.RouteHandler = (*RegistryProxy)(nil)
 
 const (
 	registryBaseURL  = "https://registry.modelcontextprotocol.io/v0.1"
@@ -112,14 +112,14 @@ func (p *RegistryProxy) RegisterRoutes(mux *http.ServeMux) {
 
 func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if len(q) > maxSearchQueryLen {
 		slog.Debug("mcp: registry search query too long",
 			"len", len(q), "cap", maxSearchQueryLen)
-		api.BadRequest(w, "query too long")
+		httpreply.BadRequest(w, "query too long")
 		return
 	}
 	// Control characters can't appear in real search queries; they
@@ -130,7 +130,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if c < 0x20 || c == 0x7f {
 			slog.Debug("mcp: registry search query has control chars",
 				"len", len(q))
-			api.BadRequest(w, "query contains control characters")
+			httpreply.BadRequest(w, "query contains control characters")
 			return
 		}
 	}
@@ -140,7 +140,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Debug("mcp: registry search bad limit",
 				"limit", s, "error", err)
-			api.BadRequest(w, "invalid limit")
+			httpreply.BadRequest(w, "invalid limit")
 			return
 		}
 		limit = n
@@ -167,7 +167,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		// the slog.Warn above. The error text can leak upstream
 		// operational signals ("refusing redirect to non-registry host
 		// 169.254.169.254") that the browser has no need to see.
-		api.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
 			"error": "registry unavailable",
 		})
 		return
@@ -175,7 +175,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	normalised := normaliseRegistryResponse(body)
 	slog.Debug("mcp: registry search",
 		"q", q, "limit", limit, "results", len(normalised), "cached", cached)
-	api.WriteJSON(w, map[string]any{"servers": normalised})
+	webhttp.WriteJSON(w, map[string]any{"servers": normalised})
 }
 
 // fetchSearch returns raw upstream response bytes (from cache when
@@ -244,7 +244,7 @@ func (p *RegistryProxy) doFetch(ctx context.Context, q string, limit int) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", api.MIMETypeJSON)
+	req.Header.Set("Accept", httpreply.MIMETypeJSON)
 	req.Header.Set("User-Agent", "vibekit/1.0")
 
 	resp, err := p.client.Do(req)

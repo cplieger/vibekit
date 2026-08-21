@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -28,7 +28,7 @@ import (
 // Using a struct instead of map[string]string gives compile-time key safety
 // and enables json's cached struct encoder.
 //
-// api.PushSubject is EMBEDDED, so its fields land flat on the wire and there is
+// vibekit.PushSubject is EMBEDDED, so its fields land flat on the wire and there is
 // one definition of the subject rather than a copy here. It is also what makes
 // fitToCap correct by construction: every subject field is charged against the
 // cap because the whole struct is what gets marshaled, so adding a subject field
@@ -37,7 +37,7 @@ import (
 type pushPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
-	api.PushSubject
+	vibekit.PushSubject
 }
 
 // Send delivers a push notification to all subscribers.
@@ -48,9 +48,22 @@ type pushPayload struct {
 // are truncated with a Warn breadcrumb so an accidentally-chatty caller
 // doesn't get silently rejected by the push vendor.
 //
-// subject names what the notification is about; see api.PushSubject. Pass a zero
+// subject names what the notification is about; see vibekit.PushSubject. Pass a zero
 // value for a workspace-global notification with nothing single behind it.
-func (s *Service) Send(ctx context.Context, title, body string, notifyType api.PushKind, subject api.PushSubject) {
+//
+// The nil check below reads a two-valued answer from one slice: nil means DO NOT
+// SEND — a gate refused (unhealthy, kind disabled, unknown kind, still inside the
+// debounce window) — while a non-nil EMPTY slice means send to nobody, i.e. every
+// gate passed and there are no subscribers. Only the first is a return. The
+// second falls through and fans out to zero endpoints, which matters because
+// preflightSend stamps the debounce timestamp before it snapshots the
+// subscribers: an app nobody has subscribed to still burns the window, so a
+// subscription registered within pushDebounce of a notification is debounced out
+// of the next one. Nothing is lost that was deliverable at the time, and closing
+// it would mean either stamping after the snapshot (reopening the TOCTOU that
+// hold is there to close) or treating an empty subscriber set as a refusal, which
+// is a different claim than the gates make.
+func (s *Service) Send(ctx context.Context, title, body string, notifyType vibekit.PushKind, subject vibekit.PushSubject) {
 	slog.Debug("push: send", "kind", string(notifyType))
 	// Trim against the *marshaled* size, not the raw title+body length. The
 	// JSON envelope (~22 bytes for {"title":...,"body":...}) plus any
@@ -147,7 +160,7 @@ func classify(code int) disposition {
 // dead-letter store. A production web-push architecture puts a job queue and a
 // DLQ behind this, and the reason vibekit does not is that a DLQ exists to make
 // undelivered WORK recoverable, while nothing here is work: an unanswered
-// permission is replayed to every client on reconnect by the hub's pending-
+// permission is replayed to every client on reconnect by the runtime's pending-
 // permission tracker, and a finished turn is in the transcript. An undelivered
 // notification costs a nudge, not state.
 //
@@ -157,7 +170,7 @@ func classify(code int) disposition {
 // 24-hour TTL header permits the SERVICE to do. So the loop stops when the
 // notification would arrive too late to mean anything, which is a smaller and
 // more honest bound than "five attempts with exponential backoff".
-func (s *Service) deliver(ctx context.Context, sub api.PushSubscription, payload []byte) (prune bool) {
+func (s *Service) deliver(ctx context.Context, sub vibekit.PushSubscription, payload []byte) (prune bool) {
 	ep := runesafe.SanitizeSingleLineBounded(sub.Endpoint, 60)
 	deadline := time.Now().Add(pushRetryBudget)
 	backoff := pushRetryBase
@@ -290,11 +303,16 @@ func parseRetryAfter(h string) time.Duration {
 // the decision + stamp closes the TOCTOU between "should send" and
 // "record last-push".
 //
+// nil and an empty non-nil slice are DIFFERENT answers: nil is "a gate refused",
+// empty is "nothing refused and there is nobody subscribed". See Send for what
+// the caller does with each, and for the consequence of stamping before the
+// snapshot.
+//
 // The window is per kind AND subject. A kind-only window meant the second of two
 // pull requests settling in one poll was dropped inside five seconds while the
 // poller had already advanced its state for it, so that notification was never
 // sent at all — see pushDebounceKey.
-func (s *Service) preflightSend(notifyType api.PushKind, subject api.PushSubject) []api.PushSubscription {
+func (s *Service) preflightSend(notifyType vibekit.PushKind, subject vibekit.PushSubject) []vibekit.PushSubscription {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.healthy {
@@ -318,7 +336,7 @@ func (s *Service) preflightSend(notifyType api.PushKind, subject api.PushSubject
 	}
 	s.pruneDebounceLocked()
 	s.lastPush[key] = time.Now()
-	subs := make([]api.PushSubscription, 0, len(s.subs))
+	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -352,7 +370,7 @@ func (s *Service) pruneStale(stale []string) {
 		delete(s.subs, ep)
 	}
 	s.mu.Unlock()
-	s.saveSubs(s.ctx)
+	s.saveSubs(s.lifetime)
 }
 
 // push performs RFC 8291 encryption and delivers the payload to a
@@ -361,7 +379,7 @@ func (s *Service) pruneStale(stale []string) {
 // service, the Retry-After delay it asked for (0 when absent).
 func (s *Service) push(
 	ctx context.Context,
-	sub api.PushSubscription,
+	sub vibekit.PushSubscription,
 	payload []byte,
 ) (int, time.Duration, error) {
 	// Defense-in-depth: bound payload size before any allocation. The
@@ -384,11 +402,11 @@ func (s *Service) push(
 
 	// Derive the request context from BOTH the caller's ctx and the
 	// service lifecycle, unconditionally. The previous fast path merged
-	// only when s.ctx was ALREADY canceled, so a send started while
+	// only when s.lifetime was ALREADY canceled, so a send started while
 	// healthy never observed a later Service.Close and ran until the
 	// client timeout. Three small allocations per subscriber per push is
 	// noise at push frequency.
-	reqCtx, mergeCleanup := mergeCtx(ctx, s.ctx)
+	reqCtx, mergeCleanup := mergeCtx(ctx, s.lifetime)
 	defer mergeCleanup()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.Endpoint, bytes.NewReader(body))
@@ -424,7 +442,7 @@ func (s *Service) push(
 // salt(16) || rs(4) || idlen(1) || ephemeralPublicKey || ciphertext.
 // The caller (push) bounds len(payload) to pushBodyCap before calling,
 // so the len(payload)+1 allocation below is provably small.
-func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
+func encryptPayload(sub vibekit.PushSubscription, payload []byte) ([]byte, error) {
 	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil {
 		return nil, fmt.Errorf("decode p256dh: %w", err)
@@ -450,7 +468,13 @@ func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
 	if _, saltErr := rand.Read(salt); saltErr != nil {
 		return nil, saltErr
 	}
-	cek, nonce, err := deriveKeyNonce(shared, authSecret, clientPubBytes, ephPriv.PublicKey().Bytes(), salt)
+	cek, nonce, err := deriveKeyNonce(keyMaterial{
+		Shared:     shared,
+		AuthSecret: authSecret,
+		ClientPub:  clientPubBytes,
+		ServerPub:  ephPriv.PublicKey().Bytes(),
+		Salt:       salt,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +533,7 @@ const pushTruncMarker = "..."
 // is asked for a cap strictly below its current length, and the Capped pair
 // never returns more than the cap it was given — so that field strictly
 // shrinks, and an empty title+body marshals well under the cap.
-func fitToCap(title, body string, subject api.PushSubject) (fitTitle, fitBody string, truncated bool) {
+func fitToCap(title, body string, subject vibekit.PushSubject) (fitTitle, fitBody string, truncated bool) {
 	if marshaledLen(title, body, subject) <= pushBodyCap {
 		return title, body, false
 	}
@@ -535,9 +559,9 @@ func fitToCap(title, body string, subject api.PushSubject) (fitTitle, fitBody st
 // The subject is charged against the cap like any other field: its fields are
 // short, but leaving them out would under-count the payload by exactly the amount
 // that makes the vendor reject it, which is the failure fitToCap exists to
-// prevent. Embedding api.PushSubject in pushPayload is what makes that automatic
+// prevent. Embedding vibekit.PushSubject in pushPayload is what makes that automatic
 // rather than a thing each new subject field has to remember.
-func marshaledLen(title, body string, subject api.PushSubject) int {
+func marshaledLen(title, body string, subject vibekit.PushSubject) int {
 	p, _ := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject})
 	return len(p)
 }

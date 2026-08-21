@@ -38,14 +38,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/envx/yamlenv"
+	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/envx/yamlenv/v2"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -62,19 +63,27 @@ const (
 	maxPolicyFileSize = 1 << 20 // 1 MiB — the policy file is tiny in practice
 )
 
-// Rule is one policy rule. yaml tags drive the on-disk block YAML; json tags
-// keep it decodable from the REST layer. Field order (capability, effect,
-// match, exclude) is the canonical KAS order.
+// Rule is one policy rule. Field order (capability, effect, match, exclude) is
+// the canonical KAS order.
+//
+// YAML TAGS ONLY. This type had json tags too, on the stated grounds that they
+// "keep it decodable from the REST layer" — measured false: nothing in the
+// workspace ever encodes or decodes a Rule or a File as JSON. The REST layer
+// decodes into its own policyRuleBody and maps the fields across by name, so the
+// tags were dead. They also carried a latent surprise: `omitempty` on a slice
+// changes the wire under encoding/json/v2, where a nil slice emits `[]` instead
+// of being omitted, and sanitizePatterns returns nil for the empty case that the
+// workspace relaxation writes for every rule. Deleting them removes both.
 type Rule struct {
-	Capability string   `yaml:"capability" json:"capability"`
-	Effect     string   `yaml:"effect" json:"effect"`
-	Match      []string `yaml:"match,omitempty" json:"match,omitempty"`
-	Exclude    []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	Capability string   `yaml:"capability"`
+	Effect     string   `yaml:"effect"`
+	Match      []string `yaml:"match,omitempty"`
+	Exclude    []string `yaml:"exclude,omitempty"`
 }
 
 // File is the whole permissions.yaml document.
 type File struct {
-	Rules []Rule `yaml:"rules" json:"rules"`
+	Rules []Rule `yaml:"rules"`
 }
 
 // Scope names vibekit can write. Kiro/administration are read-only
@@ -244,15 +253,35 @@ func canonicalWorkDir(workDir string) string {
 	return filepath.Clean(abs)
 }
 
-// PathFor returns the permissions.yaml path for the given scope. home is the
-// base KAS resolves from ($HOME); workDir is the bridge's cwd (only needed
-// for the workspace scope).
-func PathFor(scope, home, workDir string) (string, error) {
+// Roots are the two filesystem roots a permissions.yaml path resolves against.
+//
+// A struct because PathFor used to take them as `(scope, home, workDir string)`
+// and two of those three were paths: a transposition compiled, resolved, and
+// wrote a security policy file under the wrong root — user-scope rules landing
+// beneath a workspace hash KAS reads for a different workspace, or workspace
+// rules at the user path where they apply everywhere. Nothing detects that; the
+// file is valid YAML at a valid location and KAS loads it. Named fields make the
+// swap unrepresentable, and a runtime guard could not have caught it at all
+// (both values are absolute directories that exist).
+type Roots struct {
+	// Home is the base KAS resolves both scopes from ($HOME).
+	Home string
+	// WorkDir is the bridge's cwd, needed only for the workspace scope.
+	WorkDir string
+}
+
+// PathFor returns the permissions.yaml path for the given scope.
+//
+// scope stays a separate parameter: it is the discriminator this switches on,
+// and confusing it with a root is already loud (a path is not "user" or
+// "workspace", so it returns ErrInvalidScope). The silent mistake was the pair.
+func PathFor(scope string, roots Roots) (string, error) {
 	switch scope {
 	case ScopeUser:
-		return filepath.Join(home, ".kiro", "settings", filename), nil
+		return filepath.Join(roots.Home, ".kiro", "settings", filename), nil
 	case ScopeWorkspace:
-		return filepath.Join(home, ".kiro", "workspace-roots", WorkspaceHash(workDir), filename), nil
+		return filepath.Join(roots.Home, ".kiro", "workspace-roots",
+			WorkspaceHash(roots.WorkDir), filename), nil
 	default:
 		return "", ErrInvalidScope
 	}
@@ -262,16 +291,39 @@ func PathFor(scope, home, workDir string) (string, error) {
 // File and nil error (the common "no rules yet" case). Parse failures and
 // oversize files are errors so the caller never silently clobbers a
 // hand-authored file it couldn't understand.
+//
+// The open is atomicfile.OpenRegular rather than os.ReadFile for two reasons,
+// both measured. A FIFO at the name blocks os.ReadFile in open(2) with no
+// context deadline able to rescue it (still blocked past 2s on go1.27.0), and
+// this file lives under $HOME/.kiro, which the agent's own shell can write — so
+// one mkfifo wedged the whole permissions REST surface permanently. And
+// os.ReadFile sized its buffer from the file and read all of it BEFORE the
+// maxPolicyFileSize check ran on the result, so the 1 MiB bound was enforced
+// after an arbitrarily large file had been pulled into memory; ReadBoundedFile
+// stats the descriptor first. OpenRegular also refuses a symlink at the final
+// component, which matches Save: atomicfile's write entry points already refuse
+// to write through one, so a policy vibekit would not write is now a policy it
+// will not read either.
+//
+// The path is made absolute first because OpenRegular requires that. os.ReadFile
+// resolved a relative path against the process cwd, and filepath.Abs preserves
+// exactly that, so no caller's meaning changes.
 func Load(path string) (*File, error) {
-	data, err := os.ReadFile(path)
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		return nil, fmt.Errorf("resolve %s: %w", filename, err)
+	}
+	fh, _, err := atomicfile.OpenRegular(abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return &File{Rules: []Rule{}}, nil
 		}
 		return nil, err
 	}
-	if len(data) > maxPolicyFileSize {
-		return nil, fmt.Errorf("policy file too large: %d bytes", len(data))
+	defer func() { _ = fh.Close() }()
+	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxPolicyFileSize)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", filename, err)
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return &File{Rules: []Rule{}}, nil
@@ -376,14 +428,28 @@ func sanitizePatterns(in []string) ([]string, error) {
 	return out, nil
 }
 
-func isCtrl(r rune) bool { return r < 0x20 || r == 0x7f }
+// isCtrl reports whether r is a control character, which a capability token or a
+// match pattern may not contain.
+//
+// unicode.IsControl rather than the `r < 0x20 || r == 0x7f` this used to be: that
+// form covered C0 and DEL and left the whole C1 block (U+0080-U+009F) through,
+// 32 runes the gate's own doc says it rejects. Measured on go1.27.0 —
+// unicode.Cc has 65 members and the hand-rolled predicate matched 33 of them.
+// The direction of that gap is what makes it worth closing: this is a REFUSE
+// gate, so a missed rune fails OPEN and the pattern lands in permissions.yaml,
+// where U+0085 NEXT LINE is a line break to a good many renderers.
+//
+// Version-stable by construction, so this does not trade one exposure for
+// another: Cc is the fixed set U+0000-U+001F plus U+007F-U+009F, it cannot gain
+// members, and the changelog's Unicode 15-to-17 diff measures it unmoved at 65.
+func isCtrl(r rune) bool { return unicode.IsControl(r) }
 
 // Signature is the dedup/equality key for a rule: capability + effect +
 // sorted match + sorted exclude. Mirrors KAS ruleSignature so vibekit's
 // notion of "same rule" matches the engine's.
 func Signature(r *Rule) string {
-	m := append([]string(nil), r.Match...)
-	e := append([]string(nil), r.Exclude...)
+	m := slices.Clone(r.Match)
+	e := slices.Clone(r.Exclude)
 	slices.Sort(m)
 	slices.Sort(e)
 	var b strings.Builder
@@ -429,7 +495,11 @@ func (f *File) Remove(r *Rule) bool {
 	sig := Signature(r)
 	for i := range f.Rules {
 		if Signature(&f.Rules[i]) == sig {
-			f.Rules = append(f.Rules[:i], f.Rules[i+1:]...)
+			// slices.Delete, not append(a[:i], a[i+1:]...): it zeroes the vacated
+			// tail, so the removed rule's Match and Exclude slices are not still
+			// reachable through the backing array of a security policy the caller
+			// is about to hand to Save.
+			f.Rules = slices.Delete(f.Rules, i, i+1)
 			return true
 		}
 	}
@@ -463,7 +533,7 @@ func (f *File) ReplaceEffect(old *Rule, effect string) bool {
 	}
 	for i := range f.Rules {
 		if i != idx && Signature(&f.Rules[i]) == nextSig {
-			f.Rules = append(f.Rules[:idx], f.Rules[idx+1:]...)
+			f.Rules = slices.Delete(f.Rules, idx, idx+1)
 			return true
 		}
 	}

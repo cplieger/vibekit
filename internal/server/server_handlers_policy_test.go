@@ -9,23 +9,23 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/policyfile"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 type fakePolicy struct {
-	rules       []api.PolicyRule
+	rules       []vibekit.PolicyRule
 	listErr     error
-	explain     *api.PolicyExplainResult
+	explain     *vibekit.PolicyExplainResult
 	explainErr  error
-	explainReqs []api.PolicyExplainRequest
+	explainReqs []vibekit.PolicyExplainRequest
 }
 
-func (f *fakePolicy) PolicyList(_ context.Context, _ string) ([]api.PolicyRule, error) {
+func (f *fakePolicy) PolicyList(_ context.Context, _ string) ([]vibekit.PolicyRule, error) {
 	return f.rules, f.listErr
 }
 
-func (f *fakePolicy) PolicyExplain(_ context.Context, req api.PolicyExplainRequest) (*api.PolicyExplainResult, error) {
+func (f *fakePolicy) PolicyExplain(_ context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
 	f.explainReqs = append(f.explainReqs, req)
 	return f.explain, f.explainErr
 }
@@ -40,7 +40,7 @@ func postRules(t *testing.T, s *Server, body policyRuleBody) *httptest.ResponseR
 }
 
 func TestPolicyViewLive(t *testing.T) {
-	f := &fakePolicy{rules: []api.PolicyRule{
+	f := &fakePolicy{rules: []vibekit.PolicyRule{
 		{Capability: "fs_write", Effect: "allow", Scope: "user", Source: "/x/permissions.yaml"},
 	}}
 	s := &Server{policy: f, workDir: t.TempDir()}
@@ -50,7 +50,7 @@ func TestPolicyViewLive(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var got api.PolicyView
+	var got vibekit.PolicyView
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	// Seed a user file so the fallback has something to read.
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
 	if err := policyfile.Save(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"sudo *"}}},
 	}); err != nil {
@@ -78,7 +78,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
-	var got api.PolicyView
+	var got vibekit.PolicyView
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestPolicyRuleAddDefaultsToAsk(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 	f, err := policyfile.Load(wp)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestPolicyRuleAddExplicitAllow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
 	f, _ := policyfile.Load(up)
 	if len(f.Rules) != 1 || f.Rules[0].Effect != "allow" || f.Rules[0].Capability != "web_fetch" {
 		t.Errorf("written rule = %+v", f.Rules)
@@ -154,7 +154,7 @@ func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (KAS is the authority on the vocabulary)", rec.Code)
 	}
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
 	f, err := policyfile.Load(up)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -199,7 +199,7 @@ func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
 		t.Fatal("test assumes 'hooks' is absent from the suggested set")
 	}
 
-	got := pickerCapabilities([]api.PolicyRule{
+	got := pickerCapabilities([]vibekit.PolicyRule{
 		{Capability: "hooks", Effect: "deny", Scope: "kiro"},
 		// Already suggested: must not be duplicated.
 		{Capability: "shell", Effect: "ask", Scope: "user"},
@@ -227,10 +227,24 @@ func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
 
 // TestPickerCapabilities_NoRulesIsTheSuggestedSet: a fresh install with no rules
 // must still populate the dropdown.
+//
+// The non-EMPTY leg is the wire assertion, and slices.Equal cannot make it:
+// slices.Equal(nil, []string{}) is true, so comparing against the suggested set
+// would pass if both were empty, and an empty picker marshals `"capabilities":
+// null` rather than `[]` (the field carries no omitzero/omitempty). Since
+// pickerCapabilities now returns slices.Sorted(maps.Keys(…)), whose answer for an
+// empty set IS nil, the invariant "the snapshot always seeds it" is what keeps
+// the wire shape stable — so it is asserted here rather than assumed.
 func TestPickerCapabilities_NoRulesIsTheSuggestedSet(t *testing.T) {
 	got := pickerCapabilities(nil)
+	if len(got) == 0 {
+		t.Fatal("picker is empty; the capabilities wire field would marshal as null, not []")
+	}
 	if !slices.Equal(got, policyfile.Capabilities()) {
 		t.Errorf("picker = %v, want the suggested set", got)
+	}
+	if !slices.IsSorted(got) {
+		t.Errorf("picker = %v, want one alphabetical list", got)
 	}
 }
 
@@ -239,7 +253,7 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	// Seed a deny rule.
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}}},
 	}); err != nil {
@@ -277,16 +291,16 @@ func TestPolicyRuleUnknownOp(t *testing.T) {
 }
 
 func TestPolicyExplainProxies(t *testing.T) {
-	f := &fakePolicy{explain: &api.PolicyExplainResult{Capability: "fs_write", Effect: "ask"}}
+	f := &fakePolicy{explain: &vibekit.PolicyExplainResult{Capability: "fs_write", Effect: "ask"}}
 	s := &Server{policy: f}
-	b, _ := json.Marshal(api.PolicyExplainRequest{Capability: "fs_write", Resource: "/etc/hosts"})
+	b, _ := json.Marshal(vibekit.PolicyExplainRequest{Capability: "fs_write", Resource: "/etc/hosts"})
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/explain", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	s.handlePolicyExplain(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var got api.PolicyExplainResult
+	var got vibekit.PolicyExplainResult
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +314,7 @@ func TestPolicyExplainProxies(t *testing.T) {
 
 func TestPolicyExplainRequiresTarget(t *testing.T) {
 	s := &Server{policy: &fakePolicy{}}
-	b, _ := json.Marshal(api.PolicyExplainRequest{})
+	b, _ := json.Marshal(vibekit.PolicyExplainRequest{})
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/explain", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	s.handlePolicyExplain(rec, req)
@@ -317,7 +331,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 		home := t.TempDir()
 		work := t.TempDir()
 		t.Setenv("HOME", home)
-		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
+		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 		if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 			Rules: []policyfile.Rule{
 				{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},
@@ -416,9 +430,9 @@ func TestPolicyExplainShellRequiresResource(t *testing.T) {
 	// the simulation up front with a clear reason instead of forwarding a
 	// request that can only fail (and used to surface as a misleading
 	// "unavailable" error).
-	f := &fakePolicy{explain: &api.PolicyExplainResult{Capability: "shell", Effect: "ask"}}
+	f := &fakePolicy{explain: &vibekit.PolicyExplainResult{Capability: "shell", Effect: "ask"}}
 	s := &Server{policy: f}
-	b, _ := json.Marshal(api.PolicyExplainRequest{Capability: "shell", Resource: "   "})
+	b, _ := json.Marshal(vibekit.PolicyExplainRequest{Capability: "shell", Resource: "   "})
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/explain", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	s.handlePolicyExplain(rec, req)

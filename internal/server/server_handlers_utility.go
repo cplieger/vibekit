@@ -4,7 +4,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 )
 
 // handleUtilityExplainError explains a tool error in plain language.
@@ -13,7 +16,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if s.utilityPrompt == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(vibekit.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -24,7 +27,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if body.Error == "" {
-		api.BadRequest(w, "error is required")
+		httpreply.BadRequest(w, "error is required")
 		return
 	}
 	prompt := "Explain this error in plain language. What went wrong and how to fix it? Be concise (2-3 sentences).\n\n"
@@ -32,12 +35,12 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		prompt += "Context: " + body.Context + "\n\n"
 	}
 	prompt += "Error: " + body.Error
-	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, api.EffortLow)
+	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, vibekit.EffortLow)
 	if err != nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
 		return
 	}
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
 }
 
 // handleUtilityResolveConflict proposes a merged version of a 3-way
@@ -47,7 +50,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.utilityPrompt == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(vibekit.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -59,7 +62,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if body.Ours == "" && body.Theirs == "" {
-		api.BadRequest(w, "ours or theirs is required")
+		httpreply.BadRequest(w, "ours or theirs is required")
 		return
 	}
 	const sideCap = 4 * 1024
@@ -89,10 +92,10 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 	sb.WriteString("\n```\n\nMerged:")
 	// Medium effort: merging two divergent code edits is the hardest
 	// utility task; a low-effort merge tends to just pick one side.
-	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), api.EffortMedium)
+	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), vibekit.EffortMedium)
 	if err != nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
 		return
 	}
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: api.StripCodeFence(strings.TrimSpace(result))})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: modeltext.StripCodeFence(strings.TrimSpace(result))})
 }

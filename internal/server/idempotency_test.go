@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/webhttp"
@@ -178,26 +179,81 @@ func TestIdempotency_clientErrorCachedAndReplayed(t *testing.T) {
 	}
 }
 
+// TestIdempotency_completeDoesNotAliasTheCallerBody pins complete's own
+// documented contract — the cached bytes are a COPY of the caller's buffer, so a
+// later reuse of it cannot rewrite an already-cached response.
+//
+// It exists because that contract was unasserted: replacing the copy with a
+// straight assignment left every idempotency test green (measured — the whole
+// TestIdempotency set passes with `cp := body`), because the middleware discards
+// the capturing writer as soon as the handler returns, so nothing in production
+// reuses the buffer today. The copy is the guard against a future writer that
+// pools one, and a guard no test states is a guard the next reader deletes.
+func TestIdempotency_completeDoesNotAliasTheCallerBody(t *testing.T) {
+	c := newIdempotencyCache(idempotencyTTL)
+	defer c.stop()
+
+	buf := []byte(`{"ok":true}`)
+	c.complete("k", http.StatusOK, "application/json", buf)
+	copy(buf, `{"ok":FALS`) // the caller reuses its buffer
+
+	e, inflight := c.begin("k")
+	if e == nil || inflight {
+		t.Fatalf("begin returned entry=%v inflight=%v, want the cached entry", e, inflight)
+	}
+	if got := string(e.body); got != `{"ok":true}` {
+		t.Errorf("cached body = %q, want %q (complete aliased the caller's buffer)", got, `{"ok":true}`)
+	}
+}
+
 // (10): once the TTL elapses, the cached entry is lazily evicted on the
 // next access and the handler re-executes.
+//
+// In a synctest bubble at the PRODUCTION idempotencyTTL. It used to construct
+// the cache with a 15 ms TTL and sleep 40 ms of real time — a class-(b) wait,
+// nothing here is racing an async effect — and asserted against a 15 ms fixture
+// rather than the 5 minutes the app ships. A synthetic clock makes the shipped
+// value free, and synctest.Sleep (Go 1.27) is time.Sleep plus synctest.Wait.
+//
+// The 30-second offset is load-bearing and was found by mutation, not by
+// reading. The janitor sweeps with `>= ttl` on a 1-minute ticker started when
+// the cache is constructed, and idempotencyTTL is an exact multiple of that
+// tick — so an entry created at synthetic t=0 reaches age == ttl at the very
+// instant a tick fires, and the JANITOR evicts it before begin's `< ttl` is ever
+// consulted. Measured: with no offset, both mutants survive — flipping begin's
+// boundary from `<` to `<=` and deleting its lazy eviction outright both leave
+// this test green, because the sweep does the work either way. Offset by 30 s the
+// entry expires at 5m30s, between the 5m and 6m ticks, and begin's own boundary
+// is what the assertions below see.
 func TestIdempotency_ttlExpiryReexecutes(t *testing.T) {
-	c := newIdempotencyCache(15 * time.Millisecond)
-	defer c.stop()
-	h, calls := idemHandler(http.StatusOK, "application/json", "x")
-	mw := c.middleware(h)
+	synctest.Test(t, func(t *testing.T) {
+		c := newIdempotencyCache(idempotencyTTL)
+		defer c.stop()
+		h, calls := idemHandler(http.StatusOK, "application/json", "x")
+		mw := c.middleware(h)
 
-	serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl"))
-	serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl")) // replay, within TTL
-	if calls.Load() != 1 {
-		t.Fatalf("within TTL: handler calls = %d, want 1", calls.Load())
-	}
+		synctest.Sleep(30 * time.Second) // see the offset note above
 
-	time.Sleep(40 * time.Millisecond) // exceed TTL
+		serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl"))
+		serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl")) // replay, within TTL
+		if calls.Load() != 1 {
+			t.Fatalf("within TTL: handler calls = %d, want 1", calls.Load())
+		}
 
-	serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl"))
-	if calls.Load() != 2 {
-		t.Fatalf("after TTL: handler calls = %d, want 2 (expired → re-execute)", calls.Load())
-	}
+		// A replay does not re-stamp ts (begin returns the entry and complete
+		// never runs), so age is measured from the first request throughout.
+		synctest.Sleep(idempotencyTTL - time.Nanosecond)
+		serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl"))
+		if calls.Load() != 1 {
+			t.Fatalf("at TTL-1ns: handler calls = %d, want 1 (still inside the window)", calls.Load())
+		}
+
+		synctest.Sleep(time.Nanosecond)
+		serveIdem(mw, idemReq(http.MethodPost, "/api/git/stash", "ttl"))
+		if calls.Load() != 2 {
+			t.Fatalf("at exactly TTL: handler calls = %d, want 2 (the window is half-open: `< ttl` replays)", calls.Load())
+		}
+	})
 }
 
 // (11): two truly-concurrent requests under the same key — the first
@@ -432,5 +488,61 @@ func TestIdempotency_writerBuffersExactlyAtLimit(t *testing.T) {
 	}
 	if got := cw.buf.String(); got != "abcd" {
 		t.Errorf("buffered = %q, want %q", got, "abcd")
+	}
+}
+
+// TestIdempotency_commandRouteParticipates is the test the command-path
+// unification rests on. POST /api/command used to dedup itself, inside the
+// dispatcher, keyed on a request_id BODY field — a second cache with no
+// in-flight marker, so two concurrent duplicates both executed. That cache is
+// deleted and the envelope field with it; the route's only idempotency is this
+// middleware now. So the thing worth pinning is no longer a cache's behaviour
+// (the tests above cover that) but the WIRING: that the command route is inside
+// the production stack's dedup layer, and that a duplicate is answered without
+// the handler running twice.
+//
+// It goes through s.middlewareStack rather than a hand-built chain for the same
+// reason TestMiddlewareStack_GuardOrder does: a stack assembled here would keep
+// passing after someone reorders or drops the real one.
+func TestIdempotency_commandRouteParticipates(t *testing.T) {
+	handler, calls := idemHandler(http.StatusOK, "application/json", `{"ok":true}`)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/command", handler)
+
+	idem := newIdempotencyCache(idempotencyTTL)
+	t.Cleanup(idem.stop)
+	s := New()
+	h := webhttp.Chain(mux, s.middlewareStack(fallbackCSPPolicy(), idem)...)
+
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://example.com/api/command",
+			strings.NewReader(`{"type":"create_chat","chat_id":"c1"}`))
+		req.Header.Set("Content-Type", "application/json")
+		// Same-origin so the CSRF check outside this layer lets it through.
+		req.Header.Set("Origin", "http://example.com")
+		req.Header.Set(idempotencyHeader, "r-abc123")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := post()
+	if first.Code != http.StatusOK {
+		t.Fatalf("first POST = %d, want 200 (body %q)", first.Code, first.Body.String())
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("handler calls after first POST = %d, want 1", got)
+	}
+
+	second := post()
+	if second.Code != http.StatusOK {
+		t.Errorf("replayed POST = %d, want 200", second.Code)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("handler calls after duplicate = %d, want 1 — the command route is "+
+			"outside the idempotency middleware", got)
+	}
+	if first.Body.String() != second.Body.String() {
+		t.Errorf("replay body = %q, want the cached %q", second.Body.String(), first.Body.String())
 	}
 }

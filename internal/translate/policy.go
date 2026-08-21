@@ -17,24 +17,24 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // v3PolicyChanged mirrors _kiro/policy/changed.
 type v3PolicyChanged struct {
-	SessionID string                `json:"sessionId"`
-	Status    string                `json:"status"`
-	Errors    []api.PolicyErrorItem `json:"errors"`
+	SessionID string                    `json:"sessionId"`
+	Status    string                    `json:"status"`
+	Errors    []vibekit.PolicyErrorItem `json:"errors"`
 }
 
 // HandlePolicyChanged translates _kiro/policy/changed → the
 // permissions_changed SSE. Clients refetch the native policy view.
-func (t *Translator) HandlePolicyChanged(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandlePolicyChanged(ctx context.Context, _ vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3PolicyChanged](msg, "policy/changed")
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventPermissionsChanged, "", api.PermissionsChangedPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPermissionsChanged, "", vibekit.PermissionsChangedPayload{
 		Status: p.Status,
 		Errors: p.Errors,
 	}))
@@ -42,16 +42,16 @@ func (t *Translator) HandlePolicyChanged(ctx context.Context, _ api.ChatID, msg 
 
 // v3PolicyError mirrors _kiro/policy/error.
 type v3PolicyError struct {
-	SessionID string                `json:"sessionId"`
-	Errors    []api.PolicyErrorItem `json:"errors"`
+	SessionID string                    `json:"sessionId"`
+	Errors    []vibekit.PolicyErrorItem `json:"errors"`
 }
 
 // HandlePolicyError translates _kiro/policy/error → the policy_error SSE
 // (rendered as a banner so a bad hand-edit or rejected rule is visible).
-func (t *Translator) HandlePolicyError(ctx context.Context, _ api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandlePolicyError(ctx context.Context, _ vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3PolicyError](msg, "policy/error")
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventPolicyError, "", api.PolicyErrorPayload{Errors: p.Errors}))
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPolicyError, "", vibekit.PolicyErrorPayload{Errors: p.Errors}))
 }

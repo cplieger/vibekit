@@ -17,7 +17,7 @@
 # One entry may report as "matches nothing" on a given run: punused caps a
 # single invocation at a 30s context deadline and drops the rest of the
 # shard silently (the masked error reads "file already closed", which the
-# gate filters), and internal/api is over that budget. The policy.go entry
+# gate filters), and internal/vibekit is over that budget. The policy.go entry
 # is the one that flickers. Entries here are the union of a complete
 # per-FILE scan, so this file stays a superset either way.
 
@@ -59,17 +59,17 @@ field Prompts is
 # elicitation schemas are pass-through JSON-Schema: vibekit forwards the
 # MCP server's form definition to the client verbatim and never inspects a
 # property, which is exactly why no Go code reads these fields.
-internal/api/elicitation.go
-internal/api/policy.go
+internal/vibekit/elicitation.go
+internal/vibekit/policy.go
 
 # --- 3. Inbound envelopes decoded by encoding/json, deliberately not read.
-# internal/api/commands.go holds the client -> server command payloads; the
+# internal/vibekit/commands.go holds the client -> server command payloads; the
 # browser sends every field and json.Unmarshal fills it. Attachment.Name is
 # the only unread one: internal/command/prompt_attachments.go re-derives the
 # display name with filepath.Base(att.Path) rather than trusting a
 # client-supplied string that reaches log lines and agent-visible text.
 # Deleting it would erase the record of what the client actually sends.
-internal/api/commands.go
+internal/vibekit/commands.go
 # RPCResponse.JSONRPC is the inbound half of the ACP JSON-RPC envelope
 # (the outbound RPCRequest/RPCNotification/RPCResponseOut copies ARE set in
 # internal/bridge/bridge_rpc.go). The reader ignores the version field, but
@@ -82,7 +82,7 @@ field JSONRPC is
 # fields are decoded and deliberately unread: _meta.kiro.kind (the
 # "agent-subtask" discriminator — the translator keys off agentSubtaskId
 # instead) and _meta.kiro.refusal.explanation (duplicates the chunk text,
-# so only Category/RecommendedModel flow into api.RefusalInfo). Both
+# so only Category/RecommendedModel flow into vibekit.RefusalInfo). Both
 # document the wire contract at the only place it is expressed in code.
 internal/translate/wire.go
 
@@ -90,7 +90,7 @@ internal/translate/wire.go
 # discover String() by reflection at %s/%v sites, so no reference exists to
 # find. All four are string-kind types whose String() returns the
 # underlying string, giving the ID family one uniform conversion affordance
-# (api.ChatID/SessionID/ModelID, mcp.ServerID).
+# (vibekit.ChatID/SessionID/ModelID, mcp.ServerID).
 method (ChatID).String
 method (SessionID).String
 method (ModelID).String
@@ -98,11 +98,11 @@ method (ServerID).String
 
 # --- 6. error-interface machinery. Error() is called by whatever formats
 # the error; Unwrap() is what makes errors.Is/As walk the chain. Call
-# sites: internal/command/prompt.go errors.AsType[*api.TransportError],
-# and internal/forges/cliexec constructs &CmdError{Err: ...} as an error.
+# sites: internal/command/prompt.go errors.AsType[*vibekit.TransportError],
+# and internal/forges/exec.go constructs &cmdError{Err: ...} as an error.
 method (*TransportError).Unwrap
-method (*CmdError).Error
-method (*CmdError).Unwrap
+method (*cmdError).Error
+method (*cmdError).Unwrap
 
 # --- 7. container/heap.Interface method sets. The stdlib calls Len/Less/
 # Swap/Push/Pop through the interface: internal/buffer/lines.go uses
@@ -124,11 +124,14 @@ method (*Dispatcher).ServeHTTP
 #   ShellCappedBuffer -> internal/command/shell.go   shellProc.Stdout/Stderr
 #   hookCappedBuffer  -> internal/hub/hooks.go       proc.Stdout/Stderr
 #   RingBuffer        -> internal/mcp/prewarm        cmd.Stdout/Stderr
-#   cappedBuffer      -> internal/server/cli.go      cmd.Stdout
+#   procout.Buffer    -> internal/auth (login/logout/whoami), internal/server/cli.go
+#                        cmd.Stdout and cmd.Stderr; replaced internal/server's
+#                        cappedBuffer, which this list named until the two
+#                        capped writers became one type.
 method (*ShellCappedBuffer).Write
 method (*hookCappedBuffer).Write
 method (*RingBuffer).Write
-method (*cappedBuffer).Write
+method (*Buffer).Write
 
 # --- 10. json.Unmarshaler. encoding/json calls (*mcp.Server).UnmarshalJSON
 # whenever the servers file is decoded; it is the boundary that rejects an
@@ -139,25 +142,33 @@ method (*Server).UnmarshalJSON
 # packages' TEST binaries share one implementation, so EU1001 is its
 # design, not a defect. The EU1002 members are interface-satisfaction
 # stubs pinned by the compile-time assertions in these files:
-#   var _ api.ChatStore  = NopChatStore{}                (chatstore.go)
-#   var _ api.ChatStore  = (*RecordingChatStore)(nil)    (chatstore.go)
-#   var _ api.ChatStore  = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
-#   var _ api.Broadcaster = (*CaptureBroadcaster)(nil)   (broadcaster.go)
+#   var _ chatStoreUnion = (*RecordingChatStore)(nil)    (chatstore.go)
+#   var _ chatStoreUnion = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
+# chatStoreUnion is the union of what the real consumers declare, since
+# vibekit.ChatStore no longer exists; each consumer names 1 to 5 of the store's 9.
 # Consumers: internal/hub (fakeChatStore = testsupport.RecordingChatStore),
-# internal/command and internal/translate (NewInMemoryChatStore).
+# internal/command, internal/translate and internal/hub (NewInMemoryChatStore).
+#
+# Five doubles left the package under the two-consumer rule and are NOT
+# excused here, they are gone: NopACPBridge, NopBroadcaster and
+# CaptureBroadcaster had no consumer outside their own tests; NopChatStore and
+# NopMCPRecorder had one each and moved into internal/translate's own _test.go.
+# Each remaining fake's RegisterRoutes no-op went too — only internal/server
+# mounts the chat routes, and it does so on the concrete store.
 internal/testsupport/chatstore.go
 internal/testsupport/inmem_chatstore.go
-internal/testsupport/broadcaster.go
 
 # --- 12. internal/testsupport shared contract suites. Each is a t.Run
 # battery invoked from another package's _test.go: internal/chat and
-# internal/hub (ChatStoreContractTest), internal/mcp and internal/hub
-# (MCPConfigContractTest), internal/testsupport's own bridge_test.go
-# (ACPBridgeContractTest, post-Start smoke), internal/bridge and
-# internal/hub (ACPBridgePreStartContractTest, pre-Start lifecycle).
+# internal/hub (ChatStoreContractTest), internal/mcp (MCPConfigContractTest),
+# internal/bridge and internal/hub (ACPBridgePreStartContractTest, pre-Start
+# lifecycle).
+#
+# ACPBridgeContractTest is gone with the NopACPBridge it was the only caller
+# of: a no-op fake, a suite, and a test running the suite against the fake
+# was a closed loop that could never observe a production implementation.
 internal/testsupport/chatstore_contract.go
 internal/testsupport/mcpconfig_contract.go
-internal/testsupport/bridge_contract.go
 internal/testsupport/bridge_prestart_contract.go
 
 # --- 13. Test-isolation seam that prevents writing the developer's own
@@ -201,3 +212,16 @@ function WithCommand
 function WithURL is
 function WithOAuthClientID
 function WithEnv is
+
+
+# --- 17. Reached only through errors.As, which punused cannot see.
+# statusError wraps a handler's error with the HTTP status the dispatcher
+# answers with. Unwrap is what lets rpcerr.Details reach the wrapped
+# error: Details does errors.As(err, &detailer) to pull ErrorData off a
+# bridge RPC failure, and four handlers (compact, mode, rewind, steer)
+# return exactly that failure wrapped in a status. Without Unwrap the
+# As fails, Text falls back to err.Error(), and on a -32603 that string
+# is KAS's literal "Internal error" while the real cause sits unread in
+# error.data — the precise defect rpcerr.Text exists to prevent.
+# TestStatusError_UnwrapsToTheCause pins it.
+method (*statusError).Unwrap

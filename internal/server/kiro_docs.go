@@ -47,8 +47,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/webhttp"
 )
 
 // Document categories, matching the page's sub-tabs. Wire values; the client
@@ -123,7 +124,7 @@ type kiroDoc struct {
 	// what went is the wrong derivation.
 	//
 	// `omitempty`, so absent means writable and read-only is asserted explicitly.
-	// Same default direction as api.Origin's adaptOrigin (mcp-state.ts), and for
+	// Same default direction as vibekit.Origin's adaptOrigin (mcp-state.ts), and for
 	// the same reason: a read-only row must only ever be produced by the server
 	// saying so, never by a field failing to arrive.
 	ReadOnly bool `json:"read_only,omitempty"`
@@ -153,15 +154,14 @@ type docsCache struct {
 }
 
 func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 	docs := s.collectKiroDocs(r.Context())
 	if docs == nil {
 		docs = []kiroDoc{}
 	}
-	api.WriteJSON(w, map[string]any{"docs": docs})
+	webhttp.WriteJSON(w, map[string]any{"docs": docs})
 }
 
 // collectKiroDocs returns the cached inventory, rescanning when the signature
@@ -351,10 +351,7 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			data = nil
 		}
 		fm := steering.Parse(data)
-		name := fm.Name
-		if name == "" {
-			name = e.Name()
-		}
+		name := cmp.Or(fm.Name, e.Name())
 		// A DECLARED mode only, never the default. KAS's SkillFrontMatterSchema
 		// declares no `inclusion` key — only SteeringContextFrontMatterSchema
 		// does — so steering.Parse's "always" default is the steering default
@@ -404,10 +401,7 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			data = nil
 		}
 		fm := steering.Parse(data)
-		name := fm.Name
-		if name == "" {
-			name = base
-		}
+		name := cmp.Or(fm.Name, base)
 		docs = append(docs, kiroDoc{
 			Category:        catAgent,
 			Name:            name,
@@ -512,10 +506,7 @@ func hookRows(data []byte, prefix, file string, deleteProtected bool) []kiroDoc 
 	parsed := steering.ParseHooks(data)
 	out := make([]kiroDoc, 0, len(parsed))
 	for _, h := range parsed {
-		name := h.Name
-		if name == "" {
-			name = strings.TrimSuffix(file, ".json")
-		}
+		name := cmp.Or(h.Name, strings.TrimSuffix(file, ".json"))
 		out = append(out, kiroDoc{
 			Category:        catHook,
 			Name:            name,

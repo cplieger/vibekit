@@ -9,13 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // recordingBridge is a CommandBridge that records the one call made through it
@@ -28,10 +27,10 @@ type recordingBridge struct {
 	gotMethod string
 	gotParams map[string]any
 	callCount int
-	sessionID api.SessionID
+	sessionID vibekit.SessionID
 }
 
-func (b *recordingBridge) Call(_ context.Context, method string, params any) (*api.RPCResponse, error) {
+func (b *recordingBridge) Call(_ context.Context, method string, params any) (*vibekit.RPCResponse, error) {
 	b.callCount++
 	b.gotMethod = method
 	if m, ok := params.(map[string]any); ok {
@@ -44,12 +43,12 @@ func (b *recordingBridge) Call(_ context.Context, method string, params any) (*a
 	if err != nil {
 		return nil, err
 	}
-	return &api.RPCResponse{Result: raw}, nil
+	return &vibekit.RPCResponse{Result: raw}, nil
 }
 
 func (b *recordingBridge) Notify(context.Context, string, any) error        { return nil }
 func (b *recordingBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (b *recordingBridge) SessionID() api.SessionID                         { return b.sessionID }
+func (b *recordingBridge) SessionID() vibekit.SessionID                     { return b.sessionID }
 func (b *recordingBridge) TryAcquireForPrompt() bool                        { return true }
 func (b *recordingBridge) ReleaseAfterPrompt()                              {}
 func (b *recordingBridge) BeginPromptCall(context.CancelFunc) uint64        { return 0 }
@@ -65,38 +64,41 @@ type bridgeDeps struct {
 	bridge Bridge
 }
 
-func (d *bridgeDeps) GetBridge(api.ChatID) Bridge { return d.bridge }
+func (d *bridgeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
 
-func newBridgeDispatcher(store api.ChatStore, bridge Bridge) *Dispatcher {
-	return New(&bridgeDeps{
+// newBridgeHost builds the all-in-one double a handler is called with. It used
+// to return a *Dispatcher beside it, because every handler took one to reach its
+// response helpers; a handler that returns its outcome takes no dispatcher, so
+// there is nothing to hand back.
+func newBridgeHost(store ChatStore, bridge Bridge) hostDouble {
+	return &bridgeDeps{
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
-	})
+	}
 }
 
-func rewindReq(t *testing.T, chatID api.ChatID, messageID string) *api.ClientCommand {
+func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.RewindChatCommand{MessageID: messageID})
+	payload, err := json.Marshal(vibekit.RewindChatCommand{MessageID: messageID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdRewindChat,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+	return &vibekit.ClientCommand{
+		Type:    vibekit.CmdRewindChat,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 
 // seedChat writes a four-message transcript: u1, a1, u2, a2.
-func seedChat(t *testing.T, store api.ChatStore, id api.ChatID) {
+func seedChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
 	t.Helper()
-	err := store.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
-		c.Messages = []api.Message{
-			{ID: "u1", Role: api.RoleUser, Content: "first", Ts: 100},
-			{ID: "a1", Role: api.RoleAssistant, Content: "reply one", Ts: 200},
-			{ID: "u2", Role: api.RoleUser, Content: "second", Ts: 300},
-			{ID: "a2", Role: api.RoleAssistant, Content: "reply two", Ts: 400},
+	err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+		c.Messages = []vibekit.Message{
+			{ID: "u1", Role: vibekit.RoleUser, Content: "first", Ts: 100},
+			{ID: "a1", Role: vibekit.RoleAssistant, Content: "reply one", Ts: 200},
+			{ID: "u2", Role: vibekit.RoleUser, Content: "second", Ts: 300},
+			{ID: "a2", Role: vibekit.RoleAssistant, Content: "reply two", Ts: 400},
 		}
 		c.MessageCount = len(c.Messages)
 		return true
@@ -117,13 +119,12 @@ func TestCmdRewindChat_DropsTheTargetAndEverythingAfter(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -145,18 +146,18 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
+	host := newBridgeHost(store, b)
 
-	CmdRewindChat(d, t.Context(), httptest.NewRecorder(), rewindReq(t, "c1", "u1"))
+	_, _ = CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u1"))
 
-	if b.gotMethod != api.MethodCheckpointRevertMultiple {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodCheckpointRevertMultiple)
+	if b.gotMethod != vibekit.MethodCheckpointRevertMultiple {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodCheckpointRevertMultiple)
 	}
 	if b.gotParams["messageId"] != "u1" {
 		t.Errorf("messageId = %v, want u1", b.gotParams["messageId"])
 	}
 	// SessionParams supplies sessionId; KAS rejects the call without it.
-	if b.gotParams["sessionId"] != api.SessionID("sess-1") {
+	if b.gotParams["sessionId"] != vibekit.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", b.gotParams["sessionId"])
 	}
 }
@@ -169,13 +170,12 @@ func TestCmdRewindChat_RefusesANonUserTarget(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "a1"))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "a1"))
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
+	if statusOf(err) != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", statusOf(err))
 	}
 	if b.callCount != 0 {
 		t.Errorf("called the bridge %d times, want 0", b.callCount)
@@ -190,13 +190,12 @@ func TestCmdRewindChat_RefusesAnUnknownTarget(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "nope"))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "nope"))
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
+	if statusOf(err) != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", statusOf(err))
 	}
 	if b.callCount != 0 {
 		t.Errorf("called the bridge %d times, want 0", b.callCount)
@@ -206,13 +205,12 @@ func TestCmdRewindChat_RefusesAnUnknownTarget(t *testing.T) {
 func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	d := newBridgeDispatcher(store, &recordingBridge{result: okResult()})
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, &recordingBridge{result: okResult()})
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", ""))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", ""))
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
+	if statusOf(err) != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", statusOf(err))
 	}
 }
 
@@ -221,13 +219,12 @@ func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 func TestCmdRewindChat_RequiresALiveBridge(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	d := newBridgeDispatcher(store, nil)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, nil)
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
 
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409", w.Code)
+	if statusOf(err) != http.StatusConflict {
+		t.Errorf("status = %d, want 409", statusOf(err))
 	}
 	c, _ := store.Get(t.Context(), "c1")
 	if len(c.Messages) != 4 {
@@ -248,17 +245,16 @@ func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
 		},
 		sessionID: "sess-1",
 	}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
 
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409", w.Code)
+	if statusOf(err) != http.StatusConflict {
+		t.Errorf("status = %d, want 409", statusOf(err))
 	}
 	// KAS's reason reaches the client: it is more specific than anything vibekit
 	// could infer, and mid-turn is the case a user can actually act on.
-	if body := w.Body.String(); !strings.Contains(body, "still running") {
+	if body := errText(err); !strings.Contains(body, "still running") {
 		t.Errorf("response %s does not carry KAS's reason", body)
 	}
 	c, _ := store.Get(t.Context(), "c1")
@@ -271,13 +267,12 @@ func TestCmdRewindChat_TransportFailureLeavesTheRecordIntact(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502", w.Code)
+	if statusOf(err) != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", statusOf(err))
 	}
 	c, _ := store.Get(t.Context(), "c1")
 	if len(c.Messages) != 4 {
@@ -291,13 +286,12 @@ func TestCmdRewindChat_ToTheFirstMessageEmptiesTheTranscript(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u1"))
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u1"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200", statusOf(err))
 	}
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -309,11 +303,11 @@ func TestCmdRewindChat_ToTheFirstMessageEmptiesTheTranscript(t *testing.T) {
 }
 
 func TestUserMessageIndex(t *testing.T) {
-	msgs := []api.Message{
-		{ID: "u1", Role: api.RoleUser},
-		{ID: "a1", Role: api.RoleAssistant},
-		{ID: "e1", Role: api.RoleEvent},
-		{ID: "u2", Role: api.RoleUser},
+	msgs := []vibekit.Message{
+		{ID: "u1", Role: vibekit.RoleUser},
+		{ID: "a1", Role: vibekit.RoleAssistant},
+		{ID: "e1", Role: vibekit.RoleEvent},
+		{ID: "u2", Role: vibekit.RoleUser},
 	}
 	cases := map[string]int{"u1": 0, "u2": 3, "a1": -1, "e1": -1, "missing": -1, "": -1}
 	for id, want := range cases {

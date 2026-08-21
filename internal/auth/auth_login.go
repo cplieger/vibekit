@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,7 +11,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/webhttp"
 )
 
@@ -83,7 +83,7 @@ func buildLoginArgs(provider, region string) []string {
 // body is legitimate (default Builder ID flow) and returns zero
 // values with ok=true.
 func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region string, ok bool) {
-	api.LimitBody(w, r, api.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var body struct {
 		Provider string `json:"provider"`
 		Region   string `json:"region"`
@@ -91,21 +91,21 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("login: body exceeds limit",
-				"limit_bytes", api.MaxJSONBody)
-			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				api.ErrorJSON("request too large"))
+				"limit_bytes", webhttp.MaxJSONBody)
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				httpreply.ErrorJSON("request too large"))
 			return "", "", false
 		}
 		slog.Warn("login: decode body", "error", err)
-		api.BadRequest(w, "invalid JSON body")
+		httpreply.BadRequest(w, "invalid JSON body")
 		return "", "", false
 	}
 	if err := validateProvider(body.Provider); err != nil {
-		api.BadRequest(w, err.Error())
+		httpreply.BadRequest(w, err.Error())
 		return "", "", false
 	}
 	if err := validateRegion(body.Region); err != nil {
-		api.BadRequest(w, err.Error())
+		httpreply.BadRequest(w, err.Error())
 		return "", "", false
 	}
 	return body.Provider, body.Region, true
@@ -117,14 +117,14 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 // HTTP request (device-flow login takes minutes while the user completes
 // the browser flow; r.Context() would cancel it as soon as the response
 // is written) — see the context.WithTimeout below which caps the
-// subprocess at the LoginProcessCap wall-clock budget.
+// subprocess at the LoginTimeout wall-clock budget.
 //
 // Only one login may be in flight at a time: a concurrent POST gets
 // HTTP 409. vibekit is single-user, and a double-click/LAN-probe
 // would otherwise pin two AWS device codes for 16 minutes each.
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	// Audit trail: record every /api/login POST so operators can
@@ -132,7 +132,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Loki. client_ip is the spoof-safe resolved client host from
 	// webhttp.ClientIP: the unspoofable socket peer when directly
 	// exposed, or the real client from a trusted X-Forwarded-For when
-	// WT_TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
+	// TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
 	// client_ip + user_agent is bounded.
 	slog.Info("login: request received",
 		"client_ip", webhttp.ClientIP(r, h.trusted...),
@@ -145,7 +145,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// cmd.Start) releases via the semReleased guard before
 		// returning. See Handler doc comment.
 	default:
-		api.Conflict(w, "login in progress")
+		httpreply.Conflict(w, "login in progress")
 		return
 	}
 	// Guarded release: only fires if we return before the reap
@@ -171,28 +171,28 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// abandoned flows (tab closed, network lost) at AWS's
 	// device-code TTL + 1m grace. The select below separately
 	// bounds the URL-discovery phase at LoginURLTimeout.
-	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginProcessCap)
+	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginTimeout)
 	cmd := exec.CommandContext(ctx, h.cliPath(), buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
-	setLoginProcAttr(cmd)
+	setProcGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
 		slog.Error("login: stdout pipe failed",
 			"error", err, "cli_path", h.cliPath())
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("login unavailable"))
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON("login unavailable"))
 		return
 	}
 	// Capture stderr into a bounded buffer separate from stdout so
 	// stderr chatter (deprecation warnings, debug envs) doesn't
 	// count against the 200-line maxLoginLines cap on the URL
 	// scanner. Logged on timeout / error paths for diagnostics.
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &limitedWriter{W: &stderrBuf, N: stderrCap}
+	stderrBuf := procout.NewBuffer(stderrCap)
+	cmd.Stderr = stderrBuf
 	if err := cmd.Start(); err != nil {
 		cancel()
 		status := classifyLoginStartErr(err, h.cliPath())
-		api.WriteJSONStatus(w, status, api.ErrorJSON("login unavailable"))
+		webhttp.WriteJSONStatus(w, status, httpreply.ErrorJSON("login unavailable"))
 		return
 	}
 	urlCh := make(chan map[string]string, 1)
@@ -226,7 +226,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// exit status and release the subprocess resources. On success
 	// this goroutine outlives the HTTP handler (the login runs
 	// until the user finishes the browser flow or the outer
-	// LoginProcessCap fires). On timeout we kill the process
+	// LoginTimeout fires). On timeout we kill the process
 	// group (CommandContext's default cancel only kills the PID,
 	// which orphans bun/Node helper children that keep the stdout
 	// pipe open and wedge cmd.Wait for the full sleep), and wait
@@ -236,7 +236,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		ctx:        ctx,
 		cancel:     cancel,
 		cmd:        cmd,
-		stderrBuf:  &stderrBuf,
+		stderrBuf:  stderrBuf,
 		stdoutDone: stdoutDone,
 		waitDone:   waitDone,
 	})
@@ -255,18 +255,18 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// Reap the child eagerly rather than waiting for
 			// the 16-minute hard cap — no user completion is
 			// coming and the device code is wasted either way.
-			killLoginProcess(cmd)
+			killProcessGroup(cmd)
 			<-waitDone
 		}
-		api.WriteJSON(w, result)
+		webhttp.WriteJSON(w, result)
 	case <-time.After(h.cfg.LoginURLTimeout):
-		killLoginProcess(cmd)
+		killProcessGroup(cmd)
 		<-waitDone // bounded: Kill → SIGKILL → reap
 		attrs := make([]any, 0, 4)
 		attrs = append(attrs, "timeout", h.cfg.LoginURLTimeout)
-		attrs = append(attrs, stderrAttr(&stderrBuf)...)
+		attrs = append(attrs, stderrAttr(stderrBuf)...)
 		slog.Warn("login: timeout waiting for auth URL", attrs...)
-		api.WriteJSONStatus(w, http.StatusGatewayTimeout,
-			api.ErrorJSON("timeout waiting for auth URL"))
+		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout,
+			httpreply.ErrorJSON("timeout waiting for auth URL"))
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // cancelGrace is how long a cooperative session/cancel gets to be reflected
@@ -19,30 +19,27 @@ import (
 const cancelGrace = 10 * time.Second
 
 // CmdCreateChat creates a new chat with the given metadata.
-func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdCreateChat(ctx context.Context, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
-	var p api.CreateChatCommand
+	var p vibekit.CreateChatCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-			return
+			return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 		}
 	}
 	name := p.Name
 	if name == "" {
-		name = api.DefaultChatName
+		name = vibekit.DefaultChatName
 	}
-	if len(name) > api.MaxChatNameBytes {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+	if len(name) > vibekit.MaxChatNameBytes {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if !ValidIdent(p.Model) {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	err := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			return false
 		}
@@ -51,10 +48,9 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		return true
 	})
 	if err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
-	d.RespondOK(w, cmd.RequestID)
+	return responseOK, nil
 }
 
 // CmdDeleteChat removes a chat: tear down its side effects, then delete the
@@ -68,42 +64,39 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 // nothing to order or to half-fail. The transition, its ordering guarantee and
 // the `failed_children` response are all gone rather than kept as a
 // single-element loop.
-func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	// Delete implies close semantics: the chat's runs are cancelled first,
-	// because a run is durable state a dead bridge only PAUSES — without this,
-	// deleting a chat mid-run left the run to revive and edit files attributed
-	// to a chat that no longer exists.
-	d.Chat().CancelChatRuns(ctx, cmd.ChatID)
-	d.Chat().CleanupChatState(ctx, cmd.ChatID)
-	if err := d.Chat().ChatStore().Delete(ctx, cmd.ChatID); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+func CmdDeleteChat(ctx context.Context, chats ChatStore, teardown ChatTeardown, cmd *vibekit.ClientCommand) (any, error) {
+	// Delete implies close semantics, and DeleteChatState owns that: it cancels
+	// the chat's runs before dropping the bridge, because a run is durable state
+	// a dead bridge only PAUSES — without it, deleting a chat mid-run left the run
+	// to revive and edit files attributed to a chat that no longer exists.
+	teardown.DeleteChatState(ctx, cmd.ChatID)
+	if err := chats.Delete(ctx, cmd.ChatID); err != nil {
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	slog.Info("chat deleted", "chat_id", cmd.ChatID)
-	d.RespondOK(w, cmd.RequestID)
+	return responseOK, nil
 }
 
 // CmdCancel cancels the active turn, if any.
-func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, terms TerminalAccess, cmd *vibekit.ClientCommand) (any, error) {
 	// Only the pending PERMISSIONS are cleared. There is no staging queue to
 	// flush and no per-turn trust to drop: KAS owns the write gate, and cancelling
 	// a turn reverts its own approval (measured — session/cancel is the documented
 	// escape from an unanswered approval and it reverts correctly).
-	d.PendingPerms().ClearPendingPermsForChat(cmd.ChatID)
+	perms.ClearPendingPermsForChat(cmd.ChatID)
 
 	// The interrupt's process half (§5.6 R3): stopping the MODEL does not stop
 	// the processes its turn already spawned — cancelling mid-`npm test` left
 	// the command running, owned by nobody, streaming into a turn that no
 	// longer existed. Scoped to the turn's own terminals; a background command
 	// an earlier turn started on purpose is not this gesture's to kill.
-	d.Terminals().KillTurnTerminals(cmd.ChatID)
+	terms.KillForTurn(cmd.ChatID)
 
-	sb := d.Bridge().GetBridge(cmd.ChatID)
+	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
-		d.RespondOK(w, cmd.RequestID)
-		return
+		return responseOK, nil
 	}
-	if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
+	if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	// Unresponsive-cancel budget. session/cancel is a notification, so nothing
@@ -121,7 +114,7 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	if !sb.ArmCancelGrace(sb.PromptGeneration(), cancelGrace) {
 		slog.Debug("cancel: no in-flight prompt to arm a grace budget against", "chat_id", cmd.ChatID)
 	}
-	d.RespondOK(w, cmd.RequestID)
+	return responseOK, nil
 }
 
 // CmdCloseChat is the tab-close teardown: the user closed the chat's tab, and
@@ -135,29 +128,26 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 // and a paused run later revives and edits files nobody is watching), then the
 // process teardown, which also flushes the in-flight buffer and kills the
 // chat's agent terminals.
-func CmdCloseChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	d.PendingPerms().ClearPendingPermsForChat(cmd.ChatID)
-	if sb := d.Bridge().GetBridge(cmd.ChatID); sb != nil {
-		if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
+func CmdCloseChat(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, cmd *vibekit.ClientCommand) (any, error) {
+	perms.ClearPendingPermsForChat(cmd.ChatID)
+	if sb := bridges.Bridge(cmd.ChatID); sb != nil {
+		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", cmd.ChatID, keyError, err)
 		}
 	}
-	d.Chat().CancelChatRuns(ctx, cmd.ChatID)
-	d.Chat().CloseChatState(ctx, cmd.ChatID)
-	d.RespondOK(w, cmd.RequestID)
+	teardown.CloseChatState(ctx, cmd.ChatID)
+	return responseOK, nil
 }
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
-func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	sb := d.Bridge().GetBridge(cmd.ChatID)
+func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
+	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
-		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
-		return
+		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}
-	var p api.PermissionResponseCommand
+	var p vibekit.PermissionResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// Claim the request BEFORE answering it. Two tabs on one chat both see the
 	// card, and kiro-cli discards the second answer for a request id it has
@@ -165,16 +155,15 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	// rather than here. Losing the take means somebody else answered, which is
 	// not this request's failure to report as one: 409 with a code the client
 	// can explain.
-	if !d.PendingPerms().TakePendingPerm(p.RequestID, api.SettledByUser) {
-		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
-		return
+	if !perms.TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
+		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
 	// A turn approval answers on the SAME reply, with per-file decisions in
 	// _meta. Built through one helper so the omitted-id-means-reject rule lives in
 	// exactly one place.
-	outcome := api.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
+	outcome := vibekit.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
 	if err := sb.Respond(ctx, p.RequestID, outcome, nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.RespondOK(w, cmd.RequestID)
+	return responseOK, nil
 }

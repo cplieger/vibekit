@@ -5,7 +5,7 @@ package translate
 // KAS answers `session/load` by replaying the session's stored transcript as
 // ordinary `session/update` notifications, each tagged
 // `update._meta.kiro.replay: true`. This file turns that stream back into
-// []api.Message.
+// []vibekit.Message.
 //
 // It is a PURE ACCUMULATOR: no chat store, no broadcaster, no clock beyond an
 // injected id generator. That is deliberate — the replay must be staged and
@@ -46,11 +46,13 @@ package translate
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // replayInfoMeta decodes the `_meta.kiro` block of a replayed
@@ -68,7 +70,7 @@ type replayInfoMeta struct {
 }
 
 // replayTS converts KAS's RFC3339-with-milliseconds timestamp to the epoch
-// millis api.Message carries. A missing or unparseable value yields 0, which
+// millis vibekit.Message carries. A missing or unparseable value yields 0, which
 // callers replace with their own fallback — never with time.Now() at the top
 // level, because stamping replayed history with the load's clock is the bug
 // this function exists to avoid.
@@ -147,7 +149,7 @@ type Projection struct {
 	// session was never compacted.
 	Watermark string
 
-	messages []api.Message
+	messages []vibekit.Message
 
 	userTs    int64
 	turnStart int64
@@ -169,22 +171,22 @@ func NewProjection(newID func() string) *Projection {
 // Ingest folds one replayed session/update frame into the projection.
 // Unknown kinds are ignored: a replay carries catalog and telemetry frames
 // that contribute nothing to a transcript.
-func (p *Projection) Ingest(kind api.ACPUpdateKind, raw json.RawMessage) {
+func (p *Projection) Ingest(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
 	switch kind {
-	case api.ACPUpdateSessionInfo:
+	case vibekit.ACPUpdateSessionInfo:
 		p.ingestInfo(raw)
-	case api.ACPUpdateAgentChunk:
+	case vibekit.ACPUpdateAgentChunk:
 		p.ingestAgentText(raw, false)
-	case api.ACPUpdateThoughtChunk:
+	case vibekit.ACPUpdateThoughtChunk:
 		p.ingestAgentText(raw, true)
-	case api.ACPUpdateToolCall:
+	case vibekit.ACPUpdateToolCall:
 		p.ingestToolCall(raw)
-	case api.ACPUpdateToolUpdate:
+	case vibekit.ACPUpdateToolUpdate:
 		p.ingestToolUpdate(raw)
 	default:
 		// user_message_chunk is handled here rather than in the switch above
 		// because its kind constant lives outside the ACPUpdate* set vibekit
-		// declares (it has never had a live handler — see hub/translate.go).
+		// declares (it has never had a live handler — see agent/translate.go).
 		if kind == replayUserChunkKind {
 			p.ingestUserText(raw)
 		}
@@ -192,10 +194,10 @@ func (p *Projection) Ingest(kind api.ACPUpdateKind, raw json.RawMessage) {
 }
 
 // replayUserChunkKind is KAS's user-message replay frame. vibekit declares no
-// api.ACPUpdate* constant for it because the LIVE path deliberately has no
+// vibekit.ACPUpdate* constant for it because the LIVE path deliberately has no
 // handler (vibekit echoes its own user bubbles), so a replay is the only
 // context in which it means anything.
-const replayUserChunkKind api.ACPUpdateKind = "user_message_chunk"
+const replayUserChunkKind vibekit.ACPUpdateKind = "user_message_chunk"
 
 func (p *Projection) ingestUserText(raw json.RawMessage) {
 	var c replayChunk
@@ -229,7 +231,6 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 	sub := c.Meta.Kiro.AgentSubtaskID
 	if thinking {
 		p.buf.AppendThinkingDelta(c.Content.Text, sub)
-		p.buf.Reasoning.WriteString(c.Content.Text)
 		return
 	}
 	// The same marker filter as the live path, and not optional here: KAS replays
@@ -248,7 +249,6 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 		return
 	}
 	p.buf.AppendTextDelta(text, sub)
-	p.buf.Content.WriteString(text)
 }
 
 func (p *Projection) ingestToolCall(raw json.RawMessage) {
@@ -258,7 +258,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 	}
 	p.ensureTurn()
 	p.adoptTurnIdentity(tc.Meta.Kiro.MessageID, tc.Meta.Kiro.Timestamp)
-	call := api.ToolCall{
+	call := vibekit.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          tc.Title,
 		Kind:           tc.Kind,
@@ -268,11 +268,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 		Locations:      tc.Locations,
 		Ts:             p.frameTS(tc.Meta.Kiro.Timestamp),
 	}
-	p.buf.ToolCalls = append(p.buf.ToolCalls, call)
-	if p.buf.ToolCallIndex == nil {
-		p.buf.ToolCallIndex = make(map[string]int)
-	}
-	p.buf.ToolCallIndex[tc.ToolCallID] = len(p.buf.ToolCalls) - 1
+	p.buf.AppendToolCall(&call)
 	p.buf.AppendToolUseBlock(tc.ToolCallID, tc.Meta.Kiro.AgentSubtaskID)
 }
 
@@ -286,11 +282,10 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 	if json.Unmarshal(raw, &tu) != nil || p.buf == nil {
 		return
 	}
-	idx, ok := p.buf.ToolCallIndex[tu.ToolCallID]
-	if !ok || idx >= len(p.buf.ToolCalls) {
+	tc, idx, ok := p.buf.ToolCall(tu.ToolCallID)
+	if !ok {
 		return
 	}
-	tc := &p.buf.ToolCalls[idx]
 	if tu.Title != "" {
 		tc.Title = tu.Title
 	}
@@ -305,10 +300,11 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 	}
 	for _, item := range tu.Content {
 		if item.Type == ContentTypeContent && item.Content.Text != "" {
-			tc.Output += api.SanitizeOutput(item.Content.Text) + "\n"
+			tc.Output += sanitize.Output(item.Content.Text) + "\n"
 		}
 	}
-	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
+	mergeCheckpoint(&tc, tu.Meta.Kiro.Checkpoint)
+	p.buf.SetToolCall(idx, &tc)
 }
 
 func (p *Projection) ingestInfo(raw json.RawMessage) {
@@ -333,7 +329,7 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 }
 
 // applySummary appends the compaction event for a replayed summary. It folds
-// onto the SAME domain shape the live path produces (an api.RoleEvent message
+// onto the SAME domain shape the live path produces (an vibekit.RoleEvent message
 // with EventKind compacted, plus a watermark) rather than introducing a second
 // representation of a compacted transcript.
 //
@@ -377,14 +373,14 @@ func (p *Projection) applySummary(sum *struct {
 	if at > 0 {
 		ts = p.messages[at-1].Ts
 	}
-	evt := api.Message{
+	evt := vibekit.Message{
 		ID:        p.newID(),
-		Role:      api.RoleEvent,
-		EventKind: api.EventCompacted,
+		Role:      vibekit.RoleEvent,
+		EventKind: vibekit.EventCompacted,
 		Content:   sum.Content,
 		Ts:        ts,
 	}
-	p.messages = append(p.messages[:at], append([]api.Message{evt}, p.messages[at:]...)...)
+	p.messages = append(p.messages[:at], append([]vibekit.Message{evt}, p.messages[at:]...)...)
 	p.Watermark = evt.ID
 	p.compactAt = -1
 }
@@ -440,9 +436,9 @@ func (p *Projection) closeTurn() {
 	if b.Content.Len() == 0 && b.Reasoning.Len() == 0 && len(b.ToolCalls) == 0 {
 		return
 	}
-	p.messages = append(p.messages, api.Message{
+	p.messages = append(p.messages, vibekit.Message{
 		ID:        p.idOr(p.turnID),
-		Role:      api.RoleAssistant,
+		Role:      vibekit.RoleAssistant,
 		Content:   b.Content.String(),
 		Reasoning: b.Reasoning.String(),
 		Blocks:    b.Blocks,
@@ -483,18 +479,21 @@ func (p *Projection) flushUser() {
 	if text == "" {
 		return
 	}
-	p.messages = append(p.messages, api.Message{
+	p.messages = append(p.messages, vibekit.Message{
 		ID:      p.idOr(id),
-		Role:    api.RoleUser,
+		Role:    vibekit.RoleUser,
 		Content: text,
 		Ts:      ts,
 	})
 }
 
-// Messages closes any still-open turn and returns the projected transcript.
-// Safe to call once; the projection is spent afterwards.
-func (p *Projection) Messages() []api.Message {
+// Messages closes any still-open turn and returns the projected transcript as
+// a fresh slice, so a caller appending to it cannot write into the
+// projection's own backing array. Idempotent: closeTurn and flushUser are
+// both no-ops once they have run, so a second call returns the same
+// transcript rather than a truncated one.
+func (p *Projection) Messages() []vibekit.Message {
 	p.closeTurn()
 	p.flushUser()
-	return p.messages
+	return slices.Clone(p.messages)
 }

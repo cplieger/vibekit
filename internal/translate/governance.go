@@ -24,14 +24,14 @@ package translate
 //
 // The state is account-GLOBAL (identical across a connection's sessions), so the
 // SSE is broadcast with an empty chat id (every client, including one on Settings
-// with no active chat, receives it) and the latest is cached hub-side
+// with no active chat, receives it) and the latest is cached runtime-side
 // (deps.SetGovernance) so GET /api/governance can serve it on a fresh page load.
 
 import (
 	"context"
 	"encoding/json"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // v3GovernanceState is the _kiro/governance/state notification payload.
@@ -56,12 +56,12 @@ type v3GovernanceFeatures struct {
 // payload converts the wire shape into the domain SSE/REST payload, stamping
 // Known=true (this only runs on a real notification). SessionID is intentionally
 // dropped — governance is account-global, not session-scoped.
-func (w v3GovernanceState) payload() api.GovernanceStatePayload {
-	return api.GovernanceStatePayload{
+func (w v3GovernanceState) payload() vibekit.GovernanceStatePayload {
+	return vibekit.GovernanceStatePayload{
 		Known:          true,
 		IsEnterprise:   w.IsEnterprise,
 		DisabledReason: w.DisabledReason,
-		Features: api.GovernanceFeatures{
+		Features: vibekit.GovernanceFeatures{
 			MCPEnabled:           w.Features.MCPEnabled,
 			WebToolsEnabled:      w.Features.WebToolsEnabled,
 			UsageAnalytics:       w.Features.UsageAnalytics,
@@ -74,28 +74,28 @@ func (w v3GovernanceState) payload() api.GovernanceStatePayload {
 }
 
 // DecodeGovernanceState decodes a raw _kiro/governance/state params object into
-// the domain payload. Exported so the hub can reuse it for the copy the utility
+// the domain payload. Exported so the runtime can reuse it for the copy the utility
 // bridge receives (whose notifications don't flow through this dispatcher) —
 // keeping one wire→domain conversion. Returns false on empty/invalid params.
-func DecodeGovernanceState(raw json.RawMessage) (api.GovernanceStatePayload, bool) {
+func DecodeGovernanceState(raw json.RawMessage) (vibekit.GovernanceStatePayload, bool) {
 	if len(raw) == 0 {
-		return api.GovernanceStatePayload{}, false
+		return vibekit.GovernanceStatePayload{}, false
 	}
 	var w v3GovernanceState
 	if err := json.Unmarshal(raw, &w); err != nil {
-		return api.GovernanceStatePayload{}, false
+		return vibekit.GovernanceStatePayload{}, false
 	}
 	return w.payload(), true
 }
 
 // HandleGovernanceState translates _kiro/governance/state into a
-// governance_state SSE and caches the latest state hub-side. The SSE is
+// governance_state SSE and caches the latest state runtime-side. The SSE is
 // broadcast with an empty chat id because the policy is account-global (a
 // client on Settings with no active chat must still receive it). A
 // subagent-session copy is skipped (KAS may re-emit per session; the parent
 // copy carries the identical account-global flags) — the same dedup guard
 // safety.go / code_references.go use.
-func (t *Translator) HandleGovernanceState(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleGovernanceState(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3GovernanceState](msg, "governance/state")
 	if !ok {
 		return
@@ -104,6 +104,6 @@ func (t *Translator) HandleGovernanceState(ctx context.Context, chatID api.ChatI
 		return
 	}
 	payload := p.payload()
-	t.deps.SetGovernance(payload)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventGovernanceState, "", payload))
+	t.governance.SetGovernance(payload)
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
 }

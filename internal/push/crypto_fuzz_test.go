@@ -1,6 +1,9 @@
 package push
 
 import (
+	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -71,7 +74,7 @@ func FuzzDeriveKeyNonce(f *testing.F) {
 	f.Add(shared, authSecret, realPub, serverPub, salt)
 
 	f.Fuzz(func(t *testing.T, shared, authSecret, clientPub, serverPub, salt []byte) {
-		cek, nonce, err := deriveKeyNonce(shared, authSecret, clientPub, serverPub, salt)
+		cek, nonce, err := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: authSecret, ClientPub: clientPub, ServerPub: serverPub, Salt: salt})
 		if err != nil {
 			return // errors are acceptable
 		}
@@ -84,7 +87,7 @@ func FuzzDeriveKeyNonce(f *testing.F) {
 			t.Fatalf("nonce length = %d, want 12", len(nonce))
 		}
 		// Invariant 3: deterministic — same inputs produce same outputs.
-		cek2, nonce2, err2 := deriveKeyNonce(shared, authSecret, clientPub, serverPub, salt)
+		cek2, nonce2, err2 := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: authSecret, ClientPub: clientPub, ServerPub: serverPub, Salt: salt})
 		if err2 != nil {
 			t.Fatalf("second call errored but first succeeded: %v", err2)
 		}
@@ -93,6 +96,59 @@ func FuzzDeriveKeyNonce(f *testing.F) {
 		}
 		if string(nonce) != string(nonce2) {
 			t.Fatal("nonce not deterministic")
+		}
+	})
+}
+
+// FuzzECDHToECDSA verifies the ECDH→ECDSA P-256 key conversion preserves the
+// X/Y coordinates of the public key and yields a valid ECDSA private key on
+// the P-256 curve.
+//
+// Bug class: silent key corruption when porting an ECDH key into the ECDSA
+// structure used to sign VAPID JWTs. A coordinate truncation, an off-by-one on
+// the uncompressed-point split, or a wrong curve constant would generate JWTs
+// that fail verification at the push gateway — a failure that surfaces as
+// "notifications stopped working", far from its cause.
+//
+// Restored after the internal/push/crypto roll-up dropped it: the surviving
+// sibling FuzzDeriveKeyNonce came across, this one did not, which left
+// ecdhToECDSA's uncompressed-point guard (len 65, leading 0x04) with no
+// coverage beyond one happy-path call in crypto_derive_test.go.
+func FuzzECDHToECDSA(f *testing.F) {
+	priv, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		f.Fatalf("seed: GenerateKey: %v", err)
+	}
+	f.Add(priv.Bytes())
+
+	f.Fuzz(func(t *testing.T, dBytes []byte) {
+		key, err := ecdh.P256().NewPrivateKey(dBytes)
+		if err != nil {
+			t.Skip() // not a valid P-256 scalar; the conversion is not reached
+		}
+
+		ec, err := ecdhToECDSA(key)
+		if err != nil {
+			t.Fatalf("ecdhToECDSA: %v", err)
+		}
+		if ec.Curve == nil || ec.Curve.Params().Name != "P-256" {
+			t.Fatalf("curve = %v, want P-256", ec.Curve)
+		}
+		if ec.X == nil || ec.Y == nil {
+			t.Fatalf("nil coordinate: X=%v Y=%v", ec.X, ec.Y)
+		}
+
+		raw := key.PublicKey().Bytes()
+		if len(raw) != 65 || raw[0] != 0x04 {
+			t.Fatalf("public key is not an uncompressed point: len=%d head=%#x", len(raw), raw[0])
+		}
+		// big.Int.Bytes() drops leading zero bytes, so the wire halves are
+		// trimmed the same way before comparing.
+		if got, want := ec.X.Bytes(), bytes.TrimLeft(raw[1:33], "\x00"); !bytes.Equal(got, want) {
+			t.Errorf("X = %x, want %x", got, want)
+		}
+		if got, want := ec.Y.Bytes(), bytes.TrimLeft(raw[33:65], "\x00"); !bytes.Equal(got, want) {
+			t.Errorf("Y = %x, want %x", got, want)
 		}
 	})
 }

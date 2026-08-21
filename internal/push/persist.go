@@ -14,8 +14,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func (s *Service) keysPath() string { return filepath.Join(s.dir, "vapid-keys.json") }
@@ -70,7 +70,7 @@ func (s *Service) loadSubs() {
 		}
 		return
 	}
-	var subs []api.PushSubscription
+	var subs []vibekit.PushSubscription
 	if err := json.Unmarshal(data, &subs); err != nil {
 		slog.Warn("push: parse subs", "error", err, "size", len(data))
 		return
@@ -100,7 +100,7 @@ func (s *Service) saveSubsAsync(ctx context.Context) {
 	}
 	// Snapshot current subs under mu, then send to the writer goroutine.
 	s.mu.Lock()
-	subs := make([]api.PushSubscription, 0, len(s.subs))
+	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -109,7 +109,7 @@ func (s *Service) saveSubsAsync(ctx context.Context) {
 	done := make(chan struct{})
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 	}
 }
 
@@ -121,7 +121,7 @@ func (s *Service) saveSubs(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	subs := make([]api.PushSubscription, 0, len(s.subs))
+	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -129,15 +129,18 @@ func (s *Service) saveSubs(ctx context.Context) {
 	done := make(chan struct{})
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		// Guard the completion wait with ctx too: if Close() raced this send
-		// and writeLoop already exited, nothing will ever close `done` —
-		// without this guard the goroutine (an inflight.Go member) would block
-		// forever and hang inflight.Wait() at shutdown.
+		// Guard the completion wait with the service LIFETIME as well as the
+		// send: if Close() raced this send and writeLoop already exited,
+		// nothing will ever close `done` — without this guard the goroutine (an
+		// inflight.Go member) would block forever and hang inflight.Wait() at
+		// shutdown. This is the second signal, and it is why the lifetime stays
+		// a field rather than becoming a parameter: a caller's ctx cannot say
+		// whether the write loop is still alive.
 		select {
 		case <-done:
-		case <-s.ctx.Done():
+		case <-s.lifetime.Done():
 		}
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 	}
 }
 
@@ -147,27 +150,30 @@ func (s *Service) saveSubs(ctx context.Context) {
 func (s *Service) flushSaves() {
 	done := make(chan struct{})
 	s.mu.Lock()
-	subs := make([]api.PushSubscription, 0, len(s.subs))
+	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
 	s.mu.Unlock()
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		// Guard the completion wait with ctx too: if Close() raced this send
-		// and writeLoop already exited, nothing will ever close `done` —
-		// without this guard the goroutine (an inflight.Go member) would block
-		// forever and hang inflight.Wait() at shutdown.
+		// Guard the completion wait with the service LIFETIME as well as the
+		// send: if Close() raced this send and writeLoop already exited,
+		// nothing will ever close `done` — without this guard the goroutine (an
+		// inflight.Go member) would block forever and hang inflight.Wait() at
+		// shutdown. This is the second signal, and it is why the lifetime stays
+		// a field rather than becoming a parameter: a caller's ctx cannot say
+		// whether the write loop is still alive.
 		select {
 		case <-done:
-		case <-s.ctx.Done():
+		case <-s.lifetime.Done():
 		}
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 	}
 }
 
 // writeSubsSnapshot marshals and persists a subscription snapshot to disk.
-func (s *Service) writeSubsSnapshot(subs []api.PushSubscription) {
+func (s *Service) writeSubsSnapshot(subs []vibekit.PushSubscription) {
 	data, err := json.MarshalIndent(subs, "", "  ")
 	if err != nil {
 		slog.Error("push: marshal subscriptions", "error", err)

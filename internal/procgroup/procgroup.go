@@ -2,8 +2,8 @@
 // just its head.
 //
 // It is its own package because both consumers need it and neither should own
-// it: internal/hub spawns the agent's terminals and internal/bridge spawns
-// kiro-cli, and hub already imports bridge, so exporting it from either would
+// it: internal/agent spawns the agent's terminals and internal/bridge spawns
+// kiro-cli, and agent already imports bridge, so exporting it from either would
 // warp that package's surface for the other's benefit.
 //
 // Every consumer must pair Kill with SysProcAttr{Setpgid: true} on the command

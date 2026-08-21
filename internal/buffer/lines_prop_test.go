@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"pgregory.net/rapid"
 )
 
@@ -14,9 +14,9 @@ func TestLineTracker_RapidEviction(t *testing.T) {
 
 		// Use 1-3 chat IDs.
 		numChats := rapid.IntRange(1, 3).Draw(rt, "numChats")
-		chatIDs := make([]api.ChatID, numChats)
+		chatIDs := make([]vibekit.ChatID, numChats)
 		for i := range numChats {
-			chatIDs[i] = api.ChatID(fmt.Sprintf("chat-%d", i))
+			chatIDs[i] = vibekit.ChatID(fmt.Sprintf("chat-%d", i))
 		}
 
 		// Generate 0-600 unique paths.
@@ -37,7 +37,7 @@ func TestLineTracker_RapidEviction(t *testing.T) {
 			startLine := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("start_%d", turn))
 			endLine := startLine + rapid.IntRange(0, 50).Draw(rt, fmt.Sprintf("span_%d", turn))
 
-			lt.Record(chatIDs[chatIdx], paths[pathIdx], startLine, endLine, turn, "edit")
+			lt.Record(chatIDs[chatIdx], paths[pathIdx], LineRange{StartLine: startLine, EndLine: endLine, Turn: turn, Kind: "edit"})
 		}
 
 		// Assert invariants.

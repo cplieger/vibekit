@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // pendingCall registers one pending request id and returns its channel, the way
 // Call does. Lets a test observe what readLoop hands a waiter without standing up
 // a subprocess.
-func pendingCall(b *Bridge, id int64) chan *api.RPCResponse {
-	ch := make(chan *api.RPCResponse, 1)
+func pendingCall(b *Bridge, id int64) chan *vibekit.RPCResponse {
+	ch := make(chan *vibekit.RPCResponse, 1)
 	b.pendingMu.Lock()
 	b.pending[id] = ch
 	b.pendingMu.Unlock()
@@ -56,14 +56,15 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 	_ = capture.Default(t)
 	huge := strings.Repeat("x", scannerLineCap+16)
 	b := readLoopBridge(strings.NewReader(
-		huge + "\n" + `{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n"))
-	b.notifCh = make(chan *api.RPCResponse, 4)
+		huge + "\n" + `{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n",
+	))
+	b.notifCh = make(chan *vibekit.RPCResponse, 4)
 
 	b.readLoop()
 
 	select {
 	case msg := <-b.notifCh:
-		if msg == nil || msg.Method != api.MethodSessionUpdate {
+		if msg == nil || msg.Method != vibekit.MethodSessionUpdate {
 			t.Fatalf("notification after the oversize frame = %#v, want session/update", msg)
 		}
 	default:
@@ -72,7 +73,7 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 }
 
 // Call translates the sentinel into a NON-retryable transport error carrying
-// api.ErrFrameTooLarge. Retryability is the load-bearing half: retrying would
+// vibekit.ErrFrameTooLarge. Retryability is the load-bearing half: retrying would
 // re-run an expensive turn to produce the same oversize payload, and the wording
 // is what promptFailureReason puts in front of the user.
 func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
@@ -81,7 +82,7 @@ func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := b.Call(t.Context(), api.MethodPrompt, nil)
+		_, err := b.Call(t.Context(), vibekit.MethodPrompt, nil)
 		done <- err
 	}()
 	waitPending(t, b, 1)
@@ -89,15 +90,15 @@ func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, api.ErrFrameTooLarge) {
-			t.Fatalf("Call error = %v, want api.ErrFrameTooLarge", err)
+		if !errors.Is(err, vibekit.ErrFrameTooLarge) {
+			t.Fatalf("Call error = %v, want vibekit.ErrFrameTooLarge", err)
 		}
-		if errors.Is(err, api.ErrBridgeExited) {
+		if errors.Is(err, vibekit.ErrBridgeExited) {
 			t.Error("a dropped frame must not read as a dead bridge: the process and the session are still alive")
 		}
-		te, ok := errors.AsType[*api.TransportError](err)
+		te, ok := errors.AsType[*vibekit.TransportError](err)
 		if !ok {
-			t.Fatalf("Call error %T, want *api.TransportError", err)
+			t.Fatalf("Call error %T, want *vibekit.TransportError", err)
 		}
 		if te.Retryable {
 			t.Error("frame-too-large was marked retryable; the same prompt reproduces the same oversize payload")

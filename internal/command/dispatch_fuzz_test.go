@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // FuzzDispatcherServeHTTP exercises the Dispatcher's top-level HTTP handler
@@ -20,10 +20,9 @@ func FuzzDispatcherServeHTTP(f *testing.F) {
 	f.Add([]byte(`{"command":"unknown"}`))
 	f.Add([]byte(`not json at all`))
 
-	deps := newBenchDeps()
-	d := New(deps)
-	d.Register("test_cmd", func(_ context.Context, w http.ResponseWriter, _ *api.ClientCommand) {
-		w.WriteHeader(http.StatusOK)
+	d := New()
+	d.Register("test_cmd", func(context.Context, *vibekit.ClientCommand) (any, error) {
+		return responseOK, nil
 	})
 
 	f.Fuzz(func(t *testing.T, data []byte) {

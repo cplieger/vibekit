@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 )
 
 // accountUsageTTL bounds how often the footer fetch hits KAS. Account
@@ -20,7 +22,7 @@ const accountUsageTTL = 60 * time.Second
 // a refresh fails (no live bridge, rate limit) so the footer degrades
 // gracefully instead of blanking.
 type acctUsageCache struct {
-	data    *api.AccountUsage
+	data    *vibekit.AccountUsage
 	atNanos int64 // wall-clock UnixNano of the last successful fetch
 	mu      sync.Mutex
 }
@@ -29,8 +31,14 @@ type acctUsageCache struct {
 // footer. Cached for accountUsageTTL; on a fetch failure it serves the
 // last-known snapshot (marked stale) if any, else 503.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
+	// Gated here, not on the ServeMux pattern: a method-pattern mismatch falls
+	// through to the SPA mount and answers 200 with index.html. See
+	// server.go's ListenAndServe.
+	if !httpreply.RequireMethod(w, r, http.MethodGet) {
+		return
+	}
 	if s.accountUsage == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("account usage unavailable"))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
 		return
 	}
 	c := &s.acctUsage
@@ -40,7 +48,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		fresh := *c.data
 		c.mu.Unlock()
 		fresh.Stale = false
-		api.WriteJSON(w, fresh)
+		webhttp.WriteJSON(w, fresh)
 		return
 	}
 	c.mu.Unlock()
@@ -53,11 +61,11 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		if last != nil {
 			stale := *last
 			stale.Stale = true
-			api.WriteJSON(w, stale)
+			webhttp.WriteJSON(w, stale)
 			return
 		}
 		slog.Warn("account usage fetch failed", "error", err)
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("account usage unavailable"))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("account usage unavailable"))
 		return
 	}
 
@@ -65,5 +73,5 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	c.data = usage
 	c.atNanos = time.Now().UnixNano()
 	c.mu.Unlock()
-	api.WriteJSON(w, usage)
+	webhttp.WriteJSON(w, usage)
 }

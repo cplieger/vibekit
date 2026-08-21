@@ -3,10 +3,10 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-func countEvents(events *[]api.ServerEvent, typ api.EventType) int {
+func countEvents(events *[]vibekit.ServerEvent, typ vibekit.EventType) int {
 	n := 0
 	for _, e := range *events {
 		if e.Type == typ {
@@ -21,23 +21,23 @@ func countEvents(events *[]api.ServerEvent, typ api.EventType) int {
 // status — the signal the client refetches GET /api/permissions on.
 func TestHandlePolicyChanged(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
-	tr.HandlePolicyChanged(t.Context(), api.ChatID("c1"), &api.RPCResponse{
+	tr.HandlePolicyChanged(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{
 		Params: mustJSON(t, map[string]any{"sessionId": "sess-1", "status": "success"}),
 	})
 
-	if countEvents(events, api.EventPermissionsChanged) != 1 {
-		t.Fatalf("permissions_changed count = %d, want 1", countEvents(events, api.EventPermissionsChanged))
+	if countEvents(events, vibekit.EventPermissionsChanged) != 1 {
+		t.Fatalf("permissions_changed count = %d, want 1", countEvents(events, vibekit.EventPermissionsChanged))
 	}
 	for _, e := range *events {
-		if e.Type != api.EventPermissionsChanged {
+		if e.Type != vibekit.EventPermissionsChanged {
 			continue
 		}
 		if e.ChatID != "" {
 			t.Errorf("event ChatID = %q, want empty (policy is global)", e.ChatID)
 		}
-		p, ok := e.Payload.(api.PermissionsChangedPayload)
+		p, ok := e.Payload.(vibekit.PermissionsChangedPayload)
 		if !ok || p.Status != "success" {
 			t.Errorf("payload = %+v (ok=%v)", e.Payload, ok)
 		}
@@ -55,9 +55,9 @@ func TestHandlePolicyChanged(t *testing.T) {
 // stops broadcasting, a bad rule becomes silent.
 func TestHandlePolicyError(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
-	tr.HandlePolicyError(t.Context(), api.ChatID("c1"), &api.RPCResponse{
+	tr.HandlePolicyError(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess-1",
 			"errors": []map[string]any{
@@ -66,14 +66,14 @@ func TestHandlePolicyError(t *testing.T) {
 		}),
 	})
 
-	if countEvents(events, api.EventPolicyError) != 1 {
-		t.Fatalf("policy_error count = %d, want 1", countEvents(events, api.EventPolicyError))
+	if countEvents(events, vibekit.EventPolicyError) != 1 {
+		t.Fatalf("policy_error count = %d, want 1", countEvents(events, vibekit.EventPolicyError))
 	}
 	for _, e := range *events {
-		if e.Type != api.EventPolicyError {
+		if e.Type != vibekit.EventPolicyError {
 			continue
 		}
-		p, ok := e.Payload.(api.PolicyErrorPayload)
+		p, ok := e.Payload.(vibekit.PolicyErrorPayload)
 		if !ok || len(p.Errors) != 1 || p.Errors[0].Message != "bad rule" || !p.Errors[0].Fatal {
 			t.Errorf("payload = %+v (ok=%v)", e.Payload, ok)
 		}
@@ -84,9 +84,9 @@ func TestHandlePolicyError(t *testing.T) {
 // without a broadcast.
 func TestHandlePolicyMalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
-	tr.HandlePolicyChanged(t.Context(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
-	tr.HandlePolicyError(t.Context(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
+	tr := New(rolesOf(deps))
+	tr.HandlePolicyChanged(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{Params: []byte("{")})
+	tr.HandlePolicyError(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{Params: []byte("{")})
 	if len(*events) != 0 {
 		t.Errorf("malformed params produced %d events, want 0", len(*events))
 	}

@@ -175,7 +175,7 @@ func BenchmarkNormaliseRegistryResponse(b *testing.B) {
 		payload := buildRegistryPayload(n)
 		b.Run(fmt.Sprintf("servers=%d", n), func(b *testing.B) {
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				normaliseRegistryResponse(payload)
 			}
 		})

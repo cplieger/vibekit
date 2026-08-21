@@ -11,7 +11,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
@@ -1040,8 +1039,33 @@ func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
 // against the real mcp.Store to catch drift between the fake and the
 // production implementation.
 func TestStore_MCPConfigContract(t *testing.T) {
-	testsupport.MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
+	testsupport.MCPConfigContractTest(t, func(t *testing.T) testsupport.MCPNameSets {
 		t.Helper()
 		return newTestStore(t)
 	})
+}
+
+// TestNew_RefusesNilContext pins the construction-time requirement that replaced
+// a use-site context.Background() fallback.
+//
+// The fallback was the defect: notifyChange parents the change callback on the
+// store's lifetime, and production wires MCP prewarm to that callback, so a nil
+// store ctx silently produced a prewarm goroutine no shutdown could cancel and
+// nothing waited on. Nothing observable failed — the notification fired, the work
+// ran, and it simply outlived the process's shutdown sequence. Refusing at New
+// makes it a startup error at the single construction site instead.
+func TestNew_RefusesNilContext(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	//nolint:staticcheck // SA1012: passing nil is the whole point of this test.
+	s, err := New(nil, dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	if err == nil {
+		t.Fatal("New(nil ctx) returned no error; a nil store ctx must be refused at " +
+			"construction rather than substituted with context.Background() at the " +
+			"point of use, where it becomes an uncancellable prewarm goroutine")
+	}
+	if s != nil {
+		t.Errorf("New(nil ctx) returned a non-nil store (%p) alongside its error", s)
+	}
 }

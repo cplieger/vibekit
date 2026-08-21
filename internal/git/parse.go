@@ -8,8 +8,6 @@ import (
 	"context"
 	"log/slog"
 	"strings"
-
-	"github.com/cplieger/vibekit/internal/gitexec"
 )
 
 // --- git status parsing ---
@@ -135,7 +133,7 @@ func splitTrackedUntracked(ctx context.Context, dir string, files []string) (tra
 			slog.Debug("git status canceled during discard", "repo", dir, "cause", ctx.Err())
 			return nil, nil
 		}
-		slog.Warn("git status failed during discard", "repo", dir, "error", err, "out", gitexec.ScrubAuth(string(raw)))
+		slog.Warn("git status failed during discard", "repo", dir, "error", err, "out", scrubAuth(string(raw)))
 		return nil, nil
 	}
 	wanted := make(map[string]bool, len(files))

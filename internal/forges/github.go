@@ -76,16 +76,20 @@ func (p *githubProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 	fields := "name,owner,nameWithOwner,defaultBranchRef,description,isPrivate,isArchived,isFork,sshUrl,url,updatedAt"
 	args := p.withHost(fieldRepo, "list", "--json", fields, "--limit", "300")
 	var raw []struct {
-		Name             string                 `json:"name"`
-		Owner            struct{ Login string } `json:"owner"`
-		NameWithOwner    string                 `json:"nameWithOwner"`
-		DefaultBranchRef struct{ Name string }  `json:"defaultBranchRef"`
-		Description      string                 `json:"description"`
-		URL              string                 `json:"url"`
-		UpdatedAt        string                 `json:"updatedAt"`
-		IsPrivate        bool                   `json:"isPrivate"`
-		IsArchived       bool                   `json:"isArchived"`
-		IsFork           bool                   `json:"isFork"`
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		NameWithOwner    string `json:"nameWithOwner"`
+		DefaultBranchRef struct {
+			Name string `json:"name"`
+		} `json:"defaultBranchRef"`
+		Description string `json:"description"`
+		URL         string `json:"url"`
+		UpdatedAt   string `json:"updatedAt"`
+		IsPrivate   bool   `json:"isPrivate"`
+		IsArchived  bool   `json:"isArchived"`
+		IsFork      bool   `json:"isFork"`
 	}
 	if err := runJSONEnv(ctx, ListTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
@@ -149,22 +153,24 @@ type ghPRRaw struct {
 	// AutoMergeRequest is null unless auto-merge is already armed; only
 	// its presence is read, so the shape stays empty. Pointer first for
 	// govet fieldalignment.
-	AutoMergeRequest  *struct{}              `json:"autoMergeRequest"`
-	Title             string                 `json:"title"`
-	Body              string                 `json:"body"`
-	State             string                 `json:"state"`
-	Author            struct{ Login string } `json:"author"`
-	HeadRefName       string                 `json:"headRefName"`
-	BaseRefName       string                 `json:"baseRefName"`
-	URL               string                 `json:"url"`
-	CreatedAt         string                 `json:"createdAt"`
-	UpdatedAt         string                 `json:"updatedAt"`
-	Mergeable         string                 `json:"mergeable"`
-	HeadRefOid        string                 `json:"headRefOid"`
-	MergeStateStatus  string                 `json:"mergeStateStatus"`
-	StatusCheckRollup []ghRollupEntry        `json:"statusCheckRollup"`
-	Number            int                    `json:"number"`
-	IsDraft           bool                   `json:"isDraft"`
+	AutoMergeRequest *struct{} `json:"autoMergeRequest"`
+	Title            string    `json:"title"`
+	Body             string    `json:"body"`
+	State            string    `json:"state"`
+	Author           struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	HeadRefName       string          `json:"headRefName"`
+	BaseRefName       string          `json:"baseRefName"`
+	URL               string          `json:"url"`
+	CreatedAt         string          `json:"createdAt"`
+	UpdatedAt         string          `json:"updatedAt"`
+	Mergeable         string          `json:"mergeable"`
+	HeadRefOid        string          `json:"headRefOid"`
+	MergeStateStatus  string          `json:"mergeStateStatus"`
+	StatusCheckRollup []ghRollupEntry `json:"statusCheckRollup"`
+	Number            int             `json:"number"`
+	IsDraft           bool            `json:"isDraft"`
 }
 
 func (r *ghPRRaw) toPR() PR {
@@ -525,15 +531,19 @@ func (p *githubProvider) ListIssues(ctx context.Context, repo string, state List
 	fields := "number,title,body,state,author,url,labels,createdAt,updatedAt"
 	args := p.withHost("issue", "list", "--repo", repo, "--state", string(state), "--json", fields, "--limit", "100")
 	var raw []struct {
-		Title     string                  `json:"title"`
-		Body      string                  `json:"body"`
-		State     string                  `json:"state"`
-		Author    struct{ Login string }  `json:"author"`
-		URL       string                  `json:"url"`
-		CreatedAt string                  `json:"createdAt"`
-		UpdatedAt string                  `json:"updatedAt"`
-		Labels    []struct{ Name string } `json:"labels"`
-		Number    int                     `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		State  string `json:"state"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		URL       string `json:"url"`
+		CreatedAt string `json:"createdAt"`
+		UpdatedAt string `json:"updatedAt"`
+		Labels    []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		Number int `json:"number"`
 	}
 	if err := runJSONEnv(ctx, ListTimeout, p.envHost(), &raw, "gh", args...); err != nil {
 		return nil, err
@@ -588,15 +598,19 @@ func (p *githubProvider) viewIssue(ctx context.Context, repo string, number int)
 	fields := "number,title,body,state,author,url,labels,createdAt,updatedAt"
 	args := p.withHost("issue", "view", strconv.Itoa(number), "--repo", repo, "--json", fields)
 	var r struct {
-		Title     string                  `json:"title"`
-		Body      string                  `json:"body"`
-		State     string                  `json:"state"`
-		Author    struct{ Login string }  `json:"author"`
-		URL       string                  `json:"url"`
-		CreatedAt string                  `json:"createdAt"`
-		UpdatedAt string                  `json:"updatedAt"`
-		Labels    []struct{ Name string } `json:"labels"`
-		Number    int                     `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		State  string `json:"state"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		URL       string `json:"url"`
+		CreatedAt string `json:"createdAt"`
+		UpdatedAt string `json:"updatedAt"`
+		Labels    []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		Number int `json:"number"`
 	}
 	if err := runJSONEnv(ctx, CmdTimeout, p.envHost(), &r, "gh", args...); err != nil {
 		return nil, err

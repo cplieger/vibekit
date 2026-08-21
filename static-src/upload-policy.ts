@@ -26,12 +26,12 @@
  *  resolves it against the workspace). A workspace-relative "uploads" would
  *  satisfy the second and be refused by the first.
  *
- *  Mirrors defaultUploadDir in internal/filehandler/filehandler.go;
+ *  Mirrors defaultUploadDir in internal/filebrowse/filebrowse.go;
  *  TestUploadPolicyMatchesClient pins the two together. */
 export const UPLOADS_DIR = "/workspace/uploads";
 
 /** The server's upload ceiling in bytes. Mirrors maxUploadSize in
- *  internal/filehandler/filehandler.go, which applies it to the WHOLE
+ *  internal/filebrowse/filebrowse.go, which applies it to the WHOLE
  *  multipart request body (http.MaxBytesReader) and again to each file inside
  *  it, answering 413 either way.
  *

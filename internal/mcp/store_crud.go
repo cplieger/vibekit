@@ -98,7 +98,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	// and its stored secrets outright. Returning the existing record instead
 	// preserves them, and skipping the persist matters beyond tidiness: a write
 	// re-renders KAS's config file, whose watcher emits a status notification
-	// back into the hub.
+	// back into the agent.
 	if existing := s.findByNameLocked(rec.Name); existing != nil {
 		if !sameSpec(existing, rec) {
 			s.mu.Unlock()
@@ -120,7 +120,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	s.mu.Unlock()
 	slog.Info("mcp: server created", "id", rec.ID, "name", rec.Name,
 		"transport", rec.Transport, "enabled", rec.Enabled)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return maskedCopy(rec), nil
 }
 
@@ -207,7 +207,7 @@ func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult
 	}
 	s.mu.Unlock()
 	slog.Info("mcp: servers imported", "created", created, "entries", len(in))
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return results, nil
 }
 
@@ -218,7 +218,8 @@ func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
 		if !sameSpec(existing, sv) {
 			return ImportResult{}, fmt.Errorf(
 				"%w: %q is configured with a different command or url; rename the entry or edit the existing integration",
-				ErrNameConflict, existing.Name)
+				ErrNameConflict, existing.Name,
+			)
 		}
 		return ImportResult{Name: existing.Name, Outcome: ImportUnchanged}, nil
 	}
@@ -298,7 +299,7 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 	s.mu.Unlock()
 	slog.Info("mcp: server updated", "id", rec.ID, "name", rec.Name,
 		"transport", rec.Transport, "enabled", rec.Enabled)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return maskedCopy(rec), nil
 }
 
@@ -332,7 +333,7 @@ func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Ser
 	out := maskedCopy(s.servers[idx])
 	s.mu.Unlock()
 	slog.Info("mcp: server enabled toggled", "id", id, "enabled", enabled)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return out, nil
 }
 
@@ -358,7 +359,7 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 	// vibekit-generated at Create (newID base32), which breaks the
 	// user-input taint chain a raw path segment would carry into the log.
 	slog.Info("mcp: server deleted", "id", removed.ID)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return nil
 }
 
@@ -367,7 +368,7 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 // RUNTIME state — they describe what is connected right now, not what the user
 // configured. They used to be written into this config file on every status
 // notification, which made a notification path do disk I/O and put agent-derived
-// data in a user-intent file. They live in the hub's runtime registry now and
+// data in a user-intent file. They live in the runtime's runtime registry now and
 // reach the UI through /api/mcp/status, beside the prompts and resources that
 // were already there.
 //

@@ -20,7 +20,7 @@ const TickInterval = time.Minute
 // classified as missed and never run at all.
 const MissGrace = 3 * time.Minute
 
-// Launcher starts one workflow run on behalf of a schedule. Hub satisfies this;
+// Launcher starts one workflow run on behalf of a schedule. Runtime satisfies this;
 // the narrow interface is what lets the runner be tested without a bridge or a
 // subprocess.
 //
@@ -40,7 +40,7 @@ const MissGrace = 3 * time.Minute
 // spec whose next slot cannot be computed) means "no slot to respect" rather than
 // "unbounded" — such a run is still bounded by the ceiling.
 type Launcher interface {
-	LaunchScheduledRun(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error)
+	LaunchScheduled(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error)
 }
 
 // Runner fires due schedules. Construct with NewRunner and call Run in a
@@ -138,7 +138,7 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 			"id", e.ID, "source", e.Source, "error", dErr)
 		slotAt = time.Time{}
 	}
-	runID, name, err := r.launcher.LaunchScheduledRun(ctx, e.Source, e.ID, slotAt)
+	runID, name, err := r.launcher.LaunchScheduled(ctx, e.Source, e.ID, slotAt)
 	result := "started"
 	if err != nil {
 		// An overlap is the expected, already-implemented refusal (one live run

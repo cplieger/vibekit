@@ -6,17 +6,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// hookCmd builds an *api.ClientCommand carrying the marshaled hook payload p.
-func hookCmd(t *testing.T, p hookCreatePayload) *api.ClientCommand {
+// hookCmd builds an *vibekit.ClientCommand carrying the marshaled hook payload p.
+func hookCmd(t *testing.T, p hookCreatePayload) *vibekit.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(p)
 	if err != nil {
 		t.Fatalf("marshal hook payload: %v", err)
 	}
-	return &api.ClientCommand{Payload: json.RawMessage(raw)}
+	return &vibekit.ClientCommand{Payload: json.RawMessage(raw)}
 }
 
 // TestValidateHookPayload exercises the decode/name/event gate, the
@@ -89,9 +89,9 @@ func TestValidateHookPayload(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *api.ClientCommand
+			var cmd *vibekit.ClientCommand
 			if tc.raw != nil {
-				cmd = &api.ClientCommand{Payload: json.RawMessage(tc.raw)}
+				cmd = &vibekit.ClientCommand{Payload: json.RawMessage(tc.raw)}
 			} else {
 				cmd = hookCmd(t, tc.p)
 			}
@@ -123,7 +123,7 @@ func FuzzValidateHookPayload(f *testing.F) {
 	f.Add([]byte(`{"name":"../evil","event_type":"x","action_type":"askAgent","prompt":"p"}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		cmd := &api.ClientCommand{Payload: json.RawMessage(data)}
+		cmd := &vibekit.ClientCommand{Payload: json.RawMessage(data)}
 		_, _, code, err := validateHookPayload(cmd)
 
 		if err == nil && code != 0 {

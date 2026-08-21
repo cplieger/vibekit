@@ -12,9 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
-	"github.com/cplieger/vibekit/internal/gitexec"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
@@ -28,12 +27,12 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.URL == "" {
-		api.BadRequest(w, "url required")
+		httpreply.BadRequest(w, "url required")
 		return
 	}
 	if !isAllowedRemoteScheme(body.URL) {
-		slog.Warn("git clone: invalid scheme rejected", "url", gitexec.ScrubAuth(body.URL))
-		api.BadRequest(w, "only https:// and git@ URLs allowed")
+		slog.Warn("git clone: invalid scheme rejected", "url", scrubAuth(body.URL))
+		httpreply.BadRequest(w, "only https:// and git@ URLs allowed")
 		return
 	}
 	// Defense in depth against git argument-injection CVEs (1000117,
@@ -42,7 +41,7 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 	// otherwise interpret leading dashes as flags. The explicit scheme
 	// prefix above already blocks `--flag=...`, but `--` is cheap and
 	// makes the guarantee lexical rather than prefix-based.
-	slog.Info("git clone", "url", gitexec.ScrubAuth(body.URL))
+	slog.Info("git clone", "url", scrubAuth(body.URL))
 	cloneCtx, cancel := context.WithTimeout(r.Context(), h.timeouts.Clone)
 	defer cancel()
 	cmd := gitExec(cloneCtx, h.workDir, "clone", "--", body.URL)
@@ -70,7 +69,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Repo == "" || body.Repo == "." {
-		api.BadRequest(w, "re-clone requires a named repo (cannot target workspace root)")
+		httpreply.BadRequest(w, "re-clone requires a named repo (cannot target workspace root)")
 		return
 	}
 	// The resolved variant, matching handleRemove: this handler DELETES, so it
@@ -78,21 +77,21 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// repoDirForDelete). It answers "" for a path it will not vouch for.
 	dir := h.repoDirForDelete(body.Repo)
 	if dir == "" {
-		api.BadRequest(w, "that repo path is not inside the workspace")
+		httpreply.BadRequest(w, "that repo path is not inside the workspace")
 		return
 	}
 	if dir == h.workDir {
-		api.BadRequest(w, "cannot re-clone workspace root")
+		httpreply.BadRequest(w, "cannot re-clone workspace root")
 		return
 	}
-	if !fileutil.IsGitRepo(r.Context(), dir) {
-		api.BadRequest(w, msgNotAGitRepo)
+	if !IsRepo(r.Context(), dir) {
+		httpreply.BadRequest(w, msgNotAGitRepo)
 		return
 	}
-	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
+	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
-		api.WriteJSON(w, api.ErrorJSON("no origin remote"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
 		return
 	}
 	// Defense-in-depth: the origin URL came from git config and could
@@ -103,7 +102,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// os.RemoveAll so a rejected reclone leaves the working tree
 	// intact.
 	if !isAllowedRemoteScheme(remote) {
-		api.WriteJSON(w, api.ErrorJSON("origin has unsupported scheme for re-clone"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
@@ -111,7 +110,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// partial delete doesn't strand the repo in an unreclonable state.
 	if rmErr := os.RemoveAll(dir); rmErr != nil {
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
-		api.WriteJSON(w, api.ErrorJSON("remove failed"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	// `--` barrier: the origin URL came from git config, but a prior
@@ -120,7 +119,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	cmd := gitExec(r.Context(), h.workDir, "clone", "--", remote, filepath.Base(dir))
 	out, cErr := cmd.CombinedOutput()
 	if cErr != nil {
-		slog.Error("git reclone: clone failed", "repo", body.Repo, "error", cErr, "out", gitexec.ScrubAuth(strings.TrimSpace(string(out))))
+		slog.Error("git reclone: clone failed", "repo", body.Repo, "error", cErr, "out", scrubAuth(strings.TrimSpace(string(out))))
 	} else {
 		slog.Info("git reclone completed", "repo", body.Repo)
 	}

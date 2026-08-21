@@ -1,8 +1,10 @@
 // ---------------------------------------------------------------------------
 // Transport: SSE for server→client, fetch POST for client→server.
 //
-// Every command gets a fresh client-generated request_id so the server can
-// dedupe retries. The dispatcher receives typed ServerEvents from SSE.
+// Every command carries an Idempotency-Key header so the server can dedupe
+// retries; an action that declares idempotencyKey supplies its own, which is
+// what makes a RETRY dedupe (see send). The dispatcher receives typed
+// ServerEvents from SSE.
 //
 // Errors surface through send-state.ts (which drives the send-button
 // error face + tooltip). There is no inline error card; the button is
@@ -26,7 +28,12 @@
 import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js";
 import { setLastError, setSSEStatus } from "./send-state.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
-import { registerCleanup, hasErrorString } from "./actions/index.js";
+import {
+  registerCleanup,
+  hasErrorString,
+  IDEMPOTENCY_HEADER,
+  IDEMPOTENCY_COMMAND_FIELD,
+} from "./actions/index.js";
 import { computeBackoff } from "./lib/backoff.js";
 
 type MsgHandler = (evt: ServerEvent) => void;
@@ -63,7 +70,6 @@ export type TypedCommand =
         text: string;
         attachments?: readonly unknown[];
         message_id?: string;
-        request_id?: string;
         model?: string;
       };
     }
@@ -87,14 +93,14 @@ export type TypedCommand =
       chat_id: string;
       payload: { request_id: number; action: string; content?: Record<string, unknown> };
     }
-  | { type: "set_effort"; chat_id: string; request_id: string; payload: { level: string } }
+  | { type: "set_effort"; chat_id: string; payload: { level: string } }
   // The composer text typed and not sent. An empty string is a real value: it
   // is how a sent or abandoned draft is cleared.
   | { type: "set_draft"; chat_id: string; payload: { text: string } }
   | { type: "set_mode"; chat_id: string; payload: { mode_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
-  | { type: "rewind_chat"; chat_id: string; request_id: string; payload: { message_id: string } };
+  | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } };
 
 const TRANSPORT_ERROR_CODES = {
   TIMEOUT: "timeout",
@@ -123,6 +129,18 @@ interface SendOptions {
    *  it owns the error surface via toast — letting both fire produces
    *  duplicate user feedback for one failure. */
   reportSendState?: boolean;
+}
+
+/** Read the key an action attached to its command, if any.
+ *
+ *  The actions framework puts it on the command object under
+ *  IDEMPOTENCY_COMMAND_FIELD. It is NOT forwarded as a body field: the server's
+ *  envelope has no such member and never read one, so sending it would be a
+ *  third spelling of a concept that now has exactly one. It becomes the header
+ *  instead. */
+function idempotencyKeyOf(cmd: TypedCommand | Command): string | undefined {
+  const v = (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD];
+  return typeof v === "string" && v !== "" ? v : undefined;
 }
 
 /** Generate a client-side request id (also used as a message id). */
@@ -380,7 +398,18 @@ class TransportController {
   // --- POST /api/command ---
 
   async send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {
-    const requestID = newRequestID();
+    // An action declaring `idempotencyKey` generates ONE key per dispatch and
+    // the framework threads it through every retry attempt, so honouring it is
+    // what makes a retry dedupe. Minting a fresh key here for such a command
+    // would defeat the whole mechanism — which is exactly what this transport
+    // did before: it built the body field by field, so the framework's key was
+    // dropped and never reached the server at all. Rewind is the case that
+    // makes it matter (a second revert cuts from an already-truncated
+    // transcript), and its idempotency was decorative until this line.
+    //
+    // A bare send() has no such key and gets a fresh one, which is right: two
+    // deliberate sends are two operations.
+    const requestID = idempotencyKeyOf(cmd) ?? newRequestID();
     const timeoutMs = opts?.timeoutMs ?? COMMAND_TIMEOUT_MS;
     const ctrl = new AbortController();
     this.inflight.add(ctrl);
@@ -394,11 +423,19 @@ class TransportController {
     try {
       const r = await fetch("/api/command", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          // The idempotency token is a HEADER, not a body field. It used to ride
+          // the envelope as request_id, which meant the command dispatcher had to
+          // run its own dedup cache keyed on a body field — and that one had no
+          // in-flight marker, so two concurrent sends of the same id both
+          // executed. As a header it reaches the server's one idempotency
+          // middleware, which marks in-flight and answers 409 instead.
+          [IDEMPOTENCY_HEADER]: requestID,
+        },
         signal: combined,
         body: JSON.stringify({
           type: cmd.type,
-          request_id: requestID,
           chat_id: cmd.chat_id ?? "",
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},

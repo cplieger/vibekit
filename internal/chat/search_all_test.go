@@ -5,14 +5,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // seedChat writes one chat file into a store's dir.
-func seedChat(t *testing.T, s *Store, id, name string, msgs []api.Message) {
+func seedChat(t *testing.T, s *Store, id, name string, msgs []vibekit.Message) {
 	t.Helper()
 	ctx := t.Context()
-	if err := s.Mutate(ctx, api.ChatID(id), func(c *api.Chat, _ bool) bool {
+	if err := s.Mutate(ctx, vibekit.ChatID(id), func(c *vibekit.Chat, _ bool) bool {
 		c.Name = name
 		c.Messages = msgs
 		return true
@@ -75,11 +75,11 @@ func TestTitleHits_IgnoresFilterOnlyQueries(t *testing.T) {
 
 func TestSearchAll(t *testing.T) {
 	s, _ := newTestStore(t)
-	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []api.Message{
-		msg("m1", api.RoleUser, "we moved the cache to redis today"),
+	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []vibekit.Message{
+		msg("m1", vibekit.RoleUser, "we moved the cache to redis today"),
 	})
-	seedChat(t, s, "c-bbbbbbbb", "Grocery list", []api.Message{
-		msg("m2", api.RoleUser, "nothing relevant here at all"),
+	seedChat(t, s, "c-bbbbbbbb", "Grocery list", []vibekit.Message{
+		msg("m2", vibekit.RoleUser, "nothing relevant here at all"),
 	})
 	ctx := t.Context()
 
@@ -111,7 +111,7 @@ func TestSearchAll(t *testing.T) {
 // TestSearchAll_EmptyQuery must not fan out over every chat for nothing.
 func TestSearchAll_EmptyQuery(t *testing.T) {
 	s, _ := newTestStore(t)
-	seedChat(t, s, "c-aaaaaaaa", "Redis", []api.Message{msg("m1", api.RoleUser, "redis")})
+	seedChat(t, s, "c-aaaaaaaa", "Redis", []vibekit.Message{msg("m1", vibekit.RoleUser, "redis")})
 	for _, q := range []string{"", "   "} {
 		got := s.SearchAll(t.Context(), q)
 		if len(got.Matches) != 0 {
@@ -131,13 +131,13 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 	// calibrated in KiB: at a few hundred characters it barely discounts, and
 	// twenty mentions in a tiny document legitimately IS a strong signal.
 	padding := strings.Repeat("context and discussion that surrounds the mention. ", 40)
-	many := make([]api.Message, 0, 20)
+	many := make([]vibekit.Message, 0, 20)
 	for i := range 20 {
-		many = append(many, msg(string(rune('a'+i)), api.RoleUser,
+		many = append(many, msg(string(rune('a'+i)), vibekit.RoleUser,
 			"some long passage mentioning redis in passing. "+padding))
 	}
 	seedChat(t, s, "c-bbbbbbbb", "Assorted debugging", many)
-	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []api.Message{msg("m1", api.RoleUser, "moved the cache")})
+	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []vibekit.Message{msg("m1", vibekit.RoleUser, "moved the cache")})
 
 	got := s.SearchAll(t.Context(), "redis")
 	if len(got.Matches) < 2 {
@@ -158,7 +158,7 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 // match-case toggle belongs to the in-chat search, which is a different question
 // on a different endpoint (handleSearch, which DOES read `case`). Two halves have
 // to hold for that to be true end to end — the body scan and the title boost —
-// because titleHits folds independently of SearchChat.
+// because titleHits folds independently of Search.
 //
 // If a future change adds a case parameter here, this test is the record of what
 // it is overturning, and the client's toggle has to arrive in the same commit.
@@ -180,13 +180,13 @@ func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 			t.Parallel()
 			s, _ := newTestStore(t)
 			// One chat matches only in its TITLE (the titleHits half), the other
-			// only in its BODY (the SearchChat half), and both are spelled in a
+			// only in its BODY (the Search half), and both are spelled in a
 			// case the queries above disagree with.
-			seedChat(t, s, "c-aaaaaaaa", "REDIS migration", []api.Message{
-				msg("m1", api.RoleUser, "moved the cache over"),
+			seedChat(t, s, "c-aaaaaaaa", "REDIS migration", []vibekit.Message{
+				msg("m1", vibekit.RoleUser, "moved the cache over"),
 			})
-			seedChat(t, s, "c-bbbbbbbb", "Assorted notes", []api.Message{
-				msg("m2", api.RoleUser, "we touched Redis in passing"),
+			seedChat(t, s, "c-bbbbbbbb", "Assorted notes", []vibekit.Message{
+				msg("m2", vibekit.RoleUser, "we touched Redis in passing"),
 			})
 
 			got := s.SearchAll(t.Context(), tc.query)

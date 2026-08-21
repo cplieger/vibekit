@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,14 +23,19 @@ func helloMux() http.Handler {
 	})
 }
 
-// testCSP is a fixed CSP string for the security middleware tests that
-// don't care about importmap hashing — they assert structural
-// properties (origin checks, headers set, etc.) of the middleware.
-// Production uses buildCSPPolicy(staticFS) instead.
-func testCSP() string { return fallbackCSPPolicy() }
+// fallbackCSPPolicy assembles the CSP with the script-src hash slot relaxed to
+// 'unsafe-inline' instead of a pinned hash. It lives in the TEST file by design:
+// production always goes through buildCSPPolicy against the real embedded
+// index.html and never relaxes script-src, so a relaxed builder must not be
+// reachable from — or even compiled into — the production binary. Tests that
+// assert structural properties of the middleware (origin checks, headers set)
+// rather than the inline-script hashing use it as their policy stand-in.
+func fallbackCSPPolicy() string {
+	return fmt.Sprintf(cspTemplate, "'unsafe-inline'")
+}
 
 func TestSecurityMiddleware_SetsCSP(t *testing.T) {
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -65,7 +71,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 		{"DELETE cross-origin blocked", http.MethodDelete, "http://attacker.example", http.StatusForbidden},
 	}
 
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var body *strings.Reader
@@ -90,7 +96,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 	}
 }
 
-// TestSecurityMiddleware_HostAllowlist pins the WT_ALLOWED_HOSTS
+// TestSecurityMiddleware_HostAllowlist pins the ALLOWED_HOSTS
 // anti-DNS-rebinding gate inside the real security middleware: a rebinding
 // attack makes an attacker-controlled hostname resolve to this server, so
 // Origin and Host AGREE and the CSRF layer alone admits the request — the
@@ -99,17 +105,17 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 // (which still rejects a forged cross-origin POST). The loopback peer+Host
 // carve-out keeps the image's own healthcheck working under a browser-facing
 // allowlist, a forged loopback Host from a remote peer stays rejected, and a
-// nil policy is a pass-through (unset WT_ALLOWED_HOSTS stays backward
+// nil policy is a pass-through (unset ALLOWED_HOSTS stays backward
 // compatible).
 func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"vibekit.example.com"},
 		webhttp.WithLoopbackExempt(),
 		webhttp.WithHostAllowlistError("",
-			"host not allowed; add it to WT_ALLOWED_HOSTS to serve this hostname"))
+			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
 	}
-	h := securityMiddleware(testCSP(), policy, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), policy, helloMux())
 
 	do := func(method, host, origin, remoteAddr string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "http://"+host+"/x", strings.NewReader(""))
@@ -129,8 +135,8 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403 (Origin/Host agreement must not admit a rebound host)", rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "WT_ALLOWED_HOSTS") {
-			t.Errorf("403 body = %q, want it to name WT_ALLOWED_HOSTS", rec.Body.String())
+		if !strings.Contains(rec.Body.String(), "ALLOWED_HOSTS") {
+			t.Errorf("403 body = %q, want it to name ALLOWED_HOSTS", rec.Body.String())
 		}
 		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 			t.Error("host-gate 403 lost the baseline security headers")
@@ -166,25 +172,24 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	})
 
 	t.Run("nil policy is a pass-through", func(t *testing.T) {
-		open := securityMiddleware(testCSP(), nil, helloMux())
+		open := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 		req := httptest.NewRequest(http.MethodGet, "http://anything.example/x", http.NoBody)
 		rec := httptest.NewRecorder()
 		open.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200 (unset WT_ALLOWED_HOSTS must stay backward compatible)", rec.Code)
+			t.Errorf("status = %d, want 200 (unset ALLOWED_HOSTS must stay backward compatible)", rec.Code)
 		}
 	})
 }
 
 func BenchmarkSecurityMiddleware(b *testing.B) {
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 
 	b.Run("GET_headers_only", func(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
 		rec := httptest.NewRecorder()
 		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
+		for b.Loop() {
 			rec.Body.Reset()
 			h.ServeHTTP(rec, req)
 		}
@@ -195,8 +200,7 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 		req.Header.Set("Origin", "http://example.com")
 		rec := httptest.NewRecorder()
 		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
+		for b.Loop() {
 			rec.Body.Reset()
 			h.ServeHTTP(rec, req)
 		}
@@ -293,7 +297,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 	f.Add("PUT", "null", "example.com")
 	f.Add("PATCH", "http://example.com", "example.com:443")
 
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 
 	f.Fuzz(func(t *testing.T, method, origin, host string) {
 		if method == "" {
@@ -333,7 +337,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 }
 
 func TestCSPPolicy_StructuralInvariants(t *testing.T) {
-	policy := testCSP()
+	policy := fallbackCSPPolicy()
 	directives := make(map[string]string)
 	for part := range strings.SplitSeq(policy, "; ") {
 		fields := strings.SplitN(part, " ", 2)

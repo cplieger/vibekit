@@ -4,29 +4,33 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // lineRec is a recording LineRecorder capturing RecordFromDiffs
 // invocations so the diff gates in HandleToolCall / HandleToolCallUpdate
 // are observable.
 type lineRec struct {
-	lastDiffs []api.ToolDiff
+	lastDiffs []vibekit.ToolDiff
 	calls     int
 }
 
-func (r *lineRec) RecordFromDiffs(_ api.ChatID, diffs []api.ToolDiff, _ int, _ string) {
+func (r *lineRec) RecordFromDiffs(_ vibekit.ChatID, diffs []vibekit.ToolDiff, _ int, _ string) {
 	r.calls++
 	r.lastDiffs = diffs
 }
 
-// lineDeps wraps baseDeps and swaps in the recording LineTracker.
+// lineDeps wraps baseDeps and records the line-tracking calls. It overrides
+// RecordFromDiffs directly; it used to override a LineTracker() getter, and that
+// getter is gone with the role composites.
 type lineDeps struct {
 	*baseDeps
 	rec *lineRec
 }
 
-func (d *lineDeps) LineTracker() LineRecorder { return d.rec }
+func (d *lineDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
+	d.rec.RecordFromDiffs(chatID, diffs, turn, kind)
+}
 
 // workDirDeps wraps baseDeps and overrides WorkDir for relPath tests.
 type workDirDeps struct {
@@ -48,14 +52,14 @@ func (d *hookStatusDeps) IsHookStatusEnabled() bool { return d.enabled }
 
 var (
 	_ LineRecorder = (*lineRec)(nil)
-	_ Deps         = (*lineDeps)(nil)
-	_ Deps         = (*workDirDeps)(nil)
-	_ Deps         = (*hookStatusDeps)(nil)
+	_ hostDouble   = (*lineDeps)(nil)
+	_ hostDouble   = (*workDirDeps)(nil)
+	_ hostDouble   = (*hookStatusDeps)(nil)
 )
 
 // newLineCaptureDeps builds an event-capturing baseDeps with a recording
 // LineTracker spliced in.
-func newLineCaptureDeps() (*lineDeps, *lineRec, *[]api.ServerEvent) {
+func newLineCaptureDeps() (*lineDeps, *lineRec, *[]vibekit.ServerEvent) {
 	base, events := newEventCaptureDeps()
 	rec := &lineRec{}
 	return &lineDeps{baseDeps: base, rec: rec}, rec, events
@@ -66,11 +70,11 @@ func newLineCaptureDeps() (*lineDeps, *lineRec, *[]api.ServerEvent) {
 // no diffs/locations/output, empty SubSessionID), then clears the
 // captured events and recorder so the subsequent update is observed in
 // isolation.
-func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]api.ServerEvent, api.ChatID) {
+func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]vibekit.ServerEvent, vibekit.ChatID) {
 	t.Helper()
 	deps, rec, events := newLineCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "tc-mid" }))
-	chatID := api.ChatID("c1")
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
+	chatID := vibekit.ChatID("c1")
 	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"title":      "readFile",
@@ -85,23 +89,23 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]api.Serve
 
 // lastToolCallUpdate returns the ToolCall carried by the most recent
 // tool_call_update event, or ok=false if none was emitted.
-func lastToolCallUpdate(t *testing.T, events *[]api.ServerEvent) (api.ToolCall, bool) {
+func lastToolCallUpdate(t *testing.T, events *[]vibekit.ServerEvent) (vibekit.ToolCall, bool) {
 	t.Helper()
 	for i := range slices.Backward(*events) {
-		if (*events)[i].Type == api.EventToolCallUpdate {
-			p, ok := (*events)[i].Payload.(api.ToolCallUpdatePayload)
+		if (*events)[i].Type == vibekit.EventToolCallUpdate {
+			p, ok := (*events)[i].Payload.(vibekit.ToolCallUpdatePayload)
 			if !ok {
-				t.Fatalf("tool_call_update payload type = %T, want api.ToolCallUpdatePayload", (*events)[i].Payload)
+				t.Fatalf("tool_call_update payload type = %T, want vibekit.ToolCallUpdatePayload", (*events)[i].Payload)
 			}
 			return p.ToolCall, true
 		}
 	}
-	return api.ToolCall{}, false
+	return vibekit.ToolCall{}, false
 }
 
-func hasWorkingLabel(events *[]api.ServerEvent) bool {
+func hasWorkingLabel(events *[]vibekit.ServerEvent) bool {
 	for _, e := range *events {
-		if e.Type == api.EventWorkingLabel {
+		if e.Type == vibekit.EventWorkingLabel {
 			return true
 		}
 	}
@@ -109,9 +113,9 @@ func hasWorkingLabel(events *[]api.ServerEvent) bool {
 }
 
 // hasToolCallEvent reports whether any tool_call event was broadcast.
-func hasToolCallEvent(events *[]api.ServerEvent) bool {
+func hasToolCallEvent(events *[]vibekit.ServerEvent) bool {
 	for _, e := range *events {
-		if e.Type == api.EventToolCall {
+		if e.Type == vibekit.EventToolCall {
 			return true
 		}
 	}
@@ -138,8 +142,8 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 	t.Run("SuppressedWhenStatusDisabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		chatID := api.ChatID("c1")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		chatID := vibekit.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), "")
 		if hasToolCallEvent(events) {
 			t.Error("hook-ask tool call broadcast a tool_call event; want suppressed (hooks.showStatus off)")
@@ -152,8 +156,8 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 	t.Run("ShownWhenStatusEnabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: true}
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, hookAsk), "")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, hookAsk), "")
 		if !hasToolCallEvent(events) {
 			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
 		}
@@ -162,8 +166,8 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 	t.Run("NonHookAskShownWhenStatusDisabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, map[string]any{
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"title":      "readFile",
 			"kind":       "read",
@@ -181,8 +185,8 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithDiffRecordsLineChanges", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, map[string]any{
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff",
 			"title":      "writeFile",
 			"kind":       "edit",
@@ -197,8 +201,8 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 	})
 	t.Run("WithoutDiffSkipsLineTracker", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, map[string]any{
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-nodiff",
 			"title":      "readFile",
 			"kind":       "read",
@@ -222,8 +226,8 @@ func TestToolCallUpdate_StatusApplied(t *testing.T) {
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
-	if tc.Status != api.ToolCompleted {
-		t.Errorf("ToolCall.Status = %q, want %q (non-empty status must be applied)", tc.Status, api.ToolCompleted)
+	if tc.Status != vibekit.ToolCompleted {
+		t.Errorf("ToolCall.Status = %q, want %q (non-empty status must be applied)", tc.Status, vibekit.ToolCompleted)
 	}
 }
 
@@ -338,7 +342,7 @@ func TestToolCallUpdate_IndexBoundaryGuard(t *testing.T) {
 		"status":     "completed",
 	}), "")
 	for _, e := range *events {
-		if e.Type == api.EventToolCallUpdate {
+		if e.Type == vibekit.EventToolCallUpdate {
 			t.Error("idx==len: tool_call_update emitted, want early return (no event)")
 		}
 	}
@@ -453,7 +457,7 @@ func TestRelPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deps := &workDirDeps{baseDeps: newBaseDeps(), workDir: tt.workDir}
-			tr := New(deps, withIDGenerator(func() string { return "mid" }))
+			tr := New(rolesOf(deps), withIDGenerator(func() string { return "mid" }))
 			if got := tr.relPath(tt.abs); got != tt.want {
 				t.Errorf("relPath(%q) [workDir=%q] = %q, want %q", tt.abs, tt.workDir, got, tt.want)
 			}
@@ -470,8 +474,8 @@ func TestRelPath(t *testing.T) {
 func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	t.Run("PendingEditMarksNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		chatID := api.ChatID("c1")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		chatID := vibekit.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-new",
 			"title":      "writeFile",
@@ -492,8 +496,8 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	})
 	t.Run("CompletedEditIsNotNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		chatID := api.ChatID("c2")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		chatID := vibekit.ChatID("c2")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-existing",
 			"title":      "writeFile",
@@ -535,17 +539,17 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	tests := []struct {
 		name       string
 		checkpoint map[string]any
-		want       api.ToolCheckpoint
+		want       vibekit.ToolCheckpoint
 	}{
 		{
 			name:       "overwriting an existing file carries all three",
 			checkpoint: map[string]any{"original": origURI, "modified": modURI, "local": local},
-			want:       api.ToolCheckpoint{Original: origURI, Modified: modURI, Local: local},
+			want:       vibekit.ToolCheckpoint{Original: origURI, Modified: modURI, Local: local},
 		},
 		{
 			name:       "creating a file has no pre-image",
 			checkpoint: map[string]any{"modified": modURI, "local": local},
-			want:       api.ToolCheckpoint{Modified: modURI, Local: local},
+			want:       vibekit.ToolCheckpoint{Modified: modURI, Local: local},
 		},
 	}
 	for _, tt := range tests {
@@ -591,7 +595,7 @@ func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
-	want := api.ToolCheckpoint{Original: "orig-uri", Modified: "mod-uri-2", Local: "local-uri"}
+	want := vibekit.ToolCheckpoint{Original: "orig-uri", Modified: "mod-uri-2", Local: "local-uri"}
 	if tc.Checkpoint == nil || *tc.Checkpoint != want {
 		t.Errorf("ToolCall.Checkpoint = %+v, want %+v (a narrower frame must refine, not replace)", tc.Checkpoint, want)
 	}

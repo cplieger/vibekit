@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/pathinside"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // HandleToolCall adds a tool call to the current assistant message
@@ -21,7 +22,7 @@ import (
 // call tagged _meta.kiro.kind=="agent-subtask"; AgentSubtaskID is threaded
 // onto the domain ToolCall so the client can render a subagent card and
 // nest the subagent's chunks (which carry the same id) under it.
-func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
+func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string) {
 	var tc ACPToolCallWire
 	if json.Unmarshal(raw, &tc) != nil {
 		return
@@ -33,10 +34,10 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	// card. Suppressing the initial tool_call also drops its follow-up
 	// tool_call_update: HandleToolCallUpdate early-returns when the id was
 	// never buffered.
-	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.deps.IsHookStatusEnabled() {
+	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
-	buf := t.deps.BufferStore().GetOrInit(chatID)
+	buf := t.buffers.GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
 	// A workflow STEP's tool frames carry KAS's own agentSubtaskId (or none),
 	// while the step's TEXT is keyed by its nodePath — so without this override
@@ -53,7 +54,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	// double-render whatever the following update repeats.
 	content := t.parseToolUpdateContent(tc.Content)
 	diffs := content.diffs
-	call := api.ToolCall{
+	call := vibekit.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          tc.Title,
 		Kind:           tc.Kind,
@@ -68,11 +69,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
 		Ts:             time.Now().UnixMilli(),
 	}
-	buf.ToolCalls = append(buf.ToolCalls, call)
-	if buf.ToolCallIndex == nil {
-		buf.ToolCallIndex = make(map[string]int)
-	}
-	buf.ToolCallIndex[tc.ToolCallID] = len(buf.ToolCalls) - 1
+	turn := buf.AppendToolCall(&call) + 1
 	// Anchor the tool in the chronological block array. Always a new
 	// block — back-to-back tool calls each get their own tool_use
 	// block (the next text chunk after this will also start a new
@@ -80,32 +77,35 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	blockIndex := buf.AppendToolUseBlock(call.ID, subtask)
 	buf.RecordToolStart(tc.ToolCallID)
 	if len(diffs) > 0 {
-		isNew := tc.Kind == api.ToolKindEdit && tc.Status == api.ToolPending
+		isNew := tc.Kind == vibekit.ToolKindEdit && tc.Status == vibekit.ToolPending
 		buf.TrackFileChanges(diffs, isNew)
-		turn := len(buf.ToolCalls)
-		t.deps.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
+		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCall, chatID,
-		api.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID,
-		api.WorkingLabelPayload{Label: api.WorkingLabelForKind(tc.Kind, tc.Title)}))
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCall, chatID,
+		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }
 
 // HandleToolCallUpdate mutates an in-flight tool call's status and
 // appends any new output chunks.
-func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
+func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
 	content := t.parseToolUpdateContent(tu.Content)
-	buf := t.deps.BufferStore().GetOrInit(chatID)
-	idx, ok := buf.ToolCallIndex[tu.ToolCallID]
-	if !ok || idx >= len(buf.ToolCalls) {
+	buf := t.buffers.GetOrInit(chatID)
+	// A COPY, folded locally and written back, because the fold below reaches the
+	// terminal registry, the line tracker and the event bus — none of which may
+	// run under the buffer's mutex.
+	tc, idx, ok := buf.ToolCall(tu.ToolCallID)
+	if !ok {
 		return
 	}
-	t.applyToolCallUpdate(ctx, chatID, buf, idx, &tu, content, subSessionID)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID, api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
+	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, subSessionID)
+	buf.SetToolCall(idx, &tc)
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
 }
 
 // parseToolUpdateContent extracts the sanitized output delta, any file diffs,
@@ -123,10 +123,10 @@ func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) too
 	for _, item := range items {
 		switch {
 		case item.Type == ContentTypeContent && item.Content.Text != "":
-			outputDelta.WriteString(api.SanitizeOutput(item.Content.Text))
+			outputDelta.WriteString(sanitize.Output(item.Content.Text))
 			outputDelta.WriteByte('\n')
 		case item.Type == ContentTypeDiff && item.Path != "":
-			out.diffs = append(out.diffs, api.ToolDiff{
+			out.diffs = append(out.diffs, vibekit.ToolDiff{
 				Path: t.relPath(item.Path), OldText: item.OldText, NewText: item.NewText,
 			})
 		case item.Type == ContentTypeTerminal && item.TerminalID != "":
@@ -143,15 +143,14 @@ func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) too
 type toolUpdateContent struct {
 	output     string
 	terminalID string
-	diffs      []api.ToolDiff
+	diffs      []vibekit.ToolDiff
 }
 
 // applyToolCallUpdate folds a parsed tool_call_update into the buffered
 // tool call at idx: status (emitting a working label on terminal
 // status), appended output, replaced locations, appended diffs (with
 // line tracking), and a first-seen subsession id.
-func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, idx int, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
-	tc := &buf.ToolCalls[idx]
+func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
 	// A mid-flight update may refine the card's title/kind (KAS sends them
 	// nullish on tool_call_update); apply only when present so an update
 	// that omits them doesn't wipe the values set on the initial tool_call.
@@ -196,35 +195,34 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 // stamps the duration and takes the terminal's output for keeping. Split out of
 // applyToolCallUpdate to keep that function a flat list of per-field folds.
 func (t *Translator) applyToolCallStatus(
-	ctx context.Context, chatID api.ChatID, buf *buffer.Buffer,
-	tc *api.ToolCall, tu *ACPToolCallUpdateWire,
+	ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer,
+	tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire,
 ) {
 	if tu.Status == "" {
 		return
 	}
 	tc.Status = tu.Status
-	if tu.Status != api.ToolCompleted && tu.Status != api.ToolFailed {
+	if tu.Status != vibekit.ToolCompleted && tu.Status != vibekit.ToolFailed {
 		return
 	}
 	tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
 	t.adoptTerminalOutput(chatID, tc)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID,
-		api.WorkingLabelPayload{Label: api.WorkingLabelThinking}))
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelThinking}))
 }
 
 // applyToolCallDiffs appends an update's diffs and records the file changes they
 // describe. Split out of applyToolCallUpdate to keep that function readable as a
 // list of per-field folds.
 func (t *Translator) applyToolCallDiffs(
-	chatID api.ChatID, buf *buffer.Buffer, tc *api.ToolCall, diffs []api.ToolDiff,
+	chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, diffs []vibekit.ToolDiff,
 ) {
 	if len(diffs) == 0 {
 		return
 	}
 	tc.Diffs = append(tc.Diffs, diffs...)
 	buf.TrackFileChanges(diffs, false)
-	turn := len(buf.ToolCalls)
-	t.deps.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
+	t.lines.RecordFromDiffs(chatID, diffs, buf.ToolCallCount(), string(tc.Kind))
 }
 
 // adoptTerminalOutput copies a finished terminal's output onto its tool call, so
@@ -234,7 +232,7 @@ func (t *Translator) applyToolCallDiffs(
 // command is done, which is why this is a copy at ONE moment rather than
 // incremental bookkeeping: a terminal's first output arrives before the update
 // that names it, so there is no earlier point where an append could be both
-// correct and complete. The hub keeps a released terminal's bytes under the same
+// correct and complete. The runtime keeps a released terminal's bytes under the same
 // id for the rest of the turn, so this still works after KAS has released it —
 // which it always has by now.
 //
@@ -249,7 +247,7 @@ func (t *Translator) applyToolCallDiffs(
 // exists to prevent: a card that renders empty looks exactly like a command that
 // printed nothing, which is how the output of an agent command was invisible for
 // the whole life of this feature with nothing saying so. The warning is worth
-// having only because the hub distinguishes "no record" from "an empty record" —
+// having only because the runtime distinguishes "no record" from "an empty record" —
 // a silent `mkdir -p` answers ok, so it does not file a false alarm here. What
 // remains is the real failure set: a record evicted before its turn ended, an id
 // KAS named and then reused, a completion arriving after the turn closed.
@@ -261,11 +259,11 @@ func (t *Translator) applyToolCallDiffs(
 // condition here would have hidden the first case behind the second, and the fold
 // order makes it unknowable anyway — a same-frame content block is applied after
 // this runs.
-func (t *Translator) adoptTerminalOutput(chatID api.ChatID, tc *api.ToolCall) {
+func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.ToolCall) {
 	if tc.TerminalID == "" {
 		return
 	}
-	text, spans, ok := t.deps.TerminalOutput(tc.TerminalID)
+	text, spans, ok := t.terminals.Output(tc.TerminalID)
 	if !ok {
 		slog.Warn("terminal output missing at completion",
 			"chat_id", chatID, "tool_call_id", tc.ID,
@@ -284,7 +282,7 @@ func (t *Translator) adoptTerminalOutput(chatID api.ChatID, tc *api.ToolCall) {
 // the buffered call. Late adoption, for the same reason as the checkpoint fold: a
 // denial in particular is decided when the call is ATTEMPTED, so it can arrive on
 // the update rather than the create. Never overwrites a value already held.
-func mergeToolMeta(tc *api.ToolCall, tu *ACPToolCallUpdateWire) {
+func mergeToolMeta(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire) {
 	if tc.Disclosed == nil {
 		tc.Disclosed = disclosedFrom(tu.Meta.Kiro.DisclosedContext)
 	}
@@ -296,28 +294,28 @@ func mergeToolMeta(tc *api.ToolCall, tu *ACPToolCallUpdateWire) {
 // disclosedFrom maps KAS's disclosedContext block onto the domain type. Returns
 // nil for every tool call that is not a disclose_context, which is nearly all of
 // them.
-func disclosedFrom(in *ACPDisclosedContext) *api.ToolDisclosed {
+func disclosedFrom(in *ACPDisclosedContext) *vibekit.ToolDisclosed {
 	if in == nil {
 		return nil
 	}
-	return &api.ToolDisclosed{Type: in.Type, DisplayName: in.DisplayName, URI: in.URI}
+	return &vibekit.ToolDisclosed{Type: in.Type, DisplayName: in.DisplayName, URI: in.URI}
 }
 
 // denialFrom maps KAS's policyDenial block onto the domain type. The outer
 // `effect` is always the literal "deny" so it is dropped; the matched rule's own
 // effect is kept, because an "ask" rule that nobody answered also arrives here.
-func denialFrom(in *ACPPolicyDenial) *api.ToolDenial {
+func denialFrom(in *ACPPolicyDenial) *vibekit.ToolDenial {
 	if in == nil {
 		return nil
 	}
-	out := &api.ToolDenial{
+	out := &vibekit.ToolDenial{
 		Capability: in.Capability,
 		Resource:   in.Resource,
 		Scope:      in.Scope,
 		Source:     in.Source,
 	}
 	if in.MatchedRule != nil {
-		out.Rule = &api.ToolDenialRule{
+		out.Rule = &vibekit.ToolDenialRule{
 			Capability: in.MatchedRule.Capability,
 			Effect:     in.MatchedRule.Effect,
 			Match:      in.MatchedRule.Match,
@@ -336,12 +334,12 @@ func denialFrom(in *ACPPolicyDenial) *api.ToolDenial {
 // file creation and adds `original` only when there was a pre-image, so
 // replacing the struct would be correct today and lossy the moment a second
 // frame arrives with a narrower set.
-func mergeCheckpoint(tc *api.ToolCall, in *ACPCheckpointMeta) {
+func mergeCheckpoint(tc *vibekit.ToolCall, in *ACPCheckpointMeta) {
 	if in == nil || (in.Original == "" && in.Modified == "" && in.Local == "") {
 		return
 	}
 	if tc.Checkpoint == nil {
-		tc.Checkpoint = &api.ToolCheckpoint{}
+		tc.Checkpoint = &vibekit.ToolCheckpoint{}
 	}
 	if in.Original != "" {
 		tc.Checkpoint.Original = in.Original
@@ -405,7 +403,7 @@ func localPath(ref string) string {
 // test leaked the absolute path to the client.
 func (t *Translator) relPath(ref string) string {
 	abs := localPath(ref)
-	workDir := t.deps.WorkDir()
+	workDir := t.workDir
 	if workDir == "" {
 		return abs
 	}
@@ -427,12 +425,10 @@ func (t *Translator) relPath(ref string) string {
 // projection — measured to hold each sub-message as it completes, so a
 // tool-first turn is covered from its first tool call rather than from its
 // first text.
-func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
-	if buf.Started {
+func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
+	if !buf.StartTurn(t.newMsgID()) {
 		return
 	}
-	buf.Started = true
-	buf.MessageID = t.newMsgID()
 	// FALLBACK attribution only. A prompt latches the model at DISPATCH
 	// (CmdPrompt -> LatchTurnModel), which is what closes the window where a fast
 	// switch lands before the old model's first frame; SetModel is first-write-wins,
@@ -444,10 +440,10 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, b
 	// no switch can have raced a dispatch that never happened. Dropping it would
 	// leave those turns with no attribution at all.
 	if !buf.HasModel() {
-		if c, ok := t.deps.ChatStore().Get(ctx, chatID); ok {
+		if c, ok := t.chats.Get(ctx, chatID); ok {
 			buf.SetModel(c.Model)
 		}
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
-		api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
+		vibekit.Message{ID: buf.MessageID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

@@ -31,7 +31,7 @@ import { setUserScrolledUp } from "./scroll.js";
 import { turnAnchorID, type TurnOutcome } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 
-/** One row of the session-wide turn index. Mirrors api.TurnSummary. */
+/** One row of the session-wide turn index. Mirrors vibekit.TurnSummary. */
 export interface TurnSummary {
   id: string;
   first_line?: string;

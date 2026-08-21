@@ -1,41 +1,62 @@
 package command
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // storeDeps is benchDeps with a real chat store, so a handler that mutates the
 // store can be asserted on. benchDeps returns nil for ChatStore().
 type storeDeps struct {
 	*benchDeps
-	store api.ChatStore
+	store ChatStore
 }
 
-func (d *storeDeps) ChatStore() api.ChatStore { return d.store }
+// The five store methods are promoted from the embedded store, not handed back
+// through a ChatStore() getter: Roles holds the interface directly now, so a
+// double that only overrode the getter left benchDeps' no-op methods winning and
+// silently stored nothing.
+func (d *storeDeps) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+	return d.store.Get(ctx, id)
+}
 
-func newTestDispatcher(t *testing.T, store api.ChatStore) *Dispatcher {
+func (d *storeDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+	return d.store.Mutate(ctx, id, fn)
+}
+
+func (d *storeDeps) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	return d.store.AppendMessage(ctx, chatID, msg)
+}
+
+func (d *storeDeps) SetDraft(ctx context.Context, id vibekit.ChatID, text string) error {
+	return d.store.SetDraft(ctx, id, text)
+}
+
+func (d *storeDeps) Delete(ctx context.Context, id vibekit.ChatID) error {
+	return d.store.Delete(ctx, id)
+}
+
+func newTestHost(t *testing.T, store ChatStore) hostDouble {
 	t.Helper()
-	return New(&storeDeps{benchDeps: newBenchDeps(), store: store})
+	return &storeDeps{benchDeps: newBenchDeps(), store: store}
 }
 
 // resumeReq builds a resume_session command envelope.
-func resumeReq(t *testing.T, chatID api.ChatID, sessionID, name string) *api.ClientCommand {
+func resumeReq(t *testing.T, chatID vibekit.ChatID, sessionID, name string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.ResumeSessionCommand{SessionID: sessionID, Name: name})
+	payload, err := json.Marshal(vibekit.ResumeSessionCommand{SessionID: sessionID, Name: name})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdResumeSession,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+	return &vibekit.ClientCommand{
+		Type:    vibekit.CmdResumeSession,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 
@@ -45,14 +66,13 @@ func resumeReq(t *testing.T, chatID api.ChatID, sessionID, name string) *api.Cli
 // copies no messages.
 func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d := newTestDispatcher(t, store)
+	host := newTestHost(t, store)
 	ctx := t.Context()
-	w := httptest.NewRecorder()
 
-	CmdResumeSession(d, ctx, w, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
+	_, err := CmdResumeSession(ctx, host, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, ok := store.Get(ctx, "c1")
 	if !ok {
@@ -83,17 +103,16 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
+	if err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Existing"
 		c.RecordSession("sess_original")
 		return true
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	d := newTestDispatcher(t, store)
-	w := httptest.NewRecorder()
+	host := newTestHost(t, store)
 
-	CmdResumeSession(d, ctx, w, resumeReq(t, "c1", "sess_other", "Hijack"))
+	_, _ = CmdResumeSession(ctx, host, resumeReq(t, "c1", "sess_other", "Hijack"))
 
 	c, _ := store.Get(ctx, "c1")
 	if c.ACPSessionID != "sess_original" {
@@ -108,7 +127,7 @@ func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 // TestCmdResumeSession_RejectsPathUnsafeIDs covers the validation, and the case
 // list documents what the guard does and does NOT promise.
 //
-// api.ValidSessionID is a PATH-SAFETY guard: non-empty, <= 128 bytes, no
+// ids.ValidSessionID is a PATH-SAFETY guard: non-empty, <= 128 bytes, no
 // `/ \ NUL`, no `..`. It deliberately does not constrain the alphabet or
 // require the `sess_` prefix, which is why this test does not assert those.
 // Two consequences worth stating rather than discovering later:
@@ -133,13 +152,12 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 	for name, sid := range cases {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
-			d := newTestDispatcher(t, store)
-			w := httptest.NewRecorder()
+			host := newTestHost(t, store)
 
-			CmdResumeSession(d, t.Context(), w, resumeReq(t, "c1", sid, ""))
+			_, err := CmdResumeSession(t.Context(), host, resumeReq(t, "c1", sid, ""))
 
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d for session id %q, want 400", w.Code, sid)
+			if statusOf(err) != http.StatusBadRequest {
+				t.Errorf("status = %d for session id %q, want 400", statusOf(err), sid)
 			}
 			if _, ok := store.Get(t.Context(), "c1"); ok {
 				t.Errorf("a chat was created for invalid session id %q", sid)

@@ -11,7 +11,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/runesafe"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/webhttp"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The
@@ -46,7 +49,7 @@ type WhoamiResponse struct {
 // can't pin the HTTP handler indefinitely.
 func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.WhoamiTimeout)
@@ -56,14 +59,19 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	// repo-wide gosec G204 exclusion already suppresses the warning;
 	// no //nolint needed.
 	cmd := exec.CommandContext(ctx, h.cliPath(), "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
-	var stderr bytes.Buffer
-	var stdoutBuf bytes.Buffer
+	// Honour WhoamiTimeout rather than the child's lifetime. Without this the
+	// handler returned only when the last grandchild holding stdout exited — see
+	// boundChild, and note this endpoint fires on every page load and SSE
+	// reconnect.
+	boundChild(cmd)
+	stderr := procout.NewBuffer(stderrCap)
+	stdoutBuf := procout.NewBuffer(whoamiMaxOutput)
 	// Bounded stderr capture so a runaway or hostile kiro-cli can't
 	// OOM the container via unbounded stderr on this per-page-load
 	// endpoint. Mirrors the login/logout pattern.
-	cmd.Stderr = &limitedWriter{W: &stderr, N: stderrCap}
+	cmd.Stderr = stderr
 	// Bounded stdout capture so a runaway CLI can't OOM the container.
-	cmd.Stdout = &limitedWriter{W: &stdoutBuf, N: whoamiMaxOutput}
+	cmd.Stdout = stdoutBuf
 	err := cmd.Run()
 	out := stdoutBuf.Bytes()
 	if err != nil {
@@ -71,14 +79,14 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 		// so Grafana can alert on each independently. All three
 		// still return the generic msgWhoamiUnavailable sentinel
 		// to the client (fail-soft banner). Every stderr log
-		// attribute is run through api.SanitizeOutput so ANSI /
+		// attribute is run through sanitize.Output so ANSI /
 		// hidden Unicode from a compromised kiro-cli can't inject
 		// into Loki or any downstream AI log pipeline.
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			attrs := make([]any, 0, 4)
 			attrs = append(attrs, "timeout", h.cfg.WhoamiTimeout)
-			attrs = append(attrs, stderrAttr(&stderr)...)
+			attrs = append(attrs, stderrAttr(stderr)...)
 			slog.Warn("whoami: kiro-cli timed out", attrs...)
 		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
 			// Warn (not Error): /api/whoami fires on every page
@@ -95,20 +103,20 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 			// only needs to see that whoami failed.
 			attrs := make([]any, 0, 6)
 			attrs = append(attrs, "error", err, "stdout_bytes", len(out))
-			attrs = append(attrs, stderrAttr(&stderr)...)
+			attrs = append(attrs, stderrAttr(stderr)...)
 			slog.Warn("whoami: kiro-cli invocation failed", attrs...)
 		}
-		api.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
+		webhttp.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
 	info, err := whoamiInfo(out)
 	if err != nil {
 		slog.Warn("whoami: cli output not parseable as json",
 			"error", err, "stdout_bytes", len(out))
-		api.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
+		webhttp.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
-	api.WriteJSON(w, info)
+	webhttp.WriteJSON(w, info)
 }
 
 // whoamiInfo parses kiro-cli's --format json whoami output and
@@ -120,16 +128,34 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 // empty account-type fields leave Auth unset so the UI can render
 // the malformed-upstream case as "not signed in".
 //
-// kiro-cli 2.0.1+ appends a non-JSON footer after the JSON payload
-// (e.g. a "Profile: ..." banner from Identity Center). Decoding via
-// json.Decoder consumes exactly one JSON value so the trailing bytes
-// are ignored.
+// EVERY STRING IS SANITIZED AND BOUNDED on its way out, which closes an
+// in-package asymmetry rather than adding a policy: handleLogout already runs
+// its subprocess output through sanitize.Output, and this handler read the same
+// subprocess and passed five of its fields straight to the browser and the log.
+// The values originate at the user's identity provider (email, startUrl, region)
+// or are echoed verbatim by humanizeAccountType's generic arm, and their only
+// bound was the 64 KiB whole-output cap — so one 60 KiB "email" reached the
+// sidebar, and a Bidi override in any of them reordered the identity row.
+//
+// runesafe's single-line preset rather than sanitize.Output: these are one-line
+// LABELS, so a newline in one is itself a defect, and the preset turns C0/C1,
+// DEL, the Bidi controls and the paragraph separators into spaces instead of
+// deleting them — a deception becomes visible whitespace rather than silently
+// vanishing. Measured on runesafe v1.4.2: pure RTL text (Hebrew, Arabic) is
+// byte-identical, so the cost falls only on a value that MIXES scripts and
+// relies on explicit direction marks, which an email address, a region id and an
+// SSO start URL cannot.
 //
 // Fields kiro-cli emits that aren't represented on WhoamiResponse
 // (account_id, profile, ARN, etc.) are deliberately dropped at this
 // boundary to keep the wire surface narrow and stable; per the
 // rewrite proposal AUTH-01, this prevents accidental field leakage
 // from CLI version bumps.
+//
+// kiro-cli 2.0.1+ appends a non-JSON footer after the JSON payload
+// (e.g. a "Profile: ..." banner from Identity Center). Decoding via
+// json.Decoder consumes exactly one JSON value so the trailing bytes
+// are ignored.
 func whoamiInfo(out []byte) (*WhoamiResponse, error) {
 	dec := json.NewDecoder(bytes.NewReader(out))
 	var raw map[string]any
@@ -148,11 +174,24 @@ func whoamiInfo(out []byte) (*WhoamiResponse, error) {
 	resp.Email = firstNonEmptyString(raw, "email", "Email")
 	resp.AccountType = firstNonEmptyString(raw, "account_type", "accountType")
 	if resp.AccountType != "" {
-		resp.Auth = humanizeAccountType(resp.AccountType)
+		resp.Auth = identityText(humanizeAccountType(resp.AccountType))
 	}
 	resp.StartURL = firstNonEmptyString(raw, "startUrl", "start_url")
 	resp.Region = firstNonEmptyString(raw, "region")
 	return resp, nil
+}
+
+// maxIdentityFieldBytes bounds one identity string on its way to the sidebar and
+// the log. A real email, region id or SSO start URL is well under 256 bytes; the
+// only thing this excludes is an upstream that is not answering the question.
+const maxIdentityFieldBytes = 256
+
+// identityText prepares one upstream identity string for a single-line UI row:
+// runesafe's single-line preset, capped on a rune boundary. Same treatment
+// translate.displayText gives upstream text bound for a banner or a decision
+// card, so every surface carrying text vibekit did not write answers to one rule.
+func identityText(s string) string {
+	return runesafe.SanitizeSingleLineBounded(s, maxIdentityFieldBytes)
 }
 
 // firstNonEmptyString returns the first non-empty string value found among
@@ -160,10 +199,13 @@ func whoamiInfo(out []byte) (*WhoamiResponse, error) {
 // whoamiInfo accept both snake_case and camelCase spellings of the same
 // kiro-cli field while preferring the canonical key, without repeating the
 // type-assert-and-empty-check pattern per field.
+//
+// The winner is sanitized here rather than at each assignment so no future field
+// can be added without it.
 func firstNonEmptyString(raw map[string]any, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := raw[k].(string); ok && v != "" {
-			return v
+			return identityText(v)
 		}
 	}
 	return ""

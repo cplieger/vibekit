@@ -9,7 +9,7 @@ package chat
 // of every hit — the answer is a conversation to open, not a position to jump
 // to. Once the chat is open, its own search takes over.
 //
-// Lexical and index-free, consistent with SearchChat: the substrate is the same
+// Lexical and index-free, consistent with Search: the substrate is the same
 // per-chat scan fanned out over the existing bounded-parallel reader.
 
 import (
@@ -23,8 +23,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/parallel"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // The scan window, result cap and title boost are KiroCrew's
@@ -49,8 +49,8 @@ const searchWorkers = 8
 
 // Match is one chat that matched, with the evidence for showing it.
 type Match struct {
-	Name string     `json:"name"`
-	ID   api.ChatID `json:"id"`
+	Name string         `json:"name"`
+	ID   vibekit.ChatID `json:"id"`
 	// Best is the highest-scoring hit in this chat: the line the result row
 	// shows, and the position the client can jump to after opening.
 	Best SearchHit `json:"best"`
@@ -122,7 +122,7 @@ func searchOneChat(ce chatEntry, query string) Match {
 	// search, which is a different question on a different endpoint; a
 	// cross-chat "which conversation was that in" is asked from memory, and
 	// memory does not remember capitalisation.
-	hits := SearchChat(c.Messages, query, false)
+	hits := Search(c.Messages, query, false)
 	// A chat whose TITLE names the subject is a result even when its body never
 	// repeats the word — dropping it on content hits alone would make the title
 	// boost unreachable in exactly the case it exists for.
@@ -132,7 +132,7 @@ func searchOneChat(ce chatEntry, query string) Match {
 	}
 	m := Match{
 		Name:      c.Name,
-		ID:        api.ChatID(c.ID),
+		ID:        vibekit.ChatID(c.ID),
 		Hits:      len(hits),
 		Score:     scoreChat(len(hits), titles, docChars(c.Messages), c.Name),
 		UpdatedAt: c.UpdatedAt,
@@ -166,7 +166,7 @@ func (s *Store) newestEntries(ctx context.Context) (entries []chatEntry, truncat
 			continue
 		}
 		id := strings.TrimSuffix(name, chatFileSuffix)
-		if !chatIDPattern(api.ChatID(id)) {
+		if !chatIDPattern(vibekit.ChatID(id)) {
 			continue
 		}
 		var mtim int64
@@ -225,7 +225,7 @@ func scoreChat(contentHits, titleHitCount, docChars int, _ string) float64 {
 }
 
 // docChars is the chat's text volume, the normaliser's input.
-func docChars(msgs []api.Message) int {
+func docChars(msgs []vibekit.Message) int {
 	n := 0
 	for i := range msgs {
 		n += len(msgs[i].Content)

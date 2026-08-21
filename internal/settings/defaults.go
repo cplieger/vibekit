@@ -1,6 +1,6 @@
 // Centralized defaults and the known-keys validation set for
 // vibekit-managed `<configDir>/config.json`. The HTTP GET handler
-// emits DefaultSettings() when the file is missing; PATCH/PUT
+// emits Default() when the file is missing; PATCH/PUT
 // handlers call WarnUnknownKeys to surface typos and CLI/UI drift
 // without rejecting forward-compatible keys (per AUTH/SET design
 // discussion in the rewrite-analysis docs: a `knownKeys` warning
@@ -41,7 +41,7 @@ const (
 // approval renders identically to one that is working). So a switch that
 // silenced the ask was not a preference — it was a way to stall every later
 // turn of every chat with no signal, discoverable only by noticing that work
-// had stopped. The permission notice is a FLOOR: api.PushKindPermission is
+// had stopped. The permission notice is a FLOOR: vibekit.PushKindPermission is
 // registered with no settings key, so no value in config.json can turn it off
 // (pinned by push.TestPermissionKindHasNoSettingsKey).
 //
@@ -93,9 +93,9 @@ func DefaultAgentIgnoreFiles() []string {
 	return []string{".gitignore", ".kiroignore"}
 }
 
-// DefaultSettings returns the canonical defaults the GET /api/settings
+// Default returns the canonical defaults the GET /api/settings
 // handler emits when config.json is missing or unreadable. Every key it emits
-// must also be in KnownKeys (enforced by TestDefaultSettings_OnlyKnownKeys) so
+// must also be in KnownKeys (enforced by TestDefault_OnlyKnownKeys) so
 // a fresh GET response round-tripped back as a PATCH never trips the
 // unknown-key warning.
 //
@@ -104,7 +104,7 @@ func DefaultAgentIgnoreFiles() []string {
 // advertises it. Preferences NOT listed here apply their default in-process
 // near their consumer (e.g. logctl.go's false for debug_logs) because the
 // consumer owns the fail-mode policy; those need not ride this wire shape.
-func DefaultSettings() map[string]any {
+func Default() map[string]any {
 	return map[string]any{
 		KeyAgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
 		KeyChatRetentionDays: DefaultChatRetentionDays,
@@ -126,7 +126,7 @@ func DefaultSettings() map[string]any {
 // setting shaped `{last_model, effort}`, so it was keyed by the LAST model rather
 // than by the chat: two chats could not disagree about effort, and switching
 // models discarded the previous model's choice. It is a field on the chat record
-// now (api.Chat.Effort), written by CmdSetEffort and applied at session/new
+// now (vibekit.Chat.Effort), written by CmdSetEffort and applied at session/new
 // through StartOpts.Effort, which is where the other three per-chat composer
 // settings already lived. Nothing reads or writes the old key; a config.json that
 // still carries it warns as an unknown key on the next write and is otherwise

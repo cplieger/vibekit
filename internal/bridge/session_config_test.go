@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // configOptionFake writes a fake kiro-cli that logs every request line to
@@ -61,7 +61,7 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &api.StartOpts{Model: "claude-opus-5", Effort: "high"}); err != nil {
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Model: "claude-opus-5", Effort: "high"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 		name  string
 		model string
 	}{
-		{"auto is not a model id", api.ModelAuto},
+		{"auto is not a model id", vibekit.ModelAuto},
 		{"already the session default", "engine-default"},
 		{"unset", ""},
 	}
@@ -110,7 +110,7 @@ func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 
 			b := New(scriptPath, dir)
 			t.Cleanup(b.Stop)
-			if err := b.Start(context.Background(), &api.StartOpts{Model: tc.model}); err != nil {
+			if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Model: tc.model}); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 
@@ -134,7 +134,7 @@ func TestNewSession_DropsInvalidEffort(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &api.StartOpts{Effort: "ultra"}); err != nil {
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Effort: "ultra"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestStart_RefusesInvalidModelIdentifier(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	err := b.Start(context.Background(), &api.StartOpts{Model: "bad model; rm -rf /"})
+	err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Model: "bad model; rm -rf /"})
 	if err == nil {
 		t.Fatal("Start accepted an invalid model identifier, want an error")
 	}
@@ -192,7 +192,7 @@ func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	lifetime, cancelLifetime := context.WithCancel(context.Background())
 	t.Cleanup(cancelLifetime)
 
-	if err := b.Start(handshakeCtx, &api.StartOpts{Lifetime: lifetime}); err != nil {
+	if err := b.Start(handshakeCtx, &vibekit.StartOpts{Lifetime: lifetime}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -204,7 +204,7 @@ func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	}
 }
 
-// The lifetime context DOES own the subprocess, so hub shutdown still reaps a
+// The lifetime context DOES own the subprocess, so agent shutdown still reaps a
 // bridge even if Stop races or panics. Without this the belt-and-braces kill
 // that the handshake context used to provide would simply be gone.
 func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
@@ -215,7 +215,7 @@ func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
 	t.Cleanup(b.Stop)
 
 	lifetime, cancelLifetime := context.WithCancel(context.Background())
-	if err := b.Start(context.Background(), &api.StartOpts{Lifetime: lifetime}); err != nil {
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: lifetime}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -230,23 +230,35 @@ func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
 	}
 }
 
-// A caller that names no lifetime keeps a subprocess owned solely by Stop, and
-// must not inherit the handshake context's cancellation by accident — that is the
-// defect above wearing a default.
-func TestStart_NilLifetimeDoesNotInheritHandshakeCancellation(t *testing.T) {
+// A caller that names no lifetime is REFUSED. The nil case used to be a
+// default: Start substituted context.WithoutCancel of the handshake ctx, which
+// is an uncancellable context handed to exec.CommandContext, so a caller who
+// forgot the field got a subprocess only Stop() could ever reach — silently,
+// and one Stop() bug away from a leaked kiro-cli tree. Refusing at Start makes
+// that a startup error at the site that would have caused it, and a caller who
+// genuinely wants Stop-only ownership says so by passing context.Background()
+// (which is what the tests above do).
+//
+// The property the old default protected — the subprocess must not inherit the
+// HANDSHAKE context's cancellation — is pinned by
+// TestStart_HandshakeCtxDoesNotOwnTheSubprocess above, which is the assertion
+// that actually matters and does not depend on a nil field.
+func TestStart_RefusesNilLifetime(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := configOptionFake(t, filepath.Join(dir, "requests.log"))
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
 
-	handshakeCtx, cancelHandshake := context.WithCancel(context.Background())
-	if err := b.Start(handshakeCtx, &api.StartOpts{}); err != nil {
-		t.Fatalf("Start: %v", err)
+	err := b.Start(context.Background(), &vibekit.StartOpts{})
+	if err == nil {
+		t.Fatal("Start accepted a nil StartOpts.Lifetime; it must be refused rather than " +
+			"substituted with an uncancellable context at the point the subprocess is spawned")
 	}
-	cancelHandshake()
-
-	if _, err := b.Call(context.Background(), "_probe/ping", map[string]any{}); err != nil {
-		t.Fatalf("Call after the handshake ctx was cancelled: %v", err)
+	if !strings.Contains(err.Error(), "Lifetime") {
+		t.Errorf("error = %v, want it to name the required Lifetime field", err)
+	}
+	if b.SessionID() != "" {
+		t.Errorf("refused Start left a session id (%q); nothing should have been spawned", b.SessionID())
 	}
 }

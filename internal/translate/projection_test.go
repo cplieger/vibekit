@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // seqIDs returns a deterministic id generator so projected transcripts can be
@@ -22,7 +22,7 @@ func seqIDs() func() string {
 
 // replayFrame builds one session/update `update` object. sub is the
 // _meta.kiro.kind for a session_info_update; extra merges into _meta.kiro.
-func replayFrame(t *testing.T, kind api.ACPUpdateKind, text, sub string, extra map[string]any) (api.ACPUpdateKind, json.RawMessage) {
+func replayFrame(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) (vibekit.ACPUpdateKind, json.RawMessage) {
 	t.Helper()
 	kiro := map[string]any{"replay": true}
 	if sub != "" {
@@ -42,35 +42,35 @@ func replayFrame(t *testing.T, kind api.ACPUpdateKind, text, sub string, extra m
 // ingestAll feeds a sequence of (kind, raw) pairs into a fresh Projection.
 func ingestAll(p *Projection, frames [][2]any) {
 	for _, f := range frames {
-		p.Ingest(f[0].(api.ACPUpdateKind), f[1].(json.RawMessage))
+		p.Ingest(f[0].(vibekit.ACPUpdateKind), f[1].(json.RawMessage))
 	}
 }
 
 // measuredCompactedReplay is the EXACT frame sequence a session/load returns
 // for a two-turn session that was then compacted, captured from kiro-cli
 // 2.16.0 on 2026-08-02. The trailing untagged catalog frames are omitted:
-// hub.handleSessionUpdate routes only replay-tagged frames here.
+// agent.handleSessionUpdate routes only replay-tagged frames here.
 func measuredCompactedReplay(t *testing.T) [][2]any {
 	t.Helper()
-	f := func(kind api.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
 	return [][2]any{
 		f(replayUserChunkKind, "Reply with exactly: ONE", "", nil),
-		f(api.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		f(api.ACPUpdateAgentChunk, "ONE", "", nil),
-		f(api.ACPUpdateSessionInfo, "", "context_usage", nil),
-		f(api.ACPUpdateSessionInfo, "", "turn_completion", nil),
-		f(api.ACPUpdateSessionInfo, "", "turn_end", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		f(vibekit.ACPUpdateAgentChunk, "ONE", "", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "context_usage", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_completion", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", nil),
 		f(replayUserChunkKind, "Reply with exactly: TWO", "", nil),
-		f(api.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		f(api.ACPUpdateAgentChunk, "TWO", "", nil),
-		f(api.ACPUpdateSessionInfo, "", "context_usage", nil),
-		f(api.ACPUpdateSessionInfo, "", "turn_completion", nil),
-		f(api.ACPUpdateSessionInfo, "", "turn_end", nil),
-		f(api.ACPUpdateSessionInfo, "", "summarization_separator", map[string]any{"summarizationSeparator": true}),
-		f(api.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		f(vibekit.ACPUpdateAgentChunk, "TWO", "", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "context_usage", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_completion", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "summarization_separator", map[string]any{"summarizationSeparator": true}),
+		f(vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
 			"summaryMessage": map[string]any{"content": "## Goal\nRespond exactly."},
 		}),
 	}
@@ -89,16 +89,16 @@ func TestProjection_MeasuredCompactedReplay(t *testing.T) {
 	got := p.Messages()
 
 	type want struct {
-		role    api.Role
+		role    vibekit.Role
 		content string
-		kind    api.EventKind
+		kind    vibekit.EventKind
 	}
 	expect := []want{
-		{role: api.RoleUser, content: "Reply with exactly: ONE"},
-		{role: api.RoleAssistant, content: "ONE"},
-		{role: api.RoleUser, content: "Reply with exactly: TWO"},
-		{role: api.RoleAssistant, content: "TWO"},
-		{role: api.RoleEvent, content: "## Goal\nRespond exactly.", kind: api.EventCompacted},
+		{role: vibekit.RoleUser, content: "Reply with exactly: ONE"},
+		{role: vibekit.RoleAssistant, content: "ONE"},
+		{role: vibekit.RoleUser, content: "Reply with exactly: TWO"},
+		{role: vibekit.RoleAssistant, content: "TWO"},
+		{role: vibekit.RoleEvent, content: "## Goal\nRespond exactly.", kind: vibekit.EventCompacted},
 	}
 	if len(got) != len(expect) {
 		t.Fatalf("projected %d messages, want %d:\n%s", len(got), len(expect), dumpMessages(got))
@@ -130,9 +130,9 @@ func TestProjection_TurnBracketsSeparateTurns(t *testing.T) {
 	ingestAll(p, measuredCompactedReplay(t))
 	got := p.Messages()
 
-	var assistants []api.Message
+	var assistants []vibekit.Message
 	for _, m := range got {
-		if m.Role == api.RoleAssistant {
+		if m.Role == vibekit.RoleAssistant {
 			assistants = append(assistants, m)
 		}
 	}
@@ -164,7 +164,7 @@ func TestProjection_UserMessagePrecedesTheBracket(t *testing.T) {
 	if len(got) < 2 {
 		t.Fatalf("projected %d messages, want at least 2", len(got))
 	}
-	if got[0].Role != api.RoleUser || got[1].Role != api.RoleAssistant {
+	if got[0].Role != vibekit.RoleUser || got[1].Role != vibekit.RoleAssistant {
 		t.Errorf("first two roles = %s, %s; want user then assistant", got[0].Role, got[1].Role)
 	}
 }
@@ -201,19 +201,19 @@ func TestProjection_CompactionKeepsTheOriginals(t *testing.T) {
 // permanently-spinning card in every restored transcript.
 func TestProjection_ToolCallLandsComplete(t *testing.T) {
 	p := NewProjection(seqIDs())
-	_, start := replayFrame(t, api.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(api.ACPUpdateSessionInfo, start)
+	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
 
-	p.Ingest(api.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(api.ACPUpdateToolCall),
+	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
 		"toolCallId":    "tc-1",
 		"title":         "Read File",
 		"kind":          "read",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(api.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(api.ACPUpdateToolUpdate),
+	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-1",
 		"status":        "completed",
 		"content": []map[string]any{
@@ -230,9 +230,9 @@ func TestProjection_ToolCallLandsComplete(t *testing.T) {
 		t.Fatalf("got %d tool calls, want 1", len(got[0].ToolCalls))
 	}
 	tc := got[0].ToolCalls[0]
-	if tc.Status != api.ToolCompleted {
+	if tc.Status != vibekit.ToolCompleted {
 		t.Errorf("tool status = %q, want %q (the update's terminal status must be folded in)",
-			tc.Status, api.ToolCompleted)
+			tc.Status, vibekit.ToolCompleted)
 	}
 	if !strings.Contains(tc.Output, "file body") {
 		t.Errorf("tool output = %q, want the update's content", tc.Output)
@@ -241,7 +241,7 @@ func TestProjection_ToolCallLandsComplete(t *testing.T) {
 	// rather than dropping it.
 	var sawToolBlock bool
 	for _, b := range got[0].Blocks {
-		if b.Type == api.BlockToolUse && b.ToolCallID == "tc-1" {
+		if b.Type == vibekit.BlockToolUse && b.ToolCallID == "tc-1" {
 			sawToolBlock = true
 		}
 	}
@@ -256,10 +256,10 @@ func TestProjection_ToolCallLandsComplete(t *testing.T) {
 // a restored conversation's content.
 func TestProjection_ReasoningBecomesAThinkingBlock(t *testing.T) {
 	p := NewProjection(seqIDs())
-	_, start := replayFrame(t, api.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(api.ACPUpdateSessionInfo, start)
-	_, th := replayFrame(t, api.ACPUpdateThoughtChunk, "weighing options", "", nil)
-	p.Ingest(api.ACPUpdateThoughtChunk, th)
+	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+	_, th := replayFrame(t, vibekit.ACPUpdateThoughtChunk, "weighing options", "", nil)
+	p.Ingest(vibekit.ACPUpdateThoughtChunk, th)
 
 	got := p.Messages()
 	if len(got) != 1 {
@@ -270,7 +270,7 @@ func TestProjection_ReasoningBecomesAThinkingBlock(t *testing.T) {
 	}
 	var sawThinking bool
 	for _, b := range got[0].Blocks {
-		if b.Type == api.BlockThinking && b.Thinking == "weighing options" {
+		if b.Type == vibekit.BlockThinking && b.Thinking == "weighing options" {
 			sawThinking = true
 		}
 	}
@@ -286,8 +286,8 @@ func TestProjection_ReasoningBecomesAThinkingBlock(t *testing.T) {
 func TestProjection_EmptyTurnIsDropped(t *testing.T) {
 	p := NewProjection(seqIDs())
 	for _, sub := range []string{"turn_start", "turn_end"} {
-		_, raw := replayFrame(t, api.ACPUpdateSessionInfo, "", sub, nil)
-		p.Ingest(api.ACPUpdateSessionInfo, raw)
+		_, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", sub, nil)
+		p.Ingest(vibekit.ACPUpdateSessionInfo, raw)
 	}
 	if got := p.Messages(); len(got) != 0 {
 		t.Errorf("projected %d messages from an empty turn, want 0:\n%s", len(got), dumpMessages(got))
@@ -300,10 +300,10 @@ func TestProjection_EmptyTurnIsDropped(t *testing.T) {
 // arbitrary place.
 func TestProjection_SummaryWithoutSeparatorIsIgnored(t *testing.T) {
 	p := NewProjection(seqIDs())
-	_, raw := replayFrame(t, api.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+	_, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
 		"summaryMessage": map[string]any{"content": "orphan summary"},
 	})
-	p.Ingest(api.ACPUpdateSessionInfo, raw)
+	p.Ingest(vibekit.ACPUpdateSessionInfo, raw)
 
 	if got := p.Messages(); len(got) != 0 {
 		t.Errorf("projected %d messages, want 0:\n%s", len(got), dumpMessages(got))
@@ -313,7 +313,7 @@ func TestProjection_SummaryWithoutSeparatorIsIgnored(t *testing.T) {
 	}
 }
 
-func dumpMessages(ms []api.Message) string {
+func dumpMessages(ms []vibekit.Message) string {
 	var b strings.Builder
 	for i, m := range ms {
 		fmt.Fprintf(&b, "  [%d] role=%s kind=%s id=%s content=%q tools=%d\n",
@@ -335,12 +335,12 @@ func dumpMessages(ms []api.Message) string {
 // first, and a synthetic id would not exercise that.
 func probe23Turn(t *testing.T) [][2]any {
 	t.Helper()
-	f := func(kind api.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
 	toolCall := mustJSON(t, map[string]any{
-		"sessionUpdate": string(api.ACPUpdateToolCall),
+		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
 		"toolCallId":    "tooluse_bNV19vGaS2y5nx7WcVCyFx",
 		"title":         "Write File",
 		"kind":          "edit",
@@ -356,13 +356,13 @@ func probe23Turn(t *testing.T) [][2]any {
 			"messageId": "ca4b4050-d45b-44d9-8a99-f72e79cc2767",
 			"timestamp": "2026-08-01T00:33:12.051Z",
 		}),
-		f(api.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		{api.ACPUpdateToolCall, toolCall},
-		f(api.ACPUpdateAgentChunk, "Done.", "", map[string]any{
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		{vibekit.ACPUpdateToolCall, toolCall},
+		f(vibekit.ACPUpdateAgentChunk, "Done.", "", map[string]any{
 			"messageId": "2f5d57c4-152e-4825-8dcf-fda9668b4693-say",
 			"timestamp": "2026-08-01T00:33:17.880Z",
 		}),
-		f(api.ACPUpdateSessionInfo, "", "turn_end", nil),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", nil),
 	}
 }
 
@@ -463,12 +463,12 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 	ingestAll(p, probe23Turn(t))
 	ingestAll(p, [][2]any{
 		func() [2]any {
-			k, raw := replayFrame(t, api.ACPUpdateSessionInfo, "", "summarization_separator",
+			k, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
 				map[string]any{"summarizationSeparator": true})
 			return [2]any{k, raw}
 		}(),
 		func() [2]any {
-			k, raw := replayFrame(t, api.ACPUpdateSessionInfo, "", "summary_message",
+			k, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message",
 				map[string]any{"summaryMessage": map[string]any{"content": "## Goal\nMANGO."}})
 			return [2]any{k, raw}
 		}(),
@@ -476,8 +476,8 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 	got := p.Messages()
 
 	last := got[len(got)-1]
-	if last.EventKind != api.EventCompacted {
-		t.Fatalf("last message event kind = %q, want %q", last.EventKind, api.EventCompacted)
+	if last.EventKind != vibekit.EventCompacted {
+		t.Fatalf("last message event kind = %q, want %q", last.EventKind, vibekit.EventCompacted)
 	}
 	// The assistant turn it follows is stamped 1785544395522.
 	if last.Ts != 1785544395522 {
@@ -513,7 +513,7 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 // And the wire cannot even do it faithfully: with no id and no count, position
 // is all there is.
 func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
-	f := func(kind api.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
@@ -523,19 +523,19 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 				"messageId": fmt.Sprintf("user-%d", n),
 				"timestamp": fmt.Sprintf("2026-08-02T20:0%d:00.000Z", n),
 			}),
-			f(api.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-			f(api.ACPUpdateAgentChunk, reply, "", map[string]any{
+			f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+			f(vibekit.ACPUpdateAgentChunk, reply, "", map[string]any{
 				"messageId": fmt.Sprintf("agent-%d-say", n),
 				"timestamp": fmt.Sprintf("2026-08-02T20:0%d:30.000Z", n),
 			}),
-			f(api.ACPUpdateSessionInfo, "", "turn_end", nil),
+			f(vibekit.ACPUpdateSessionInfo, "", "turn_end", nil),
 		}
 	}
 	compaction := func(summary string) [][2]any {
 		return [][2]any{
-			f(api.ACPUpdateSessionInfo, "", "summarization_separator",
+			f(vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
 				map[string]any{"summarizationSeparator": true}),
-			f(api.ACPUpdateSessionInfo, "", "summary_message",
+			f(vibekit.ACPUpdateSessionInfo, "", "summary_message",
 				map[string]any{"summaryMessage": map[string]any{"content": summary}}),
 		}
 	}
@@ -568,7 +568,7 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 	for _, wantText := range []string{"ONE", "TWO", "THREE", "FOUR"} {
 		found := false
 		for _, m := range got {
-			if m.Role == api.RoleAssistant && m.Content == wantText {
+			if m.Role == vibekit.RoleAssistant && m.Content == wantText {
 				found = true
 				break
 			}
@@ -581,7 +581,7 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 	// Both compaction events are present, in order, at their separators.
 	var events []int
 	for i, m := range got {
-		if m.EventKind == api.EventCompacted {
+		if m.EventKind == vibekit.EventCompacted {
 			events = append(events, i)
 		}
 	}

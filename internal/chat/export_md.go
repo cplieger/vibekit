@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // renderChatMarkdown renders a persisted chat as a self-contained Markdown
@@ -16,11 +17,11 @@ import (
 // and collapsible tool-call summaries. It is pure (no I/O) so it is
 // unit-testable and safe to call inline on the chat read path.
 //
-// Tool input/output is passed through api.SanitizeOutput before embedding —
+// Tool input/output is passed through sanitize.Output before embedding —
 // the same ANSI-strip + hidden-codepoint scrub the store applies when
 // persisting tool output — so a hostile tool result can't smuggle terminal
 // escapes or prompt-injection codepoints into the exported file.
-func renderChatMarkdown(c *api.Chat) string {
+func renderChatMarkdown(c *vibekit.Chat) string {
 	var b strings.Builder
 	title := oneLine(c.Name)
 	if title == "" {
@@ -40,7 +41,7 @@ func renderChatMarkdown(c *api.Chat) string {
 
 // writeChatMetadata emits the header bullet list (id, model, mode,
 // timestamps, message count). Empty fields are skipped.
-func writeChatMetadata(b *strings.Builder, c *api.Chat) {
+func writeChatMetadata(b *strings.Builder, c *vibekit.Chat) {
 	if c.ID != "" {
 		fmt.Fprintf(b, "- **Chat ID:** `%s`\n", oneLine(c.ID))
 	}
@@ -61,7 +62,7 @@ func writeChatMetadata(b *strings.Builder, c *api.Chat) {
 
 // writeMessageMarkdown renders one message: heading, timestamp, reasoning
 // (collapsible), content, plan checklist, and tool calls, then a rule.
-func writeMessageMarkdown(b *strings.Builder, m *api.Message) {
+func writeMessageMarkdown(b *strings.Builder, m *vibekit.Message) {
 	b.WriteString(messageHeading(m))
 	if ts := mdTimestamp(m.Ts); ts != "" {
 		fmt.Fprintf(b, "_%s_\n\n", ts)
@@ -86,13 +87,13 @@ func writeMessageMarkdown(b *strings.Builder, m *api.Message) {
 
 // messageHeading returns the "## Role" heading (with the event kind for
 // event messages) including its trailing blank line.
-func messageHeading(m *api.Message) string {
+func messageHeading(m *vibekit.Message) string {
 	switch m.Role {
-	case api.RoleUser:
+	case vibekit.RoleUser:
 		return "## User\n\n"
-	case api.RoleAssistant:
+	case vibekit.RoleAssistant:
 		return "## Assistant\n\n"
-	case api.RoleEvent:
+	case vibekit.RoleEvent:
 		kind := oneLine(string(m.EventKind))
 		if kind == "" {
 			kind = "event"
@@ -109,16 +110,16 @@ func messageHeading(m *api.Message) string {
 
 // writePlanMarkdown renders the plan as a GitHub task-list checklist.
 // Completed → [x]; in-progress → [ ] with a suffix (GFM has no third box).
-func writePlanMarkdown(b *strings.Builder, plan []api.PlanEntry) {
+func writePlanMarkdown(b *strings.Builder, plan []vibekit.PlanEntry) {
 	b.WriteString("**Plan**\n\n")
 	for i := range plan {
 		box, suffix := "[ ]", ""
 		switch plan[i].Status {
-		case api.PlanCompleted:
+		case vibekit.PlanCompleted:
 			box = "[x]"
-		case api.PlanInProgress:
+		case vibekit.PlanInProgress:
 			suffix = " _(in progress)_"
-		case api.PlanPending:
+		case vibekit.PlanPending:
 			// leave the default unchecked box
 		}
 		fmt.Fprintf(b, "- %s %s%s\n", box, oneLine(plan[i].Content), suffix)
@@ -129,7 +130,7 @@ func writePlanMarkdown(b *strings.Builder, plan []api.PlanEntry) {
 // writeToolCallMarkdown renders one tool call as a collapsible block:
 // "Tool: <title> — <status>" summary, then duration, locations, and the
 // sanitised input/output in fenced code blocks.
-func writeToolCallMarkdown(b *strings.Builder, tc *api.ToolCall) {
+func writeToolCallMarkdown(b *strings.Builder, tc *vibekit.ToolCall) {
 	title := oneLine(tc.Title)
 	if title == "" {
 		title = oneLine(string(tc.Kind))
@@ -148,17 +149,17 @@ func writeToolCallMarkdown(b *strings.Builder, tc *api.ToolCall) {
 	writeToolLocations(b, tc.Locations)
 	if in := formatToolInput(tc.Input); in != "" {
 		b.WriteString("Input:\n\n")
-		b.WriteString(fencedCode(api.SanitizeOutput(in), "json"))
+		b.WriteString(fencedCode(sanitize.Output(in), "json"))
 	}
 	if out := strings.TrimSpace(tc.Output); out != "" {
 		b.WriteString("Output:\n\n")
-		b.WriteString(fencedCode(api.SanitizeOutput(out), ""))
+		b.WriteString(fencedCode(sanitize.Output(out), ""))
 	}
 	b.WriteString("</details>\n\n")
 }
 
 // writeToolLocations renders the tool call's file locations as a list.
-func writeToolLocations(b *strings.Builder, locs []api.ToolLocation) {
+func writeToolLocations(b *strings.Builder, locs []vibekit.ToolLocation) {
 	if len(locs) == 0 {
 		return
 	}

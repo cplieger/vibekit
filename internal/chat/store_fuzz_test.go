@@ -3,7 +3,7 @@ package chat
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func FuzzStore_MutateGetRoundTrip(f *testing.F) {
@@ -20,11 +20,11 @@ func FuzzStore_MutateGetRoundTrip(f *testing.F) {
 			t.Fatalf("NewStore: %v", err)
 		}
 
-		chatID := api.ChatID("fuzz-chat-1")
+		chatID := vibekit.ChatID("fuzz-chat-1")
 		ctx := t.Context()
 
 		// Create chat with fuzzed name.
-		err = s.Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+		err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 			c.Name = name
 			return true
 		})
@@ -33,9 +33,9 @@ func FuzzStore_MutateGetRoundTrip(f *testing.F) {
 		}
 
 		// Append message with fuzzed content.
-		msg := &api.Message{
+		msg := &vibekit.Message{
 			ID:      "msg-1",
-			Role:    api.RoleAssistant,
+			Role:    vibekit.RoleAssistant,
 			Content: content,
 		}
 		err = s.AppendMessage(ctx, chatID, msg)

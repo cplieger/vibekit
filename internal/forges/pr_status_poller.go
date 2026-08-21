@@ -65,8 +65,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/push"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // PRPollInterval is the ACTIVE rate: how often the poller looks while it is
@@ -120,12 +120,15 @@ type PRSource interface {
 	OpenAuthoredPRs(ctx context.Context) ([]WatchedPR, error)
 }
 
-// PRNotifier is the slice of the push service the poller uses. The signature
-// matches api.PushService.Send exactly, so *push.Service satisfies this directly
-// and there is no adapter to keep in step.
+// PRNotifier is the slice of the push service the poller uses: 2 of the 8
+// methods *push.Service offers. The signatures match the concrete methods
+// exactly, so it satisfies this directly and there is no adapter to keep in
+// step. Identical in shape to internal/agent's pushNotifier, and deliberately a
+// separate declaration — two consumers restating two methods each is cheaper
+// than one contract every package imports.
 type PRNotifier interface {
 	HasSubscribers() bool
-	Send(ctx context.Context, title, body string, kind api.PushKind, subject api.PushSubject)
+	Send(ctx context.Context, title, body string, kind vibekit.PushKind, subject vibekit.PushSubject)
 }
 
 // PRStatusPoller notifies on a CI flip. Construct with NewPRStatusPoller and call
@@ -230,8 +233,8 @@ func (p *PRStatusPoller) sweep(ctx context.Context) {
 			// INTO pending is the run starting, which the user caused by pushing.
 			continue
 		}
-		p.push.Send(ctx, push.DefaultTitle, prStatusBody(pr), api.PushKindPRStatus,
-			api.PRSubject(pr.ForgeID, pr.Repo, pr.Number))
+		p.push.Send(ctx, push.DefaultTitle, prStatusBody(pr), vibekit.PushKindPRStatus,
+			vibekit.PRSubject(pr.ForgeID, pr.Repo, pr.Number))
 	}
 	// Drop the PRs that closed or merged since the last tick, so a process running
 	// for weeks holds one entry per OPEN pull request rather than per PR ever seen.
@@ -245,7 +248,7 @@ func (p *PRStatusPoller) sweep(ctx context.Context) {
 // prSubjectKey is the poller's own state key, and it is the notification's subject
 // key so the two cannot describe different things.
 func prSubjectKey(pr WatchedPR) string {
-	return api.PRSubject(pr.ForgeID, pr.Repo, pr.Number).Key
+	return vibekit.PRSubject(pr.ForgeID, pr.Repo, pr.Number).Key
 }
 
 // isSettledCheck reports whether a verdict is one worth interrupting for.

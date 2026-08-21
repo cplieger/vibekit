@@ -5,41 +5,41 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
-	c := &api.Chat{
+	c := &vibekit.Chat{
 		ID:            "abc123",
 		Name:          "My Chat",
 		Model:         "claude-x",
 		CurrentModeID: "vibe",
 		CreatedAt:     1_700_000_000_000,
 		UpdatedAt:     1_700_000_100_000,
-		Messages: []api.Message{
-			{ID: "m1", Role: api.RoleUser, Content: "hello there", Ts: 1_700_000_000_000},
+		Messages: []vibekit.Message{
+			{ID: "m1", Role: vibekit.RoleUser, Content: "hello there", Ts: 1_700_000_000_000},
 			{
 				ID:        "m2",
-				Role:      api.RoleAssistant,
+				Role:      vibekit.RoleAssistant,
 				Content:   "hi back",
 				Reasoning: "let me think about this",
-				Plan: []api.PlanEntry{
-					{Content: "step one", Status: api.PlanCompleted},
-					{Content: "step two", Status: api.PlanInProgress},
-					{Content: "step three", Status: api.PlanPending},
+				Plan: []vibekit.PlanEntry{
+					{Content: "step one", Status: vibekit.PlanCompleted},
+					{Content: "step two", Status: vibekit.PlanInProgress},
+					{Content: "step three", Status: vibekit.PlanPending},
 				},
-				ToolCalls: []api.ToolCall{{
+				ToolCalls: []vibekit.ToolCall{{
 					ID:        "t1",
 					Title:     "read file",
-					Kind:      api.ToolKindRead,
-					Status:    api.ToolCompleted,
+					Kind:      vibekit.ToolKindRead,
+					Status:    vibekit.ToolCompleted,
 					Output:    "file contents here",
 					Input:     json.RawMessage(`{"path":"a.go"}`),
-					Locations: []api.ToolLocation{{Path: "a.go", Line: 3}},
+					Locations: []vibekit.ToolLocation{{Path: "a.go", Line: 3}},
 				}},
 				Ts: 1_700_000_050_000,
 			},
-			{ID: "m3", Role: api.RoleEvent, EventKind: api.EventInterrupted, Content: "interrupted by restart", Ts: 1_700_000_060_000},
+			{ID: "m3", Role: vibekit.RoleEvent, EventKind: vibekit.EventInterrupted, Content: "interrupted by restart", Ts: 1_700_000_060_000},
 		},
 	}
 
@@ -76,7 +76,7 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 }
 
 func TestRenderChatMarkdown_EmptyMessages(t *testing.T) {
-	md := renderChatMarkdown(&api.Chat{ID: "c1", Name: "Empty"})
+	md := renderChatMarkdown(&vibekit.Chat{ID: "c1", Name: "Empty"})
 	if !strings.Contains(md, "# Empty") {
 		t.Errorf("missing title: %q", md)
 	}
@@ -87,10 +87,10 @@ func TestRenderChatMarkdown_EmptyMessages(t *testing.T) {
 
 func TestRenderChatMarkdown_FallbackTitleAndOneLineName(t *testing.T) {
 	// Empty name → fallback title; CR/LF in a name must not break the heading.
-	if md := renderChatMarkdown(&api.Chat{ID: "c1"}); !strings.Contains(md, "# Untitled chat") {
+	if md := renderChatMarkdown(&vibekit.Chat{ID: "c1"}); !strings.Contains(md, "# Untitled chat") {
 		t.Errorf("missing fallback title: %q", md)
 	}
-	md := renderChatMarkdown(&api.Chat{ID: "c1", Name: "line1\nline2"})
+	md := renderChatMarkdown(&vibekit.Chat{ID: "c1", Name: "line1\nline2"})
 	if !strings.Contains(md, "# line1 line2") {
 		t.Errorf("newline in name not collapsed: %q", md)
 	}
@@ -98,13 +98,13 @@ func TestRenderChatMarkdown_FallbackTitleAndOneLineName(t *testing.T) {
 
 func TestRenderChatMarkdown_SanitisesToolOutput(t *testing.T) {
 	// A hidden bidi-control codepoint in tool output must be scrubbed by the
-	// api.SanitizeOutput pass the renderer applies.
-	c := &api.Chat{
+	// sanitize.Output pass the renderer applies.
+	c := &vibekit.Chat{
 		ID: "c1", Name: "S",
-		Messages: []api.Message{{
-			ID: "m1", Role: api.RoleAssistant,
-			ToolCalls: []api.ToolCall{{
-				ID: "t1", Title: "run", Status: api.ToolCompleted,
+		Messages: []vibekit.Message{{
+			ID: "m1", Role: vibekit.RoleAssistant,
+			ToolCalls: []vibekit.ToolCall{{
+				ID: "t1", Title: "run", Status: vibekit.ToolCompleted,
 				Output: "safe\u202etext", // U+202E RIGHT-TO-LEFT OVERRIDE
 			}},
 		}},

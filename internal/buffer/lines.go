@@ -2,10 +2,11 @@ package buffer
 
 import (
 	"container/heap"
+	"slices"
 	"strings"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // LineRange is a range of lines modified by the agent.
@@ -36,6 +37,7 @@ func (h fileHeap) Len() int           { return len(h) }
 func (h fileHeap) Less(i, j int) bool { return h[i].lastTurn < h[j].lastTurn }
 func (h fileHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i]; h[i].index = i; h[j].index = j }
 func (h *fileHeap) Push(x any)        { e, _ := x.(*fileHeapEntry); e.index = len(*h); *h = append(*h, e) }
+
 func (h *fileHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -55,17 +57,26 @@ type chatLineState struct {
 
 // LineTracker tracks per-file line changes across all chats.
 type LineTracker struct {
-	data map[api.ChatID]*chatLineState
+	data map[vibekit.ChatID]*chatLineState
 	mu   sync.RWMutex
 }
 
 // NewLineTracker creates a new LineTracker.
 func NewLineTracker() *LineTracker {
-	return &LineTracker{data: make(map[api.ChatID]*chatLineState)}
+	return &LineTracker{data: make(map[vibekit.ChatID]*chatLineState)}
 }
 
 // Record adds a line range for a file change.
-func (lt *LineTracker) Record(chatID api.ChatID, filePath string, startLine, endLine, turn int, kind string) {
+//
+// The range travels as a LineRange rather than as `startLine, endLine, turn int,
+// kind string`: three adjacent ints with no relationship the compiler can see,
+// where a transposition is silent. Swapping start and end stores an inverted
+// range the editor's changed-line gutter then paints backwards or not at all;
+// swapping either with turn corrupts the eviction key, because the heap orders
+// files by lastTurn and a line number used as a turn makes the wrong file the
+// oldest. The struct is the one the tracker stores anyway, so this also deletes
+// a field-by-field copy that could drift from it.
+func (lt *LineTracker) Record(chatID vibekit.ChatID, filePath string, r LineRange) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	state := lt.data[chatID]
@@ -86,25 +97,20 @@ func (lt *LineTracker) Record(chatID api.ChatID, filePath string, startLine, end
 	if len(existing) >= maxLineRangesPerFile {
 		existing = existing[1:]
 	}
-	state.ranges[filePath] = append(existing, LineRange{
-		StartLine: startLine,
-		EndLine:   endLine,
-		Turn:      turn,
-		Kind:      kind,
-	})
+	state.ranges[filePath] = append(existing, r)
 	// Update or insert heap entry.
 	if e, ok := state.entries[filePath]; ok {
-		e.lastTurn = turn
+		e.lastTurn = r.Turn
 		heap.Fix(&state.h, e.index)
 	} else {
-		e = &fileHeapEntry{path: filePath, lastTurn: turn}
+		e = &fileHeapEntry{path: filePath, lastTurn: r.Turn}
 		state.entries[filePath] = e
 		heap.Push(&state.h, e)
 	}
 }
 
 // RecordFromDiffs extracts line ranges from tool call diffs.
-func (lt *LineTracker) RecordFromDiffs(chatID api.ChatID, diffs []api.ToolDiff, turn int, kind string) {
+func (lt *LineTracker) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
 	for _, d := range diffs {
 		if d.Path == "" || d.NewText == "" {
 			continue
@@ -116,23 +122,31 @@ func (lt *LineTracker) RecordFromDiffs(chatID api.ChatID, diffs []api.ToolDiff, 
 		if lines == 0 {
 			lines = 1
 		}
-		lt.Record(chatID, d.Path, 1, lines, turn, kind)
+		lt.Record(chatID, d.Path, LineRange{StartLine: 1, EndLine: lines, Turn: turn, Kind: kind})
 	}
 }
 
 // Get returns the line ranges for a file in a chat.
-func (lt *LineTracker) Get(chatID api.ChatID, filePath string) []LineRange {
+//
+// A COPY, for the same reason Snapshot clones its three slices: the production
+// caller is an HTTP handler (agent/line_tracker.go) that reads the result after
+// this returns and drops the read lock, while the dispatch loop keeps calling
+// Record on the same key. Handing out the tracker's own slice made the handler's
+// read depend on Record's growth pattern — today's appends only ever write at or
+// past the returned length, so nothing overlapped, but that is a property of the
+// current eviction code rather than of this contract.
+func (lt *LineTracker) Get(chatID vibekit.ChatID, filePath string) []LineRange {
 	lt.mu.RLock()
 	defer lt.mu.RUnlock()
 	state := lt.data[chatID]
 	if state == nil {
 		return nil
 	}
-	return state.ranges[filePath]
+	return slices.Clone(state.ranges[filePath])
 }
 
 // Clear removes all tracking data for a chat.
-func (lt *LineTracker) Clear(chatID api.ChatID) {
+func (lt *LineTracker) Clear(chatID vibekit.ChatID) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	delete(lt.data, chatID)

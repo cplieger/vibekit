@@ -289,7 +289,7 @@ export interface Session {
 }
 
 /** One resumable KAS session, from GET /api/sessions. Mirrors
- *  api.ResumableSession. */
+ *  vibekit.ResumableSession. */
 export interface ResumableSessionRow {
   session_id: string;
   title: string;
@@ -304,7 +304,7 @@ export interface ResumableSessionRow {
 }
 
 /** One previous workflow run, from GET /api/sessions. Mirrors
- *  api.WorkflowRun. */
+ *  vibekit.WorkflowRun. */
 export interface WorkflowRunRow {
   workflow_id: string;
   name: string;

@@ -1,6 +1,6 @@
 // Command wirecheck asserts wire-protocol compatibility between the Go
 // server half (the web-terminal-engine module go.mod pins, used by the PTY
-// shell in internal/hub) and the bundled TS client half (the Dockerfile-ARG-
+// shell in internal/agent) and the bundled TS client half (the Dockerfile-ARG-
 // pinned npm artifact that static-src/shell.ts imports). The two halves are
 // pinned INDEPENDENTLY — Renovate moves the Go module and the npm ARG in
 // separate PRs, and a Go-only engine release publishes no npm package at all —

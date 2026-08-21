@@ -808,4 +808,56 @@ describe("initAttention", () => {
     setTabStatus("a", "failed");
     expect(iconVariant()).toBe("/favicon-done.svg");
   });
+
+  it("hands the page's own icon back when the page goes away with a cue lit", () => {
+    // A browser remembers one icon per URL and shows it for the bookmark, the
+    // history row and the new-tab tile. A tab closed on a lit cue would leave a
+    // status variant standing in for this app until the next page load.
+    openTab(chatTab("a"), { activate: false });
+    setTabStatus("a", "done");
+    expect(iconVariant()).toBe("/favicon-done.svg");
+
+    window.dispatchEvent(new Event("pagehide"));
+
+    expect(iconVariant()).toBe("/favicon.svg");
+    expect(document.title).toBe("Vibekit for Kiro");
+  });
+
+  it("KEEPS the cue when the browser merely freezes a background tab", () => {
+    // The case the restore must not reach. A frozen tab is still in the strip
+    // rendering its icon, so `freeze` is not a proxy for the page going away and
+    // restoring there would blank the cue in exactly the case it exists for.
+    openTab(chatTab("a"), { activate: false });
+    setTabStatus("a", "input");
+
+    document.dispatchEvent(new Event("freeze"));
+
+    expect(iconVariant()).toBe("/favicon-input.svg");
+    expect(count()).toBe(1);
+  });
+
+  it("repaints the cue when the page comes back from the bfcache", () => {
+    // pagehide fires on bfcache entry too, and that page can return. The sinks
+    // are change-gated, so the fold has to be re-run rather than trusted.
+    openTab(chatTab("a"), { activate: false });
+    setTabStatus("a", "failed");
+    window.dispatchEvent(new Event("pagehide"));
+    expect(iconVariant()).toBe("/favicon.svg");
+
+    const restored = new Event("pageshow");
+    Object.defineProperty(restored, "persisted", { value: true });
+    window.dispatchEvent(restored);
+
+    expect(iconVariant()).toBe("/favicon-alert.svg");
+    expect(count()).toBe(1);
+  });
+
+  it("stops restoring once disposed", () => {
+    openTab(chatTab("a"), { activate: false });
+    setTabStatus("a", "done");
+    dispose?.();
+    dispose = null;
+    window.dispatchEvent(new Event("pagehide"));
+    expect(iconVariant()).toBe("/favicon-done.svg");
+  });
 });

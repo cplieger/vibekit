@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logctl"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 )
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
@@ -25,26 +27,26 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		handleSteeringPut(w, r, path)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }
 
 func handleSteeringGet(w http.ResponseWriter, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		api.WriteJSON(w, map[string]string{"content": ""})
+		webhttp.WriteJSON(w, map[string]string{"content": ""})
 		return
 	}
-	api.WriteJSON(w, map[string]string{"content": string(data)})
+	webhttp.WriteJSON(w, map[string]string{"content": string(data)})
 }
 
 func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
-	api.LimitBody(w, r, api.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var body struct {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		api.BadRequest(w, "bad request")
+		httpreply.BadRequest(w, "bad request")
 		return
 	}
 	// Empty content (whitespace only) means "no custom instructions":
@@ -52,10 +54,10 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	// kiro-cli would include the empty file on every agent load.
 	if strings.TrimSpace(body.Content) == "" {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			api.InternalError(w, err)
+			httpreply.InternalError(w, err)
 			return
 		}
-		api.Ok(w)
+		webhttp.Ok(w)
 		return
 	}
 	if r.Context().Err() != nil {
@@ -73,14 +75,14 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	res, err := atomicfile.WriteFile(r.Context(), path, []byte(body.Content),
 		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
 	if err != nil {
-		api.InternalError(w, err)
+		httpreply.InternalError(w, err)
 		return
 	}
 	if !res.Durable {
 		slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	api.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -91,17 +93,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut, http.MethodPatch:
 		s.handleSettingsWrite(w, r, path)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
 	}
 }
 
 func handleSettingsGet(w http.ResponseWriter, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		api.WriteJSON(w, settings.DefaultSettings())
+		webhttp.WriteJSON(w, settings.Default())
 		return
 	}
-	w.Header().Set("Content-Type", api.MIMETypeJSON)
+	w.Header().Set("Content-Type", httpreply.MIMETypeJSON)
 	_, _ = w.Write(data)
 }
 
@@ -133,10 +135,10 @@ func readExistingSettings(path string) map[string]json.RawMessage {
 }
 
 func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, path string) {
-	api.LimitBody(w, r, api.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-		api.BadRequest(w, "invalid json")
+		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	// Warn (don't reject) on unknown top-level keys so a typo
@@ -174,7 +176,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 	}
 	pretty, err := json.MarshalIndent(patch, "", "  ")
 	if err != nil {
-		api.BadRequest(w, "invalid json")
+		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	if r.Context().Err() != nil {
@@ -191,17 +193,17 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 	res, wErr := atomicfile.WriteFile(r.Context(), path, append(pretty, '\n'),
 		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
 	if wErr != nil {
-		api.InternalError(w, wErr)
+		httpreply.InternalError(w, wErr)
 		return
 	}
 	if !res.Durable {
 		slog.Warn("settings: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	api.Ok(w)
-	s.hub.Broadcast(r.Context(), api.NewEvent(api.EventSettingsUpdated, "", api.SettingsUpdatedPayload{}))
+	webhttp.Ok(w)
+	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(patch)
-	s.syncDebugLogs(patch)
+	syncDebugLogs(patch)
 }
 
 // syncPushPreferences reads notification preference toggles from the settings
@@ -210,7 +212,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 // It DERIVES the kind set from push.Kinds() rather than naming the kinds here.
 // This used to be a hand-written map with both kinds spelled out and a single
 // `if` reading one key, which made it a THIRD copy of the kind set beside
-// api.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
+// vibekit.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
 // to config.json and then never reached the running service until the next SSE
 // reconnect happened to call ReloadPreferences.
 //
@@ -231,7 +233,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 // internal/settings/defaults.go.
 func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 	kinds := push.Kinds()
-	prefs := make(map[api.PushKind]bool, len(kinds))
+	prefs := make(map[vibekit.PushKind]bool, len(kinds))
 	// Read at most once, and only when a key is actually missing: the merged
 	// document every current caller passes needs no disk read at all.
 	var persisted map[string]json.RawMessage
@@ -261,7 +263,7 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 
 // syncDebugLogs flips the process-wide slog level when the user
 // toggles the Debug logs setting.
-func (s *Server) syncDebugLogs(patch map[string]json.RawMessage) {
+func syncDebugLogs(patch map[string]json.RawMessage) {
 	v, ok := patch[settings.KeyDebugLogs]
 	if !ok {
 		return

@@ -444,7 +444,7 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
 // The THIRD gate. `read_only` and `delete_protected` govern the control slot;
 // this one governs the activation surface too, because the file is not reachable
 // at all — the container HOME is deny-listed by the file surface
-// (internal/filehandler), and a `~`-prefixed display path would not resolve
+// (internal/filebrowse), and a `~`-prefixed display path would not resolve
 // first. The three must AGREE rather than stack: a row whose controls are
 // withheld must not still open an editable file on click.
 describe("the Hooks tab: a global hook is unreachable, not merely read-only", () => {

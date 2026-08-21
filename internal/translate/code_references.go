@@ -26,7 +26,7 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // v3CodeReferences is the _kiro/code_references notification payload.
@@ -49,7 +49,7 @@ type v3CodeReference struct {
 // persisted onto the finalized assistant message at turn end (bridge_coord.go)
 // so the chip survives reload — the streamed assistant turn is never
 // re-broadcast as message_appended.
-func (t *Translator) HandleCodeReferences(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3CodeReferences](msg, "code_references")
 	if !ok {
 		return
@@ -62,14 +62,14 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID api.ChatID
 	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}
-	refs := make([]api.CodeReference, 0, len(p.References))
+	refs := make([]vibekit.CodeReference, 0, len(p.References))
 	for _, r := range p.References {
 		// Match KAS's own filter: a reference with no license name carries
 		// no attribution value.
 		if r.LicenseName == "" {
 			continue
 		}
-		refs = append(refs, api.CodeReference{
+		refs = append(refs, vibekit.CodeReference{
 			LicenseName: r.LicenseName,
 			Repository:  r.Repository,
 			URL:         r.URL,
@@ -78,7 +78,7 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID api.ChatID
 	if len(refs) == 0 {
 		return
 	}
-	buf := t.deps.BufferStore().GetOrInit(chatID)
+	buf := t.buffers.GetOrInit(chatID)
 	// Only attach to an in-flight turn. References fire mid-completion (the
 	// model must generate the licensed code first), so by the time one
 	// arrives the assistant buffer is Started with a message id. Dropping a
@@ -88,7 +88,7 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID api.ChatID
 		return
 	}
 	all := buf.AppendCodeReferences(refs)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventCodeReferences, chatID, api.CodeReferencesPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
 		MessageID:  buf.MessageID,
 		References: all,
 	}))

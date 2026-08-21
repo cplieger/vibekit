@@ -11,7 +11,7 @@ lists the hardening in progress.
 A self-hosted web front-end that drives a kiro-cli coding agent over ACP, with
 chat persistence, subagents, MCP integration, and push notifications. By
 design it can run an agent that executes commands and edits files, so its
-**intended capability is powerful**; the security model is about who may reach
+**intended capability is powerful**; the security model is about who can reach
 it and keeping per-chat data isolated, not about sandboxing the agent.
 
 ## Security model
@@ -28,8 +28,8 @@ can reach vibekit."
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | Cross-chat data access (one chat reading another's blobs) | chat-scoped blob access: `ReadBlob` returns 404 if the chat's event log doesn't reference the SHA  | checkpoint/blob tests                      |
 | MCP secret mishandling                                    | structured secret round-trip in the MCP layer; secrets not logged                                  | `internal/mcp`, mcp tests                  |
-| Push-notification crypto errors                           | push payload crypto exercised under fuzz                                                           | `internal/push/crypto/crypto_fuzz_test.go` |
-| Malformed ACP / wire input                                | hardened decoders; large Go + property/fuzz suite (400+ test files, 150+ fuzz targets)             | weekly fuzz + gremlins                     |
+| Push-notification crypto errors                           | push payload crypto exercised under fuzz                                                           | `internal/push/crypto_fuzz_test.go`        |
+| Malformed ACP / wire input                                | hardened decoders; large Go + property/fuzz suite (350+ test files, 160+ fuzz targets)             | weekly fuzz + gremlins                     |
 | Stale/empty embedded UI shipped                           | CI image smoke test starts the container and asserts the health endpoint serves                    | image smoke test (CI docker job)           |
 | Reaching vibekit without authorisation                    | network/auth boundary (LAN gate + reverse proxy)                                                   | self-hosted deployment                     |
 

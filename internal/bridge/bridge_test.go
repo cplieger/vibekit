@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -14,12 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestNew_FieldsAndAccessors(t *testing.T) {
@@ -83,7 +85,7 @@ func TestIsDeprecatedOrLegacy(t *testing.T) {
 		{desc: "Model for legacyapi users", want: false},
 	}
 	for _, tc := range cases {
-		if got := api.TagExcluded(tc.desc, api.HiddenTags); got != tc.want {
+		if got := modeltext.Hidden(tc.desc); got != tc.want {
 			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tc.desc, got, tc.want)
 		}
 	}
@@ -306,7 +308,7 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 	b.stdin = pw
 
 	type result struct {
-		resp *api.RPCResponse
+		resp *vibekit.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -409,7 +411,7 @@ func TestRespond_GenericError(t *testing.T) {
 
 func TestRespond_TypedRPCError(t *testing.T) {
 	b, pr := respondBridge(t)
-	rpcErr := &api.RPCError{Code: -32001, Message: "custom error"}
+	rpcErr := &vibekit.RPCError{Code: -32001, Message: "custom error"}
 	if err := b.Respond(t.Context(), 99, nil, rpcErr); err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +452,7 @@ func TestCall_HappyPath(t *testing.T) {
 	b.stdin = pw
 
 	type result struct {
-		resp *api.RPCResponse
+		resp *vibekit.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -464,7 +466,7 @@ func TestCall_HappyPath(t *testing.T) {
 	// Simulate readLoop dispatching a successful response.
 	b.pendingMu.Lock()
 	var id int64
-	var ch chan *api.RPCResponse
+	var ch chan *vibekit.RPCResponse
 	for k, v := range b.pending {
 		id = k
 		ch = v
@@ -473,7 +475,7 @@ func TestCall_HappyPath(t *testing.T) {
 	delete(b.pending, id)
 	b.pendingMu.Unlock()
 
-	successResp := &api.RPCResponse{}
+	successResp := &vibekit.RPCResponse{}
 	raw := json.RawMessage(`{"ok":true}`)
 	successResp.Result = raw
 	ch <- successResp
@@ -501,7 +503,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 	b.stdin = pw
 
 	type result struct {
-		resp *api.RPCResponse
+		resp *vibekit.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -514,7 +516,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 
 	b.pendingMu.Lock()
 	var id int64
-	var ch chan *api.RPCResponse
+	var ch chan *vibekit.RPCResponse
 	for k, v := range b.pending {
 		id = k
 		ch = v
@@ -523,8 +525,8 @@ func TestCall_ErrorResponse(t *testing.T) {
 	delete(b.pending, id)
 	b.pendingMu.Unlock()
 
-	errResp := &api.RPCResponse{
-		Error: &api.RPCError{Code: -32600, Message: "invalid request"},
+	errResp := &vibekit.RPCResponse{
+		Error: &vibekit.RPCError{Code: -32600, Message: "invalid request"},
 	}
 	ch <- errResp
 
@@ -554,7 +556,7 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 	b.stdin = pw
 
 	type result struct {
-		resp *api.RPCResponse
+		resp *vibekit.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -567,7 +569,7 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 
 	// Simulate readLoop drain: send bridgeExitedResp to the pending channel.
 	b.pendingMu.Lock()
-	var ch chan *api.RPCResponse
+	var ch chan *vibekit.RPCResponse
 	for _, v := range b.pending {
 		ch = v
 		break
@@ -597,12 +599,12 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 func BenchmarkBridgeReadLoop(b *testing.B) {
 	// Pre-build message payloads: half responses, half notifications.
 	respID := int64(1)
-	respMsg, _ := json.Marshal(api.RPCResponse{
+	respMsg, _ := json.Marshal(vibekit.RPCResponse{
 		JSONRPC: "2.0",
 		ID:      &respID,
 		Result:  json.RawMessage(`{"status":"ok"}`),
 	})
-	notifMsg, _ := json.Marshal(api.RPCResponse{
+	notifMsg, _ := json.Marshal(vibekit.RPCResponse{
 		JSONRPC: "2.0",
 		Method:  "session/update",
 		Params:  json.RawMessage(`{"sessionId":"s1","delta":{"type":"text","text":"hi"}}`),
@@ -610,15 +612,15 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	respLine := append(respMsg, '\n')
 	notifLine := append(notifMsg, '\n')
 
-	b.ResetTimer()
-	for range b.N {
+	b.ReportAllocs()
+	for b.Loop() {
 		b.StopTimer()
 
 		pr, pw, _ := os.Pipe()
 		br := &Bridge{
 			stdout:  newFrameReader(bufio.NewReaderSize(pr, stdoutBufSize)),
-			pending: make(map[int64]chan *api.RPCResponse),
-			notifCh: make(chan *api.RPCResponse, 1024),
+			pending: make(map[int64]chan *vibekit.RPCResponse),
+			notifCh: make(chan *vibekit.RPCResponse, 1024),
 			done:    make(chan struct{}),
 		}
 
@@ -626,7 +628,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 		// We'll write msgCount messages total: alternate resp/notif.
 		const msgCount = 500
 		for id := int64(1); id <= msgCount/2; id++ {
-			br.pending[id] = make(chan *api.RPCResponse, 1)
+			br.pending[id] = make(chan *vibekit.RPCResponse, 1)
 		}
 
 		// Write all messages into the pipe, then close to signal EOF.
@@ -635,7 +637,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 				if j%2 == 0 {
 					// Response with incrementing ID.
 					id := int64(j/2 + 1)
-					msg, _ := json.Marshal(api.RPCResponse{
+					msg, _ := json.Marshal(vibekit.RPCResponse{
 						JSONRPC: "2.0",
 						ID:      &id,
 						Result:  json.RawMessage(`{"status":"ok"}`),
@@ -665,7 +667,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	_ = notifLine
 }
 
-// TestRealBridge_Contract runs BridgeContractTest (from hub/shared_test.go)
+// TestRealBridge_Contract runs BridgeContractTest (from agent/shared_test.go)
 // against the real bridge.Bridge using a pipe-based fake kiro-cli script.
 // This catches interface drift between the fake and real implementations
 // at the Start/Stop/NotifCh lifecycle level without requiring a real
@@ -712,13 +714,16 @@ done
 		t.Fatalf("write fake script: %v", err)
 	}
 
-	newBridge := func() api.ACPBridge {
+	// The concrete type, not an interface: this package's own test has no
+	// reason to go through one, and the contract suite that does is
+	// bridge_contract_test.go.
+	newBridge := func() *Bridge {
 		return New(scriptPath, dir)
 	}
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -729,7 +734,7 @@ done
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -740,7 +745,7 @@ done
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -755,7 +760,7 @@ done
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -766,7 +771,7 @@ done
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -784,7 +789,7 @@ done
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -795,6 +800,13 @@ done
 }
 
 // --- parseErrTracker state machine tests (tarch-b7-c3-p4, consolidated tarch-b4-c4-p4) ---
+//
+// The count-driven cases are a table; the two CLOCK-driven ones are synctest
+// bubbles below it. The window case used to sit in this table and reach in to
+// assign tr.windowStart directly, which asserted the branch without ever
+// exercising the comparison that selects it; the decay branch had no case at all,
+// because a real-clock test for it costs five minutes. Both are now driven
+// through time.Now on the bubble's synthetic clock at zero real cost.
 
 func TestParseErrTracker(t *testing.T) {
 	cases := []struct {
@@ -818,17 +830,6 @@ func TestParseErrTracker(t *testing.T) {
 			},
 			calls:      1,
 			wantAction: parseErrSuppress,
-		},
-		{
-			name: "summarize after window expires",
-			setup: func(tr *parseErrTracker) {
-				for range parseErrBurst {
-					tr.Record()
-				}
-				tr.windowStart = time.Now().Add(-parseErrWindow - time.Second)
-			},
-			calls:      1,
-			wantAction: parseErrSummarize,
 		},
 		{
 			name:       "circuit break at consecutive threshold",
@@ -875,6 +876,90 @@ func TestParseErrTracker(t *testing.T) {
 		}
 		if got := tr.SummaryCount(); got != extra {
 			t.Errorf("SummaryCount() = %d, want %d", got, extra)
+		}
+	})
+}
+
+// TestParseErrTracker_WindowCadenceIsDrivenByTheClock exercises the comparison
+// that selects parseErrSummarize, rather than assigning the field it reads.
+//
+// The case this replaces did `tr.windowStart = time.Now().Add(-parseErrWindow -
+// time.Second)`, which reaches past the state machine to stage its own answer: a
+// Record that stopped consulting windowStart at all would still have passed.
+// Here the clock moves and Record decides.
+func TestParseErrTracker_WindowCadenceIsDrivenByTheClock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var tr parseErrTracker
+		for range parseErrBurst {
+			if got := tr.Record(); got != parseErrLog {
+				t.Fatalf("burst Record() = %v, want parseErrLog", got)
+			}
+		}
+		// Inside the window: suppressed, however many arrive.
+		synctest.Sleep(parseErrWindow / 2)
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Errorf("Record() inside the window = %v, want parseErrSuppress", got)
+		}
+		// Past it: exactly one summary line, then suppressed again — the window
+		// restarts from this instant, so a second summary must not follow.
+		synctest.Sleep(parseErrWindow)
+		if got := tr.Record(); got != parseErrSummarize {
+			t.Errorf("Record() past the window = %v, want parseErrSummarize", got)
+		}
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Errorf("Record() straight after a summary = %v, want parseErrSuppress: "+
+				"the window must restart at the summary, or a storm emits one line per frame", got)
+		}
+	})
+}
+
+// TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker covers the
+// parseErrDecay branch, which had no test — a real-clock one costs five minutes —
+// and pins the half the old comment got wrong.
+//
+// Decay resets the storm WINDOW, so a bridge that saw a storm hours ago gets its
+// verbatim burst back instead of staying summary-only for the life of the
+// process. It deliberately leaves `consecutive` alone: Reset clears that on every
+// frame that parses, so parseErrMaxConsecutive frames with not one valid frame
+// between them is a dead stream at any pace, and decaying the count would stop
+// the breaker firing on a stream that fails totally but slowly. The old comment
+// claimed decay prevented "false circuit-breaks", which is the opposite of what
+// the second half asserts here.
+func TestParseErrTracker_DecayRestartsTheBurstButNotTheBreaker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var tr parseErrTracker
+		for range parseErrBurst + 5 {
+			tr.Record()
+		}
+		if got := tr.Record(); got != parseErrSuppress {
+			t.Fatalf("Record() past the burst = %v, want parseErrSuppress", got)
+		}
+
+		synctest.Sleep(parseErrDecay + time.Second)
+
+		// The burst is back: the storm window was reset, so this line is emitted
+		// verbatim rather than suppressed.
+		if got := tr.Record(); got != parseErrLog {
+			t.Errorf("Record() after %v of quiet = %v, want parseErrLog: "+
+				"decay must restart the burst", parseErrDecay, got)
+		}
+		if tr.total != 1 {
+			t.Errorf("total = %d after decay, want 1", tr.total)
+		}
+
+		// The breaker is NOT back. consecutive has counted every error, decay
+		// included, so one more than the ceiling away from it still trips.
+		if tr.consecutive != parseErrBurst+7 {
+			t.Fatalf("consecutive = %d, want %d: decay must not touch the breaker's count",
+				tr.consecutive, parseErrBurst+7)
+		}
+		for range parseErrMaxConsecutive - tr.consecutive - 1 {
+			tr.Record()
+		}
+		if got := tr.Record(); got != parseErrCircuitBreak {
+			t.Errorf("Record() at consecutive=%d = %v, want parseErrCircuitBreak: "+
+				"decay must not spare a stream that fails totally but slowly",
+				tr.consecutive, got)
 		}
 	})
 }
@@ -929,7 +1014,7 @@ done
 	// and "sonnet" is the value under test. A requested model would legitimately
 	// override it via session/set_config_option — see
 	// TestNewSession_AppliesRequestedModelAndEffort.
-	if err := b.Start(t.Context(), &api.StartOpts{}); err != nil {
+	if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if id := b.SessionID(); id != "lifecycle-001" {
@@ -997,7 +1082,7 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 			b.stdin = pw
 
 			type result struct {
-				resp *api.RPCResponse
+				resp *vibekit.RPCResponse
 				err  error
 			}
 			done := make(chan result, 1)
@@ -1010,15 +1095,15 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 
 			// Inject error response.
 			b.pendingMu.Lock()
-			var ch chan *api.RPCResponse
+			var ch chan *vibekit.RPCResponse
 			for _, v := range b.pending {
 				ch = v
 				break
 			}
 			b.pendingMu.Unlock()
 
-			errResp := &api.RPCResponse{
-				Error: &api.RPCError{Code: tc.code, Message: tc.message},
+			errResp := &vibekit.RPCResponse{
+				Error: &vibekit.RPCError{Code: tc.code, Message: tc.message},
 			}
 			ch <- errResp
 
@@ -1028,12 +1113,12 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 					t.Fatal("expected error, got nil")
 				}
 				if tc.wantNotIdle {
-					if !errors.Is(r.err, api.ErrNotIdle) {
-						t.Errorf("err = %v, want api.ErrNotIdle", r.err)
+					if !errors.Is(r.err, vibekit.ErrNotIdle) {
+						t.Errorf("err = %v, want vibekit.ErrNotIdle", r.err)
 					}
 				} else {
-					if errors.Is(r.err, api.ErrNotIdle) {
-						t.Errorf("err = %v, should NOT be api.ErrNotIdle", r.err)
+					if errors.Is(r.err, vibekit.ErrNotIdle) {
+						t.Errorf("err = %v, should NOT be vibekit.ErrNotIdle", r.err)
 					}
 					if !strings.Contains(r.err.Error(), tc.wantMsg) {
 						t.Errorf("err = %v, want to contain %q", r.err, tc.wantMsg)
@@ -1050,18 +1135,34 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 }
 
 func BenchmarkBridgeRespond(b *testing.B) {
-	// Create a Bridge with a pipe-based writer (no real process).
-	_, pw, err := os.Pipe()
+	// A pipe-based writer (no real process), and its read end MUST be drained.
+	// This used to discard it (`_, pw, err := os.Pipe()`), so writeFrame filled
+	// the 64 KiB pipe buffer and blocked forever in os.(*File).Write —
+	// measured: the benchmark completes at -benchtime=10x and HANGS at 50x and
+	// above, so `go test -bench .` on this package never terminated. Nothing
+	// caught it because `go test` without -bench never runs a benchmark.
+	// Draining is also the faithful fixture: a real bridge's stdin is drained by
+	// kiro-cli.
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		b.Fatalf("os.Pipe: %v", err)
 	}
-	defer pw.Close()
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+	b.Cleanup(func() {
+		_ = pw.Close() // EOF for the drain
+		<-drained      // join it, so nothing outlives the benchmark
+		_ = pr.Close()
+	})
 
 	br := &Bridge{
 		stdin:   pw,
 		done:    make(chan struct{}),
-		pending: make(map[int64]chan *api.RPCResponse),
-		notifCh: make(chan *api.RPCResponse, 16),
+		pending: make(map[int64]chan *vibekit.RPCResponse),
+		notifCh: make(chan *vibekit.RPCResponse, 16),
 	}
 
 	ctx := b.Context()
@@ -1073,8 +1174,7 @@ func BenchmarkBridgeRespond(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		if err := br.Respond(ctx, 42, result, nil); err != nil {
 			b.Fatalf("Respond: %v", err)
 		}
@@ -1125,8 +1225,8 @@ func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
 func readLoopBridge(r io.Reader) *Bridge {
 	return &Bridge{
 		stdout:  newFrameReader(bufio.NewReaderSize(r, stdoutBufSize)),
-		pending: make(map[int64]chan *api.RPCResponse),
-		notifCh: make(chan *api.RPCResponse, 1),
+		pending: make(map[int64]chan *vibekit.RPCResponse),
+		notifCh: make(chan *vibekit.RPCResponse, 1),
 		done:    make(chan struct{}),
 	}
 }
@@ -1156,7 +1256,7 @@ func waitPending(t *testing.T, b *Bridge, n int) {
 }
 
 // resp on the matching pending channel, and returns loadSession's error.
-func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *api.RPCResponse) error {
+func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *vibekit.RPCResponse) error {
 	t.Helper()
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -1170,7 +1270,7 @@ func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *api.RPCRespo
 		done <- b.loadSession(t.Context(), "acp-session-xyz", fallback)
 	}()
 
-	var ch chan *api.RPCResponse
+	var ch chan *vibekit.RPCResponse
 	deadline := time.Now().Add(time.Second)
 	for ch == nil {
 		b.pendingMu.Lock()
@@ -1253,11 +1353,21 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 
 // --- bridge_process.go: startProcess ---
 
-// startProcess substitutes context.Background() for a nil lifecycleCtx
-// (the state right after New), so it must not panic on a nil ctx.
-func TestStartProcess_NilLifecycleCtxFallsBackToBackground(t *testing.T) {
+// startProcess reports a spawn failure rather than swallowing it.
+//
+// This was TestStartProcess_NilLifecycleCtxFallsBackToBackground, which pinned a
+// context.Background() substitution for a nil lifecycleCtx — the state right
+// after New. That fallback is deleted: Start refuses a nil StartOpts.Lifetime
+// (TestStart_RefusesNilLifetime), so the only path into startProcess has already
+// assigned a real lifetime, and a nil arriving here would be a bug worth the
+// panic rather than a case to absorb into an uncancellable subprocess. The
+// assertion that stood on its own survives.
+func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
+	// Not t.Context(): lifecycleCtx is what CommandContext binds the subprocess
+	// to, and it must outlive the t.Cleanup(b.Stop) teardown below.
+	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
 	err := b.startProcess("")
 	if err == nil {
@@ -1476,7 +1586,7 @@ func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 // fallback).
 func TestLoadSession_AppliesParsedResult(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &api.RPCResponse{
+	resp := &vibekit.RPCResponse{
 		Result: json.RawMessage(`{"sessionId":"acp-session-xyz","configOptions":[{"id":"model","currentValue":"parsed-model","options":[{"value":"parsed-model","name":"Parsed","description":"ok","_meta":{"kiro":{"rateMultiplier":1}}}]}]}`),
 	}
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
@@ -1491,7 +1601,7 @@ func TestLoadSession_AppliesParsedResult(t *testing.T) {
 func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 	c := capture.Default(t)
 	b := New("/nonexistent", "/work")
-	resp := &api.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -1507,7 +1617,7 @@ func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 // this pins the model that actually ends up applied.
 func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &api.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -1520,7 +1630,7 @@ func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 // controls the _meta.kiro.hooks opt-in in the initialize handshake. When true
 // the bridge declares {enabled:true,v2:true} so KAS's v2 hook engine autofires
 // the workspace's .kiro/hooks/*.json hooks during a turn (chat bridges set this
-// in hub/bridge_coord.go; KAS then loads and runs the hooks internally, with no
+// in agent/bridge_coord.go; KAS then loads and runs the hooks internally, with no
 // executeHook callback to the client). When false (the zero value) the opt-in
 // is omitted, while the always-on openExternalUrl + infrastructureSafety kiro
 // capabilities are still declared either way.
@@ -1558,7 +1668,7 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "m", EnableHooks: enableHooks}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -1669,7 +1779,7 @@ done
 // Fails rather than returns empty on a miss, because "the call did not happen"
 // and "the call carried nothing" are different defects and only one of them is
 // about the session door.
-func captureRequest(t *testing.T, method string, opts *api.StartOpts) string {
+func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts) string {
 	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
@@ -1738,7 +1848,7 @@ func metaKiroSettings(t *testing.T, line string) map[string]any {
 // no workflow steering doc. Nothing logged it and no method 404'd, so a fixture
 // on this exact call is the only thing that notices.
 func TestSessionNewCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/new", &api.StartOpts{Model: "m"})
+	line := captureRequest(t, "session/new", &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
@@ -1764,7 +1874,7 @@ door. Captured:
 // fresh chat has the workflow tools and a resumed one silently does not, which is
 // the worst shape of the two: it looks like the fix landed.
 func TestSessionLoadCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/load", &api.StartOpts{Model: "m", SessionID: "sess_resume_door"})
+	line := captureRequest(t, "session/load", &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", SessionID: "sess_resume_door"})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
@@ -1798,7 +1908,7 @@ func TestSessionDoorOmitsMetaWhenDisabled(t *testing.T) {
 	t.Setenv("RPC_CAPTURE", capturePath)
 
 	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &api.StartOpts{Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -1930,19 +2040,48 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	})
 
 	grandchild := waitForBridgePID(t, pidFile)
-	if syscall.Kill(grandchild, 0) != nil {
+	if !processAlive(grandchild) {
 		t.Fatalf("bait grandchild %d not alive before cancel; the test proves nothing", grandchild)
 	}
 
 	cancel() // fires cmd.Cancel
 
 	deadline := time.Now().Add(3 * time.Second)
-	for syscall.Kill(grandchild, 0) == nil {
+	for processAlive(grandchild) {
 		if time.Now().After(deadline) {
 			t.Fatalf("grandchild %d survived ctx cancel; Cancel signalled the head without closing stdin, so the tree never saw EOF", grandchild)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// processAlive reports whether pid is a live (non-zombie) process, read from
+// /proc/<pid>/stat.
+//
+// A null-signal poll is NOT usable, and the test above used to be one. `kill(pid,
+// 0)` answers "alive" for a zombie, and the pid here is the bait shell's
+// backgrounded child: the shell reaps it on its next wait, so a null-signal poll
+// asserts the SHELL's reaping latency on top of the property under test. That
+// happens to hold today because the bait ignores SIGTERM and stays alive to reap
+// — one fixture edit that lets the shell die with the group orphans the child onto
+// PID 1 and the poll then measures whatever init this suite runs under, which in
+// the vibekit container never reaps. A zombie already proves the EOF reached the
+// tree, which is the whole property.
+//
+// The state field follows the LAST ')' — comm is parenthesized and may itself
+// contain spaces or parens, so the prefix has to be skipped from the right rather
+// than split on whitespace.
+func processAlive(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
+	if err != nil {
+		return false // no /proc entry: reaped and gone
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return false
+	}
+	return s[i+2] != 'Z'
 }
 
 // waitForBridgePID polls for the bait script's pid file and returns the pid.
@@ -2017,11 +2156,11 @@ done
 
 	cases := []struct {
 		name   string
-		opts   *api.StartOpts
+		opts   *vibekit.StartOpts
 		method string
 	}{
-		{"session/new", &api.StartOpts{Model: "m"}, "session/new"},
-		{"session/load", &api.StartOpts{SessionID: "existing", Model: "m"}, "session/load"},
+		{"session/new", &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"}, "session/new"},
+		{"session/load", &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "existing", Model: "m"}, "session/load"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2114,7 +2253,7 @@ done
 	}
 
 	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &api.StartOpts{Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -2243,7 +2382,8 @@ done
 		capturePath := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capturePath)
 		b := New(scriptPath, dir)
-		err := b.Start(t.Context(), &api.StartOpts{
+		err := b.Start(t.Context(), &vibekit.StartOpts{
+			Lifetime:      t.Context(),
 			Model:         "m",
 			SecretStorage: tc.secretStorage,
 			EnableHooks:   tc.enableHooks,

@@ -4,7 +4,7 @@ import (
 	"maps"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // fullFeatures is the 7-flag governance feature set as it appears on the wire
@@ -21,30 +21,30 @@ func fullFeatures() map[string]any {
 	}
 }
 
-func govMsg(t *testing.T, sessionID string, extra map[string]any) *api.RPCResponse {
+func govMsg(t *testing.T, sessionID string, extra map[string]any) *vibekit.RPCResponse {
 	t.Helper()
 	params := map[string]any{"sessionId": sessionID, "features": fullFeatures()}
 	maps.Copy(params, extra)
-	return &api.RPCResponse{Params: mustJSON(t, params)}
+	return &vibekit.RPCResponse{Params: mustJSON(t, params)}
 }
 
 // HandleGovernanceState parses the notification, broadcasts a global (empty
 // chatID) governance_state event with the resolved flags, and caches it
-// hub-side via SetGovernance.
+// runtime-side via SetGovernance.
 func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	var cached *api.GovernanceStatePayload
-	deps.onSetGovernance = func(g api.GovernanceStatePayload) { cp := g; cached = &cp }
-	tr := New(deps)
+	var cached *vibekit.GovernanceStatePayload
+	deps.onSetGovernance = func(g vibekit.GovernanceStatePayload) { cp := g; cached = &cp }
+	tr := New(rolesOf(deps))
 
-	tr.HandleGovernanceState(t.Context(), api.ChatID("c1"),
+	tr.HandleGovernanceState(t.Context(), vibekit.ChatID("c1"),
 		govMsg(t, "sess-parent", map[string]any{"isEnterprise": false}))
 
 	if len(*events) != 1 {
 		t.Fatalf("expected 1 event, got %d: %v", len(*events), eventTypes(*events))
 	}
 	evt := (*events)[0]
-	if evt.Type != api.EventGovernanceState {
+	if evt.Type != vibekit.EventGovernanceState {
 		t.Fatalf("type = %q, want governance_state", evt.Type)
 	}
 	// Account-global: broadcast carries no chat id so a Settings-only client
@@ -52,7 +52,7 @@ func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 	if evt.ChatID != "" {
 		t.Errorf("chat_id = %q, want empty (account-global)", evt.ChatID)
 	}
-	p, ok := evt.Payload.(api.GovernanceStatePayload)
+	p, ok := evt.Payload.(vibekit.GovernanceStatePayload)
 	if !ok {
 		t.Fatalf("payload type = %T, want GovernanceStatePayload", evt.Payload)
 	}
@@ -81,11 +81,11 @@ func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 func TestHandleGovernanceState_SubagentSkipped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	cached := false
-	deps.onSetGovernance = func(api.GovernanceStatePayload) { cached = true }
+	deps.onSetGovernance = func(vibekit.GovernanceStatePayload) { cached = true }
 	deps.parent = "sess-parent"
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
-	tr.HandleGovernanceState(t.Context(), api.ChatID("c1"),
+	tr.HandleGovernanceState(t.Context(), vibekit.ChatID("c1"),
 		govMsg(t, "sess-subagent", nil))
 
 	if len(*events) != 0 || cached {
@@ -97,17 +97,17 @@ func TestHandleGovernanceState_SubagentSkipped(t *testing.T) {
 func TestHandleGovernanceState_Malformed(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	cached := false
-	deps.onSetGovernance = func(api.GovernanceStatePayload) { cached = true }
-	tr := New(deps)
+	deps.onSetGovernance = func(vibekit.GovernanceStatePayload) { cached = true }
+	tr := New(rolesOf(deps))
 
-	tr.HandleGovernanceState(t.Context(), "c1", &api.RPCResponse{Params: []byte("{")})
+	tr.HandleGovernanceState(t.Context(), "c1", &vibekit.RPCResponse{Params: []byte("{")})
 
 	if len(*events) != 0 || cached {
 		t.Errorf("malformed governance should be dropped: events=%d cached=%v", len(*events), cached)
 	}
 }
 
-// DecodeGovernanceState (the exported decoder the hub reuses for the utility
+// DecodeGovernanceState (the exported decoder the runtime reuses for the utility
 // bridge copy) maps the wire shape to the domain payload and rejects
 // empty/invalid input.
 func TestDecodeGovernanceState(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"maps"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // steerFrame builds a session_info_update whose steering fields sit FLAT beside
@@ -27,7 +27,7 @@ func steerFrame(t *testing.T, kind string, fields map[string]any) []byte {
 
 func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
@@ -37,10 +37,10 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
 	}
 	e := (*events)[0]
-	if e.Type != api.EventSteerQueued {
-		t.Fatalf("type = %q, want %q", e.Type, api.EventSteerQueued)
+	if e.Type != vibekit.EventSteerQueued {
+		t.Fatalf("type = %q, want %q", e.Type, vibekit.EventSteerQueued)
 	}
-	p, ok := e.Payload.(api.SteerQueuedPayload)
+	p, ok := e.Payload.(vibekit.SteerQueuedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", e.Payload)
 	}
@@ -55,7 +55,7 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 // words on the composer's chip row as though the user had typed them.
 func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
 			"messageId":            "notify-1",
 			"content":              "[notification/error] a step failed",
@@ -66,10 +66,10 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
 	}
 	e := (*events)[0]
-	if e.Type != api.EventAgentNotice {
-		t.Fatalf("type = %q, want %q", e.Type, api.EventAgentNotice)
+	if e.Type != vibekit.EventAgentNotice {
+		t.Fatalf("type = %q, want %q", e.Type, vibekit.EventAgentNotice)
 	}
-	p, ok := e.Payload.(api.AgentNoticePayload)
+	p, ok := e.Payload.(vibekit.AgentNoticePayload)
 	if !ok {
 		t.Fatalf("payload type = %T", e.Payload)
 	}
@@ -83,16 +83,16 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 
 func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_injected", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
 		}), "")
 
-	if len(*events) != 1 || (*events)[0].Type != api.EventSteerInjected {
+	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
 		t.Fatalf("events = %+v, want one steer_injected", *events)
 	}
-	p, ok := (*events)[0].Payload.(api.SteerInjectedPayload)
+	p, ok := (*events)[0].Payload.(vibekit.SteerInjectedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
@@ -103,15 +103,15 @@ func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 
 func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
 			"messageIds": []string{"steer-1", "steer-2"},
 		}), "")
 
-	if len(*events) != 1 || (*events)[0].Type != api.EventSteerCleared {
+	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerCleared {
 		t.Fatalf("events = %+v, want one steer_cleared", *events)
 	}
-	p, ok := (*events)[0].Payload.(api.SteerClearedPayload)
+	p, ok := (*events)[0].Payload.(vibekit.SteerClearedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
@@ -125,7 +125,7 @@ func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 // the wire per turn for every chat.
 func TestSteeringCleared_EmptyListIsNotBroadcast(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{}}), "")
 
 	if len(*events) != 0 {
@@ -141,7 +141,7 @@ func TestSteering_IDlessFramesAreDroppedNotForwarded(t *testing.T) {
 	for _, kind := range []string{"steering_queued", "steering_injected"} {
 		t.Run(kind, func(t *testing.T) {
 			deps, events, _ := depsWithStore(t, "c1")
-			New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 				steerFrame(t, kind, map[string]any{"content": "orphan"}), "")
 
 			if len(*events) != 0 {
@@ -158,13 +158,13 @@ func TestSteering_IDlessFramesAreDroppedNotForwarded(t *testing.T) {
 // leaving a chip that says "waiting" over a message the model has read.
 func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_injected", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
 		}), "sub-session-7")
 
-	if len(*events) != 1 || (*events)[0].Type != api.EventSteerInjected {
+	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
 		t.Fatalf("events = %+v — a steer consumed inside a subagent must still be reported", *events)
 	}
 }

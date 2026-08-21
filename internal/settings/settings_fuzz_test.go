@@ -33,16 +33,16 @@ func FuzzSettingsField(f *testing.F) {
 		ctx := t.Context()
 
 		// Must not panic regardless of input, across representative target types.
-		Field[bool](ctx, dir, key, "fuzz")
-		Field[int](ctx, dir, key, "fuzz")
-		Field[[]string](ctx, dir, key, "fuzz")
+		Field[bool](ctx, dir, key)
+		Field[int](ctx, dir, key)
+		Field[[]string](ctx, dir, key)
 
 		// Cross-function consistency: Field[string] and FieldInto(&string) read
 		// the same key through the same parse path, so they must agree on both
 		// presence and value for every input.
-		val, okField := Field[string](ctx, dir, key, "fuzz")
+		val, okField := Field[string](ctx, dir, key)
 		var into string
-		okInto := FieldInto(ctx, dir, key, "fuzz", &into)
+		okInto := FieldInto(ctx, dir, key, &into)
 		if okField != okInto {
 			t.Errorf("Field/FieldInto presence disagree for key %q: %v vs %v", key, okField, okInto)
 		}
@@ -75,7 +75,7 @@ func FuzzSettingsReadBytes(f *testing.F) {
 		ctx := t.Context()
 
 		// Must not panic regardless of content.
-		got, err := ReadBytes(ctx, dir)
+		got, err := readBytes(ctx, dir)
 		if err != nil {
 			return
 		}
@@ -86,7 +86,7 @@ func FuzzSettingsReadBytes(f *testing.F) {
 			expected = expected[:MaxBytes]
 		}
 		if !bytes.Equal(got, expected) {
-			t.Errorf("ReadBytes content mismatch: got %d bytes, want %d", len(got), len(expected))
+			t.Errorf("readBytes content mismatch: got %d bytes, want %d", len(got), len(expected))
 		}
 	})
 }

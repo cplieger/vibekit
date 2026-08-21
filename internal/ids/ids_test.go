@@ -3,7 +3,6 @@ package ids
 import (
 	"math"
 	"testing"
-	"time"
 
 	"pgregory.net/rapid"
 )
@@ -127,12 +126,20 @@ func TestNewMessageID_RapidInvariants(t *testing.T) {
 }
 
 func TestNewMessageID_TimeOrdering(t *testing.T) {
-	id1 := NewMessageID()
-	time.Sleep(2 * time.Millisecond)
-	id2 := NewMessageID()
-
-	if id2 <= id1 {
-		t.Errorf("time ordering violated: id1=%s >= id2=%s", id1, id2)
+	// No sleep: uuid.NewV7 packs a 12-bit sub-millisecond fraction beside the
+	// timestamp and takes a mutex to guarantee the order, so consecutive ids
+	// are strictly increasing even inside one millisecond. The hand-rolled
+	// generator this replaced had millisecond granularity and random low bits,
+	// so 5007 of 9999 consecutive pairs were out of order and the only
+	// assertion available was one across a 2ms sleep.
+	const n = 1000
+	prev := NewMessageID()
+	for i := 1; i < n; i++ {
+		id := NewMessageID()
+		if id <= prev {
+			t.Fatalf("ids not strictly increasing at call %d: %s <= %s", i, id, prev)
+		}
+		prev = id
 	}
 }
 
@@ -144,18 +151,5 @@ func TestNewMessageID_Uniqueness(t *testing.T) {
 			t.Fatalf("duplicate id after %d iterations: %s", i, id)
 		}
 		seen[id] = struct{}{}
-	}
-}
-
-func TestNewE_unknownEncodingReturnsError(t *testing.T) {
-	// NewE's contract differs from New: it returns the error gracefully
-	// rather than panicking. New(_, bad) panics (see TestNew_PanicOnBadEncoding);
-	// NewE(_, bad) must hand the caller ("", err) instead.
-	got, err := NewE(8, Encoding(99))
-	if err == nil {
-		t.Fatal("NewE(8, Encoding(99)) err = nil, want error for unknown encoding")
-	}
-	if got != "" {
-		t.Errorf("NewE(8, Encoding(99)) = %q, want empty string on error", got)
 	}
 }

@@ -11,24 +11,22 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-func effortReq(t *testing.T, chatID api.ChatID, level string) *api.ClientCommand {
+func effortReq(t *testing.T, chatID vibekit.ChatID, level string) *vibekit.ClientCommand {
 	t.Helper()
 	payload, err := json.Marshal(map[string]string{"level": level})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdSetEffort,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+	return &vibekit.ClientCommand{
+		Type:    vibekit.CmdSetEffort,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 
@@ -36,13 +34,12 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	b := &recordingBridge{result: map[string]any{}, sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSetEffort(d, t.Context(), w, effortReq(t, "c1", "high"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "high"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -51,11 +48,11 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	if c.Effort != "high" {
 		t.Errorf("Effort = %q, want %q; the level has to survive a restart to reach StartOpts.Effort", c.Effort, "high")
 	}
-	if b.gotMethod != api.MethodSetConfigOption {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodSetConfigOption)
+	if b.gotMethod != vibekit.MethodSetConfigOption {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSetConfigOption)
 	}
-	if b.gotParams["configId"] != api.ConfigOptionEffort {
-		t.Errorf("configId = %v, want %q", b.gotParams["configId"], api.ConfigOptionEffort)
+	if b.gotParams["configId"] != vibekit.ConfigOptionEffort {
+		t.Errorf("configId = %v, want %q", b.gotParams["configId"], vibekit.ConfigOptionEffort)
 	}
 	if b.gotParams["value"] != "high" {
 		t.Errorf("value = %v, want high", b.gotParams["value"])
@@ -68,10 +65,10 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	seedEmptyChat(t, store, "c2")
-	d := newBridgeDispatcher(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
+	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	CmdSetEffort(d, t.Context(), httptest.NewRecorder(), effortReq(t, "c1", "low"))
-	CmdSetEffort(d, t.Context(), httptest.NewRecorder(), effortReq(t, "c2", "max"))
+	_, _ = CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "low"))
+	_, _ = CmdSetEffort(t.Context(), host, host, effortReq(t, "c2", "max"))
 
 	c1, _ := store.Get(t.Context(), "c1")
 	c2, _ := store.Get(t.Context(), "c2")
@@ -84,7 +81,7 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 // prompt.
 type noBridgeDeps struct{ *storeDeps }
 
-func (d *noBridgeDeps) GetBridge(api.ChatID) Bridge { return nil }
+func (d *noBridgeDeps) Bridge(vibekit.ChatID) Bridge { return nil }
 
 // A bridgeless chat used to answer 409, which is why the client had a second
 // path that wrote a GLOBAL setting instead — a different store and a different
@@ -93,13 +90,12 @@ func (d *noBridgeDeps) GetBridge(api.ChatID) Bridge { return nil }
 func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
-	d := New(&noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}})
-	w := httptest.NewRecorder()
+	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	CmdSetEffort(d, t.Context(), w, effortReq(t, "c1", "medium"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "medium"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Effort != "medium" {
@@ -112,13 +108,12 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 // rolled back.
 func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d := New(&noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}})
-	w := httptest.NewRecorder()
+	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	CmdSetEffort(d, t.Context(), w, effortReq(t, "c-brand-new", "xhigh"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c-brand-new", "xhigh"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	c, ok := store.Get(t.Context(), "c-brand-new")
 	if !ok {
@@ -127,7 +122,7 @@ func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	if c.Effort != "xhigh" {
 		t.Errorf("Effort = %q, want xhigh", c.Effort)
 	}
-	if c.Name != api.DefaultChatName {
+	if c.Name != vibekit.DefaultChatName {
 		t.Errorf("Name = %q, want the default so the row is not blank", c.Name)
 	}
 }
@@ -139,13 +134,12 @@ func TestCmdSetEffort_ARefusedLiveSwitchIsNotPersisted(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	b := &recordingBridge{callErr: errors.New("no such config option"), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSetEffort(d, t.Context(), w, effortReq(t, "c1", "max"))
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "max"))
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502", w.Code)
+	if statusOf(err) != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", statusOf(err))
 	}
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Effort != "" {
@@ -159,13 +153,12 @@ func TestCmdSetEffort_RejectsAnUnknownLevel(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedEmptyChat(t, store, "c1")
 			b := &recordingBridge{result: map[string]any{}, sessionID: "s"}
-			d := newBridgeDispatcher(store, b)
-			w := httptest.NewRecorder()
+			host := newBridgeHost(store, b)
 
-			CmdSetEffort(d, t.Context(), w, effortReq(t, "c1", level))
+			_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", level))
 
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d, want 400", w.Code)
+			if statusOf(err) != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", statusOf(err))
 			}
 			if b.callCount != 0 {
 				t.Error("an invalid level reached the bridge")
@@ -174,11 +167,11 @@ func TestCmdSetEffort_RejectsAnUnknownLevel(t *testing.T) {
 	}
 }
 
-// api.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
+// vibekit.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
 // has to carry it too: the effort control renders the ACTIVE chat's level, and an
 // empty chat never fetches its full record.
 func TestChatHeader_CarriesEffort(t *testing.T) {
-	c := &api.Chat{ID: "c1", Effort: "high"}
+	c := &vibekit.Chat{ID: "c1", Effort: "high"}
 	if got := c.Header().Effort; got != "high" {
 		t.Errorf("Header().Effort = %q, want high", got)
 	}

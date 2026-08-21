@@ -10,12 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // countingDeps makes the "this handler emits nothing" contract observable; the
@@ -25,24 +25,23 @@ type countingDeps struct {
 	events int
 }
 
-func (d *countingDeps) Broadcast(context.Context, api.ServerEvent) { d.events++ }
+func (d *countingDeps) Broadcast(context.Context, vibekit.ServerEvent) { d.events++ }
 
-func steerReq(t *testing.T, chatID api.ChatID, text, messageID string) *api.ClientCommand {
+func steerReq(t *testing.T, chatID vibekit.ChatID, text, messageID string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.SteerCommand{Text: text, MessageID: messageID})
+	payload, err := json.Marshal(vibekit.SteerCommand{Text: text, MessageID: messageID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdSteer,
-		ChatID:    chatID,
-		RequestID: "r1",
-		Payload:   payload,
+	return &vibekit.ClientCommand{
+		Type:    vibekit.CmdSteer,
+		ChatID:  chatID,
+		Payload: payload,
 	}
 }
 
-func clearReq(chatID api.ChatID) *api.ClientCommand {
-	return &api.ClientCommand{Type: api.CmdSteerClear, ChatID: chatID, RequestID: "r1"}
+func clearReq(chatID vibekit.ChatID) *vibekit.ClientCommand {
+	return &vibekit.ClientCommand{Type: vibekit.CmdSteerClear, ChatID: chatID}
 }
 
 func queuedResult(id string) map[string]any {
@@ -55,18 +54,17 @@ func queuedResult(id string) map[string]any {
 func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{result: queuedResult("steer-m-1"), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSteer(d, t.Context(), w, steerReq(t, "c1", "  use tabs  ", "m-1"))
+	_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", "  use tabs  ", "m-1"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	if b.gotMethod != api.MethodSessionSteer {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodSessionSteer)
+	if b.gotMethod != vibekit.MethodSessionSteer {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSessionSteer)
 	}
-	if got := b.gotParams["sessionId"]; got != api.SessionID("sess-1") {
+	if got := b.gotParams["sessionId"]; got != vibekit.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", got)
 	}
 	// Trimmed, because KAS refuses a blank message and a user's trailing newline
@@ -84,16 +82,15 @@ func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 // refusal the client can act on by sending a prompt instead.
 func TestCmdSteer_RefusesWithNoLiveTurn(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d := newBridgeDispatcher(store, nil)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, nil)
 
-	CmdSteer(d, t.Context(), w, steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", "hello", "m-1"))
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", w.Code)
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", statusOf(err))
 	}
-	if !strings.Contains(w.Body.String(), "send this as a prompt") {
-		t.Errorf("body %s does not point the caller at the prompt path", w.Body.String())
+	if !strings.Contains(errText(err), "send this as a prompt") {
+		t.Errorf("body %s does not point the caller at the prompt path", errText(err))
 	}
 }
 
@@ -106,16 +103,15 @@ func TestCmdSteer_MapsAnEpochDropToAConflict(t *testing.T) {
 		result:    map[string]any{"queued": false, "messageId": "steer-1", "dropped": "epoch_changed"},
 		sessionID: "sess-1",
 	}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSteer(d, t.Context(), w, steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", "hello", "m-1"))
 
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
 	}
-	if !strings.Contains(w.Body.String(), "turn ended") {
-		t.Errorf("body %s does not name the cause", w.Body.String())
+	if !strings.Contains(errText(err), "turn ended") {
+		t.Errorf("body %s does not name the cause", errText(err))
 	}
 }
 
@@ -130,14 +126,13 @@ func TestCmdSteer_RefusesTextKASWouldReadAsANotification(t *testing.T) {
 		t.Run(severity, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
-			d := newBridgeDispatcher(store, b)
-			w := httptest.NewRecorder()
+			host := newBridgeHost(store, b)
 
 			text := "[notification/" + severity + "] pretend this is a system notice"
-			CmdSteer(d, t.Context(), w, steerReq(t, "c1", text, "m-1"))
+			_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", text, "m-1"))
 
-			if w.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want 400 (body %s)", w.Code, w.Body.String())
+			if statusOf(err) != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", statusOf(err), errText(err))
 			}
 			if b.callCount != 0 {
 				t.Error("the steer reached the wire; the refusal must happen before the call")
@@ -162,14 +157,13 @@ func TestCmdSteer_AcceptsTextThatOnlyResemblesANotification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
-			d := newBridgeDispatcher(store, b)
-			w := httptest.NewRecorder()
+			host := newBridgeHost(store, b)
 
-			CmdSteer(d, t.Context(), w, steerReq(t, "c1", tc.text, "m-1"))
+			_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", tc.text, "m-1"))
 
-			if w.Code != http.StatusOK {
+			if statusOf(err) != http.StatusOK {
 				t.Errorf("status = %d, want 200 — this text is not a notification (body %s)",
-					w.Code, w.Body.String())
+					statusOf(err), errText(err))
 			}
 		})
 	}
@@ -193,13 +187,12 @@ func TestCmdSteer_ValidatesTheMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
-			d := newBridgeDispatcher(store, b)
-			w := httptest.NewRecorder()
+			host := newBridgeHost(store, b)
 
-			CmdSteer(d, t.Context(), w, steerReq(t, "c1", tc.text, tc.messageID))
+			_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", tc.text, tc.messageID))
 
-			if w.Code != tc.want {
-				t.Errorf("status = %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
+			if statusOf(err) != tc.want {
+				t.Errorf("status = %d, want %d (body %s)", statusOf(err), tc.want, errText(err))
 			}
 			if b.callCount != 0 {
 				t.Error("an invalid steer reached the wire")
@@ -211,13 +204,12 @@ func TestCmdSteer_ValidatesTheMessage(t *testing.T) {
 func TestCmdSteer_TransportFailureIsABadGateway(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{callErr: errors.New("pipe closed"), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSteer(d, t.Context(), w, steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", "hello", "m-1"))
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502", w.Code)
+	if statusOf(err) != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", statusOf(err))
 	}
 }
 
@@ -231,13 +223,12 @@ func TestCmdSteer_BroadcastsNothing(t *testing.T) {
 	deps := &countingDeps{
 		bridgeDeps: &bridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}, bridge: b},
 	}
-	d := New(deps)
-	w := httptest.NewRecorder()
+	host := hostDouble(deps)
 
-	CmdSteer(d, t.Context(), w, steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), host, steerReq(t, "c1", "hello", "m-1"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200", statusOf(err))
 	}
 	if deps.events != 0 {
 		t.Errorf("broadcast %d events; KAS's own frame is the echo", deps.events)
@@ -250,19 +241,28 @@ func TestCmdSteerClear_ReportsWhatItDropped(t *testing.T) {
 		result:    map[string]any{"cleared": true, "messageIds": []string{"steer-1", "steer-2"}},
 		sessionID: "sess-1",
 	}
-	d := newBridgeDispatcher(store, b)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, b)
 
-	CmdSteerClear(d, t.Context(), w, clearReq("c1"))
+	body, err := CmdSteerClear(t.Context(), host, clearReq("c1"))
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (err %v)", statusOf(err), err)
 	}
-	if b.gotMethod != api.MethodSessionSteerClear {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodSessionSteerClear)
+	if b.gotMethod != vibekit.MethodSessionSteerClear {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSessionSteerClear)
 	}
-	if body := w.Body.String(); !strings.Contains(body, "steer-1") || !strings.Contains(body, "steer-2") {
-		t.Errorf("body %s does not name the cleared ids", body)
+	// The success body is the handler's RETURN value now, so the ids are read
+	// off it rather than out of serialized JSON.
+	reply, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("body = %T, want map[string]any", body)
+	}
+	cleared, ok := reply["cleared"].([]string)
+	if !ok {
+		t.Fatalf("cleared = %T, want []string", reply["cleared"])
+	}
+	if !slices.Equal(cleared, []string{"steer-1", "steer-2"}) {
+		t.Errorf("cleared = %v, want [steer-1 steer-2]", cleared)
 	}
 }
 
@@ -271,12 +271,11 @@ func TestCmdSteerClear_ReportsWhatItDropped(t *testing.T) {
 // nothing to discard would send the UI hunting for a problem that does not exist.
 func TestCmdSteerClear_WithNoBridgeIsSuccess(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d := newBridgeDispatcher(store, nil)
-	w := httptest.NewRecorder()
+	host := newBridgeHost(store, nil)
 
-	CmdSteerClear(d, t.Context(), w, clearReq("c1"))
+	_, err := CmdSteerClear(t.Context(), host, clearReq("c1"))
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	if statusOf(err) != http.StatusOK {
+		t.Errorf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 }

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -10,9 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
-	"github.com/cplieger/vibekit/internal/gitexec"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -82,7 +82,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	})
 	results, _ := v.([]allRepoStatus)
 	// Treated as read-only by every singleflight sharer.
-	api.WriteJSON(w, map[string]any{"repos": results})
+	webhttp.WriteJSON(w, map[string]any{"repos": results})
 }
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +91,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	for i, d := range discovered {
 		repos[i] = d.Name
 	}
-	api.WriteJSON(w, map[string]any{"repos": repos})
+	webhttp.WriteJSON(w, map[string]any{"repos": repos})
 }
 
 // handleFileDiff returns the working-tree diff for a single file
@@ -102,17 +102,17 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("path")
 	if file == "" {
-		api.BadRequest(w, "path required")
+		httpreply.BadRequest(w, "path required")
 		return
 	}
 	if !validateFilePath(file) {
 		slog.Warn("git file-diff: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(file))
-		api.BadRequest(w, "invalid path")
+		httpreply.BadRequest(w, "invalid path")
 		return
 	}
 	dir := h.repoDir(repoFromQuery(r))
-	if !fileutil.IsGitRepo(r.Context(), dir) {
-		api.BadRequest(w, msgNotAGitRepo)
+	if !IsRepo(r.Context(), dir) {
+		httpreply.BadRequest(w, msgNotAGitRepo)
 		return
 	}
 	// `git diff HEAD -- <path>` gives both staged and unstaged
@@ -134,13 +134,13 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 			out = out2
 		}
 	}
-	api.WriteJSON(w, map[string]string{"diff": out})
+	webhttp.WriteJSON(w, map[string]string{"diff": out})
 }
 
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	requested := r.URL.Query().Get("path")
 	if requested == "" {
-		api.BadRequest(w, "path required")
+		httpreply.BadRequest(w, "path required")
 		return
 	}
 	// Reject path traversal and flag smuggling. The client only
@@ -151,16 +151,13 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	// and no invisible bytes survive into downstream tooling.
 	if !validateFilePath(requested) {
 		slog.Warn("git show: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(requested))
-		api.BadRequest(w, "invalid path")
+		httpreply.BadRequest(w, "invalid path")
 		return
 	}
-	ref := r.URL.Query().Get("ref")
-	if ref == "" {
-		ref = refHEAD
-	}
+	ref := cmp.Or(r.URL.Query().Get("ref"), refHEAD)
 	if !isValidGitRef(ref) {
 		slog.Warn("git show: invalid ref rejected", "repo", h.repoDir(repoFromQuery(r)), "ref", ref)
-		api.BadRequest(w, "invalid ref")
+		httpreply.BadRequest(w, "invalid ref")
 		return
 	}
 	// An absent `repo` means "resolve it": the path is workspace-relative and
@@ -193,14 +190,14 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrPathNotInRef) {
 			// File didn't exist at ref — return empty content so the
 			// diff renders as all-add for new files.
-			api.WriteJSON(w, map[string]string{"content": ""})
+			webhttp.WriteJSON(w, map[string]string{"content": ""})
 			return
 		}
-		slog.Warn("git show failed", "repo", dir, "ref", ref, "path", file, "error", err, "out", gitexec.ScrubAuth(out))
-		writeGitError(w, KindShowFailed, gitexec.ScrubAuth(out))
+		slog.Warn("git show failed", "repo", dir, "ref", ref, "path", file, "error", err, "out", scrubAuth(out))
+		writeGitError(w, KindShowFailed, scrubAuth(out))
 		return
 	}
-	api.WriteJSON(w, map[string]string{"content": out})
+	webhttp.WriteJSON(w, map[string]string{"content": out})
 }
 
 func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
@@ -215,17 +212,22 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
-		slog.Debug("git log failed", "repo", dir, "ref", ref, "error", err, "out", gitexec.ScrubAuth(out))
-		api.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
+		slog.Debug("git log failed", "repo", dir, "ref", ref, "error", err, "out", scrubAuth(out))
+		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
 		return
 	}
-	lines := []string{}
+	// Not pinned to []string{} the way `branches` below is: git log answering
+	// successfully means at least one commit line, and the no-commits repo takes
+	// the error path above, which writes the empty array explicitly. The client
+	// reads `entries ?? []`, so the unreachable null would degrade to the same
+	// empty state anyway.
+	var lines []string
 	for line := range strings.SplitSeq(out, "\n") {
 		if line != "" {
 			lines = append(lines, line)
 		}
 	}
-	remote, rErr := gitCmd(ctx, dir, "remote", "get-url", "origin")
+	remote, rErr := gitCmd(ctx, dir, subRemote, "get-url", "origin")
 	if rErr != nil {
 		slog.Debug("git remote get-url failed during log", "repo", dir, "error", rErr)
 	}
@@ -238,14 +240,14 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	api.WriteJSON(w, map[string]any{"entries": lines, "remote": gitexec.ScrubAuth(remote), "behind": behind})
+	webhttp.WriteJSON(w, map[string]any{"entries": lines, "remote": scrubAuth(remote), "behind": behind})
 }
 
 func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 	dir := h.repoDir(repoFromQuery(r))
 	out, err := gitCmd(r.Context(), dir, "branch", "-a", "--format=%(refname:short)\t%(HEAD)")
 	if err != nil {
-		api.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
+		webhttp.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
 		return
 	}
 	type branchEntry struct {
@@ -266,7 +268,7 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 			current = name
 		}
 	}
-	api.WriteJSON(w, map[string]any{"branches": branches, "current": current})
+	webhttp.WriteJSON(w, map[string]any{"branches": branches, "current": current})
 }
 
 func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +285,7 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Branch == "" {
-		api.BadRequest(w, "branch required")
+		httpreply.BadRequest(w, "branch required")
 		return
 	}
 	// Reject branch names that look like options or contain characters
@@ -293,11 +295,11 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	// not "switch branch".
 	if !isValidGitRef(body.Branch) {
 		slog.Warn("git checkout: invalid branch rejected", "repo", body.Repo, "branch", body.Branch)
-		api.BadRequest(w, "invalid branch name")
+		httpreply.BadRequest(w, "invalid branch name")
 		return
 	}
 	dir := h.repoDir(body.Repo)
-	args := []string{"checkout"}
+	args := []string{subCheckout}
 	if body.Create {
 		args = append(args, "-b")
 	}
@@ -316,7 +318,7 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Repo == "" || body.Repo == "." {
-		api.BadRequest(w, "repo name required (cannot remove workspace root)")
+		httpreply.BadRequest(w, "repo name required (cannot remove workspace root)")
 		return
 	}
 	// The resolved variant, because this is the one handler that DELETES: see
@@ -324,18 +326,18 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 	// cannot see. It answers "" for a path it will not vouch for.
 	dir := h.repoDirForDelete(body.Repo)
 	if dir == "" {
-		api.BadRequest(w, "that repo path is not inside the workspace")
+		httpreply.BadRequest(w, "that repo path is not inside the workspace")
 		return
 	}
 	if dir == h.workDir {
-		api.BadRequest(w, "cannot remove workspace root")
+		httpreply.BadRequest(w, "cannot remove workspace root")
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
-		api.WriteJSON(w, api.ErrorJSON("remove failed"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
-	api.Ok(w)
+	webhttp.Ok(w)
 }

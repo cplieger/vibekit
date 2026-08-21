@@ -28,7 +28,7 @@ type PushState =
   | { kind: "failed"; error: string };
 
 /** The push kinds the user can switch off, keyed by their WIRE value (matching
- *  `api.PushKind`) and paired with the settings key that carries each one.
+ *  `vibekit.PushKind`) and paired with the settings key that carries each one.
  *
  *  Derived from the server's registry rather than restated: a kind with a settings
  *  key is configurable, and `permission` deliberately has none — an ask blocks the

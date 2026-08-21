@@ -22,7 +22,7 @@ const (
 // parseErrBurst is the first N parse-error lines readLoop emits
 // verbatim before switching to summary-only mode. parseErrWindow is
 // the summary-line cadence; parseErrMaxConsecutive is the consecutive-
-// failure ceiling that triggers bridge teardown so the hub recreates
+// failure ceiling that triggers bridge teardown so the runtime recreates
 // a fresh subprocess on the next prompt.
 const (
 	parseErrBurst          = 10
@@ -39,9 +39,16 @@ type parseErrTracker struct {
 	consecutive int
 }
 
-// parseErrDecay is the duration after which the storm window resets if
-// no new errors arrive. Prevents long-lived bridges from accumulating
-// stale error counts that trigger false circuit-breaks.
+// parseErrDecay is how long the storm window survives without a new error. Past
+// it the burst/summary accounting starts over, so a long-lived bridge that saw
+// one storm hours ago gets its verbatim burst back instead of staying in
+// summary-only mode for the life of the process.
+//
+// It does NOT touch the circuit breaker, and it must not: the breaker counts
+// CONSECUTIVE failures, which Reset clears on every frame that parses, so
+// parseErrMaxConsecutive frames with not one valid frame between them is a dead
+// stream at any pace. Decaying that count would make the breaker unable to fire
+// on a stream that fails totally but slowly.
 const parseErrDecay = 5 * time.Minute
 
 // Record notes a parse error and returns the action readLoop should take.
@@ -64,7 +71,10 @@ func (t *parseErrTracker) Record() parseErrAction {
 		}
 		return parseErrLog
 	}
-	if time.Since(t.windowStart) > parseErrWindow {
+	// now, not a second time.Now(): one decision must not straddle two readings
+	// of the clock, or the decay above and the window here answer about
+	// different instants.
+	if now.Sub(t.windowStart) > parseErrWindow {
 		t.windowStart = now
 		return parseErrSummarize
 	}

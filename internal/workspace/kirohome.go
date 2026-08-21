@@ -21,7 +21,7 @@ var kiroHomeResolver func() string
 // SetKiroHomeResolver sets the function that resolves the kiro home
 // directory. Must be called once at startup from the config layer
 // before any call to KiroHome(). This keeps the env-var read explicit
-// at the composition root rather than buried in the api package.
+// at the composition root rather than buried in the vibekit package.
 func SetKiroHomeResolver(fn func() string) {
 	kiroHomeResolver = fn
 }

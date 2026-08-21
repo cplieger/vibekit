@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// canonTmp returns a symlink-resolved temp dir so AssertInside /
+// canonTmp returns a symlink-resolved temp dir so containment /
 // EvalSymlinks comparisons aren't confused by a symlinked /tmp.
 func canonTmp(t *testing.T) string {
 	t.Helper()
@@ -56,26 +56,43 @@ func TestResolveInsideAbs_existingFileResolves(t *testing.T) {
 	}
 }
 
-// AssertInside accepts a path beneath root and rejects the parent
-// directory (whose relative path is "..").
-func TestAssertInside_acceptsInsideRejectsParent(t *testing.T) {
+// The containment boundary accepts a path beneath the workspace and rejects the
+// parent directory (whose relative path is ".."). Asserted through
+// ResolveInsideAbs because the boundary is no longer a callable pair: the root
+// is a pathinside.Root the function holds, which is what removes the
+// transposition hazard rather than renaming it.
+func TestResolveInsideAbs_acceptsInsideRejectsParent(t *testing.T) {
 	base := canonTmp(t)
 
 	inside := filepath.Join(base, "sub")
-	if err := AssertInside(inside, base); err != nil {
-		t.Errorf("AssertInside(inside, base) = %v, want nil", err)
+	if _, err := ResolveInsideAbs(base, inside); err != nil {
+		t.Errorf("ResolveInsideAbs(base, inside) = %v, want nil", err)
 	}
 
 	parent := filepath.Dir(base) // relative path is ".."
-	if err := AssertInside(parent, base); err == nil {
-		t.Error("AssertInside(parent, base) = nil, want error")
+	if got, err := ResolveInsideAbs(base, parent); err == nil {
+		t.Errorf("ResolveInsideAbs(base, parent) = (%q, nil), want an error", got)
+	}
+}
+
+// An empty workspace root contains NOTHING, so every path is refused. The
+// hand-rolled filepath.Rel predicate this replaced failed OPEN here: Rel cleans
+// an empty base to ".", so a relative path was silently confined to the
+// process's working directory — a boundary nobody chose — and an unset workDir
+// is a missing configuration value, not that request.
+func TestResolveInsideAbs_emptyRootContainsNothing(t *testing.T) {
+	for _, p := range []string{"sub/file.txt", "file.txt", "/abs/file.txt", "."} {
+		if got, err := ResolveInsideAbs("", p); err == nil {
+			t.Errorf("ResolveInsideAbs(%q, %q) = (%q, nil), want an error", "", p, got)
+		}
 	}
 }
 
 // RelPath returns the forward-slash-normalized relative path on success and
 // an error when the pair cannot be made relative (absolute vs relative).
 // It normalizes but does NOT reject escapes: an abs path outside workDir
-// yields a "../"-prefixed result with no error (sandboxing is AssertInside's job).
+// yields a "../"-prefixed result with no error (containment is
+// ResolveInsideAbs's job).
 func TestRelPath_normalizesAndErrors(t *testing.T) {
 	got, err := RelPath("/work", "/work/sub/f.txt")
 	if err != nil {

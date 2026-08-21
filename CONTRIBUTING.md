@@ -30,16 +30,21 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 ### Server (repo root)
 
 - `main.go` / `embed.go`: the composition root. Load config, construct the
-  store, hub, bridge, and push service, register HTTP routes, embed the
+  store, agent runtime, bridge, and push service, register HTTP routes, embed the
   compiled static assets. Wiring only.
-- `internal/api/`: interface contracts (`ChatStore`, `Hub`, `ACPBridge`,
-  `PushService`) plus the domain types (chat, message, tool call, plan, usage).
-  Every other package depends only on this one. Includes `httputil.go` response
-  helpers; use them, never hand-craft JSON.
+- `internal/vibekit/`: the wire and domain TYPE vocabulary (chat, message, tool call,
+  plan, usage) plus the constructors and mappers over it. No interfaces, no
+  behaviour: the contracts are declared at their consumers, and the helpers that
+  used to live here moved to packages named for what they do: `internal/httpreply`
+  (JSON replies), `internal/sanitize` (ANSI + hidden Unicode), `internal/ids`
+  (identifier minting and validation), `internal/rpcerr` (JSON-RPC error text),
+  `internal/modeltext` (model tag policy, markdown fences), `internal/procout`,
+  `internal/ansitext`.
 - `internal/chat/`: persistence, one JSON file per chat, written atomically.
   `Mutate` is the only write path.
-- `internal/hub/`: command dispatch, SSE broadcast, ACP-to-domain event
-  translation, bridge buffer aggregation, and the global PTY shell.
+- `internal/agent/`: command dispatch, SSE broadcast, ACP-to-domain event
+  translation, bridge buffer aggregation, and the global PTY shell. Named for the
+  per-chat agent runtime it coordinates; the type is `agent.Runtime`.
 - `internal/bridge/`: `kiro-cli acp` subprocess lifecycle, capability
   handshake, and the filesystem read/write handlers. The binary it runs is
   resolved once per bridge, from the install manager, so a version switch reaches
@@ -58,12 +63,12 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   declaration is the one that can withhold readiness: the library refuses to
   install into a tree another identity can write, and reads access-control lists
   to find that out. `TrustedUIDs` carries the identities a deployment vouches
-  for, and it is deliberately NOT a compiled-in value — it comes from
-  `WT_TRUSTED_INSTALL_UIDS` (parsed by `parseTrustedInstallUIDs` in
+  for, and it is deliberately NOT a compiled-in value; it comes from
+  `TRUSTED_INSTALL_UIDS` (parsed by `parseTrustedInstallUIDs` in
   `internal/composition/config.go`), because only the deployment knows which
   account on its volume already holds at least this process's privilege. The
   image ships it unset, which leaves the check fully enforcing. `Untrusted`
-  stays deliberately unset here — vibekit has no hardening pass that could make
+  stays deliberately unset here: vibekit has no hardening pass that can make
   that observation.
 
   Nothing in this file exits the process: every failure degrades readiness
@@ -72,11 +77,9 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 - `internal/translate/`: ACP notification handlers that turn raw `kiro-cli`
   events into vibekit domain events.
 - `internal/command/`: handlers for each `POST /api/command` type.
-- `internal/checkpoint/`: content-addressed file-snapshot store with a
-  two-phase atomic restore.
-- `internal/permissions/`, `internal/forges/`, `internal/git/`,
+- `internal/forges/`, `internal/git/`,
   `internal/mcp/`, `internal/push/`, `internal/auth/`,
-  `internal/server/`: feature subsystems (tool-approval policy, forge CLI
+  `internal/server/`: feature subsystems (forge CLI
   orchestration, git handlers, MCP, web push, kiro-cli identity endpoints, HTTP
   middleware and routing).
 - The tools engine is the external
@@ -89,8 +92,8 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   `internal/workspace/`, `internal/kiroauth/`, `internal/version/`, and the
   other small packages: focused helpers.
 
-Server dependencies flow one direction: composition root → hub → API contracts
-→ feature packages. No reverse imports.
+Server dependencies flow one direction: composition root → agent runtime → wire
+types → feature packages. No reverse imports.
 
 ### Client (`static-src/`, compiled to `static/`)
 
@@ -132,10 +135,12 @@ These rules exist because breaking them caused real bugs. Preserve them.
   and restarts never delete. A live bridge always implies a live chat record.
 - **Translate ACP events to domain events.** Never emit raw ACP to clients; do
   the translation in the `internal/translate/` handlers.
-- **Use the `internal/api` response helpers.** Never hand-craft JSON error or
-  success bodies (`http.Error` with a JSON string, `fmt.Fprint`,
-  `w.Write([]byte(...))`). Use `Ok`, `WriteJSON`, `BadRequest`, `NotFound`,
-  `Conflict`, `InternalError`, and the rest.
+- **Use the `internal/httpreply` response helpers.** Never hand-craft JSON error
+  or success bodies (`http.Error` with a JSON string, `fmt.Fprint`,
+  `w.Write([]byte(...))`). Use `BadRequest`, `NotFound`, `Conflict`, `Forbidden`,
+  `InternalError`, `ServerError`, `MethodNotAllowed`, `RequireMethod`,
+  `DecodeJSON`, `ErrorJSON` and the rest; `WriteJSON` is `webhttp`'s, called
+  directly for a plain body.
 - **Logs are UTC.** `internal/logctl` installs the logger via `slogx.Setup`,
   whose `UTCTime` `ReplaceAttr` forces every record's timestamp to UTC, so the
   container needs no `TZ` and the binary embeds no `time/tzdata`.
@@ -226,7 +231,7 @@ $VIBEKIT_TOOLS_DIR/kiro-cli-versions/<version>/
 export VIBEKIT_TOOLS_DIR=/tmp/vibekit-tools KIRO_CLI_VERSION=2.14.2
 # Both digests are validated when the manager is CONSTRUCTED, before it knows
 # whether it has anything to download, so they must be 64 lowercase hex
-# characters each — but nothing is fetched here, so the values are arbitrary.
+# characters each, but nothing is fetched here, so the values are arbitrary.
 export KIRO_CLI_SHA256=0000000000000000000000000000000000000000000000000000000000000000
 export KIRO_CLI_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000
 V="$VIBEKIT_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
@@ -260,6 +265,23 @@ The full application (Go server, kiro-cli download, and the on-demand tool
 chain) is designed to run in the container. The image is built from the
 multi-stage `Dockerfile`, and `compose.yaml` wires up the persistent `/config`
 volume and exposes the UI on port `9847`.
+
+### Runtime profiles
+
+`GET /debug/pprof/` serves Go's standard runtime profiles behind a loopback
+check: the socket peer and the `Host` header must both be loopback, and a
+request carrying proxy or browser headers is refused. A browser tab therefore
+gets a 403, so read a profile with `curl` from inside the container:
+
+```sh
+docker exec vibekit curl -s 'http://127.0.0.1:9847/debug/pprof/goroutine?debug=2'
+```
+
+The goroutine dump is the useful one: every stack, what it is waiting on, and
+how long. `goroutineleak`, `heap`, `allocs`, `block`, `mutex` and
+`threadcreate` are there too. The CPU profile and the execution trace are
+deliberately absent, because both hold the server for their whole sample
+window.
 
 ### Frontend assets
 
@@ -369,7 +391,7 @@ Tests live beside the code they cover, standard for both ecosystems:
 
 - **Go**: `foo.go` → `foo_test.go` in the same package. Property-based tests use
   `pgregory.net/rapid`. Run the race detector (`go test -race ./...`) on changes
-  to concurrent code (the hub, bridge, chat store, checkpoints).
+  to concurrent code (the agent runtime, bridge, chat store, buffers).
 - **TypeScript**: `foo.ts` → `foo.test.ts`, co-located. The runner is vitest;
   property-based tests use `fast-check`. DOM-dependent tests opt into happy-dom
   with `// @vitest-environment happy-dom` at the file top. For action tests, mock

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires /api/push/vapid-key, /api/push/subscribe, and
@@ -22,22 +24,21 @@ type vapidKeyResponse struct {
 }
 
 func (s *Service) handleVAPIDKey(w http.ResponseWriter, _ *http.Request) {
-	api.WriteJSON(w, vapidKeyResponse{PublicKey: s.PublicKey()})
+	webhttp.WriteJSON(w, vapidKeyResponse{PublicKey: s.PublicKey()})
 }
 
 func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+	if !httpreply.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
-	api.LimitBody(w, r, api.MaxJSONBody)
-	var sub api.PushSubscription
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	var sub vibekit.PushSubscription
 	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil || sub.Endpoint == "" {
-		api.BadRequest(w, "invalid subscription")
+		httpreply.BadRequest(w, "invalid subscription")
 		return
 	}
 	if !isAllowedPushEndpoint(sub.Endpoint) {
-		api.BadRequest(w, "push endpoint not from a recognised browser push service")
+		httpreply.BadRequest(w, "push endpoint not from a recognised browser push service")
 		return
 	}
 	// Validate key material at the ingress boundary so Send's hot
@@ -46,31 +47,30 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// (0x04 || X(32) || Y(32)); auth is 16 random bytes.
 	pub, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil || len(pub) != 65 || pub[0] != 0x04 {
-		api.BadRequest(w, "invalid p256dh key")
+		httpreply.BadRequest(w, "invalid p256dh key")
 		return
 	}
 	auth, err := base64.RawURLEncoding.DecodeString(sub.Keys.Auth)
 	if err != nil || len(auth) != 16 {
-		api.BadRequest(w, "invalid auth secret")
+		httpreply.BadRequest(w, "invalid auth secret")
 		return
 	}
 	s.Subscribe(sub)
-	api.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+	if !httpreply.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
-	api.LimitBody(w, r, api.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var body struct {
 		Endpoint string `json:"endpoint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Endpoint == "" {
-		api.BadRequest(w, "invalid endpoint")
+		httpreply.BadRequest(w, "invalid endpoint")
 		return
 	}
 	s.Unsubscribe(body.Endpoint)
-	api.Ok(w)
+	webhttp.Ok(w)
 }

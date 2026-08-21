@@ -1,7 +1,6 @@
 package logctl
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -35,9 +34,19 @@ func writeSettings(t *testing.T, dir, content string) {
 // readDebugFlag is a test helper that exercises the same code path as
 // Install: settings.Field[bool] for the "debug_logs" key. Returns
 // (value, ok) matching the settings.Field contract.
-// context.Background() rather than t.Context(): no *testing.T is in scope here.
-func readDebugFlag(dir string) (bool, bool) {
-	return settings.Field[bool](context.Background(), dir, "debug_logs", "debug_logs")
+//
+// Takes the testing.TB so the read is parented on the test's context rather
+// than context.Background(). That context is load-bearing rather than
+// decorative: settings.readBytes checks ctx.Err() before touching the cache and
+// returns the error, which Field turns into (zero, false) plus a Warn — so a
+// helper on Background() is the one caller in the package that could not observe
+// a cancelled read. The previous comment here justified Background() with "no
+// *testing.T is in scope", which was true of the signature and false as a
+// reason: testing.TB carries Context() (Go 1.24), and the single caller is
+// inside a subtest holding a *testing.T.
+func readDebugFlag(tb testing.TB, dir string) (bool, bool) {
+	tb.Helper()
+	return settings.Field[bool](tb.Context(), dir, "debug_logs")
 }
 
 func TestReadDebugFlag(t *testing.T) {
@@ -142,7 +151,7 @@ func TestReadDebugFlag(t *testing.T) {
 				writeSettings(t, dir, tc.content)
 			}
 
-			got, ok := readDebugFlag(dir)
+			got, ok := readDebugFlag(t, dir)
 
 			if ok != tc.wantOK {
 				t.Errorf("readDebugFlag ok = %v, want %v", ok, tc.wantOK)
@@ -162,7 +171,7 @@ func TestInstall_WithDebugTrue_SetsDebugLevel(t *testing.T) {
 	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelDebug {
-		t.Errorf("after Install(context.Background(), debug=true) level = %v, want %v", got, slog.LevelDebug)
+		t.Errorf("after Install(t.Context(), debug=true) level = %v, want %v", got, slog.LevelDebug)
 	}
 }
 
@@ -174,7 +183,7 @@ func TestInstall_WithDebugFalse_SetsInfoLevel(t *testing.T) {
 	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
-		t.Errorf("after Install(context.Background(), debug=false) level = %v, want %v", got, slog.LevelInfo)
+		t.Errorf("after Install(t.Context(), debug=false) level = %v, want %v", got, slog.LevelInfo)
 	}
 }
 
@@ -185,7 +194,7 @@ func TestInstall_WithMissingSettings_DefaultsToInfo(t *testing.T) {
 	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
-		t.Errorf("after Install(context.Background(), no config.json) level = %v, want %v (must not silently enable debug)", got, slog.LevelInfo)
+		t.Errorf("after Install(t.Context(), no config.json) level = %v, want %v (must not silently enable debug)", got, slog.LevelInfo)
 	}
 }
 
@@ -197,7 +206,7 @@ func TestInstall_WithCorruptSettings_DefaultsToInfo(t *testing.T) {
 	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
-		t.Errorf("after Install(context.Background(), corrupt config.json) level = %v, want %v (must fail safe)", got, slog.LevelInfo)
+		t.Errorf("after Install(t.Context(), corrupt config.json) level = %v, want %v (must fail safe)", got, slog.LevelInfo)
 	}
 }
 

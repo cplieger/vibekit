@@ -2,19 +2,41 @@ package chat
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 
-	"github.com/cplieger/jsonx/bounded"
-	"github.com/cplieger/pathinside"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/jsoncap/v2"
+	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes
 // size cap and the TOCTOU grow-during-read guard. Returns the raw bytes.
+//
+// THE NAME IS OPENED THROUGH atomicfile.OpenRegular, NOT os.Open, and that is
+// an availability fix rather than tidiness. os.Open on a FIFO blocks in open(2)
+// until a writer appears and no context deadline can rescue it (measured on
+// go1.27.0: os.Open, os.ReadFile and io.ReadAll over one all hang past 2s,
+// while the same open with O_NONBLOCK returns immediately). This directory is
+// on the /config volume, which invariant 6 invites the operator to reshape and
+// which the agent's own shell can reach, so `mkfifo <chats>/<valid-chat-id>.json`
+// was a one-command permanent wedge: Store.load blocks, every reader that
+// serialises behind it blocks, and List's whole 8-worker fan-out blocks inside
+// one singleflight slot, so every later GET /api/chats joins the same queue.
+// It survives a restart, because the FIFO is on the volume. OpenRegular refuses
+// a directory, FIFO, device node or socket with ErrNotRegular and refuses a
+// symlink at the final component with ErrSymlinkTarget, both on the open
+// itself, and hands back the descriptor the bytes are then read from — so the
+// object judged and the object read are the same one.
+//
+// The symlink refusal is a second, smaller close: a link planted at
+// <chats>/<id>.json pointing anywhere else made that file's bytes searchable
+// through Search/SearchAll under a chat id. A refused chat degrades one row
+// (List logs it and reports the scan incomplete, which fails the session sweep
+// closed) rather than aborting boot, so this stays inside invariant 6.
 //
 // Path is filepath.Clean'd up-front and rejected if it holds a ".."
 // component or is non-absolute. Callers already pass paths derived from
@@ -47,38 +69,34 @@ func readCappedFile(path, label string) ([]byte, error) {
 	if !filepath.IsAbs(clean) || pathinside.HasDotDot(clean) {
 		return nil, fmt.Errorf("%s: rejected unsafe path %q", label, path)
 	}
-	f, err := os.Open(clean)
+	f, _, err := atomicfile.OpenRegular(clean)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	st, err := f.Stat()
+	// ReadBoundedFile is the size cap AND the grow-during-read guard the two
+	// hand-rolled stat/ReadAll/re-check steps here used to be: it stats the
+	// descriptor, refuses over maxChatFileBytes with ErrFileTooLarge, and
+	// refuses again if the file grew past the limit while being read.
+	// context.Background() because no read path here carries one — Store.load,
+	// Store.Load (archive.StoreAccess) and searchOneChat are all context-free,
+	// and threading one through would change the archive interface for a bound
+	// that is already enforced.
+	data, err := atomicfile.ReadBoundedFile(context.Background(), f, maxChatFileBytes)
 	if err != nil {
-		return nil, err
-	}
-	if st.Size() > maxChatFileBytes {
-		return nil, fmt.Errorf("%s file too large: %d bytes (max %d)",
-			label, st.Size(), maxChatFileBytes)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxChatFileBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxChatFileBytes {
-		return nil, fmt.Errorf("%s grew during load: read %d bytes (max %d)",
-			label, len(data), maxChatFileBytes)
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
 	return data, nil
 }
 
 // readChatFile reads a chat JSON file at path, enforcing the
 // maxChatFileBytes size cap and the TOCTOU grow-during-read guard.
-func readChatFile(path, label string) (*api.Chat, error) {
+func readChatFile(path, label string) (*vibekit.Chat, error) {
 	data, err := readCappedFile(path, label)
 	if err != nil {
 		return nil, err
 	}
-	var c api.Chat
+	var c vibekit.Chat
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -86,19 +104,19 @@ func readChatFile(path, label string) (*api.Chat, error) {
 }
 
 // chatHeaderOnDisk is a partial-unmarshal struct that skips the Messages
-// array. Embeds api.ChatHeader so new fields automatically flow through
+// array. Embeds vibekit.ChatHeader so new fields automatically flow through
 // without a manual mapping step. json.RawMessage avoids allocating/parsing
 // the message objects, bounding List's memory to O(N × header_size)
 // instead of O(N × full_chat).
 type chatHeaderOnDisk struct {
 	Messages json.RawMessage `json:"messages"`
-	api.ChatHeader
+	vibekit.ChatHeader
 }
 
 // readChatHeader reads a chat JSON file and returns only the header fields,
 // skipping full message deserialization. The message count is derived from
 // counting top-level array elements in the raw JSON.
-func readChatHeader(path, label string) (*api.ChatHeader, error) {
+func readChatHeader(path, label string) (*vibekit.ChatHeader, error) {
 	data, err := readCappedFile(path, label)
 	if err != nil {
 		return nil, err
@@ -112,7 +130,7 @@ func readChatHeader(path, label string) (*api.ChatHeader, error) {
 }
 
 // countJSONArrayElements counts top-level elements in a JSON array without
-// materializing them: each element is token-skipped via jsonx/bounded, so
+// materializing them: each element is token-skipped via jsoncap, so
 // counting never allocates per-element buffers. Returns 0 for
 // nil/empty/invalid input (count-so-far when an element mid-array is
 // malformed).
@@ -124,7 +142,7 @@ func countJSONArrayElements(raw json.RawMessage) int {
 	if len(raw) == 0 {
 		return 0
 	}
-	dec := bounded.NewDecoder(bytes.NewReader(raw), 0)
+	dec := jsoncap.NewDecoder(bytes.NewReader(raw), 0)
 	if ok, err := dec.Open('['); err != nil || !ok {
 		return 0
 	}

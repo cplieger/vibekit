@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // focusFrame builds a session_info_update raw payload carrying a
@@ -24,14 +24,14 @@ func focusFrame(t *testing.T, focus map[string]any) []byte {
 
 // chatStatusPayloads filters the captured events down to chat_status
 // payloads.
-func chatStatusPayloads(t *testing.T, events *[]api.ServerEvent) []api.ChatStatusPayload {
+func chatStatusPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.ChatStatusPayload {
 	t.Helper()
-	var out []api.ChatStatusPayload
+	var out []vibekit.ChatStatusPayload
 	for _, e := range *events {
-		if e.Type != api.EventChatStatus {
+		if e.Type != vibekit.EventChatStatus {
 			continue
 		}
-		p, ok := e.Payload.(api.ChatStatusPayload)
+		p, ok := e.Payload.(vibekit.ChatStatusPayload)
 		if !ok {
 			t.Fatalf("chat_status payload type = %T", e.Payload)
 		}
@@ -44,7 +44,7 @@ func chatStatusPayloads(t *testing.T, events *[]api.ServerEvent) []api.ChatStatu
 // broadcasts the status/description as an ephemeral chat_status event.
 func TestHandleSessionInfoUpdate_FocusAdoptsTitleAndStatus(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title":       "Photo organizer CLI setup",
@@ -69,7 +69,7 @@ func TestHandleSessionInfoUpdate_FocusAdoptsTitleAndStatus(t *testing.T) {
 // the title untouched and still broadcasts chat_status.
 func TestHandleSessionInfoUpdate_FocusStatusOnly(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"description": "Step 1 complete.",
@@ -89,7 +89,7 @@ func TestHandleSessionInfoUpdate_FocusStatusOnly(t *testing.T) {
 // Subagent focus frames are dropped by the parent-only gate.
 func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title": "Sub focus", "status": "in_progress",
@@ -124,14 +124,14 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if err := store.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
-					c.Messages = append(c.Messages, api.Message{ID: "m1", Role: api.RoleUser, Content: tc.userMsg})
+				if err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+					c.Messages = append(c.Messages, vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: tc.userMsg})
 					return true
 				}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			tr := New(deps)
+			tr := New(rolesOf(deps))
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{"title": tc.title}), "")
 
@@ -148,9 +148,9 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 
 // titleIsPromptDerived edge cases the integration table above doesn't hit.
 func TestTitleIsPromptDerived(t *testing.T) {
-	chat := &api.Chat{Messages: []api.Message{
-		{Role: api.RoleUser, Content: "  padded prompt text  "},
-		{Role: api.RoleAssistant, Content: "assistant text"},
+	chat := &vibekit.Chat{Messages: []vibekit.Message{
+		{Role: vibekit.RoleUser, Content: "  padded prompt text  "},
+		{Role: vibekit.RoleAssistant, Content: "assistant text"},
 	}}
 	cases := []struct {
 		name  string

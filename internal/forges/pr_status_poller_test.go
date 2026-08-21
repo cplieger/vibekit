@@ -13,9 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // fakeSource counts how often it was asked, which is what makes "no forge work"
@@ -33,8 +34,8 @@ func (f *fakeSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
 
 type sentPush struct {
 	body    string
-	kind    api.PushKind
-	subject api.PushSubject
+	kind    vibekit.PushKind
+	subject vibekit.PushSubject
 }
 
 // fakeNotifier records every Send and reports a configurable subscriber state.
@@ -49,7 +50,7 @@ func (f *fakeNotifier) HasSubscribers() bool {
 	return f.subscribers
 }
 
-func (f *fakeNotifier) Send(_ context.Context, _, body string, kind api.PushKind, subject api.PushSubject) {
+func (f *fakeNotifier) Send(_ context.Context, _, body string, kind vibekit.PushKind, subject vibekit.PushSubject) {
 	f.sent = append(f.sent, sentPush{body: body, kind: kind, subject: subject})
 }
 
@@ -159,8 +160,8 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 					len(n.sent), tc.from, tc.to, n.sent)
 			}
 			got := n.sent[0]
-			if got.kind != api.PushKindPRStatus {
-				t.Errorf("kind = %q, want %q", got.kind, api.PushKindPRStatus)
+			if got.kind != vibekit.PushKindPRStatus {
+				t.Errorf("kind = %q, want %q", got.kind, vibekit.PushKindPRStatus)
 			}
 			if !strings.Contains(got.body, tc.wantBody) {
 				t.Errorf("body %q does not say %q", got.body, tc.wantBody)
@@ -234,7 +235,7 @@ func TestPoller_SubjectIsPerPR(t *testing.T) {
 			n.sent[0].subject.Key)
 	}
 	for _, s := range n.sent {
-		if !strings.HasPrefix(s.subject.Key, api.PRSubjectPrefix) {
+		if !strings.HasPrefix(s.subject.Key, vibekit.PRSubjectPrefix) {
 			t.Errorf("subject %q lacks the PR prefix the client routes on", s.subject.Key)
 		}
 		if s.subject.ChatID != "" {
@@ -398,43 +399,56 @@ func (s *slowSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
 // The assertion is on the observed gap between one listing finishing and the next
 // starting, measured by the fixture rather than against the production budget. A
 // ticker leaves that gap at effectively zero, so this fails closed on the old shape.
+//
+// It runs in a synctest BUBBLE, which turns the whole assertion from a tolerance
+// into an equality. Everything in the loop blocks durably — the sweep is a
+// time.Sleep, the wait is a timer receive, teardown is a context cancel and a
+// channel close — so the bubble's clock advances only between them and the gap
+// each iteration leaves is EXACTLY p.tick. Before the bubble this test slept
+// 6*(delay+interval) of real time (measured: 0.72 s, 39% of the package's
+// -race runtime) and could only assert `gap >= interval/2`, because a real
+// timer's imprecision made the whole interval unassertable; the half-interval
+// floor was wide enough that a sweep scheduled 51% early still passed. Now an
+// early schedule of one nanosecond fails.
 func TestPoller_SchedulesFromCompletion(t *testing.T) {
-	const interval = 40 * time.Millisecond
-	src := &slowSource{delay: 2 * interval}
-	n := &fakeNotifier{subscribers: true}
-	p := NewPRStatusPoller(src, n)
-	p.tick = interval
-	p.discovery = interval
+	synctest.Test(t, func(t *testing.T) {
+		const interval = 40 * time.Millisecond
+		src := &slowSource{delay: 2 * interval}
+		n := &fakeNotifier{subscribers: true}
+		p := NewPRStatusPoller(src, n)
+		p.tick = interval
+		p.discovery = interval
 
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() {
-		p.Run(ctx)
-		close(done)
-	}()
-	// Long enough for three sweeps at (delay + interval) each, plus slack.
-	time.Sleep(6 * (src.delay + interval))
-	cancel()
-	<-done
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan struct{})
+		go func() {
+			p.Run(ctx)
+			close(done)
+		}()
+		// Synthetic time: long enough for three sweeps at (delay + interval) each.
+		// No slack is needed and none is wanted — slack would be indistinguishable
+		// from a sweep firing early.
+		synctest.Sleep(3 * (src.delay + interval))
+		cancel()
+		<-done
 
-	src.mu.Lock()
-	starts := append([]time.Time(nil), src.starts...)
-	ends := append([]time.Time(nil), src.ends...)
-	src.mu.Unlock()
+		src.mu.Lock()
+		starts := append([]time.Time(nil), src.starts...)
+		ends := append([]time.Time(nil), src.ends...)
+		src.mu.Unlock()
 
-	if len(starts) < 2 {
-		t.Fatalf("only %d sweeps ran; the fixture cannot witness the gap", len(starts))
-	}
-	// Half the interval, not the whole one: timer firing has real imprecision, and
-	// the defect being caught leaves the gap near zero rather than merely short.
-	floor := interval / 2
-	for i := 0; i+1 < len(starts) && i < len(ends); i++ {
-		if gap := starts[i+1].Sub(ends[i]); gap < floor {
-			t.Errorf("sweep %d started %v after sweep %d finished, want at least %v: "+
-				"the next sweep is being scheduled from a retained tick rather than from completion",
-				i+1, gap, i, floor)
+		if len(starts) < 2 {
+			t.Fatalf("only %d sweeps ran; the fixture cannot witness the gap", len(starts))
 		}
-	}
+		// EXACTLY the interval. The defect being caught leaves the gap at zero.
+		for i := 0; i+1 < len(starts) && i < len(ends); i++ {
+			if gap := starts[i+1].Sub(ends[i]); gap != interval {
+				t.Errorf("sweep %d started %v after sweep %d finished, want exactly %v: "+
+					"the next sweep is being scheduled from a retained tick rather than from completion",
+					i+1, gap, i, interval)
+			}
+		}
+	})
 }
 
 // TestPoller_RunDoesNotSweepOnEntry: the first sweep only seeds, so sweeping at
@@ -531,7 +545,7 @@ func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
 	t.Run("GiteaNotifiesNothing", func(t *testing.T) {
 		const payload = `[{"number":4,"title":"Ready","state":"open","mergeable":true,
 		  "head":{"ref":"feat","sha":"aaaaaaa1111"},"base":{"ref":"main"}}]`
-		prs, err := newGitea(KindGitea, "gitea.example").parsePRs([]byte(payload))
+		prs, err := parsePRs([]byte(payload))
 		if err != nil {
 			t.Fatalf("parsePRs: %v", err)
 		}

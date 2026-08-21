@@ -11,19 +11,19 @@ package steering
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -31,11 +31,17 @@ import (
 // OOM the container by committing a multi-GiB README or tools.json.
 // The workspace hosts agent-cloned upstreams whose contents are
 // attacker-controlled from our point of view; everywhere else in
-// vibekit (bridge_fs, checkpoint blobs, forges, filehandler) clamps
+// vibekit (bridge_fs, checkpoint blobs, forges, filebrowse) clamps
 // reads via io.LimitReader for the same reason.
 const (
 	firstLineReadCap = 4 << 10 // README first non-heading line fits easily in 4 KiB
 	toolsManifestCap = 1 << 20 // any realistic tools.json stays well under 1 MiB
+	// steeringCompareCap bounds the read of the EXISTING environment.md that
+	// the skip-if-unchanged check compares against. Generously above any
+	// content this generator produces (tens of KiB), so the comparison is
+	// exact for every real file; anything larger is not a file this wrote and
+	// compares unequal, which replaces it.
+	steeringCompareCap = 4 << 20
 
 	inclusionAlways    = "always"
 	inclusionFileMatch = "fileMatch"
@@ -51,9 +57,9 @@ const (
 
 // MCPSnapshot is the subset of the MCP runtime registry the steering
 // generator uses. Returned by the snapshot function wired at construct
-// time; steering has no direct dependency on hub internals.
+// time; steering has no direct dependency on agent internals.
 type MCPSnapshot struct {
-	Servers []api.MCPSnapshotServer
+	Servers []vibekit.MCPSnapshotServer
 }
 
 // ForgeSnapshot describes connected forge providers for the steering file.
@@ -87,7 +93,7 @@ func New(workDir, configDir string) *Generator {
 // SetMCPSnapshot wires a snapshot callback. Called once after
 // construction. If unset, the generator omits the MCP section entirely.
 // The callback runs OUTSIDE the generator's mutex (so it may safely
-// take hub locks without re-entry risk); only the pointer assignment
+// take agent locks without re-entry risk); only the pointer assignment
 // and read are lock-guarded. Generate enforces this by snapshotting
 // g.mcpSnapshot under g.mu, then releasing the lock around the call.
 func (g *Generator) SetMCPSnapshot(fn func() MCPSnapshot) {
@@ -116,7 +122,7 @@ func (g *Generator) Generate(ctx context.Context) {
 	// Snapshot the callback pointer under g.mu, then invoke it
 	// outside the read-only section. Matches the contract the
 	// SetMCPSnapshot doc promises: the callback may safely take
-	// hub locks without re-entry risk.
+	// agent locks without re-entry risk.
 	snapshotFn := g.mcpSnapshot
 	forgeFn := g.forgeSnapshot
 	var mcp MCPSnapshot
@@ -187,7 +193,14 @@ func (g *Generator) Generate(ctx context.Context) {
 	// Skip if the rendered content is byte-identical. MCP event
 	// storms fire Generate multiple times per second; rewriting
 	// the same bytes bumps mtime and wastes disk I/O.
-	if existing, readErr := os.ReadFile(steeringFile); readErr == nil && bytes.Equal(existing, content) {
+	//
+	// Through readCappedFile, not os.ReadFile: the Kiro home is a volume the
+	// operator reshapes by hand (invariant 6), so a FIFO or a symlink can be
+	// sitting at this name too, and a plain read here would hang before the
+	// write below ever got the chance to refuse it. Any error — including an
+	// over-cap file — falls through to the write, which is the outcome that
+	// heals: a bogus environment.md gets replaced rather than trusted.
+	if existing, readErr := readCappedFile(steeringFile, steeringCompareCap); readErr == nil && bytes.Equal(existing, content) {
 		slog.Debug("steering: content unchanged, skipping write", "path", steeringFile)
 		return
 	}
@@ -213,12 +226,41 @@ func (g *Generator) Generate(ctx context.Context) {
 // OOM the container. Returns the (possibly truncated) bytes and any
 // error from open/read; callers treat errors the same way os.ReadFile
 // did (log-and-omit, not a fatal).
+//
+// The open is atomicfile.OpenRegular rather than os.Open, and both of its
+// refusals are load-bearing here. Every path this reads is named by WORKSPACE
+// layout — `<repo>/README.md`, `<repo>/.git/{config,HEAD}`, `.kiro/**`,
+// tools-state.json — and the workspace is a tree the agent writes.
+//
+//   - A FIFO at any of those names hung the generator FOREVER. os.Open on a
+//     reader-less FIFO waits in open(2) with no deadline to interrupt it, and
+//     Generate runs SYNCHRONOUSLY before every bridge spawn while holding g.mu,
+//     so one `mkfifo /workspace/anyrepo/README.md` wedged every session start
+//     of every chat. Measured: the old form was still blocked after 2s against a
+//     2s context, which is the same shape internal/ignore's loadRules was fixed
+//     for. O_NONBLOCK makes it an immediate ErrNotRegular instead.
+//   - A symlink at one of those names was an EXFILTRATION primitive, not merely
+//     a confinement leak. readFirstLine writes its result verbatim into
+//     environment.md, so `ln -s /config/mcp-secrets.json <repo>/README.md` put
+//     the first 100 characters of the MCP credential store into the file
+//     kiro-cli treats as authoritative agent context — measured end to end, an
+//     OAuth refresh token reached the steering file. O_NOFOLLOW makes the KERNEL
+//     refuse the final component, which no check-then-open can do without a
+//     race. Cost, stated: a repo that legitimately symlinks its README loses its
+//     one-line description. That is the right trade — the value forgone is a
+//     cosmetic line, the hazard closed is reading whatever the link names.
+//
+// Truncation is kept rather than moved to atomicfile.ReadBoundedFile, which
+// refuses an over-cap file outright. These caps mean "only the HEAD matters"
+// (front-matter, a README's first line), so refusing would drop the
+// classification of a large-but-legitimate document, where truncating still
+// reads it.
 func readCappedFile(path string, limit int64) ([]byte, error) {
-	f, err := os.Open(path)
+	f, _, err := atomicfile.OpenRegular(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(io.LimitReader(f, limit))
 }
 
@@ -249,12 +291,15 @@ func writeTools(b *strings.Builder, data []byte) {
 		if st.InstalledVersion == "" {
 			continue
 		}
-		bins := append(append([]string{}, st.Bins...), st.PMBins...)
+		bins := slices.Concat(st.Bins, st.PMBins)
 		if len(bins) == 0 {
 			bins = []string{name}
 		}
+		// Defused: a binary name comes from the tools catalog or a hand-added
+		// entry, and a version string is whatever the installed binary printed
+		// for --version.
 		for _, bin := range bins {
-			all = append(all, tool{bin, st.InstalledVersion})
+			all = append(all, tool{defuse(bin), defuse(st.InstalledVersion)})
 		}
 	}
 	if len(all) == 0 {
@@ -276,7 +321,7 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 		return
 	}
 	servers := slices.Clone(snap.Servers)
-	slices.SortFunc(servers, func(a, b api.MCPSnapshotServer) int {
+	slices.SortFunc(servers, func(a, b vibekit.MCPSnapshotServer) int {
 		return strings.Compare(a.Name, b.Name)
 	})
 
@@ -285,7 +330,7 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 	b.WriteString("Their tools appear in your toolset with the server name ")
 	b.WriteString("embedded in the tool name.\n\n")
 	for _, s := range servers {
-		fmt.Fprintf(b, "- **%s**\n", s.Name)
+		fmt.Fprintf(b, "- **%s**\n", defuse(s.Name))
 	}
 	b.WriteString("\n")
 }
@@ -335,13 +380,12 @@ func connectedKinds(snap ForgeSnapshot) map[string]bool {
 // clone hint, and (capped) accessible-repository list. p is taken by
 // pointer to avoid copying the ~88-byte ForgeProvider value.
 func writeForgeProvider(w io.Writer, p *ForgeProvider) {
-	user := p.User
-	if user == "" {
-		user = "(authenticated)"
-	}
-	fmt.Fprintf(w, "### %s (%s)\n\n", p.Kind, p.Host)
+	// Every field below is a forge CLI's report of a remote system's state, so
+	// it is defused like any other input vibekit did not author.
+	user := cmp.Or(defuse(p.User), "(authenticated)")
+	fmt.Fprintf(w, "### %s (%s)\n\n", defuse(p.Kind), defuse(p.Host))
 	if p.Email != "" {
-		fmt.Fprintf(w, "- Authenticated as: %s <%s>\n", user, p.Email)
+		fmt.Fprintf(w, "- Authenticated as: %s <%s>\n", user, defuse(p.Email))
 	} else {
 		fmt.Fprintf(w, "- Authenticated as: %s\n", user)
 	}
@@ -349,12 +393,12 @@ func writeForgeProvider(w io.Writer, p *ForgeProvider) {
 	if cli != "" {
 		fmt.Fprintf(w, "- CLI: `%s`\n", cli)
 	}
-	fmt.Fprintf(w, "- Clone via: `git clone https://%s/<owner>/<repo>.git`\n", p.Host)
+	fmt.Fprintf(w, "- Clone via: `git clone https://%s/<owner>/<repo>.git`\n", defuse(p.Host))
 	if len(p.Repos) > 0 {
 		fmt.Fprintf(w, "- Accessible repositories:\n")
 		n := min(len(p.Repos), 20)
 		for _, r := range p.Repos[:n] {
-			fmt.Fprintf(w, "  - %s\n", r)
+			fmt.Fprintf(w, "  - %s\n", defuse(r))
 		}
 		if len(p.Repos) > 20 {
 			fmt.Fprintf(w, "  - … and %d more\n", len(p.Repos)-20)

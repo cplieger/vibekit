@@ -25,6 +25,7 @@ package composition
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,8 +38,8 @@ import (
 	"time"
 
 	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/vibekit/internal/agent"
 	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/hub"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"
 )
 
@@ -103,17 +104,31 @@ func fitTree(t *testing.T) (configDir, toolsDir string) {
 	return configDir, toolsDir
 }
 
-// testHub is a real hub rather than a nil one on purpose. Every call below
-// expects New to FAIL, and both failure arms return before the hub is touched --
+// testRuntime is a real agent rather than a nil one on purpose. Every call below
+// expects New to FAIL, and both failure arms return before the runtime is touched --
 // so a nil would never be dereferenced by CORRECT code. It is the incorrect code
 // that matters: with the integrity check off, buildToolsEngine runs to completion
-// through the job callbacks and the code-intelligence wiring, and a nil hub turns
+// through the job callbacks and the code-intelligence wiring, and a nil agent turns
 // that regression into a SIGSEGV stack trace instead of the assertion that names
 // what actually broke.
-func testHub(t *testing.T) *hub.Hub {
+//
+// The chat store is REAL. It used to be nil on the same "correct code never
+// touches it" reasoning, and agent.New's own role guard refuted that: the store is
+// read at construction to wire the translator, so a nil one is a runtime that cannot
+// serve a single chat. Passing nil built one anyway and deferred the crash to the
+// first ACP frame.
+func testRuntime(t *testing.T) *agent.Runtime {
 	t.Helper()
-	h := hub.New(t.TempDir(), nil, nil)
-	t.Cleanup(h.Shutdown)
+	store, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
+	if err != nil {
+		t.Fatalf("chat store: %v", err)
+	}
+	h := agent.New(t.Context(), t.TempDir(), nil, store)
+	t.Cleanup(func() {
+		if err := h.Shutdown(context.Background()); err != nil {
+			t.Errorf("runtime shutdown: %v", err)
+		}
+	})
 	return h
 }
 
@@ -137,7 +152,6 @@ func mkdirMode(t *testing.T, path string, mode os.FileMode) {
 // The condition is persistent-volume state this process neither created nor may
 // repair, and the container is the operator's only way in to fix it -- so
 // aborting here would strand a box that a chmod from inside would have healed.
-// See the vibekit steering doc's invariant 6.
 func TestBuildToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 	tests := map[string]struct {
 		// plant introduces the defect and returns the paths the check must
@@ -210,7 +224,7 @@ func TestBuildToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			engine, err := buildToolsEngine(&Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
+			engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t))
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
@@ -241,7 +255,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(&Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t))
 	if err != nil || engine != nil {
 		t.Fatalf("buildToolsEngine = (%v, %v), want the degraded (nil, nil)", engine, err)
 	}
@@ -250,11 +264,11 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This hub is Shutdown by the App under test, so it is deliberately not
-	// the t.Cleanup-registered testHub.
+	// This agent is Shutdown by the App under test, so it is deliberately not
+	// the t.Cleanup-registered testRuntime.
 	app := &App{
-		Hub:            hub.New(t.TempDir(), nil, chatStore),
-		purgeScheduler: chat.NewPurgeScheduler(t.Context(), chatStore, func() time.Duration { return 0 }),
+		Runtime:        agent.New(t.Context(), t.TempDir(), nil, chatStore),
+		purgeScheduler: chat.NewPurgeScheduler(chatStore, func() time.Duration { return 0 }),
 		mcpPrewarm:     prewarm.NewRunner(t.Context(), nil),
 		tools:          engine,
 		stopKiro:       func() {},
@@ -280,7 +294,7 @@ func TestBuildToolsEngineKeepsNonIntegrityFailuresFatal(t *testing.T) {
 	}
 	logs := captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(&Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t))
 
 	if err == nil {
 		t.Fatal("a manifest-version failure was absorbed into a tool-less boot; only the root-integrity refusal may degrade")

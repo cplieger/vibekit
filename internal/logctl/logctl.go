@@ -51,7 +51,7 @@ var levelVar = new(slog.LevelVar)
 // broken settings file never accidentally drops the user into debug mode.
 func Install(ctx context.Context, configDir string) {
 	levelVar = slogx.Setup(slogx.Options{})
-	if on, ok := settings.Field[bool](ctx, configDir, settings.KeyDebugLogs, settings.KeyDebugLogs); on && ok {
+	if on, ok := settings.Field[bool](ctx, configDir, settings.KeyDebugLogs); on && ok {
 		levelVar.Set(slog.LevelDebug)
 	}
 }

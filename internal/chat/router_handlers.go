@@ -10,7 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
@@ -24,11 +27,11 @@ func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 // handleList returns all chat headers.
 func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	headers := rt.store.List(r.Context())
-	api.WriteJSON(w, map[string]any{"chats": headers})
+	webhttp.WriteJSON(w, map[string]any{"chats": headers})
 }
 
 // handleOne serves GET /api/chats/{id}?before_id=<id>&limit=<n> and routes
@@ -36,11 +39,11 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/chats/")
 	if rest == "" || strings.HasPrefix(rest, "/") {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	if id, sub, ok := strings.Cut(rest, "/"); ok {
-		rt.routeChatSubResource(w, r, api.ChatID(id), sub)
+		rt.routeChatSubResource(w, r, vibekit.ChatID(id), sub)
 		return
 	}
 	rt.serveChatMessages(w, r, rest)
@@ -48,7 +51,7 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 
 // routeChatSubResource dispatches /api/chats/{id}/<sub> to the handler for
 // the addressed sub-resource.
-func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid api.ChatID, sub string) {
+func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid vibekit.ChatID, sub string) {
 	switch sub {
 	case "export":
 		rt.handleExport(w, r, cid)
@@ -57,7 +60,7 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 	case "search":
 		rt.handleSearch(w, r, cid)
 	default:
-		api.NotFound(w, "unknown chat sub-resource")
+		httpreply.NotFound(w, "unknown chat sub-resource")
 	}
 }
 
@@ -65,16 +68,16 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 // /api/chats/{id} request.
 func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	if !chatIDPattern(api.ChatID(id)) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+	if !chatIDPattern(vibekit.ChatID(id)) {
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	c, ok := rt.store.Get(r.Context(), api.ChatID(id))
+	c, ok := rt.store.Get(r.Context(), vibekit.ChatID(id))
 	if !ok {
-		api.NotFound(w, errMsgChatNotFound)
+		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
 
@@ -87,15 +90,21 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		end = indexOfMessage(msgs, beforeID)
 	}
 	start := max(end-limit, 0)
-	window := make([]api.Message, end-start)
+	// NOT slices.Clone: measured on go1.27.0, cloning a sub-slice of a NIL
+	// messages array yields nil and marshals as `null`, where make+copy yields a
+	// non-nil empty slice and marshals as `[]`. A chat with no messages is
+	// ordinary, and the wire decoder rejects `null` for an array (see List's doc
+	// for the same rule). The idiom is right in general and wrong wherever the
+	// empty result has to keep its shape on the wire.
+	window := make([]vibekit.Message, end-start)
 	copy(window, msgs[start:end])
 
 	// `draft` rides here as its own field rather than on the header, which is
 	// what keeps the composer autosave off the SSE fan-out and off the list
 	// response: this is the one request a client makes when it opens a chat it
 	// has no local draft for, which is exactly when it needs the server's copy.
-	api.WriteJSON(w, map[string]any{
-		"chat":     rt.store.header(r.Context(), c),
+	webhttp.WriteJSON(w, map[string]any{
+		"chat":     c.Header(),
 		"messages": window,
 		"has_more": start > 0,
 		"draft":    c.Draft,
@@ -115,24 +124,24 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // It is cheap on purpose: `Get` already materialises the whole chat (the
 // paginated read does too, then discards all but a window), so the added cost
 // here is serialising a few fields per turn rather than any extra IO.
-func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), chatID)
 	if !ok {
-		api.NotFound(w, errMsgChatNotFound)
+		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
 	// thinking=false: the store is the persisted record and knows nothing about
 	// a bridge being mid-turn. The client owns the live turn's outcome, which is
 	// the one turn it always has resident anyway.
-	api.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
+	webhttp.WriteJSON(w, map[string]any{"turns": projectTurnSummaries(c.Messages, false)})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
@@ -143,18 +152,18 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api
 // conversation while covering only the resident tail. It is also what makes
 // progressive collapse acceptable: a collapse that hides content from search is
 // a data-loss bug. See search.go's header for why there is no index.
-func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), chatID)
 	if !ok {
-		api.NotFound(w, errMsgChatNotFound)
+		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
 	// `case=1` is the client's match-case toggle. Both halves of the in-chat
@@ -163,8 +172,8 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ap
 	// default either side could get wrong. Absent or anything else = insensitive,
 	// which is the behaviour every existing client gets.
 	caseSensitive := r.URL.Query().Get("case") == "1"
-	api.WriteJSON(w, map[string]any{
-		"hits": SearchChat(c.Messages, r.URL.Query().Get("q"), caseSensitive),
+	webhttp.WriteJSON(w, map[string]any{
+		"hits": Search(c.Messages, r.URL.Query().Get("q"), caseSensitive),
 	})
 }
 
@@ -206,7 +215,7 @@ func parseLimitParam(r *http.Request) int {
 // An id is exact, so neither failure exists, and it needs no ordering invariant at
 // all. Cost is a backwards scan of an already-materialised slice; the store loads
 // the whole chat for this request either way.
-func indexOfMessage(msgs []api.Message, id string) int {
+func indexOfMessage(msgs []vibekit.Message, id string) int {
 	for i := range slices.Backward(msgs) {
 		if msgs[i].ID == id {
 			return i
@@ -227,29 +236,29 @@ const (
 // the persisted chat to a downloadable Markdown transcript (the default) or
 // the raw chat JSON. The chat store is the source of truth, so no live ACP
 // bridge is involved.
-func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	format, ok := parseExportFormat(r.URL.Query().Get("format"))
 	if !ok {
-		api.BadRequest(w, "unsupported export format (use md or json)")
+		httpreply.BadRequest(w, "unsupported export format (use md or json)")
 		return
 	}
 	c, found := rt.loadForExport(r.Context(), chatID)
 	if !found {
-		api.NotFound(w, errMsgChatNotFound)
+		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
 	if format == exportFormatJSON {
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
-		api.WriteJSON(w, c)
+		webhttp.WriteJSON(w, c)
 		return
 	}
 	w.Header().Set("Content-Disposition",
@@ -277,7 +286,7 @@ func parseExportFormat(v string) (exportFormat, bool) {
 
 // loadForExport returns the chat for chatID. One lookup: chats never move, so
 // there is no second location to fall back to.
-func (rt *Router) loadForExport(ctx context.Context, chatID api.ChatID) (*api.Chat, bool) {
+func (rt *Router) loadForExport(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, bool) {
 	return rt.store.Get(ctx, chatID)
 }
 

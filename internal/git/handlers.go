@@ -9,14 +9,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/pathinside"
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/gitexec"
+	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"golang.org/x/sync/singleflight"
 )
 
 // Compile-time interface assertion.
-var _ api.RouteHandler = (*Handler)(nil)
 
 // Option configures a Handler at construction time.
 type Option func(*Handler)
@@ -27,12 +25,12 @@ type Handler struct {
 	repoFlight   singleflight.Group
 	statusFlight singleflight.Group
 	workDir      string
-	timeouts     gitexec.Timeouts
+	timeouts     gitTimeouts
 }
 
 // NewHandler returns a Handler scoped to workDir.
 func NewHandler(workDir string, opts ...Option) *Handler {
-	h := &Handler{workDir: workDir, timeouts: gitexec.DefaultTimeouts()}
+	h := &Handler{workDir: workDir, timeouts: defaultTimeouts()}
 	for _, o := range opts {
 		o(h)
 	}
@@ -92,7 +90,7 @@ func resolveRepoDir(workDir, repo string) string {
 // git repo into the workspace and expect the UI to address it by its
 // symlink name. Git itself doesn't follow symlinks into .git/, so
 // this is safe for the read operations this package performs. Write
-// operations in the hub's fs bridge resolve symlinks via EvalSymlinks
+// operations in the runtime's fs bridge resolve symlinks via EvalSymlinks
 // — that path has stricter requirements. The check is therefore
 // deliberately LEXICAL-ONLY: an os.Root here would refuse the
 // symlinked repos that are a feature of this surface.
@@ -140,7 +138,7 @@ func (h *Handler) repoDirForDelete(repo string) string {
 		slog.Warn("git remove: cannot resolve the repo's parent", "repo", repo, "error", err)
 		return ""
 	}
-	if parent != root && !pathinside.Inside(root, parent) {
+	if parent != root && !pathinside.Root(root).Contains(parent) {
 		slog.Warn("git remove: refusing a path whose parent resolves outside the workspace",
 			"repo", repo, "resolved_parent", parent)
 		return ""
@@ -177,7 +175,7 @@ func parseGitStatus(ctx context.Context, dir string) []gitFile {
 			slog.Debug("git status canceled", "repo", dir, "cause", ctx.Err())
 			return nil
 		}
-		slog.Warn("git status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(string(raw)))
+		slog.Warn("git status failed", "repo", dir, "error", err, "out", scrubAuth(string(raw)))
 		return nil
 	}
 	return parseGitStatusOutput(raw)
@@ -206,7 +204,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Number <= 0 || body.Number > 10_000_000 {
 		slog.Warn("git pr-fetch: invalid PR number rejected", "repo", body.Repo, "number", body.Number)
-		api.BadRequest(w, "invalid PR number")
+		httpreply.BadRequest(w, "invalid PR number")
 		return
 	}
 	// body.Head is optional; when set it's used as a local branch name,
@@ -214,11 +212,11 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	// isValidGitRef helper to block flag smuggling and ref-injection.
 	if body.Head != "" && !isValidGitRef(body.Head) {
 		slog.Warn("git pr-fetch: invalid head rejected", "repo", body.Repo, "number", body.Number, "head", body.Head)
-		api.BadRequest(w, "invalid head name")
+		httpreply.BadRequest(w, "invalid head name")
 		return
 	}
 	dir := h.repoDir(body.Repo)
-	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
+	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
 	if err != nil {
 		slog.Warn("git pr-fetch: origin lookup failed", "repo", body.Repo, "pr", body.Number, "error", err)
 		writeCmdResult(w, remote, err)
@@ -231,7 +229,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	args := []string{"fetch", "origin", fmt.Sprintf(refShape, body.Number) + ":" + local}
 	slog.Info("git pr-fetch", "repo", body.Repo, "number", body.Number, "local", local)
-	out, err := h.gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, remote, args...)
+	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, remote, args...)
 	writeCmdResult(w, out, err)
 }
 
@@ -244,7 +242,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 // we default to the GitHub shape — it's the most common and a failed
 // fetch surfaces a clear error to the user.
 func prRefShape(remote string) string {
-	host := gitexec.ParseRemoteHost(remote)
+	host := parseRemoteHost(remote)
 	if strings.Contains(host, "gitlab") {
 		return "refs/merge-requests/%d/head"
 	}

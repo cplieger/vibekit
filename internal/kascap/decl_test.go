@@ -245,7 +245,7 @@ func TestEnvOverrideIsWired(t *testing.T) {
 		{"a typo keeps sending", "flase", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(row.env, tc.value)
+			t.Setenv(string(row.env), tc.value)
 			settings, _ := build(Spawn{})[settingsKey].(map[string]any)
 			_, present := settings["workflows"]
 			if present != tc.want {
@@ -281,7 +281,7 @@ func neutralizeEnvOverrides(t *testing.T) {
 	t.Helper()
 	for _, row := range table {
 		if row.env != "" {
-			t.Setenv(row.env, "")
+			t.Setenv(string(row.env), "")
 		}
 	}
 }

@@ -6,24 +6,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/runesafe"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
-
-// maxNotifyTextBytes bounds one backend-supplied string on its way into banner
-// copy. Every value these four handlers interpolate is chosen upstream: an agent
-// name and a config path from a local file KAS read, and two free-form provider
-// messages. None has a length bound on the wire, and all four land in a banner
-// and a log line, so they get the same treatment as an RPC error's text.
-const maxNotifyTextBytes = 512
-
-// notifyText prepares one upstream string for banner copy: runesafe's
-// single-line preset (C0/C1 controls, DEL, Bidi overrides and the paragraph
-// separators become spaces, so a mangled message cannot forge a log record or
-// reorder a sentence in a viewer) capped on a rune boundary.
-func notifyText(s string) string {
-	return runesafe.SanitizeSingleLineBounded(s, maxNotifyTextBytes)
-}
 
 // HandleAgentNotFound handles the _kiro/customAgent/not_found notification:
 // the requested agent (a mode id on v3) doesn't exist. Persists the
@@ -32,16 +16,16 @@ func notifyText(s string) string {
 // carries no model fields here — a bad model is an InvalidModelError RPC
 // error on the set_config_option/prompt call, not a notification, so there
 // is no model-not-found handler.
-func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Requested string `json:"requestedAgent"`
 		Fallback  string `json:"fallbackAgent"`
-	}](msg, string(api.ErrCodeAgentNotFound))
+	}](msg, string(vibekit.ErrCodeAgentNotFound))
 	if !ok {
 		return
 	}
 	if p.Fallback != "" && chatID != "" {
-		if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+		if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
@@ -51,15 +35,15 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID api.ChatID,
 			slog.Error("agent_not_found: persist fallback", "error", err)
 		}
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code:    api.ErrCodeAgentNotFound,
-		Message: "\"" + notifyText(p.Requested) + "\" not found, using \"" + notifyText(p.Fallback) + "\"",
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		Code:    vibekit.ErrCodeAgentNotFound,
+		Message: "\"" + displayText(p.Requested) + "\" not found, using \"" + displayText(p.Fallback) + "\"",
 	}))
 }
 
 // HandleAgentConfigError handles the _kiro/customAgent/config_error
 // notification ({path, error}); the extra v3 sessionId is ignored.
-func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Path  string `json:"path"`
 		Error string `json:"error"`
@@ -67,25 +51,25 @@ func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID api.Chat
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code:    api.ErrCodeAgentConfigError,
-		Message: notifyText(t.relPath(p.Path)) + ": " + notifyText(p.Error),
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		Code:    vibekit.ErrCodeAgentConfigError,
+		Message: displayText(t.relPath(p.Path)) + ": " + displayText(p.Error),
 	}))
 }
 
 // HandleRateLimit handles the _kiro/error/rate_limit notification
 // ({message}); the extra v3 sessionId is ignored. Rendered as an
 // auto-clearing amber banner.
-func (t *Translator) HandleRateLimit(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleRateLimit(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Message string `json:"message"`
 	}](msg, "rate_limit")
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code:    api.ErrCodeRateLimit,
-		Message: notifyText(p.Message),
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		Code:    vibekit.ErrCodeRateLimit,
+		Message: displayText(p.Message),
 	}))
 }
 
@@ -96,7 +80,7 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID api.ChatID, msg
 // be empty). The message is surfaced verbatim as an auto-clearing banner;
 // level (info/warning/error) is decoded for forward-compatibility but not
 // separately surfaced — banner styling keys off the error code.
-func (t *Translator) HandleSystemNotify(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleSystemNotify(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[struct {
 		Level   string `json:"level"`
 		Message string `json:"message"`
@@ -104,8 +88,8 @@ func (t *Translator) HandleSystemNotify(ctx context.Context, chatID api.ChatID, 
 	if !ok || p.Message == "" {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code:    api.ErrCodeRateLimit,
-		Message: notifyText(p.Message),
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		Code:    vibekit.ErrCodeRateLimit,
+		Message: displayText(p.Message),
 	}))
 }

@@ -3,7 +3,7 @@ package chat
 import (
 	"fmt"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // The typed StoreError / ErrorKind pair that used to live here is DELETED, not
@@ -19,7 +19,7 @@ import (
 
 // errInvalidChatID returns the canonical error for a malformed chat ID.
 // Single source of truth for the error message format.
-func errInvalidChatID(id api.ChatID) error {
+func errInvalidChatID(id vibekit.ChatID) error {
 	return fmt.Errorf("invalid chat id: %q", id)
 }
 
@@ -31,7 +31,7 @@ func errInvalidChatID(id api.ChatID) error {
 // any legitimate write to it. The only way to reach this is a file whose stored
 // id is not its filename, so the message names both halves for the operator who
 // has to go and look.
-func errChatIDMismatch(want api.ChatID, got string) error {
+func errChatIDMismatch(want vibekit.ChatID, got string) error {
 	return fmt.Errorf("chat %q holds id %q: refusing to write it over another chat's file", want, got)
 }
 

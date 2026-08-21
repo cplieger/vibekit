@@ -7,20 +7,36 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 )
+
+// utilityPrompter is the AI text generation this handler needs: one round trip
+// that takes a prompt and a reasoning-effort level and returns text.
+//
+// Declared here, at the consumer, rather than in a shared contract package.
+// 1 method against the *agent.Runtime that satisfies it, which exports well over a
+// hundred — none of the rest is any business of a commit-message endpoint. The
+// effort level is a parameter rather than a second method because the three
+// endpoints below differ only in what they pass: a branch name is cheap
+// (EffortLow), reading a diff is not (EffortMedium).
+type utilityPrompter interface {
+	UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error)
+}
 
 // AIHandler registers the AI-backed git endpoints (commit-message,
 // pr-description). Separated from Handler because these have a
 // fundamentally different dependency profile: they need an AI bridge
 // but no git subprocess execution beyond basic diff/log.
 type AIHandler struct {
-	prompter api.UtilityPrompter
+	prompter utilityPrompter
 	workDir  string
 }
 
 // NewAIHandler returns an AIHandler. The prompter must be non-nil.
-func NewAIHandler(workDir string, prompter api.UtilityPrompter) *AIHandler {
+func NewAIHandler(workDir string, prompter utilityPrompter) *AIHandler {
 	return &AIHandler{
 		prompter: prompter,
 		workDir:  workDir,
@@ -96,7 +112,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 
 	// Medium effort: the task reads a full staged diff and must infer the
 	// change's intent; low-effort output on complex diffs reads generic.
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortMedium)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, vibekit.EffortMedium)
 	if err != nil {
 		slog.Error("commit message generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -104,7 +120,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	msg := extractCommitMessage(result)
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: msg})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: msg})
 }
 
 // defaultPRBase is the assumed base branch when a PR-description
@@ -130,7 +146,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 		if !isValidGitRef(body.Branch) {
 			slog.Warn("git pr-description: invalid branch rejected",
 				"repo", body.Repo, "branch", body.Branch)
-			api.BadRequest(w, "invalid branch name")
+			httpreply.BadRequest(w, "invalid branch name")
 			return
 		}
 		base = body.Branch
@@ -162,7 +178,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 
 	// Medium effort: reads a branch diff + commit log (same class as the
 	// commit-message task).
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortMedium)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, vibekit.EffortMedium)
 	if err != nil {
 		slog.Error("PR description generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -173,10 +189,10 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	// variants like ```markdown / ```diff) via the shared helper so
 	// this flow stays in sync with extractCommitMessage.
 	result = strings.TrimSpace(result)
-	result = api.StripCodeFence(result)
+	result = modeltext.StripCodeFence(result)
 	result = strings.TrimSpace(result)
 
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: result})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: result})
 }
 
 // handleBranchName suggests a branch name for the repo's work in progress.
@@ -213,7 +229,7 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 
 	// Low effort: a short name from a small context; no diff reasoning
 	// depth needed.
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortLow)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, vibekit.EffortLow)
 	if err != nil {
 		slog.Error("branch name generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -224,7 +240,7 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 		writeGitError(w, KindGenerationFailed, "model returned no usable name")
 		return
 	}
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: name})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: name})
 }
 
 // uncommittedContext summarises the repo's uncommitted state (porcelain

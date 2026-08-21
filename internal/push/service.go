@@ -13,14 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/ssrf/v3"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/singleflight"
 )
-
-// Compile-time interface assertion.
-var _ api.PushService = (*Service)(nil)
 
 // DefaultTitle is the notification title used for all Web Push messages.
 const DefaultTitle = "Vibekit"
@@ -49,7 +46,7 @@ const (
 )
 
 // pushSubjectGlobal is the debounce subject for a notification with nothing single
-// behind it (an empty api.PushSubject — see its doc comment).
+// behind it (an empty vibekit.PushSubject — see its doc comment).
 //
 // Named rather than left as the empty string so the workspace-global window is a
 // stated member of the key space instead of an accident of a zero value. It is
@@ -66,12 +63,12 @@ const pushSubjectGlobal = "<workspace global>"
 // retried. Coalescing repeats of ONE subject is the behaviour worth having;
 // coalescing two different subjects is data loss.
 type pushDebounceKey struct {
-	kind    api.PushKind
+	kind    vibekit.PushKind
 	subject string
 }
 
 // debounceKey builds the window key for one send.
-func debounceKey(kind api.PushKind, subject api.PushSubject) pushDebounceKey {
+func debounceKey(kind vibekit.PushKind, subject vibekit.PushSubject) pushDebounceKey {
 	switch {
 	case subject.ChatID != "":
 		return pushDebounceKey{kind: kind, subject: string(subject.ChatID)}
@@ -101,15 +98,31 @@ type vapidKeys struct {
 
 // Service manages push subscriptions and sends notifications.
 type Service struct {
-	ctx           context.Context
+	// lifetime is the service's OWN cancellable child of the context New
+	// requires, and it must stay a field: it is the writeLoop-LIVENESS signal,
+	// which is a second, independent fact from any caller's ctx.
+	//
+	// Converting it into a method parameter would merge the two, and that merge
+	// has already cost a shutdown hang: saveSubs and flushSaves send a snapshot
+	// to writeLoop and then wait for `done` to close, and if Close() raced that
+	// send, writeLoop has already exited and nothing will ever close it. The
+	// caller's ctx says nothing about whether the loop is alive; only this does.
+	// See persist.go's guarded waits and the in-code note there. The same holds
+	// for send.go's mergeCtx, which composes a request ctx WITH this one rather
+	// than picking either.
+	//
+	// Named for what it is, not `ctx`: a field called ctx reads like an ambient
+	// context at the dozen sites that consume it, and that reading is exactly
+	// what invites merging it with a caller's.
+	lifetime      context.Context
 	prefsFlight   singleflight.Group
 	saveCh        chan saveRequest
 	writeLoopDone chan struct{}
 	cancel        context.CancelFunc
 	client        *http.Client
 	lastPush      map[pushDebounceKey]time.Time
-	subs          map[string]api.PushSubscription
-	prefs         map[api.PushKind]bool
+	subs          map[string]vibekit.PushSubscription
+	prefs         map[vibekit.PushKind]bool
 	keys          vapidKeys
 	vapidPriv     *ecdsa.PrivateKey
 	subject       string
@@ -122,23 +135,27 @@ type Service struct {
 // so the caller can wait for the write to complete.
 type saveRequest struct {
 	done chan struct{}
-	subs []api.PushSubscription
+	subs []vibekit.PushSubscription
 }
 
 // New creates a Service, loads persisted subscriptions and preferences, and starts the write loop.
 // subject is the VAPID subject (mailto: or https: URI identifying the sender).
+//
+// ctx is the service's lifetime and is required — it is passed straight to
+// context.WithCancel, so a nil one is refused there, at the single construction
+// site, rather than defaulted into a service nothing can stop.
 func New(ctx context.Context, configDir, subject string) *Service {
 	ctx, cancel := context.WithCancel(ctx)
-	prefs := make(map[api.PushKind]bool, len(kindRegistry))
+	prefs := make(map[vibekit.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		prefs[kr.Kind] = kr.DefaultOn
 	}
 	s := &Service{
-		subs:          make(map[string]api.PushSubscription),
+		subs:          make(map[string]vibekit.PushSubscription),
 		lastPush:      make(map[pushDebounceKey]time.Time),
 		subject:       subject,
 		dir:           configDir,
-		ctx:           ctx,
+		lifetime:      ctx,
 		cancel:        cancel,
 		prefs:         prefs,
 		saveCh:        make(chan saveRequest, 1),
@@ -189,7 +206,7 @@ func New(ctx context.Context, configDir, subject string) *Service {
 	}
 	s.loadKeys()
 	s.loadSubs()
-	s.loadPreferences(s.ctx)
+	s.loadPreferences(s.lifetime)
 	go s.writeLoop()
 	s.mu.Lock()
 	n := len(s.subs)
@@ -199,8 +216,12 @@ func New(ctx context.Context, configDir, subject string) *Service {
 }
 
 // Close cancels any in-flight pushes and waits for the write loop to
-// drain pending saves. Call from the hub's shutdown path so pending
+// drain pending saves. Call from the runtime's shutdown path so pending
 // sends don't hold the shutdown up to 10s each.
+//
+// It SIGNALS and WAITS, which is the half of the rule the lifetime field serves:
+// cancelling s.lifetime is the signal, and <-s.writeLoopDone is the proof the
+// loop went quiet.
 func (s *Service) Close() {
 	s.cancel()
 	<-s.writeLoopDone
@@ -210,18 +231,18 @@ func (s *Service) Close() {
 func (s *Service) PublicKey() string { return s.keys.PublicKey }
 
 // SetPreferences updates the per-kind notification enabled flags.
-func (s *Service) SetPreferences(prefs map[api.PushKind]bool) {
+func (s *Service) SetPreferences(prefs map[vibekit.PushKind]bool) {
 	s.mu.Lock()
 	maps.Copy(s.prefs, prefs)
 	s.mu.Unlock()
 }
 
 // Subscribe registers a push subscription endpoint. Duplicate endpoints are silently overwritten.
-func (s *Service) Subscribe(sub api.PushSubscription) {
+func (s *Service) Subscribe(sub vibekit.PushSubscription) {
 	s.mu.Lock()
 	s.subs[sub.Endpoint] = sub
 	s.mu.Unlock()
-	s.saveSubsAsync(s.ctx)
+	s.saveSubsAsync(s.lifetime)
 	// Log only the host so the per-subscriber token in the URL
 	// path doesn't leak into Loki. Host alone is enough to
 	// distinguish Chrome/Firefox/Safari subscribers for debugging.
@@ -237,7 +258,7 @@ func (s *Service) Unsubscribe(endpoint string) {
 	s.mu.Lock()
 	delete(s.subs, endpoint)
 	s.mu.Unlock()
-	s.saveSubsAsync(s.ctx)
+	s.saveSubsAsync(s.lifetime)
 }
 
 // HasSubscribers reports whether any push subscriptions are currently registered.
@@ -250,8 +271,8 @@ func (s *Service) HasSubscribers() bool {
 // kindRegistry is the single source of truth for push notification kinds.
 // Adding a new kind requires only a new entry here — the default, settings
 // key, and kind constant are co-located. The init() below validates that
-// every registered kind passes api.PushKind.Valid(), ensuring the registry
-// and the api-level Valid() switch cannot drift.
+// every registered kind passes vibekit.PushKind.Valid(), ensuring the registry
+// and the vibekit-level Valid() switch cannot drift.
 //
 // An EMPTY SettingsKey means the kind has no writable preference: it is a
 // floor, always DefaultOn, and loadPreferences never looks for a value it
@@ -259,9 +280,9 @@ func (s *Service) HasSubscribers() bool {
 // "no notify_permission key" note in internal/settings/defaults.go for why
 // silencing a turn-blocking ask is a defect rather than a preference.
 var kindRegistry = []KindPref{
-	{api.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
-	{api.PushKindPRStatus, settings.KeyNotifyPRStatus, true},
-	{api.PushKindPermission, "", true},
+	{vibekit.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
+	{vibekit.PushKindPRStatus, settings.KeyNotifyPRStatus, true},
+	{vibekit.PushKindPermission, "", true},
 }
 
 // KindPref is one registered kind. Named rather than anonymous so
@@ -271,11 +292,11 @@ var kindRegistry = []KindPref{
 //
 // Exported so the settings write path can DERIVE its preference map from the
 // registry instead of keeping a third hand-maintained copy of the kind set beside
-// this one and api.pushKinds. That third copy was the reason a new kind's toggle
+// this one and vibekit.pushKinds. That third copy was the reason a new kind's toggle
 // could persist to config.json and never reach the running service until the next
 // SSE reconnect.
 type KindPref struct {
-	Kind        api.PushKind
+	Kind        vibekit.PushKind
 	SettingsKey string
 	DefaultOn   bool
 }
@@ -296,7 +317,7 @@ func init() {
 
 // validateKindRegistry enforces the two rules the registry's types cannot.
 //
-// The first keeps the registry and api.PushKind.Valid() from drifting. The
+// The first keeps the registry and vibekit.PushKind.Valid() from drifting. The
 // second is why the keyless convention is safe to have at all: an empty
 // SettingsKey MEANS "unconfigurable floor", and nothing distinguishes that from
 // an entry whose author simply forgot the key — so a future kind added with a
@@ -310,7 +331,7 @@ func validateKindRegistry(entries []KindPref) error {
 		if kr.SettingsKey != "" {
 			continue
 		}
-		if kr.Kind != api.PushKindPermission {
+		if kr.Kind != vibekit.PushKindPermission {
 			return errors.New("kindRegistry entry " + string(kr.Kind) +
 				" declares no settings key; only the permission floor may omit one")
 		}
@@ -351,7 +372,7 @@ func (s *Service) writeLoop() {
 			}
 			s.writeSubsSnapshot(req.subs)
 			close(req.done)
-		case <-s.ctx.Done():
+		case <-s.lifetime.Done():
 			// Drain remaining on shutdown.
 			for {
 				select {
@@ -374,7 +395,7 @@ func (s *Service) writeLoop() {
 // diagnostic trail.
 func (s *Service) loadPreferences(ctx context.Context) {
 	// Build local prefs map without holding mu — settings.Field does disk I/O.
-	local := make(map[api.PushKind]bool, len(kindRegistry))
+	local := make(map[vibekit.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		// A keyless kind is a floor: no disk read, so no config.json value —
 		// current, hand-edited or left over from an older release — can turn
@@ -383,7 +404,7 @@ func (s *Service) loadPreferences(ctx context.Context) {
 			local[kr.Kind] = kr.DefaultOn
 			continue
 		}
-		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey, kr.SettingsKey); ok {
+		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey); ok {
 			local[kr.Kind] = v
 		} else {
 			local[kr.Kind] = kr.DefaultOn

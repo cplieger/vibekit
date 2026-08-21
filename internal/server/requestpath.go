@@ -27,13 +27,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
 // apiPathPrefix is the subtree this guard covers, and it is vibekit's whole
 // HTTP surface bar one mount: every route registered in ListenAndServe and in
-// every RegisterRoutes under internal/{hub,chat,git,filehandler,auth,mcp,
+// every RegisterRoutes under internal/{agent,chat,git,filebrowse,auth,mcp,
 // forges,push} sits under /api/, and the single exception is the "/" catch-all
 // that serves the SPA and the embedded static tree.
 //
@@ -57,7 +57,7 @@ const msgNonCanonicalPath = "non-canonical request path"
 //
 // # Status and body
 //
-// 400 with vibekit's bare error envelope (api.BadRequest). The status is the
+// 400 with vibekit's bare error envelope (httpreply.BadRequest). The status is the
 // load-bearing half: >= 400 is what makes `curl -f` / `curl -sf` exit non-zero,
 // which is the entire point — the failure has to become visible to the
 // non-following clients above, and any 2xx or 3xx leaves them reporting
@@ -69,15 +69,16 @@ const msgNonCanonicalPath = "non-canonical request path"
 //
 // The DECODED r.URL.Path, not r.URL.EscapedPath(). EscapedPath is what
 // ServeMux itself cleans, so it would reproduce the redirect verdict exactly —
-// and that is precisely why it is not enough here. Measured on this toolchain
-// (go1.26.5), the encoded spelling of the same mistake does not redirect at
-// all: GET /api/%2e%2e/api/health is already canonical in escaped form, so
-// ServeMux draws no 307, no pattern matches the decoded /../api/health, and the
-// request falls through to the "/" catch-all and is answered 200 with
-// index.html. For `curl -sf` that is strictly worse than the 307 it replaces —
-// a 200 with an HTML body and not even a Location to give the game away. Only
-// the decoded path refuses both spellings of one intent, and it is also the
-// path the sender believed it was addressing.
+// and that is precisely why it is not enough here. _Re-measured on go1.27.0_
+// (the claim below was first taken on go1.26.5 and every row still holds), the
+// encoded spelling of the same mistake does not redirect at all: GET
+// /api/%2e%2e/api/health is already canonical in escaped form, so ServeMux
+// draws no 307, no pattern matches the decoded /../api/health, and the request
+// falls through to the "/" catch-all and is answered 200 with index.html. For
+// `curl -sf` that is strictly worse than the 307 it replaces — a 200 with an
+// HTML body and not even a Location to give the game away. Only the decoded
+// path refuses both spellings of one intent, and it is also the path the sender
+// believed it was addressing.
 //
 // The wider verdict was measured for false refusals before it was chosen, and
 // it costs nothing here: the extra refusals are exactly the paths with a
@@ -94,7 +95,10 @@ const msgNonCanonicalPath = "non-canonical request path"
 // # Why BOTH the raw and the cleaned path decide the scope
 //
 // The prefix test runs on the raw spelling OR the cleaned one, because either
-// alone leaks, in opposite directions, and both leaks were measured:
+// alone leaks, in opposite directions, and both leaks were measured (and
+// re-measured on go1.27.0 — /api/../api/health still answers 307,
+// /api/health/.. still 307s to /api, and both encoded spellings still reach the
+// catch-all at 200):
 //
 //   - Cleaning can move a path INTO the API surface. /%2e%2e/api/health has a
 //     raw path of /../api/health — not under /api/ — while its clean is plainly
@@ -136,7 +140,7 @@ func canonicalAPIPath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clean, canonical := webhttp.CanonicalRequestPath(r.URL.Path)
 		if !canonical && onAPISurface(r.URL.Path, clean) {
-			api.BadRequest(w, msgNonCanonicalPath)
+			httpreply.BadRequest(w, msgNonCanonicalPath)
 			return
 		}
 		next.ServeHTTP(w, r)

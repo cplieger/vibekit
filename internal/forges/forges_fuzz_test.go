@@ -1,9 +1,9 @@
 package forges
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -41,7 +41,7 @@ func FuzzLoadGLabConfig(f *testing.F) {
 		if err != nil {
 			t.Fatalf("re-parse of identical input failed: %v", err)
 		}
-		if !reflect.DeepEqual(cfg.Hosts, cfg2.Hosts) {
+		if !maps.Equal(cfg.Hosts, cfg2.Hosts) {
 			t.Errorf("re-parse mismatch:\n  first:  %+v\n  second: %+v", cfg.Hosts, cfg2.Hosts)
 		}
 	})

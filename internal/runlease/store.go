@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 )
 
 // FileName is the store's file, beside schedules.json in the config dir.
@@ -46,14 +48,14 @@ type file struct {
 // THE 0600 IS VERIFIED, NOT MERELY REQUESTED, and it is verified by the WRITE
 // rather than by a pass afterwards. A mode argument is normally a request — open(2)
 // puts it through umask and an inheritable ACL can store something wider — which
-// is why this repo has fileutil.EnforceFileMode for the objects it chmods by name.
+// is why this repo has filemode.EnforceFile for the objects it chmods by name.
 // atomicfile.WriteFile does not need it: finalizeTempFile runs
 // atomicfile.EnforceMode on the OPEN TEMP DESCRIPTOR (fchmod then fstat, one
 // handle) and FAILS the write with ErrModeNotStored rather than publishing a wider
 // file, and the rename then publishes that same verified inode. So the mode on disk
 // is a fact by the time this returns, and TestStore_WritesA0600File pins it.
 //
-// Do not add a second EnforceFileMode on s.path after the write: it would re-verify
+// Do not add a second EnforceFile on s.path after the write: it would re-verify
 // what the temp handle already established, by NAME, which is the weaker of the two
 // checks. The one thing genuinely not covered is a mode widened by something else
 // BETWEEN two writes, which is out of a write's reach and low-consequence here —
@@ -62,7 +64,7 @@ type file struct {
 // on LOAD as well.
 //
 // The ZERO VALUE is usable: an empty path persists nothing, which is what a test
-// wants and what a hub built without the durable store falls back to. Nothing
+// wants and what a runtime built without the durable store falls back to. Nothing
 // here reaches back into its caller, so a caller may hold its own lock across a
 // call without a lock-order question.
 type Store struct {
@@ -72,7 +74,7 @@ type Store struct {
 }
 
 // NewMemory returns an in-memory store that persists nothing. For tests, and for
-// a hub constructed without a config dir.
+// a runtime constructed without a config dir.
 func NewMemory() *Store { return &Store{leases: map[string]Lease{}} }
 
 // NewStore opens (or starts) the store at <dir>/runs.json.
@@ -131,13 +133,8 @@ func (s *Store) List() []Lease {
 
 func (s *Store) sortedLocked() []Lease {
 	out := make([]Lease, 0, len(s.leases))
-	for id := range s.leases {
+	for _, id := range slices.Sorted(maps.Keys(s.leases)) {
 		out = append(out, s.leases[id])
-	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].WorkflowID < out[j-1].WorkflowID; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
 	}
 	return out
 }

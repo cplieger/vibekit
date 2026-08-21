@@ -13,7 +13,7 @@
 // fetchKiroSetting) is unchanged, so the call sites don't move.
 //
 // NOT used for the POST /api/command envelope — that's a different contract
-// (request_id dedup, typed SendResult with status codes) served by
+// (Idempotency-Key dedup, typed SendResult with status codes) served by
 // transport.ts's `send()` function. Keep the two separate.
 // ---------------------------------------------------------------------------
 

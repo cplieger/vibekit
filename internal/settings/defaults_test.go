@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-func TestDefaultSettings_OnlyKnownKeys(t *testing.T) {
-	// Every key DefaultSettings emits must be in KnownKeys; otherwise
+func TestDefault_OnlyKnownKeys(t *testing.T) {
+	// Every key Default emits must be in KnownKeys; otherwise
 	// a fresh GET response would itself trigger the unknown-keys
 	// warning when the frontend round-trips back as a PATCH.
-	for k := range DefaultSettings() {
+	for k := range Default() {
 		if _, ok := KnownKeys[k]; !ok {
-			t.Errorf("DefaultSettings emits %q but it is not in KnownKeys", k)
+			t.Errorf("Default emits %q but it is not in KnownKeys", k)
 		}
 	}
 }
@@ -83,7 +83,7 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 		}
 	}
 	// model_effort is deliberately absent from both sides now: reasoning effort
-	// is per-chat, on the chat record (api.Chat.Effort). A key here with no
+	// is per-chat, on the chat record (vibekit.Chat.Effort). A key here with no
 	// frontend writer and no server reader would only invite one back.
 	if _, ok := KnownKeys["model_effort"]; ok {
 		t.Error("KnownKeys still declares model_effort; effort moved to the chat record")
@@ -92,7 +92,7 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 
 // TestDefaultAgentIgnoreFiles_SeededAndDiscoverable pins the settled
 // "agent read filter ON by default" decision: the seeded ignore-file list is
-// non-empty and includes .gitignore + .kiroignore, DefaultSettings advertises
+// non-empty and includes .gitignore + .kiroignore, Default advertises
 // the key (so a fresh GET carries it), and each returned slice is a fresh copy
 // callers can mutate without corrupting the shared default.
 func TestDefaultAgentIgnoreFiles_SeededAndDiscoverable(t *testing.T) {
@@ -104,16 +104,16 @@ func TestDefaultAgentIgnoreFiles_SeededAndDiscoverable(t *testing.T) {
 		t.Errorf("DefaultAgentIgnoreFiles() = %v, want it to include .gitignore and .kiroignore", got)
 	}
 
-	// DefaultSettings must advertise the key so the GET-when-missing wire
+	// Default must advertise the key so the GET-when-missing wire
 	// shape carries the default (and the frontend can display it).
-	def := DefaultSettings()
+	def := Default()
 	raw, ok := def[KeyAgentIgnoreFiles]
 	if !ok {
-		t.Fatalf("DefaultSettings() missing %q; fresh GET would not surface the default", KeyAgentIgnoreFiles)
+		t.Fatalf("Default() missing %q; fresh GET would not surface the default", KeyAgentIgnoreFiles)
 	}
 	list, ok := raw.([]string)
 	if !ok || !slices.Equal(list, DefaultAgentIgnoreFiles()) {
-		t.Errorf("DefaultSettings()[%q] = %v (%T), want %v", KeyAgentIgnoreFiles, raw, raw, DefaultAgentIgnoreFiles())
+		t.Errorf("Default()[%q] = %v (%T), want %v", KeyAgentIgnoreFiles, raw, raw, DefaultAgentIgnoreFiles())
 	}
 
 	// Fresh copy: mutating the returned slice must not affect the next call.

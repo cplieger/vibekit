@@ -20,7 +20,7 @@ func newStubSource(ops ForgeOps, repos []PRRepo) PRSource {
 	}
 }
 
-func TestMatchRepoForges(t *testing.T) {
+func TestMatchRepos(t *testing.T) {
 	configured := []ConfiguredForge{
 		{ID: "github:github.com", Kind: KindGitHub, Host: "GitHub.com", Connected: true},
 		{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", Connected: true},
@@ -74,7 +74,7 @@ func TestMatchRepoForges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := MatchRepoForges(configured, tc.origins)
+			got := MatchRepos(configured, tc.origins)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %d repos, want %d: %+v", len(got), len(tc.want), got)
 			}
@@ -173,7 +173,7 @@ func TestManagerPRSource_NoReposIsOneCheapAnswer(t *testing.T) {
 // TestManagerPRSource_ResolvesWhoamiOncePerForge: several watched repos usually
 // share one connection, and Whoami is a subprocess.
 func TestManagerPRSource_ResolvesWhoamiOncePerForge(t *testing.T) {
-	ops := &whoamiCountingOps{prStubOps: prStubOps{login: "cplieger"}}
+	ops := &whoamiCountingOps{login: "cplieger"}
 	src := newStubSource(ops, []PRRepo{
 		{ForgeID: "github:github.com", Slug: "a/one"},
 		{ForgeID: "github:github.com", Slug: "a/two"},
@@ -193,10 +193,10 @@ func TestManagerPRSource_ResolvesWhoamiOncePerForge(t *testing.T) {
 // TestManagerPRSource_APerRepoFailureIsSkipped: one archived repo or one permission
 // wall must not stop the other repos' PRs from being watched.
 func TestManagerPRSource_APerRepoFailureIsSkipped(t *testing.T) {
-	ops := &failFirstOps{prStubOps: prStubOps{
+	ops := &failFirstOps{
 		login: "cplieger",
 		prs:   []PR{{Number: 4, Author: "cplieger", CheckStatus: checkPassing}},
-	}}
+	}
 	src := newStubSource(ops, []PRRepo{
 		{ForgeID: "github:github.com", Slug: "a/broken"},
 		{ForgeID: "github:github.com", Slug: "a/fine"},

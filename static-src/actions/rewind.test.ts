@@ -58,14 +58,24 @@ describe("rewind.revert", () => {
   // already-truncated transcript and take real turns with it, which is why the
   // idempotency key matters more here than it did for the old create action
   // (where a duplicate merely made a spare branch).
-  it("carries an idempotency key", async () => {
+  //
+  // The key must be at the command's TOP level under the framework's field
+  // name, because that is the one place transport.send looks when it builds the
+  // Idempotency-Key header. This assertion used to read `request_id`, a field
+  // the action set by hand and transport.send discarded when it built the body
+  // — so it passed while nothing reached the server.
+  it("carries a framework idempotency key at the top level", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     const { rewindChat } = await import("./rewind.js");
+    const { IDEMPOTENCY_COMMAND_FIELD } = await import("./index.js");
 
     await rewindChat.dispatch({ chatID: "c-1", messageID: "m-abc" });
 
     const cmd = mockSend.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(cmd["request_id"]).toBeTypeOf("string");
+    expect(cmd[IDEMPOTENCY_COMMAND_FIELD]).toBeTypeOf("string");
+    // And NOT the hand-minted envelope field it used to carry: the server's
+    // envelope has no request_id any more.
+    expect(cmd["request_id"]).toBeUndefined();
   });
 
   it("exports no promote or discard action", async () => {

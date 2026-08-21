@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestLineTracker_Record_Basic(t *testing.T) {
 	lt := NewLineTracker()
-	lt.Record("chat1", "main.go", 1, 10, 1, "edit")
+	lt.Record("chat1", "main.go", LineRange{StartLine: 1, EndLine: 10, Turn: 1, Kind: "edit"})
 	got := lt.Get("chat1", "main.go")
 	if len(got) != 1 {
 		t.Fatalf("expected 1 range, got %d", len(got))
@@ -21,8 +21,8 @@ func TestLineTracker_Record_Basic(t *testing.T) {
 
 func TestLineTracker_Record_MultipleFiles(t *testing.T) {
 	lt := NewLineTracker()
-	lt.Record("chat1", "a.go", 1, 5, 1, "edit")
-	lt.Record("chat1", "b.go", 10, 20, 1, "edit")
+	lt.Record("chat1", "a.go", LineRange{StartLine: 1, EndLine: 5, Turn: 1, Kind: "edit"})
+	lt.Record("chat1", "b.go", LineRange{StartLine: 10, EndLine: 20, Turn: 1, Kind: "edit"})
 	if got := lt.Get("chat1", "a.go"); len(got) != 1 {
 		t.Errorf("a.go: expected 1 range, got %d", len(got))
 	}
@@ -34,7 +34,7 @@ func TestLineTracker_Record_MultipleFiles(t *testing.T) {
 func TestLineTracker_Record_MaxRanges(t *testing.T) {
 	lt := NewLineTracker()
 	for i := range maxLineRangesPerFile + 10 {
-		lt.Record("chat1", "file.go", i, i+1, 1, "edit")
+		lt.Record("chat1", "file.go", LineRange{StartLine: i, EndLine: i + 1, Turn: 1, Kind: "edit"})
 	}
 	got := lt.Get("chat1", "file.go")
 	if len(got) > maxLineRangesPerFile {
@@ -45,7 +45,7 @@ func TestLineTracker_Record_MaxRanges(t *testing.T) {
 func TestLineTracker_Record_MaxFiles(t *testing.T) {
 	lt := NewLineTracker()
 	for i := range maxFilesPerChat + 10 {
-		lt.Record("chat1", fmt.Sprintf("file%d.go", i), 1, 2, i, "edit")
+		lt.Record("chat1", fmt.Sprintf("file%d.go", i), LineRange{StartLine: 1, EndLine: 2, Turn: i, Kind: "edit"})
 	}
 	count := 0
 	for i := range maxFilesPerChat + 10 {
@@ -60,7 +60,7 @@ func TestLineTracker_Record_MaxFiles(t *testing.T) {
 
 func TestLineTracker_RecordFromDiffs(t *testing.T) {
 	lt := NewLineTracker()
-	diffs := []api.ToolDiff{
+	diffs := []vibekit.ToolDiff{
 		{Path: "a.go", NewText: "line1\nline2\nline3\n"},
 		{Path: "", NewText: "ignored"},
 		{Path: "b.go", NewText: ""},
@@ -76,7 +76,7 @@ func TestLineTracker_RecordFromDiffs(t *testing.T) {
 
 func TestLineTracker_Clear(t *testing.T) {
 	lt := NewLineTracker()
-	lt.Record("chat1", "file.go", 1, 10, 1, "edit")
+	lt.Record("chat1", "file.go", LineRange{StartLine: 1, EndLine: 10, Turn: 1, Kind: "edit"})
 	lt.Clear("chat1")
 	if got := lt.Get("chat1", "file.go"); got != nil {
 		t.Errorf("after Clear, expected nil, got %v", got)
@@ -92,7 +92,7 @@ func TestLineTracker_Get_UnknownChat(t *testing.T) {
 
 func TestLineTracker_Get_UnknownFile(t *testing.T) {
 	lt := NewLineTracker()
-	lt.Record("chat1", "known.go", 1, 5, 1, "edit")
+	lt.Record("chat1", "known.go", LineRange{StartLine: 1, EndLine: 5, Turn: 1, Kind: "edit"})
 	if got := lt.Get("chat1", "unknown.go"); got != nil {
 		t.Errorf("expected nil for unknown file, got %v", got)
 	}
@@ -154,7 +154,7 @@ func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lt := NewLineTracker()
-			lt.RecordFromDiffs("chat", []api.ToolDiff{{Path: "f.go", NewText: tt.newText}}, 5, "edit")
+			lt.RecordFromDiffs("chat", []vibekit.ToolDiff{{Path: "f.go", NewText: tt.newText}}, 5, "edit")
 			ranges := lt.Get("chat", "f.go")
 			if len(ranges) != 1 {
 				t.Fatalf("ranges = %d, want 1", len(ranges))

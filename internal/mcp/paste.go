@@ -37,6 +37,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -190,12 +191,10 @@ func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest
 	if len(entries) > maxImportServers {
 		return nil, fmt.Errorf(`"%s" names %d servers (max %d)`, kasServerKey, len(entries), maxImportServers)
 	}
-	keys := make([]string, 0, len(entries))
-	for key := range entries {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
+	// Entries are translated in the block's own key order (sorted, since a JSON
+	// object has none once decoded), so a re-paste of the same block produces
+	// the same order.
+	for _, key := range slices.Sorted(maps.Keys(entries)) {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(entries[key], &obj); err != nil {
 			return nil, fmt.Errorf("server %q: must be a JSON object: %w", key, err)
@@ -404,11 +403,7 @@ func classifyKeys(where string, obj map[string]json.RawMessage, consumed []strin
 func suggestKey(got string, consumed []string, ignored map[string]string) string {
 	lower := strings.ToLower(got)
 	best, bestDist := "", importSuggestDistance+1
-	candidates := make([]string, 0, len(consumed)+len(ignored))
-	candidates = append(candidates, consumed...)
-	for key := range ignored {
-		candidates = append(candidates, key)
-	}
+	candidates := slices.AppendSeq(slices.Clone(consumed), maps.Keys(ignored))
 	slices.Sort(candidates)
 	for _, cand := range candidates {
 		if d := editDistance(lower, strings.ToLower(cand)); d < bestDist {
@@ -448,6 +443,16 @@ func editDistance(a, b string) int {
 // document's order. Absent yields nil. A scalar value is stringified — a real
 // block writes `"PORT": 3000` — while an object, array or null is a mistake
 // worth naming rather than flattening.
+//
+// The pair count is bounded HERE rather than only at the store's validator,
+// because the slice is what a hostile body amplifies. Measured on go1.27.0: an
+// env object at webhttp's 1 MiB body cap, filled with the cheapest pair JSON
+// can express, decoded to 174,762 KeyPairs and 39.4 MB of allocation — 37.6x
+// the wire bytes — and only then met `maxEnvEntries = 64`. The bound is
+// maxImportBlockKeys, the same one classifyKeys applies to the sibling walk
+// over the enclosing object, so the paste layer refuses an oversized record
+// before allocation scales with it and the store's per-field limits stay the
+// authoritative ones.
 func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -463,6 +468,9 @@ func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 	}
 	var out []KeyPair
 	for dec.More() {
+		if len(out) >= maxImportBlockKeys {
+			return nil, fmt.Errorf("%s: more than %d entries", field, maxImportBlockKeys)
+		}
 		keyTok, kErr := dec.Token()
 		if kErr != nil {
 			return nil, fmt.Errorf("%s: %w", field, kErr)

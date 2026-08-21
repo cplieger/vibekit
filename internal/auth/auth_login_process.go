@@ -11,7 +11,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // classifyLoginStartErr maps a cmd.Start error to an HTTP status code
@@ -48,7 +49,7 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 		select {
 		case <-r.ctx.Done():
 			if errors.Is(r.ctx.Err(), context.DeadlineExceeded) {
-				killLoginProcess(r.cmd)
+				killProcessGroup(r.cmd)
 			}
 		case <-killOnDeadline:
 		}
@@ -67,7 +68,7 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 	// without ctx expiring but the deadline then fired),
 	// belt-and-braces the group kill.
 	if errors.Is(r.ctx.Err(), context.DeadlineExceeded) {
-		killLoginProcess(r.cmd)
+		killProcessGroup(r.cmd)
 	}
 	r.cancel()
 	switch {
@@ -75,7 +76,7 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 		slog.Info("login: subprocess completed cleanly")
 	case errors.Is(r.ctx.Err(), context.DeadlineExceeded):
 		attrs := make([]any, 0, 4)
-		attrs = append(attrs, "cap", h.cfg.LoginProcessCap)
+		attrs = append(attrs, "cap", h.cfg.LoginTimeout)
 		attrs = append(attrs, stderrAttr(r.stderrBuf)...)
 		slog.Warn("login: subprocess hit hard cap", attrs...)
 	default:
@@ -121,7 +122,7 @@ func extractAuthURL(line string) string {
 // drain is what lets kiro-cli keep writing progress banners after we
 // emitted the URL — without it, the pipe fills at 64 KiB and kiro-cli
 // blocks on write(2) until the 16m hard cap fires. A Copy error here
-// is normal (EPIPE after killLoginProcess, closed pipe on clean exit)
+// is normal (EPIPE after killProcessGroup, closed pipe on clean exit)
 // and already surfaced via cmd.Wait in the reap goroutine; logged at
 // Debug for completeness.
 func scanLoginOutputWithDrain(stdout io.ReadCloser, urlCh chan<- map[string]string) {
@@ -158,7 +159,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 	var code, authURL string
 	var lineCount int
 	for scanner.Scan() {
-		line := strings.TrimSpace(api.StripANSI(scanner.Text()))
+		line := strings.TrimSpace(sanitize.StripANSI(scanner.Text()))
 		lineCount++
 		ring.Push(line)
 		// Fast path: kiro-cli refuses a fresh login when a session
@@ -166,7 +167,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		// recognise instead of the generic "no auth URL" sentinel,
 		// which read as "something broke" to users.
 		if strings.Contains(strings.ToLower(line), "already logged in") {
-			urlCh <- api.ErrorJSON("already_logged_in")
+			urlCh <- httpreply.ErrorJSON("already_logged_in")
 			return
 		}
 		if after, found := strings.CutPrefix(line, "Code:"); found {
@@ -192,18 +193,18 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 			slog.Warn("login: output line cap hit without auth URL",
 				"lines", lineCount,
 				"first_and_last_sample", ring.Sample())
-			urlCh <- api.ErrorJSON("CLI produced too much output without auth URL")
+			urlCh <- httpreply.ErrorJSON("CLI produced too much output without auth URL")
 			return
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// Warn (not Error): EOF after killLoginProcess (a normal
+		// Warn (not Error): EOF after killProcessGroup (a normal
 		// consequence of the URL-timeout branch in handleLogin)
 		// and network flake both land here. Not a page-worthy
 		// event on its own.
 		slog.Warn("login: scanner failed before URL",
 			"error", err, "lines_read", lineCount)
-		urlCh <- api.ErrorJSON("scanner error: " + err.Error())
+		urlCh <- httpreply.ErrorJSON("scanner error: " + err.Error())
 		return
 	}
 	// Clean EOF without a URL. No log at this layer — handleLogin's
@@ -211,5 +212,5 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 	// already surface the failure with richer context. Emitting a
 	// second Warn here duplicated every timeout event on Loki's
 	// level=warn stream without adding information.
-	urlCh <- api.ErrorJSON("no auth URL found in CLI output")
+	urlCh <- httpreply.ErrorJSON("no auth URL found in CLI output")
 }

@@ -3,7 +3,7 @@ package buffer
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestBlockAccumulators(t *testing.T) {
@@ -17,7 +17,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if got, want := len(buf.Blocks), 1; got != want {
 			t.Fatalf("len(Blocks) = %d, want %d", got, want)
 		}
-		if got, want := buf.Blocks[0].Type, api.BlockText; got != want {
+		if got, want := buf.Blocks[0].Type, vibekit.BlockText; got != want {
 			t.Errorf("Blocks[0].Type = %q, want %q", got, want)
 		}
 		if got, want := buf.Blocks[0].Text, "hello world"; got != want {
@@ -36,7 +36,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if got, want := len(buf.Blocks), 3; got != want {
 			t.Fatalf("len(Blocks) = %d, want %d", got, want)
 		}
-		want := []api.BlockType{api.BlockText, api.BlockToolUse, api.BlockText}
+		want := []vibekit.BlockType{vibekit.BlockText, vibekit.BlockToolUse, vibekit.BlockText}
 		for i, w := range want {
 			if buf.Blocks[i].Type != w {
 				t.Errorf("Blocks[%d].Type = %q, want %q", i, buf.Blocks[i].Type, w)
@@ -54,7 +54,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if i0 != 0 || i1 != 1 {
 			t.Errorf("indices = %d / %d, want 0 / 1", i0, i1)
 		}
-		if buf.Blocks[0].Type != api.BlockThinking || buf.Blocks[1].Type != api.BlockText {
+		if buf.Blocks[0].Type != vibekit.BlockThinking || buf.Blocks[1].Type != vibekit.BlockText {
 			t.Errorf("kinds = %q / %q, want thinking / text", buf.Blocks[0].Type, buf.Blocks[1].Type)
 		}
 	})
@@ -93,7 +93,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if got, want := len(buf.Blocks), 2; got != want {
 			t.Fatalf("len(Blocks) = %d, want %d", got, want)
 		}
-		if got, want := buf.Blocks[1].Type, api.BlockThinking; got != want {
+		if got, want := buf.Blocks[1].Type, vibekit.BlockThinking; got != want {
 			t.Errorf("Blocks[1].Type = %q, want %q", got, want)
 		}
 		if got, want := buf.Blocks[1].Thinking, "reasoning"; got != want {
@@ -166,18 +166,18 @@ func TestBlockAccumulators(t *testing.T) {
 func TestTrackFileChanges(t *testing.T) {
 	tests := []struct {
 		name      string
-		diffs     []api.ToolDiff
+		diffs     []vibekit.ToolDiff
 		isNewFile bool
 		wantFiles int
 	}{
 		{"empty diffs", nil, false, 0},
-		{"single diff", []api.ToolDiff{{Path: "a.go", NewText: "x\ny\n"}}, false, 1},
-		{"multiple diffs same file", []api.ToolDiff{
+		{"single diff", []vibekit.ToolDiff{{Path: "a.go", NewText: "x\ny\n"}}, false, 1},
+		{"multiple diffs same file", []vibekit.ToolDiff{
 			{Path: "a.go", NewText: "x\n"},
 			{Path: "a.go", NewText: "y\n"},
 		}, false, 1},
-		{"empty path skipped", []api.ToolDiff{{Path: "", NewText: "x\n"}}, false, 0},
-		{"isNewFile propagation", []api.ToolDiff{{Path: "new.go", NewText: "x\n"}}, true, 1},
+		{"empty path skipped", []vibekit.ToolDiff{{Path: "", NewText: "x\n"}}, false, 0},
+		{"isNewFile propagation", []vibekit.ToolDiff{{Path: "new.go", NewText: "x\n"}}, true, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -203,18 +203,18 @@ func TestTrackFileChanges(t *testing.T) {
 func TestMarkCancelledToolsFailed(t *testing.T) {
 	tests := []struct {
 		name    string
-		tools   []api.ToolCall
+		tools   []vibekit.ToolCall
 		wantLen int
 	}{
 		{"no tool calls", nil, 0},
-		{"all completed", []api.ToolCall{
-			{Status: api.ToolCompleted},
-			{Status: api.ToolCompleted},
+		{"all completed", []vibekit.ToolCall{
+			{Status: vibekit.ToolCompleted},
+			{Status: vibekit.ToolCompleted},
 		}, 0},
-		{"mix of statuses", []api.ToolCall{
-			{Status: api.ToolInProgress},
-			{Status: api.ToolPending},
-			{Status: api.ToolCompleted},
+		{"mix of statuses", []vibekit.ToolCall{
+			{Status: vibekit.ToolInProgress},
+			{Status: vibekit.ToolPending},
+			{Status: vibekit.ToolCompleted},
 		}, 2},
 	}
 	for _, tt := range tests {
@@ -225,7 +225,7 @@ func TestMarkCancelledToolsFailed(t *testing.T) {
 				t.Errorf("changed = %d, want %d", len(changed), tt.wantLen)
 			}
 			for _, tc := range changed {
-				if tc.Status != api.ToolFailed {
+				if tc.Status != vibekit.ToolFailed {
 					t.Errorf("status = %q, want failed", tc.Status)
 				}
 			}
@@ -275,7 +275,7 @@ func TestRecordToolStart(t *testing.T) {
 // counts derive from the newline counts in the new and old text.
 func TestTrackFileChanges_LineCounts(t *testing.T) {
 	buf := &Buffer{}
-	buf.TrackFileChanges([]api.ToolDiff{
+	buf.TrackFileChanges([]vibekit.ToolDiff{
 		{Path: "f.go", NewText: "a\nb\nc", OldText: "x\ny\nz\nw"},
 	}, false)
 	fc := buf.ChangedFiles["f.go"]

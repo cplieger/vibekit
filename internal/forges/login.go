@@ -18,30 +18,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/cplieger/vibekit/internal/forges/oauth"
 )
 
-// DeviceFlowResponse describes a started OAuth device flow.
-// Re-exported from the oauth sub-package for API compatibility.
-type DeviceFlowResponse = oauth.DeviceFlowResponse
-
-// PollResult is the per-poll status during the device flow.
+// PollResult is the per-poll status of the GitHub device flow. Deliberately
+// tokenless: the access token never leaves the server. pollDeviceToken carries
+// it as far as `gh auth login --with-token` and no further.
 type PollResult struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
-}
-
-// StartGitHubDeviceFlow initiates the OAuth device flow with GitHub.
-func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
-	return oauth.StartGitHubDeviceFlow(ctx)
 }
 
 // PollGitHubDeviceFlow checks if the user has approved the device.
 // On complete, the token is written to gh's config and the helper
 // is set up.
 func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, error) {
-	result, err := oauth.PollGitHubDeviceFlow(ctx, deviceCode)
+	result, err := pollDeviceToken(ctx, deviceCode)
 	if err != nil {
 		return PollResult{}, err
 	}

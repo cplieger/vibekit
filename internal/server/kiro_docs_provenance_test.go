@@ -4,7 +4,7 @@ package server
 //
 // D67a is WITHDRAWN, so what these cover changed shape. It asserted that a
 // symlinked entry arrives read-only because its save would fail with ELOOP; the
-// premise was false — internal/filehandler resolves the link and applies
+// premise was false — internal/filebrowse resolves the link and applies
 // O_NOFOLLOW to the canonical target, so the save succeeds — and `resolved != full`
 // was never a writability test. It also marked every file beneath an in-root
 // symlinked directory read-only while those writes work.

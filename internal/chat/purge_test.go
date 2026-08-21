@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat/archive"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- OldestChatMTime ---
@@ -160,8 +160,8 @@ func TestPurgeScheduler_TriggerWithZeroRetentionIsNoOp(t *testing.T) {
 		calls.Add(1)
 		return 0
 	}
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	p.Trigger()
@@ -170,12 +170,12 @@ func TestPurgeScheduler_TriggerWithZeroRetentionIsNoOp(t *testing.T) {
 
 func TestPurgeScheduler_TriggerRunsPurgeWhenRetentionPositive(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
-	p.Start()
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
+	p.Start(t.Context())
 	defer p.Stop()
 
 	if !waitForPurge(t, chatPath, 2*time.Second) {
@@ -187,12 +187,12 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 	// A fresh chat (not yet expired) should not be purged
 	// but the scheduler should schedule a future purge.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	// Wait for a pass to actually run before asserting it kept the file.
@@ -207,8 +207,8 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 func TestPurgeScheduler_TriggerWithNoChatsIsNoOp(t *testing.T) {
 	s, _ := newTestStore(t)
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	p.Trigger()
@@ -218,11 +218,11 @@ func TestPurgeScheduler_TriggerWithNoChatsIsNoOp(t *testing.T) {
 
 func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
 	// Stop before Start — the goroutine never runs.
 	p.Stop()
 	p.Trigger()
@@ -239,14 +239,14 @@ func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 
 func TestPurgeScheduler_StartInvokesTrigger(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
 	defer p.Stop()
 
-	p.Start()
+	p.Start(t.Context())
 
 	if !waitForPurge(t, chatPath, 2*time.Second) {
 		t.Error("chat file survived Start() after 2s")
@@ -257,11 +257,11 @@ func TestPurgeScheduler_CollapsesConcurrentTriggers(t *testing.T) {
 	// Multiple rapid Trigger calls should collapse into a single
 	// evaluation, not queue N sequential purge passes.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	// Fire multiple triggers rapidly.
@@ -277,16 +277,16 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 	// With retention=1s and an entry already aged past retention,
 	// the scheduler must purge expired entries and keep fresh ones.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
 	// A second chat with fresh activity, which must survive.
-	_ = s.Mutate(t.Context(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	_ = s.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 	c2Path := filepath.Join(s.dir, "c2.json")
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return time.Second })
-	p.Start()
+	p := NewPurgeScheduler(s, func() time.Duration { return time.Second })
+	p.Start(t.Context())
 	defer p.Stop()
 
 	if !waitForPurge(t, chatPath, 2*time.Second) {
@@ -300,9 +300,9 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 
 func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 	s, _ := newTestStore(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	p := NewPurgeScheduler(ctx, s, func() time.Duration { return 24 * time.Hour })
-	p.Start()
+	ctx, cancel := context.WithCancel(t.Context())
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
+	p.Start(ctx)
 
 	cancel()
 	// The done channel should close promptly.
@@ -328,14 +328,14 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("OldEntriesPurged", func(t *testing.T) {
 		// Any entry older than retention must be purged after Trigger.
 		s, _ := newTestStore(t)
-		_ = s.Mutate(t.Context(), "old1", func(c *api.Chat, _ bool) bool { c.Name = "Old"; return true })
+		_ = s.Mutate(t.Context(), "old1", func(c *vibekit.Chat, _ bool) bool { c.Name = "Old"; return true })
 		chatPath := filepath.Join(s.dir, "old1.json")
 		// Age it well past retention (stamp + mtime).
 		ageChat(t, s, "old1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return retention })
-		p.Start()
+		p := NewPurgeScheduler(s, func() time.Duration { return retention })
+		p.Start(t.Context())
 		defer p.Stop()
 
 		p.Trigger()
@@ -347,13 +347,13 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("YoungEntriesPreserved", func(t *testing.T) {
 		// Any entry younger than retention must NOT be purged.
 		s, _ := newTestStore(t)
-		_ = s.Mutate(t.Context(), "young1", func(c *api.Chat, _ bool) bool { c.Name = "Young"; return true })
+		_ = s.Mutate(t.Context(), "young1", func(c *vibekit.Chat, _ bool) bool { c.Name = "Young"; return true })
 		chatPath := filepath.Join(s.dir, "young1.json")
 		// Fresh activity, so the retention window has not elapsed.
 
 		retention, calls := countingRetention(48 * time.Hour)
-		p := NewPurgeScheduler(t.Context(), s, retention)
-		p.Start()
+		p := NewPurgeScheduler(s, retention)
+		p.Start(t.Context())
 		defer p.Stop()
 
 		p.Trigger()
@@ -368,15 +368,15 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("StopPreventsAllPurges", func(t *testing.T) {
 		// After Stop(), no purge should occur regardless of pending triggers.
 		s, _ := newTestStore(t)
-		_ = s.Mutate(t.Context(), "stop1", func(c *api.Chat, _ bool) bool { c.Name = "Stop"; return true })
+		_ = s.Mutate(t.Context(), "stop1", func(c *vibekit.Chat, _ bool) bool { c.Name = "Stop"; return true })
 		chatPath := filepath.Join(s.dir, "stop1.json")
 		ageChat(t, s, "stop1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return retention })
+		p := NewPurgeScheduler(s, func() time.Duration { return retention })
 		// Stop before Start — the goroutine never runs.
 		p.Stop()
-		p.Start() // Start after Stop should be a no-op.
+		p.Start(t.Context()) // Start after Stop should be a no-op.
 
 		// Trigger after stop should be no-op.
 		p.Trigger()
@@ -396,13 +396,13 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("NoDuplicatePurgeCallbacks", func(t *testing.T) {
 		// Each entry should be purged exactly once (no double-fire).
 		s, _ := newTestStore(t)
-		_ = s.Mutate(t.Context(), "dup1", func(c *api.Chat, _ bool) bool { c.Name = "Dup"; return true })
+		_ = s.Mutate(t.Context(), "dup1", func(c *vibekit.Chat, _ bool) bool { c.Name = "Dup"; return true })
 		chatPath := filepath.Join(s.dir, "dup1.json")
 		ageChat(t, s, "dup1", 72*time.Hour)
 
 		retention, calls := countingRetention(24 * time.Hour)
-		p := NewPurgeScheduler(t.Context(), s, retention)
-		p.Start()
+		p := NewPurgeScheduler(s, retention)
+		p.Start(t.Context())
 		defer p.Stop()
 
 		// Multiple triggers should not cause issues.
@@ -432,7 +432,7 @@ func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 	ctx := t.Context()
 
 	// keep: recent activity, but a backdated mtime.
-	_ = s.Mutate(ctx, "keep", func(c *api.Chat, _ bool) bool { c.Name = "K"; return true })
+	_ = s.Mutate(ctx, "keep", func(c *vibekit.Chat, _ bool) bool { c.Name = "K"; return true })
 	keepPath := filepath.Join(s.dir, "keep.json")
 	stale := time.Now().Add(-72 * time.Hour)
 	if err := os.Chtimes(keepPath, stale, stale); err != nil {
@@ -440,7 +440,7 @@ func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 	}
 
 	// gone: genuinely stale activity.
-	_ = s.Mutate(ctx, "gone", func(c *api.Chat, _ bool) bool { c.Name = "G"; return true })
+	_ = s.Mutate(ctx, "gone", func(c *vibekit.Chat, _ bool) bool { c.Name = "G"; return true })
 	gonePath := filepath.Join(s.dir, "gone.json")
 	ageChat(t, s, "gone", 72*time.Hour)
 

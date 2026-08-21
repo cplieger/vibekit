@@ -23,7 +23,7 @@
 //         exceptions (BACKGROUND_ALLOWLIST below)
 //
 // If you're adding a new user-initiated mutation, declare an action
-// in actions/<area>.ts and dispatch it. See actions/index.ts (or the steering doc).
+// in actions/<area>.ts and dispatch it. See actions/index.ts.
 // If you're adding a legitimate background poll or cleanup that
 // must remain silent, add the file to the BACKGROUND_ALLOWLIST
 // below with a one-line comment explaining why.

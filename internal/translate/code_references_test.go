@@ -3,21 +3,21 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // codeRefsPayload extracts the CodeReferencesPayload from the single
 // EventCodeReferences broadcast, or fails if there isn't exactly one.
-func codeRefsPayload(t *testing.T, events *[]api.ServerEvent) api.CodeReferencesPayload {
+func codeRefsPayload(t *testing.T, events *[]vibekit.ServerEvent) vibekit.CodeReferencesPayload {
 	t.Helper()
-	var got []api.CodeReferencesPayload
+	var got []vibekit.CodeReferencesPayload
 	for _, e := range *events {
-		if e.Type != api.EventCodeReferences {
+		if e.Type != vibekit.EventCodeReferences {
 			continue
 		}
-		p, ok := e.Payload.(api.CodeReferencesPayload)
+		p, ok := e.Payload.(vibekit.CodeReferencesPayload)
 		if !ok {
-			t.Fatalf("EventCodeReferences payload type = %T, want api.CodeReferencesPayload", e.Payload)
+			t.Fatalf("EventCodeReferences payload type = %T, want vibekit.CodeReferencesPayload", e.Payload)
 		}
 		got = append(got, p)
 	}
@@ -27,10 +27,10 @@ func codeRefsPayload(t *testing.T, events *[]api.ServerEvent) api.CodeReferences
 	return got[0]
 }
 
-func countCodeRefEvents(events *[]api.ServerEvent) int {
+func countCodeRefEvents(events *[]vibekit.ServerEvent) int {
 	n := 0
 	for _, e := range *events {
-		if e.Type == api.EventCodeReferences {
+		if e.Type == vibekit.EventCodeReferences {
 			n++
 		}
 	}
@@ -39,15 +39,15 @@ func countCodeRefEvents(events *[]api.ServerEvent) int {
 
 // startedBuf returns an in-flight assistant buffer for chatID with a
 // message id set (mirrors ensureTurnStarted).
-func startedBuf(deps *baseDeps, chatID api.ChatID, msgID string) {
+func startedBuf(deps *baseDeps, chatID vibekit.ChatID, msgID string) {
 	buf := deps.bufStore.GetOrInit(chatID)
 	buf.Started = true
 	buf.MessageID = msgID
 }
 
-func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *api.RPCResponse {
+func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *vibekit.RPCResponse {
 	t.Helper()
-	return &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	return &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"sessionId":  sessionID,
 		"references": refs,
 	})}
@@ -59,8 +59,8 @@ func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *api.RPCR
 // full list.
 func TestHandleCodeReferences_HappyPath(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
-	chatID := api.ChatID("c1")
+	tr := New(rolesOf(deps))
+	chatID := vibekit.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
@@ -87,8 +87,8 @@ func TestHandleCodeReferences_HappyPath(t *testing.T) {
 // only such entries produces no broadcast and no accumulation.
 func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
-	chatID := api.ChatID("c1")
+	tr := New(rolesOf(deps))
+	chatID := vibekit.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
@@ -108,8 +108,8 @@ func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 // the (freshly GetOrInit'd) buffer so it can't contaminate the next turn.
 func TestHandleCodeReferences_NoTurnInFlight(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
-	chatID := api.ChatID("c1")
+	tr := New(rolesOf(deps))
+	chatID := vibekit.ChatID("c1")
 	// No startedBuf: buffer is absent / not started.
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
@@ -132,8 +132,8 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 	t.Run("SubagentCopySkipped", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
-		tr := New(deps)
-		chatID := api.ChatID("c1")
+		tr := New(rolesOf(deps))
+		chatID := vibekit.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
 		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-sub", []map[string]any{
@@ -146,8 +146,8 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 	t.Run("ParentCopyProcessed", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
-		tr := New(deps)
-		chatID := api.ChatID("c1")
+		tr := New(rolesOf(deps))
+		chatID := vibekit.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
 		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-parent", []map[string]any{
@@ -164,8 +164,8 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 // again) accumulates once; the second broadcast still carries a single entry.
 func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
-	chatID := api.ChatID("c1")
+	tr := New(rolesOf(deps))
+	chatID := vibekit.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
 	ref := []map[string]any{{"licenseName": "MIT", "repository": "r", "url": "https://example.com"}}
@@ -176,7 +176,7 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 		t.Fatalf("broadcast count = %d, want 2 (one per notification)", n)
 	}
 	last := (*events)[len(*events)-1]
-	p, ok := last.Payload.(api.CodeReferencesPayload)
+	p, ok := last.Payload.(vibekit.CodeReferencesPayload)
 	if !ok {
 		t.Fatalf("last payload type = %T", last.Payload)
 	}
@@ -192,11 +192,11 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 // dropped without a broadcast (defensive decode).
 func TestHandleCodeReferences_MalformedParamsNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
-	chatID := api.ChatID("c1")
+	tr := New(rolesOf(deps))
+	chatID := vibekit.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
-	tr.HandleCodeReferences(t.Context(), chatID, &api.RPCResponse{Params: []byte("{")})
+	tr.HandleCodeReferences(t.Context(), chatID, &vibekit.RPCResponse{Params: []byte("{")})
 	if n := countCodeRefEvents(events); n != 0 {
 		t.Errorf("broadcast count = %d, want 0 (malformed params)", n)
 	}

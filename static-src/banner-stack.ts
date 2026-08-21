@@ -107,7 +107,7 @@ export function ensureBound(): void {
  *
  *  Built with keyenc `join` so neither field can forge a boundary. This is
  *  byte-identical to the old `${chatID}:${code}` template for every key this
- *  app produces — a chat id is `[A-Za-z0-9_-]` (api.ValidChatID, so no ":" and
+ *  app produces — a chat id is `[A-Za-z0-9_-]` (ids.ValidChatID, so no ":" and
  *  no "\\") and a code is a call-site literal from the same class — so NO
  *  persisted dismissal under `dismissed_banners` is invalidated by the
  *  adoption. The join is what keeps that true if either field ever loosens. */
@@ -260,7 +260,7 @@ export function clearBannersForChat(chatID: string): void {
   // Prefix scan rather than a keyenc call: the library has no "prefix of a
   // key" primitive (it does not export its escaper), so the separator is
   // written out here. It stays correct because a chat id contains neither
-  // reserved character (api.ValidChatID: [A-Za-z0-9_-]), so `join` emits it
+  // reserved character (ids.ValidChatID: [A-Za-z0-9_-]), so `join` emits it
   // verbatim and `${chatID}:` is exactly the first component of every key for
   // this chat. The trailing ":" is what keeps the scan from over-matching —
   // chat "abc" must not clear chat "abcd" (pinned by a test in

@@ -8,15 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- Unexported Store methods ---
-
-func (s *Store) header(_ context.Context, c *api.Chat) api.ChatHeader {
-	return c.Header()
-}
 
 // lock returns the per-chat mutex for chatID, creating it lazily. Entries
 // are never removed from the map: removing an entry races with any caller
@@ -25,7 +21,7 @@ func (s *Store) header(_ context.Context, c *api.Chat) api.ChatHeader {
 // The map is bounded by the number of distinct chat ids ever accessed in
 // the process lifetime (negligible memory). Uses sync.Map for lock-free
 // reads on the hot path (existing chats).
-func (s *Store) lock(chatID api.ChatID) *sync.Mutex {
+func (s *Store) lock(chatID vibekit.ChatID) *sync.Mutex {
 	v, _ := s.locks.LoadOrStore(chatID, &sync.Mutex{})
 	//nolint:errcheck // LoadOrStore guarantees v is the stored *sync.Mutex.
 	return v.(*sync.Mutex)
@@ -34,17 +30,17 @@ func (s *Store) lock(chatID api.ChatID) *sync.Mutex {
 // --- archive.StoreAccess interface methods ---
 
 // Lock returns the per-chat mutex for the archive package.
-func (s *Store) Lock(chatID api.ChatID) *sync.Mutex { return s.lock(chatID) }
+func (s *Store) Lock(chatID vibekit.ChatID) *sync.Mutex { return s.lock(chatID) }
 
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 
 // Load reads a chat from the active directory (exported for archive).
-func (s *Store) Load(chatID api.ChatID) (*api.Chat, error) { return s.load(chatID) }
+func (s *Store) Load(chatID vibekit.ChatID) (*vibekit.Chat, error) { return s.load(chatID) }
 
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.
-func (s *Store) markDeleted(chatID api.ChatID) {
+func (s *Store) markDeleted(chatID vibekit.ChatID) {
 	now := time.Now()
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
@@ -58,7 +54,7 @@ func (s *Store) markDeleted(chatID api.ChatID) {
 }
 
 // isTombstoned reports whether chatID was deleted within tombstoneTTL.
-func (s *Store) isTombstoned(chatID api.ChatID) bool {
+func (s *Store) isTombstoned(chatID vibekit.ChatID) bool {
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
 	t, ok := s.tombstone[chatID]
@@ -72,7 +68,7 @@ func (s *Store) isTombstoned(chatID api.ChatID) bool {
 	return true
 }
 
-func (s *Store) pathFor(chatID api.ChatID) (string, error) {
+func (s *Store) pathFor(chatID vibekit.ChatID) (string, error) {
 	if !chatIDPattern(chatID) {
 		return "", errInvalidChatID(chatID)
 	}
@@ -81,7 +77,7 @@ func (s *Store) pathFor(chatID api.ChatID) (string, error) {
 
 // load reads a chat file into memory. Returns nil, os.ErrNotExist if the
 // file does not exist.
-func (s *Store) load(chatID api.ChatID) (*api.Chat, error) {
+func (s *Store) load(chatID vibekit.ChatID) (*vibekit.Chat, error) {
 	path, err := s.pathFor(chatID)
 	if err != nil {
 		return nil, err
@@ -92,7 +88,7 @@ func (s *Store) load(chatID api.ChatID) (*api.Chat, error) {
 // save stamps the chat's last-activity time and writes it to chatID's file.
 // Every mutation except a draft autosave goes through here, because every other
 // mutation IS activity.
-func (s *Store) save(chatID api.ChatID, chat *api.Chat) error {
+func (s *Store) save(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	chat.UpdatedAt = time.Now().UnixMilli()
 	return s.writeChat(chatID, chat)
 }
@@ -119,7 +115,7 @@ func (s *Store) save(chatID api.ChatID, chat *api.Chat) error {
 // as a parameter means a future no-stamp writer cannot reintroduce the bypass by
 // skipping a check, because there is no path left that reads the destination off
 // the payload.
-func (s *Store) writeChat(chatID api.ChatID, chat *api.Chat) error {
+func (s *Store) writeChat(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	path, err := s.pathFor(chatID)
 	if err != nil {
 		return err

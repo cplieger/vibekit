@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func FuzzStoreLifecycle(f *testing.F) {
@@ -13,10 +13,10 @@ func FuzzStoreLifecycle(f *testing.F) {
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		store := NewStore()
 		numChats := 5
-		active := make(map[api.ChatID]bool)
+		active := make(map[vibekit.ChatID]bool)
 
 		for _, op := range ops {
-			chatID := api.ChatID(fmt.Sprintf("chat-%d", int(op>>4)%numChats))
+			chatID := vibekit.ChatID(fmt.Sprintf("chat-%d", int(op>>4)%numChats))
 			switch op & 0x03 {
 			case 0: // GetOrInit
 				buf := store.GetOrInit(chatID)

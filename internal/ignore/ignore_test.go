@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
-	cfgsettings "github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 // writeIgnoreSettings writes config.json listing the given ignore files.
@@ -67,7 +68,7 @@ func TestIgnoreMatcher_FreshInstallDefaultFiltersGitignored(t *testing.T) {
 
 	// The seeded default must be non-empty (otherwise a fresh install would
 	// filter nothing) and drive the workspace .gitignore.
-	def := cfgsettings.DefaultAgentIgnoreFiles()
+	def := settings.DefaultAgentIgnoreFiles()
 	if len(def) == 0 {
 		t.Fatal("DefaultAgentIgnoreFiles() is empty; fresh install would not filter agent reads")
 	}
@@ -92,7 +93,7 @@ func TestIgnoreMatcher_FreshInstallDefaultFiltersGitignored(t *testing.T) {
 func TestIgnoreMatcher_FreshInstallDefaultHonorsKiroignore(t *testing.T) {
 	// The seeded default also covers .kiroignore, so a workspace .kiroignore
 	// filters agent reads with no config.json present.
-	if !slices.Contains(cfgsettings.DefaultAgentIgnoreFiles(), ".kiroignore") {
+	if !slices.Contains(settings.DefaultAgentIgnoreFiles(), ".kiroignore") {
 		t.Skip("default does not seed .kiroignore")
 	}
 	dir := t.TempDir() // no config.json
@@ -752,8 +753,7 @@ func BenchmarkIgnoreMatcherMatches(b *testing.B) {
 				m.Matches(b.Context(), pVal, false)
 
 				b.ReportAllocs()
-				b.ResetTimer()
-				for range b.N {
+				for b.Loop() {
 					m.Matches(b.Context(), pVal, false)
 				}
 			})
@@ -780,5 +780,90 @@ func writeIgnoreSettingsB(b *testing.B, dir string, files []string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), buf, 0o600); err != nil {
 		b.Fatalf("write settings: %v", err)
+	}
+}
+
+// A named pipe at an ignore-file name must be REFUSED, not opened.
+//
+// This is the shape that makes it serious rather than exotic: the default list
+// resolves `.gitignore` and `.kiroignore` against the workspace, which the agent
+// writes, and the matcher's refresh runs on the agent's own fs read path. A plain
+// O_RDONLY open of a reader-less FIFO waits in open(2) with no deadline that can
+// rescue it, so one pipe wedged every later read of every chat against a KAS Call
+// that carries no timeout.
+//
+// The test would HANG rather than fail if the refusal regressed, which is exactly
+// why it is worth pinning: a hang is the failure mode nobody attributes correctly.
+func TestIgnoreMatcher_FIFORefusedNotOpened(t *testing.T) {
+	dir := t.TempDir()
+	work := t.TempDir()
+	fifo := filepath.Join(work, "pipe.ignore")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo unsupported here: %v", err)
+	}
+	real := filepath.Join(work, "real.ignore")
+	writeIgnoreFile(t, real, "blocked\n")
+	// The FIFO first, so a blocking open would stop the loop before the real
+	// file is ever parsed.
+	writeIgnoreSettings(t, dir, []string{fifo, real})
+
+	m := NewMatcher(dir, work)
+
+	if !m.Matches(t.Context(), "blocked", false) {
+		t.Error("the ignore file listed after the FIFO was never parsed; the FIFO was not skipped")
+	}
+	if m.Matches(t.Context(), "unrelated", false) {
+		t.Error("matcher blocked an unlisted path")
+	}
+}
+
+// A symlink at an ignore-file name must not be read through.
+//
+// An ignore file is named by CONFIGURATION and lives in a directory the agent
+// writes, so the name and its contents have different owners. Reading through the
+// link would let a planted link decide the matcher's rules — and, with the size
+// cap taken from a separate stat, decide them from a file the cap never judged.
+func TestIgnoreMatcher_SymlinkAtIgnoreNameRefused(t *testing.T) {
+	dir := t.TempDir()
+	work := t.TempDir()
+	elsewhere := filepath.Join(t.TempDir(), "planted")
+	writeIgnoreFile(t, elsewhere, "smuggled\n")
+	link := filepath.Join(work, "link.ignore")
+	if err := os.Symlink(elsewhere, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	writeIgnoreSettings(t, dir, []string{link})
+
+	m := NewMatcher(dir, work)
+
+	if m.Matches(t.Context(), "smuggled", false) {
+		t.Error("matcher read rules through a symlink at the ignore-file name")
+	}
+}
+
+// readIgnoreFile reports the mtime of the descriptor it read, not of a second
+// stat on the name.
+//
+// The stamp is what change detection keys on, so a mtime newer than the bytes
+// makes the next refresh believe it is current and pin a stale ruleset — a
+// fail-open outcome in a filter whose job is to refuse reads.
+func TestReadIgnoreFile_MTimeComesFromTheDescriptorRead(t *testing.T) {
+	work := t.TempDir()
+	path := filepath.Join(work, "a.ignore")
+	writeIgnoreFile(t, path, "one\n")
+
+	data, modTime, err := readIgnoreFile(path)
+	if err != nil {
+		t.Fatalf("readIgnoreFile(%q) = %v, want nil", path, err)
+	}
+	if string(data) != "one\n" {
+		t.Errorf("data = %q, want %q", data, "one\n")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !modTime.Equal(info.ModTime()) {
+		t.Errorf("modTime = %v, want the file's %v", modTime, info.ModTime())
 	}
 }

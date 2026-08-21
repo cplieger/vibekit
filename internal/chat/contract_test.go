@@ -3,12 +3,11 @@ package chat
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
 func TestStore_ChatStoreContract(t *testing.T) {
-	testsupport.ChatStoreContractTest(t, func(t *testing.T) api.ChatStore {
+	testsupport.ChatStoreContractTest(t, func(t *testing.T) testsupport.ChatStoreContract {
 		t.Helper()
 		s, err := NewStore(t.TempDir())
 		if err != nil {

@@ -120,8 +120,7 @@ func TestGiteaParsePRs_NoCheckChip(t *testing.T) {
 	  {"number":2,"title":"Stuck","state":"open","mergeable":false,
 	   "head":{"ref":"old","sha":"ccccccc3333"},"base":{"ref":"main"}}
 	]`
-	p := newGitea(KindGitea, "gitea.example")
-	prs, err := p.parsePRs([]byte(payload))
+	prs, err := parsePRs([]byte(payload))
 	if err != nil {
 		t.Fatalf("parsePRs: %v", err)
 	}

@@ -2,7 +2,7 @@
 //
 // The Translator receives raw ACP notifications from kiro-cli bridges
 // and converts them into domain events (SSE broadcasts, chat-store
-// mutations). Hub remains the coordinator; this package owns the
+// mutations). Runtime remains the coordinator; this package owns the
 // protocol-specific decode + dispatch logic.
 package translate
 
@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Shared ACP wire-format decode types for the translate layer. These
@@ -205,7 +205,7 @@ func (w *ACPWorkflowMeta) SubtaskID() string {
 
 // ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed
 // file-writing tool_call_update. Every field is independently optional —
-// see api.ToolCheckpoint for the create-has-no-pre-image case.
+// see vibekit.ToolCheckpoint for the create-has-no-pre-image case.
 type ACPCheckpointMeta struct {
 	Original string `json:"original"`
 	Modified string `json:"modified"`
@@ -215,7 +215,7 @@ type ACPCheckpointMeta struct {
 // ACPRefusalMeta is the _meta.kiro.refusal block on a refusal explanation
 // chunk. Explanation duplicates the chunk text (KAS falls back to a canned
 // message when absent), so only Category / RecommendedModel flow into the
-// domain api.RefusalInfo.
+// domain vibekit.RefusalInfo.
 type ACPRefusalMeta struct {
 	Category         string `json:"category"`
 	Explanation      string `json:"explanation"`
@@ -227,10 +227,10 @@ type ACPToolCallWire struct {
 	Meta       ACPKiroMeta               `json:"_meta"`
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
-	Kind       api.ToolKind              `json:"kind"`
-	Status     api.ToolStatus            `json:"status"`
+	Kind       vibekit.ToolKind          `json:"kind"`
+	Status     vibekit.ToolStatus        `json:"status"`
 	RawInput   json.RawMessage           `json:"rawInput"`
-	Locations  []api.ToolLocation        `json:"locations"`
+	Locations  []vibekit.ToolLocation    `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
 }
 
@@ -244,15 +244,15 @@ type ACPToolCallUpdateWire struct {
 	Meta       ACPKiroMeta               `json:"_meta"`
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
-	Kind       api.ToolKind              `json:"kind"`
-	Status     api.ToolStatus            `json:"status"`
-	Locations  []api.ToolLocation        `json:"locations"`
+	Kind       vibekit.ToolKind          `json:"kind"`
+	Status     vibekit.ToolStatus        `json:"status"`
+	Locations  []vibekit.ToolLocation    `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
 }
 
 // ACPPlanWire is the wire shape for plan session updates.
 type ACPPlanWire struct {
-	Entries []api.PlanEntry `json:"entries"`
+	Entries []vibekit.PlanEntry `json:"entries"`
 }
 
 // ACPModeUpdateWire is the wire shape for the current_mode_update
@@ -288,7 +288,7 @@ type ACPSessionUpdateEnvelope struct {
 // tagged: they carry the session's CURRENT state, not its history, so they
 // must keep reaching the live handlers.
 type ACPSessionUpdateBase struct {
-	Kind api.ACPUpdateKind `json:"sessionUpdate"`
+	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 	Meta struct {
 		Kiro struct {
 			// Workflow is present on a workflow STEP's frames and is the

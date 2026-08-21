@@ -149,7 +149,7 @@ function formatDuration(ms: number): string {
 type RunVerdict = "completed" | "failed" | "aborted";
 
 /** How a bounded termination reads. The keys are the server's vocabulary
- *  (api.WorkflowRun.EndReason); the sentences are the reader's.
+ *  (vibekit.WorkflowRun.EndReason); the sentences are the reader's.
  *
  *  A run stopped by one of vibekit's own bounds is the one ending KAS's status
  *  cannot describe: both bounds terminate through the same cancel a person uses,

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 var errBoom = errors.New("persist boom")
@@ -18,27 +18,27 @@ var errBoom = errors.New("persist boom")
 // recStore records AppendMessage/Mutate calls and returns configurable
 // errors so HandlePlan's persist branches are observable.
 type recStore struct {
-	testsupport.NopChatStore
+	nopChatRecords
 	appendErr   error
 	mutateErr   error
 	appendCalls int
 	mutateCalls int
 }
 
-func (s *recStore) AppendMessage(_ context.Context, _ api.ChatID, _ *api.Message) error {
+func (s *recStore) AppendMessage(_ context.Context, _ vibekit.ChatID, _ *vibekit.Message) error {
 	s.appendCalls++
 	return s.appendErr
 }
 
-func (s *recStore) Mutate(_ context.Context, _ api.ChatID, fn func(*api.Chat, bool) bool) error {
+func (s *recStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
 	s.mutateCalls++
 	if fn != nil {
-		_ = fn(&api.Chat{}, true)
+		_ = fn(&vibekit.Chat{}, true)
 	}
 	return s.mutateErr
 }
 
-var _ api.ChatStore = (*recStore)(nil)
+var _ ChatRecords = (*recStore)(nil)
 
 // captureSlog redirects the default slog logger to buf and returns a
 // restore function. Not parallel-safe (mutates the global slog default).
@@ -55,7 +55,7 @@ func captureSlog(buf *bytes.Buffer) func() {
 func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) bool {
 	t.Helper()
 	deps, events := newEventCaptureDeps()
-	chatID := api.ChatID("cap")
+	chatID := vibekit.ChatID("cap")
 	buf := deps.bufStore.GetOrInit(chatID)
 	if contentLen > 0 {
 		buf.Content.WriteString(strings.Repeat("a", contentLen))
@@ -67,18 +67,18 @@ func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) boo
 	// the only possible broadcast is then the message_chunk on process.
 	buf.Started = true
 	buf.MessageID = "cap-mid"
-	tr := New(deps, withIDGenerator(func() string { return "cap-mid" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "cap-mid" }))
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-		"content": map[string]any{"type": api.ContentTypeText, "text": text},
+		"content": map[string]any{"type": vibekit.ContentTypeText, "text": text},
 	}), false)
 	// The chunk's OWN text, not merely "some chunk was broadcast": crossing the
 	// cap now emits a one-off truncation notice, and counting that as processed
 	// would make these cases pass whether the text was dropped or not.
 	for _, e := range *events {
-		if e.Type != api.EventMessageChunk {
+		if e.Type != vibekit.EventMessageChunk {
 			continue
 		}
-		if p, ok := e.Payload.(api.MessageChunkPayload); ok && p.Delta == text {
+		if p, ok := e.Payload.(vibekit.MessageChunkPayload); ok && p.Delta == text {
 			return true
 		}
 	}
@@ -90,24 +90,24 @@ func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) boo
 // nothing in the transcript to say why.
 func truncationNotices(t *testing.T, contentLen, chunks int) int {
 	t.Helper()
-	const chatID api.ChatID = "c1"
+	const chatID vibekit.ChatID = "c1"
 	deps, events, _ := depsWithStore(t, chatID)
-	buf := deps.BufferStore().GetOrInit(chatID)
+	buf := deps.GetOrInit(chatID)
 	buf.Content.WriteString(strings.Repeat("a", contentLen))
 	buf.Started = true
 	buf.MessageID = "cap-mid"
-	tr := New(deps, withIDGenerator(func() string { return "cap-mid" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "cap-mid" }))
 	for range chunks {
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-			"content": map[string]any{"type": api.ContentTypeText, "text": "a"},
+			"content": map[string]any{"type": vibekit.ContentTypeText, "text": "a"},
 		}), false)
 	}
 	n := 0
 	for _, e := range *events {
-		if e.Type != api.EventMessageChunk {
+		if e.Type != vibekit.EventMessageChunk {
 			continue
 		}
-		if p, ok := e.Payload.(api.MessageChunkPayload); ok && strings.Contains(p.Delta, "Reply truncated") {
+		if p, ok := e.Payload.(vibekit.MessageChunkPayload); ok && strings.Contains(p.Delta, "Reply truncated") {
 			n++
 		}
 	}
@@ -162,8 +162,8 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if rec.appendCalls != 1 {
 			t.Errorf("valid plan JSON: AppendMessage calls = %d, want 1", rec.appendCalls)
 		}
@@ -172,8 +172,8 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), api.ChatID("c1"), json.RawMessage(`{`))
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{`))
 		if rec.appendCalls != 0 {
 			t.Errorf("invalid plan JSON: AppendMessage calls = %d, want 0", rec.appendCalls)
 		}
@@ -191,8 +191,8 @@ func TestHandlePlan_LogsOnlyOnAppendError(t *testing.T) {
 		rec := &recStore{appendErr: errBoom}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if !strings.Contains(logbuf.String(), "persist plan") {
 			t.Errorf("AppendMessage error not logged; log=%q, want it to contain %q", logbuf.String(), "persist plan")
 		}
@@ -204,8 +204,8 @@ func TestHandlePlan_LogsOnlyOnAppendError(t *testing.T) {
 		rec := &recStore{} // appendErr nil, mutateErr nil
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if strings.Contains(logbuf.String(), "persist plan") {
 			t.Errorf("unexpected error log on AppendMessage success; log=%q", logbuf.String())
 		}
@@ -224,11 +224,11 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	store := testsupport.NewRecordingChatStore()
 	deps.store = store
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 	// Pre-create the chat so HandleModeUpdate's Mutate sees exists=true.
-	_ = store.Mutate(t.Context(), chatID, func(_ *api.Chat, _ bool) bool { return true })
+	_ = store.Mutate(t.Context(), chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
 
-	tr := New(deps, withIDGenerator(func() string { return "id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 	tr.HandleModeUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"currentModeId": "plan",
 	}))
@@ -245,12 +245,12 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	// Broadcast mode_changed carrying the new mode id.
 	found := false
 	for _, e := range *events {
-		if e.Type != api.EventModeChanged {
+		if e.Type != vibekit.EventModeChanged {
 			continue
 		}
-		p, isModePayload := e.Payload.(api.ModeChangedPayload)
+		p, isModePayload := e.Payload.(vibekit.ModeChangedPayload)
 		if !isModePayload {
-			t.Fatalf("mode_changed payload type = %T, want api.ModeChangedPayload", e.Payload)
+			t.Fatalf("mode_changed payload type = %T, want vibekit.ModeChangedPayload", e.Payload)
 		}
 		if p.ModeID != "plan" {
 			t.Errorf("mode_changed ModeID = %q, want %q", p.ModeID, "plan")
@@ -270,8 +270,8 @@ func TestHandlePlan_ContextErrGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if rec.mutateCalls != 1 {
 			t.Errorf("active ctx: Mutate calls = %d, want 1", rec.mutateCalls)
 		}
@@ -280,10 +280,10 @@ func TestHandlePlan_ContextErrGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		tr.HandlePlan(ctx, api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr.HandlePlan(ctx, vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if rec.mutateCalls != 0 {
 			t.Errorf("cancelled ctx: Mutate calls = %d, want 0", rec.mutateCalls)
 		}
@@ -295,7 +295,7 @@ func TestHandlePlan_ContextErrGuard(t *testing.T) {
 func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 	newChunk := func(meta map[string]any) map[string]any {
 		c := map[string]any{
-			"content": map[string]any{"type": api.ContentTypeText, "text": "I can't continue."},
+			"content": map[string]any{"type": vibekit.ContentTypeText, "text": "I can't continue."},
 		}
 		if meta != nil {
 			c["_meta"] = map[string]any{"kiro": meta}
@@ -305,8 +305,8 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("tagged text chunk stamps buffer and rides the chunk event", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
-		chatID := api.ChatID("rf1")
-		tr := New(deps, withIDGenerator(func() string { return "m1" }))
+		chatID := vibekit.ChatID("rf1")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{
 				"category":         "safety",
@@ -322,10 +322,10 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 		if buf.Refusal.Category != "safety" || buf.Refusal.RecommendedModel != "model-x" {
 			t.Errorf("refusal fields: %+v", buf.Refusal)
 		}
-		var chunkPayloads []api.MessageChunkPayload
+		var chunkPayloads []vibekit.MessageChunkPayload
 		for _, e := range *events {
-			if e.Type == api.EventMessageChunk {
-				chunkPayloads = append(chunkPayloads, e.Payload.(api.MessageChunkPayload))
+			if e.Type == vibekit.EventMessageChunk {
+				chunkPayloads = append(chunkPayloads, e.Payload.(vibekit.MessageChunkPayload))
 			}
 		}
 		if len(chunkPayloads) != 1 || chunkPayloads[0].Refusal == nil {
@@ -338,8 +338,8 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("first refusal wins", func(t *testing.T) {
 		deps, _ := newEventCaptureDeps()
-		chatID := api.ChatID("rf2")
-		tr := New(deps, withIDGenerator(func() string { return "m1" }))
+		chatID := vibekit.ChatID("rf2")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{"category": "first"},
 		})), false)
@@ -354,8 +354,8 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("reasoning chunk cannot mark the turn", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
-		chatID := api.ChatID("rf3")
-		tr := New(deps, withIDGenerator(func() string { return "m1" }))
+		chatID := vibekit.ChatID("rf3")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{"category": "safety"},
 		})), true)
@@ -363,7 +363,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 			t.Error("reasoning chunk must not stamp refusal")
 		}
 		for _, e := range *events {
-			if e.Type == api.EventMessageChunk && e.Payload.(api.MessageChunkPayload).Refusal != nil {
+			if e.Type == vibekit.EventMessageChunk && e.Payload.(vibekit.MessageChunkPayload).Refusal != nil {
 				t.Error("reasoning chunk must not carry refusal on the wire")
 			}
 		}
@@ -371,14 +371,14 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("untagged chunk stays clean", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
-		chatID := api.ChatID("rf4")
-		tr := New(deps, withIDGenerator(func() string { return "m1" }))
+		chatID := vibekit.ChatID("rf4")
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(nil)), false)
 		if buf := deps.bufStore.Get(chatID); buf != nil && buf.Refusal != nil {
 			t.Error("untagged chunk must not stamp refusal")
 		}
 		for _, e := range *events {
-			if e.Type == api.EventMessageChunk && e.Payload.(api.MessageChunkPayload).Refusal != nil {
+			if e.Type == vibekit.EventMessageChunk && e.Payload.(vibekit.MessageChunkPayload).Refusal != nil {
 				t.Error("untagged chunk must not carry refusal")
 			}
 		}

@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // CmdSetSupervisedMode records the chat's supervised choice and applies it to a
@@ -31,33 +31,31 @@ import (
 // with until the next session, which is the kind of silent lag that makes a
 // safety toggle untrustworthy. On a chat with no bridge yet the persisted value
 // is enough — `spawnBridge` passes it at `session/new`.
-func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
-	var p api.SetSupervisedModeCommand
+	var p vibekit.SetSupervisedModeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	if err := d.Deps().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.SupervisedMode == p.Enabled {
 			return false
 		}
 		c.SupervisedMode = p.Enabled
 		return true
 	}); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	// Best-effort on the live session, and logged at ERROR when it fails while
 	// ENABLING: the user asked to review writes and would not be asked. The
 	// disabling direction failing is a nuisance, not a hazard.
-	if bridge := d.Deps().GetBridge(cmd.ChatID); bridge != nil {
-		if _, err := bridge.Call(ctx, api.MethodSetConfigOption, SessionParams(bridge, map[string]any{
-			"configId": api.ConfigOptionAutopilot,
+	if bridge := bridges.Bridge(cmd.ChatID); bridge != nil {
+		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
+			"configId": vibekit.ConfigOptionAutopilot,
 			"value":    !p.Enabled,
 		})); err != nil {
 			if p.Enabled {
@@ -70,5 +68,5 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}
 
 	slog.Info("supervised mode set", "chat", cmd.ChatID, "enabled", p.Enabled)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"enabled": p.Enabled}))
+	return responseWith(map[string]any{"enabled": p.Enabled}), nil
 }

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // BenchmarkReadLoop_Notifications measures JSON unmarshal throughput for
 // notification-shaped messages (the hot path in readLoop).
 func BenchmarkReadLoop_Notifications(b *testing.B) {
-	notif := api.RPCResponse{
+	notif := vibekit.RPCResponse{
 		JSONRPC: jsonRPCVersion,
 		Method:  "session/update",
 		Params:  json.RawMessage(`{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"content","text":"hello world"}}}`),
@@ -23,16 +23,15 @@ func BenchmarkReadLoop_Notifications(b *testing.B) {
 	}
 	lineStr := string(line)
 
-	b.ResetTimer()
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		fr := newFrameReader(bufio.NewReaderSize(strings.NewReader(lineStr+"\n"), stdoutBufSize))
 		for {
 			line, _, rerr := fr.readFrame()
 			if rerr != nil {
 				break
 			}
-			var resp api.RPCResponse
+			var resp vibekit.RPCResponse
 			if err := json.Unmarshal(line, &resp); err != nil {
 				b.Fatal(err)
 			}
@@ -54,7 +53,7 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 	for _, sz := range sizes {
 		b.Run(sz.name, func(b *testing.B) {
 			payload := strings.Repeat("x", sz.size)
-			resp := api.RPCResponse{
+			resp := vibekit.RPCResponse{
 				JSONRPC: jsonRPCVersion,
 				ID:      new(int64(42)),
 				Result:  json.RawMessage(`"` + payload + `"`),
@@ -71,16 +70,15 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 			}
 			data := sb.String()
 
-			b.ResetTimer()
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				fr := newFrameReader(bufio.NewReaderSize(strings.NewReader(data), stdoutBufSize))
 				for {
 					line, _, rerr := fr.readFrame()
 					if rerr != nil {
 						break
 					}
-					var resp api.RPCResponse
+					var resp vibekit.RPCResponse
 					if err := json.Unmarshal(line, &resp); err != nil {
 						b.Fatal(err)
 					}

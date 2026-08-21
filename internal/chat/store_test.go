@@ -14,23 +14,24 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // fakeBroadcaster captures broadcasts for assertions. Access is guarded
 // by mu so concurrent appends from parallel AppendMessage goroutines
 // don't race the slice header.
 type fakeBroadcaster struct {
-	events []api.ServerEvent
+	events []vibekit.ServerEvent
 	count  atomic.Int32
 	mu     sync.Mutex
 }
 
-var _ api.Broadcaster = (*fakeBroadcaster)(nil)
+var _ broadcaster = (*fakeBroadcaster)(nil)
 
-func (f *fakeBroadcaster) Broadcast(_ context.Context, e api.ServerEvent) {
+func (f *fakeBroadcaster) Broadcast(_ context.Context, e vibekit.ServerEvent) {
 	f.mu.Lock()
 	f.events = append(f.events, e)
 	f.mu.Unlock()
@@ -40,7 +41,7 @@ func (f *fakeBroadcaster) Broadcast(_ context.Context, e api.ServerEvent) {
 // snapshot returns a copy of the captured events under the mutex.
 // Tests should use this instead of reading f.events directly so a
 // future asynchronous broadcaster doesn't race a bare slice read.
-func (f *fakeBroadcaster) snapshot() []api.ServerEvent {
+func (f *fakeBroadcaster) snapshot() []vibekit.ServerEvent {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.events)
@@ -77,7 +78,7 @@ func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	if err != nil {
 		t.Fatalf("read chat %s: %v", id, err)
 	}
-	var c api.Chat
+	var c vibekit.Chat
 	if err := json.Unmarshal(data, &c); err != nil {
 		t.Fatalf("unmarshal chat %s: %v", id, err)
 	}
@@ -98,12 +99,12 @@ func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 // badChatIDs is the canonical set of invalid chat identifiers used
 // across all RejectsBadChatID / InvalidChatIDRejected tests. Adding a
 // new invalid pattern here automatically covers every method.
-var badChatIDs = []api.ChatID{"", "a/b", "..", "a\x00b", "a b", api.ChatID(strings.Repeat("x", 200))}
+var badChatIDs = []vibekit.ChatID{"", "a/b", "..", "a\x00b", "a b", vibekit.ChatID(strings.Repeat("x", 200))}
 
 // assertRejectsBadChatIDs iterates badChatIDs and asserts that fn
 // returns a non-nil error for each. Use in table-driven subtests to
 // eliminate duplicated bad-id slices across store method tests.
-func assertRejectsBadChatIDs(t *testing.T, fn func(id api.ChatID) error) {
+func assertRejectsBadChatIDs(t *testing.T, fn func(id vibekit.ChatID) error) {
 	t.Helper()
 	for _, bad := range badChatIDs {
 		if err := fn(bad); err == nil {
@@ -116,7 +117,7 @@ func assertRejectsBadChatIDs(t *testing.T, fn func(id api.ChatID) error) {
 
 func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			t.Error("exists = true on fresh chat")
 		}
@@ -144,9 +145,9 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 
 func TestMutate_UpdatesChatAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	// Second Mutate should broadcast chat_updated.
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			t.Error("exists = false on existing chat")
 		}
@@ -164,7 +165,7 @@ func TestMutate_UpdatesChatAndBroadcasts(t *testing.T) {
 
 func TestMutate_AbortDoesNotBroadcast(t *testing.T) {
 	s, b := newTestStore(t)
-	err := s.Mutate(t.Context(), "c1", func(*api.Chat, bool) bool { return false })
+	err := s.Mutate(t.Context(), "c1", func(*vibekit.Chat, bool) bool { return false })
 	if err != nil {
 		t.Fatalf("Mutate error = %v", err)
 	}
@@ -178,8 +179,8 @@ func TestMutate_AbortDoesNotBroadcast(t *testing.T) {
 
 func TestMutate_RejectsBadChatID(t *testing.T) {
 	s, _ := newTestStore(t)
-	assertRejectsBadChatIDs(t, func(id api.ChatID) error {
-		return s.Mutate(t.Context(), id, func(*api.Chat, bool) bool { return true })
+	assertRejectsBadChatIDs(t, func(id vibekit.ChatID) error {
+		return s.Mutate(t.Context(), id, func(*vibekit.Chat, bool) bool { return true })
 	})
 }
 
@@ -195,7 +196,7 @@ func TestMutate_RejectsBadChatID(t *testing.T) {
 // The test is parameterised so it can be reused against any Broadcaster
 // implementation (fakeBroadcaster today, SSE broadcaster in integration
 // tests later).
-func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster) {
+func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 	t.Helper()
 
 	t.Run("ConcurrentBroadcastsDoNotBlock", func(t *testing.T) {
@@ -204,15 +205,13 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster
 		done := make(chan struct{})
 		go func() {
 			var wg sync.WaitGroup
-			wg.Add(N)
 			for i := range N {
-				go func(i int) {
-					defer wg.Done()
-					b.Broadcast(t.Context(), api.ServerEvent{
+				wg.Go(func() {
+					b.Broadcast(t.Context(), vibekit.ServerEvent{
 						Type:   "test_event",
-						ChatID: api.ChatID(fmt.Sprintf("c%d", i)),
+						ChatID: vibekit.ChatID(fmt.Sprintf("c%d", i)),
 					})
-				}(i)
+				})
 			}
 			wg.Wait()
 			close(done)
@@ -229,14 +228,14 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster
 		b := newBroadcaster()
 		const N = 200
 		for i := range N {
-			b.Broadcast(t.Context(), api.ServerEvent{
+			b.Broadcast(t.Context(), vibekit.ServerEvent{
 				Type:   "order_test",
-				ChatID: api.ChatID(fmt.Sprintf("%d", i)),
+				ChatID: vibekit.ChatID(fmt.Sprintf("%d", i)),
 			})
 		}
 		// Verify ordering via the concrete type's snapshot if available.
 		type snapshotter interface {
-			snapshot() []api.ServerEvent
+			snapshot() []vibekit.ServerEvent
 		}
 		if s, ok := b.(snapshotter); ok {
 			evs := s.snapshot()
@@ -244,7 +243,7 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster
 				t.Fatalf("len(events) = %d, want %d", len(evs), N)
 			}
 			for i, e := range evs {
-				want := api.ChatID(fmt.Sprintf("%d", i))
+				want := vibekit.ChatID(fmt.Sprintf("%d", i))
 				if e.ChatID != want {
 					t.Errorf("event[%d].ChatID = %q, want %q (order violated)", i, e.ChatID, want)
 					break
@@ -255,7 +254,7 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster
 }
 
 func TestFakeBroadcaster_ContractCompliance(t *testing.T) {
-	BroadcasterContractTest(t, func() api.Broadcaster {
+	BroadcasterContractTest(t, func() broadcaster {
 		return &fakeBroadcaster{}
 	})
 }
@@ -274,7 +273,7 @@ func TestChatIDPattern(t *testing.T) {
 		strings.Repeat("x", 128),               // max length
 	}
 	for _, id := range valid {
-		if !chatIDPattern(api.ChatID(id)) {
+		if !chatIDPattern(vibekit.ChatID(id)) {
 			t.Errorf("chatIDPattern(%q) = false, want true", id)
 		}
 	}
@@ -290,7 +289,7 @@ func TestChatIDPattern(t *testing.T) {
 		strings.Repeat("x", 129), // over max length
 	}
 	for _, id := range invalid {
-		if chatIDPattern(api.ChatID(id)) {
+		if chatIDPattern(vibekit.ChatID(id)) {
 			t.Errorf("chatIDPattern(%q) = true, want false", id)
 		}
 	}
@@ -305,28 +304,50 @@ func TestGet_MissingChat(t *testing.T) {
 
 // --- List ---
 
+// TestList_SortsByUpdatedAtDesc runs in a synctest bubble, which is what lets it
+// assert the gap between the two timestamps EXACTLY rather than nudge a real
+// clock and hope.
+//
+// The two `time.Sleep(2 * time.Millisecond)` calls this replaces were class (b)
+// — advancing a real clock the test could not fake — and their comment said so:
+// "nudge the wall clock so the UpdatedAt ms timestamps don't collide on fast
+// machines". Inside the bubble the clock is synthetic, so the nudge is exact and
+// the ordering is deterministic by construction instead of by resolution.
+//
+// Measured: atomicfile.WriteFile's real filesystem work (mkdir walk, fsync,
+// rename, parent fsync) is fine in here. That is the documented boundary —
+// TRANSIENT file I/O reaches a durably-blocked state afterwards, so the clock
+// still advances; only a goroutine parked indefinitely on an external FD defeats
+// a bubble.
 func TestList_SortsByUpdatedAtDesc(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	// Nudge the wall clock between mutations so the UpdatedAt ms
-	// timestamps don't collide on fast machines and the sort order
-	// is deterministic.
-	time.Sleep(2 * time.Millisecond)
-	_ = s.Mutate(t.Context(), "b", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
-	time.Sleep(2 * time.Millisecond)
-	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { return true }) // bump updated_at
-	headers := s.List(t.Context())
-	if len(headers) != 2 {
-		t.Fatalf("len = %d, want 2", len(headers))
-	}
-	if headers[0].ID != "a" {
-		t.Errorf("first = %q, want a (most recently updated)", headers[0].ID)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s, _ := newTestStore(t)
+		_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+		synctest.Sleep(2 * time.Millisecond)
+		_ = s.Mutate(t.Context(), "b", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
+		synctest.Sleep(2 * time.Millisecond)
+		_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { return true }) // bump updated_at
+		headers := s.List(t.Context())
+		// Fatal: every assertion below indexes headers.
+		if len(headers) != 2 {
+			t.Fatalf("len = %d, want 2", len(headers))
+		}
+		if headers[0].ID != "a" {
+			t.Errorf("first = %q, want a (most recently updated)", headers[0].ID)
+		}
+		// Exactly 4ms of synthetic time separates a's second mutation from b's
+		// only one. On a real clock this could only ever be asserted as `> 0`,
+		// which a save that stamped the wrong field, or stamped once and reused
+		// the value, would satisfy.
+		if gap := headers[0].UpdatedAt - headers[1].UpdatedAt; gap != 2 {
+			t.Errorf("UpdatedAt gap = %dms, want exactly 2 (b at +2ms, a re-stamped at +4ms)", gap)
+		}
+	})
 }
 
 func TestList_IgnoresNonChatFiles(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	// Non-.json file → skipped by the suffix filter.
 	if err := os.WriteFile(filepath.Join(s.dir, "random.txt"), []byte("garbage"), 0o600); err != nil {
 		t.Fatal(err)
@@ -344,7 +365,7 @@ func TestList_IgnoresNonChatFiles(t *testing.T) {
 
 func TestList_SkipsMalformedChatFile(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "good", func(c *api.Chat, _ bool) bool { c.Name = "ok"; return true })
+	_ = s.Mutate(t.Context(), "good", func(c *vibekit.Chat, _ bool) bool { c.Name = "ok"; return true })
 	// Drop a file that matches chatIDPattern but isn't valid JSON.
 	// List must log and skip it, not panic or return a zero-value
 	// header that confuses clients.
@@ -362,10 +383,10 @@ func TestList_SkipsMalformedChatFile(t *testing.T) {
 
 func TestAppendMessage_AddsAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	b.reset()
 
-	msg := &api.Message{ID: "m1", Role: api.RoleUser, Content: "hi"}
+	msg := &vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: "hi"}
 	if err := s.AppendMessage(t.Context(), "c1", msg); err != nil {
 		t.Fatalf("AppendMessage error = %v", err)
 	}
@@ -394,7 +415,7 @@ func TestAppendMessage_AddsAndBroadcasts(t *testing.T) {
 
 func TestAppendMessage_NoOpOnMissingChat(t *testing.T) {
 	s, b := newTestStore(t)
-	err := s.AppendMessage(t.Context(), "nonexistent", &api.Message{ID: "m1", Role: api.RoleUser})
+	err := s.AppendMessage(t.Context(), "nonexistent", &vibekit.Message{ID: "m1", Role: vibekit.RoleUser})
 	if err != nil {
 		t.Errorf("error on missing chat: %v", err)
 	}
@@ -407,11 +428,11 @@ func TestAppendMessage_NoOpOnMissingChat(t *testing.T) {
 
 func TestUpdateMessage_MutatesInPlace(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.AppendMessage(t.Context(), "c1", &api.Message{ID: "m1", Role: api.RoleAssistant, Content: "old"})
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.AppendMessage(t.Context(), "c1", &vibekit.Message{ID: "m1", Role: vibekit.RoleAssistant, Content: "old"})
 	b.reset()
 
-	err := s.UpdateMessage(t.Context(), "c1", "m1", func(m *api.Message) { m.Content = "new" })
+	err := s.UpdateMessage(t.Context(), "c1", "m1", func(m *vibekit.Message) { m.Content = "new" })
 	if err != nil {
 		t.Fatalf("UpdateMessage error = %v", err)
 	}
@@ -436,10 +457,10 @@ func TestUpdateMessage_MutatesInPlace(t *testing.T) {
 
 func TestUpdateMessage_NoOpOnMissingMessage(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	b.reset()
 
-	_ = s.UpdateMessage(t.Context(), "c1", "nonexistent", func(*api.Message) {})
+	_ = s.UpdateMessage(t.Context(), "c1", "nonexistent", func(*vibekit.Message) {})
 	if evs := b.snapshot(); len(evs) != 0 {
 		t.Errorf("events: %+v", evs)
 	}
@@ -449,7 +470,7 @@ func TestUpdateMessage_NoOpOnMissingMessage(t *testing.T) {
 
 func TestDelete_RemovesFileAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	b.reset()
 
 	if err := s.Delete(t.Context(), "c1"); err != nil {
@@ -478,7 +499,7 @@ func TestDelete_MissingChatIsNoOp(t *testing.T) {
 
 func TestDelete_TombstonesChatID(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
 	if !s.isTombstoned("c1") {
 		t.Error("tombstone not set after Delete")
@@ -487,16 +508,16 @@ func TestDelete_TombstonesChatID(t *testing.T) {
 
 func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
 	b.reset()
 
 	// Simulate a late handler racing the delete — it tries to Mutate
 	// the just-deleted id. The call must return nil (no error, no
 	// resurrection) so the caller treats it as a benign no-op.
-	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		c.Name = "resurrected"
-		c.Messages = append(c.Messages, api.Message{Role: api.RoleUser, Content: "ghost"})
+		c.Messages = append(c.Messages, vibekit.Message{Role: vibekit.RoleUser, Content: "ghost"})
 		return true
 	})
 	if err != nil {
@@ -520,11 +541,11 @@ func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
 	// verify the code path: once the chat exists, tombstone is
 	// irrelevant because we never consult it.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
 	// Tombstone is now live for c1. Re-Create via a different id
 	// shouldn't be affected.
-	err := s.Mutate(t.Context(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	err := s.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 	if err != nil {
 		t.Fatalf("unrelated chat blocked by unrelated tombstone: %v", err)
 	}
@@ -535,7 +556,7 @@ func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
 
 func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
 	b.reset()
 
@@ -545,7 +566,7 @@ func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
 	// first. This test pins that path: after Delete, AppendMessage must
 	// produce no events and not resurrect the chat even though the
 	// mutator would have happily returned false anyway.
-	err := s.AppendMessage(t.Context(), "c1", &api.Message{Role: api.RoleUser, Content: "ghost"})
+	err := s.AppendMessage(t.Context(), "c1", &vibekit.Message{Role: vibekit.RoleUser, Content: "ghost"})
 	if err != nil {
 		t.Fatalf("AppendMessage error: %v", err)
 	}
@@ -563,19 +584,19 @@ func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
 
 func TestBuildHistory_FormatsAllRoles(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
-		c.Messages = []api.Message{
-			{Role: api.RoleUser, Content: "hello"},
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Messages = []vibekit.Message{
+			{Role: vibekit.RoleUser, Content: "hello"},
 			{
-				Role:    api.RoleAssistant,
+				Role:    vibekit.RoleAssistant,
 				Content: "thinking",
-				ToolCalls: []api.ToolCall{
-					{Title: "grep", Status: api.ToolCompleted},
-					{Title: "edit", Status: api.ToolFailed},
+				ToolCalls: []vibekit.ToolCall{
+					{Title: "grep", Status: vibekit.ToolCompleted},
+					{Title: "edit", Status: vibekit.ToolFailed},
 				},
 			},
-			{Role: api.RoleEvent, EventKind: api.EventCancelled, Content: "user aborted"},
-			{Role: api.RoleEvent, EventKind: api.EventCompacted, Content: "summary text"},
+			{Role: vibekit.RoleEvent, EventKind: vibekit.EventCancelled, Content: "user aborted"},
+			{Role: vibekit.RoleEvent, EventKind: vibekit.EventCompacted, Content: "summary text"},
 		}
 		return true
 	})
@@ -591,7 +612,7 @@ func TestBuildHistory_FormatsAllRoles(t *testing.T) {
 
 func TestBuildHistory_EmptyChatReturnsEmptyString(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	if got := s.BuildHistory(t.Context(), "c1"); got != "" {
 		t.Errorf("BuildHistory on empty-message chat = %q, want empty", got)
 	}
@@ -608,9 +629,9 @@ func TestBuildHistory_EmptyForMissingChat(t *testing.T) {
 
 func TestHandleList_ReturnsHeaders(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "One"
-		c.Messages = []api.Message{{ID: "m1", Role: api.RoleUser, Content: "x"}}
+		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "x"}}
 		return true
 	})
 
@@ -633,11 +654,11 @@ func TestHandleList_ReturnsHeaders(t *testing.T) {
 
 func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "One"
-		c.Messages = []api.Message{
-			{ID: "m1", Role: api.RoleUser, Content: "a", Ts: 100},
-			{ID: "m2", Role: api.RoleAssistant, Content: "b", Ts: 200},
+		c.Messages = []vibekit.Message{
+			{ID: "m1", Role: vibekit.RoleUser, Content: "a", Ts: 100},
+			{ID: "m2", Role: vibekit.RoleAssistant, Content: "b", Ts: 200},
 		}
 		return true
 	})
@@ -674,7 +695,7 @@ func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
 func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 	cases := []struct {
 		name     string
-		msgs     []api.Message
+		msgs     []vibekit.Message
 		beforeID string
 		wantIDs  []string
 	}{
@@ -684,12 +705,12 @@ func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 			// compaction. A timestamp search lands on the FIRST message at that
 			// value, so it excludes b and c along with d and answers [a].
 			name: "a tie group holding the cursor is paged rather than skipped",
-			msgs: []api.Message{
-				{ID: "a", Role: api.RoleUser, Ts: 100},
-				{ID: "b", Role: api.RoleUser, Ts: 120},
-				{ID: "c", Role: api.RoleEvent, Ts: 120},
-				{ID: "d", Role: api.RoleAssistant, Ts: 120},
-				{ID: "e", Role: api.RoleUser, Ts: 130},
+			msgs: []vibekit.Message{
+				{ID: "a", Role: vibekit.RoleUser, Ts: 100},
+				{ID: "b", Role: vibekit.RoleUser, Ts: 120},
+				{ID: "c", Role: vibekit.RoleEvent, Ts: 120},
+				{ID: "d", Role: vibekit.RoleAssistant, Ts: 120},
+				{ID: "e", Role: vibekit.RoleUser, Ts: 130},
 			},
 			beforeID: "d",
 			wantIDs:  []string{"a", "b", "c"},
@@ -699,11 +720,11 @@ func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 			// the slice is not non-decreasing and a binary search over it is
 			// undefined. Here it answers [a], dropping b.
 			name: "an inverted cursor is paged in array order",
-			msgs: []api.Message{
-				{ID: "a", Role: api.RoleUser, Ts: 100},
-				{ID: "b", Role: api.RoleUser, Ts: 120},
-				{ID: "c", Role: api.RoleEvent, Ts: 119},
-				{ID: "d", Role: api.RoleUser, Ts: 130},
+			msgs: []vibekit.Message{
+				{ID: "a", Role: vibekit.RoleUser, Ts: 100},
+				{ID: "b", Role: vibekit.RoleUser, Ts: 120},
+				{ID: "c", Role: vibekit.RoleEvent, Ts: 119},
+				{ID: "d", Role: vibekit.RoleUser, Ts: 130},
 			},
 			beforeID: "c",
 			wantIDs:  []string{"a", "b"},
@@ -712,7 +733,7 @@ func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Messages = tc.msgs
 				return true
@@ -725,7 +746,7 @@ func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 			}
 			var got struct {
-				Messages []api.Message `json:"messages"`
+				Messages []vibekit.Message `json:"messages"`
 			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -758,14 +779,14 @@ func TestHandleOne_Pagination(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
-				c.Messages = []api.Message{
-					{ID: "a", Role: api.RoleUser, Content: "1", Ts: 100},
-					{ID: "b", Role: api.RoleUser, Content: "2", Ts: 110},
-					{ID: "c", Role: api.RoleUser, Content: "3", Ts: 120},
-					{ID: "d", Role: api.RoleUser, Content: "4", Ts: 130},
-					{ID: "e", Role: api.RoleUser, Content: "5", Ts: 140},
+				c.Messages = []vibekit.Message{
+					{ID: "a", Role: vibekit.RoleUser, Content: "1", Ts: 100},
+					{ID: "b", Role: vibekit.RoleUser, Content: "2", Ts: 110},
+					{ID: "c", Role: vibekit.RoleUser, Content: "3", Ts: 120},
+					{ID: "d", Role: vibekit.RoleUser, Content: "4", Ts: 130},
+					{ID: "e", Role: vibekit.RoleUser, Content: "5", Ts: 140},
 				}
 				return true
 			})
@@ -776,8 +797,8 @@ func TestHandleOne_Pagination(t *testing.T) {
 				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 			}
 			var got struct {
-				Messages []api.Message `json:"messages"`
-				HasMore  bool          `json:"has_more"`
+				Messages []vibekit.Message `json:"messages"`
+				HasMore  bool              `json:"has_more"`
 			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -829,10 +850,10 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	_ = s1.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s1.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Saved"
 		c.ACPSessionID = "acp-1"
-		c.Messages = []api.Message{{ID: "m1", Role: api.RoleUser, Content: "hi"}}
+		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "hi"}}
 		return true
 	})
 
@@ -914,7 +935,7 @@ func TestHandleOne_RejectsEmptyOrLeadingSlashPath(t *testing.T) {
 
 func TestHandleOne_BaseRejectsNonGET(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/api/chats/c1", nil)
 		rec := httptest.NewRecorder()
@@ -927,9 +948,9 @@ func TestHandleOne_BaseRejectsNonGET(t *testing.T) {
 
 func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Messages = []api.Message{{ID: "m1", Role: api.RoleUser, Content: "x", Ts: 100}}
+		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "x", Ts: 100}}
 		return true
 	})
 	cases := []struct {
@@ -958,7 +979,7 @@ func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 
 func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	mux := http.NewServeMux()
 	s.RegisterRoutes(mux)
@@ -987,18 +1008,16 @@ func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 
 func TestMutate_SerializesSameChatConcurrentAppends(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	const N = 50
 	var wg sync.WaitGroup
-	wg.Add(N)
 	for i := range N {
-		go func(i int) {
-			defer wg.Done()
-			_ = s.AppendMessage(t.Context(), "c1", &api.Message{
-				ID: fmt.Sprintf("m%d", i), Role: api.RoleUser, Content: "x",
+		wg.Go(func() {
+			_ = s.AppendMessage(t.Context(), "c1", &vibekit.Message{
+				ID: fmt.Sprintf("m%d", i), Role: vibekit.RoleUser, Content: "x",
 			})
-		}(i)
+		})
 	}
 	wg.Wait()
 	got, _ := s.Get(t.Context(), "c1")
@@ -1011,21 +1030,18 @@ func TestMutate_DifferentChatsAreIndependent(t *testing.T) {
 	// Two chats should not block each other. We assert completion of
 	// N mutations on each chat runs to success with no deadlock.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Mutate(t.Context(), "b", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "b", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	const N = 20
 	var wg sync.WaitGroup
-	wg.Add(2 * N)
 	for i := range N {
-		go func(i int) {
-			defer wg.Done()
-			_ = s.AppendMessage(t.Context(), "a", &api.Message{ID: fmt.Sprintf("a%d", i), Role: api.RoleUser, Content: "x"})
-		}(i)
-		go func(i int) {
-			defer wg.Done()
-			_ = s.AppendMessage(t.Context(), "b", &api.Message{ID: fmt.Sprintf("b%d", i), Role: api.RoleUser, Content: "x"})
-		}(i)
+		wg.Go(func() {
+			_ = s.AppendMessage(t.Context(), "a", &vibekit.Message{ID: fmt.Sprintf("a%d", i), Role: vibekit.RoleUser, Content: "x"})
+		})
+		wg.Go(func() {
+			_ = s.AppendMessage(t.Context(), "b", &vibekit.Message{ID: fmt.Sprintf("b%d", i), Role: vibekit.RoleUser, Content: "x"})
+		})
 	}
 	wg.Wait()
 	a, _ := s.Get(t.Context(), "a")
@@ -1058,7 +1074,7 @@ func TestIsTombstoned_ExpiredEntryIsPrunedAndReturnsFalse(t *testing.T) {
 
 func TestMutate_ExpiredTombstoneDoesNotBlockRecreation(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
 
 	// Age the tombstone past its TTL.
@@ -1066,7 +1082,7 @@ func TestMutate_ExpiredTombstoneDoesNotBlockRecreation(t *testing.T) {
 	s.tombstone["c1"] = time.Now().Add(-2 * tombstoneTTL)
 	s.tombMu.Unlock()
 
-	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			t.Error("exists = true after expired tombstone")
 		}
@@ -1099,7 +1115,7 @@ func TestMarkDeleted_PrunesExpiredEntries(t *testing.T) {
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
 	for _, id := range []string{"expired-1", "expired-2", "expired-3"} {
-		if _, ok := s.tombstone[api.ChatID(id)]; ok {
+		if _, ok := s.tombstone[vibekit.ChatID(id)]; ok {
 			t.Errorf("markDeleted did not prune expired entry %q", id)
 		}
 	}
@@ -1125,7 +1141,7 @@ func TestDelete_MissingChatDoesNotTombstone(t *testing.T) {
 		t.Error("phantom delete tombstoned a chat that never existed")
 	}
 	// Creating a new chat with that id must succeed.
-	err := s.Mutate(t.Context(), "never-existed", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	err := s.Mutate(t.Context(), "never-existed", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	if err != nil {
 		t.Fatalf("Mutate after phantom delete: %v", err)
 	}
@@ -1186,7 +1202,7 @@ func TestList_SkipsOversizeChatFile(t *testing.T) {
 	// The same guardrail must keep one oversize file from erasing the
 	// sidebar for every other chat. List should log-and-skip, not fail.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "good", func(c *api.Chat, _ bool) bool { c.Name = "ok"; return true })
+	_ = s.Mutate(t.Context(), "good", func(c *vibekit.Chat, _ bool) bool { c.Name = "ok"; return true })
 	path := filepath.Join(s.dir, "big.json")
 	f, err := os.Create(path)
 	if err != nil {
@@ -1216,7 +1232,7 @@ func TestMutate_PropagatesParseErrorDoesNotOverwrite(t *testing.T) {
 	if err := os.WriteFile(badPath, []byte(garbage), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "would-stomp-history"
 		return true
 	})
@@ -1241,7 +1257,7 @@ func TestMutate_RefusesMutatorReassigningChatID(t *testing.T) {
 	// allowing concurrent writes under mismatched locks. Mutate must
 	// refuse and surface the error so the broken caller is visible.
 	s, _ := newTestStore(t)
-	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.ID = "c2" // broken mutator
 		c.Name = "stolen"
 		return true
@@ -1269,7 +1285,7 @@ func TestUpdateMessage_NoOpOnMissingChat(t *testing.T) {
 	// must early-return from its mutator when the chat doesn't exist
 	// so no ghost file is written and no broadcast is emitted.
 	s, b := newTestStore(t)
-	err := s.UpdateMessage(t.Context(), "never-existed", "m1", func(m *api.Message) {
+	err := s.UpdateMessage(t.Context(), "never-existed", "m1", func(m *vibekit.Message) {
 		m.Content = "ghost"
 	})
 	if err != nil {
@@ -1323,7 +1339,7 @@ func TestDelete_RejectsBadChatID(t *testing.T) {
 	// lose the pre-validation contract, so lock the current behaviour:
 	// every invalid id produces an error AND zero broadcasts.
 	s, b := newTestStore(t)
-	assertRejectsBadChatIDs(t, func(id api.ChatID) error {
+	assertRejectsBadChatIDs(t, func(id vibekit.ChatID) error {
 		return s.Delete(t.Context(), id)
 	})
 	// Defensive assertion: rejected ids never emit chat_deleted.
@@ -1341,7 +1357,7 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 	// can distinguish "chat gone" (no-op) from "filesystem broken"
 	// (surface to operator).
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	if err := os.Chmod(s.dir, 0o500); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
@@ -1363,10 +1379,10 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 
 func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Named Chat"
-		c.Messages = []api.Message{
-			{ID: "m1", Role: api.RoleUser, Content: "hi"},
+		c.Messages = []vibekit.Message{
+			{ID: "m1", Role: vibekit.RoleUser, Content: "hi"},
 		}
 		return true
 	})
@@ -1389,10 +1405,10 @@ func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 
 func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Named Chat"
-		c.Messages = []api.Message{
-			{ID: "m1", Role: api.RoleUser, Content: "hi"},
+		c.Messages = []vibekit.Message{
+			{ID: "m1", Role: vibekit.RoleUser, Content: "hi"},
 		}
 		return true
 	})
@@ -1420,7 +1436,7 @@ func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 
 func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=xml", nil)
 	rec := httptest.NewRecorder()
@@ -1433,7 +1449,7 @@ func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
 
 func TestHandleExport_FallsBackToChatIDWhenNameEmpty(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { return true })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
@@ -1460,7 +1476,7 @@ func TestHandleExport_NotFoundForMissingChat(t *testing.T) {
 
 func TestHandleExport_RejectsNonGET(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/api/chats/c1/export", nil)
 		rec := httptest.NewRecorder()
@@ -1486,7 +1502,7 @@ func TestHandleExport_SanitisesAdversarialChatName(t *testing.T) {
 	// break the Content-Disposition header via string concatenation.
 	// mime.FormatMediaType + safeExportName now handle all of these.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "evil\"; filename=\"spoof"
 		return true
 	})
@@ -1547,23 +1563,23 @@ func TestExportFilename(t *testing.T) {
 func TestMutate_RejectsInvalidUTF8(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(c *api.Chat)
+		mutate func(c *vibekit.Chat)
 	}{
 		{
 			name:   "invalid utf-8 in name",
-			mutate: func(c *api.Chat) { c.Name = "bad\xff\xfename" },
+			mutate: func(c *vibekit.Chat) { c.Name = "bad\xff\xfename" },
 		},
 		{
 			name: "invalid utf-8 in message content",
-			mutate: func(c *api.Chat) {
-				c.Messages = append(c.Messages, api.Message{ID: "m1", Role: api.RoleUser, Content: "ok\xffbad"})
+			mutate: func(c *vibekit.Chat) {
+				c.Messages = append(c.Messages, vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: "ok\xffbad"})
 			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, b := newTestStore(t)
-			err := s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+			err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				tc.mutate(c)
 				return true
 			})
@@ -1593,17 +1609,17 @@ func TestBuildHistory_TrimsOldestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	ctx := context.Background()
-	chatID := api.ChatID("prime-trim")
+	ctx := t.Context()
+	chatID := vibekit.ChatID("prime-trim")
 
 	// Twelve messages of ~8 KiB each: comfortably over the 64 KiB cap, so the
 	// oldest must go.
 	const each = 8 << 10
-	if err := s.Mutate(ctx, chatID, func(c *api.Chat, _ bool) bool {
+	if err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {
 		for i := range 12 {
-			c.Messages = append(c.Messages, api.Message{
+			c.Messages = append(c.Messages, vibekit.Message{
 				ID:      fmt.Sprintf("m%02d", i),
-				Role:    api.RoleUser,
+				Role:    vibekit.RoleUser,
 				Content: fmt.Sprintf("MARK%02d ", i) + strings.Repeat("x", each),
 				Ts:      int64(i + 1),
 			})
@@ -1639,13 +1655,13 @@ func TestBuildHistory_KeepsTheLastMessageEvenOversize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	ctx := context.Background()
-	chatID := api.ChatID("prime-oversize")
+	ctx := t.Context()
+	chatID := vibekit.ChatID("prime-oversize")
 
-	if err := s.Mutate(ctx, chatID, func(c *api.Chat, _ bool) bool {
-		c.Messages = []api.Message{
-			{ID: "old", Role: api.RoleUser, Content: "OLDMARK", Ts: 1},
-			{ID: "big", Role: api.RoleUser, Content: strings.Repeat("z", primeHistoryCap*2), Ts: 2},
+	if err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {
+		c.Messages = []vibekit.Message{
+			{ID: "old", Role: vibekit.RoleUser, Content: "OLDMARK", Ts: 1},
+			{ID: "big", Role: vibekit.RoleUser, Content: strings.Repeat("z", primeHistoryCap*2), Ts: 2},
 		}
 		return true
 	}); err != nil {

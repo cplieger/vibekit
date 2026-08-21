@@ -18,7 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/webhttp"
 )
 
 // drainOne reads a single message from urlCh with a sensible budget so the
@@ -73,7 +74,7 @@ func writeFakeCLIScript(t *testing.T, body string) string {
 
 // skipIfNotUnix skips the test on Windows. Every subprocess / signal
 // helper in this package is unix-only (process groups, /bin/sh fake
-// CLI, loginKill). Factored so the skip reason doesn't drift across
+// CLI, killGroup). Factored so the skip reason doesn't drift across
 // the 14 tests that need this gate.
 func skipIfNotUnix(t *testing.T) {
 	t.Helper()
@@ -762,7 +763,7 @@ func TestHandleLogin_TimesOutWhenCLIProducesNoURL(t *testing.T) {
 	path := writeFakeCLIScript(t, "sleep 10\n")
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: 50 * time.Millisecond,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
@@ -869,13 +870,13 @@ func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// killLoginProcess tests (cycle 2 test-c2-5)
+// killProcessGroup tests (cycle 2 test-c2-5)
 // ---------------------------------------------------------------------------
 
 func TestKillLoginProcess_NilProcess(t *testing.T) {
 	cmd := exec.Command("/bin/true")
 	// Deliberately do NOT call Start; Process stays nil.
-	killLoginProcess(cmd)
+	killProcessGroup(cmd)
 	if cmd.Process != nil {
 		t.Errorf("Process = %v, want nil (Start was not called)", cmd.Process)
 	}
@@ -884,7 +885,7 @@ func TestKillLoginProcess_NilProcess(t *testing.T) {
 func TestKillLoginProcess_AlreadyExited(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
-	setLoginProcAttr(cmd)
+	setProcGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -892,7 +893,7 @@ func TestKillLoginProcess_AlreadyExited(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 	// Process has exited and been reaped; must not panic.
-	killLoginProcess(cmd)
+	killProcessGroup(cmd)
 }
 
 // ---------------------------------------------------------------------------
@@ -910,91 +911,6 @@ func TestNewHandler(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// limitedWriter tests (cycle 3 t-1)
-// ---------------------------------------------------------------------------
-
-func TestLimitedWriter_WithinCap(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 100}
-
-	n, err := lw.Write([]byte("hello"))
-	if err != nil {
-		t.Fatalf("Write err = %v, want nil", err)
-	}
-	if n != 5 {
-		t.Errorf("Write(%q) n = %d, want 5", "hello", n)
-	}
-	if buf.String() != "hello" {
-		t.Errorf("buf = %q, want %q", buf.String(), "hello")
-	}
-	if lw.N != 95 {
-		t.Errorf("remaining N = %d, want 95", lw.N)
-	}
-}
-
-func TestLimitedWriter_TruncatesAtCap(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 3}
-
-	n, err := lw.Write([]byte("hello"))
-	if err != nil {
-		t.Fatalf("Write err = %v, want nil", err)
-	}
-	if n != 3 {
-		t.Errorf("Write(%q) n = %d, want 3 (truncated to cap)", "hello", n)
-	}
-	if buf.String() != "hel" {
-		t.Errorf("buf = %q, want %q", buf.String(), "hel")
-	}
-	if lw.N != 0 {
-		t.Errorf("remaining N = %d, want 0 (fully consumed)", lw.N)
-	}
-}
-
-func TestLimitedWriter_SaturatedDropsSilently(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 0}
-
-	// Contract: when saturated, return len(p) with no error so upstream
-	// io.Copy / cmd.Wait don't report a short write, but drop the bytes.
-	n, err := lw.Write([]byte("overflow"))
-	if err != nil {
-		t.Fatalf("Write err = %v, want nil (saturated writer drops silently)", err)
-	}
-	if n != 8 {
-		t.Errorf("Write(%q) n = %d, want 8 (pretend full write)", "overflow", n)
-	}
-	if buf.Len() != 0 {
-		t.Errorf("buf = %q, want empty (bytes dropped)", buf.String())
-	}
-	if lw.N != 0 {
-		t.Errorf("remaining N = %d, want 0 (unchanged)", lw.N)
-	}
-}
-
-func TestLimitedWriter_SequentialWritesAcrossCap(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 5}
-
-	n1, err1 := lw.Write([]byte("abc"))
-	if err1 != nil || n1 != 3 {
-		t.Fatalf("first Write = (%d, %v), want (3, nil)", n1, err1)
-	}
-	n2, err2 := lw.Write([]byte("defgh"))
-	if err2 != nil || n2 != 2 {
-		t.Fatalf("second Write = (%d, %v), want (2, nil) — partial at cap", n2, err2)
-	}
-	n3, err3 := lw.Write([]byte("ij"))
-	if err3 != nil || n3 != 2 {
-		t.Fatalf("third Write = (%d, %v), want (2, nil) — post-saturation no-op returning full len", n3, err3)
-	}
-
-	if buf.String() != "abcde" {
-		t.Errorf("buf = %q, want %q (cap=5, rest dropped)", buf.String(), "abcde")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // handleWhoami timeout branch (cycle 3 t-2)
 // ---------------------------------------------------------------------------
 
@@ -1004,7 +920,7 @@ func TestHandleWhoami_TimesOutWhenCLIHangs(t *testing.T) {
 	path := writeFakeCLIScript(t, "sleep 10\n")
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   50 * time.Millisecond,
 	}))
@@ -1077,7 +993,7 @@ func TestHandleLogout_TimesOut(t *testing.T) {
 	path := writeFakeCLIScript(t, "sleep 10\n")
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   50 * time.Millisecond,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
@@ -1193,7 +1109,7 @@ func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
 
 func TestHandleLogin_BodyTooLargeReturns413(t *testing.T) {
 	h := NewHandler(fixedPath("/does-not-exist"))
-	big := strings.Repeat("a", int(api.MaxJSONBody)+1024)
+	big := strings.Repeat("a", int(webhttp.MaxJSONBody)+1024)
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{"provider":"`+big+`"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1223,7 +1139,7 @@ func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
 	// details of the first.
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: 100 * time.Millisecond,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
@@ -1270,12 +1186,12 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 	path := writeFakeCLIScript(t,
 		"echo 'Open this URL: https://example.com/auth'\n"+
 			"sleep 30\n")
-	// Shrink LoginProcessCap so the test doesn't hold the
+	// Shrink LoginTimeout so the test doesn't hold the
 	// subprocess for 16 minutes. The sleep is 30s; a 500ms hard
 	// cap forces the reap goroutine to SIGKILL long before.
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginProcessCap: 500 * time.Millisecond,
+		LoginTimeout:    500 * time.Millisecond,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
@@ -1371,16 +1287,16 @@ func TestWhoamiInfo_CapitalEmailFallback(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// loginKill nil-process early return (cycle 3 t-6)
+// killGroup nil-process early return (cycle 3 t-6)
 // ---------------------------------------------------------------------------
 
 func TestLoginKill_NilProcessReturnsESRCH(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
 	// Never call Start; Process is nil.
-	err := loginKill(cmd)
+	err := killGroup(cmd)
 	if !errors.Is(err, syscall.ESRCH) {
-		t.Errorf("loginKill(unstarted) = %v, want syscall.ESRCH", err)
+		t.Errorf("killGroup(unstarted) = %v, want syscall.ESRCH", err)
 	}
 }
 
@@ -1593,14 +1509,14 @@ func (r *drainErrReader) Close() error { return nil }
 // for non-empty stderr, so a failed CLI's diagnostics reach the structured
 // log without emitting an empty attribute on success.
 func TestStderrAttr_EmptyVsNonEmpty(t *testing.T) {
-	var empty bytes.Buffer
-	if got := stderrAttr(&empty); got != nil {
+	empty := procout.NewBuffer(stderrCap)
+	if got := stderrAttr(empty); got != nil {
 		t.Errorf("stderrAttr(empty) = %v, want nil", got)
 	}
 
-	var nonEmpty bytes.Buffer
-	nonEmpty.WriteString("boom")
-	got := stderrAttr(&nonEmpty)
+	nonEmpty := procout.NewBuffer(stderrCap)
+	nonEmpty.Write([]byte("boom"))
+	got := stderrAttr(nonEmpty)
 	if len(got) != 2 {
 		t.Fatalf("stderrAttr(non-empty) len = %d, want 2; got=%v", len(got), got)
 	}
@@ -1642,7 +1558,8 @@ func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	withCode := captureSlogJSON(t, slog.LevelInfo, func() {
 		ch := make(chan map[string]string, 1)
 		scanLoginOutput(strings.NewReader(
-			"Code: ABCD-1234\nOpen this URL: https://idp.example.com/\n"), ch)
+			"Code: ABCD-1234\nOpen this URL: https://idp.example.com/\n",
+		), ch)
 	})
 	rc := findLogRec(withCode, "login: auth URL extracted")
 	if rc == nil {
@@ -1655,7 +1572,8 @@ func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	noCode := captureSlogJSON(t, slog.LevelInfo, func() {
 		ch := make(chan map[string]string, 1)
 		scanLoginOutput(strings.NewReader(
-			"Open this URL: https://idp.example.com/\n"), ch)
+			"Open this URL: https://idp.example.com/\n",
+		), ch)
 	})
 	rn := findLogRec(noCode, "login: auth URL extracted")
 	if rn == nil {
@@ -1666,12 +1584,12 @@ func TestScanLoginOutput_LogsHasCodeAttribute(t *testing.T) {
 	}
 }
 
-// killLoginProcess logs "login: kill group no-op (already reaped)" at Debug
-// when the subprocess has already exited (loginKill returns ESRCH).
+// killProcessGroup logs "auth: kill group no-op (already reaped)" at Debug
+// when the subprocess has already exited (killGroup returns ESRCH).
 func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 	skipIfNotUnix(t)
 	cmd := exec.Command("/bin/true")
-	setLoginProcAttr(cmd)
+	setProcGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -1679,11 +1597,11 @@ func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 	recs := captureSlogJSON(t, slog.LevelDebug, func() {
-		killLoginProcess(cmd)
+		killProcessGroup(cmd)
 	})
-	if findLogRec(recs, "login: kill group no-op (already reaped)") == nil {
+	if findLogRec(recs, "auth: kill group no-op (already reaped)") == nil {
 		t.Errorf("expected debug log %q for reaped process; logs=%v",
-			"login: kill group no-op (already reaped)", recs)
+			"auth: kill group no-op (already reaped)", recs)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // BF5. A single frame can carry both the type:"terminal" content block and
@@ -26,7 +26,7 @@ func TestAdoptTerminalOutput_LinkAndCompletionInOneFrame(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	deps.terminals[termID] = termRendered{
 		text:  "hello\n",
-		spans: []api.TextSpan{{Start: 0, End: 5, FG: 1, BG: -1}},
+		spans: []vibekit.TextSpan{{Start: 0, End: 5, FG: 1, BG: -1}},
 	}
 
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -201,7 +201,7 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 				return
 			}
 			// The line has to be actionable: the terminal id is the only handle on
-			// the hub-side record, and the byte count is what separates an empty
+			// the runtime-side record, and the byte count is what separates an empty
 			// card from a surviving fragment.
 			for _, want := range []string{
 				"terminal_id=" + termID, "tool_call_id=tc-1",
@@ -220,17 +220,17 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 // an update.
 func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	deps, _, events := newLineCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "tc-mid" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
 	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
 		"toolCallId": "tc-9", "title": "run", "kind": "execute", "status": "in_progress",
 		"content": []map[string]any{{"type": "terminal", "terminalId": "term-9"}},
 	}), "")
 
 	for _, e := range *events {
-		if e.Type != api.EventToolCall {
+		if e.Type != vibekit.EventToolCall {
 			continue
 		}
-		p, ok := e.Payload.(api.ToolCallPayload)
+		p, ok := e.Payload.(vibekit.ToolCallPayload)
 		if !ok {
 			t.Fatalf("tool_call payload = %T", e.Payload)
 		}

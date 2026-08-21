@@ -3,7 +3,8 @@ package command
 import (
 	"errors"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // maxPromptBytes caps the text field of a prompt command.
@@ -28,23 +29,17 @@ var (
 )
 
 // validChatID reports whether id is safe to use as a chat identifier.
-func validChatID(id api.ChatID) bool {
-	return api.ValidChatID(string(id))
-}
-
-// validRequestID reports whether the given request_id is safe to use
-// as an idempotency cache key. Delegates to api.ValidRequestID.
-func validRequestID(id string) bool {
-	return api.ValidRequestID(id)
+func validChatID(id vibekit.ChatID) bool {
+	return ids.ValidChatID(string(id))
 }
 
 // ValidMessageID reports whether id is safe to echo on SSE and store
-// on disk as the ID field of a message. Delegates to api.ValidMessageID.
+// on disk as the ID field of a message. Delegates to ids.ValidMessageID.
 func ValidMessageID(id string) bool {
-	return api.ValidMessageID(id)
+	return ids.ValidMessageID(id)
 }
 
 // ValidIdent reports whether s is a safe agent or model identifier.
 func ValidIdent(s string) bool {
-	return api.ValidIdent(s)
+	return ids.ValidIdent(s)
 }

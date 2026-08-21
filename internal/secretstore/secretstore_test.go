@@ -224,12 +224,86 @@ func TestCorruptStoreMovedAside(t *testing.T) {
 	if got := s.count(); got != 0 {
 		t.Errorf("count = %d, want 0", got)
 	}
-	if _, err := os.Stat(path + ".corrupt"); err != nil {
-		t.Errorf("stat moved-aside file: %v, want it preserved", err)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stat %s = %v, want it renamed aside", path, err)
+	}
+	if got := corruptSiblings(t, dir); len(got) != 1 {
+		t.Errorf("quarantine siblings = %v, want exactly one %s.corrupt.<ts>.<pid>", got, fileName)
 	}
 	// The store is usable afterwards.
 	if err := s.Set(t.Context(), realKey, "v"); err != nil {
 		t.Errorf("Set() after corrupt recovery error = %v, want nil", err)
+	}
+}
+
+// corruptSiblings returns the quarantine files in dir. The scan is by PREFIX
+// because the name carries a timestamp and a PID; an exact-name Stat would pin
+// the fixed name that TestCorruptStoreKeepsTheFirstForensicCopy forbids.
+func corruptSiblings(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	var found []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), fileName+".corrupt.") {
+			found = append(found, e.Name())
+		}
+	}
+	return found
+}
+
+// TestCorruptStoreKeepsTheFirstForensicCopy pins the property a fixed
+// quarantine name cannot have: the FIRST corrupt store survives a later one.
+// These bytes are OAuth client secrets, refresh tokens and PKCE verifiers, and
+// the first corruption is the evidence worth keeping — a second one arriving
+// later is the ordinary aftermath, not the incident.
+//
+// The already-quarantined copy is staged directly rather than driven by a
+// second real corruption: the name's timestamp has one-second resolution and
+// its PID is this process's, so two corruptions inside one test would race for
+// the same name for reasons that have nothing to do with the defect.
+func TestCorruptStoreKeepsTheFirstForensicCopy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, fileName)
+
+	const firstCopy = `{"secrets":{"kiro.mcp.first.client":"dHJ1bmNhdGVk`
+	first := path + ".corrupt"
+	if err := os.WriteFile(first, []byte(firstCopy), 0o600); err != nil {
+		t.Fatalf("stage the already-quarantined copy: %v", err)
+	}
+	const secondCorruption = `{"secrets":{"kiro.mcp.second.client":`
+	if err := os.WriteFile(path, []byte(secondCorruption), 0o600); err != nil {
+		t.Fatalf("seed corrupt store: %v", err)
+	}
+
+	if _, err := New(dir); err != nil {
+		t.Fatalf("New() over a corrupt store error = %v, want nil", err)
+	}
+
+	got, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatalf("the first forensic copy is gone: %v", err)
+	}
+	if string(got) != firstCopy {
+		t.Errorf("the first forensic copy was overwritten: content = %q, want %q", got, firstCopy)
+	}
+	// The quarantine still has to happen: the store must be off the live path
+	// and its bytes preserved under a distinct name.
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stat %s = %v, want it renamed aside", path, err)
+	}
+	siblings := corruptSiblings(t, dir)
+	if len(siblings) != 1 {
+		t.Fatalf("quarantine siblings = %v, want exactly one %s.corrupt.<ts>.<pid>", siblings, fileName)
+	}
+	quarantined, err := os.ReadFile(filepath.Join(dir, siblings[0]))
+	if err != nil {
+		t.Fatalf("read %s: %v", siblings[0], err)
+	}
+	if string(quarantined) != secondCorruption {
+		t.Errorf("quarantined content = %q, want the corrupt store's own bytes %q", quarantined, secondCorruption)
 	}
 }
 

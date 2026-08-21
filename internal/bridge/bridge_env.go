@@ -1,7 +1,7 @@
 // Environment screening for the kiro-cli process this package spawns.
 //
 // DIRECTION MATTERS, and this file guards the opposite one from
-// hub/agent_terminal_env.go. That file screens what the AGENT may INJECT into a
+// agent/agent_terminal_env.go. That file screens what the AGENT may INJECT into a
 // terminal it asks vibekit to run: names that redirect execution (LD_PRELOAD,
 // PATH, GIT_SSH_COMMAND), refused wholesale so a per-command approval cannot be
 // turned into approval of something else. This file screens what the bridge
@@ -27,7 +27,7 @@
 // person who hit it would reach for the override rather than the list.
 //
 // A DROP, not a refusal, and that is the other half of the asymmetry with the
-// hub. There the request has a requester, so refusing it makes the agent's next
+// agent. There the request has a requester, so refusing it makes the agent's next
 // move a corrected one. Here the input is the operator's own container
 // environment and there is nobody to refuse: refusing would mean refusing to
 // start a chat. So the variable is dropped and the drop is LOGGED by name, which
@@ -41,7 +41,7 @@ import "strings"
 // through anyway. Exported because composition reads it (this package reads no
 // environment of its own, following ParseACPArgs on the same seam).
 //
-// An override exists for the same reason the hub's does. A denylist keyed on name
+// An override exists for the same reason the runtime's does. A denylist keyed on name
 // shape will eventually catch a name that is not a credential — a build flag
 // spelled `*_SECRET`, a service discovery variable ending `_TOKEN` — and a guard
 // with no way past it becomes a guard people disable.
@@ -59,7 +59,7 @@ const EnvAllowVar = "VIBEKIT_ALLOW_BRIDGE_ENV"
 // TestScreenBridgeEnv_DropsEveryNameTheDecisionNames pins each of those names
 // individually, which is where the enumeration belongs.
 //
-// Matched EXACTLY on case, not folded, for the same reason the hub's list is:
+// Matched EXACTLY on case, not folded, for the same reason the runtime's list is:
 // POSIX environments are case-sensitive, so a case variant is a different
 // variable that no consumer reads rather than a bypass, and folding would only
 // drop harmless names.

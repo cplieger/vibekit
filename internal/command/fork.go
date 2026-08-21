@@ -38,7 +38,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // errForkParentUnknown is returned when the chat being forked has no record.
@@ -50,44 +51,37 @@ var errForkParentUnknown = errors.New("the chat this tangent came from no longer
 var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens into")
 
 // CmdForkChat opens a tangent off another chat.
-//
-//nolint:revive // context-as-argument: dispatcher handler signature
-func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
-	deps := d.Deps()
-	if !d.RequireChatID(w, cmd) {
-		return
+func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, cmd *vibekit.ClientCommand) (any, error) {
+	if err := requireChatID(cmd); err != nil {
+		return nil, err
 	}
-	var p api.ForkChatCommand
+	var p vibekit.ForkChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !api.ValidChatID(string(p.ParentChatID)) || len(p.Title) > api.MaxChatNameBytes {
-		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
+	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > vibekit.MaxChatNameBytes {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if p.ParentChatID == cmd.ChatID {
-		d.RespondErr(w, http.StatusBadRequest, errForkParentIsSelf)
-		return
+		return nil, StatusError(http.StatusBadRequest, errForkParentIsSelf)
 	}
 
-	parent, ok := deps.ChatStore().Get(ctx, p.ParentChatID)
+	parent, ok := chats.Get(ctx, p.ParentChatID)
 	if !ok {
-		d.RespondErr(w, http.StatusNotFound, errForkParentUnknown)
-		return
+		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
 	}
 
 	// The parent's model and mode ride along so the tangent's answers come from
 	// the same agent that produced the conversation it inherited. Read here
 	// rather than sent by the client: the record is the truth about both, and a
 	// client value could be a tab's stale projection.
-	sessionID := forkSession(ctx, deps, p, cmd.ChatID)
-	outcome := api.ForkOutcomeForked
+	sessionID := forkSession(ctx, bridges, ws, p, cmd.ChatID)
+	outcome := vibekit.ForkOutcomeForked
 	if sessionID == "" {
-		outcome = api.ForkOutcomePrimed
+		outcome = vibekit.ForkOutcomePrimed
 	}
 
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		// Refuse to reshape an existing chat, for CmdResumeSession's reason:
 		// binding a live chat to another session strands its own (the transcript
 		// stays on disk unreferenced, so the reaper sweeps it) and silently
@@ -95,7 +89,7 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		if exists {
 			return false
 		}
-		c.Name = api.DefaultChatName
+		c.Name = vibekit.DefaultChatName
 		c.Model = parent.Model
 		c.CurrentModeID = parent.CurrentModeID
 		c.Effort = parent.Effort
@@ -107,23 +101,22 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		}
 		return true
 	}); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
-	if outcome == api.ForkOutcomePrimed {
+	if outcome == vibekit.ForkOutcomePrimed {
 		// Marked AFTER the record exists, so nothing can observe a prime note for
 		// a chat that failed to create.
-		deps.PrimeFromChat(cmd.ChatID, p.ParentChatID)
+		bridges.PrimeFromChat(cmd.ChatID, p.ParentChatID)
 	}
 
 	slog.Info("tangent opened",
 		"chat", cmd.ChatID, "parent", p.ParentChatID,
 		"outcome", outcome, "acp_session", sessionID)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{
+	return responseWith(map[string]any{
 		"outcome":    outcome,
 		"session_id": sessionID,
-	}))
+	}), nil
 }
 
 // forkSession asks KAS to branch the parent's session and returns the new
@@ -134,8 +127,8 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 // reasons are still distinguished in the log, since "no bridge" (the parent was
 // never prompted, or its process is gone) and "KAS refused" want different
 // follow-ups.
-func forkSession(ctx context.Context, deps Dependencies, p api.ForkChatCommand, newChat api.ChatID) string {
-	bridge := deps.GetBridge(p.ParentChatID)
+func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
+	bridge := bridges.Bridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// No live session to branch. Deliberately NOT started here: spawning a
 		// bridge for the parent as a side effect of opening a tangent would
@@ -146,12 +139,12 @@ func forkSession(ctx context.Context, deps Dependencies, p api.ForkChatCommand, 
 		return ""
 	}
 
-	meta := map[string]any{"createdReason": api.CreatedReasonTangent}
+	meta := map[string]any{"createdReason": vibekit.CreatedReasonTangent}
 	if p.Title != "" {
 		meta["title"] = p.Title
 	}
-	resp, err := bridge.Call(ctx, api.MethodSessionFork, SessionParams(bridge, map[string]any{
-		"cwd":   deps.WorkDir(),
+	resp, err := bridge.Call(ctx, vibekit.MethodSessionFork, SessionParams(bridge, map[string]any{
+		"cwd":   ws.Dir,
 		"_meta": map[string]any{"kiro": meta},
 	}))
 	if err != nil {
@@ -165,7 +158,7 @@ func forkSession(ctx context.Context, deps Dependencies, p api.ForkChatCommand, 
 	if resp != nil && resp.Result != nil {
 		_ = json.Unmarshal(resp.Result, &out)
 	}
-	if !api.ValidSessionID(out.SessionID) {
+	if !ids.ValidSessionID(out.SessionID) {
 		// A reply with no usable session id is a refusal however it is spelled.
 		// Validated rather than trusted for CmdResumeSession's reason: the value
 		// reaches a filesystem path inside KAS and vibekit's own reaper keep-list.

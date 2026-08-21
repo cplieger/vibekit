@@ -63,11 +63,10 @@ func (s *stubOps) RerunFailedChecks(_ context.Context, _ string, number int, hea
 func doPRAction(t *testing.T, ops ForgeOps, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	pathTail, _, _ := strings.Cut(target, "?")
-	h := &HTTPHandler{}
 	r := httptest.NewRequestWithContext(t.Context(), method,
 		"/api/forges/github:github.com/repos/o/r/prs/"+target, nil)
 	w := httptest.NewRecorder()
-	h.handlePRAction(w, r, ops, "o/r", pathTail)
+	handlePRAction(w, r, ops, "o/r", pathTail)
 	return w
 }
 

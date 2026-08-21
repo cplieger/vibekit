@@ -13,7 +13,10 @@ package prewarm
 
 import (
 	"context"
+	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeLister is a ServerLister that returns a fixed set, standing in
@@ -166,5 +169,81 @@ func TestRun_SkipsWhenNpmMissingButDoesNotLatch(t *testing.T) {
 	}
 	if running2 != 0 {
 		t.Errorf("second Run queued installs: %d", running2)
+	}
+}
+
+// A dead context must not acquire an install slot, even with every slot free.
+// This is the property the slot CHANNEL could not hold: `select` picks at random
+// among ready cases, so a cancelled pass raced the free slot and won it about
+// half the time, starting an install for work whose caller had already given up.
+// semaphore.Weighted tests the context before its fast path, so the refusal is
+// decided rather than drawn.
+//
+// It is asserted over a batch because a single draw proves nothing about a coin:
+// the channel shape passes one attempt half the time, and 64 (2^-64) is where
+// "it never installs" stops being luck. queue is called directly rather than
+// through Run so the assertion needs no handshake with a goroutine.
+func TestQueue_DeadContextNeverTakesASlot(t *testing.T) {
+	const attempts = 64
+
+	p := NewRunner(t.Context(), fakeLister{})
+	var installs atomic.Int64
+	p.OnStatus = func(_ string, state State) {
+		if state == Installing {
+			installs.Add(1)
+		}
+	}
+
+	dead, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	for i := range attempts {
+		pkg := "@scope/pkg" + strconv.Itoa(i)
+		if !p.reserve(pkg) {
+			t.Fatalf("reserve(%q) = false on a fresh runner", pkg)
+		}
+		p.queue(dead, pkg)
+	}
+
+	if got := installs.Load(); got != 0 {
+		t.Errorf("queue started %d installs under a cancelled context, want 0", got)
+	}
+	// The reservation is handed back, so a later pass with a live context
+	// retries the package instead of treating it as permanently in flight.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.running) != 0 {
+		t.Errorf("abandoned waits left %d in-flight reservations, want 0: %v", len(p.running), p.running)
+	}
+}
+
+// Every slot is given back after an install, so capacity does not leak across
+// passes: a runner that has put twice its cap through queue must still be able
+// to take the cap at once. This guards the conversion rather than the defect —
+// the slot channel released too — and it is the assertion a dropped
+// `defer p.sem.Release(1)` fails.
+//
+// An empty PATH is what keeps installOne out of scope: exec resolves "npm" at
+// construction, so the install fails before any process is spawned, and the
+// acquire/release pair is all that runs. Each wait carries its own budget so a
+// leaked slot reports the leak instead of parking the package's test binary on
+// an acquire that can never succeed.
+func TestQueue_ReleasesEverySlot(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	p := NewRunner(t.Context(), fakeLister{})
+	for i := range maxConcurrentInstalls * 2 {
+		pkg := "@scope/pkg" + strconv.Itoa(i)
+		if !p.reserve(pkg) {
+			t.Fatalf("reserve(%q) = false on a fresh runner", pkg)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		p.queue(ctx, pkg)
+		cancel()
+	}
+
+	if !p.sem.TryAcquire(maxConcurrentInstalls) {
+		t.Errorf("the runner cannot take its %d-slot cap after %d installs, so a slot leaked",
+			maxConcurrentInstalls, maxConcurrentInstalls*2)
 	}
 }

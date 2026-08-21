@@ -13,37 +13,24 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/toolbelt/v2"
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/auth"
-	"github.com/cplieger/vibekit/internal/bridge"
-	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/composition"
-	"github.com/cplieger/vibekit/internal/filehandler"
-	forgesPkg "github.com/cplieger/vibekit/internal/forges"
-	"github.com/cplieger/vibekit/internal/git"
-	"github.com/cplieger/vibekit/internal/hub"
-	mcpPkg "github.com/cplieger/vibekit/internal/mcp"
-	pushPkg "github.com/cplieger/vibekit/internal/push"
-	"github.com/cplieger/vibekit/internal/server"
-	"github.com/cplieger/vibekit/internal/steering"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
-// Compile-time interface satisfaction checks.
-var (
-	_ api.ChatStore            = (*chat.Store)(nil)
-	_ api.ACPBridge            = (*bridge.Bridge)(nil)
-	_ api.Broadcaster          = (*hub.Hub)(nil)
-	_ api.Hub                  = (*hub.Hub)(nil)
-	_ server.SteeringGenerator = (*steering.Generator)(nil)
-	_ api.RouteHandler         = (*git.Handler)(nil)
-	_ api.RouteHandler         = (*filehandler.Handler)(nil)
-	_ api.RouteHandler         = (*auth.Handler)(nil)
-	_ api.PushService          = (*pushPkg.Service)(nil)
-	_ api.MCPConfig            = (*mcpPkg.Store)(nil)
-	_ api.RouteHandler         = (*mcpPkg.Store)(nil)
-	_ api.RouteHandler         = (*mcpPkg.RegistryProxy)(nil)
-)
+// There are no compile-time interface assertions here any more, and no `var _ =`
+// pair standing in for them either. Every assertion this file carried named a
+// type the composition root already passes to the option that consumes it —
+// server.WithGit, WithFiles, WithAuth, WithMCPConfig, WithMCPRegistry,
+// WithSteering — so the compiler checked each satisfaction at the call site
+// whether or not it was also written down. An assertion is worth keeping only
+// where nothing in the build already forces the check, and after that refactor
+// there is no such place left in main.
+//
+// What survived it was `var (_ = forges.NewManager; _ = server.New)`, under a
+// comment pointing at "the compile-time var block above" that no longer existed.
+// It asserted nothing — naming a function proves only that the identifier
+// exists, which the compiler knows — and it was the sole reason main imported
+// either package.
 
 // requiredToolsList is the same required-tools.txt the image build
 // verifies the baked catalog against, embedded so the RUNTIME catalog
@@ -90,10 +77,3 @@ func runMain() int {
 	}
 	return 0
 }
-
-// Keep interface satisfaction checks reachable. These imports are used
-// only by the compile-time var block above.
-var (
-	_ = forgesPkg.NewManager
-	_ = server.New
-)

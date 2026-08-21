@@ -125,7 +125,7 @@ describe("banner-stack: active-chat scoping", () => {
 describe("banner-stack: composite key (keyenc)", () => {
   it("keeps the pre-adoption key bytes, so no persisted dismissal is lost", async () => {
     // The dismissal set is PERSISTED in localStorage under dismissed_banners.
-    // A chat id is [A-Za-z0-9_-] (api.ValidChatID) and a code is a call-site
+    // A chat id is [A-Za-z0-9_-] (ids.ValidChatID) and a code is a call-site
     // literal, so keyenc emits both verbatim and the key is byte-identical to
     // the old `${chatID}:${code}` template. Asserted through the public API: a
     // dismissal recorded in the OLD format must still suppress its banner.

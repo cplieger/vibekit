@@ -3,16 +3,18 @@ package chat
 import (
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // Router owns the HTTP handler surface for the chat package. It holds
 // a *Store reference and delegates all persistence to it, separating
 // the HTTP routing/serialisation concern from the data layer.
 //
-// The Store's RegisterRoutes method delegates to Router.Register so
-// the api.ChatStore interface contract is preserved while the HTTP
-// concern is structurally separated.
+// The Store's RegisterRoutes method delegates to Router.Register, which
+// separates the HTTP concern without changing the Store's method set — so the
+// chat-store contracts its consumers declare (agent/deps.go, command/deps.go) see
+// the same store either way.
 type Router struct {
 	store *Store
 }
@@ -40,8 +42,8 @@ func (rt *Router) Register(mux *http.ServeMux) {
 // in", so it returns chats with their best line rather than every hit.
 func (rt *Router) handleSearchAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	api.WriteJSON(w, rt.store.SearchAll(r.Context(), r.URL.Query().Get("q")))
+	webhttp.WriteJSON(w, rt.store.SearchAll(r.Context(), r.URL.Query().Get("q")))
 }

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestNew_GeneratesKeys(t *testing.T) {
@@ -50,7 +50,7 @@ func TestSubscribeUnsubscribe(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
-	sub := api.PushSubscription{Endpoint: "https://push.example.com/1"}
+	sub := vibekit.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub.Keys.P256dh = "dGVzdA"
 	sub.Keys.Auth = "YXV0aA"
 
@@ -70,11 +70,11 @@ func TestSubscribe_OverwritesDuplicate(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
-	sub1 := api.PushSubscription{Endpoint: "https://push.example.com/1"}
+	sub1 := vibekit.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub1.Keys.Auth = "old"
 	s.Subscribe(sub1)
 
-	sub2 := api.PushSubscription{Endpoint: "https://push.example.com/1"}
+	sub2 := vibekit.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub2.Keys.Auth = "new"
 	s.Subscribe(sub2)
 
@@ -120,7 +120,7 @@ func TestSubscribe_HostLogging(t *testing.T) {
 
 			// Install capture AFTER New so its "push: ready" line is excluded.
 			capLog := capture.Default(t)
-			s.Subscribe(api.PushSubscription{Endpoint: tt.endpoint})
+			s.Subscribe(vibekit.PushSubscription{Endpoint: tt.endpoint})
 
 			got, ok := capLog.AttrValue("push: subscribed", "host")
 			if !ok {
@@ -141,20 +141,20 @@ func TestSetPreferences(t *testing.T) {
 
 	// Defaults: both true.
 	s.mu.Lock()
-	if !s.prefs[api.PushKindAgentFinished] || !s.prefs[api.PushKindPermission] {
+	if !s.prefs[vibekit.PushKindAgentFinished] || !s.prefs[vibekit.PushKindPermission] {
 		t.Error("default preferences should be true")
 	}
 	s.mu.Unlock()
 
-	s.SetPreferences(map[api.PushKind]bool{
-		api.PushKindAgentFinished: false,
-		api.PushKindPermission:    true,
+	s.SetPreferences(map[vibekit.PushKind]bool{
+		vibekit.PushKindAgentFinished: false,
+		vibekit.PushKindPermission:    true,
 	})
 	s.mu.Lock()
-	if s.prefs[api.PushKindAgentFinished] {
+	if s.prefs[vibekit.PushKindAgentFinished] {
 		t.Error("agentFinished should be false")
 	}
-	if !s.prefs[api.PushKindPermission] {
+	if !s.prefs[vibekit.PushKindPermission] {
 		t.Error("permissionNeeded should be true")
 	}
 	s.mu.Unlock()
@@ -191,7 +191,7 @@ func TestLoadPreferences(t *testing.T) {
 			s := New(t.Context(), dir, "mailto:test@example.com")
 
 			s.mu.Lock()
-			af, pn := s.prefs[api.PushKindAgentFinished], s.prefs[api.PushKindPermission]
+			af, pn := s.prefs[vibekit.PushKindAgentFinished], s.prefs[vibekit.PushKindPermission]
 			s.mu.Unlock()
 			if af != tt.wantAF || pn != tt.wantPN {
 				t.Errorf("agentFinished=%v permissionNeeded=%v, want %v %v",
@@ -208,7 +208,7 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	select {
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 		t.Fatal("context already Done before Close")
 	default:
 	}
@@ -216,7 +216,7 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 	s.Close()
 
 	select {
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 		// expected
 	case <-time.After(100 * time.Millisecond):
 		t.Error("context not Done after Close")
@@ -224,7 +224,7 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 }
 
 // TestClose_IsIdempotent — context.CancelFunc is safe to call multiple
-// times. Hub shutdown paths can race parent cancels; Close must
+// times. Runtime shutdown paths can race parent cancels; Close must
 // tolerate that without panic.
 func TestClose_IsIdempotent(t *testing.T) {
 	dir := t.TempDir()

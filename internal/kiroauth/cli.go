@@ -54,12 +54,12 @@ const reuseLeeway = 5 * time.Minute
 // install manager has no active version yet).
 var errCLIUnavailable = errors.New("kiro-cli is not available yet (install pending or failed)")
 
-// ErrNoSource reports that no token source was wired at all (a hub built
+// ErrNoSource reports that no token source was wired at all (a runtime built
 // without WithKiroCLIPath — tests, or a mis-assembled composition).
 var ErrNoSource = errors.New("no kiro-cli token source configured")
 
 // diagCap bounds one piece of upstream CLI text folded into an error. The
-// error reaches a slog attribute (hub's "v3 auth: token unavailable") and a
+// error reaches a slog attribute (runtime's "v3 auth: token unavailable") and a
 // JSON-RPC error frame back to KAS, so the bound and the sanitizing belong
 // at construction rather than at either sink.
 const diagCap = 200

@@ -12,10 +12,25 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/pathinside"
-	"github.com/cplieger/vibekit/internal/fileutil"
+	"github.com/cplieger/pathinside/v2"
 	"golang.org/x/sync/errgroup"
 )
+
+// IsRepo reports whether dir contains a .git entry (directory for
+// regular repos, regular file for worktrees and submodules, or a
+// symlink to either — os.Stat follows symlinks).
+//
+// Exported for internal/steering, whose environment.md generator enumerates the
+// workspace's repositories. It was internal/fileutil.IsGitRepo, sharing a
+// package with two mode-enforcement functions on the strength of the word
+// "file"; git knowledge belongs with the git package.
+func IsRepo(ctx context.Context, dir string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
 
 // maxRepoEntries caps the number of top-level directory entries scanned
 // for git repos. Prevents pathological workspaces from blocking the
@@ -33,7 +48,7 @@ type repoEntry struct {
 // are repos (sorted by name). Caps the scan at maxRepoEntries.
 func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 	var repos []repoEntry
-	if fileutil.IsGitRepo(ctx, workDir) {
+	if IsRepo(ctx, workDir) {
 		repos = append(repos, repoEntry{Name: ".", Dir: workDir})
 	}
 	entries, err := os.ReadDir(workDir)
@@ -58,14 +73,14 @@ func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 		// clone succeed on disk yet stay invisible to /api/git/repos and
 		// status-all, so the Sources row kept offering Clone (which then
 		// failed on the non-empty dir). Hidden non-repo dirs (.cache,
-		// .venv) cost one IsGitRepo stat and are skipped by its result.
+		// .venv) cost one IsRepo stat and are skipped by its result.
 		if !e.IsDir() || e.Name() == ".git" {
 			continue
 		}
 		name := e.Name()
 		dir := filepath.Join(workDir, name)
 		g.Go(func() error {
-			if fileutil.IsGitRepo(gctx, dir) {
+			if IsRepo(gctx, dir) {
 				mu.Lock()
 				found = append(found, repoEntry{Name: name, Dir: dir})
 				mu.Unlock()
@@ -112,7 +127,7 @@ func (h *Handler) ownerOf(ctx context.Context, relPath string) (repo, inRepo str
 			}
 			continue
 		}
-		if !pathinside.Inside(e.Name, relPath) || len(e.Name) <= best {
+		if !pathinside.Root(e.Name).Contains(relPath) || len(e.Name) <= best {
 			continue
 		}
 		rest := strings.TrimPrefix(strings.TrimPrefix(relPath, e.Name), "/")

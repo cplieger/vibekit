@@ -3,13 +3,13 @@ package buffer
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// TestBufferSnapshot covers the read that replaced hub/turn_mirror.go's parallel
+// TestBufferSnapshot covers the read that replaced agent/turn_mirror.go's parallel
 // replica of the in-flight turn.
 //
-// The mirror re-folded every broadcast event into its own api.Message — a second
+// The mirror re-folded every broadcast event into its own vibekit.Message — a second
 // implementation of the block assembly this package already does, free to drift
 // from it. These cases pin that the buffer's own snapshot carries what the
 // connect-time turn_state needs.
@@ -33,19 +33,16 @@ func TestBufferSnapshot(t *testing.T) {
 	})
 
 	t.Run("text, thinking and tools all reach the snapshot", func(t *testing.T) {
-		// Mirrors translate/streaming_content.go: the Append*Delta calls build
-		// the Blocks array, and the caller writes Content/Reasoning alongside.
-		// Those two are a second representation the turn-commit path and the
-		// 32 MiB cap both read, so a snapshot has to carry them.
+		// Mirrors translate/streaming_content.go: one Append*Delta call builds
+		// the Blocks array AND accumulates the content/reasoning builder the
+		// turn-commit path and the 32 MiB cap both read, so a snapshot has to
+		// carry both representations from the one call.
 		buf := Buffer{MessageID: "m1"}
 		buf.AppendTextDelta("hello ", "")
-		buf.Content.WriteString("hello ")
 		buf.AppendThinkingDelta("pondering", "")
-		buf.Reasoning.WriteString("pondering")
 		buf.AppendToolUseBlock("tool-1", "")
-		buf.ToolCalls = append(buf.ToolCalls, api.ToolCall{ID: "tool-1", Title: "Read File"})
+		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1", Title: "Read File"})
 		buf.AppendTextDelta("world", "")
-		buf.Content.WriteString("world")
 
 		msg, seq, ok := buf.Snapshot()
 		if !ok {
@@ -54,7 +51,7 @@ func TestBufferSnapshot(t *testing.T) {
 		if msg.ID != "m1" {
 			t.Errorf("id = %q, want m1", msg.ID)
 		}
-		if msg.Role != api.RoleAssistant {
+		if msg.Role != vibekit.RoleAssistant {
 			t.Errorf("role = %q, want assistant", msg.Role)
 		}
 		if msg.Content != "hello world" {
@@ -88,8 +85,7 @@ func TestBufferSnapshot(t *testing.T) {
 		// would be a data race the -race gate cannot always catch.
 		buf := Buffer{MessageID: "m1"}
 		buf.AppendTextDelta("hi", "")
-		buf.Content.WriteString("hi")
-		buf.ToolCalls = append(buf.ToolCalls, api.ToolCall{ID: "tool-1"})
+		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1"})
 
 		msg, _, ok := buf.Snapshot()
 		if !ok {

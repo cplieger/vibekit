@@ -14,29 +14,32 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/procgroup"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Start launches the kiro-cli subprocess and either creates a new ACP
 // session (acpSessionID == "") or loads an existing one. Exactly one call
 // per bridge instance.
 //
-// ctx bounds the startup handshake only; opts.Lifetime bounds the subprocess.
-func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
+// ctx bounds the startup handshake only; opts.Lifetime bounds the subprocess
+// and is required.
+func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	// The subprocess outlives this call. Start's ctx bounds the handshake
-	// below; opts.Lifetime bounds the process. See api.StartOpts.Lifetime for
-	// what taking the process lifetime from a turn context measured like.
-	b.lifecycleCtx = opts.Lifetime
-	if b.lifecycleCtx == nil {
-		b.lifecycleCtx = context.WithoutCancel(ctx)
+	// below; opts.Lifetime bounds the process. See vibekit.StartOpts.Lifetime for
+	// what taking the process lifetime from a turn context measured like, and
+	// for why the field is required rather than defaulted here.
+	if opts.Lifetime == nil {
+		return errors.New("bridge: StartOpts.Lifetime is required: it bounds the kiro-cli subprocess, and every default for it is a subprocess nothing can cancel")
 	}
+	b.lifecycleCtx = opts.Lifetime
 	// Immutable after Start; read lock-free by SetModel / initialize.
 	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
 	b.secretStorage = opts.SecretStorage
 	b.extraArgs = opts.ExtraArgs
-	if opts.SessionID != "" && !api.ValidSessionID(opts.SessionID) {
+	if opts.SessionID != "" && !ids.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 	}
 	if opts.Model != "" && !validIdent(opts.Model) {
@@ -73,7 +76,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 }
 
 // Stop kills the subprocess and closes NotifCh. Safe to call multiple
-// times; subsequent calls are no-ops. Multiple call sites (hub.Shutdown,
+// times; subsequent calls are no-ops. Multiple call sites (agent.Shutdown,
 // tab close, model switch, session/load recovery) can race to stop the
 // same bridge; the sync.Once gate prevents a double-close panic on b.done.
 // Reaps the process via cmd.Wait so the OS releases its process entry
@@ -128,9 +131,9 @@ func buildACPArgs(engine string) []string {
 	// The agent engine determines which ACP methods the agent registers.
 	// Default to v3 (KAS); vibekit is v3-only. v3 requires the host to
 	// answer the _kiro/auth/getAccessToken + _kiro/terminal/shell_type
-	// callbacks (see internal/hub/bridge_v3_auth.go).
+	// callbacks (see internal/agent/bridge_v3_auth.go).
 	if engine == "" {
-		engine = api.AgentEngineV3
+		engine = vibekit.AgentEngineV3
 	}
 	return []string{"acp", "--agent-engine", engine}
 }
@@ -151,15 +154,14 @@ func (b *Bridge) startProcess(engine string) error {
 	// Already filtered (see acp_args.go) — never trust this slice to be safe
 	// because it came through StartOpts.
 	args := append(buildACPArgs(engine), b.extraArgs...)
-	// Normal teardown is owned by Stop(). lifecycleCtx is the hub's shutdown
+	// Normal teardown is owned by Stop(). lifecycleCtx is the runtime's shutdown
 	// context: a belt-and-braces kill so a bridge cannot outlive the process
-	// if Stop() races or panics. Start guarantees it is non-nil, and it is
-	// never a request or turn context — see api.StartOpts.Lifetime.
-	ctx := b.lifecycleCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	b.cmd = exec.CommandContext(ctx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
+	// if Stop() races or panics. Start refuses a nil StartOpts.Lifetime, so
+	// this is non-nil by construction and needs no fallback — the
+	// context.Background() one that used to live here was a second
+	// uncancellable substitution behind Start's own. It is never a request or
+	// turn context — see vibekit.StartOpts.Lifetime.
+	b.cmd = exec.CommandContext(b.lifecycleCtx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	// Own process group, so teardown can reclaim the whole tree. Closing stdin
 	// first is still what gives kiro-cli a chance to exit on its own, but it is
 	// no longer sufficient: see procgroup.Kill for the 2.18.0 measurement.
@@ -186,7 +188,7 @@ func (b *Bridge) startProcess(engine string) error {
 	// giving kiro-cli a chance to flush its own state. Stop() (called for
 	// normal teardown) goes straight to SIGKILL so chat-switch and tab-close
 	// teardown remain instantaneous; this path only fires if Stop races or
-	// panics during hub shutdown.
+	// panics during agent shutdown.
 	//
 	// Closing stdin FIRST is what makes the grace period mean anything: vibekit
 	// spawns `kiro-cli acp` on pipes and the head passes its stdio down, so the

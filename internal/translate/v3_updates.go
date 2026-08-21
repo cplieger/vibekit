@@ -29,7 +29,8 @@ import (
 	"log/slog"
 	"math"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // v3Summarization is the compaction status carried under
@@ -104,7 +105,7 @@ type promptTurnSummary struct {
 // on the chat that launched and paid for it. A step frame is now allowed
 // through for its metering only; see persistTurnSummary's owner argument for
 // why the turn counters are not the step's to move.
-func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
+func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
 		return
@@ -152,7 +153,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.Cha
 		// No recognised sub-block and no usage percentage. Most sub-kinds
 		// legitimately land here, but an UNKNOWN one is worth a line — see
 		// logUnconsumedInfoKind.
-		t.logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
+		logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
 		return
 	}
 	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
@@ -192,7 +193,7 @@ var knownSessionInfoKinds = map[string]struct{}{
 // most likely a KAS addition vibekit has not looked at yet, and the whole
 // failure mode of a multiplexed carrier is that new payloads vanish without
 // a trace. A known-but-ignored kind logs at Debug: expected, not news.
-func (t *Translator) logUnconsumedInfoKind(chatID api.ChatID, kind string) {
+func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 	if kind == "" {
 		return
 	}
@@ -209,10 +210,10 @@ func (t *Translator) logUnconsumedInfoKind(chatID api.ChatID, kind string) {
 // compaction domain events. "running"/"success" drive the started/completed
 // path; a "canceled" reason is benign and produces no failed-compaction
 // boundary or error banner; any other non-empty status is a genuine failure.
-func (t *Translator) handleV3Summarization(ctx context.Context, chatID api.ChatID, s *v3Summarization) {
+func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.ChatID, s *v3Summarization) {
 	switch s.Status {
 	case "running":
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventCompactionStarted, chatID, api.CompactionStartedPayload{}))
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCompactionStarted, chatID, vibekit.CompactionStartedPayload{}))
 	case "success":
 		var summary *string
 		if s.Summary != nil {
@@ -244,14 +245,14 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID api.ChatI
 // accumulate either way; TurnCount and LastTurnMs describe the CONVERSATION, so
 // a step must not touch them — twenty steps would otherwise report a four-message
 // chat as twenty-four turns and overwrite "last turn" with an unrelated duration.
-func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
+func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
 		if summaries[i].Unit == "" || summaries[i].Unit == "credit" {
 			credits += summaries[i].Usage
 		}
 	}
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -288,7 +289,7 @@ type usageUpdate struct {
 // HandleUsageUpdate folds v3 usage_update into the chat's usage (context %,
 // window size, and credits). Parent attribution is handled by
 // ignoreSubSession in the dispatch table.
-func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
+func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var u usageUpdate
 	if json.Unmarshal(raw, &u) != nil || u.Size <= 0 {
 		return
@@ -322,8 +323,8 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID api.ChatID, r
 // context ring actually renders, plus the two tier boundaries KAS itself keys
 // on (80 = warning, 95 = critical) so a crossing is never rounded away. A
 // change the UI cannot show is not worth a transcript rewrite.
-func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct float64, size int, credits float64) {
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pct float64, size int, credits float64) {
+	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -418,7 +419,7 @@ type configChoice struct {
 // config_option_update. Modes are intentionally NOT refreshed here: the
 // config catalog omits the bundled/workspace source tag the picker groups
 // by, so the authoritative mode list stays the one captured on session/new.
-func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
+func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p configOptionUpdate
 	if json.Unmarshal(raw, &p) != nil {
 		return
@@ -427,7 +428,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID api.Ch
 	if len(cat.models) == 0 && !cat.sawEffort {
 		return
 	}
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -448,8 +449,8 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID api.Ch
 type configCatalog struct {
 	currentModel  string
 	currentEffort string
-	models        []api.SessionModel
-	efforts       []api.SessionEffortLevel
+	models        []vibekit.SessionModel
+	efforts       []vibekit.SessionEffortLevel
 	sawEffort     bool
 }
 
@@ -459,10 +460,10 @@ func readConfigCatalog(opts []configOption) configCatalog {
 	for i := range opts {
 		opt := &opts[i]
 		switch {
-		case opt.ID == api.ConfigOptionModel || opt.Category == api.ConfigOptionModel:
+		case opt.ID == vibekit.ConfigOptionModel || opt.Category == vibekit.ConfigOptionModel:
 			_ = json.Unmarshal(opt.CurrentValue, &cat.currentModel) // string; ignore non-string
 			cat.models = flattenModelChoices(opt.Options)
-		case opt.ID == api.ConfigOptionEffort:
+		case opt.ID == vibekit.ConfigOptionEffort:
 			cat.sawEffort = true
 			_ = json.Unmarshal(opt.CurrentValue, &cat.currentEffort) // string; ignore non-string
 			cat.efforts = flattenEffortChoices(opt.Options)
@@ -474,7 +475,7 @@ func readConfigCatalog(opts []configOption) configCatalog {
 // applyTo writes the catalog onto the chat, reporting whether anything changed
 // (the store only persists and broadcasts on a change, so a repeated frame must
 // answer false).
-func (cat *configCatalog) applyTo(c *api.Chat) bool {
+func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
 	changed := false
 	if len(cat.models) > 0 && !sameModelIDs(c.AvailableModels, cat.models) {
 		c.AvailableModels = cat.models
@@ -501,8 +502,8 @@ func (cat *configCatalog) applyTo(c *api.Chat) bool {
 // flattenEffortChoices converts the effortLevel option's choices into the
 // domain tier list. Flat by construction (KAS groups only the model select),
 // but recursing costs one branch and cannot be wrong.
-func flattenEffortChoices(choices []configChoice) []api.SessionEffortLevel {
-	out := make([]api.SessionEffortLevel, 0, len(choices))
+func flattenEffortChoices(choices []configChoice) []vibekit.SessionEffortLevel {
+	out := make([]vibekit.SessionEffortLevel, 0, len(choices))
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 {
@@ -512,7 +513,7 @@ func flattenEffortChoices(choices []configChoice) []api.SessionEffortLevel {
 		if c.Value == "" {
 			continue
 		}
-		out = append(out, api.SessionEffortLevel{ID: c.Value, Name: c.Name})
+		out = append(out, vibekit.SessionEffortLevel{ID: c.Value, Name: c.Name})
 	}
 	return out
 }
@@ -520,7 +521,7 @@ func flattenEffortChoices(choices []configChoice) []api.SessionEffortLevel {
 // sameEffortLevels reports whether two tier lists carry the same ids in the
 // same order — the change-detector that keeps a repeated catalog from
 // rewriting the chat file (and broadcasting) on every frame.
-func sameEffortLevels(a, b []api.SessionEffortLevel) bool {
+func sameEffortLevels(a, b []vibekit.SessionEffortLevel) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -535,19 +536,19 @@ func sameEffortLevels(a, b []api.SessionEffortLevel) bool {
 // flattenModelChoices converts select choices (flat or grouped) into the
 // domain model catalog, dropping [Deprecated]/[Legacy]-tagged entries the
 // same way bridge.applySessionResultLocked does for v2.
-func flattenModelChoices(choices []configChoice) []api.SessionModel {
-	var out []api.SessionModel
+func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
+	var out []vibekit.SessionModel
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 { // grouped: recurse into the group's choices
 			out = append(out, flattenModelChoices(c.Options)...)
 			continue
 		}
-		if c.Value == "" || api.TagExcluded(c.Description, api.HiddenTags) {
+		if c.Value == "" || modeltext.Hidden(c.Description) {
 			continue
 		}
 		effort := choiceEffort(c.Meta)
-		out = append(out, api.SessionModel{
+		out = append(out, vibekit.SessionModel{
 			ID: c.Value, Name: c.Name, Description: c.Description,
 			HasEffort:          effort.HasEffort,
 			DefaultEffortLevel: effort.Default,
@@ -591,7 +592,7 @@ func choiceEffort(meta json.RawMessage) choiceEffortMeta {
 // sameModelIDs reports whether two model catalogs carry the same ids in
 // the same order — a cheap change-detector so a repeated config catalog
 // doesn't churn the chat file.
-func sameModelIDs(a, b []api.SessionModel) bool {
+func sameModelIDs(a, b []vibekit.SessionModel) bool {
 	if len(a) != len(b) {
 		return false
 	}

@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Go for building the web server
 # renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.26.7
+ARG GO_VERSION=1.27.0
 RUN ARCH=$(dpkg --print-architecture) && \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
     | tar -C /usr/local -xz
@@ -325,7 +325,7 @@ RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passw
 COPY --from=builder /app /app
 
 # Install artifacts under /opt/vibekit/ so they don't clutter / in the
-# file browser. The blacklist in internal/filehandler/paths.go already
+# file browser. The blacklist in internal/filebrowse/paths.go already
 # hides /opt, so users never see these.
 COPY --chmod=755 entrypoint.sh /opt/vibekit/entrypoint.sh
 COPY --from=builder /tmp/tool-catalog.json /opt/vibekit/tool-catalog.json

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/buffer"
+	"golang.org/x/sync/semaphore"
 )
 
 // ServerInfo is the narrow view of an MCP server that prewarm needs.
@@ -62,10 +63,19 @@ const (
 
 // Runner owns the lifecycle of npx pre-installs.
 type Runner struct {
-	Lister   ServerLister
-	running  map[string]struct{}
-	sem      chan struct{}
-	ctx      context.Context
+	Lister  ServerLister
+	running map[string]struct{}
+	sem     *semaphore.Weighted
+	// lifetime is the RUNNER's own cancellable context, which Stop cancels, and
+	// it is a second fact from the per-pass ctx Run takes: a pass ends when its
+	// caller's ctx does, while an install already in flight must also die when
+	// the runner is stopped. queue composes BOTH (see there) rather than
+	// picking either, so this cannot become a parameter without losing the Stop
+	// signal.
+	//
+	// Named for what it is rather than `ctx`, so it cannot be read as the
+	// ambient context at the sites that consume it.
+	lifetime context.Context
 	cancel   context.CancelFunc
 	OnStatus func(pkg string, state State)
 	mu       sync.Mutex
@@ -74,14 +84,18 @@ type Runner struct {
 
 // NewRunner returns a runner. Call Run to kick an initial pass at
 // container boot; subsequent passes fire from the store's onChange.
+//
+// ctx is the runner's lifetime and is required — it goes straight to
+// context.WithCancel, which refuses a nil one at this single construction site
+// rather than defaulting into installs no Stop could reach.
 func NewRunner(ctx context.Context, lister ServerLister) *Runner {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Runner{
-		Lister:  lister,
-		running: make(map[string]struct{}),
-		sem:     make(chan struct{}, maxConcurrentInstalls),
-		ctx:     ctx,
-		cancel:  cancel,
+		Lister:   lister,
+		running:  make(map[string]struct{}),
+		sem:      semaphore.NewWeighted(maxConcurrentInstalls),
+		lifetime: ctx,
+		cancel:   cancel,
 	}
 }
 
@@ -92,8 +106,11 @@ func (p *Runner) Stop() {
 
 // Run enumerates enabled prewarm-flagged npx servers and kicks off a
 // background install for each.
+//
+// ctx bounds THIS pass. The runner's own lifetime is separate and both are
+// honoured: see the field and installOne.
 func (p *Runner) Run(ctx context.Context) {
-	if p.ctx.Err() != nil {
+	if p.lifetime.Err() != nil {
 		return
 	}
 	if p.Disabled.Load() {
@@ -120,25 +137,34 @@ func (p *Runner) Run(ctx context.Context) {
 		}
 		queued++
 		slog.Debug("mcp: prewarm queued", "package", pkg, "position", queued)
-		go func(pkg string) {
-			select {
-			case p.sem <- struct{}{}:
-			case <-p.ctx.Done():
-				p.mu.Lock()
-				delete(p.running, pkg)
-				p.mu.Unlock()
-				return
-			case <-ctx.Done():
-				p.mu.Lock()
-				delete(p.running, pkg)
-				p.mu.Unlock()
-				return
-			}
-			defer func() { <-p.sem }()
-			p.installOne(ctx, pkg)
-		}(pkg)
+		go p.queue(ctx, pkg)
 	}
 	slog.Info("mcp: prewarm pass", "candidates", len(candidates), "queued", queued)
+}
+
+// queue waits for one of the maxConcurrentInstalls slots and installs pkg,
+// handing the in-flight reservation back when the wait is abandoned instead.
+//
+// The wait honours the pass ctx AND the runner's lifetime, and the merge is
+// made ONCE here for both the wait and the install — installOne relies on it,
+// so its ctx must already carry both signals.
+//
+// A cancelled context never acquires a slot: semaphore.Weighted.Acquire tests
+// ctx.Done() before its fast path. A select over a slot channel could not
+// promise that — with a slot free, select picks at random among ready cases, so
+// an already-dead pass could still win the send and start an install.
+func (p *Runner) queue(ctx context.Context, pkg string) {
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(p.lifetime, cancel)
+	defer stop()
+
+	if err := p.sem.Acquire(workCtx, 1); err != nil {
+		p.release(pkg)
+		return
+	}
+	defer p.sem.Release(1)
+	p.installOne(workCtx, pkg)
 }
 
 func (p *Runner) reserve(pkg string) bool {
@@ -149,6 +175,13 @@ func (p *Runner) reserve(pkg string) bool {
 	}
 	p.running[pkg] = struct{}{}
 	return true
+}
+
+// release drops pkg from the in-flight set, so the next pass may retry it.
+func (p *Runner) release(pkg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.running, pkg)
 }
 
 // RingBuffer keeps the last Cap bytes of a stream.
@@ -168,20 +201,14 @@ func (r *RingBuffer) Write(p []byte) (int, error) {
 // Bytes returns the buffered content, up to Cap bytes (the most recent tail).
 func (r *RingBuffer) Bytes() []byte { return r.buf }
 
+// installOne runs the install. ctx must already carry both the pass and the
+// runner's lifetime — queue merges them, and the 5-minute budget hangs off that
+// merge, so a ctx carrying only one of the two silently loses the other signal.
 func (p *Runner) installOne(ctx context.Context, pkg string) {
-	defer func() {
-		p.mu.Lock()
-		delete(p.running, pkg)
-		p.mu.Unlock()
-	}()
+	defer p.release(pkg)
 
-	mergedCtx, mergedCancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(p.ctx, mergedCancel)
-
-	installCtx, installCancel := context.WithTimeout(mergedCtx, 5*time.Minute)
+	installCtx, installCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer installCancel()
-	defer mergedCancel()
-	defer stop()
 
 	start := time.Now()
 	slog.Info("mcp: prewarm install", "package", pkg)
@@ -215,7 +242,8 @@ func (p *Runner) installOne(ctx context.Context, pkg string) {
 // NpmPkgSpecRe accepts conservative npm package specs.
 var NpmPkgSpecRe = regexp.MustCompile(
 	`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*` +
-		`(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$`)
+		`(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$`,
+)
 
 // ExtractNpxPackage returns the npm identifier a stdio server will run
 // via `npx -y <pkg>`, or "" if the server's command isn't an npx run.

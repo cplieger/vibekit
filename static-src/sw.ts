@@ -25,7 +25,7 @@ sw.addEventListener("fetch", ((event: FetchEvent) => {
 }) as EventListener);
 
 /** The push payload vibekit's server sends (internal/push/send.go pushPayload,
- *  whose subject fields come from api.PushSubject).
+ *  whose subject fields come from vibekit.PushSubject).
  *
  *  EXACTLY ONE of the two subject fields is set, and both may be absent for a
  *  workspace-global notification. `chat_id` names the chat a notification belongs
@@ -51,7 +51,7 @@ interface PushPageMessage {
   body: string;
 }
 
-/** Subject-key prefix for a pull request (api.PRSubjectPrefix). The two halves of
+/** Subject-key prefix for a pull request (vibekit.PRSubjectPrefix). The two halves of
  *  this contract are in different languages, so the constant is spelled once on
  *  each side and asserted against the Go one by a test. */
 const PR_SUBJECT_PREFIX = "pr:";

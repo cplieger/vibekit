@@ -54,7 +54,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 

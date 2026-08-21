@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // documentExts maps a file extension to the MIME type vibekit sends when
@@ -109,8 +109,8 @@ const MaxInlineTurnBytes = 20 * 1024 * 1024
 // (documentExts) is always inlined as an ACP embedded `resource` content
 // block; everything else becomes a text path reference the agent reads with
 // its file tools.
-func BuildPromptBlocks(ctx context.Context, text string, attachments []api.Attachment, resolve func(string) (string, error)) []map[string]any {
-	blocks := []map[string]any{api.TextBlock(text)}
+func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.Attachment, resolve func(string) (string, error)) []map[string]any {
+	blocks := []map[string]any{vibekit.TextBlock(text)}
 	// budget is the turn's remaining inline allowance, spent by each document
 	// actually read. It is threaded rather than global because it describes THIS
 	// prompt: the next turn gets a fresh one, and the history cost of what was
@@ -134,7 +134,7 @@ func BuildPromptBlocks(ctx context.Context, text string, attachments []api.Attac
 // The second return value is the file bytes this block consumed from the turn's
 // inline budget: zero for every path-reference block, and the document's size for
 // one that was inlined.
-func attachmentBlock(att api.Attachment, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
+func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
 	displayName := filepath.Base(att.Path)
 	ext := strings.ToLower(filepath.Ext(att.Path))
 
@@ -160,13 +160,13 @@ func attachmentBlock(att api.Attachment, resolve func(string) (string, error), b
 	if _, err := resolve(att.Path); err != nil {
 		slog.Warn("attachment: path escapes workspace",
 			"path", displayName, keyError, err)
-		return api.TextBlock("Attached file (invalid path): " + displayName), 0
+		return vibekit.TextBlock("Attached file (invalid path): " + displayName), 0
 	}
 	if unsupportedDocExts[ext] {
-		return api.TextBlock("Attached file: " + att.Path +
+		return vibekit.TextBlock("Attached file: " + att.Path +
 			" (binary document — read it with your file tools; this format may not be readable as text)"), 0
 	}
-	return api.TextBlock("Attached file: " + att.Path), 0
+	return vibekit.TextBlock("Attached file: " + att.Path), 0
 }
 
 // inlineResourceBlock reads a document attachment from disk and returns an
@@ -176,7 +176,7 @@ func attachmentBlock(att api.Attachment, resolve func(string) (string, error), b
 // (uri + mimeType + base64 blob). On any failure (path escape, stat/read
 // error, or oversize) it returns a descriptive text block instead so the
 // agent is never left silently dropping the attachment.
-func inlineResourceBlock(att api.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
+func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
 	abs, data, fallback := readForInline(att, displayName, resolve, budget)
 	if fallback != nil {
 		return fallback, 0
@@ -200,7 +200,7 @@ func inlineResourceBlock(att api.Attachment, displayName, mime string, resolve f
 // The block carries `data` and `mimeType` and deliberately no `uri`: KAS's
 // toDataUrl returns a present uri INSTEAD of building the base64 data URL, so
 // including one would replace the bytes with a path the model cannot fetch.
-func inlineImageBlock(att api.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
+func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
 	_, data, fallback := readForInline(att, displayName, resolve, budget)
 	if fallback != nil {
 		return fallback, 0
@@ -223,7 +223,7 @@ func inlineImageBlock(att api.Attachment, displayName, mime string, resolve func
 // file tools, which is strictly better than a session wedged by history it
 // cannot drop.
 func readForInline(
-	att api.Attachment,
+	att vibekit.Attachment,
 	displayName string,
 	resolve func(string) (string, error),
 	budget int,
@@ -232,30 +232,30 @@ func readForInline(
 	if err != nil {
 		slog.Warn("attachment: path escapes workspace",
 			"path", displayName, keyError, err)
-		return "", nil, api.TextBlock("Attached file (invalid path): " + displayName)
+		return "", nil, vibekit.TextBlock("Attached file (invalid path): " + displayName)
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		slog.Warn("attachment: stat failed", "path", displayName, keyError, err)
-		return "", nil, api.TextBlock("Attached file (unreadable): " + displayName)
+		return "", nil, vibekit.TextBlock("Attached file (unreadable): " + displayName)
 	}
 	if info.Size() > MaxDocumentBytes {
 		slog.Warn("attachment: too large",
 			"path", displayName, "size", info.Size())
-		return "", nil, api.TextBlock("Attached file (too large for inline): " + displayName)
+		return "", nil, vibekit.TextBlock("Attached file (too large for inline): " + displayName)
 	}
 	// Checked BEFORE the read so an over-budget set costs no allocation.
 	if int(info.Size()) > budget {
 		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
 			"path", displayName, "size", info.Size(), "remaining", budget)
-		return "", nil, api.TextBlock("Attached file: " + att.Path +
+		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
 			" (not inlined: this turn's attachment budget is spent — read it with your file tools)")
 	}
 	data, err = os.ReadFile(abs)
 	if err != nil {
 		slog.Warn("attachment: read failed",
 			"path", displayName, keyError, err)
-		return "", nil, api.TextBlock("Attached file (unreadable): " + displayName)
+		return "", nil, vibekit.TextBlock("Attached file (unreadable): " + displayName)
 	}
 	return abs, data, nil
 }

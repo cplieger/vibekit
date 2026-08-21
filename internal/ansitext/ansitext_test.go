@@ -368,7 +368,7 @@ func TestParser_OpenStyleCarriesAcrossWrites(t *testing.T) {
 	}
 }
 
-// Offset is the parser's own count of emitted UTF-16 units, and the hub reports
+// Offset is the parser's own count of emitted UTF-16 units, and the runtime reports
 // it on the wire as the base of the chunk it is broadcasting. The property that
 // makes that correct: Offset read BEFORE a Write equals the absolute Start the
 // first span of that Write will carry. A second counter kept in step by hand is
@@ -479,6 +479,19 @@ func FuzzParse(f *testing.F) {
 	// A run of invalid bytes, which strings.ToValidUTF8 collapses into ONE
 	// replacement and so breaks the additivity offsets depend on:
 	f.Add("\xbd\xbd\xbd")
+	// The five bytes that LOOK like multi-byte leads to a mask test and are not
+	// valid leads at all: 0xC0/0xC1 would be overlong two-byte forms and
+	// 0xF5-0xF7 encode past U+10FFFF. No continuation can complete one, so a
+	// tail-hold that waits for one waits forever. Seeded because the corpus
+	// reached none of them, and incompleteRuneTail's answer for them is exactly
+	// where a hand-rolled lead-byte table and unicode/utf8 disagree — measured
+	// at 853,573 divergences over all 33.6M strings of up to 4 bytes.
+	f.Add("\xc0")
+	f.Add("\xc0\x80")
+	f.Add("\xc1\xbf")
+	f.Add("\xf5\x80\x80\x80")
+	f.Add("a\xf6b")
+	f.Add("\x1b[1m\xf7\x80")
 
 	f.Fuzz(func(t *testing.T, in string) {
 		text, spans := Parse(in)
@@ -515,7 +528,7 @@ func FuzzParse(f *testing.F) {
 		}
 
 		// 4. The plain text never carries an escape byte. This is the invariant
-		//    that lets the parser stand in for api.StripANSI: the text is
+		//    that lets the parser stand in for sanitize.StripANSI: the text is
 		//    persisted to a JSON chat file and re-served, so a surviving ESC
 		//    would be a residual escape in stored output.
 		if strings.ContainsRune(text, 0x1b) {
@@ -542,7 +555,7 @@ func FuzzParse(f *testing.F) {
 				t.Fatalf("split at %d gave %q, one-shot gave %q", cut, a+b+tail, text)
 			}
 			// 6. Offset agrees with the text actually emitted, at every split.
-			//    The hub reports Offset as a chunk's base, so a drift here
+			//    The runtime reports Offset as a chunk's base, so a drift here
 			//    would rebase every live span onto the wrong character.
 			if got, want := p.Offset(), utf16Len(text); got != want {
 				t.Fatalf("split at %d: Offset = %d, want %d units of emitted text", cut, got, want)

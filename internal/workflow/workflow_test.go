@@ -15,7 +15,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // realInspect is trimmed from a measured inspect result. Fields this package
@@ -119,14 +119,14 @@ func TestStepSessions_EmptyInputs(t *testing.T) {
 
 // rpcErr builds the error shape a KAS failure arrives as.
 func rpcErr(message, data string) error {
-	e := &api.RPCError{Code: -32603, Message: message}
+	e := &vibekit.RPCError{Code: -32603, Message: message}
 	if data != "" {
 		e.Data = json.RawMessage(data)
 	}
 	return e
 }
 
-func TestIsUnknownMethod(t *testing.T) {
+func TestClassify(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -145,12 +145,32 @@ func TestIsUnknownMethod(t *testing.T) {
 		{"a real failure with details", rpcErr("Internal error", `{"details":"workflow not found"}`), false},
 		{"a param error with no data at all", rpcErr("workspacePaths is not iterable", ""), false},
 		{"a plain error", errors.New("boom"), false},
+		{
+			// The narrowing: an error that merely QUOTES the marker in its own text
+			// is a failure, not an unregistered verb. The rendered-chain sniff this
+			// replaced called it one.
+			"a failure quoting the marker in its message",
+			errors.New("workflow inspect call: _kiro/workflow/inspect has no persistence classification"),
+			false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := IsUnknownMethod(c.err); got != c.want {
-				t.Errorf("IsUnknownMethod(%v) = %v, want %v", c.err, got, c.want)
+			got := Classify(c.err)
+			if isUnknown := errors.Is(got, ErrUnknownMethod); isUnknown != c.want {
+				t.Errorf("errors.Is(Classify(%v), ErrUnknownMethod) = %v, want %v", c.err, isUnknown, c.want)
+			}
+			if c.err == nil {
+				if got != nil {
+					t.Errorf("Classify(nil) = %v, want nil", got)
+				}
+				return
+			}
+			// The original error stays reachable whichever way it was classified,
+			// so a caller can still report what KAS actually said.
+			if !errors.Is(got, c.err) {
+				t.Errorf("Classify(%v) = %v, want the original error still unwrappable", c.err, got)
 			}
 		})
 	}

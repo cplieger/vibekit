@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/forges/cliexec"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -136,7 +135,7 @@ func (m *Manager) Refresh(ctx context.Context) error {
 func addGHForges(ctx context.Context, out map[string]*ConfiguredForge) {
 	hosts, err := ghAuthHosts(ctx)
 	if err != nil {
-		if errors.Is(err, cliexec.ErrNotInstalled) {
+		if errors.Is(err, ErrNotInstalled) {
 			addCLIMissingRow(KindGitHub, out)
 		} else {
 			slog.Warn("forges: gh discovery failed", "error", err)
@@ -197,7 +196,7 @@ func addGLabForges(out map[string]*ConfiguredForge) {
 func addTeaForges(ctx context.Context, out map[string]*ConfiguredForge) {
 	logins, err := teaLogins(ctx)
 	if err != nil {
-		if errors.Is(err, cliexec.ErrNotInstalled) {
+		if errors.Is(err, ErrNotInstalled) {
 			addCLIMissingRow(KindGitea, out)
 		} else {
 			slog.Warn("forges: tea discovery failed", "error", err)

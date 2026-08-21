@@ -27,7 +27,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // runOriginAgent labels a run KAS parented on a chat session, which is the
@@ -122,7 +122,7 @@ func logAgentRun(msg, workflowID, recipe, parentSessionID string, extra ...any) 
 // It fires again on every resume (probe 6 measured three for one run), which is
 // why the client treats it as "this run exists and something changed" rather
 // than as a create. An insert keyed on workflow id is idempotent.
-func (t *Translator) HandleRunStart(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[kasRunStart](msg, "workflow/run_start")
 	if !ok || p.WorkflowID == "" {
 		return
@@ -131,12 +131,12 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID api.ChatID, msg 
 	// way on purpose: each occurrence is a real launch of the run's remaining
 	// work, and de-duplicating it would need the state this record refuses.
 	logAgentRun("agent-launched workflow run started", p.WorkflowID, p.WorkflowName, p.ParentSessionID)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventRunStarted, chatID, api.RunStartedPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStarted, chatID, vibekit.RunStartedPayload{
 		WorkflowID: p.WorkflowID,
 		Name:       p.WorkflowName,
 		// Keyed on the workflow id, NOT on chatID: this frame's chat id is empty
 		// for exactly the runs the flag is about (see RunOriginAccess).
-		Scheduled: t.deps.IsScheduledRun(p.WorkflowID),
+		Scheduled: t.runOrigin.IsScheduled(p.WorkflowID),
 	}))
 }
 
@@ -146,7 +146,7 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID api.ChatID, msg 
 // Terminal covers more than success: a cancel, a failure and an
 // `onMaxIterations: "pause"` policy stop all arrive here, which is why the
 // status travels rather than being inferred from the event's existence.
-func (t *Translator) HandleRunComplete(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[kasRunComplete](msg, "workflow/run_complete")
 	if !ok || p.WorkflowID == "" {
 		return
@@ -156,7 +156,7 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID api.ChatID, m
 	logAgentRun("agent-launched workflow run finished", p.WorkflowID, p.FinalState.WorkflowName,
 		cmp.Or(p.ParentSessionID, p.FinalState.ParentSessionID), "status", p.Status)
 	t.steps.forgetRun(p.WorkflowID)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventRunFinished, chatID, api.RunFinishedPayload{
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunFinished, chatID, vibekit.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,
 		// The one name this frame carries. It is inside the state rather than at
@@ -173,22 +173,19 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID api.ChatID, m
 // which the client uses to decide how eagerly to refetch, not to reconstruct
 // state. Seven copies of the same four lines would be seven places for the
 // invalidation contract to drift.
-func (t *Translator) RunProgressHandler(kind api.RunProgressKind) func(context.Context, api.ChatID, *api.RPCResponse) {
-	return func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
+	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 		p, ok := unmarshalParams[kasRunNode](msg, "workflow/"+string(kind))
 		if !ok || p.WorkflowID == "" {
 			return
 		}
-		node := p.NodeID
-		if node == "" {
-			node = p.LoopID
-		}
+		node := cmp.Or(p.NodeID, p.LoopID)
 		// The ONE frame that announces a step's session id. Recorded before the
 		// broadcast so a permission ask racing the event still classifies.
-		if kind == api.RunProgressNodeStart && p.SessionID != "" {
+		if kind == vibekit.RunProgressNodeStart && p.SessionID != "" {
 			t.steps.record(p.SessionID, p.WorkflowID, node)
 		}
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventRunProgress, chatID, api.RunProgressPayload{
+		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID, vibekit.RunProgressPayload{
 			WorkflowID: p.WorkflowID,
 			NodeID:     node,
 			Kind:       kind,

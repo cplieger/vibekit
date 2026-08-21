@@ -15,8 +15,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // MaxHookField caps the per-field size for CmdCreateHook payloads.
@@ -49,7 +49,7 @@ func hookFieldsExceedLimit(p *hookCreatePayload) bool {
 }
 
 // validateHookPayload decodes + validates a CmdCreateHook payload.
-func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
+func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
 	if uErr := json.Unmarshal(cmd.Payload, &p); uErr != nil || p.Name == "" || p.EventType == "" {
 		return p, "", http.StatusBadRequest, ErrInvalidPayload
 	}
@@ -245,35 +245,29 @@ func buildHookDoc(p *hookCreatePayload) hookDoc {
 }
 
 // CmdCreateHook creates a hook file from chat context.
-func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
+func CmdCreateHook(ctx context.Context, ws Workspace, cmd *vibekit.ClientCommand) (any, error) {
 	p, safeName, code, vErr := validateHookPayload(cmd)
 	if vErr != nil {
-		d.RespondErr(w, code, vErr)
-		return
+		return nil, StatusError(code, vErr)
 	}
 	hook := buildHookDoc(&p)
 
-	hookPath := filepath.Join(deps.WorkDir(), ".kiro", "hooks", safeName+".json")
+	hookPath := filepath.Join(ws.Dir, ".kiro", "hooks", safeName+".json")
 	if _, err := os.Stat(hookPath); err == nil {
-		d.RespondErr(w, http.StatusConflict,
+		return nil, StatusError(http.StatusConflict,
 			errors.New("a hook with this name already exists"))
-		return
 	} else if !errors.Is(err, os.ErrNotExist) {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	data, err := json.MarshalIndent(hook, "", "  ")
 	if err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if _, err := atomicfile.WriteFile(ctx, hookPath, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	relPath := filepath.Join(".kiro", "hooks", safeName+".json")
 	slog.Info("hook created from chat", keyName, p.Name, "path", relPath)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"path": relPath}))
+	return responseWith(map[string]any{"path": relPath}), nil
 }

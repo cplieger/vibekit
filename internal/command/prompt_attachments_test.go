@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // kasSupportedDocumentMIMEs mirrors KAS's SUPPORTED_DOCUMENT_MIME_TYPES
@@ -121,7 +121,7 @@ func TestAttachmentBlock_ImageInlinesAsImageBlock(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(api.Attachment{Path: abs, Name: "shot.png"},
+	block, spent := attachmentBlock(vibekit.Attachment{Path: abs, Name: "shot.png"},
 		resolve, MaxInlineTurnBytes)
 
 	if got := block[keyType]; got != "image" {
@@ -154,8 +154,8 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 	resolve := func(string) (string, error) { return abs, nil }
 
 	t.Run("over_turn_budget", func(t *testing.T) {
-		block, spent := attachmentBlock(api.Attachment{Path: abs}, resolve, 10)
-		if got := block[keyType]; got != api.ContentTypeText {
+		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, 10)
+		if got := block[keyType]; got != vibekit.ContentTypeText {
 			t.Errorf("block type = %v, want text (a path reference)", got)
 		}
 		if spent != 0 {
@@ -165,8 +165,8 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 
 	t.Run("path_escapes_workspace", func(t *testing.T) {
 		deny := func(string) (string, error) { return "", errors.New("escapes") }
-		block, spent := attachmentBlock(api.Attachment{Path: abs}, deny, MaxInlineTurnBytes)
-		if got := block[keyType]; got != api.ContentTypeText {
+		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, deny, MaxInlineTurnBytes)
+		if got := block[keyType]; got != vibekit.ContentTypeText {
 			t.Errorf("block type = %v, want text", got)
 		}
 		if spent != 0 {
@@ -192,10 +192,10 @@ func TestAttachmentBlock_TextFileTakesPathReference(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(api.Attachment{Path: abs, Name: filepath.Base(abs)},
+	block, spent := attachmentBlock(vibekit.Attachment{Path: abs, Name: filepath.Base(abs)},
 		resolve, MaxInlineTurnBytes)
 
-	if got := block[keyType]; got != api.ContentTypeText {
+	if got := block[keyType]; got != vibekit.ContentTypeText {
 		t.Fatalf("block type = %v, want text (a path reference)", got)
 	}
 	wantText := "Attached file: " + abs

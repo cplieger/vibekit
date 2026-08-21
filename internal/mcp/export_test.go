@@ -6,7 +6,7 @@ package mcp
 import (
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -118,7 +118,7 @@ func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	}
 }
 
-// TestConfiguredNames_IncludesDisabled pins the set the hub's guard subtracts
+// TestConfiguredNames_IncludesDisabled pins the set the runtime's guard subtracts
 // EnabledNames from: without a disabled server here, the guard could not tell
 // "the user switched this off" from "vibekit never configured this", which are
 // the two cases needing opposite treatment.
@@ -162,7 +162,7 @@ func TestAllNames_IncludesThePowersBlock(t *testing.T) {
 		t.Errorf("vibekit's own server is missing from AllNames: %+v", all)
 	}
 	if _, ok := s.ConfiguredNames(ctx)["from-a-power"]; ok {
-		t.Error("a Power's server must NOT appear in ConfiguredNames; the hub would read it as vibekit's own")
+		t.Error("a Power's server must NOT appear in ConfiguredNames; the runtime would read it as vibekit's own")
 	}
 }
 
@@ -211,7 +211,7 @@ func TestMergeSecrets_IdempotentAndNoMutation(t *testing.T) {
 	for _, patch := range cases {
 		once := mergeSecrets(patch, existing)
 		twice := mergeSecrets(once, existing)
-		if !reflect.DeepEqual(once, twice) {
+		if !slices.Equal(once, twice) {
 			t.Errorf("not idempotent:\n patch=%+v\n once=%+v\n twice=%+v", patch, once, twice)
 		}
 		if existing[0].Value != "secret" || existing[1].Value != "https://old" {
@@ -240,7 +240,7 @@ func FuzzMergeSecrets(f *testing.F) {
 		twice := mergeSecrets(once, existing)
 
 		// Idempotency: merging the result again yields the same output.
-		if !reflect.DeepEqual(once, twice) {
+		if !slices.Equal(once, twice) {
 			t.Errorf("not idempotent:\n patch=%+v\n once=%+v\n twice=%+v", patch, once, twice)
 		}
 		// No mutation of existing slice.
@@ -331,7 +331,7 @@ func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
 		}
 
 		// Invariant 4: existing slice not mutated.
-		if !reflect.DeepEqual(existing, existingSnapshot) {
+		if !slices.Equal(existing, existingSnapshot) {
 			t.Fatalf("existing was mutated: got %+v, want %+v", existing, existingSnapshot)
 		}
 	})

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind is the claim that
@@ -107,14 +107,14 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 
 			s.syncPushPreferences(patch)
 
-			if got := mp.prefs[api.PushKindAgentFinished]; got != tc.wantFinished {
+			if got := mp.prefs[vibekit.PushKindAgentFinished]; got != tc.wantFinished {
 				t.Errorf("prefs[%s] = %v, want %v (%s)", finished, got, tc.wantFinished, tc.why)
 			}
-			if got := mp.prefs[api.PushKindPRStatus]; got != tc.wantPR {
+			if got := mp.prefs[vibekit.PushKindPRStatus]; got != tc.wantPR {
 				t.Errorf("prefs[%s] = %v, want %v (%s)", prStatus, got, tc.wantPR, tc.why)
 			}
 			// The floor rides every case: no resolution path may lower it.
-			if !mp.prefs[api.PushKindPermission] {
+			if !mp.prefs[vibekit.PushKindPermission] {
 				t.Errorf("prefs[Permission] = false, want true (the ask is a floor, %s)", tc.why)
 			}
 		})
@@ -140,7 +140,7 @@ func TestSyncPushPreferences_MergedPatchNeedsNoDiskRead(t *testing.T) {
 		settings.KeyNotifyPRStatus:      json.RawMessage(`false`),
 	})
 
-	if mp.prefs[api.PushKindAgentFinished] || mp.prefs[api.PushKindPRStatus] {
+	if mp.prefs[vibekit.PushKindAgentFinished] || mp.prefs[vibekit.PushKindPRStatus] {
 		t.Errorf("prefs = %+v, want both false: a key the patch carries must not be re-read from disk", mp.prefs)
 	}
 }

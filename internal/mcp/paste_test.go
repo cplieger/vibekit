@@ -7,6 +7,7 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -438,7 +439,7 @@ func TestImport_ReachesTheAgentsConfigFile(t *testing.T) {
 }
 
 // The no-op path must skip the write: a persist re-renders KAS's file, whose
-// watcher emits a status notification straight back into the hub.
+// watcher emits a status notification straight back into the agent.
 func TestImport_UnchangedEntryDoesNotRewriteTheAgentsFile(t *testing.T) {
 	s, mux := newRoutedStore(t)
 
@@ -540,7 +541,8 @@ func TestTranslate_EnvKeepsTheReadmeOrder(t *testing.T) {
 	// A Go map would lose this, which is why the pairs are decoded off the token
 	// stream: the order is what the user reads in the form.
 	req, err := parseImportBody([]byte(
-		`{"mcpServers":{"x":{"command":"srv","env":{"ZED":"1","ALPHA":"2","MID":"3"}}}}`))
+		`{"mcpServers":{"x":{"command":"srv","env":{"ZED":"1","ALPHA":"2","MID":"3"}}}}`,
+	))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -558,7 +560,8 @@ func TestTranslate_EnvKeepsTheReadmeOrder(t *testing.T) {
 
 func TestTranslate_ScalarEnvValuesAreStringified(t *testing.T) {
 	req, err := parseImportBody([]byte(
-		`{"mcpServers":{"x":{"command":"srv","env":{"PORT":3000,"DEBUG":true}}}}`))
+		`{"mcpServers":{"x":{"command":"srv","env":{"PORT":3000,"DEBUG":true}}}}`,
+	))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -576,7 +579,8 @@ func TestTranslate_ScalarEnvValuesAreStringified(t *testing.T) {
 
 func TestTranslate_NonScalarEnvValueIsNamed(t *testing.T) {
 	_, err := parseImportBody([]byte(
-		`{"mcpServers":{"x":{"command":"srv","env":{"NESTED":{"a":1}}}}}`))
+		`{"mcpServers":{"x":{"command":"srv","env":{"NESTED":{"a":1}}}}}`,
+	))
 	if err == nil {
 		t.Fatal("expected an error for an object env value")
 	}
@@ -587,7 +591,8 @@ func TestTranslate_NonScalarEnvValueIsNamed(t *testing.T) {
 
 func TestTranslate_NameIsAdjustedAndReported(t *testing.T) {
 	req, err := parseImportBody([]byte(
-		`{"mcpServers":{"@acme/my.server":{"command":"srv"}}}`))
+		`{"mcpServers":{"@acme/my.server":{"command":"srv"}}}`,
+	))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -667,6 +672,60 @@ func TestParseImportBody_Rejects(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestImport_OversizedRecordIsRefusedBeforeItIsBuilt is the anti-amplification
+// bound on the ordered-pair walk. The store's own maxEnvEntries would reject the
+// record anyway, but only after the whole slice exists: measured on go1.27.0, an
+// env object at webhttp's 1 MiB body cap decoded to 174,762 KeyPairs and 39.4 MB
+// of allocation, 37.6x the wire bytes, against a limit of 64. With the bound in
+// the loop the same body costs 27 KB.
+//
+// The boundary is asserted in both directions, because a cap that fires one
+// entry early would silently refuse a legal record: a record AT the cap is
+// accepted and its pairs survive in order, one PAST it is refused naming the
+// field. Env is the wider of the two fields the walk serves; headers ride the
+// same code with the same bound.
+func TestImport_OversizedRecordIsRefusedBeforeItIsBuilt(t *testing.T) {
+	env := func(n int) string {
+		var b strings.Builder
+		b.WriteByte('{')
+		for i := range n {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, `"K%d":"v%d"`, i, i)
+		}
+		b.WriteByte('}')
+		return b.String()
+	}
+
+	t.Run("at the cap", func(t *testing.T) {
+		body := `{"name":"x","command":"srv","env":` + env(maxImportBlockKeys) + `}`
+		req, err := parseImportBody([]byte(body))
+		if err != nil {
+			t.Fatalf("a record at the cap was refused: %v", err)
+		}
+		if got := len(req.servers[0].Env); got != maxImportBlockKeys {
+			t.Errorf("decoded %d env pairs, want %d", got, maxImportBlockKeys)
+		}
+		// Order is the reason this walk is hand-rolled rather than a map decode.
+		if req.servers[0].Env[0].Name != "K0" {
+			t.Errorf("first env pair = %q, want K0: the walk lost the block's order",
+				req.servers[0].Env[0].Name)
+		}
+	})
+
+	t.Run("one past the cap", func(t *testing.T) {
+		body := `{"name":"x","command":"srv","env":` + env(maxImportBlockKeys+1) + `}`
+		_, err := parseImportBody([]byte(body))
+		if err == nil {
+			t.Fatal("a record past the cap was accepted")
+		}
+		if !strings.Contains(err.Error(), "env") {
+			t.Errorf("error = %q, want the field named", err)
+		}
+	})
 }
 
 // FuzzParseImportBody guards the pasted-block parser, which is an untrusted-input

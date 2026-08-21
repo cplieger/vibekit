@@ -38,7 +38,6 @@ export const rewindChat = transportAction<RewindArgs>({
   command: ({ chatID, messageID }) => ({
     type: "rewind_chat",
     chat_id: chatID,
-    request_id: `rewind-${String(Date.now())}`,
     payload: { message_id: messageID },
   }),
   error: "Couldn't rewind chat",

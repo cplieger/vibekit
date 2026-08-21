@@ -1,7 +1,20 @@
 package command
 
+// The `!cmd` shell interception.
+//
+// Output capture is procout's, not this package's. `ShellCappedBuffer` used to
+// live here and was the THIRD bounded-capture writer in the tree — internal/auth
+// and internal/server already share procout.Buffer, whose whole reason for
+// existing is that the choice should not be a per-site coin flip. Its Write is
+// also the one that is provably right about os/exec: a capping writer reporting
+// the bytes it KEPT makes io.Copy return io.ErrShortWrite, which Cmd.Wait then
+// hands back as the command's error on a child that exited 0. The version here
+// happened to get that right and had no test for it; procout's suite does,
+// alongside an os/exec merged-stream test and a fuzz target parameterised over
+// the cap that the two hand-rolled ones (this package's and the duplicate in
+// internal/agent) each seeded with a 1 MiB literal.
+
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,8 +24,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
@@ -23,47 +38,24 @@ const ShellOutputCap = 1 * 1024 * 1024
 // future settings overrides can reference the default.
 const ShellTimeout = 30 * time.Second
 
-// ShellCappedBuffer writes to an underlying bytes.Buffer, rejecting
-// bytes past the cap.
-type ShellCappedBuffer struct {
-	Buf       bytes.Buffer
-	Truncated bool
-}
-
-func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
-	remaining := ShellOutputCap - b.Buf.Len()
-	if remaining <= 0 {
-		b.Truncated = true
-		return len(p), nil
-	}
-	if len(p) <= remaining {
-		return b.Buf.Write(p)
-	}
-	b.Truncated = true
-	if _, err := b.Buf.Write(p[:remaining]); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
-
 // appendShellUserMessage persists the user's "!cmd" message and, on the
 // chat's first message, derives an initial chat name from the command text.
 // Returns whether the message was persisted (false when the chat record
 // doesn't exist).
-func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.ChatID, msg *api.Message, text string) (persisted bool, err error) {
-	err = deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
+	err = chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
-			c.Name = api.DefaultChatName
+			c.Name = vibekit.DefaultChatName
 		}
 		c.Messages = append(c.Messages, *msg)
-		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
+		if c.Name == vibekit.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(text, 80)
 			if name != text {
 				name += ellipsis
 			}
 			c.Name = name
 		}
-		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, msg))
+		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 		persisted = true
 		return true
 	})
@@ -71,12 +63,11 @@ func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.C
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
-func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, p *api.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientCommand, p *vibekit.PromptCommand) (any, error) {
 	shellCmd := strings.TrimPrefix(p.Text, "!")
 	shellCmd = strings.TrimSpace(shellCmd)
 	if shellCmd == "" {
-		d.RespondErr(w, http.StatusBadRequest, errEmptyPrompt)
-		return
+		return nil, StatusError(http.StatusBadRequest, errEmptyPrompt)
 	}
 
 	// Busy-guard: serialize against a real streaming turn on the same
@@ -88,30 +79,27 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	// bridge yet has never run a turn, so !cmd runs locally with no lock
 	// (nothing to collide with); we broadcast the shell turn_ended only
 	// when we own the turn (locked) or when there is no bridge at all.
-	if sb := deps.GetBridge(cmd.ChatID); sb != nil {
+	if sb := roles.bridges.Bridge(cmd.ChatID); sb != nil {
 		if !sb.TryAcquireForPrompt() {
-			d.RespondErr(w, http.StatusConflict, errBusy)
-			return
+			return nil, StatusError(http.StatusConflict, errBusy)
 		}
 		defer sb.ReleaseAfterPrompt()
 	}
 
-	deps.InflightAdd(1)
-	defer deps.InflightDone()
+	roles.lifecycle.InflightAdd(1)
+	defer roles.lifecycle.InflightDone()
 
 	// Persist the user message.
-	userMsg := api.Message{
-		ID: p.MessageID, Role: api.RoleUser, Ts: time.Now().UnixMilli(),
+	userMsg := vibekit.Message{
+		ID: p.MessageID, Role: vibekit.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
-	persisted, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
+	persisted, err := appendShellUserMessage(ctx, roles.chats, roles.bus, cmd.ChatID, &userMsg, p.Text)
 	if err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if !persisted {
-		d.RespondErr(w, http.StatusConflict, ErrChatNotFound)
-		return
+		return nil, StatusError(http.StatusConflict, ErrChatNotFound)
 	}
 
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
@@ -123,17 +111,20 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	defer cancel()
 
 	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd)
-	shellProc.Dir = deps.WorkDir()
-	var capped ShellCappedBuffer
-	shellProc.Stdout = &capped
-	shellProc.Stderr = &capped
+	shellProc.Dir = roles.workspace.Dir
+	// One *procout.Buffer on both streams is the documented way to merge them:
+	// os/exec compares the two writers and guarantees at most one goroutine
+	// calls Write at a time, so the two copiers do not race.
+	capped := procout.NewBuffer(ShellOutputCap)
+	shellProc.Stdout = capped
+	shellProc.Stderr = capped
 	runErr := shellProc.Run()
 
-	raw := capped.Buf.String()
-	if capped.Truncated {
+	raw := capped.String()
+	if capped.Truncated() {
 		raw += "\n[output truncated at 1 MiB]"
 	}
-	output := api.SanitizeOutput(raw)
+	output := sanitize.Output(raw)
 	timedOut := errors.Is(shellCtx.Err(), context.DeadlineExceeded)
 
 	slog.Info("shell interception complete",
@@ -141,23 +132,23 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		"elapsed_ms", time.Since(start).Milliseconds(),
 		"exit_error", runErr != nil,
 		"timed_out", timedOut,
-		"truncated", capped.Truncated)
+		"truncated", capped.Truncated())
 
 	content := renderShellResult(output, runErr, timedOut)
 	msgID := ids.NewMessageID()
-	assistantMsg := api.Message{
-		ID: msgID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli(),
+	assistantMsg := vibekit.Message{
+		ID: msgID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
 	}
-	appendErr := deps.ChatStore().AppendMessage(ctx, cmd.ChatID, &assistantMsg)
+	appendErr := roles.chats.AppendMessage(ctx, cmd.ChatID, &assistantMsg)
 	if appendErr != nil {
 		slog.Error("shell interception: persist output", "chat_id", cmd.ChatID, keyError, appendErr)
 	}
-	if _, stillExists := deps.ChatStore().Get(ctx, cmd.ChatID); stillExists {
-		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, cmd.ChatID, &assistantMsg))
-		deps.Broadcast(ctx, api.NewEvent(api.EventTurnEnded, cmd.ChatID, api.TurnEndedPayload{StopReason: api.StopReasonEndTurn}))
+	if _, stillExists := roles.chats.Get(ctx, cmd.ChatID); stillExists {
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
 	}
-	d.RespondOK(w, cmd.RequestID)
+	return responseOK, nil
 }
 
 // renderShellResult wraps sanitized command output in a Markdown code
@@ -188,8 +179,7 @@ func shellStatusLine(runErr error, timedOut bool) string {
 	case runErr == nil:
 		return "[exit 0]"
 	default:
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return fmt.Sprintf("[exit %d]", exitErr.ExitCode())
 		}
 		// The command could not be run at all (e.g. sh missing, or the

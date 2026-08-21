@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/pinstall/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -69,12 +69,20 @@ func kiroReasonText(why pinstall.Reason) string {
 // none is: the same verdict /api/health will serve from the next probe, so a
 // caller gets its answer without polling.
 func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
+	// The method gate sits INSIDE the loopback wrapper deliberately: a remote
+	// caller gets the 403 and learns nothing about which methods the endpoint
+	// serves. It is here rather than on the ServeMux pattern because a
+	// `POST `-prefixed pattern's mismatch falls through to the SPA mount — see
+	// ListenAndServe.
+	if !httpreply.RequireMethod(w, r, http.MethodPost) {
+		return
+	}
 	// A rescan probes the candidate binary and reasserts the required settings,
 	// so it is not free; it is also not cacheable under any circumstances.
 	w.Header().Set("Cache-Control", "no-store")
 	ok, err := s.kiroRescan(r.Context())
 	if ok {
-		api.WriteJSON(w, healthBody{Status: "ok"})
+		webhttp.WriteJSON(w, healthBody{Status: "ok"})
 		return
 	}
 	// The manager has already logged the specific fault (and every path it took)
@@ -88,7 +96,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", err)
-	api.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 		Status: "unready",
 		Reason: reason,
 	})
@@ -131,8 +139,8 @@ func loopbackOnly(surface string, next http.Handler) http.Handler {
 		// writer.
 		slog.Warn("loopback-only endpoint refused: not a loopback caller",
 			"surface", surface, "remote", r.RemoteAddr, "host", r.Host)
-		api.WriteJSONStatus(w, http.StatusForbidden,
-			api.ErrorJSON(surface+" is loopback-only; call it from inside the container"))
+		webhttp.WriteJSONStatus(w, http.StatusForbidden,
+			httpreply.ErrorJSON(surface+" is loopback-only; call it from inside the container"))
 	})
 	return webhttp.LoopbackOnly(refuse)(next)
 }

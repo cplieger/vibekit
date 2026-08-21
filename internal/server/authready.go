@@ -4,7 +4,7 @@ package server
 //
 // kiro-cli owns the login store and the rotating refresh chain; vibekit only
 // asks it for a KAS access token when a session opens (_kiro/auth/getAccessToken,
-// internal/hub/bridge_v3_auth.go). When that vend fails, KAS runs
+// internal/agent/bridge_v3_auth.go). When that vend fails, KAS runs
 // UNAUTHENTICATED rather than refusing: sessions still open, and then every
 // service-backed surface fails. So the fact has to be reported, and readiness is
 // where an operator and a monitor both look.
