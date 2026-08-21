@@ -116,7 +116,7 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 			// create noise; operators can flip the level when the
 			// "some files missing from UI" report comes in.
 			slog.Debug("filebrowse: listEntries entry stat failed",
-				"dir", logsafe.Field(resolved), "name", name, "error", logsafe.Field(err.Error()))
+				"dir", logsafe.Field(resolved), "name", logsafe.Field(name), "error", logsafe.Field(err.Error()))
 			continue
 		}
 		files = append(files, fileEntry{
