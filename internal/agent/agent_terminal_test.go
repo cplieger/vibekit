@@ -436,12 +436,48 @@ func (r *sizeChunkReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// pumpBroadcast runs the output pump over data on a fresh terminal, handing the
+// reader out in size-byte slices, and returns the ring's raw content plus the
+// concatenation of every terminal_output payload the pump broadcast.
+func pumpBroadcast(t *testing.T, h *Runtime, data []byte, size int) (ring, broadcast []byte) {
+	t.Helper()
+	_, preSeq := h.bus.fanout.Bounds()
+	term := newAgentTerminal(nil, "c1", 1<<20)
+	h.agentTerms.pumpOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: size})
+	for _, e := range bufferedSince(h, preSeq) {
+		var env struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Data string `json:"data"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
+			t.Fatalf("unmarshal ring event: %v", err)
+		}
+		if env.Type == string(vibekit.EventTerminalOutput) {
+			broadcast = append(broadcast, env.Payload.Data...)
+		}
+	}
+	return term.output.Bytes(), broadcast
+}
+
 // FuzzPumpTerminalOutput_UTF8Broadcast asserts two invariants over arbitrary
-// bytes split at arbitrary read boundaries: (1) the concatenation of every
-// broadcast chunk equals the raw input exactly (no byte dropped or
-// duplicated), and (2) when the whole input is valid UTF-8, every broadcast
-// chunk is itself valid UTF-8 (no rune split across the read boundary). One
-// agent is reused across iterations (fuzz iterations run sequentially per
+// bytes split at arbitrary read boundaries: (1) the ring holds the raw input
+// exactly, no byte dropped or duplicated, and (2) where the read boundaries
+// fall does not change what the transcript receives — the chunked broadcast
+// reassembles to the same text as a single-read broadcast of the same input.
+//
+// (2) is the pending-tail carry's whole job, stated as an oracle rather than as
+// byte-equality with the input, because the emitter is not a passthrough: it
+// deletes hidden Unicode and parses escape sequences off into style spans, so a
+// broadcast is expected to differ from the raw bytes. What it may NOT do is
+// differ by chunk size — a rune split across a read boundary turns into two
+// U+FFFD on one side of that comparison and one character on the other.
+//
+// Bounded to 512 bytes, which is also inside ansitext's maxPendingBytes, the one
+// input class where its streaming parse cannot agree with a one-shot parse.
+//
+// One agent is reused across iterations (fuzz iterations run sequentially per
 // process) to avoid leaking the per-Runtime background goroutines.
 func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	f.Add([]byte("hello"), uint8(1))
@@ -449,44 +485,25 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	f.Add([]byte("aé€😀z"), uint8(3))
 	f.Add([]byte{0xE2, 0x82, 0xAC}, uint8(1))
 	f.Add([]byte{0xFF, 0x80, 0xE2}, uint8(1)) // invalid + incomplete tail
+	f.Add([]byte("a\u202cb"), uint8(1))       // hidden Unicode the emitter deletes
+	f.Add([]byte("a\x1b[31mred"), uint8(1))   // an escape the parser lifts into a span
 	h := New(f.Context(), f.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
 	f.Fuzz(func(t *testing.T, data []byte, chunkRaw uint8) {
 		if len(data) > 512 {
 			data = data[:512] // keep this iteration's emits under the 1024-event ring cap
 		}
 		chunkSize := int(chunkRaw)%8 + 1
-		_, preSeq := h.bus.fanout.Bounds()
-		term := newAgentTerminal(nil, "c1", 1<<20)
-		h.agentTerms.pumpOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
 
+		ring, chunked := pumpBroadcast(t, h, data, chunkSize)
 		// The ring receives every raw byte exactly once, for any input.
-		if ring := term.output.Bytes(); !bytes.Equal(ring, data) {
-			t.Errorf("ring content = %x, want raw input %x (chunkSize=%d)", ring, data, chunkSize)
+		if !bytes.Equal(ring, data) {
+			t.Fatalf("ring content = %x, want raw input %x (chunkSize=%d)", ring, data, chunkSize)
 		}
-
-		var got []byte
-		for _, e := range bufferedSince(h, preSeq) {
-			var env struct {
-				Type    string `json:"type"`
-				Payload struct {
-					Data string `json:"data"`
-				} `json:"payload"`
-			}
-			if err := json.Unmarshal(e.Event.Data, &env); err != nil {
-				t.Fatalf("unmarshal ring event: %v", err)
-			}
-			if env.Type == string(vibekit.EventTerminalOutput) {
-				got = append(got, env.Payload.Data...)
-			}
-		}
-		// When the whole input is valid UTF-8 the fix never splits a rune, so
-		// each broadcast chunk survives the SSE JSON round-trip intact and the
-		// chunks reassemble to the exact input. Invalid input is expectedly
-		// coerced to U+FFFD by json.Marshal, so byte-preservation of the
-		// broadcast only holds for valid UTF-8 — the ring check above covers
-		// the raw-byte path for all inputs.
-		if utf8.Valid(data) && !bytes.Equal(got, data) {
-			t.Errorf("valid UTF-8 input %x reassembled from broadcasts as %x (chunkSize=%d) — a rune was split across the read boundary", data, got, chunkSize)
+		// size is clamped to 1 so an empty input still terminates the reader.
+		_, whole := pumpBroadcast(t, h, data, max(len(data), 1))
+		if !bytes.Equal(chunked, whole) {
+			t.Fatalf("input %x broadcast as %q at chunkSize=%d but as %q in one read — a rune was split across the read boundary",
+				data, chunked, chunkSize, whole)
 		}
 	})
 }
