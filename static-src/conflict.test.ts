@@ -278,3 +278,84 @@ describe("resolveHunk", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Marker-shaped lines in the wrong place. The parser runs over whatever the file
+// contains, and `=======` is also a Markdown H1 underline while `|||||||` is a
+// plausible table row — so a conflicted document really does carry lines that
+// look like markers outside the hunk they would belong to.
+// ---------------------------------------------------------------------------
+describe("parseConflicts on marker-shaped content", () => {
+  it("does not look for the separator above the head marker", () => {
+    const file = parseConflicts(
+      ["Title", "=======", "<<<<<<< HEAD", "ours", "=======", "theirs", ">>>>>>> b", ""].join("\n"),
+    );
+    expect([file.hunks[0]!.oursLines, file.hunks[0]!.theirsLines]).toEqual([["ours"], ["theirs"]]);
+  });
+
+  it("ignores a base marker below the separator", () => {
+    const file = parseConflicts(
+      ["<<<<<<< HEAD", "ours", "=======", "|||||||", "theirs", ">>>>>>> b", ""].join("\n"),
+    );
+    expect([file.hunks[0]!.oursLines, file.hunks[0]!.theirsLines]).toEqual([
+      ["ours"],
+      ["|||||||", "theirs"],
+    ]);
+  });
+
+  it("keeps the first base marker when a second one follows", () => {
+    const file = parseConflicts(
+      [
+        "<<<<<<< HEAD",
+        "mine",
+        "||||||| base",
+        "old",
+        "||||||| again",
+        "older",
+        "=======",
+        "theirs",
+        ">>>>>>> b",
+        "",
+      ].join("\n"),
+    );
+    expect(file.hunks[0]!.oursLines).toEqual(["mine"]);
+  });
+
+  it("keeps the first separator when the theirs side carries another", () => {
+    const file = parseConflicts(
+      ["<<<<<<< HEAD", "ours", "=======", "Title", "=======", "theirs", ">>>>>>> b", ""].join("\n"),
+    );
+    expect([file.hunks[0]!.oursLines, file.hunks[0]!.theirsLines]).toEqual([
+      ["ours"],
+      ["Title", "=======", "theirs"],
+    ]);
+  });
+
+  it("does not end a hunk on an end marker that precedes the separator", () => {
+    const file = parseConflicts(
+      ["<<<<<<< HEAD", ">>>>>>> stray", "=======", "theirs", ">>>>>>> b", ""].join("\n"),
+    );
+    expect(file.hunks.map((h) => h.oursLines)).toEqual([[">>>>>>> stray"]]);
+  });
+
+  // Otherwise content the parser already consumed can be read a second time as
+  // the head of a hunk that is not there.
+  it("resumes scanning strictly after the hunk it consumed", () => {
+    const file = parseConflicts(
+      [
+        "<<<<<<< HEAD",
+        "a",
+        "=======",
+        "<<<<<<< X",
+        ">>>>>>> br",
+        "<<<<<<< HEAD",
+        "c",
+        "=======",
+        "d",
+        ">>>>>>> br2",
+        "",
+      ].join("\n"),
+    );
+    expect(file.hunks.map((h) => h.startLine)).toEqual([0, 5]);
+  });
+});

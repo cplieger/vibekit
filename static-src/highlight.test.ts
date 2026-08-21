@@ -1,6 +1,6 @@
 // Table-driven tests for highlight.ts tokenizer across all supported languages.
 import { describe, it, expect } from "vitest";
-import { highlightByLang, detectLang, normalizeLang } from "./highlight.js";
+import { highlightByLang, highlight, detectLang, normalizeLang } from "./highlight.js";
 
 // ---------------------------------------------------------------------------
 // Helper: extract spans from highlightByLang output.
@@ -400,5 +400,193 @@ describe("highlightByLang property-based fuzz", () => {
       { numRuns: 500 },
     );
     expect(result.failed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Where a token STOPS, which extractSpans cannot see: it drops text tokens, so
+// two adjacent text tokens and one merged token look identical through it. These
+// assert the whole rendered string instead.
+// ---------------------------------------------------------------------------
+describe("token boundaries", () => {
+  const cases: { input: string; lang: string; expected: string; desc: string }[] = [
+    {
+      input: "9",
+      lang: "go",
+      expected: '<span class="hl-number">9</span>',
+      desc: "a bare 9 is a number (the top of the digit range)",
+    },
+    {
+      input: "A1",
+      lang: "go",
+      expected: "A1",
+      desc: "an identifier may start with A",
+    },
+    {
+      input: "Z1",
+      lang: "go",
+      expected: "Z1",
+      desc: "an identifier may start with Z",
+    },
+    {
+      input: "a1",
+      lang: "go",
+      expected: "a1",
+      desc: "an identifier may start with a",
+    },
+    {
+      input: "z1",
+      lang: "go",
+      expected: "z1",
+      desc: "an identifier may start with z",
+    },
+    {
+      input: "_1",
+      lang: "go",
+      expected: "_1",
+      desc: "an identifier may start with an underscore",
+    },
+    {
+      input: "$1",
+      lang: "go",
+      expected: "$1",
+      desc: "an identifier may start with a dollar",
+    },
+    {
+      input: "x0",
+      lang: "go",
+      expected: "x0",
+      desc: "a trailing 0 belongs to the identifier, not to a number of its own",
+    },
+    {
+      input: "x9",
+      lang: "go",
+      expected: "x9",
+      desc: "a trailing 9 belongs to the identifier",
+    },
+    {
+      input: "x{}",
+      lang: "go",
+      expected: 'x<span class="hl-punctuation">{</span><span class="hl-punctuation">}</span>',
+      desc: "a brace ends an identifier and is punctuation",
+    },
+    {
+      input: "#if",
+      lang: "go",
+      expected: '#<span class="hl-keyword">if</span>',
+      desc: "a character the language does not use does not swallow the token after it",
+    },
+    {
+      input: " 'a'",
+      lang: "py",
+      expected: " <span class=\"hl-string\">'a'</span>",
+      desc: "an indented string literal is still a string",
+    },
+  ];
+
+  it.each(cases)("$desc", ({ input, lang, expected }) => {
+    expect(highlightByLang(input, lang)).toBe(expected);
+  });
+});
+
+describe("keyword tables", () => {
+  // The only capitalised keywords in the tables, and the reason the ident-start
+  // range has to cover A-Z at all.
+  it("highlights Python's capitalised literals", () => {
+    const spans = extractSpans(highlightByLang("None", "py"));
+    expect(spans).toEqual([{ type: "keyword", value: "None" }]);
+  });
+
+  it("highlights Rust's capitalised result constructors", () => {
+    const spans = extractSpans(highlightByLang("Err", "rs"));
+    expect(spans).toEqual([{ type: "keyword", value: "Err" }]);
+  });
+});
+
+describe("comment delimiters", () => {
+  it("treats a lone slash as punctuation, not a comment", () => {
+    expect(highlightByLang("a / b", "go")).toBe('a <span class="hl-punctuation">/</span> b');
+  });
+
+  it("treats a star between operands as punctuation, not a comment", () => {
+    expect(highlightByLang("a*b", "go")).toBe('a<span class="hl-punctuation">*</span>b');
+  });
+
+  it("ends a line comment at the newline", () => {
+    expect(highlightByLang("// c\nx", "go")).toBe('<span class="hl-comment">// c</span>\nx');
+  });
+
+  it("ends a block comment at its terminator", () => {
+    expect(highlightByLang("x /* c */ 1", "go")).toBe(
+      'x <span class="hl-comment">/* c */</span> <span class="hl-number">1</span>',
+    );
+  });
+
+  it("runs an unterminated block comment to the end of the input", () => {
+    expect(highlightByLang("x /* oops", "go")).toBe('x <span class="hl-comment">/* oops</span>');
+  });
+
+  // The terminator cannot overlap the opener: `/*/` is an unterminated comment,
+  // not an empty one, so the search for `*/` starts past both characters.
+  it("does not let a block comment close on its own opener", () => {
+    expect(highlightByLang("/*/ x */", "go")).toBe('<span class="hl-comment">/*/ x */</span>');
+  });
+
+  it("treats # as a comment in shell", () => {
+    expect(highlightByLang("# c", "sh")).toBe('<span class="hl-comment"># c</span>');
+  });
+
+  it("does not treat # as a comment in Go", () => {
+    expect(highlightByLang("# c", "go")).toBe("# c");
+  });
+});
+
+describe("string delimiters", () => {
+  it("ends a raw string at its closing backtick", () => {
+    expect(highlightByLang("`raw` x", "go")).toBe('<span class="hl-string">`raw`</span> x');
+  });
+
+  // Go raw strings have no escapes, which is why the backtick scan is separate
+  // from the escape-aware one: a backslash before the closing backtick does not
+  // extend the string.
+  it("does not let a backslash escape a closing backtick", () => {
+    expect(highlightByLang("`a\\`b`", "go")).toBe(
+      '<span class="hl-string">`a\\`</span>b<span class="hl-string">`</span>',
+    );
+  });
+});
+
+describe("number literals", () => {
+  it("reads a leading dot as part of the number", () => {
+    expect(highlightByLang(".5", "go")).toBe('<span class="hl-number">.5</span>');
+  });
+
+  // The 0x/0o/0b prefix skip belongs to a leading zero only; applying it to any
+  // digit merged an identifier into the number before it.
+  it("does not apply the radix prefix to a non-zero digit", () => {
+    expect(highlightByLang("1x2", "go")).toBe('<span class="hl-number">1</span>x2');
+  });
+
+  it("ends a number at whitespace", () => {
+    expect(highlightByLang("1e x", "go")).toBe('<span class="hl-number">1e</span> x');
+  });
+});
+
+describe("language routing", () => {
+  // Markdown is prose: tokenizing it would highlight ordinary English words that
+  // happen to be keywords.
+  it("passes markdown through without highlighting its prose", () => {
+    expect(highlightByLang("if you want", "md")).toBe("if you want");
+  });
+
+  // highlight() lowercases the extension before the lookup, so a shouted
+  // filename still finds its language.
+  it("detects the language from an uppercase extension", () => {
+    const spans = extractSpans(highlight("func f()", "MAIN.GO"));
+    expect(spans).toEqual([
+      { type: "keyword", value: "func" },
+      { type: "punctuation", value: "(" },
+      { type: "punctuation", value: ")" },
+    ]);
   });
 });
