@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -381,6 +382,79 @@ drained:
 	}
 	// Shutdown to clean up the notifier goroutine.
 	close(h.lifecycle.done)
+}
+
+// A burst of mutations is ONE change to the subscriber. Any real config edit
+// mutates the registry several times in a row (a server recorded connected, then
+// its tools, then a sibling's failure), and the subscriber is the steering
+// generator: it walks .kiro and rewrites environment.md per call, so a burst that
+// arrived as separate invocations would rewrite the file three times for one
+// edit.
+//
+// On the bubble's clock the window is exact rather than probabilistic, which is
+// what makes the count assertable at all: the same test on a real clock can only
+// sleep and hope.
+func TestMCPRegistry_SignalsInsideOneWindowFireOneCallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHubWithMCPConfig(nil)
+		// Ends the notifier and New's two ticker loops. A defer rather than
+		// t.Cleanup on purpose: Test waits for the bubble's goroutines to exit
+		// BEFORE running cleanups, so a cleanup-time close deadlocks the bubble,
+		// and the defer also runs on the t.Fatalf path.
+		defer close(h.lifecycle.done)
+		start := time.Now()
+		var mu sync.Mutex
+		var firedAt []time.Duration
+		h.mcpRegistry.SetOnChange(func() {
+			mu.Lock()
+			firedAt = append(firedAt, time.Since(start))
+			mu.Unlock()
+		})
+
+		h.mcpRegistry.signalChange()
+		synctest.Sleep(30 * time.Millisecond)
+		h.mcpRegistry.signalChange()
+		synctest.Sleep(30 * time.Millisecond)
+		h.mcpRegistry.signalChange()
+		// Past the window the FIRST signal opened, so a coalescing notifier has
+		// fired once by now and one that does not coalesce has fired per signal.
+		synctest.Sleep(150 * time.Millisecond)
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(firedAt) != 1 {
+			t.Errorf("three signals 30ms apart fired onChange %d times (at %v), want 1", len(firedAt), firedAt)
+		}
+	})
+}
+
+// The other half of the same rule: the window coalesces a burst, it does not
+// swallow a later edit. Two signals further apart than the window are two
+// changes, and the subscriber must see both — a config edit made after the
+// steering file was rewritten still has to reach it.
+func TestMCPRegistry_SignalsBeyondTheWindowFireSeparateCallbacks(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHubWithMCPConfig(nil)
+		defer close(h.lifecycle.done) // see the sibling test for why not t.Cleanup
+		var mu sync.Mutex
+		calls := 0
+		h.mcpRegistry.SetOnChange(func() {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		})
+
+		h.mcpRegistry.signalChange()
+		synctest.Sleep(150 * time.Millisecond)
+		h.mcpRegistry.signalChange()
+		synctest.Sleep(150 * time.Millisecond)
+
+		mu.Lock()
+		defer mu.Unlock()
+		if calls != 2 {
+			t.Errorf("two signals 150ms apart fired onChange %d times, want 2", calls)
+		}
+	})
 }
 
 func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
