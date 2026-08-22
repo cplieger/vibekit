@@ -26,6 +26,8 @@ github.com/cplieger/ssrf/v4 v4.1.0 h1:7GqcqAEuZcRBMgfGYxcIWaDe2ikqrOMGBHwLve4MTj
 github.com/cplieger/ssrf/v4 v4.1.0/go.mod h1:Nq8CsFwZcpYNpzDpgqyLV9IRM8XiYTfR1V4Bm93YSFU=
 github.com/cplieger/toolbelt/v3 v3.0.1 h1:G2sNqRWXu4libCQm88vp7iayWaZHuOi6EwXyQfWf6Ho=
 github.com/cplieger/toolbelt/v3 v3.0.1/go.mod h1:EwyeJadeHbghnJhTfpi3AIEtfdJc9PgC9eWtKuHFGeA=
+github.com/cplieger/toolbelt/v3 v3.0.2 h1:HZg/WzG7FcOitsS0Iag81UhiX6NfpTpatY2FDFZ3UBo=
+github.com/cplieger/toolbelt/v3 v3.0.2/go.mod h1:mqRyYpBG3b3BlTu/JZ8dEFBsHfyporeHql77l33N2dc=
 github.com/cplieger/web-terminal-engine/v5 v5.0.3 h1:7HE2LvDjQWGqo6aVdrE429AYQinbdnnOiKtZf6DQ71Y=
 github.com/cplieger/web-terminal-engine/v5 v5.0.3/go.mod h1:7HlrjnXQMX42WU1YH7IQwF3C4ndCHMTpOu7isoeb9f8=
 github.com/cplieger/webhttp/v2 v2.0.0 h1:0kZfGTUIX3ltdW5Nah95/oa9BtARePlOMP6HGy6to4o=
