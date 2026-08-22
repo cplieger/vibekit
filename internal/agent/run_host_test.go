@@ -712,9 +712,8 @@ func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
 func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowListRecipes: json.RawMessage(
-			`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
-		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
+		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
 	}
 	br.callRPCErrs = map[string]*vibekit.RPCError{
 		methodKiroWorkflowNew: {Code: -32602, Message: "inputs.branch: Required"},
