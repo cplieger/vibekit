@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -22,10 +23,20 @@ func TestWorkspaceHash(t *testing.T) {
 	if len(WorkspaceHash("/x")) != 16 {
 		t.Errorf("hash length != 16")
 	}
-	// Relative paths are resolved to absolute first (deterministic).
-	if WorkspaceHash("rel") == "" {
-		t.Errorf("relative path produced empty hash")
-	}
+	// A relative KIRO_WORK_DIR is resolved against the process cwd BEFORE it is
+	// hashed, so it lands on the same directory KAS computes for the absolute
+	// form. Asserting only that the hash is non-empty would pass for a hash of
+	// the relative text itself, which is the divergence that writes
+	// workspace-scope rules where KAS never reads them.
+	t.Run("a relative work dir hashes as its absolute form", func(t *testing.T) {
+		base := t.TempDir()
+		t.Chdir(base)
+		want := WorkspaceHash(filepath.Join(base, "rel"))
+		if got := WorkspaceHash("rel"); got != want {
+			t.Errorf("WorkspaceHash(%q) = %q, want %q (the hash of %q)",
+				"rel", got, want, filepath.Join(base, "rel"))
+		}
+	})
 }
 
 // TestWorkspaceHashGolden pins WorkspaceHash to a hardcoded value for the real
@@ -254,6 +265,51 @@ func TestCapabilities_IsASuggestionNotAnAllowlist(t *testing.T) {
 	}
 }
 
+// TestSanitizeRule_AcceptsEveryBoundAtItsEdge states the near side of each shape
+// bound the cases above only state the far side of.
+//
+// All three caps are inclusive, and the difference matters in one direction only:
+// a rule refused here is a rule the editor cannot write, so a bound that is one
+// short silently caps what the user is allowed to express in their own security
+// policy, with an error naming a limit their input did not actually exceed.
+func TestSanitizeRule_AcceptsEveryBoundAtItsEdge(t *testing.T) {
+	t.Run("a capability exactly at the length cap", func(t *testing.T) {
+		capability := strings.Repeat("a", maxCapabilityLen)
+		got, err := SanitizeRule(&Rule{Capability: capability, Effect: "ask"})
+		if err != nil {
+			t.Fatalf("SanitizeRule(capability of %d bytes) = %v, want nil", maxCapabilityLen, err)
+		}
+		if got.Capability != capability {
+			t.Errorf("capability = %q, want it verbatim", got.Capability)
+		}
+	})
+
+	t.Run("a pattern exactly at the length cap", func(t *testing.T) {
+		pattern := strings.Repeat("a", maxPatternLen)
+		got, err := SanitizeRule(&Rule{Capability: "shell", Effect: "ask", Match: []string{pattern}})
+		if err != nil {
+			t.Fatalf("SanitizeRule(pattern of %d bytes) = %v, want nil", maxPatternLen, err)
+		}
+		if len(got.Match) != 1 || got.Match[0] != pattern {
+			t.Errorf("match = %v, want the one %d-byte pattern verbatim", got.Match, maxPatternLen)
+		}
+	})
+
+	t.Run("exactly the maximum number of match entries", func(t *testing.T) {
+		match := make([]string, 0, maxMatchEntries)
+		for i := range maxMatchEntries {
+			match = append(match, "p"+strconv.Itoa(i))
+		}
+		got, err := SanitizeRule(&Rule{Capability: "shell", Effect: "ask", Match: match})
+		if err != nil {
+			t.Fatalf("SanitizeRule(%d match entries) = %v, want nil", maxMatchEntries, err)
+		}
+		if len(got.Match) != maxMatchEntries {
+			t.Errorf("match entries = %d, want %d", len(got.Match), maxMatchEntries)
+		}
+	})
+}
+
 func TestUpsertDedupAndRemove(t *testing.T) {
 	f := &File{Rules: []Rule{}}
 	r := Rule{Capability: "web_fetch", Effect: "allow"}
@@ -276,6 +332,38 @@ func TestUpsertDedupAndRemove(t *testing.T) {
 	}
 	if f.Remove(&Rule{Capability: "web_fetch", Effect: "allow"}) {
 		t.Error("removing an absent rule should return false")
+	}
+}
+
+// TestUpsert_RefusesAFullFile pins the per-file rule ceiling at the count it
+// names.
+//
+// The cap is on the file as it STANDS, so a file already holding the maximum is
+// full and the next append is refused — off by one here and the ceiling is a
+// number the file can always exceed by exactly one rule, which is not a ceiling
+// anyone can reason about when the file is a security policy KAS loads.
+func TestUpsert_RefusesAFullFile(t *testing.T) {
+	full := &File{Rules: make([]Rule, 0, maxRulesPerFile)}
+	for i := range maxRulesPerFile {
+		full.Rules = append(full.Rules, Rule{Capability: "shell", Effect: "ask", Match: []string{"c" + strconv.Itoa(i)}})
+	}
+
+	changed, err := full.Upsert(&Rule{Capability: "shell", Effect: "deny", Match: []string{"one-too-many"}})
+	if !errors.Is(err, ErrTooManyRules) {
+		t.Errorf("Upsert() into a file of %d rules error = %v, want ErrTooManyRules", maxRulesPerFile, err)
+	}
+	if changed || len(full.Rules) != maxRulesPerFile {
+		t.Errorf("Upsert() into a full file changed=%v rules=%d, want false and %d",
+			changed, len(full.Rules), maxRulesPerFile)
+	}
+
+	// And the last slot below the cap is still usable, so the refusal above is
+	// the ceiling rather than an off-by-one below it.
+	nearlyFull := &File{Rules: full.Rules[:maxRulesPerFile-1]}
+	changed, err = nearlyFull.Upsert(&Rule{Capability: "shell", Effect: "deny", Match: []string{"last-slot"}})
+	if err != nil || !changed || len(nearlyFull.Rules) != maxRulesPerFile {
+		t.Errorf("Upsert() into a file of %d rules changed=%v err=%v rules=%d, want true, nil and %d",
+			maxRulesPerFile-1, changed, err, len(nearlyFull.Rules), maxRulesPerFile)
 	}
 }
 

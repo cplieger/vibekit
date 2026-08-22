@@ -47,6 +47,13 @@ func TestDetails(t *testing.T) {
 			`{"weird":true}`,
 		},
 		{"an empty details string falls through rather than winning", rpcErr("Internal error", `{"details":""}`), `{"details":""}`},
+		{
+			// A Zod array that parses but carries no message text: the join has
+			// nothing to say, so what KAS actually sent is still better than "".
+			"a Zod issue array with no messages falls back to the raw JSON",
+			rpcErr("Internal error", `[{"path":["workspacePaths"]},{"message":""}]`),
+			`[{"path":["workspacePaths"]},{"message":""}]`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

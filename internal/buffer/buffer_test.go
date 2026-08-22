@@ -350,3 +350,40 @@ func TestSetModel_LatchesFirstWrite(t *testing.T) {
 		})
 	}
 }
+
+// TestAppendToolCall_IndexAddressesTheAppendedCall pins the index
+// AppendToolCall hands back and stores under the call's id.
+//
+// That index is the whole read-modify-write cycle the dispatch loop runs: it
+// appends, later reads the call back by id, folds an update into the copy and
+// writes it back at the index. Both the returned index and the stored one have to
+// address the call that was just appended — an index off the end makes the call
+// unfindable, and SetToolCall's own bounds guard then drops the write silently,
+// so a tool call would sit in the transcript never progressing past "started".
+func TestAppendToolCall_IndexAddressesTheAppendedCall(t *testing.T) {
+	buf := &Buffer{}
+	first := buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1", Title: "Read File"})
+	second := buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-2", Title: "Write File"})
+	if first != 0 || second != 1 {
+		t.Fatalf("AppendToolCall() returned %d then %d, want 0 then 1", first, second)
+	}
+
+	got, idx, ok := buf.ToolCall("tool-2")
+	if !ok {
+		t.Fatalf("ToolCall(%q) not found after AppendToolCall returned index %d", "tool-2", second)
+	}
+	if idx != second {
+		t.Errorf("ToolCall(%q) index = %d, want the %d AppendToolCall returned", "tool-2", idx, second)
+	}
+	if got.Title != "Write File" {
+		t.Errorf("ToolCall(%q) title = %q, want %q", "tool-2", got.Title, "Write File")
+	}
+
+	// And the index is writable, which is what the fold does with it.
+	got.Title = "Write File (done)"
+	buf.SetToolCall(idx, &got)
+	if buf.ToolCalls[second].Title != "Write File (done)" {
+		t.Errorf("ToolCalls[%d].Title = %q, want the folded update %q",
+			second, buf.ToolCalls[second].Title, "Write File (done)")
+	}
+}

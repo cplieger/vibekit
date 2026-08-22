@@ -143,3 +143,38 @@ func TestInitializeDeclaresExactly(t *testing.T) {
 func TestSessionDoorDeclaresExactly(t *testing.T) {
 	checkGolden(t, sessionGoldenPath, renderMatrix(t, SessionMeta))
 }
+
+// TestSessionDoor_WithdrawnRowsLeaveNoSettingsObject pins the one payload shape
+// the goldens above cannot reach: the session door with every settings row
+// withheld.
+//
+// The session door is the only door whose settings map can empty out, and it can
+// because its single sending row is env-overridable. An empty `settings` object
+// is not the same message as no `settings` key: KAS's resolvers read an absent
+// key as false, which is exactly what withholding a row is asking for, so sending
+// `{"settings":{}}` puts a key on the wire whose only content is the claim that
+// vibekit had something to say about settings. That is the failure this guard
+// exists for, and no spawn combination produces it — only the override does.
+func TestSessionDoor_WithdrawnRowsLeaveNoSettingsObject(t *testing.T) {
+	neutralizeEnvOverrides(t)
+	t.Setenv(envWorkflows, "false")
+
+	meta := SessionMeta(Spawn{SecretStorage: true, Hooks: true})
+	if _, present := meta[settingsKey]; present {
+		t.Errorf("SessionMeta()[%q] = %#v, want the key absent once every settings row is withheld",
+			settingsKey, meta[settingsKey])
+	}
+
+	// The override is the only thing suppressing it, so the same call with the
+	// row sending must still carry the object — otherwise this test would pass
+	// against a projection that never emits settings at all.
+	t.Setenv(envWorkflows, "true")
+	withRow := SessionMeta(Spawn{SecretStorage: true, Hooks: true})
+	settings, present := withRow[settingsKey]
+	if !present {
+		t.Fatalf("SessionMeta() carries no %q key with the row sending, so the case above proves nothing", settingsKey)
+	}
+	if got, ok := settings.(map[string]any); !ok || len(got) == 0 {
+		t.Errorf("SessionMeta()[%q] = %#v, want a non-empty settings object", settingsKey, settings)
+	}
+}

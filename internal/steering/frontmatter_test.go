@@ -37,6 +37,19 @@ func TestParse_FoldedScalarDescription(t *testing.T) {
 			want: "Indented folded value.",
 		},
 		{
+			// Both ends of the digit range are indicator characters, so neither
+			// may fall through to the plain-scalar branch and leave the header
+			// itself standing in for the value the author wrote below it.
+			name: "folded with a zero indent digit",
+			in:   "---\ndescription: >0\n  Zero-indent folded value.\n---\n",
+			want: "Zero-indent folded value.",
+		},
+		{
+			name: "literal with a nine indent digit",
+			in:   "---\ndescription: |9\n  Nine-indent literal value.\n---\n",
+			want: "Nine-indent literal value.",
+		},
+		{
 			name: "blank line inside a block scalar collapses",
 			in:   "---\ndescription: >\n  Para one.\n\n  Para two.\n---\n",
 			want: "Para one. Para two.",
@@ -139,6 +152,55 @@ func TestParse_Tools(t *testing.T) {
 	if fm.Description != "after" {
 		t.Errorf("Description after a block sequence = %q, want %q", fm.Description, "after")
 	}
+
+	// And a key with NO sequence under it must leave the cursor where it found
+	// it. A key that looks like the head of a sequence and is not is the one
+	// case where the reader has to hand lines back unread; consuming them
+	// instead drops the rest of the block on the floor, and the document then
+	// classifies itself with defaults it never declared.
+	t.Run("an empty key consumes none of the keys after it", func(t *testing.T) {
+		fm := Parse([]byte("---\ntools:\ninclusion: manual\ndescription: kept\n---\n"))
+		if fm.Tools != nil {
+			t.Errorf("Tools = %v, want nil", fm.Tools)
+		}
+		if fm.Inclusion != "manual" {
+			t.Errorf("Inclusion = %q, want manual", fm.Inclusion)
+		}
+		if fm.Description != "kept" {
+			t.Errorf("Description = %q, want %q", fm.Description, "kept")
+		}
+	})
+}
+
+// TestParse_StripsOneLayerOfQuotes pins unquote's whole contract, the empty pair
+// included.
+//
+// The quotes are there to protect a leading `*` or a colon, so they are never
+// part of the value — and an explicitly empty value is the one case where
+// stripping them changes whether the field counts as set at all: the renderers
+// treat an empty description as "no description" and omit it, while a literal
+// pair of quote characters renders as a description whose entire content is two
+// quote marks.
+func TestParse_StripsOneLayerOfQuotes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"double quoted", "---\ndescription: \"quoted\"\n---\n", "quoted"},
+		{"single quoted", "---\ndescription: 'quoted'\n---\n", "quoted"},
+		{"an explicitly empty double-quoted value", "---\ndescription: \"\"\n---\n", ""},
+		{"an explicitly empty single-quoted value", "---\ndescription: ''\n---\n", ""},
+		{"unquoted, left alone", "---\ndescription: plain\n---\n", "plain"},
+		{"one unbalanced quote is not a pair", "---\ndescription: \"unbalanced\n---\n", "\"unbalanced"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Parse([]byte(tc.in)).Description; got != tc.want {
+				t.Errorf("Description = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestParse_NoFrontMatter(t *testing.T) {
@@ -152,6 +214,32 @@ func TestParse_NoFrontMatter(t *testing.T) {
 	}
 	if fm.Description != "" {
 		t.Errorf("Description = %q, want empty", fm.Description)
+	}
+}
+
+// TestParse_EmptyFencePairCarriesNoFrontMatter covers the pair of fences with
+// nothing between them.
+//
+// HasFrontMatter is what a caller checks before falling back to the document's
+// first H1 for a title, so it has to mean "this document classified itself". A
+// fence pair enclosing nothing classifies nothing, and reporting it as
+// front-matter would suppress that fallback and render the row with no
+// description at all rather than with the heading the author wrote.
+func TestParse_EmptyFencePairCarriesNoFrontMatter(t *testing.T) {
+	for _, in := range []string{
+		"---\n\n---\n# Title\n",     // one blank line between the fences
+		"---\n---\n# Title\n",       // the closing fence on the next line
+		"---\r\n\r\n---\r\n# T\r\n", // the same, as an editor would save it
+	} {
+		t.Run(strings.ReplaceAll(strings.ReplaceAll(in, "\n", "\\n"), "\r", "\\r"), func(t *testing.T) {
+			fm := Parse([]byte(in))
+			if fm.HasFrontMatter {
+				t.Errorf("HasFrontMatter = true for a fence pair enclosing nothing; the caller's H1 fallback is now suppressed")
+			}
+			if fm.Inclusion != inclusionAlways {
+				t.Errorf("Inclusion = %q, want the always default", fm.Inclusion)
+			}
+		})
 	}
 }
 
@@ -265,11 +353,14 @@ func TestParse_MalformedDegradesQuietly(t *testing.T) {
 		"---\nno colon here\n---\n",      // no key
 		"---\n:\n---\n",                  // empty key and value
 		"---\n  indented: orphan\n---\n", // indented at top level
-		"---\ndescription:\n---\n",       // key with nothing after it
-		"---\ndescription: >\n---\n",     // block scalar with no content
-		"",                               // empty document
-		"\ufeff",                         // BOM only
-		"---",                            // fence only, no newline
+		// An indented line is a continuation, never a key, so an indented line
+		// that happens to spell a real key must not classify the document.
+		"---\n  inclusion: manual\n---\n",
+		"---\ndescription:\n---\n",   // key with nothing after it
+		"---\ndescription: >\n---\n", // block scalar with no content
+		"",                           // empty document
+		"\ufeff",                     // BOM only
+		"---",                        // fence only, no newline
 	}
 	for _, in := range inputs {
 		t.Run(strings.ReplaceAll(in, "\n", "\\n"), func(t *testing.T) {

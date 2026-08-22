@@ -1,9 +1,11 @@
 package secretstore
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,6 +162,37 @@ func TestBounds(t *testing.T) {
 		}
 	})
 
+	// The limits are inclusive: a blob measuring exactly the cap is a blob KAS
+	// is allowed to hand over, and refusing it would surface as an MCP connect
+	// failure the operator cannot act on (the value is opaque and its size is
+	// KAS's choice). The over-limit cases above only pin the far side of the
+	// edge, so both sides are stated.
+	t.Run("value exactly at the limit is stored", func(t *testing.T) {
+		s := newStore(t)
+		value := strings.Repeat("x", MaxValueBytes)
+		if err := s.Set(ctx, realKey, value); err != nil {
+			t.Fatalf("Set(value of exactly %d bytes) error = %v, want nil", MaxValueBytes, err)
+		}
+		got, ok := s.Get(realKey)
+		if !ok {
+			t.Fatalf("Get(%q) missing after a Set at the value limit", realKey)
+		}
+		if len(got) != MaxValueBytes {
+			t.Errorf("Get(%q) returned %d bytes, want %d", realKey, len(got), MaxValueBytes)
+		}
+	})
+
+	t.Run("key exactly at the limit is stored", func(t *testing.T) {
+		s := newStore(t)
+		key := strings.Repeat("k", MaxKeyBytes)
+		if err := s.Set(ctx, key, "v"); err != nil {
+			t.Fatalf("Set(key of exactly %d bytes) error = %v, want nil", MaxKeyBytes, err)
+		}
+		if got, ok := s.Get(key); !ok || got != "v" {
+			t.Errorf("Get(key of exactly %d bytes) = %q, %v, want %q, true", MaxKeyBytes, got, ok, "v")
+		}
+	})
+
 	t.Run("empty key", func(t *testing.T) {
 		s := newStore(t)
 		if err := s.Set(ctx, "", "v"); err == nil {
@@ -234,6 +267,47 @@ func TestCorruptStoreMovedAside(t *testing.T) {
 	if err := s.Set(t.Context(), realKey, "v"); err != nil {
 		t.Errorf("Set() after corrupt recovery error = %v, want nil", err)
 	}
+}
+
+// TestCorruptStoreReportsTheQuarantineNotAFailure pins what the operator reads
+// when a quarantine SUCCEEDS.
+//
+// The rename is the only forensic copy of a file holding OAuth client secrets,
+// refresh tokens and PKCE verifiers, so the two log lines are the whole record
+// of whether that copy exists: one says where the evidence went, the other says
+// it was lost. A quarantine that worked and reported a preservation failure
+// would send whoever is reading the logs looking for a file that is sitting
+// right there, and the filesystem end-state is identical either way — the
+// rename has already happened by the time either line is chosen — so nothing
+// but the log can tell them apart.
+func TestCorruptStoreReportsTheQuarantineNotAFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("seed corrupt store: %v", err)
+	}
+	logs := captureLogs(t)
+	if _, err := New(dir); err != nil {
+		t.Fatalf("New() over a corrupt store error = %v, want nil", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "secretstore: store unparseable, moved aside") {
+		t.Errorf("logs = %q, want the moved-aside record naming where the evidence went", got)
+	}
+	if strings.Contains(got, "secretstore: preserve corrupt store failed") {
+		t.Errorf("logs = %q, must not report a preservation failure for a rename that succeeded", got)
+	}
+}
+
+// captureLogs swaps the slog default to a buffer-backed debug handler for the
+// duration of the test and restores it on cleanup. The handler is global, so
+// this package's tests never run in parallel.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
 }
 
 // corruptSiblings returns the quarantine files in dir. The scan is by PREFIX
