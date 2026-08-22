@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -344,4 +346,131 @@ func TestMergeProjection(t *testing.T) {
 			t.Errorf("got %v, want the projected message first at an equal timestamp", ids(got))
 		}
 	})
+}
+
+// replayNotif wraps a replay-tagged update in the session/update notification a
+// bridge actually delivers, so a test can put the wire's own frames on notifCh.
+func replayNotif(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string) *vibekit.RPCResponse {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"sessionId": "old-acp",
+		"update":    replayUpdate(t, kind, text, sub),
+	})
+	if err != nil {
+		t.Fatalf("marshal notification: %v", err)
+	}
+	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: raw}
+}
+
+// loadedChat seeds a chat carrying an ACP session id, which is what sends its
+// next spawn down the session/load path rather than session/new.
+func loadedChat(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
+	t.Helper()
+	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		c.RecordSession("old-acp")
+		return true
+	}); err != nil {
+		t.Fatalf("seed the chat: %v", err)
+	}
+}
+
+// awaitReplayedTurn waits for the settled projection to reach the chat record.
+// A deadline-bounded poll rather than a sleep: the settle happens on the Forward
+// goroutine, so the test cannot know the instant it lands, and this fails closed
+// with a diagnostic instead of passing whenever the machine is fast enough.
+func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, want string) {
+	t.Helper()
+	stop := time.Now().Add(5 * time.Second)
+	for {
+		c, ok := cs.Get(t.Context(), chatID)
+		if ok {
+			for i := range c.Messages {
+				if c.Messages[i].Content == want {
+					return
+				}
+			}
+		}
+		if time.Now().After(stop) {
+			t.Fatalf("the replayed turn %q never reached the chat's transcript; a resumed "+
+				"chat shows an empty history instead of the conversation KAS replayed", want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestSessionLoad_AdoptsTheReplayedTranscript is the load path end to end: KAS
+// replays the stored conversation as tagged session/update frames, and the chat's
+// transcript is what they build.
+//
+// Both halves of the settle condition are wired here rather than asserted
+// separately, because either one missing produces the same user-visible failure —
+// a resumed chat whose history is gone. The projection has to be OPEN before
+// Forward attaches, or the frames arrive with nowhere to land and are dropped; and
+// the load's return has to be recorded, or no settle path will ever complete.
+func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
+	// A fresh bridge per spawn, because the utility bridge the rehydrate sweep
+	// starts would otherwise share this one's notification channel and drain the
+	// replay out from under the chat's own Forward loop.
+	cs := newFakeChatStore()
+	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs)
+	cs.Bus = h
+	h.mcpRegistry.SignalReady()
+	const chatID vibekit.ChatID = "c1"
+	loadedChat(t, cs, chatID)
+
+	sb, err := h.coord.OpenBridge(t.Context(), chatID, "")
+	if err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	br, ok := sb.bridge.(*fakeBridge)
+	if !ok {
+		t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
+	}
+
+	for _, f := range []*vibekit.RPCResponse{
+		replayNotif(t, "user_message_chunk", "ONE", ""),
+		replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_start"),
+		replayNotif(t, vibekit.ACPUpdateAgentChunk, "reply", ""),
+		replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_end"),
+	} {
+		br.notifCh <- f
+	}
+	// The bridge exiting is the backstop settle, so completion no longer depends
+	// on which side of the race drained the last frame.
+	br.Stop()
+
+	awaitReplayedTurn(t, cs, chatID, "reply")
+}
+
+// TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame is the backstop the
+// per-frame barrier cannot provide.
+//
+// The barrier fires from inside the drain loop, so it needs a frame to fire ON: a
+// load whose result arrives after the last replayed frame was already consumed
+// leaves a fully-built projection with nothing left to trigger it. Without the
+// settle at Forward's exit that transcript is never adopted and the projection is
+// never released, so the chat resumes with an empty history and the rebuild leaks
+// for the life of the process.
+func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
+	h, cs, br := newTestHub()
+	const chatID vibekit.ChatID = "c1"
+	loadedChat(t, cs, chatID)
+
+	// The frames are consumed first and the load returns after them, which is the
+	// ordering the barrier cannot see.
+	h.replay.OpenReplayProjection(chatID)
+	feedOneTurn(t, h.replay, chatID)
+	h.replay.MarkReplayLoadDone(chatID)
+
+	br.Stop() // the bridge exits with nothing further to deliver
+	h.coord.Forward(chatID, br)
+
+	awaitReplayedTurn(t, cs, chatID, "reply")
+	// And the rebuild is released rather than left open forever.
+	if h.replay.ingestReplayFrame(chatID, vibekit.ACPUpdateAgentChunk,
+		replayUpdate(t, vibekit.ACPUpdateAgentChunk, "late", "")) {
+		t.Error("a projection was still open after the bridge exited, so every later " +
+			"replay frame folds into a transcript nothing will settle")
+	}
 }

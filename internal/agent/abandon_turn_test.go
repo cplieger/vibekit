@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -60,6 +61,7 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString(partial)
 
+	logs := captureLogs(t)
 	h.AbandonInFlightTurn(ctx, "c1")
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
@@ -84,6 +86,13 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	if !sawInterrupted {
 		t.Error("no interrupted event message; the transcript shows a truncated reply " +
 			"with nothing saying why it stops")
+	}
+	// The divider landed, so nothing reports otherwise. An error line on the
+	// ORDINARY abandon means the badge was lost, and one that fires whenever the
+	// append succeeded says that for every failed turn a user ever has.
+	const persistFailed = "persist interrupted event"
+	if out := logs.String(); strings.Contains(out, `"msg":"`+persistFailed+`"`) {
+		t.Errorf("a successful append reported %q: %s", persistFailed, out)
 	}
 }
 

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -271,6 +272,57 @@ func TestSecretRequestReportsOnlyUndecodableParams(t *testing.T) {
 		secretGetResult(nil, rawParams(t, map[string]string{"key": probeKey}))
 		if got := logs.String(); strings.Contains(got, wantLine) {
 			t.Errorf("secretGetResult(well-formed params) logged %q, want no %q line", got, wantLine)
+		}
+	})
+}
+
+// startedChatBridge spawns one chat bridge on a runtime built with opts and
+// returns the fake it started, so a test can assert what the spawn was handed.
+func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
+	t.Helper()
+	cs := newFakeChatStore()
+	br := newFakeBridge()
+	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
+	cs.Bus = h
+	h.mcpRegistry.SignalReady()
+	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		return true
+	}); err != nil {
+		t.Fatalf("seed the chat: %v", err)
+	}
+	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	if br.lastStartOpts() == nil {
+		t.Fatal("the bridge was never started, so there is nothing to assert on")
+	}
+	return br
+}
+
+// TestChatSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore pins the one
+// input the capability has, in both directions.
+//
+// KAS builds its AcpSecretStorage only for a client that declared the capability,
+// and then ASKS this process to persist every MCP credential. Declaring it without
+// a store loses each one silently and re-runs the OAuth dance on the next spawn;
+// withholding it where a store exists is the same regression by omission. The
+// store is opened best-effort from the config dir, so "does this process hold one"
+// is genuinely a runtime question rather than a build-time constant.
+func TestChatSpawn_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
+	t.Run("a runtime with a credential store declares the capability", func(t *testing.T) {
+		br := startedChatBridge(t, WithConfigDir(t.TempDir()))
+		if !br.lastStartOpts().SecretStorage {
+			t.Error("a runtime holding a credential store did not declare secretStorage, " +
+				"so KAS never asks it to persist one and MCP OAuth re-registers per spawn")
+		}
+	})
+
+	t.Run("a runtime without one declares it off", func(t *testing.T) {
+		br := startedChatBridge(t)
+		if br.lastStartOpts().SecretStorage {
+			t.Error("a runtime with no credential store declared secretStorage, so KAS " +
+				"hands it credentials that go nowhere")
 		}
 	})
 }
