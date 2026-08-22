@@ -237,7 +237,8 @@ func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibe
 //
 // Newest wins because UpdatedAt is what the row displays and what the sort
 // orders on; it is also the chat's live session in every case that produces a
-// chain.
+// chain. The full rule is the largest (UpdatedAt, CreatedAt, SessionID) — see
+// livelierThan for why the two tie-breaks are there.
 func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableSession {
 	newestFor := map[string]int{}
 	drop := map[int]bool{}
@@ -251,7 +252,7 @@ func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableS
 			newestFor[chatID] = i
 			continue
 		}
-		if rows[i].UpdatedAt > rows[best].UpdatedAt {
+		if livelierThan(&rows[i], &rows[best]) {
 			newestFor[chatID] = i
 			drop[best] = true
 			continue
@@ -268,6 +269,37 @@ func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableS
 		}
 	}
 	return kept
+}
+
+// livelierThan reports whether a should keep its chat's single row and b should
+// be dropped, for two rows that open the SAME chat. The key is (UpdatedAt,
+// CreatedAt, SessionID), all descending, so equal rows keep the one seen first.
+//
+// The tie-breaks exist because an UpdatedAt tie is reachable and its outcome was
+// otherwise arrival order. parseKASTime sinks an absent or unparseable timestamp
+// to 0, so two members of one chain tie whenever KAS omits or reshapes the field
+// on both, and two sessions touched inside the same millisecond tie outright.
+//
+// CreatedAt decides that tie towards the later-created session, on the same
+// reasoning the newest-wins rule rests on: of two sessions last touched at the
+// same instant, the one created later is the chat's live member — a chain is
+// produced by RETIRING a session for a fresh one. It is present on every
+// measured row (all 399), and 0 on both rows only when KAS withheld it, which is
+// what SessionID covers.
+//
+// SessionID carries no ordering meaning; it is there to make the order TOTAL, so
+// the surviving row is a function of the row SET and never of the sequence KAS
+// listed it in. That is the point of the whole rule rather than a formality:
+// while the outcome depended on arrival order, a picker row's title, status and
+// timestamp could change between two polls that returned the same two tied
+// sessions in a different order — the reshuffle toResumable's stable sort
+// defends against, one layer down.
+func livelierThan(a, b *vibekit.ResumableSession) bool {
+	return cmp.Or(
+		cmp.Compare(a.UpdatedAt, b.UpdatedAt),
+		cmp.Compare(a.CreatedAt, b.CreatedAt),
+		cmp.Compare(a.SessionID, b.SessionID),
+	) > 0
 }
 
 // parseKASTime converts KAS's RFC3339 timestamps to the epoch millis the rest
