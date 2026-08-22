@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/settings"
 )
 
@@ -699,6 +700,67 @@ func TestIgnoreMatcher_ConfigSizeChangeBypassesFastPath(t *testing.T) {
 
 	if got := m.Matches(ctx, "foo", false); got {
 		t.Errorf("Matches(\"foo\") after config size change = true, want false (must re-read v2)")
+	}
+}
+
+// TestIgnoreMatcher_EqualLengthConfigRenamePublishBypassesFastPath is the
+// os.SameFile leg's own case for the config.json fast path: config.json is
+// published by rename (atomicfile.WriteFile, through the settings handler), so a
+// second generation of equal length landing on the same coarse-clock mtime
+// differs only by inode. The (mtime, size) pair called that unchanged and kept
+// filtering the agent's reads through the previous ignore list.
+func TestIgnoreMatcher_EqualLengthConfigRenamePublishBypassesFastPath(t *testing.T) {
+	ctx := t.Context()
+	configDir := t.TempDir()
+	workDir := t.TempDir()
+	configPath := filepath.Join(configDir, settings.Filename)
+	fixed := time.Unix(1700000000, 0)
+
+	// Equal-length filenames, so the two config.json generations are the same
+	// size. v1 ignores "foo", v2 ignores only "bar".
+	ignoreA := filepath.Join(workDir, "ia.gitignore")
+	ignoreB := filepath.Join(workDir, "ib.gitignore")
+	writeIgnoreFile(t, ignoreA, "foo\n")
+	writeIgnoreFile(t, ignoreB, "bar\n")
+
+	publish := func(ignoreFile string) {
+		t.Helper()
+		body := []byte(`{"agent_ignore_files":["` + ignoreFile + `"]}`)
+		if _, err := atomicfile.WriteFile(ctx, configPath, body, atomicfile.WithMode(0o600)); err != nil {
+			t.Fatalf("publish config listing %s: %v", ignoreFile, err)
+		}
+		if err := os.Chtimes(configPath, fixed, fixed); err != nil {
+			t.Fatalf("chtimes config listing %s: %v", ignoreFile, err)
+		}
+	}
+
+	publish(ignoreA)
+	m := NewMatcher(configDir, workDir)
+	if !m.Matches(ctx, "foo", false) {
+		t.Fatalf("setup: Matches(%q) with v1 = false, want true", "foo")
+	}
+	info1, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat v1: %v", err)
+	}
+
+	publish(ignoreB)
+	info2, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat v2: %v", err)
+	}
+	// Guards against a vacuous pass: an in-place write or a moved mtime would be
+	// caught by the size and mtime legs too.
+	if os.SameFile(info1, info2) {
+		t.Fatalf("setup: the second publish reused the inode; this case needs a rename publish")
+	}
+	if info1.Size() != info2.Size() || !info1.ModTime().Equal(info2.ModTime()) {
+		t.Fatalf("setup: generations differ in size (%d vs %d) or mtime (%v vs %v); only the inode may differ",
+			info1.Size(), info2.Size(), info1.ModTime(), info2.ModTime())
+	}
+
+	if got := m.Matches(ctx, "foo", false); got {
+		t.Errorf("Matches(%q) after an equal-length rename publish = true, want false (must re-read v2)", "foo")
 	}
 }
 

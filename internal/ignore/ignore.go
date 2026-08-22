@@ -72,16 +72,19 @@ const settingsFilename = settings.Filename
 // edits to `.gitignore` take effect on the next agent read without
 // a restart.
 type Matcher struct {
-	lastLoad      time.Time
-	settingsMTime time.Time
-	sfGroup       singleflight.Group
-	lastMTimes    map[string]time.Time
-	configDir     string
-	workDir       string
-	files         []string
-	rules         []rule
-	settingsSize  int64
-	mu            sync.Mutex
+	lastLoad   time.Time
+	settingsID atomicfile.FileIdentity
+	sfGroup    singleflight.Group
+	lastMTimes map[string]time.Time
+	configDir  string
+	workDir    string
+	files      []string
+	rules      []rule
+	// settingsSize stays beside settingsID: the identity covers mtime AND
+	// os.SameFile, and only size catches an in-place rewrite of different length
+	// that keeps both the inode and (within one clock tick) the mtime.
+	settingsSize int64
+	mu           sync.Mutex
 }
 
 // rule is a single parsed ignore entry. `negate` flips the semantics
@@ -198,7 +201,7 @@ func (m *Matcher) doRefresh(ctx context.Context) {
 	// Read cached state under lock (brief).
 	m.mu.Lock()
 	cachedFiles := m.files
-	cachedSettingsMTime := m.settingsMTime
+	cachedSettingsID := m.settingsID
 	cachedSettingsSize := m.settingsSize
 	cachedLastLoad := m.lastLoad
 	cachedLastMTimes := m.lastMTimes
@@ -206,24 +209,25 @@ func (m *Matcher) doRefresh(ctx context.Context) {
 
 	var files []string
 	settingsChanged := true
-	if settingsErr == nil && !cachedSettingsMTime.IsZero() &&
-		settingsInfo.ModTime().Equal(cachedSettingsMTime) &&
+	// The settingsErr guard is redundant — Matches(nil) is false — and kept so
+	// the nil-FileInfo case is refused here rather than by a library detail.
+	if settingsErr == nil && cachedSettingsID.Matches(settingsInfo) &&
 		settingsInfo.Size() == cachedSettingsSize {
 		// config.json unchanged — reuse cached file list.
 		files = cachedFiles
 		settingsChanged = false
 	}
 
-	var newSettingsMTime time.Time
+	var newSettingsID atomicfile.FileIdentity
 	var newSettingsSize int64
 	if settingsChanged {
 		files = m.readSettingFiles(ctx)
 		if settingsErr == nil {
-			newSettingsMTime = settingsInfo.ModTime()
+			newSettingsID = atomicfile.Identify(settingsInfo)
 			newSettingsSize = settingsInfo.Size()
 		}
 	} else {
-		newSettingsMTime = cachedSettingsMTime
+		newSettingsID = cachedSettingsID
 		newSettingsSize = cachedSettingsSize
 	}
 
@@ -232,7 +236,7 @@ func (m *Matcher) doRefresh(ctx context.Context) {
 		// Nothing changed — update settings cache if needed and return.
 		if settingsChanged {
 			m.mu.Lock()
-			m.settingsMTime = newSettingsMTime
+			m.settingsID = newSettingsID
 			m.settingsSize = newSettingsSize
 			m.files = files
 			m.mu.Unlock()
@@ -249,7 +253,7 @@ func (m *Matcher) doRefresh(ctx context.Context) {
 	m.lastMTimes = newMTimes
 	m.files = files
 	m.lastLoad = time.Now()
-	m.settingsMTime = newSettingsMTime
+	m.settingsID = newSettingsID
 	m.settingsSize = newSettingsSize
 	m.mu.Unlock()
 }

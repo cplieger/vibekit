@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/cplieger/atomicfile/v3"
 )
 
 func TestReadBytes_MissingFile(t *testing.T) {
@@ -224,6 +226,67 @@ func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
 	}
 	if string(d2) != c2 {
 		t.Errorf("second readBytes = %q, want %q (stale size-cache hit)", d2, c2)
+	}
+}
+
+// TestReadBytes_EqualLengthRenamePublishIsAMiss is the os.SameFile leg's own
+// case, and the one the (mtime, size) pair could not see: a second generation
+// published by RENAME, of equal length, carrying the same mtime. Linux stamps
+// inode times from a coarse clock, so two publishes inside one tick share an
+// mtime to the nanosecond, and a backup restore or `rsync -t` reproduces it
+// deliberately. The new inode is then the only difference, and a hit here pins
+// the agent read filter and the retention window to bytes the operator replaced —
+// for as long as nothing else happens to touch the file.
+func TestReadBytes_EqualLengthRenamePublishIsAMiss(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	resetCache(t, dir)
+	path := filepath.Join(dir, Filename)
+	fixed := time.Unix(1700000000, 0)
+
+	const v1 = `{"k":"aaa"}`
+	const v2 = `{"k":"bbb"}` // same length, so only the inode differs
+
+	publish := func(content string) {
+		t.Helper()
+		if _, err := atomicfile.WriteFile(ctx, path, []byte(content), atomicfile.WithMode(0o600)); err != nil {
+			t.Fatalf("publish %s: %v", content, err)
+		}
+		if err := os.Chtimes(path, fixed, fixed); err != nil {
+			t.Fatalf("chtimes %s: %v", content, err)
+		}
+	}
+
+	publish(v1)
+	if d1, err := readBytes(ctx, dir); err != nil || string(d1) != v1 {
+		t.Fatalf("first readBytes = (%q,%v), want (%q,nil)", d1, err, v1)
+	}
+	info1, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat v1: %v", err)
+	}
+
+	publish(v2)
+	info2, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat v2: %v", err)
+	}
+	// Without this the test could pass for the wrong reason: an in-place write or
+	// a moved mtime would make the old two-leg check catch it too.
+	if os.SameFile(info1, info2) {
+		t.Fatalf("setup: the second publish reused the inode; this case needs a rename publish")
+	}
+	if info1.Size() != info2.Size() || !info1.ModTime().Equal(info2.ModTime()) {
+		t.Fatalf("setup: generations differ in size (%d vs %d) or mtime (%v vs %v); only the inode may differ",
+			info1.Size(), info2.Size(), info1.ModTime(), info2.ModTime())
+	}
+
+	d2, err := readBytes(ctx, dir)
+	if err != nil {
+		t.Fatalf("second readBytes err = %v", err)
+	}
+	if string(d2) != v2 {
+		t.Errorf("readBytes after an equal-length rename publish = %q, want %q (stale cache hit)", d2, v2)
 	}
 }
 
