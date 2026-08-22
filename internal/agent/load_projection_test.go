@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -473,4 +474,143 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 		t.Error("a projection was still open after the bridge exited, so every later " +
 			"replay frame folds into a transcript nothing will settle")
 	}
+}
+
+// TestReplayProjection_ConcurrentLoadsAreIndependent pins that the rebuilds are
+// keyed per chat and stay that way.
+//
+// Two chats loading at once is ordinary, not exotic: a restart with several tabs
+// open respawns a bridge per chat as each is touched, and each spawn opens its own
+// projection. If opening the second one disturbed the map holding the first, the
+// earlier chat's replay would be discarded mid-flight — it would resume with an
+// empty history and no error anywhere, because a dropped projection is
+// indistinguishable from a chat that never loaded.
+func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
+	rp, rec := replayWithRecorder()
+	const first vibekit.ChatID = "c1"
+	const second vibekit.ChatID = "c2"
+
+	rp.OpenReplayProjection(first)
+	feedOneTurn(t, rp, first)
+	rp.MarkReplayLoadDone(first)
+
+	// The second chat's spawn happens while the first is still in flight.
+	rp.OpenReplayProjection(second)
+	if !rp.hasProjection(first) {
+		t.Fatal("opening a second chat's load dropped the first chat's rebuild, so that " +
+			"chat resumes with an empty transcript")
+	}
+	feedOneTurn(t, rp, second)
+
+	rp.SettleReplayProjection(first, 0, false)
+	if rec.calls != 1 {
+		t.Fatalf("the first chat settled %d times, want 1", rec.calls)
+	}
+	if len(rec.msgs) != 2 {
+		t.Errorf("the first chat projected %d messages, want 2 (user + assistant)", len(rec.msgs))
+	}
+	if !rp.hasProjection(second) {
+		t.Error("settling the first chat dropped the second chat's rebuild")
+	}
+}
+
+// TestReplayProjection_SettleReportsFramesAgainstMessages pins the one diagnostic
+// a settle leaves behind.
+//
+// The pair of counts is the whole point: many frames folding into zero messages is
+// a decoding bug, and nothing else in the process would say so — the transcript
+// simply comes back empty and the user reads that as a lost conversation. So the
+// frame tally has to track the frames actually ingested rather than merely being
+// present.
+func TestReplayProjection_SettleReportsFramesAgainstMessages(t *testing.T) {
+	logs := captureLogs(t)
+	rp, _ := replayWithRecorder()
+	const chatID vibekit.ChatID = "c1"
+
+	rp.OpenReplayProjection(chatID)
+	feedOneTurn(t, rp, chatID) // four frames: user, turn_start, reply, turn_end
+	rp.MarkReplayLoadDone(chatID)
+	rp.SettleReplayProjection(chatID, 0, false)
+
+	out := logs.String()
+	if !strings.Contains(out, `"msg":"replay projection settled"`) {
+		t.Fatalf("a completed settle said nothing: %s", out)
+	}
+	if !strings.Contains(out, `"frames":4`) {
+		t.Errorf("the settle line does not report the 4 frames it ingested: %s", out)
+	}
+	if !strings.Contains(out, `"messages":2`) {
+		t.Errorf("the settle line does not report the 2 messages it projected: %s", out)
+	}
+}
+
+// TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold covers
+// both directions of the no-op guard, which is why the two cases live in one test:
+// each is the other's failure mode.
+//
+// A resume that rebuilds exactly the transcript already stored must not rewrite
+// it — every write broadcasts a chat_updated, and a reconnect storm after a
+// restart would push one per chat for no change. But the watermark is a second,
+// independent piece of state: a compaction that happened on the KAS side moves it
+// without changing the message count, and dropping that update leaves vibekit
+// compacting from a stale point forever.
+func TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold(t *testing.T) {
+	seed := func(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, watermark string) []vibekit.Message {
+		t.Helper()
+		msgs := []vibekit.Message{
+			{ID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "hi"},
+			{ID: "abc-say", Role: vibekit.RoleAssistant, Ts: 200, Content: "hello"},
+		}
+		if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+			c.Name = "A"
+			c.Messages = msgs
+			c.CompactionWatermark = watermark
+			return true
+		}); err != nil {
+			t.Fatalf("seed the chat: %v", err)
+		}
+		return msgs
+	}
+
+	t.Run("an identical rebuild is not written back", func(t *testing.T) {
+		h, cs, _ := newTestHub()
+		const chatID vibekit.ChatID = "c1"
+		msgs := seed(t, cs, chatID, "wm-1")
+		before := bufferedSince(h, 0)
+
+		h.replay.swapProjectedTranscript(chatID, msgs, "wm-1")
+
+		got := extractTypes(t, bufferedSince(h, before[len(before)-1].ID))
+		if slices.Contains(got, "chat_updated") {
+			t.Errorf("a replay that changed nothing rewrote the chat and broadcast %v; every "+
+				"resumed tab would push an update for a transcript nobody edited", got)
+		}
+	})
+
+	t.Run("a moved watermark is written even when the messages match", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, cs, _ := newTestHub()
+		const chatID vibekit.ChatID = "c1"
+		msgs := seed(t, cs, chatID, "wm-1")
+
+		h.replay.swapProjectedTranscript(chatID, msgs, "wm-2")
+
+		chat, ok := cs.Get(t.Context(), chatID)
+		if !ok {
+			t.Fatal("the chat is gone after a swap")
+		}
+		if chat.CompactionWatermark != "wm-2" {
+			t.Errorf("watermark = %q, want %q; the replay's compaction point was dropped, so "+
+				"vibekit keeps compacting from a window KAS has already moved past",
+				chat.CompactionWatermark, "wm-2")
+		}
+		// The swap reports itself, and reports nothing about failing.
+		out := logs.String()
+		if !strings.Contains(out, `"msg":"replay projection: transcript swapped"`) {
+			t.Errorf("a completed swap said nothing: %s", out)
+		}
+		if strings.Contains(out, `"msg":"replay projection: swap failed"`) {
+			t.Errorf("a swap that worked reported a failure: %s", out)
+		}
+	})
 }
