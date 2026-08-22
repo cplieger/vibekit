@@ -1,10 +1,18 @@
 package kascap
 
-// enabled is the shape every _meta.kiro.settings entry takes. A helper rather
-// than four inline literals because KAS reads each one through the same
+// enabledMember is the one member name KAS reads inside a settings entry
+// (isSettingEnabled returns val.enabled). Named rather than inlined because the
+// spelling is invisible on the wire when it is wrong: an object without this
+// exact key resolves to undefined, which is neither the true a feature needs nor
+// the false a veto needs. Any future row that sends a runtime bool here must
+// build its object around this constant for that reason.
+const enabledMember = "enabled"
+
+// enabled is the shape every _meta.kiro.settings entry vibekit SENDS takes. A
+// helper rather than inline literals because KAS reads each one through the same
 // absent-key-means-false resolver, so the shape is a contract shared by all of
-// them rather than a coincidence repeated four times.
-func enabled() map[string]any { return map[string]any{"enabled": true} }
+// them rather than a coincidence repeated at each row.
+func enabled() map[string]any { return map[string]any{enabledMember: true} }
 
 // hooksValue is the v2 hook-engine opt-in object. Not a bare true: KAS requires
 // an object carrying a v2 member and then checks that member (resolverObject).
@@ -478,6 +486,198 @@ the prompt on the arm vibekit can actually render.
 Both spec capabilities are cheap to flip once there is somewhere for
 their output to go, and neither is a security decision, which is why they
 are recorded together as a pair rather than argued separately.`,
+	},
+	{
+		key:      "policyPreset",
+		door:     doorSession,
+		resolver: resolverCapability,
+		value:    []string{"read-workspace"},
+		send:     true,
+		because: `policyPreset restores the fs_read floor that KAS grants a bundled mode
+and denies a custom one, which kiro-cli 2.19.1 turned from a latent asymmetry
+into a silent capability loss.
+
+The 2.19.1 mechanism: filterSearchResults now runs every grep_search and
+file_search result through evaluateSingleResource({capability:"fs_read"}) and
+admits only effect === "allow". mostRestrictive([]) returns an implicit ASK, so
+"no matching rule" is a DROP, not a pass. The rule that normally makes that a
+non-event is DEFAULT_AGENT_POLICY's fs_read allow ./** — and
+resolveAgentPermissions hands that agent-scope policy ONLY to KAS-shipped
+profiles: a user- or workspace-authored agent "stays fail-closed and contributes
+no agent-scope rules".
+
+vibekit is exactly the client that loses. It seeds ZERO Cedar rules by decision
+(vibekit.md, Settings/Permissions), and its mode pill offers every workspace
+custom agent as a one-click mode threaded to StartOpts.Mode. Measured in this
+workspace: 44 .kiro/agents/*.md, 22 declaring a permissions block, and ZERO
+declaring an fs_read rule of any effect — a declared block REPLACES the default
+rather than extending it, so all 44 contribute none either way. So without this
+row, a chat switched to any custom agent gets zero search results after the pin
+bump, and file_search compounds it: hasMoreResults is computed from the
+PRE-filter provider count while the FILTERED list is sliced, so the agent is
+told an empty result set is "incomplete" and to keep refining a query that can
+never return anything. Builtin and bundled modes are unaffected, and a subagent
+under a builtin parent is safe (combineResults returns the parent's allow).
+
+Why a preset and not a rule file: read-workspace resolves to
+[FS_READ_WORKSPACE_RULE], the same object a builtin mode already gets, so this
+grants NOTHING beyond the status quo for the default mode. It is session-scope,
+so precedence by restrictiveness means it can never override a user or workspace
+deny. And it needs no permissions.yaml, which keeps vibekit's seeds-zero-rules
+posture intact — the alternative would have been writing a real allow rule to
+disk, which is a standing policy decision this row deliberately does not touch.
+
+It rides the SESSION door because resolvePresetIds reads _meta.kiro.policyPreset
+off the session call's own _meta, on BOTH session/new and session/load, and the
+value is NOT persisted in session metadata — so a key sent only on new dies at
+the first resume. withSessionMeta covers both verbs already.
+
+Two traps. validatePresetIds THROWS InvalidParamsError on an unknown id, so an
+upstream rename of read-workspace would fail session/new OUTRIGHT rather than
+degrade — every chat refusing to start, which is why VALID_PRESET_IDS is worth
+watching at a bump. And this key is in neither the isSettingEnabled nor the
+isFeatureEnabled population, so the census cannot see it and will not list it in
+unclaimed.txt: this row is the only record it exists.`,
+	},
+	{
+		key:      "userMemoryOptIn",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		send:     false,
+		because: `WITHHELD, and withholding is also kiro-cli's OWN default, so this row
+changes nothing on the wire. It exists to record the decision and what to watch.
+
+kiro-cli 2.19.1 added a memory subsystem: a model-facing memory tool over a
+JSONL store under the user's home, plus a scope-filtered index injected into msg0
+at session creation. This key is the client's answer to it.
+
+THE DEFAULT, measured three ways. kiro-cli's TUI maps its own setting
+memory.enabled onto this key inside a loop that assigns only when the stored
+value is a boolean, so it sends the key ONLY when the user set one explicitly and
+omits it entirely otherwise. And that setting is not reachable: asking kiro-cli
+for memory.enabled answers "is not a valid setting", and it is absent from the
+settings-all listing. So upstream's default is an ABSENT key, which is exactly
+what this row produces.
+
+WHY NOT A VIBEKIT SETTING, today. A three-state control (follow / on / off) was
+built and reverted, because every state is inert: the subsystem is
+client-UNREACHABLE rather than merely dark. The experiment value comes from
+featureConfig.get, whose registry is [env, experiment] with the "client"
+precedence seat declared and never constructed, and neither memory key appears in
+ENV_FEATURE_VARIABLES. No client key and no environment variable can turn it on,
+so an On option would do nothing, and a shipped control that does nothing teaches
+a reader to distrust the rest of the panel.
+
+The one state with a future is OFF. KAS reads this key into a TRI-STATE, testing
+hasOwnProperty before isSettingEnabled, and its gate vetoes only on an explicit
+false. So absent means "no opinion, let the experiment decide" while
+present-and-false is a refusal that survives a backend ramp. That veto is what to
+reach for if a watch condition below fires; it buys nothing while the feature
+cannot start.
+
+WATCH, and the first two would bite silently. A "client" provider appearing in
+buildFeatureConfigRegistry, or either memory key appearing in
+ENV_FEATURE_VARIABLES: both make the gate reachable, and neither is in a census
+regex, so the census will not report them. A backend ramp of
+memory_external_enabled needs no upstream release at all, and with no row sending
+false the first symptom would be a memory block appearing in prompts.
+
+WHY IT WOULD BE DECLINED ANYWAY on this deployment, so the watch has its answer
+ready. vibekit has ONE home directory and no authentication, so one store is
+global and a user-preference entry written in one person's chat lands in
+everyone's msg0. That store is affirmatively unreachable through vibekit's own
+file surface, since internal/filebrowse deny-lists the home tree as credentials,
+so a model would write entries no user can read or delete. Scoping collapses
+here: the resident-scope resolver over the primary workspace path yields the
+single bucket "workspace", and the repo resolver starts its walk at the parent
+directory, so every repo under /workspace shares one scope and the feature's
+headline scope-resident injection does not function. And the index is frozen at
+session creation for a bridge that lives as long as its tab.
+
+If this is ever sent as a veto the value must be exactly the enabled member set
+false: isSettingEnabled reads that member unchecked, so an empty object yields
+undefined, which is not false and does NOT veto. That is the inverse of the trap
+every other settings row here guards against.`,
+	},
+	{
+		key:      "memoryEnable",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		send:     false,
+		because: `WITHHELD, and unlike its sibling userMemoryOptIn it must not be sent
+even as false, because this key is read at TWO sites and only one of them is the
+memory gate.
+
+Site one is the memory channel fallback: resolveMemoryEnabled treats
+isSettingEnabled(settings,"memoryEnable") as an isInsiderChannel substitute "for
+older CLI nightly builds". That path is inert here, since eligibility needs the
+experiment value to be the string "insider" and its default is false.
+
+Site two is the reason for this row. The key is ALSO read through
+isFeatureEnabled("memoryEnable"), feeding resolveRemoteToolAllowlist, where for
+a kiro-cli client it appends the remote searchMemories tool. So sending it
+allowlists a remote memory-search tool while the local store stays dark — a
+half-on state with no upside: an allowlisted tool over a subsystem this
+deployment vetoes.
+
+Withholding is sufficient and correct at both sites: absent resolves false
+through isSettingEnabled and through the bridged isFeatureEnabled provider
+alike. The veto that actually matters is userMemoryOptIn's, and it is a
+different key.`,
+	},
+	{
+		key:      "streamingShellContent",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+		because: `WITHHELD, and unreachable rather than merely unwanted — the obvious
+reason is the wrong one, which is why this row spells it out.
+
+kiro-cli 2.19.1 added _kiro/tools/content_chunk, an A→C notification carrying
+live shell output while a command runs, gated on this capability. The guess a
+reader makes is that vibekit simply has not adopted it yet. The real gate is a
+SECOND one the capability does not open: the producer is ExecuteBash's
+StreamCoalescer fed by onOutputChunk, subscribed behind
+if (input.onOutputChunk && term.onOutputChunk). vibekit declares terminal:true
+with no sandbox, so KAS builds an ACPTerminal, whose entire method set is
+runCommand, readOutputLines, ensureCommandRunsInCwd, close and focus — no
+onOutputChunk — and whose runCommand awaits completion, so there is no mid-flight
+output on this path at all. Declaring the flag would emit ZERO frames.
+
+That also relocates the trap. The emit path returns, so declaring the capability
+REPLACES the mid-flight tool_call_update for kind === "execute" rather than
+adding to it — a real hazard, but for a client whose terminals KAS hosts
+in-process (DefaultTerminalManager), not for this one.
+
+And vibekit already ships the feature, better, because vibekit owns the pid:
+pipe-rate 4 KiB reads against 32 ms coalescing, an explicit per-chunk UTF-16
+offset against arrival order with no sequence number, and a 64 KiB rolling ring
+that keeps the TAIL against a hard 256 KiB cap that keeps the head. That last
+pair is the one that matters for a long build: the tail is where the error is.
+Adopting would deliver a coarser, unordered second copy of bytes already on the
+wire.
+
+ANSI is NOT a difference, and an earlier revision of this row said it was.
+sanitizeOutput filters only invisible Unicode (tag characters, zero-width and
+bidi ranges); ESC is U+001B and is in none of its ranges, and the streaming
+redactor only replaces four named env-var VALUES that are unset here. So escapes
+reach the client intact either way. The confusion was a name collision with
+vibekit's own SanitizeOutput, which IS StripANSI composed with SanitizeUnicode —
+agent_terminal.go documents having been burned by exactly that, measuring spans=0
+with it and spans=2 without.
+
+The ONE condition that reverses this: a sandbox. The sandbox && capabilities.terminal
+arm hands back DefaultTerminalManager, whose DefaultTerminal DOES implement
+onOutputChunk — at which point vibekit's own terminal handlers go silent and the
+stream moves to this frame. Sandbox is a standing proven negative in this
+container (_kiro/sandbox/applyConfig is a silent no-op: bwrap needs an
+unprivileged userns Docker's default profile forbids), so it holds, but it is one
+compose change from not holding and the failure would be silent — a blank tool
+card with the completion snapshot still filling in.
+
+If the premise ever flips, the order is: a content_chunk handler registered and
+green, THEN a toolCallId→card join (vibekit keys on terminal_id today), and only
+THEN this row's send. Never the flag first.`,
 	},
 	{
 		key:        "semanticReview",

@@ -2,6 +2,7 @@ package kascap
 
 import (
 	"maps"
+	"slices"
 
 	"github.com/cplieger/envx/v2"
 )
@@ -77,13 +78,23 @@ func sends(row *decl) bool {
 }
 
 // cloneValue returns a value the caller can hold without aliasing the table.
-// Only a map needs it: a settings row's value object is built once at package
-// init and would otherwise be shared by every build, so a caller mutating one
-// returned payload would change the next one. One level is enough because every
-// value inside those objects is a bool.
+//
+// Maps and slices both need it, and for the same reason: such a value is built
+// once at package init and would otherwise be shared by every build, so a caller
+// mutating one returned payload would change the next one. Bools and strings are
+// copied by assignment and fall through.
+//
+// One level is enough for both shapes as the table stands: every value inside a
+// settings object is a bool, and the one slice row holds strings. A row whose
+// value nests a container inside a container would need a deeper clone, and
+// TestBuildersDoNotAliasTheTable is where that would be caught.
 func cloneValue(v any) any {
-	if m, ok := v.(map[string]any); ok {
-		return maps.Clone(m)
+	switch t := v.(type) {
+	case map[string]any:
+		return maps.Clone(t)
+	case []string:
+		return slices.Clone(t)
+	default:
+		return v
 	}
-	return v
 }
