@@ -588,7 +588,6 @@ SHADOW_SITES: list[tuple[str, str]] = [
     ("git-branch-popover", "oklch(0% 0 0deg / 30%)"),
     ("chat-find (inner)", "rgb(0 0 0 / 20%)"),
     ("chat-find (outer)", "rgb(0 0 0 / 28%)"),
-    ("commands-popover", "rgb(0 0 0 / 20%)"),
 ]
 
 # Candidates for the ambient layer, so the choice is made on numbers. The border

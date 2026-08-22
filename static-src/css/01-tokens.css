@@ -553,13 +553,6 @@
     --c-selected-dot-input-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-input));
     --c-selected-dot-done-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-done));
     --c-selected-dot-failed-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-failed));
-
-    /* The accent takes the same rung, and it is the one the old code called out
-     * as impossible: `.commands-popover-name` is accent ink and the selected fill
-     * is accent over the surface, so on a selected row the name was the fill's
-     * own hue at 3.797:1. Mixing toward the row's ink pulls it clear (4.559:1
-     * dark / 5.080:1 light on the hovered fill) without landing on
-     * `--c-selected-fg`, so the name is still the coloured half of that row. */
     --c-selected-accent-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-accent));
 
     /* ---- Derived ink ----------------------------------------------------- *
