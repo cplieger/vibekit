@@ -33,7 +33,8 @@
 package httpreply
 
 import (
-	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -214,12 +215,20 @@ func DecodeBody(w http.ResponseWriter, r *http.Request, v any, errMsg string) bo
 	return true
 }
 
-// DecodeBodyOptional caps the body and decodes JSON into v.
-// Unlike DecodeBody, a decode failure is silently ignored (v keeps
-// its zero value) because the caller accepts an empty request body.
-func DecodeBodyOptional(w http.ResponseWriter, r *http.Request, v any) {
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		_ = err
+// DecodeBodyOptional caps the body and decodes JSON into v, reporting whether
+// the caller may proceed. An absent body (io.EOF) is legitimate and a malformed
+// one is ignored: v keeps its zero value and the result is true, because these
+// callers treat the body as advisory. An oversize body is the one refusal — it
+// writes a 413 and returns false, because the server stopped reading what the
+// client sent, so v's zero value would silently stand in for the value the body
+// carried and the caller would act on a request nobody made.
+func DecodeBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool {
+	err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody)
+	if err == nil || errors.Is(err, io.EOF) {
+		return true
 	}
+	if refuseTooLarge(w, r, err) {
+		return false
+	}
+	return true
 }

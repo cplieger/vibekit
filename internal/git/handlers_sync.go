@@ -43,7 +43,9 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body repoBody
-	decodePostBodyOptional(w, r, &body)
+	if !decodePostBodyOptional(w, r, &body) {
+		return
+	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git push", "repo", logsafe.Field(body.Repo))
 	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "push")
@@ -55,7 +57,9 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body repoBody
-	decodePostBodyOptional(w, r, &body)
+	if !decodePostBodyOptional(w, r, &body) {
+		return
+	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git pull", "repo", logsafe.Field(body.Repo))
 	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, "", "pull", "--ff-only")
@@ -67,7 +71,9 @@ func (h *Handler) handleStash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body repoBody
-	decodePostBodyOptional(w, r, &body)
+	if !decodePostBodyOptional(w, r, &body) {
+		return
+	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git stash", "repo", body.Repo)
 	out, err := gitCmd(r.Context(), dir, "stash", "push", "-m", "vibekit auto-stash")
@@ -79,7 +85,9 @@ func (h *Handler) handleStashPop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body repoBody
-	decodePostBodyOptional(w, r, &body)
+	if !decodePostBodyOptional(w, r, &body) {
+		return
+	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git stash-pop", "repo", body.Repo)
 	out, err := gitCmd(r.Context(), dir, "stash", "pop")
