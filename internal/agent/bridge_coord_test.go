@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,7 +64,10 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *fakeChatStore, *recordingSta
 // the most recent one (read only after a body has been received, so the
 // unsynchronised field is ordered behind the channel handoff).
 type recordingPush struct {
-	sends   chan string
+	sends chan string
+	// reloads counts ReloadPreferences calls, for the SSE reconnect rule. Atomic
+	// because the handler that calls it may not be on the test's goroutine.
+	reloads atomic.Int32
 	subject vibekit.PushSubject
 }
 
@@ -72,7 +76,7 @@ func (p *recordingPush) Subscribe(vibekit.PushSubscription)       {}
 func (p *recordingPush) Unsubscribe(string)                       {}
 func (p *recordingPush) HasSubscribers() bool                     { return true }
 func (p *recordingPush) SetPreferences(map[vibekit.PushKind]bool) {}
-func (p *recordingPush) ReloadPreferences(context.Context)        {}
+func (p *recordingPush) ReloadPreferences(context.Context)        { p.reloads.Add(1) }
 func (p *recordingPush) Close()                                   {}
 func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKind, subject vibekit.PushSubject) {
 	p.subject = subject

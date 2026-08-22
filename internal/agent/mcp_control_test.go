@@ -199,3 +199,128 @@ func postJSON(handler http.HandlerFunc, path, body string) *httptest.ResponseRec
 	handler(rec, req)
 	return rec
 }
+
+// TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset is the failure half of
+// the fan-out, in both directions.
+//
+// A per-bridge failure is deliberately not fatal — one wedged chat must not stop the
+// others reconnecting — and the count returned is bridges TARGETED, so the HTTP
+// reply says "reconnected: 1" whether the reset landed or not. The log line is the
+// only place a refusal is recorded, and a guard flipped here emits one on every
+// successful reconnect instead, which buries the real ones.
+func TestReconnectMCPServer_ReportsABridgeThatRefusedTheReset(t *testing.T) {
+	const wantLine = "mcp reconnect: bridge call failed"
+
+	t.Run("a bridge that refused is reported", func(t *testing.T) {
+		logs := captureLogs(t)
+		h := newHubWithMCPConfig(enabledConfig("everything"))
+		b := insertLiveBridge(t, h, "c1")
+		b.callErrs = map[string]error{methodV3MCPResetServer: errors.New("bridge wedged")}
+
+		if n := h.mcpRegistry.reconnectServer(t.Context(), "everything"); n != 1 {
+			t.Fatalf("targeted = %d, want 1", n)
+		}
+		out := logs.String()
+		if !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a bridge that refused the reset said nothing, while the reply counts it as "+
+				"reconnected; want a line reading %q. Got: %s", wantLine, out)
+		}
+		if !strings.Contains(out, `"server":"everything"`) {
+			t.Errorf("the failure line does not name the server it is about: %s", out)
+		}
+	})
+
+	t.Run("an ordinary reconnect is quiet about it", func(t *testing.T) {
+		logs := captureLogs(t)
+		h := newHubWithMCPConfig(enabledConfig("everything"))
+		insertLiveBridge(t, h, "c1")
+
+		if n := h.mcpRegistry.reconnectServer(t.Context(), "everything"); n != 1 {
+			t.Fatalf("targeted = %d, want 1", n)
+		}
+		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a reconnect every bridge accepted was reported as failed: %s", out)
+		}
+	})
+}
+
+// TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay pins the argument shape
+// TestGetMCPPrompt_CallsBridgeAndReturnsResult leaves unasserted.
+//
+// An MCP server's prompt schema is generated from its argument list, and a server
+// with no arguments still declares an object — so `"arguments": null` fails
+// validation server-side where `{}` passes. Substituting the empty object for
+// arguments the caller DID supply is the same bug inverted: the prompt renders with
+// every placeholder unfilled and nothing reports why.
+func TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay(t *testing.T) {
+	cases := []struct {
+		args map[string]any
+		name string
+		want string
+	}{
+		{
+			name: "no arguments become an empty object, never null",
+			args: nil,
+			want: `{}`,
+		},
+		{
+			name: "the caller's arguments travel unchanged",
+			args: map[string]any{"repo": "vibekit"},
+			want: `{"repo":"vibekit"}`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHubWithMCPConfig(enabledConfig("everything"))
+			b := insertLiveBridge(t, h, "c1")
+
+			if _, err := h.mcpRegistry.promptFor(t.Context(), "everything", "p", c.args); err != nil {
+				t.Fatalf("promptFor: %v", err)
+			}
+			params := b.paramsFor(methodV3MCPGetPrompt)
+			if params == nil {
+				t.Fatal("no getPrompt call was issued, so there are no arguments to inspect")
+			}
+			sent, err := json.Marshal(params["arguments"])
+			if err != nil {
+				t.Fatalf("marshal the arguments the call carried: %v", err)
+			}
+			if string(sent) != c.want {
+				t.Errorf("promptFor(args=%v) sent arguments %s, want %s", c.args, sent, c.want)
+			}
+		})
+	}
+}
+
+// TestWriteMCPResult_AlwaysWritesADecodableObject pins the fallback's purpose and
+// its limit.
+//
+// The result is relayed VERBATIM because vibekit models no MCP payload shapes, which
+// leaves one gap the client cannot handle: a server that answered with nothing
+// produces an empty body, and the client's decode fails on a reply that is not an
+// error either. The fallback covers exactly that case, and must not reach a result
+// that does exist — a replaced payload is a prompt or resource silently emptied.
+func TestWriteMCPResult_AlwaysWritesADecodableObject(t *testing.T) {
+	cases := []struct {
+		name string
+		res  json.RawMessage
+		want string
+	}{
+		{name: "an absent result becomes an empty object", res: nil, want: `{}`},
+		{name: "an empty result becomes an empty object", res: json.RawMessage(``), want: `{}`},
+		{
+			name: "a real result is relayed verbatim",
+			res:  json.RawMessage(`{"messages":[{"role":"user"}]}`),
+			want: `{"messages":[{"role":"user"}]}`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writeMCPResult(rec, c.res)
+			if got := strings.TrimSpace(rec.Body.String()); got != c.want {
+				t.Errorf("writeMCPResult(%q) wrote %s, want %s", c.res, got, c.want)
+			}
+		})
+	}
+}
