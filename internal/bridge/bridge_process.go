@@ -69,6 +69,19 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	if opts.SessionID != "" {
 		budget, phase = replayBudget, "session resume"
 	}
+	// Timed because the handshake is the slowest routine operation in the app and
+	// nothing measured it: "bridge started" carried the identity of the bridge and
+	// not its cost, and the `prompt` line times only the prompt Call. So a
+	// regression or an improvement in this window — the KAS runtime unpack, the SSO
+	// refresh, the initialize round trip, the session create or replay — was
+	// invisible in Loki, and a claim about it could only ever be an argument.
+	//
+	// Wall clock rather than a phase breakdown: the phases already have their own
+	// budgets and their own failure messages, and one number per spawn is what a
+	// logfmt query can aggregate. It brackets the two phases only, deliberately
+	// excluding the argv build and the process spawn above, so the value is
+	// comparable across a cold and a warm container.
+	handshakeStart := time.Now()
 	hctx, cancelHandshake := context.WithTimeout(ctx, budget)
 	defer cancelHandshake()
 	if err := b.initialize(hctx); err != nil {
@@ -113,6 +126,10 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 		"model", b.ModelID(),
 		"work_dir", b.workDir,
 		"acp_session_id", opts.SessionID,
+		// phase names which budget this elapsed was measured against, so a
+		// resume's replay time is never averaged with a fresh session's.
+		"phase", phase,
+		"elapsed_ms", time.Since(handshakeStart).Milliseconds(),
 	)
 	return nil
 }
@@ -139,7 +156,14 @@ func (b *Bridge) Stop() {
 			//
 			// Demote the expected case (process already exited after stdin
 			// close) to Debug so every graceful teardown doesn't emit an ERROR.
-			if err := procgroup.Kill(b.cmd.Process, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			//
+			// procgroup.AlreadyGone owns which errors mean "already reaped",
+			// rather than this site naming one of them. Only os.ErrProcessDone
+			// is reachable through procgroup.Kill (os folds a bare ESRCH into it),
+			// so the previous spelling was correct — but it was the fourth copy
+			// of the condition in this repo, and the predicate is where the
+			// question gets answered once.
+			if err := procgroup.Kill(b.cmd.Process, syscall.SIGKILL); err != nil && !procgroup.AlreadyGone(err) {
 				slog.Error("kill kiro-cli", "error", err)
 			}
 			// Wait releases the OS process entry so repeated chat
