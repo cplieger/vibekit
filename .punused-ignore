@@ -94,40 +94,36 @@ method (SessionID).String
 method (ModelID).String
 method (ServerID).String
 
-# --- 6. error-interface machinery. Error() is called by whatever formats
-# the error; Unwrap() is what makes errors.Is/As walk the chain. Call
-# sites: internal/command/prompt.go errors.AsType[*vibekit.TransportError],
-# and internal/forges/exec.go constructs &cmdError{Err: ...} as an error.
+# --- 6. error-interface machinery. Unwrap() is what makes errors.Is/As walk
+# the chain, so nothing calls it by name. Call sites:
+# internal/command/prompt.go errors.AsType[*vibekit.TransportError], and
+# internal/forges/exec.go constructs &cmdError{Err: ...} as an error.
+# (*cmdError).Error needs no entry even though it sits beside Unwrap on the
+# same type: internal/forges/http.go calls err.Error() on that package's own
+# error values, and gopls counts those as references to it.
 method (*TransportError).Unwrap
-method (*cmdError).Error
 method (*cmdError).Unwrap
 
 # --- 7. container/heap.Interface method sets. The stdlib calls Len/Less/
 # Swap/Push/Pop through the interface: internal/buffer/lines.go uses
-# heap.Pop/heap.Fix/heap.Push on &state.h (fileHeap) and internal/dedup
-# uses heap.Init/heap.Push/heap.Pop on &c.evictHeap (evictionHeap).
-# Removing any member breaks the interface at compile time.
+# heap.Pop/heap.Fix/heap.Push on &state.h (fileHeap). Removing any member
+# breaks the interface at compile time.
 method (fileHeap).
 method (*fileHeap).
-method (evictionHeap).
-method (*evictionHeap).
 
-# --- 8. http.Handler. internal/hub/hub.go registers the command dispatcher
-# with mux.Handle("/api/command", h.dispatcher), so net/http invokes
+# --- 8. http.Handler. internal/agent/runtime.go registers the command
+# dispatcher with mux.Handle("/api/command", …), so net/http invokes
 # ServeHTTP through the interface.
 method (*Dispatcher).ServeHTTP
 
 # --- 9. io.Writer implementations wired into os/exec. Each buffer is
 # assigned to a subprocess's Stdout/Stderr, so os/exec calls Write:
-#   ShellCappedBuffer -> internal/command/shell.go   shellProc.Stdout/Stderr
-#   hookCappedBuffer  -> internal/hub/hooks.go       proc.Stdout/Stderr
-#   RingBuffer        -> internal/mcp/prewarm        cmd.Stdout/Stderr
-#   procout.Buffer    -> internal/auth (login/logout/whoami), internal/server/cli.go
-#                        cmd.Stdout and cmd.Stderr; replaced internal/server's
-#                        cappedBuffer, which this list named until the two
-#                        capped writers became one type.
-method (*ShellCappedBuffer).Write
-method (*hookCappedBuffer).Write
+#   RingBuffer     -> internal/mcp/prewarm      cmd.Stdout/Stderr
+#   procout.Buffer -> internal/auth (login/logout/whoami),
+#                     internal/command/shell.go, internal/server/cli.go
+#                     cmd.Stdout and cmd.Stderr
+# ShellCappedBuffer and hookCappedBuffer are gone rather than adjudicated:
+# procout.Buffer absorbed both hand-rolled capped writers.
 method (*RingBuffer).Write
 method (*Buffer).Write
 
@@ -143,10 +139,11 @@ method (*Server).UnmarshalJSON
 # and nothing should — calling one directly would probe a block the parser
 # never consumed.
 #
-# Both are listed. A per-DIRECTORY scan of internal/translate reports neither
-# (a directory run under-reports, as the header says), and a per-FILE scan
-# reports both; this file is the union of a per-file scan, so it carries both.
-method (*ACPKiroBlock).UnmarshalJSON
+# Only sessionInfoKiroBlock carries an entry. (*ACPKiroBlock).UnmarshalJSON is
+# declared in internal/translate/wire.go, which section 4 already silences as a
+# whole FILE, and a finding is matched against the first pattern that fits, so
+# a second entry naming the method could never be marked used and reported as
+# stale on every run.
 method (*sessionInfoKiroBlock).UnmarshalJSON
 
 # --- 11. internal/testsupport fakes. This package exists so sibling
@@ -157,8 +154,8 @@ method (*sessionInfoKiroBlock).UnmarshalJSON
 #   var _ chatStoreUnion = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
 # chatStoreUnion is the union of what the real consumers declare, since
 # vibekit.ChatStore no longer exists; each consumer names 1 to 5 of the store's 9.
-# Consumers: internal/hub (fakeChatStore = testsupport.RecordingChatStore),
-# internal/command, internal/translate and internal/hub (NewInMemoryChatStore).
+# Consumers: internal/agent (fakeChatStore = testsupport.RecordingChatStore),
+# internal/command, internal/translate and internal/agent (NewInMemoryChatStore).
 #
 # Five doubles left the package under the two-consumer rule and are NOT
 # excused here, they are gone: NopACPBridge, NopBroadcaster and
@@ -171,9 +168,9 @@ internal/testsupport/inmem_chatstore.go
 
 # --- 12. internal/testsupport shared contract suites. Each is a t.Run
 # battery invoked from another package's _test.go: internal/chat and
-# internal/hub (ChatStoreContractTest), internal/mcp (MCPConfigContractTest),
-# internal/bridge and internal/hub (ACPBridgePreStartContractTest, pre-Start
-# lifecycle).
+# internal/agent (ChatStoreContractTest), internal/mcp and internal/agent
+# (MCPConfigContractTest), internal/bridge and internal/agent
+# (ACPBridgePreStartContractTest, pre-Start lifecycle).
 #
 # ACPBridgeContractTest is gone with the NopACPBridge it was the only caller
 # of: a no-op fake, a suite, and a test running the suite against the fake
@@ -211,21 +208,7 @@ function SetKiroHomeForTest
 # directly.
 method (*PurgeScheduler).Done
 
-# --- 16. Validated construction seam for internal/mcp's own tests.
-# Production servers are decoded from JSON (UnmarshalJSON is the
-# boundary that rejects unknown transports; the REST handlers persist
-# what the client sent after Validate). The kasfile render tests build
-# their fixtures through NewServer + options because a hand-rolled
-# struct literal would skip the same Validate the production path runs,
-# letting a fixture drift into a shape production would refuse.
-function NewServer is
-function WithCommand
-function WithURL is
-function WithOAuthClientID
-function WithEnv is
-
-
-# --- 17. Reached only through errors.As, which punused cannot see.
+# --- 16. Reached only through errors.As, which punused cannot see.
 # statusError wraps a handler's error with the HTTP status the dispatcher
 # answers with. Unwrap is what lets rpcerr.Details reach the wrapped
 # error: Details does errors.As(err, &detailer) to pull ErrorData off a
