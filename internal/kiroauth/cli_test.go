@@ -181,6 +181,24 @@ func TestParseTokenEnvelope_ErrorTextIsSafeForALog(t *testing.T) {
 		}
 	})
 
+	// The marker MEANS truncation, so text that fits must not carry one. A
+	// diagnostic measuring exactly the cap fits: it is the largest text that
+	// reaches the log whole. An elision marker on it would tell whoever is
+	// reading that upstream said more than this, and there is nothing more.
+	t.Run("a kind exactly at the cap keeps every byte and no marker", func(t *testing.T) {
+		kind := strings.Repeat("k", diagCap)
+		_, err := parseTokenEnvelope([]byte(`{"kind":"` + kind + `","data":{}}`))
+		if err == nil {
+			t.Fatal("want an error, got nil")
+		}
+		if !strings.Contains(err.Error(), kind) {
+			t.Errorf("err = %q, want the whole %d-byte kind", err, diagCap)
+		}
+		if strings.Contains(err.Error(), "...") {
+			t.Errorf("err = %q, carries an elision marker for text that was not elided", err)
+		}
+	})
+
 	// The ordering guard. Sanitizing must run BEFORE the mask, not after:
 	// encoding/json reads an invalid UTF-8 byte as U+FFFD, and the sanitizer
 	// normalizes the raw byte the same way, so a mask applied first finds

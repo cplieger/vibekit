@@ -157,3 +157,33 @@ func TestPruneDebounce_DropsOnlyExpiredEntries(t *testing.T) {
 		t.Error("prune dropped an entry still inside its window, so its next send would not be suppressed")
 	}
 }
+
+// TestPruneDebounce_EngagesAtTheHighWaterMark states where the prune starts
+// working.
+//
+// The map holds one entry per distinct chat and pull request a long-lived process
+// has notified about, and the high-water mark is the whole bound on it: a prune
+// that only engages one entry PAST the mark makes the number the constant names
+// something the map is always allowed to exceed, which is not a bound anyone can
+// reason about in a process that runs for weeks.
+func TestPruneDebounce_EngagesAtTheHighWaterMark(t *testing.T) {
+	s := New(t.Context(), t.TempDir(), "mailto:test@example.com")
+	defer s.Close()
+
+	s.mu.Lock()
+	for i := range debounceHighWater {
+		s.lastPush[debounceKey(vibekit.PushKindPRStatus,
+			vibekit.PRSubject("github:github.com", "a/b", i))] = time.Now().Add(-2 * pushDebounce)
+	}
+	seeded := len(s.lastPush)
+	s.pruneDebounceLocked()
+	after := len(s.lastPush)
+	s.mu.Unlock()
+
+	if seeded != debounceHighWater {
+		t.Fatalf("seeded %d entries, want %d — the fixture is not at the mark", seeded, debounceHighWater)
+	}
+	if after != 0 {
+		t.Errorf("prune left %d of %d expired entries at the high-water mark, want 0", after, debounceHighWater)
+	}
+}

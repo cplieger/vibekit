@@ -589,6 +589,32 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 			t.Error("dropped a notification without naming the budget as the reason")
 		}
 	})
+	t.Run("a_first_attempt_delivery_is_not_reported_as_a_retry", func(t *testing.T) {
+		// The line exists so a reader can tell a delivery that needed the retry
+		// loop from an ordinary one. Emitting it for every success inverts that:
+		// the vendor's transient 429s become invisible in a log where every push
+		// claims to have retried.
+		var attempts atomic.Int32
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts.Add(1)
+			w.WriteHeader(http.StatusCreated)
+		}))
+
+		s := New(t.Context(), t.TempDir(), testSubject)
+		defer s.Close()
+		s.client = srv.Client()
+		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
+
+		capLog := capture.Default(t)
+		s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
+
+		if got := attempts.Load(); got != 1 {
+			t.Fatalf("attempts = %d, want 1: this case has to deliver first try", got)
+		}
+		if n := capLog.CountExact("push: delivered after retry"); n != 0 {
+			t.Errorf("a first-attempt delivery reported %d retry line(s), want 0", n)
+		}
+	})
 }
 
 // TestParseRetryAfter covers both legal header forms plus the values a caller

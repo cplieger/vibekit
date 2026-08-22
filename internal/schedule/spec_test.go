@@ -77,6 +77,17 @@ func TestNextRun(t *testing.T) {
 			want:  at(2026, time.August, 5, 0, 0),
 		},
 		{
+			// The same step, phased so the day's last step lands exactly on the
+			// end of the day. The walk still stops at the day, so the next fire
+			// is the next day's PHASE and not the midnight the step points at —
+			// otherwise a step-of-50 schedule would fire at :00 once a day, a
+			// minute its phase says can never be a fire time.
+			name:  "minutely step landing exactly on the end of the day keeps its phase",
+			spec:  Spec{Freq: FreqMinutely, Interval: 50, Minute: 40},
+			after: at(2026, time.August, 4, 23, 30),
+			want:  at(2026, time.August, 5, 0, 40),
+		},
+		{
 			// Crossing an hour boundary is not special, and the offset does NOT
 			// repeat hourly for a step that does not divide 60: the walk is over
 			// minutes of the DAY, so phase 20 with a step of 45 gives 00:20,
@@ -354,8 +365,16 @@ func TestSpecValidate(t *testing.T) {
 		{"hour too high", Spec{Freq: FreqDaily, Hour: 24}, false},
 		{"hour negative", Spec{Freq: FreqDaily, Hour: -1}, false},
 		{"minute too high", Spec{Freq: FreqDaily, Minute: 60}, false},
+		// Every range in the error messages is inclusive at both ends, and the
+		// far side alone does not say so: refusing midnight, :59, or Saturday
+		// would take a schedule the form offers and reject it with a message
+		// naming a range the input sits inside.
+		{"midnight, the bottom of the hour range", Spec{Freq: FreqDaily, Hour: 0, Minute: 30}, true},
+		{"the last minute of the hour", Spec{Freq: FreqDaily, Hour: 2, Minute: 59}, true},
 		{"hourly interval zero", Spec{Freq: FreqHourly, Interval: 0}, false},
 		{"hourly interval too high", Spec{Freq: FreqHourly, Interval: 25}, false},
+		{"hourly at the floor, every hour", Spec{Freq: FreqHourly, Interval: 1}, true},
+		{"hourly at the ceiling, once a day", Spec{Freq: FreqHourly, Interval: 24}, true},
 		// The floor is the point of the frequency's bounds: every minute is what
 		// a user types when they mean "often", and four mechanisms misbehave
 		// there (see minMinuteInterval).
@@ -370,6 +389,7 @@ func TestSpecValidate(t *testing.T) {
 		{"minutely offset out of range", Spec{Freq: FreqMinutely, Interval: 15, Minute: 60}, false},
 		{"weekly with no days", Spec{Freq: FreqWeekly, Hour: 9}, false},
 		{"weekday out of range", Spec{Freq: FreqWeekly, Weekdays: []int{7}, Hour: 9}, false},
+		{"Saturday, the top of the weekday range", Spec{Freq: FreqWeekly, Weekdays: []int{6}, Hour: 9}, true},
 		{"month day zero", Spec{Freq: FreqMonthly, MonthDay: 0, Hour: 9}, false},
 		{"month day too high", Spec{Freq: FreqMonthly, MonthDay: 32, Hour: 9}, false},
 	}

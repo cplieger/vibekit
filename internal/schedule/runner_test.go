@@ -1,11 +1,14 @@
 package schedule
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -240,6 +243,88 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	if got := l.launched(); got != 1 {
 		t.Errorf("a failed launch must not be retried on the next tick, got %d attempts", got)
 	}
+}
+
+// TestSweep_FiresASlotExactlyAtTheGraceEdge states the near side of the miss
+// classification.
+//
+// MissGrace is how late a slot may be and STILL fire, so a slot landing exactly
+// on it fires. The distinction is not cosmetic: the other branch does not defer
+// the run, it advances the anchor past the slot, so a schedule at the edge would
+// silently lose that occurrence rather than run it a moment late — and the edge
+// is where a container that restarted inside the grace window lands.
+func TestSweep_FiresASlotExactlyAtTheGraceEdge(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+	st, l, r := newFixture(t, due.Add(MissGrace))
+	r.sweep(t.Context())
+
+	if got := l.launched(); got != 1 {
+		t.Fatalf("a slot exactly %v late launched %d times, want 1", MissGrace, got)
+	}
+	got := st.List()[0]
+	if !got.Anchor.Equal(due) {
+		t.Errorf("anchor = %v, want the due time %v", got.Anchor, due)
+	}
+	if got.LastResult != "started" {
+		t.Errorf("LastResult = %q, want %q", got.LastResult, "started")
+	}
+
+	// One tick past the edge is the other side of the same line.
+	_, late, lateRunner := newFixture(t, due.Add(MissGrace+time.Second))
+	lateRunner.sweep(t.Context())
+	if n := late.launched(); n != 0 {
+		t.Errorf("a slot %v late launched %d times, want 0 (missed while offline)", MissGrace+time.Second, n)
+	}
+}
+
+// TestSweep_ReportsNoStoreFailureOnTheOrdinaryPaths pins the log the operator
+// reads when a sweep goes RIGHT.
+//
+// Both store writes in the sweep are best-effort and logged at Error, and neither
+// changes what the sweep returns, so the log line is the only evidence either
+// way. An Error on a write that succeeded is worse than noise here: these two
+// lines are what says a schedule's anchor did not move, which is the state that
+// makes a schedule fire twice or never again, so a reader who learns to ignore
+// them has lost the only signal that failure has.
+func TestSweep_ReportsNoStoreFailureOnTheOrdinaryPaths(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+
+	t.Run("a fire records its outcome silently", func(t *testing.T) {
+		_, l, r := newFixture(t, due.Add(30*time.Second))
+		logs := captureLogs(t)
+		r.sweep(t.Context())
+		if n := l.launched(); n != 1 {
+			t.Fatalf("expected one launch, got %d", n)
+		}
+		if got := logs.String(); strings.Contains(got, "schedule record failed") {
+			t.Errorf("logs = %q, must not report a record failure for a fire that recorded fine", got)
+		}
+	})
+
+	t.Run("a missed slot advances its anchor silently", func(t *testing.T) {
+		now := due.Add(7 * time.Hour)
+		st, _, r := newFixture(t, now)
+		logs := captureLogs(t)
+		r.sweep(t.Context())
+		if got := st.List()[0]; !got.Anchor.Equal(now) {
+			t.Fatalf("anchor = %v, want it advanced to %v", got.Anchor, now)
+		}
+		if got := logs.String(); strings.Contains(got, "schedule skip failed") {
+			t.Errorf("logs = %q, must not report a skip failure for a skip that took", got)
+		}
+	})
+}
+
+// captureLogs swaps the slog default to a buffer-backed debug handler for the
+// duration of the test and restores it on cleanup. The handler is global, so
+// this package's tests never run in parallel.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
 }
 
 // TestMissGraceExceedsTick pins the relationship the classification depends on:

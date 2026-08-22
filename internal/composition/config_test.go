@@ -4,6 +4,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -294,6 +298,202 @@ func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 		trusted := parseTrustedProxies("10.0.0.0/8")
 		if got := webhttp.ClientIP(newReq(), trusted...); got != peer {
 			t.Errorf("ClientIP untrusted peer = %q, want socket peer %q", got, peer)
+		}
+	})
+}
+
+// TestOverlayFiles pins the asymmetry between the two ways a catalog-overlay
+// path can fail to resolve.
+//
+// The default is the image's own path, absent whenever vibekit runs outside the
+// container, so warning about it would put a line in every `go run` and teach a
+// reader that this warning means nothing. An EXPLICIT path that does not resolve
+// is the opposite: nobody typed it by accident, so running overlay-less without
+// saying so leaves the operator looking at an unpatched tool catalog with nothing
+// in the log to explain it.
+func TestOverlayFiles(t *testing.T) {
+	t.Run("a resolvable explicit path is used", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "catalog-overlays.json")
+		if err := os.WriteFile(path, []byte(`[]`), 0o600); err != nil {
+			t.Fatalf("write overlay: %v", err)
+		}
+		logs := captureDefaultLogger(t)
+
+		got := overlayFiles(path)
+		if len(got) != 1 || got[0] != path {
+			t.Errorf("overlayFiles(%q) = %v, want [%s]", path, got, path)
+		}
+		if strings.Contains(logs.String(), "VIBEKIT_TOOL_CATALOG_OVERLAY") {
+			t.Errorf("logs = %q, must not warn about a path that resolved", logs.String())
+		}
+	})
+
+	t.Run("an explicit path that does not resolve is dropped and named", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "absent.json")
+		logs := captureDefaultLogger(t)
+
+		if got := overlayFiles(path); got != nil {
+			t.Errorf("overlayFiles(%q) = %v, want nil", path, got)
+		}
+		if !strings.Contains(logs.String(), "VIBEKIT_TOOL_CATALOG_OVERLAY") {
+			t.Errorf("logs = %q, want a warning naming the variable the operator set", logs.String())
+		}
+	})
+
+	t.Run("the default path is never blamed on the operator", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		overlayFiles("")
+		if strings.Contains(logs.String(), "VIBEKIT_TOOL_CATALOG_OVERLAY") {
+			t.Errorf("logs = %q, must stay silent when nobody configured a path", logs.String())
+		}
+	})
+}
+
+// TestBrowseRoots pins the lenient parser's two halves: the standard mounts
+// always survive, and only a real malformed entry is reported.
+//
+// The extras are what an operator adds, so the list has to hold more than a
+// couple of them; and the warning is the only trace a grant was dropped, so it
+// must fire when one was and stay quiet when none was — a warning on a clean
+// list is how an operator ends up hunting for a typo they did not make.
+func TestBrowseRoots(t *testing.T) {
+	t.Run("several valid extras all survive alongside the standard mounts", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+
+		got := browseRoots("/work", "/config", "/srv/a:/srv/b:/srv/c")
+		want := []string{"/work", "/config", "/srv/a", "/srv/b", "/srv/c"}
+		if !slices.Equal(got, want) {
+			t.Errorf("browseRoots() = %v, want %v", got, want)
+		}
+		if strings.Contains(logs.String(), "VIBEKIT_BROWSE_ROOTS") {
+			t.Errorf("logs = %q, must stay silent for a list with nothing malformed in it", logs.String())
+		}
+	})
+
+	t.Run("a malformed entry is dropped, named, and does not take the mounts down", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+
+		got := browseRoots("/work", "/config", "relative/path:/srv/ok")
+		want := []string{"/work", "/config", "/srv/ok"}
+		if !slices.Equal(got, want) {
+			t.Errorf("browseRoots() = %v, want %v", got, want)
+		}
+		if !strings.Contains(logs.String(), "VIBEKIT_BROWSE_ROOTS") {
+			t.Errorf("logs = %q, want a warning naming the dropped entry", logs.String())
+		}
+	})
+}
+
+// TestParseTrustedProxies_ReportsOnlyRealRejections pins the report half of the
+// lenient parser the value tests above cover.
+//
+// This list decides whether a forwarded header is believed over the socket peer,
+// so a dropped entry silently downgrades a proxy to untrusted and every request
+// through it gets logged with the proxy's own address. The warning is the only
+// place that shows up, and a warning on a clean list would bury it.
+func TestParseTrustedProxies_ReportsOnlyRealRejections(t *testing.T) {
+	t.Run("a well-formed list is parsed silently", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		if got := parseTrustedProxies("10.0.0.0/8, 192.0.2.10"); len(got) != 2 {
+			t.Errorf("parseTrustedProxies() = %v, want 2 networks", got)
+		}
+		if strings.Contains(logs.String(), "TRUSTED_PROXIES") {
+			t.Errorf("logs = %q, must stay silent for a list with nothing malformed in it", logs.String())
+		}
+	})
+
+	t.Run("a malformed entry is named and the valid subset survives", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		if got := parseTrustedProxies("10.0.0.0/8, not-an-ip"); len(got) != 1 {
+			t.Errorf("parseTrustedProxies() = %v, want the one valid network", got)
+		}
+		if !strings.Contains(logs.String(), "TRUSTED_PROXIES") {
+			t.Errorf("logs = %q, want a warning naming the dropped entry", logs.String())
+		}
+	})
+}
+
+// TestParseTrustedInstallUIDs pins the one report vibekit emits about a list
+// whose entries are assertions of privilege.
+//
+// Each uid claims an identity is already as privileged as this process, so an
+// entry silently dropped means custody stays enforced against an account the
+// operator meant to exempt — and an entry silently KEPT that they mistyped would
+// exempt one they did not. The count is reported and the values are not, because
+// a mis-wired compose can put a secret on any key.
+func TestParseTrustedInstallUIDs(t *testing.T) {
+	t.Run("a well-formed list is parsed silently", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		if got := parseTrustedInstallUIDs("1000,1001"); !slices.Equal(got, []int{1000, 1001}) {
+			t.Errorf("parseTrustedInstallUIDs() = %v, want [1000 1001]", got)
+		}
+		if strings.Contains(logs.String(), "TRUSTED_INSTALL_UIDS") {
+			t.Errorf("logs = %q, must stay silent for a list with nothing unusable in it", logs.String())
+		}
+	})
+
+	t.Run("an unusable entry is reported by count, never by value", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		if got := parseTrustedInstallUIDs("1000,hunter2"); !slices.Equal(got, []int{1000}) {
+			t.Errorf("parseTrustedInstallUIDs() = %v, want [1000]", got)
+		}
+		out := logs.String()
+		if !strings.Contains(out, "TRUSTED_INSTALL_UIDS") {
+			t.Errorf("logs = %q, want a warning naming the variable", out)
+		}
+		if strings.Contains(out, "hunter2") {
+			t.Errorf("logs = %q, must not echo the refused text: any key can carry a secret", out)
+		}
+	})
+}
+
+// TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk pins both warnings
+// this parser owns, and their silence.
+//
+// The gate is the only thing that breaks the DNS-rebinding chain in front of an
+// otherwise unauthenticated HTTP surface with a PTY on it, and both of its
+// failure shapes are silent on the wire: a dropped entry just never matches, and
+// an active-but-empty policy 403s every browser request with the loopback
+// healthcheck still green. So each has a warning, and neither may fire for a list
+// that works — one spurious "rejecting every non-loopback request" is enough for
+// an operator to widen the allowlist to fix a problem they do not have.
+func TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk(t *testing.T) {
+	const failClosed = "rejecting every non-loopback request"
+
+	t.Run("a usable list is parsed silently", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		policy := parseAllowedHosts("localhost, vibekit.example.com")
+		if !policy.Active() || policy.Size() != 2 {
+			t.Fatalf("policy active = %v, size = %d, want active with 2 entries", policy.Active(), policy.Size())
+		}
+		if out := logs.String(); strings.Contains(out, "ALLOWED_HOSTS") {
+			t.Errorf("logs = %q, must stay silent for a list that works", out)
+		}
+	})
+
+	t.Run("a dropped entry is named while the valid subset still serves", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		policy := parseAllowedHosts("http://vibekit.example.com, localhost")
+		if !policy.Active() || policy.Size() != 1 {
+			t.Fatalf("policy active = %v, size = %d, want active with 1 entry", policy.Active(), policy.Size())
+		}
+		out := logs.String()
+		if !strings.Contains(out, "ALLOWED_HOSTS") {
+			t.Errorf("logs = %q, want a warning naming the dropped entry", out)
+		}
+		if strings.Contains(out, failClosed) {
+			t.Errorf("logs = %q, must not claim a fail-closed policy while an entry still matches", out)
+		}
+	})
+
+	t.Run("an all-invalid list says every request is now refused", func(t *testing.T) {
+		logs := captureDefaultLogger(t)
+		policy := parseAllowedHosts(":8080")
+		if !policy.Active() || policy.Size() != 0 {
+			t.Fatalf("policy active = %v, size = %d, want active and empty", policy.Active(), policy.Size())
+		}
+		if out := logs.String(); !strings.Contains(out, failClosed) {
+			t.Errorf("logs = %q, want the fail-closed warning: every browser request now 403s", out)
 		}
 	})
 }
