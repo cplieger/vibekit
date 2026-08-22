@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -22,6 +24,24 @@ import (
 func leased(t *testing.T, h *Runs, workflowID string) {
 	t.Helper()
 	h.grantLease(t.Context(), workflowID, "publish", manualLaunch())
+}
+
+// undurableLeaseStore returns a lease store whose every write fails, with no seam
+// and no injection: the directory it would write into is a regular FILE, so the
+// atomic write cannot open the parent. ENOTDIR at any uid, which a mode-based
+// fixture is not — this container runs as root, where a 0500 directory still
+// accepts writes and the test would gate nothing where CI runs.
+//
+// The in-memory half of the store is untouched, which is the split every caller
+// of it here is about.
+func undurableLeaseStore(t *testing.T) *runlease.Store {
+	t.Helper()
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
+		t.Fatalf("stage the unwritable store: %v", err)
+	}
+	st, _ := runlease.NewStore(notADir) // the error is diagnostic; the store is usable
+	return st
 }
 
 // TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline is the runtime's HALF of
@@ -203,20 +223,13 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 // enough. grantLease already resolves the same conflict the same way: lose
 // durability, keep the envelope.
 func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
+	logs := captureLogs(t)
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	// A store whose every write fails, with no seam and no injection: its directory
-	// is a regular FILE, so the atomic write cannot even open the parent. The
-	// in-memory half is untouched, which is exactly the split under test.
-	notADir := filepath.Join(t.TempDir(), "not-a-dir")
-	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
-		t.Fatalf("stage the unwritable store: %v", err)
-	}
-	st, _ := runlease.NewStore(notADir) // the error is diagnostic; the store is usable
-	h.runs.leases = st
+	h.runs.leases = undurableLeaseStore(t)
 
 	h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
 	if _, held := h.runs.lease(id); !held {
@@ -249,6 +262,114 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	// already bounded is not re-stamped.
 	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("recorded %q, want %q", got, runEndOverran)
+	}
+	// The degradation is REPORTED, and that is the whole compensation for it: the
+	// run is bounded by this process alone, so a restart silently loses its clock
+	// unless the row exists to say so.
+	const wantLine = "a run's deadline is not durable, so it will not survive a restart; this process still bounds the run"
+	if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+		t.Errorf("a run whose deadline could not be persisted was bounded silently; want a "+
+			"line reading %q. Got: %s", wantLine, out)
+	}
+	if out := logs.String(); !strings.Contains(out, `"workflow_id":"`+id+`"`) {
+		t.Errorf("the durability line does not name the run it is about: %s", out)
+	}
+}
+
+// TestDisarmRunDeadline_ParksInMemoryWhenTheParkCannotBePersisted is the disarm's
+// half of the same durability split the arm has.
+//
+// A pause parks the deadline so a run deliberately held for a week is not
+// cancelled for having been held. SetDeadline zeroes the in-memory deadline
+// whenever the lease exists and reports only the persist, so a failed persist must
+// not stop the park: refusing to park would leave the lease reading BOUNDED, which
+// the arm's idempotence check then makes permanent.
+func TestDisarmRunDeadline_ParksInMemoryWhenTheParkCannotBePersisted(t *testing.T) {
+	logs := captureLogs(t)
+	h := &Runs{leases: undurableLeaseStore(t)}
+	const id = "wf_1"
+	leased(t, h, id)
+	h.armDeadline(t.Context(), id)
+
+	if !h.disarmDeadline(t.Context(), id) {
+		t.Fatal("the disarm reported holding no deadline, so the run stays bounded with no timer")
+	}
+	if l, _ := h.lease(id); l.Bounded() {
+		t.Errorf("the parked lease still carries deadline %v", l.Deadline)
+	}
+	const wantLine = "could not park a run's deadline"
+	if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+		t.Errorf("a park that lost its durability said nothing; want a line reading %q. Got: %s",
+			wantLine, out)
+	}
+}
+
+// TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite pins the one thing the
+// outcome write can do when it fails.
+//
+// The row is how a reader finds out a schedule stopped producing, and the run is
+// cancelled whether or not the row lands — so a failed write is exactly the
+// silence the outcome exists to remove, and it has to be said out loud. A schedule
+// DELETED while its run was executing is the reachable case: the id on the lease
+// no longer resolves.
+func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+
+	// An EMPTY schedule store: the lease names a schedule that is no longer there.
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	h.runs.schedules = st
+
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-gone", time.Now().Add(30*time.Second)))
+	h.runs.armDeadline(t.Context(), id)
+	l, _ := h.runs.lease(id)
+
+	h.runs.cancelExpired(id, l.Deadline)
+
+	if got := h.runs.endReason(id); got != runEndOverran {
+		t.Errorf("endReason = %q, want %q; the run is cancelled whatever the row does", got, runEndOverran)
+	}
+	const wantLine = "could not record the schedule's outcome"
+	if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+		t.Errorf("the schedule row could not be written and nothing said so; want a line reading "+
+			"%q. Got: %s", wantLine, out)
+	}
+	if out := logs.String(); !strings.Contains(out, `"schedule_id":"sched-gone"`) {
+		t.Errorf("the failed-outcome line does not name the schedule it is about: %s", out)
+	}
+}
+
+// TestStepTurnCap_ReportsACancelItCouldNotIssue is the bound's own failure path:
+// the run breached its cap whether or not the cancel landed, and a row left
+// reading `running` is what these bounds exist to end.
+//
+// Two halves, and the second is the recovery: the claim is handed BACK, so the
+// user's Cancel button still works on a run vibekit failed to stop.
+func TestStepTurnCap_ReportsACancelItCouldNotIssue(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("bridge gone")}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+	h.runs.armDeadline(t.Context(), id)
+
+	h.runs.StepTurnCapExceeded(id, "node-3", translate.StepTurnCap+1)
+
+	const wantLine = "could not cancel a run that breached its bound"
+	if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+		t.Errorf("a bound whose cancel failed reported nothing; want a line reading %q. Got: %s",
+			wantLine, out)
+	}
+	if !h.runs.claimTermination(id) {
+		t.Error("the run stayed claimed after its cancel failed, so the user's own Cancel " +
+			"silently does nothing on a run that is still executing")
 	}
 }
 
