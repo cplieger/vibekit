@@ -6,12 +6,13 @@
 # either direction: send:true with an implementation, or send:false with a
 # because saying why not.
 #
-# Read from kiro-cli 2.19.0 by TestCapabilityCensus.
+# Read from kiro-cli 2.19.1 by TestCapabilityCensus.
 # Regenerate: go test ./internal/kascap/ -run TestCapabilityCensus -update
 capability c2sViews
 capability findFiles
 capability helpDocs
 capability specLinks
+capability streamingShellContent
 capability telemetry
 capability telemetryEnabled
 capability textSearch
@@ -20,5 +21,7 @@ setting fta
 setting ftaVibe
 setting infraSafetyMonitor
 setting inlineAgents
+setting memoryEnable
 setting steeringSupervisor
 setting toolSearch
+setting userMemoryOptIn
