@@ -1881,30 +1881,37 @@ func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts) string
 	return ""
 }
 
-// metaKiroSettings digs _meta.kiro.settings out of a captured request by
-// walking the decoded JSON one level at a time.
+// digObject walks a captured request down a chain of nested objects, failing at
+// the first level that is absent or not an object.
 //
 // A walk rather than a substring match, because the failure this guards is a key
 // nested at the wrong depth: `settings` beside `kiro` instead of inside it, or
 // `_meta.settings` with no `kiro` at all. Both would satisfy a
 // strings.Contains(`"workflows":{"enabled":true}`) and both resolve to nothing on
-// the KAS side. Each missing level is named so a failure says which one broke.
-func metaKiroSettings(t *testing.T, line string) map[string]any {
+// the KAS side. Each missing level is named, and `what` names the subject, so a
+// failure says which door's block broke rather than only which key.
+func digObject(t *testing.T, what, line string, levels ...string) map[string]any {
 	t.Helper()
 	var req map[string]any
 	if err := json.Unmarshal([]byte(line), &req); err != nil {
 		t.Fatalf("captured request is not JSON: %v\n%s", err, line)
 	}
 	node := req
-	for _, level := range []string{"params", "_meta", "kiro", "settings"} {
+	for _, level := range levels {
 		next, ok := node[level].(map[string]any)
 		if !ok {
-			t.Fatalf("captured request has no %s object (%T); the session door's block is missing or misnested:\n%s",
-				level, node[level], line)
+			t.Fatalf("captured request has no %s object (%T); %s is missing or misnested:\n%s",
+				level, node[level], what, line)
 		}
 		node = next
 	}
 	return node
+}
+
+// metaKiroSettings digs _meta.kiro.settings out of a captured SESSION request.
+func metaKiroSettings(t *testing.T, line string) map[string]any {
+	t.Helper()
+	return digObject(t, "the session door's block", line, "params", "_meta", "kiro", "settings")
 }
 
 // TestSessionNewCarriesWorkflowsAtSessionDoor pins that session/new carries the
@@ -1958,16 +1965,29 @@ lose a capability a fresh one has. Captured:
 	}
 }
 
-// TestSessionDoorOmitsMetaWhenDisabled pins the other half of the wiring: the
-// _meta key is absent entirely when the session door's projection is empty.
+// TestSessionDoorOmitsSettingsWhenDisabled pins two properties of the session
+// door on the REAL wire: the operator off switch reaches these bytes rather than
+// only the projection its own package tests, and the settings container is
+// DERIVED from the rows rather than always emitted — with workflows off there is
+// no session-door settings row left, so the container must be absent, not `{}`.
 //
-// Driven through the operator off switch, which is the only way to empty the
-// projection at runtime — and that makes this test do double duty, since it also
-// proves the env override reaches the real wire rather than only the projection
-// its own package tests. An empty `_meta.kiro` on a call that needs none is bytes
-// on every session start, and worse, it would read to the next person as though
-// the door carried something.
-func TestSessionDoorOmitsMetaWhenDisabled(t *testing.T) {
+// This test used to assert something stronger and can no longer reach it. Its
+// subject was the `len(meta) > 0` guard in withSessionMeta — an empty projection
+// must add no `_meta` at all — and the env switch was then the only way to empty
+// the projection, because workflows was the only session-door row. policyPreset
+// is now also on that door and is unconditional (no env column, deliberately:
+// see its because in kascap's table — withholding it silently costs a
+// custom-agent chat every search result), so the projection can no longer be
+// emptied at runtime and that guard has no runtime path to it.
+//
+// The guard STAYS, and the cost of not testing it is recorded here rather than
+// papered over: it is now reachable only by a table with no session-door rows,
+// which is a state the table cannot be put in from a test without a seam this
+// does not earn. What survives is the half that still has a wire consequence, and
+// it is the half that would actually regress — a settings container emitted empty
+// would be bytes on every session start and would read to the next person as
+// though the door carried something.
+func TestSessionDoorOmitsSettingsWhenDisabled(t *testing.T) {
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
 	if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
@@ -1992,8 +2012,29 @@ func TestSessionDoorOmitsMetaWhenDisabled(t *testing.T) {
 		if !strings.Contains(line, `"method":"session/new"`) {
 			continue
 		}
-		if strings.Contains(line, `"_meta"`) {
-			t.Errorf("session/new carried an _meta key with the session door disabled:\n%s", line)
+		// The env override reached the wire: no workflows key anywhere in the
+		// request. Asserted on the raw line rather than the parsed settings
+		// object, because the object is what must be ABSENT.
+		if strings.Contains(line, `"workflows"`) {
+			t.Errorf("session/new carried a workflows key with the override set to false:\n%s", line)
+		}
+		// The container is derived, so with its last member gone it must not
+		// appear at all.
+		if strings.Contains(line, `"settings"`) {
+			t.Errorf(`session/new carried an empty settings container with its only
+session-door member disabled; buildDoor adds the key only when a row landed in
+it, so this is bytes on every session start that read as a door carrying
+something:
+%s`, line)
+		}
+		// The unconditional row still rides, which is what makes the two
+		// assertions above a statement about the OVERRIDE rather than about the
+		// door being empty.
+		if !strings.Contains(line, `"policyPreset"`) {
+			t.Errorf(`session/new lost policyPreset when the workflows override was set to
+false. The override is per-row; if it can empty the whole door, a custom-agent
+chat silently loses every search result on a deployment that set it:
+%s`, line)
 		}
 		return
 	}
@@ -2366,12 +2407,12 @@ const initializeGoldenPath = "testdata/initialize.golden"
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
 // initGateCases is the COMPLETE matrix of runtime gates on the _meta.kiro
-// block: StartOpts.SecretStorage decides secretStorage's VALUE (the key is
-// present either way) and StartOpts.EnableHooks decides whether the hooks key
-// is present AT ALL. Those are two different mechanisms, which is why both
-// need a row rather than one shared "capabilities on/off" case. Nothing else
-// in the initialize payload varies at runtime, so these four rows are
-// exhaustive.
+// block, and there are two: StartOpts.SecretStorage decides secretStorage's
+// VALUE (the key is present either way) and StartOpts.EnableHooks decides
+// whether the hooks key is present AT ALL. Two different mechanisms, which is
+// why each needs its own axis rather than one shared "capabilities on/off"
+// case. Nothing else in the initialize payload varies at runtime, so these four
+// rows are exhaustive.
 //
 // The slice order IS the golden's line order. Reordering it rewrites the
 // fixture without changing the wire, which would destroy the fixture's value.

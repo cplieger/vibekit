@@ -12,7 +12,6 @@ capability c2sViews
 capability findFiles
 capability helpDocs
 capability specLinks
-capability streamingShellContent
 capability telemetry
 capability telemetryEnabled
 capability textSearch
@@ -21,7 +20,5 @@ setting fta
 setting ftaVibe
 setting infraSafetyMonitor
 setting inlineAgents
-setting memoryEnable
 setting steeringSupervisor
 setting toolSearch
-setting userMemoryOptIn

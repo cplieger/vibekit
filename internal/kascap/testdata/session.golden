@@ -1,4 +1,4 @@
-{"settings":{"workflows":{"enabled":true}}}
-{"settings":{"workflows":{"enabled":true}}}
-{"settings":{"workflows":{"enabled":true}}}
-{"settings":{"workflows":{"enabled":true}}}
+{"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}
+{"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}
+{"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}
+{"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}
