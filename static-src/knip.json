@@ -21,7 +21,6 @@
     "removeChat",
     "removePendingPermission",
     "setActive",
-    "setAvailableCommands",
     "setCurrentMode",
     "setThinking",
     "setWorkingLabel",

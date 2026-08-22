@@ -43,13 +43,11 @@ constant StopReasonRefusal
 #   MeteringItem.UnitSingular -> reqStr($.metering_item)
 #   MeteringItem.UnitPlural   -> reqStr($.metering_item)
 #   MeteringItem.Value        -> types.gen.ts MeteringItem.value
-#   CommandsUpdatedPayload.Prompts -> types.gen.ts CommandsUpdatedPayload.prompts
 field Priority is
 field MeteringItems is
 field UnitSingular is
 field UnitPlural is
 field Value is
-field Prompts is
 
 # Whole-file entries: every exported struct in these two files is a
 # wiregen-registered wire type (ElicitationPropertySchema,

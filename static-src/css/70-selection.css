@@ -37,8 +37,7 @@
 .pill-model-item,
 .pill-role-item,
 .popup-item,
-.git-branch-popover-row,
-.commands-popover-row {
+.git-branch-popover-row {
   border: 1px solid transparent;
 }
 
@@ -78,7 +77,6 @@
 .repo-picker-chip-active,
 .repo-picker-row-selected,
 .git-branch-popover-row.current,
-.commands-popover-row.selected,
 .sched-day.on,
 .recipe-sched-btn.on,
 .pill[aria-pressed="true"],
@@ -115,7 +113,6 @@
   .repo-picker-chip-active:hover,
   .repo-picker-row-selected:hover,
   .git-branch-popover-row.current:hover,
-  .commands-popover-row.selected:hover,
   .sched-day.on:hover,
   .recipe-sched-btn.on:hover,
   .pill[aria-pressed="true"]:hover,
@@ -154,7 +151,6 @@
 .repo-picker-chip-active:active,
 .repo-picker-row-selected:active,
 .git-branch-popover-row.current:active,
-.commands-popover-row.selected:active,
 .sched-day.on:active,
 .recipe-sched-btn.on:active,
 .pill[aria-pressed="true"]:active,
@@ -174,9 +170,9 @@
 
    `color` on the rule above reaches the descendants that INHERIT it, and a
    row's quiet metadata does not: `.pill-model-meta`, `.pill-role-scope`,
-   `.popup-meta`, `.picker-meta`, `.fb-meta`, `.repo-picker-row-meta` and
-   `.commands-popover-desc` each declare their own `--c-text-tertiary` or
-   `--c-text-secondary`, and an explicit declaration beats an inherited value
+   `.popup-meta`, `.picker-meta`, `.fb-meta` and `.repo-picker-row-meta` each
+   declare their own `--c-text-tertiary` or `--c-text-secondary`, and an
+   explicit declaration beats an inherited value
    however specific the ancestor is. So the consolidation coloured the row and
    left its metadata behind, at 2.464:1 dark / 3.081:1 light on the selected
    fill — a WCAG 1.4.3 failure in the rows the consolidation exists to make
@@ -207,16 +203,8 @@
 .fb-row.fb-row-selected .fb-icon,
 .fb-row.fb-row-selected .fb-meta,
 .repo-picker-row-selected .repo-picker-row-meta,
-.repo-picker-row-selected .repo-picker-row-age,
-.commands-popover-row.selected .commands-popover-desc {
+.repo-picker-row-selected .repo-picker-row-age {
   color: var(--c-selected-muted-fg);
-}
-
-/* The command name is the coloured half of its row, so it keeps a hue rather
-   than folding into the muted ink — but not the ACCENT, which on an accent-
-   derived fill is nearly the fill's own colour (3.797:1). */
-.commands-popover-row.selected .commands-popover-name {
-  color: var(--c-selected-accent-fg);
 }
 
 /* Status hues a selected row can contain. The file browser's git letter takes
