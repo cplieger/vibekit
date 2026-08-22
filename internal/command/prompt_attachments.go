@@ -213,7 +213,7 @@ func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error
 // error, or oversize) it returns a descriptive text block instead so the
 // agent is never left silently dropping the attachment.
 func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
-	abs, data, fallback := readForInline(att, displayName, resolve, budget)
+	abs, data, fallback := readForInline(att, displayName, mime, resolve, budget)
 	if fallback != nil {
 		return fallback, 0
 	}
@@ -237,7 +237,7 @@ func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resol
 // toDataUrl returns a present uri INSTEAD of building the base64 data URL, so
 // including one would replace the bytes with a path the model cannot fetch.
 func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
-	_, data, fallback := readForInline(att, displayName, resolve, budget)
+	_, data, fallback := readForInline(att, displayName, mime, resolve, budget)
 	if fallback != nil {
 		return fallback, 0
 	}
@@ -263,12 +263,26 @@ func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve 
 // direction: the agent still learns the file exists and can open it with its
 // file tools, which is strictly better than a session wedged by history it
 // cannot drop.
+//
+// The note on that path reference is branched by cause AND class, because
+// "read it with your file tools" is not followable everywhere: an image the
+// per-file cap refused is over KAS's image-read limit too (they are the same
+// number), and a binary document needs the caveat the unsupportedDocExts
+// branch already carries. mime is what decides both, taken from the caller
+// rather than re-derived, so there is one classification of an extension in
+// this file.
 func readForInline(
 	att vibekit.Attachment,
-	displayName string,
+	displayName, mime string,
 	resolve func(string) (string, error),
 	budget int,
 ) (abs string, data []byte, fallback map[string]any) {
+	isImage := strings.HasPrefix(mime, "image/")
+	// Not every inlined document is binary: text/csv is the one member of
+	// documentExts whose bytes a file tool reads as text, so the caveat is keyed
+	// on the MIME rather than applied to the whole document path.
+	isBinaryDoc := !isImage && !strings.HasPrefix(mime, "text/")
+
 	abs, err := resolve(att.Path)
 	if err != nil {
 		slog.Warn("attachment: path escapes workspace",
@@ -287,6 +301,14 @@ func readForInline(
 		// actionable — the agent cannot inline the file, so opening it is the only
 		// way it sees the contents — and a bare basename is not something a file
 		// tool can open. The budget branch below has always had this right.
+		if isImage {
+			// MaxDocumentBytes IS KAS's MAX_IMAGE_SIZE, so the one tool that could
+			// look at the picture refuses it at the same threshold this gate just
+			// did. Telling the agent to read it is advice it cannot follow; the
+			// only remedy left is a smaller file.
+			return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+				" (too large to inline, and the image tool refuses it at this size too — attach a smaller or resized image)")
+		}
 		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
 			" (too large to inline — read it with your file tools)")
 	}
@@ -297,6 +319,10 @@ func readForInline(
 	if base64.StdEncoding.EncodedLen(int(info.Size())) > budget {
 		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
 			"path", displayName, "size", info.Size(), "remaining_encoded", budget)
+		if isBinaryDoc {
+			return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+				" (not inlined: this turn's attachment budget is spent — read it with your file tools; this format may not be readable as text)")
+		}
 		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
 			" (not inlined: this turn's attachment budget is spent — read it with your file tools)")
 	}
@@ -317,6 +343,10 @@ func readForInline(
 	if encoded := base64.StdEncoding.EncodedLen(len(data)); encoded > MaxInlineEncodedBytes {
 		slog.Warn("attachment: encoded payload over cap, sending a path reference",
 			"path", displayName, "size", len(data), "encoded", encoded, "cap", MaxInlineEncodedBytes)
+		if isBinaryDoc {
+			return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+				" (too large to inline — read it with your file tools; this format may not be readable as text)")
+		}
 		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
 			" (too large to inline — read it with your file tools)")
 	}
