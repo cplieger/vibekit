@@ -146,3 +146,53 @@ func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
 		t.Fatalf("a fresh runtime's context is already done (%v); the refusal tests would be vacuous", err)
 	}
 }
+
+// TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver is the failure mode the
+// refusal was added to prevent, arriving anyway.
+//
+// The refusal exists because an unanswered A→C request wedges the turn forever —
+// so a refusal that could not be WRITTEN leaves exactly that wedge, with the one
+// difference that vibekit knows about it. The line is the only diagnosis available
+// for a chat stuck on a spinner, which also means a guard flipped here prints it
+// after every successful refusal and makes the log useless for finding the real one.
+func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
+	const wantLine = "chat bridge: refusal could not be delivered; the turn may be wedged"
+
+	t.Run("a refusal that went nowhere is reported", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, br := hubForFSTest(t, t.TempDir())
+		br.respMu.Lock()
+		br.respondErr = errors.New("bridge gone")
+		br.respMu.Unlock()
+		id := int64(4242)
+
+		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
+
+		select {
+		case <-br.done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("the refusal was never attempted")
+		}
+		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a refusal that could not be written said nothing, so a wedged turn has no "+
+				"diagnosis; want a line reading %q. Got: %s", wantLine, out)
+		}
+	})
+
+	t.Run("a delivered refusal is quiet about it", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, br := hubForFSTest(t, t.TempDir())
+		id := int64(4242)
+
+		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
+
+		select {
+		case <-br.done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("the refusal was never attempted")
+		}
+		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a refusal that landed was reported as undelivered: %s", out)
+		}
+	})
+}

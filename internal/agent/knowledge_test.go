@@ -226,3 +226,31 @@ func TestHandleKnowledgeRemove_NotFound(t *testing.T) {
 		t.Fatalf("code = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestCleanKnowledgeMsg covers what a knowledge failure tells the user, which is
+// KAS's own message whenever there is one.
+//
+// The fallback is for the case KAS reports failure with nothing in `message`: an
+// empty HTTP error body renders as a dialog with no text, so the user sees that the
+// operation failed and cannot tell what to change. Substituting the sentinel for a
+// message that DOES exist is the same loss — every distinct reason ("path does not
+// exist", "already indexed") collapses into one generic line.
+func TestCleanKnowledgeMsg(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "an empty message falls back", in: "", want: "knowledge operation failed"},
+		{name: "whitespace only falls back", in: "  \n\t ", want: "knowledge operation failed"},
+		{name: "KAS's own message survives", in: "path does not exist", want: "path does not exist"},
+		{name: "and is trimmed", in: "  already indexed\n", want: "already indexed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := cleanKnowledgeMsg(c.in); got != c.want {
+				t.Errorf("cleanKnowledgeMsg(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

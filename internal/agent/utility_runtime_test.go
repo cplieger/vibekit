@@ -849,3 +849,53 @@ func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T
 		t.Error("session.started = false after a sweep of a recently-active session, want true")
 	}
 }
+
+// TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore is the
+// utility session's half of the capability the chat spawn already pins.
+//
+// It is a separate spawn with its own StartOpts, so the two can disagree — and this
+// is the bridge MCP's OAuth actually runs on, which makes it the half that decides
+// whether a credential survives. KAS builds its AcpSecretStorage only for a client
+// that declared the capability and then asks that client to persist every
+// credential: declaring it without a store drops each one silently and re-runs the
+// OAuth dance on the next spawn, while withholding it where a store exists is the
+// same regression reached from the other side. The store is opened best-effort from
+// the config dir, so this is a runtime question rather than a build-time constant.
+func TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
+	startedUtilityBridge := func(t *testing.T, opts ...Option) *fakeBridge {
+		t.Helper()
+		cs := newFakeChatStore()
+		br := newFakeBridge()
+		h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
+		cs.Bus = h
+		h.mcpRegistry.SignalReady()
+		br.callResults = map[string]json.RawMessage{
+			methodKiroGetUsage: json.RawMessage(`{"success":true,"message":"ok"}`),
+		}
+		// Any utility call spins the session up; usage is the cheapest.
+		if _, err := h.AccountUsage(t.Context()); err != nil {
+			t.Fatalf("AccountUsage: %v", err)
+		}
+		if br.lastStartOpts() == nil {
+			t.Fatal("the utility bridge never started, so there is nothing to assert on")
+		}
+		return br
+	}
+
+	t.Run("a runtime with a credential store declares the capability", func(t *testing.T) {
+		br := startedUtilityBridge(t, WithConfigDir(t.TempDir()))
+		if !br.lastStartOpts().SecretStorage {
+			t.Error("the utility bridge did not declare secretStorage although this process holds " +
+				"a store, so KAS never asks it to persist an MCP credential and every OAuth " +
+				"registration is redone on the next spawn")
+		}
+	})
+
+	t.Run("a runtime without one declares it off", func(t *testing.T) {
+		br := startedUtilityBridge(t)
+		if br.lastStartOpts().SecretStorage {
+			t.Error("the utility bridge declared secretStorage with no store behind it, so KAS " +
+				"hands it credentials that go nowhere")
+		}
+	})
+}

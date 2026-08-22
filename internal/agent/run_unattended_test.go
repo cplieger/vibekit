@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/runlease"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestUnattendedBudget_MatchesTheDisclaimer pins a cross-language constant.
@@ -101,5 +103,38 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	}
 	if !after.IsScheduled("wf_1") {
 		t.Error("the origin did not survive")
+	}
+}
+
+// TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins the third clause of the
+// floor's guard, which is the one protecting the process rather than the policy.
+//
+// The floor answers a scheduled run's permission ask after the budget by
+// REQUEST ID, so an ask that carries none cannot be answered at all — there is
+// nothing to route a reply to. Arming for it would dereference an id that is not
+// there, taking down the whole runtime over one malformed frame from KAS. The
+// ordinary handler still runs either way: dropping the frame is the permission
+// path's decision, not the floor's.
+func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
+	rs := &Runs{}
+	rs.grantLease(t.Context(), "wf_1", "nightly",
+		scheduledLaunch("sched-1", time.Now().Add(30*time.Second)))
+	if l, held := rs.lease("wf_1"); !held || !l.Unattended {
+		t.Fatal("the fixture did not produce the unattended lease the floor reaches through")
+	}
+
+	inner := 0
+	wrapped := rs.permissionWithUnattendedFloor(
+		func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) { inner++ })
+
+	// A permission frame with no id: nothing can answer it, and nothing may try.
+	wrapped(t.Context(), runChatID("wf_1"), &vibekit.RPCResponse{
+		Method: vibekit.MethodRequestPermission,
+		ID:     nil,
+	})
+
+	if inner != 1 {
+		t.Errorf("the ordinary permission handler ran %d times, want 1: the wrapper swallowed the "+
+			"frame instead of passing it on", inner)
 	}
 }
