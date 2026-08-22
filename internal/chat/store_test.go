@@ -1735,3 +1735,102 @@ func TestParseLimitParam_HonoursTheInclusiveRange(t *testing.T) {
 		})
 	}
 }
+
+// primeCapExactChat stages a chat whose rendered transcript totals EXACTLY the
+// priming cap: 64 user messages that each render to 1024 bytes ("User: " + 1017
+// + "\n"). At that size the omission notice's reserved bytes are the only thing
+// deciding whether the oldest message fits, which is what makes the reservation
+// observable at all.
+func primeCapExactChat(t *testing.T) (*Store, vibekit.ChatID) {
+	t.Helper()
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	chatID := vibekit.ChatID("prime-exact")
+	if err := s.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		for i := range 64 {
+			c.Messages = append(c.Messages, vibekit.Message{
+				ID:      fmt.Sprintf("m%02d", i),
+				Role:    vibekit.RoleUser,
+				Content: fmt.Sprintf("MARK%02d ", i) + strings.Repeat("x", 1010),
+				Ts:      int64(i + 1),
+			})
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+	return s, chatID
+}
+
+// The omission notice is charged against the budget BEFORE the window is
+// selected, so a transcript that would exactly fill the cap loses its oldest
+// message to make room for the notice. Reserving nothing lets the notice push an
+// already-admitted message past the cap, which is how a prime ends up one
+// truncated message longer than the budget it claims to respect.
+func TestBuildHistory_ReservesTheNoticeBeforeSelecting(t *testing.T) {
+	s, chatID := primeCapExactChat(t)
+
+	h := s.BuildHistory(t.Context(), chatID)
+
+	if len(h) > primeHistoryCap {
+		t.Errorf("history is %d bytes, over the %d cap", len(h), primeHistoryCap)
+	}
+	if want := "[1 earlier message(s) omitted to fit the priming budget]"; !strings.Contains(h, want) {
+		t.Errorf("history does not carry %q; the notice's own bytes were not reserved", want)
+	}
+	if strings.Contains(h, "MARK00") {
+		t.Error("the oldest message survived; the notice was not charged against the budget")
+	}
+	if !strings.Contains(h, "MARK63") {
+		t.Error("the newest message was dropped; a prime without the last turn cannot resume")
+	}
+}
+
+// The trim line reports how many messages the model KEPT, and an operator reads
+// that number against the omitted count to see the whole transcript accounted
+// for. A count larger than the message total is not a plausible reading, so it
+// is the one error nobody would question.
+func TestBuildHistory_TrimLineReportsWhatWasKept(t *testing.T) {
+	logs := captureStoreSlog(t)
+	s, chatID := primeCapExactChat(t)
+
+	s.BuildHistory(t.Context(), chatID)
+
+	got := logs.String()
+	if !strings.Contains(got, `msg="chat build_history: transcript trimmed to the priming budget"`) {
+		t.Fatalf("no trim line logged; logs = %q", got)
+	}
+	if !strings.Contains(got, " omitted=1 ") {
+		t.Errorf("trim line does not report omitted=1; logs = %q", got)
+	}
+	if !strings.Contains(got, " kept=63 ") {
+		t.Errorf("trim line does not report kept=63 (64 messages, 1 omitted); logs = %q", got)
+	}
+}
+
+// A completed export says nothing about failing. The line exists for a client
+// that hung up mid-download, and it reads as a fact about THIS export — so
+// emitting it on every success is worst exactly when someone has turned Debug
+// on to find out why an export looked wrong.
+func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
+	logs := captureStoreSlog(t)
+	s, _ := newTestStore(t)
+	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "Named Chat"
+		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "hi"}}
+		return true
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := logs.String(); strings.Contains(got, `msg="chat export: markdown write failed"`) {
+		t.Errorf("a successful export logged a write failure; logs = %q", got)
+	}
+}
