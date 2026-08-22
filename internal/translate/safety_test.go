@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -302,6 +303,43 @@ func TestHandleSafetyStatusChanged_NonBlockedNoPersist(t *testing.T) {
 
 			if msgs := infraBlockMessages(t, store, "c1"); len(msgs) != 0 {
 				t.Fatalf("status %q persisted %d event(s), want 0", status, len(msgs))
+			}
+		})
+	}
+}
+
+// The block event's append logs when the persist FAILS and stays quiet when it
+// works. Enforce mode blocks are the one safety outcome that is meant to be
+// durable, so an error line on every successful record is what would hide the
+// one time a refusal really did not survive the write.
+func TestHandleSafetyStatusChanged_BlockPersistSpeaksOnlyOnFailure(t *testing.T) {
+	tests := []struct {
+		appendErr  error
+		name       string
+		wantLogged bool
+	}{
+		{name: "a_successful_append_is_silent", appendErr: nil, wantLogged: false},
+		{name: "a_failed_append_reports_itself", appendErr: errBoom, wantLogged: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			t.Cleanup(captureSlog(&logs))
+			deps, _ := newEventCaptureDeps()
+			deps.store = &recStore{appendErr: tc.appendErr}
+			tr := New(rolesOf(deps))
+
+			tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
+				"status":            "blocked",
+				"detail":            "fs_write blocked",
+				"toolId":            "fs_write",
+				"blockedProperties": []string{"no public S3 buckets"},
+			})})
+
+			got := strings.Contains(logs.String(), `msg="safety: append block event"`)
+			if got != tc.wantLogged {
+				t.Errorf("HandleSafetyStatusChanged(blocked, appendErr=%v) logged the append error = %t, want %t; logs = %q",
+					tc.appendErr, got, tc.wantLogged, logs.String())
 			}
 		})
 	}

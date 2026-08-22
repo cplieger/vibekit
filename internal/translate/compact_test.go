@@ -1,7 +1,9 @@
 package translate
 
 import (
+	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/testsupport"
@@ -177,5 +179,69 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	}
 	if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(msgs) != 0 {
 		t.Errorf("EventCompactFailed messages = %d, want 0 while running", len(msgs))
+	}
+}
+
+// The compacted-event append logs an error when it FAILS and says nothing when
+// it succeeds. The quiet half is the half worth pinning: compaction runs on
+// every long conversation, so an error line on the ordinary path trains an
+// operator to scroll past the one that means the breadcrumb was really lost.
+func TestHandleV3Summarization_CompactedAppendSpeaksOnlyOnFailure(t *testing.T) {
+	tests := []struct {
+		appendErr  error
+		name       string
+		wantLogged bool
+	}{
+		{name: "a_successful_append_is_silent", appendErr: nil, wantLogged: false},
+		{name: "a_failed_append_reports_itself", appendErr: errBoom, wantLogged: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			t.Cleanup(captureSlog(&logs))
+			deps, _ := newEventCaptureDeps()
+			deps.store = &recStore{appendErr: tc.appendErr}
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), "")
+
+			got := strings.Contains(logs.String(), `msg="compaction: append event"`)
+			if got != tc.wantLogged {
+				t.Errorf("HandleSessionInfoUpdate(success, appendErr=%v) logged the append error = %t, want %t; logs = %q",
+					tc.appendErr, got, tc.wantLogged, logs.String())
+			}
+		})
+	}
+}
+
+// The compaction-FAILED event's own append follows the same rule: the error
+// line belongs to the persist failing, not to a compaction failure being
+// recorded successfully. The error banner reaches the client either way, so a
+// line here would be the second report of a failure already surfaced.
+func TestHandleV3Summarization_FailedEventAppendSpeaksOnlyOnFailure(t *testing.T) {
+	tests := []struct {
+		appendErr  error
+		name       string
+		wantLogged bool
+	}{
+		{name: "a_successful_append_is_silent", appendErr: nil, wantLogged: false},
+		{name: "a_failed_append_reports_itself", appendErr: errBoom, wantLogged: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			t.Cleanup(captureSlog(&logs))
+			deps, _ := newEventCaptureDeps()
+			deps.store = &recStore{appendErr: tc.appendErr}
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), "")
+
+			got := strings.Contains(logs.String(), `msg="compaction: append failed event"`)
+			if got != tc.wantLogged {
+				t.Errorf("HandleSessionInfoUpdate(error, appendErr=%v) logged the append error = %t, want %t; logs = %q",
+					tc.appendErr, got, tc.wantLogged, logs.String())
+			}
+		})
 	}
 }

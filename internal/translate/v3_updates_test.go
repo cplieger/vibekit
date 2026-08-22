@@ -326,3 +326,168 @@ func TestMaterialPctDelta(t *testing.T) {
 		})
 	}
 }
+
+// turnSummaryInfo builds a session_info_update carrying the turn-end metering
+// block: the promptTurnSummaries list plus elapsedTime in milliseconds. A
+// summary entry with an empty unit is spelled by omitting the key, which is
+// what KAS does when it reports the default dimension.
+func turnSummaryInfo(t *testing.T, elapsedMs float64, summaries []map[string]any) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, map[string]any{
+		"_meta": map[string]any{"kiro": map[string]any{
+			"promptTurnSummaries": summaries,
+			"elapsedTime":         elapsedMs,
+		}},
+	})
+}
+
+// contextUsageInfo builds a session_info_update carrying a context percentage
+// on one of the two channels KAS mirrors it across: the contextUsage
+// sub-block, or the bare _meta.kiro.usagePercentage.
+func contextUsageInfo(t *testing.T, key string, pct float64) json.RawMessage {
+	t.Helper()
+	kiro := map[string]any{}
+	switch key {
+	case "contextUsage":
+		kiro["contextUsage"] = map[string]any{"usagePercentage": pct}
+	case "usagePercentage":
+		kiro["usagePercentage"] = pct
+	}
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": kiro}})
+}
+
+// KAS mirrors the context percentage across two channels — the contextUsage
+// sub-block and a bare usagePercentage — and whichever arrives has to keep the
+// ring fresh. Reading only one of them leaves the context popup at zero for
+// every frame KAS happened to send the other way.
+func TestHandleSessionInfoUpdate_ContextPctArrivesOnEitherChannel(t *testing.T) {
+	for _, key := range []string{"contextUsage", "usagePercentage"} {
+		t.Run(key, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", contextUsageInfo(t, key, 42.5), "")
+
+			c, ok := store.Get(t.Context(), "c1")
+			if !ok {
+				t.Fatal("chat c1 missing after session_info_update")
+			}
+			if c.Usage.ContextPct != 42.5 {
+				t.Errorf("Usage.ContextPct after a %s frame = %v, want 42.5", key, c.Usage.ContextPct)
+			}
+			if !c.Usage.HasRealData {
+				t.Errorf("Usage.HasRealData after a %s frame = false, want true", key)
+			}
+		})
+	}
+}
+
+// The metering summary counts the default dimension as spend: KAS reports
+// credits either as unit "credit" or with the unit key absent, and both are the
+// same money. Counting only the spelled-out form makes a chat's credit readout
+// silently stop at whatever the last labelled frame said.
+func TestPersistTurnSummary_AnEmptyUnitCountsAsCredits(t *testing.T) {
+	for _, unit := range []string{"", "credit"} {
+		t.Run("unit_"+unit, func(t *testing.T) {
+			deps, _, store := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+			summary := map[string]any{"usage": 0.5}
+			if unit != "" {
+				summary["unit"] = unit
+			}
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, []map[string]any{summary}), "")
+
+			c, ok := store.Get(t.Context(), "c1")
+			if !ok {
+				t.Fatal("chat c1 missing after session_info_update")
+			}
+			if c.Usage.Credits != 0.5 {
+				t.Errorf("Usage.Credits after a summary with unit %q = %v, want 0.5", unit, c.Usage.Credits)
+			}
+			if !c.Usage.HasRealData {
+				t.Errorf("Usage.HasRealData after a summary with unit %q = false, want true", unit)
+			}
+		})
+	}
+}
+
+// A turn that reported no elapsed time leaves the previous duration alone.
+// "Last turn took 0 ms" is not an answer the popup can render, and overwriting
+// a real measurement with it loses the only duration the chat had.
+func TestPersistTurnSummary_ZeroElapsedKeepsThePreviousDuration(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	credit := []map[string]any{{"unit": "credit", "usage": 0.25}}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, credit), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 0, credit), "")
+
+	c, ok := store.Get(t.Context(), "c1")
+	if !ok {
+		t.Fatal("chat c1 missing after session_info_update")
+	}
+	if c.Usage.LastTurnMs != 1200 {
+		t.Errorf("Usage.LastTurnMs after a zero-elapsed turn = %v, want 1200 (the previous measurement)", c.Usage.LastTurnMs)
+	}
+	if c.Usage.TurnCount != 2 {
+		t.Errorf("Usage.TurnCount = %d, want 2 (both turns counted)", c.Usage.TurnCount)
+	}
+}
+
+// A turn that spent nothing is not evidence of real spend. HasRealData is what
+// switches the context popup from "unknown" to a figure, so flipping it on a
+// zero-credit summary reports a measured 0.00 the account never confirmed.
+func TestPersistTurnSummary_ZeroCreditsIsNotRealSpend(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		turnSummaryInfo(t, 1200, []map[string]any{{"unit": "credit", "usage": 0.0}}), "")
+
+	c, ok := store.Get(t.Context(), "c1")
+	if !ok {
+		t.Fatal("chat c1 missing after session_info_update")
+	}
+	if c.Usage.Credits != 0 {
+		t.Errorf("Usage.Credits after a zero-credit turn = %v, want 0", c.Usage.Credits)
+	}
+	if c.Usage.HasRealData {
+		t.Error("Usage.HasRealData after a zero-credit turn = true, want false (nothing was spent)")
+	}
+	if c.Usage.TurnCount != 1 {
+		t.Errorf("Usage.TurnCount = %d, want 1 (the turn still happened)", c.Usage.TurnCount)
+	}
+}
+
+// An effort-only config frame must leave the model catalog standing. KAS sends
+// the two selects independently, so treating a frame with no model option as
+// "the model list is now empty" empties the picker the moment the user changes
+// effort.
+func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelUpdate(t, "model-a", []map[string]any{
+		{"value": "model-a", "name": "Model A"},
+		{"value": "model-b", "name": "Model B"},
+	}))
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configEffortUpdate(t, "high", []map[string]any{
+		{"value": "high", "name": "High"},
+	}))
+
+	c, ok := store.Get(t.Context(), "c1")
+	if !ok {
+		t.Fatal("chat c1 missing after config_option_update")
+	}
+	gotIDs := make([]string, 0, len(c.AvailableModels))
+	for _, m := range c.AvailableModels {
+		gotIDs = append(gotIDs, m.ID)
+	}
+	if !slices.Equal(gotIDs, []string{"model-a", "model-b"}) {
+		t.Errorf("AvailableModels after an effort-only frame = %v, want [model-a model-b]", gotIDs)
+	}
+	if c.EffortActive != "high" {
+		t.Errorf("EffortActive = %q, want high (the effort half still applied)", c.EffortActive)
+	}
+}
