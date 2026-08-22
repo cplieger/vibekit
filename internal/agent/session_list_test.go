@@ -22,6 +22,14 @@ func row(id, title, updated string, workflow bool) kasSessionRow {
 	return r
 }
 
+// rowCreated builds a row whose creation instant matters: the picker's tie-break
+// reads it, and `row` above leaves it absent the way a withheld field does.
+func rowCreated(id, title, updated, created string) kasSessionRow {
+	r := row(id, title, updated, false)
+	r.Meta.Kiro.CreatedAt = created
+	return r
+}
+
 // ownedBy seeds a chat store where each chat id owns its listed session ids, in
 // order, so the last one is the chat's current session. Every test below needs
 // this now: the picker offers TAB CONVERSATIONS, so a row with no owning chat is
@@ -160,6 +168,60 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	}
 	if _, present := byID["sess_orphan"]; present {
 		t.Error("a session no chat owns reached the picker")
+	}
+}
+
+// Two members of one chain can tie on UpdatedAt — parseKASTime sinks an absent or
+// unparseable timestamp to 0, and two sessions touched inside the same
+// millisecond tie outright — and the surviving row is what the History page
+// shows: its title, its status, its timestamp.
+//
+// The tie is broken towards the later-CREATED session, because a chain is
+// produced by retiring a session for a fresh one, so of two sessions last
+// touched at the same instant the newer one is the chat's live member.
+func TestToResumable_TiedRowsKeepTheLaterCreatedSession(t *testing.T) {
+	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_live"}})
+	got := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
+		// Listed first AND created first, so nothing but creation separates the two.
+		rowCreated("sess_retired", "retired", "2026-08-02T12:00:00.000Z", "2026-08-02T09:00:00.000Z"),
+		rowCreated("sess_live", "live", "2026-08-02T12:00:00.000Z", "2026-08-02T11:00:00.000Z"),
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("rows = %d, want 1 (one row per chat): %+v", len(got), got)
+	}
+	if got[0].SessionID != "sess_live" {
+		t.Errorf("survivor of an UpdatedAt tie = %q (title %q), want sess_live (the later-created member)",
+			got[0].SessionID, got[0].Title)
+	}
+}
+
+// With nothing but their ids to separate two rows, the same row must survive
+// whichever order KAS listed them in. That is the property the tie-break exists
+// for: while the outcome followed arrival order, one chat's picker row could
+// change its title and timestamp between two polls that returned the same pair
+// the other way round.
+//
+// Neither row carries a createdAt here, which is the state a withheld field
+// leaves them in, so the session id is the only key left.
+func TestToResumable_TieBreakIgnoresArrivalOrder(t *testing.T) {
+	h := ownedBy(t, map[string][]string{"c1": {"sess_a", "sess_b"}})
+	a := row("sess_a", "listed first", "2026-08-02T12:00:00.000Z", false)
+	b := row("sess_b", "listed second", "2026-08-02T12:00:00.000Z", false)
+
+	forward := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{a, b})
+	reversed := toResumable(h.claimedSessions(t.Context()), []kasSessionRow{b, a})
+
+	if len(forward) != 1 || len(reversed) != 1 {
+		t.Fatalf("rows = %d listed a-then-b and %d listed b-then-a, want 1 each: %+v / %+v",
+			len(forward), len(reversed), forward, reversed)
+	}
+	if forward[0].SessionID != "sess_b" {
+		t.Errorf("survivor listed a-then-b = %q, want sess_b", forward[0].SessionID)
+	}
+	if reversed[0].SessionID != "sess_b" {
+		t.Errorf("survivor listed b-then-a = %q, want sess_b (the survivor must not depend on the order KAS listed the pair)",
+			reversed[0].SessionID)
 	}
 }
 
