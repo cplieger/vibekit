@@ -3,6 +3,7 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -172,12 +173,13 @@ func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 	}
 }
 
-func TestSequence_MCPStatus_CapturesPromptsAndResources(t *testing.T) {
+func TestSequence_MCPStatus_CapturesToolsPromptsAndResources(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	var connected string
+	var tools []string
 	var prompts []vibekit.MCPPromptInfo
 	var resources []vibekit.MCPResourceInfo
-	wrapper := &mcpCaptureDeps{baseDeps: deps, connected: &connected, prompts: &prompts, resources: &resources}
+	wrapper := &mcpCaptureDeps{baseDeps: deps, connected: &connected, tools: &tools, prompts: &prompts, resources: &resources}
 	tr := New(rolesOf(wrapper))
 
 	tr.HandleMCPStatus(t.Context(), "", &vibekit.RPCResponse{
@@ -186,6 +188,11 @@ func TestSequence_MCPStatus_CapturesPromptsAndResources(t *testing.T) {
 				{
 					"name":   "everything",
 					"status": "connected",
+					"tools": []map[string]any{
+						{"name": "search"},
+						{"name": "fetch"},
+						{"name": ""}, // dropped: unaddressable
+					},
 					"prompts": []map[string]any{
 						{"name": "Simple Prompt", "promptName": "simple-prompt", "description": "no args"},
 						{"name": "Args Prompt", "promptName": "args-prompt", "arguments": []map[string]any{
@@ -205,6 +212,11 @@ func TestSequence_MCPStatus_CapturesPromptsAndResources(t *testing.T) {
 	if connected != "everything" {
 		t.Fatalf("connected = %q", connected)
 	}
+	// The tool names are what the MCP page lists the server's capabilities
+	// from, so losing them leaves a connected server looking capability-free.
+	if !slices.Equal(tools, []string{"search", "fetch"}) {
+		t.Errorf("tools = %v, want [search fetch] (empty name dropped)", tools)
+	}
 	if len(prompts) != 2 {
 		t.Fatalf("prompts = %+v, want 2 (empty promptName dropped)", prompts)
 	}
@@ -222,6 +234,7 @@ func TestSequence_MCPStatus_CapturesPromptsAndResources(t *testing.T) {
 type mcpCaptureDeps struct {
 	*baseDeps
 	connected *string
+	tools     *[]string
 	prompts   *[]vibekit.MCPPromptInfo
 	resources *[]vibekit.MCPResourceInfo
 	disabled  *[]string
@@ -229,21 +242,25 @@ type mcpCaptureDeps struct {
 
 func (d *mcpCaptureDeps) MCPRecorder() MCPRecorder {
 	return &captureMCPRecorder{
-		connected: d.connected, prompts: d.prompts,
+		connected: d.connected, tools: d.tools, prompts: d.prompts,
 		resources: d.resources, disabled: d.disabled,
 	}
 }
 
 type captureMCPRecorder struct {
 	connected *string
+	tools     *[]string
 	prompts   *[]vibekit.MCPPromptInfo
 	resources *[]vibekit.MCPResourceInfo
 	disabled  *[]string
 }
 
-func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, _ []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
+func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
 	if r.connected != nil {
 		*r.connected = name
+	}
+	if r.tools != nil {
+		*r.tools = tools
 	}
 	if r.prompts != nil {
 		*r.prompts = prompts

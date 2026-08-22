@@ -797,3 +797,62 @@ func TestProjection_ToolUpdateAppliesPresentFieldsAndKeepsAbsentOnes(t *testing.
 		})
 	}
 }
+
+// A tool card is stamped with its OWN frame's time, falling back to the turn's
+// start only when the frame carries none. A turn spanning minutes of tool work
+// otherwise collapses to a single instant, and the transcript loses the order
+// the cards happened in.
+func TestProjection_ToolCallCarriesItsOwnTimestamp(t *testing.T) {
+	const (
+		turnStamp = "2026-08-21T10:00:00.000Z"
+		toolStamp = "2026-08-21T10:04:30.000Z"
+		turnMilli = int64(1787306400000)
+		toolMilli = int64(1787306670000)
+	)
+	tests := []struct {
+		name      string
+		toolStamp string
+		wantTs    int64
+	}{
+		{name: "the_frame_carries_its_own_time", toolStamp: toolStamp, wantTs: toolMilli},
+		{name: "the_frame_carries_none", toolStamp: "", wantTs: turnMilli},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewProjection(seqIDs())
+			_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
+			p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+			// The turn's own start comes from its FIRST content frame, so the
+			// say below is what makes the tool frame's stamp a distinguishable
+			// second value rather than the same one.
+			_, say := replayFrame(t, vibekit.ACPUpdateAgentChunk, "working", "",
+				map[string]any{"timestamp": turnStamp})
+			p.Ingest(vibekit.ACPUpdateAgentChunk, say)
+			p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
+				"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+				"toolCallId":    "tc-1",
+				"title":         "Read File",
+				"kind":          "read",
+				"status":        "completed",
+				"_meta": map[string]any{"kiro": map[string]any{
+					"replay": true, "timestamp": tc.toolStamp,
+				}},
+			}))
+
+			got := p.Messages()
+			if len(got) != 1 {
+				t.Fatalf("projected %d messages, want 1 assistant turn:\n%s", len(got), dumpMessages(got))
+			}
+			if len(got[0].ToolCalls) != 1 {
+				t.Fatalf("projected %d tool calls, want 1", len(got[0].ToolCalls))
+			}
+			if got[0].ToolCalls[0].Ts != tc.wantTs {
+				t.Errorf("ToolCall.Ts for a frame stamped %q = %d, want %d",
+					tc.toolStamp, got[0].ToolCalls[0].Ts, tc.wantTs)
+			}
+			if got[0].Ts != turnMilli {
+				t.Errorf("turn Ts = %d, want %d (the first content frame's time)", got[0].Ts, turnMilli)
+			}
+		})
+	}
+}

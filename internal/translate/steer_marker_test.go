@@ -357,3 +357,48 @@ func FuzzStripSteerAcks_AccountsForEveryByte(f *testing.F) {
 		}
 	})
 }
+
+// The carry bound measures the CANDIDATE, and its edge belongs to the candidate
+// too. Two ways to get it wrong, and both surface as text vanishing: measuring
+// the whole reply instead of the withheld tail releases machinery the moment a
+// turn grows past 8 KiB, and releasing at the edge rather than past it hands the
+// client a marker that was still one byte inside the budget.
+func TestStripSteerAcks_TheBoundMeasuresTheCandidate(t *testing.T) {
+	atBound := steerAckPrefix + strings.Repeat("x", maxSteerCarry-len(steerAckPrefix))
+	longReply := strings.Repeat("y", maxSteerCarry)
+	tests := []struct {
+		name      string
+		in        string
+		wantEmit  string
+		wantCarry string
+	}{
+		{
+			name:      "a_candidate_exactly_at_the_bound_is_still_held",
+			in:        "prose " + atBound,
+			wantEmit:  "prose ",
+			wantCarry: atBound,
+		},
+		{
+			name:      "a_long_reply_in_front_of_a_short_candidate_holds_it",
+			in:        longReply + "[STE",
+			wantEmit:  longReply,
+			wantCarry: "[STE",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			emit, carry, acks := stripSteerAcks("", tt.in)
+			if emit != tt.wantEmit {
+				t.Errorf("stripSteerAcks(\"\", %d bytes) emitted %d bytes, want %d",
+					len(tt.in), len(emit), len(tt.wantEmit))
+			}
+			if carry != tt.wantCarry {
+				t.Errorf("stripSteerAcks(\"\", %d bytes) carry = %d bytes, want %d",
+					len(tt.in), len(carry), len(tt.wantCarry))
+			}
+			if len(acks) != 0 {
+				t.Errorf("acks = %+v, want none (no complete marker in the input)", acks)
+			}
+		})
+	}
+}
