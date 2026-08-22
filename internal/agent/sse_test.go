@@ -299,3 +299,90 @@ func BenchmarkEmit(b *testing.B) {
 // about per-turn TRUST — a way to wave past vibekit's per-write staging gate for
 // the rest of a turn. KAS reviews the whole turn in one approval, so there is no
 // per-write gate and nothing to trust past.
+
+// TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog pins the two
+// replays that run AFTER the handshake, and therefore the fact that the handshake's
+// write does not end the hook.
+//
+// Both exist because the event log alone is not enough. A permission dialog that
+// aged out of the replay ring would leave the agent blocked on an answer the
+// reconnected client never renders — the turn hangs with no visible cause. And a
+// client that connects mid-turn has no event to tell it a chat is busy, so it draws
+// an idle chat that is actually streaming. An early return anywhere in the hook
+// drops the rest silently: the stream still opens and looks healthy.
+func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.T) {
+	h, _, br := newTestHub()
+
+	// A pending ask that predates this connection.
+	h.bus.pendingPerms.Add(9, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
+		vibekit.PermissionNeededPayload{RequestID: 9}))
+	// And a chat mid-turn, which is what synthesizes turn_state.
+	sb := &sharedBridge{bridge: br, state: bridgeIdle}
+	h.bridge.mgr.insert("c1", sb)
+	if !sb.tryAcquireForPrompt() {
+		t.Fatal("the fixture could not put the chat into a prompting state")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events?chat_id=c1", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"connected"`) {
+		t.Fatalf("no handshake, so the stream never opened: %q", body)
+	}
+	if !strings.Contains(body, `"type":"permission_needed"`) {
+		t.Errorf("a pending permission was not replayed, so the agent stays blocked on an "+
+			"answer this client will never show: %q", body)
+	}
+	if !strings.Contains(body, `"type":"turn_state"`) {
+		t.Errorf("a chat mid-turn was replayed as nothing, so a client connecting during a turn "+
+			"draws it idle: %q", body)
+	}
+}
+
+// TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect pins which connection
+// re-reads the notification toggles from disk.
+//
+// A reconnect is the case that needs it: the config may have been edited while SSE
+// was down, and a container restart is not required to pick that up. A FRESH
+// connection is not — the process just read them at startup — and re-reading on
+// every one turns each page load into a disk read plus a singleflight round.
+func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
+	cases := []struct {
+		name        string
+		lastEventID string
+		wantReloads int32
+	}{
+		{name: "a reconnect re-reads them", lastEventID: "2", wantReloads: 1},
+		{name: "a fresh connection does not", lastEventID: "", wantReloads: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := newFakeChatStore()
+			fp := &recordingPush{sends: make(chan string, 1)}
+			h := New(context.Background(), t.TempDir(),
+				func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+			cs.Bus = h
+			h.mcpRegistry.SignalReady()
+			h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+			h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+
+			ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+			defer cancel()
+			req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+			if tc.lastEventID != "" {
+				req.Header.Set("Last-Event-ID", tc.lastEventID)
+			}
+			h.handleSSE(httptest.NewRecorder(), req)
+
+			if got := fp.reloads.Load(); got != tc.wantReloads {
+				t.Errorf("ReloadPreferences called %d times with Last-Event-ID %q, want %d",
+					got, tc.lastEventID, tc.wantReloads)
+			}
+		})
+	}
+}

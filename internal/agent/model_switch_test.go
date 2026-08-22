@@ -348,3 +348,62 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 			rec.Code, rec.Body.String())
 	}
 }
+
+// TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord pins which evidence the
+// entitlement gate believes when both exist, in both directions.
+//
+// The chat's recorded set is a snapshot from whenever it was last written, so it
+// goes stale the moment the account's entitlements change — a model added to the
+// plan would stay refused until the record caught up. The live session's set is the
+// current answer, and it only counts when the session actually advertised one:
+// treating an empty advertisement as authoritative would replace the gate with a
+// pass-through, which is the outage the fail-open case exists to avoid.
+func TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord(t *testing.T) {
+	cases := []struct {
+		name     string
+		recorded []string
+		live     []string
+		model    string
+		wantCode int
+	}{
+		{
+			name:     "a live session's newer set admits a model the record has not seen",
+			recorded: []string{"m-old"},
+			live:     []string{"m-old", "m-new"},
+			model:    "m-new",
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "a session advertising nothing leaves the record in charge",
+			recorded: []string{"m-old"},
+			live:     nil,
+			model:    "m-unentitled",
+			wantCode: http.StatusConflict,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, br := newTestHub()
+			br.servedModels = tc.live
+			if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+				c.Name = "A"
+				c.Model = "m-old"
+				c.ServedModelIDs = tc.recorded
+				return true
+			}); err != nil {
+				t.Fatalf("seed the chat: %v", err)
+			}
+			// A LIVE bridge is what makes this the two-evidence case at all.
+			h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+
+			rec := postCmd(t, h, vibekit.ClientCommand{
+				Type: "switch_model", ChatID: "c1",
+				Payload: json.RawMessage(`{"model":"` + tc.model + `"}`),
+			})
+			if rec.Code != tc.wantCode {
+				t.Errorf("switch to %q with recorded=%v live=%v: code = %d, want %d; body = %s",
+					tc.model, tc.recorded, tc.live, rec.Code, tc.wantCode, rec.Body.String())
+			}
+		})
+	}
+}
