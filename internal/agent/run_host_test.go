@@ -91,6 +91,7 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 // and buffering into the synthetic id would open a phantom assistant message on
 // a chat that must never exist.
 func TestRunDispatch_StepContentIsDropped(t *testing.T) {
+	logs := captureLogs(t)
 	h, _, _ := newTestHub()
 
 	h.dispatch(t.Context(), "run:wf_1", runNotif(vibekit.MethodSessionUpdate, map[string]any{
@@ -107,6 +108,13 @@ func TestRunDispatch_StepContentIsDropped(t *testing.T) {
 	// And nothing opened an assistant buffer for the synthetic chat.
 	if h.bridge.assistantBufs.Get("run:wf_1") != nil {
 		t.Error("a step chunk opened an assistant buffer for the synthetic chat id")
+	}
+	// The drop is DELIBERATE, so it is silent. The unhandled-notification line is
+	// how a frame vibekit genuinely does not recognise gets noticed, and a step's
+	// content arriving on it would drown that out on every run.
+	const unhandled = "run bridge: unhandled notification"
+	if out := logs.String(); strings.Contains(out, `"msg":"`+unhandled+`"`) {
+		t.Errorf("a step's session/update was reported as %q: %s", unhandled, out)
 	}
 }
 
@@ -585,4 +593,190 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	if !h.runs.claimTermination(id) {
 		t.Error("the run stayed claimed after its cancel failed, so nothing can stop it")
 	}
+}
+
+// TestRunDispatch_TheOtherAskKindsReachTheRunTab is the rest of the ask
+// population: a step can raise an elicitation or a plain question, not only a
+// permission, and each has to travel the same route.
+//
+// Both are BLOCKING requests — KAS holds the step until an answer comes back — so
+// a dispatch that fell through to the refusal ladder would not merely hide a
+// dialog, it would answer "unsupported" and strand the step with no way for the
+// user to unblock it. The synthetic chat id is the route in both directions: it is
+// what the client dock renders in the run tab and what the reply is keyed by.
+func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
+	cases := []struct {
+		name   string
+		method string
+		params map[string]any
+		want   vibekit.EventType
+	}{
+		{
+			name:   "a step asking the user to fill in a form",
+			method: vibekit.MethodElicitationCreate,
+			params: map[string]any{
+				"sessionId":  "sess_step",
+				"toolCallId": "tc1",
+				"elicitation": map[string]any{
+					"message": "which environment?",
+					"mode":    "form",
+				},
+			},
+			want: vibekit.EventElicitationNeeded,
+		},
+		{
+			name:   "a step asking the user a question",
+			method: vibekit.MethodKiroUserInput,
+			params: map[string]any{
+				"sessionId":  "sess_step",
+				"toolCallId": "tc1",
+				"question":   "ship it?",
+				"options": []map[string]any{
+					{"optionId": "yes", "name": "Yes"},
+				},
+			},
+			want: vibekit.EventUserInputNeeded,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+
+			id := int64(11)
+			msg := runNotif(c.method, c.params)
+			msg.ID = &id
+			h.dispatch(t.Context(), "run:wf_1", msg)
+
+			var got []string
+			found := false
+			for _, e := range bufferedEvents(h) {
+				got = append(got, e.Type)
+				if e.Type != string(c.want) {
+					continue
+				}
+				found = true
+				if e.ChatID != "run:wf_1" {
+					t.Errorf("%s chat_id = %q, want run:wf_1; the dock has no tab to render it in "+
+						"and the answer cannot route back", c.method, e.ChatID)
+				}
+			}
+			if !found {
+				t.Errorf("%s on a run bridge emitted %v, want a %s; the step is blocked on an "+
+					"answer the user was never shown", c.method, got, c.want)
+			}
+			if br.respondCount() != 0 {
+				t.Errorf("%s was answered by the refusal ladder, which strands the step on an "+
+					"\"unsupported\" reply", c.method)
+			}
+		})
+	}
+}
+
+// TestRunDispatch_TerminalCompletionClosesTheRunsBridge pins the teardown that
+// TestCloseFinishedRunBridge_TerminalOnly only pins the PREDICATE of: the frame the
+// close hangs off is run_complete specifically, and a run bridge that outlives its
+// terminal run holds a kiro-cli subprocess for the life of the process.
+//
+// The close runs on its own goroutine — it is called from the bridge's forward loop
+// and closing that bridge closes the channel the loop ranges over — so the wait is
+// a deadline-bounded poll that fails closed rather than an assumption about which
+// side of the race won.
+func TestRunDispatch_TerminalCompletionClosesTheRunsBridge(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+
+	h.dispatch(t.Context(), runChatID(id),
+		runNotif(methodWFRunComplete, map[string]any{"workflowId": id, "status": "completed"}))
+
+	stop := time.Now().Add(5 * time.Second)
+	for h.bridge.mgr.get(runChatID(id)) != nil {
+		if time.Now().After(stop) {
+			t.Fatal("a run that reported completion kept its bridge, so its kiro-cli subprocess " +
+				"outlives the run that needed it")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestLaunchRun_ReportsTheReplysOwnError pins which of a Call's two failure
+// channels a launch believes.
+//
+// KAS refuses a launch IN BAND: the transport succeeds and the reply carries a
+// JSON-RPC error, which is where the reason lives ("recipe not found", a schema
+// complaint about the inputs). A launch that read only the transport error would
+// fall through to the decode and report the generic "reply carried no workflowId"
+// instead — the same message a genuinely malformed reply produces, so the operator
+// loses the one sentence that says what to fix.
+func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowListRecipes: json.RawMessage(
+			`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
+		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+	}
+	br.callRPCErrs = map[string]*vibekit.RPCError{
+		methodKiroWorkflowNew: {Code: -32602, Message: "inputs.branch: Required"},
+	}
+
+	_, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil)
+	if err == nil {
+		t.Fatal("a launch KAS refused reported success")
+	}
+	if !strings.Contains(err.Error(), "inputs.branch: Required") {
+		t.Errorf("Launch error = %q, want it to carry KAS's own reason; the reply's error was "+
+			"dropped and the operator is told nothing actionable", err)
+	}
+}
+
+// TestCancelForChat_ReportsARunListItCouldNotRead pins the one thing a tab close
+// can do when it cannot find out what to cancel.
+//
+// The close proceeds either way, deliberately — the user said stop, not wait — so
+// the runs this chat launched are left executing with their owning process gone,
+// and the line is the only record that it happened. A guard flipped here says that
+// on every ordinary close instead, which buries it.
+func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
+	const chatID vibekit.ChatID = "c1"
+	seed := func(t *testing.T, cs *fakeChatStore) {
+		t.Helper()
+		if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+			c.Name = "A"
+			c.RecordSession("sess_owned")
+			return true
+		}); err != nil {
+			t.Fatalf("seed the chat: %v", err)
+		}
+	}
+	const wantLine = "close: run list unavailable, skipping run cancel"
+
+	t.Run("an unreadable run list is reported", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, cs, br := newTestHub()
+		seed(t, cs)
+		br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("kas gone")}
+
+		h.runs.CancelForChat(t.Context(), chatID)
+
+		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a close that could not read the run list said nothing; want a line reading "+
+				"%q. Got: %s", wantLine, out)
+		}
+	})
+
+	t.Run("an ordinary close is quiet about it", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, cs, br := newTestHub()
+		seed(t, cs)
+		br.callResults = map[string]json.RawMessage{
+			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		}
+
+		h.runs.CancelForChat(t.Context(), chatID)
+
+		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a close that read the run list fine reported it as unavailable: %s", out)
+		}
+	})
 }
