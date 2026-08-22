@@ -55,11 +55,18 @@ COPY . ./
 # must resolve for linux amd64+arm64 or the build fails, and the
 # runtime refresh re-runs the same check before every swap.
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json
-# renovate: datasource=go depName=github.com/cplieger/toolbelt/v3
-ARG TOOLBELT_TOOLCATALOG_VERSION=v3.0.3
-# hadolint ignore=DL3062
+# `go tool`, not `go run <pkg>@<version>`: the pkg@version form resolves OUTSIDE
+# the main module, so it discarded the copy `go mod download` had already put in
+# the layer above and re-resolved toolbelt over the network -- including a query
+# for the module's latest version to report a deprecation. GOPROXY falls back to
+# `direct` on a proxy error, direct means VCS, and this stage installs no git, so
+# a proxy hiccup failed the build with "git: executable file not found in $PATH"
+# rather than anything about the catalog (main, 2026-08-22). The tool directive in
+# go.mod pins the version instead, which also collapses the two pins this step
+# used to carry -- go.mod and an ARG that had to agree with nothing enforcing it.
+# Runs with GOPROXY=off, so it cannot reach for the network at all.
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
-    go run "github.com/cplieger/toolbelt/v3/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+    GOFLAGS=-mod=readonly GOPROXY=off go tool toolcatalog \
       verify -catalog /tmp/tool-catalog.json -require required-tools.txt
 
 # Fetch @cplieger/actions TS source from npm registry. The lib publishes
