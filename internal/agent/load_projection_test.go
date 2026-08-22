@@ -380,9 +380,17 @@ func loadedChat(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
 // A deadline-bounded poll rather than a sleep: the settle happens on the Forward
 // goroutine, so the test cannot know the instant it lands, and this fails closed
 // with a diagnostic instead of passing whenever the machine is fast enough.
+// awaitPatience bounds the replay polls below. It is a test-owned patience
+// bound, not a production budget: nothing here asserts how PROMPTLY the
+// transcript is adopted, only that it is, so widening it cannot hide a defect
+// while a tight bound turns a starved runner into a red build. 5s expired
+// exactly on a loaded CI runner for work that takes microseconds when the
+// scheduler cooperates.
+const awaitPatience = 20 * time.Second
+
 func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, want string) {
 	t.Helper()
-	stop := time.Now().Add(5 * time.Second)
+	stop := time.Now().Add(awaitPatience)
 	for {
 		c, ok := cs.Get(t.Context(), chatID)
 		if ok {
@@ -393,8 +401,9 @@ func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, w
 			}
 		}
 		if time.Now().After(stop) {
-			t.Fatalf("the replayed turn %q never reached the chat's transcript; a resumed "+
-				"chat shows an empty history instead of the conversation KAS replayed", want)
+			t.Fatalf("the replayed turn %q never reached the chat's transcript within %v; a "+
+				"resumed chat shows an empty history instead of the conversation KAS replayed",
+				want, awaitPatience)
 		}
 		time.Sleep(time.Millisecond)
 	}
