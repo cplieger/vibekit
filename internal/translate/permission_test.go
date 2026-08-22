@@ -229,3 +229,115 @@ func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 		t.Errorf("Files = %+v, want nil for a non-turn_approval request", got.Files)
 	}
 }
+
+// --- Always-allow persistability (kiro-cli 2.19.1 _meta.kiro.consent) -------
+//
+// The polarity is ABSENT-MEANS-YES, so the three cases below are the tri-state
+// a *bool has and a plain bool does not. Case (a) is the one that matters most:
+// it is the 2.19.0 wire, and a plain bool would decode it as "not persistable"
+// and suppress the Always-allow row on every command of every request.
+
+// consentParams builds a shell permission request whose `_meta.kiro` carries
+// whatever `consent` object the case wants — or none at all when nil.
+func consentParams(t *testing.T, consent map[string]any) []byte {
+	t.Helper()
+	kiro := map[string]any{}
+	if consent != nil {
+		kiro["consent"] = consent
+	}
+	return mustJSON(t, map[string]any{
+		"sessionId": "sess_x",
+		"toolCall": map[string]any{
+			"toolCallId": "tc-sh",
+			"title":      "git status",
+			"kind":       "execute",
+		},
+		"options": []map[string]any{
+			{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+			{"optionId": "deny", "name": "Deny", "kind": "reject_once"},
+		},
+		"_meta": map[string]any{"kiro": kiro},
+	})
+}
+
+// TestHandlePermissionRequest_AbsentConsentIsNotBlocked is the REGRESSION TEST
+// for the whole feature. Every kiro-cli through 2.19.0 sends no `consent` object
+// at all, and KAS on 2.19.1 omits it whenever a rule WOULD match — so absent is
+// both the old wire and the common new case, and it must mean "the offer
+// stands".
+//
+// Red-check it by making ACPConsentMeta.PersistableConsent a plain bool: the
+// zero value is false, the derivation reads that as not-persistable, and this
+// case fails while (b) still passes.
+func TestHandlePermissionRequest_AbsentConsentIsNotBlocked(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+
+	id := int64(3001)
+	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+		ID:     &id,
+		Params: consentParams(t, nil),
+	})
+
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	if got.AlwaysAllowBlocked != "" {
+		t.Errorf("AlwaysAllowBlocked = %q, want empty: an absent consent object means PERSISTABLE, "+
+			"and reading it as blocked suppresses the Always-allow row on every 2.19.0 request",
+			got.AlwaysAllowBlocked)
+	}
+}
+
+// TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow is the case the
+// field exists for: KAS probed its three candidate patterns and none would
+// match, so the card must not offer to write a rule that could never fire.
+func TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+
+	id := int64(3002)
+	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+		ID: &id,
+		Params: consentParams(t, map[string]any{
+			"persistableConsent":       false,
+			"persistableConsentReason": upstreamConsentReason,
+		}),
+	})
+
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	if got.AlwaysAllowBlocked != vibekit.AlwaysAllowBlockUnparseable {
+		t.Errorf("AlwaysAllowBlocked = %q, want %q",
+			got.AlwaysAllowBlocked, vibekit.AlwaysAllowBlockUnparseable)
+	}
+}
+
+// TestHandlePermissionRequest_PersistableTrueIsNotBlocked is the tri-state's
+// third leg. KAS is not documented to send an explicit true, but the wire type
+// can carry one, and present-and-true must read the same as absent — otherwise
+// the day upstream starts sending it, every row disappears.
+func TestHandlePermissionRequest_PersistableTrueIsNotBlocked(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+
+	id := int64(3003)
+	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+		ID: &id,
+		Params: consentParams(t, map[string]any{
+			"persistableConsent": true,
+		}),
+	})
+
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	if got.AlwaysAllowBlocked != "" {
+		t.Errorf("AlwaysAllowBlocked = %q, want empty for an explicit persistableConsent:true",
+			got.AlwaysAllowBlocked)
+	}
+}

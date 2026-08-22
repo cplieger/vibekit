@@ -15,6 +15,7 @@
 
 export type {
   // Enums
+  AlwaysAllowBlock,
   DecisionKind,
   ErrorCode,
   EventKind,

@@ -44,6 +44,21 @@ type ConnectedPayload struct {
 	Head      uint64 `json:"head"`
 }
 
+// AlwaysAllowBlock names why a permission card must not offer to persist a rule
+// for the command it is asking about.
+//
+// A CODE rather than KAS's own reason string, decided at the translate seam:
+// upstream's sentence is long, it names a permissions file the vibekit user
+// never hand-edits, and it carries a cmd.exe/PowerShell tail unreachable in
+// this container. KAS owns the VERDICT; vibekit owns the copy. A code also
+// extends by enum member rather than by a second boolean.
+type AlwaysAllowBlock string
+
+// AlwaysAllowBlockUnparseable is the one verdict KAS reports today: it could not
+// derive a shell pattern that would match this command, so a saved rule would
+// never fire and persisting one would be a permanent no-op in permissions.yaml.
+const AlwaysAllowBlockUnparseable AlwaysAllowBlock = "unparseable"
+
 // PermissionNeededPayload is the payload for type="permission_needed".
 type PermissionNeededPayload struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
@@ -60,9 +75,12 @@ type PermissionNeededPayload struct {
 	// bridge, chat_id `run:<id>`). What they buy the client: the card can say
 	// WHICH step is asking, and a run tab can render the ask of a run it is
 	// watching even though the ask is keyed to the launching chat.
-	RunID   string             `json:"run_id,omitempty"`
-	NodeID  string             `json:"node_id,omitempty"`
-	Options []PermissionOption `json:"options"`
+	RunID  string `json:"run_id,omitempty"`
+	NodeID string `json:"node_id,omitempty"`
+	// AlwaysAllowBlocked, when set, names why the card must not offer to persist
+	// a rule for this command. Empty means the offer stands.
+	AlwaysAllowBlocked AlwaysAllowBlock   `json:"always_allow_blocked,omitempty"`
+	Options            []PermissionOption `json:"options"`
 	// Files is the turn's staged file list, present ONLY on a turn approval
 	// (`_meta.kiro.type == "turn_approval"`). A turn approval arrives as an
 	// ordinary session/request_permission, which is why it rides this payload

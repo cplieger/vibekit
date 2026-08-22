@@ -37,29 +37,23 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		slog.Warn("permission request missing id", "chat_id", chatID)
 		return
 	}
+	// Field order is fieldalignment's rather than the wire's: Meta leads because
+	// its Consent block carries the struct's only pointer, and the slice trails
+	// because its len/cap are two scalars the GC would otherwise have to scan
+	// past to reach a later pointer.
 	type permReq struct {
-		SessionID string `json:"sessionId"`
+		// Meta carries the turn-approval discriminator, its file list, and
+		// 2.19.1's persistability verdict. Named block rather than an inline
+		// struct — see ACPPermissionMeta for why this frame in particular earns
+		// one.
+		Meta      ACPPermissionMeta `json:"_meta"`
+		SessionID string            `json:"sessionId"`
 		ToolCall  struct {
 			ToolCallID string           `json:"toolCallId"`
 			Title      string           `json:"title"`
 			Kind       vibekit.ToolKind `json:"kind"`
 		} `json:"toolCall"`
 		Options []permOptionWire `json:"options"`
-		// Meta carries a TURN APPROVAL when one is being asked for. A turn
-		// approval is not a separate method — KAS raises it as an ordinary
-		// session/request_permission and puts the file list here, so this is the
-		// only thing distinguishing "may I run this tool" from "may I apply this
-		// turn's writes".
-		Meta struct {
-			Kiro struct {
-				Type  string `json:"type"`
-				Files []struct {
-					Path        string `json:"path"`
-					SnapshotURI string `json:"snapshotUri"`
-					ToolCallID  string `json:"toolCallId"`
-				} `json:"files"`
-			} `json:"kiro"`
-		} `json:"_meta"`
 	}
 	req, ok := unmarshalParams[permReq](msg, "session/request_permission")
 	if !ok {
@@ -99,6 +93,22 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		}
 	}
 
+	// Whether the card may offer to persist a rule for this command, translated
+	// to a vibekit CODE rather than forwarded as KAS's reason string. Absent
+	// means persistable, so nil is a yes and only present-and-false blocks the
+	// offer — a plain bool here would read false for every pre-2.19.1 frame and
+	// suppress the Always-allow row everywhere.
+	//
+	// This replaces the client's own guess: static-src/permission.ts used to
+	// test the command against a shell-metacharacter regex, which was wrong in
+	// both directions — it suppressed `git commit -m "fix"` (a quote, though
+	// `git *` matches it) and it offered the row for a command KAS cannot parse
+	// at all, where the click wrote a rule that could never match.
+	var alwaysAllowBlocked vibekit.AlwaysAllowBlock
+	if c := req.Meta.Kiro.Consent.PersistableConsent; c != nil && !*c {
+		alwaysAllowBlocked = vibekit.AlwaysAllowBlockUnparseable
+	}
+
 	// A workflow STEP's ask is attributed to its run, whichever bridge it
 	// arrived on: the launching chat's for an agent-launched run, the run
 	// bridge for a manual one. The run id is what lets a run tab render an ask
@@ -115,13 +125,14 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		// in it renders `rm -rf /workspace` as an innocuous find command while
 		// the approved action is unchanged, so the card lies about what
 		// pressing Allow does. See displayText for the measured before/after.
-		Title:        displayText(req.ToolCall.Title),
-		Kind:         req.ToolCall.Kind,
-		SubSessionID: subSessionID,
-		RunID:        step.WorkflowID,
-		NodeID:       step.NodeID,
-		Options:      options,
-		Files:        files,
+		Title:              displayText(req.ToolCall.Title),
+		Kind:               req.ToolCall.Kind,
+		SubSessionID:       subSessionID,
+		RunID:              step.WorkflowID,
+		NodeID:             step.NodeID,
+		Options:            options,
+		Files:              files,
+		AlwaysAllowBlocked: alwaysAllowBlocked,
 	})
 	t.bus.Broadcast(ctx, evt)
 	t.pendingPerms.PendingPermsAdd(reqID, evt)

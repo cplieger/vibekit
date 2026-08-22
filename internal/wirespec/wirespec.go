@@ -146,11 +146,12 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
 	"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
-	"SafetyStatus":    {},
-	"RunProgressKind": {},
-	"DecisionKind":    {},
-	"SettledBy":       {},
-	"Transport":       {Values: []string{"stdio", "http", "sse"}},
+	"SafetyStatus":     {},
+	"RunProgressKind":  {},
+	"DecisionKind":     {},
+	"SettledBy":        {},
+	"AlwaysAllowBlock": {},
+	"Transport":        {Values: []string{"stdio", "http", "sse"}},
 }
 
 // enumTSNames renames an enum on the TypeScript side.

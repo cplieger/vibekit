@@ -256,6 +256,72 @@ type ACPRefusalMeta struct {
 	RecommendedModel string `json:"recommendedModel"`
 }
 
+// ACPConsentMeta is the _meta.kiro.consent object on a
+// session/request_permission (kiro-cli 2.19.1). Both fields are present ONLY
+// when persisting a rule for this command would NOT work: KAS generates three
+// candidate shell patterns (base / partial / full), probes each through its own
+// policy engine, and reports not-persistable when any would fail to match or
+// the command already failed to parse. A non-shell capability and an explicit
+// ask always report persistable.
+//
+// PersistableConsent is a *bool and the pointer is LOAD-BEARING, because the
+// polarity is absent-means-yes. A plain bool decodes the 2.19.0 wire — which
+// carries no consent object at all — as false, i.e. "not persistable", and that
+// would suppress the Always-allow row on every command of every request. It is
+// the loudest possible regression from the smallest possible mistake, so nil
+// has to stay distinguishable from present-and-false: nil means KAS said
+// nothing, which means the offer stands.
+//
+// PersistableConsentReason is decoded and deliberately dropped at the seam. It
+// is long, it names a permissions file the vibekit user never hand-edits, and
+// it carries a cmd.exe/PowerShell tail unreachable on Linux. KAS owns the
+// verdict; vibekit owns the copy — see vibekit.AlwaysAllowBlock. The field
+// stays declared because this is the only place in code the upstream contract
+// is written down, and a member nobody reads is still a member KAS sends.
+type ACPConsentMeta struct {
+	PersistableConsent       *bool  `json:"persistableConsent"`
+	PersistableConsentReason string `json:"persistableConsentReason"`
+}
+
+// ACPPermissionMeta is the `_meta` on a session/request_permission.
+//
+// NAMED rather than declared inline inside the handler's decode struct because
+// this frame is the one human APPROVAL surface on the wire, and its `_meta`
+// now multiplexes three unrelated concerns — which kind of ask this is, a turn
+// approval's file list, and whether a rule for it could ever match. An inline
+// struct hides all three from anything but the handler that happens to decode
+// them today.
+type ACPPermissionMeta struct {
+	Kiro ACPPermissionKiroBlock `json:"kiro"`
+}
+
+// ACPPermissionKiroBlock is the `kiro` object inside a permission request's
+// `_meta`.
+// Field order is fieldalignment's, not reading order: Consent leads because it
+// holds the only pointer in the block.
+type ACPPermissionKiroBlock struct {
+	// Consent is 2.19.1's persistability verdict. Absent for every 2.19.0 and
+	// earlier frame, and absent on 2.19.1 whenever a rule WOULD match.
+	Consent ACPConsentMeta `json:"consent"`
+	// Type marks a TURN APPROVAL ("turn_approval"). A turn approval is not a
+	// separate method — KAS raises it as an ordinary
+	// session/request_permission and puts the file list beside this — so this
+	// is the only thing distinguishing "may I run this tool" from "may I apply
+	// this turn's writes".
+	Type string `json:"type"`
+	// Files is the turn approval's staged file list. Paths arrive ABSOLUTE and
+	// the action id arrives as `toolCallId`; both are renamed on the way out
+	// (see vibekit.ApprovalFile).
+	Files []ACPApprovalFile `json:"files"`
+}
+
+// ACPApprovalFile is one entry of a turn approval's `files` array.
+type ACPApprovalFile struct {
+	Path        string `json:"path"`
+	SnapshotURI string `json:"snapshotUri"`
+	ToolCallID  string `json:"toolCallId"`
+}
+
 // ACPToolCallWire is the wire shape for tool_call session updates.
 type ACPToolCallWire struct {
 	Meta       ACPKiroMeta               `json:"_meta"`
