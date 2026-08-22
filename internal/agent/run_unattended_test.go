@@ -124,8 +124,8 @@ func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	}
 
 	inner := 0
-	wrapped := rs.permissionWithUnattendedFloor(
-		func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) { inner++ })
+	noteAsk := func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) { inner++ }
+	wrapped := rs.permissionWithUnattendedFloor(noteAsk)
 
 	// A permission frame with no id: nothing can answer it, and nothing may try.
 	wrapped(t.Context(), runChatID("wf_1"), &vibekit.RPCResponse{
