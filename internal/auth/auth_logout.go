@@ -6,12 +6,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procgroup"
 	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/webhttp/v2"
@@ -99,7 +98,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 // preventing scanner teardown. See procgroup_unix.go / procgroup_other.go for the
 // platform split.
 // Idempotent: calling after the process has already been reaped is a
-// no-op (ESRCH and os.ErrProcessDone suppressed at Debug level).
+// no-op (procgroup.AlreadyGone, suppressed at Debug level).
 func killProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
@@ -109,10 +108,10 @@ func killProcessGroup(cmd *exec.Cmd) {
 		return
 	}
 	// Both the group kill and single-PID fallback can race with
-	// cmd.Wait reaping the subprocess. ESRCH and os.ErrProcessDone
-	// mean the process is already gone — expected on the
-	// belt-and-braces second call in the reap goroutine.
-	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+	// cmd.Wait reaping the subprocess. procgroup.AlreadyGone owns which
+	// errors mean "already gone" — expected on the belt-and-braces
+	// second call in the reap goroutine.
+	if procgroup.AlreadyGone(err) {
 		slog.Debug("auth: kill group no-op (already reaped)",
 			"group_err", err)
 		return
@@ -124,7 +123,7 @@ func killProcessGroup(cmd *exec.Cmd) {
 	if kerr == nil {
 		return
 	}
-	if errors.Is(kerr, syscall.ESRCH) || errors.Is(kerr, os.ErrProcessDone) {
+	if procgroup.AlreadyGone(kerr) {
 		slog.Debug("auth: kill pid no-op (already reaped)",
 			"group_err", err, "pid_err", kerr)
 		return

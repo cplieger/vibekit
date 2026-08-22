@@ -13,6 +13,7 @@
 package procgroup
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -62,3 +63,28 @@ func Kill(p *os.Process, sig syscall.Signal) error {
 // binary. Table-test the decision here; the tree-kill integration is covered
 // separately against a real Setpgid child.
 func Owns(pid, pgid int) bool { return pgid == pid }
+
+// AlreadyGone reports whether err says the signal target had already been
+// reaped. For a kill that is the outcome the caller wanted, arriving under
+// another name, so it is not a failure to report.
+//
+// Two errors are one condition because the two ways this app signals a process
+// spell the same fact differently. A raw syscall reports ESRCH: auth's killGroup
+// returns it for a command that never started, and passes through the ESRCH of
+// syscall.Kill(-pgid, sig) when the whole group has gone. (*os.Process).Signal
+// never returns a bare ESRCH — os translates it (convertESRCH in
+// os/exec_unix.go) and answers os.ErrProcessDone both for that and for a
+// process this program has already Wait'ed. So the ESRCH half covers the callers
+// that signal by syscall and the os.ErrProcessDone half covers Kill above, whose
+// every failure path returns p.Signal's error.
+//
+// Deliberately NOT in the set, and this is the whole point of naming the
+// condition once: EPERM (the target exists and we are not allowed to signal it)
+// and EINVAL (a bad signal number) are real failures a caller must still report.
+// On Linux, the only platform this ships on, there is no third spelling — the
+// three syscalls involved (kill(2), pidfd_send_signal(2), getpgid(2)) all report
+// a vanished target as ESRCH, which is either matched here directly or already
+// folded into os.ErrProcessDone.
+func AlreadyGone(err error) bool {
+	return errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone)
+}

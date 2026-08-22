@@ -1,6 +1,9 @@
 package procgroup
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -33,6 +36,75 @@ func TestOwns(t *testing.T) {
 				t.Errorf("Owns(%d, %d) = %v, want %v", tc.pid, tc.pgid, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestAlreadyGone pins which errors mean the signal target was already reaped,
+// because that decision is what stands between a teardown log and a false alarm:
+// callers gate a Warn on it, so a member wrongly added silences a real failure
+// and a member wrongly dropped puts a warning on every ordinary release.
+//
+// The wrapped cases are the reason the predicate spells this with errors.Is and
+// not ==. No caller wraps today — auth's killGroup returns the raw syscall error
+// and Kill returns p.Signal's — so an unwrapped-only test would stay green while
+// the first %w on either path silently broke every consumer's gate.
+//
+// EPERM is the negative case that stops the predicate being vacuously true: the
+// target exists and we are not permitted to signal it, which is exactly the
+// failure the Warn exists for.
+func TestAlreadyGone(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "bare ESRCH: no such process", err: syscall.ESRCH, want: true},
+		{name: "bare ErrProcessDone: this program already reaped it", err: os.ErrProcessDone, want: true},
+		{name: "wrapped ESRCH", err: fmt.Errorf("kill group: %w", syscall.ESRCH), want: true},
+		{name: "wrapped ErrProcessDone", err: fmt.Errorf("signal head: %w", os.ErrProcessDone), want: true},
+		{name: "EPERM: the process is there and we may not signal it", err: syscall.EPERM, want: false},
+		{name: "EINVAL: a bad signal number, a programmer error", err: syscall.EINVAL, want: false},
+		{name: "an unrelated error", err: errors.New("write |1: broken pipe"), want: false},
+		{name: "no error: the kill landed on something alive", err: nil, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AlreadyGone(tc.err); got != tc.want {
+				t.Errorf("AlreadyGone(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestKill_ReapedProcessIsAlreadyGone ties the predicate to the error Kill really
+// produces on the path that made this necessary: KAS releases an agent terminal
+// after wait_for_exit, so awaitExit has already reaped the process by the time
+// the release site calls Kill.
+//
+// Without this, TestAlreadyGone pins a set of errnos with nothing saying they are
+// the errnos this code meets. The measured answer on go1.27.0 is one specific
+// member: Getpgid answers ESRCH so the group form is skipped, and p.Signal answers
+// os.ErrProcessDone rather than a bare ESRCH, because os translates it.
+func TestKill_ReapedProcessIsAlreadyGone(t *testing.T) {
+	cmd := exec.Command("true")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	p := cmd.Process
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	err := Kill(p, syscall.SIGKILL)
+	if err == nil {
+		t.Fatal("Kill on a reaped process = nil; the release site would log nothing and this gate would be dead code")
+	}
+	if !AlreadyGone(err) {
+		t.Errorf("AlreadyGone(Kill(reaped)) = false for %[1]v (%[1]T); the release site would warn on every normal release", err)
+	}
+	if !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("Kill(reaped) = %v, want os.ErrProcessDone; os.convertESRCH is what makes the ESRCH half of the predicate belong to the syscall callers instead", err)
 	}
 }
 

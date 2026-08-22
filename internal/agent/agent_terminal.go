@@ -934,8 +934,21 @@ func (at *agentTerminals) respondRelease(ctx context.Context, chatID vibekit.Cha
 	}
 	term, ok := at.release(params.TerminalID)
 	if ok && term.cmd.Process != nil {
+		// An already-reaped process is the EXPECTED answer here, not a failure:
+		// KAS drives terminal/release after wait_for_exit has returned, and that
+		// responder unblocks on term.done, which awaitExit closes only after
+		// cmd.Wait has reaped the process. So every ordinary agent-terminal
+		// release used to log a warning, which is how a warning stops meaning
+		// anything. Debug rather than silence keeps the one thing worth knowing
+		// when someone is debugging teardown: whether the kill was a no-op or
+		// really signalled a live tree. Anything else is a genuine failure.
 		if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
-			slog.Warn("terminal release: kill failed", "term_id", params.TerminalID, "error", err)
+			if procgroup.AlreadyGone(err) {
+				slog.Debug("terminal release: kill was a no-op, the process was already reaped",
+					"term_id", params.TerminalID, "error", err)
+			} else {
+				slog.Warn("terminal release: kill failed", "term_id", params.TerminalID, "error", err)
+			}
 		}
 	}
 	slog.Info("agent terminal released", "term_id", params.TerminalID)
@@ -994,8 +1007,18 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID
 		return
 	}
 	if term.cmd.Process != nil {
+		// Same split as release, for a rarer reason. KAS sends terminal/kill on
+		// the timeout and cancel paths, where the command is normally still
+		// running and the kill succeeds — but it races the command's own exit,
+		// and losing that race is not a failure to warn about. See respondRelease
+		// for why an already-gone target lands at Debug.
 		if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
-			slog.Warn("terminal kill failed", "term_id", params.TerminalID, "error", err)
+			if procgroup.AlreadyGone(err) {
+				slog.Debug("terminal kill was a no-op, the process was already reaped",
+					"term_id", params.TerminalID, "error", err)
+			} else {
+				slog.Warn("terminal kill failed", "term_id", params.TerminalID, "error", err)
+			}
 		}
 	}
 	// KAS zKillTerminalResponse is an empty object.
