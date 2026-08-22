@@ -40,10 +40,14 @@ type fakeBridge struct {
 	// assert what a spawn was actually handed (e.g. that the utility bridge
 	// gets no operator launch flags).
 	startOpts *vibekit.StartOpts
-	mu        sync.Mutex
-	responds  int
-	stopped   bool
-	started   bool
+	// notifsOnStart is the transcript a session/load replays. Start pushes these
+	// BEFORE it returns, which is the ordering the real bridge has and the one
+	// the settle barrier's correctness depends on — see Start.
+	notifsOnStart []*vibekit.RPCResponse
+	mu            sync.Mutex
+	responds      int
+	stopped       bool
+	started       bool
 }
 
 func newFakeBridge() *fakeBridge {
@@ -61,7 +65,26 @@ func (b *fakeBridge) Start(_ context.Context, opts *vibekit.StartOpts) error {
 	if opts.SessionID != "" {
 		b.sessionID = opts.SessionID
 	}
+	notifs := b.notifsOnStart
 	b.mu.Unlock()
+
+	// A replay belongs to session/load, so these ride a Start that NAMES a
+	// session and never a session/new — otherwise the utility bridge, which
+	// shares this factory, would replay a transcript of its own.
+	//
+	// Pushing before the return is what makes the fake honest, not a detail:
+	// the settle barrier (bridge_coord.go's Forward) treats an empty channel
+	// plus a recorded load result as "the replay is fully drained", which is
+	// sound ONLY because every replay frame was pushed before that result. A
+	// fake that returns first and lets the test push afterwards inverts that,
+	// and the barrier then settles on frame 1, deletes the projection, and
+	// drops the rest of the transcript.
+	if opts.SessionID == "" {
+		return nil
+	}
+	for _, n := range notifs {
+		b.notifCh <- n
+	}
 	return nil
 }
 

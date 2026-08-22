@@ -380,12 +380,18 @@ func loadedChat(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
 // A deadline-bounded poll rather than a sleep: the settle happens on the Forward
 // goroutine, so the test cannot know the instant it lands, and this fails closed
 // with a diagnostic instead of passing whenever the machine is fast enough.
-// awaitPatience bounds the replay polls below. It is a test-owned patience
-// bound, not a production budget: nothing here asserts how PROMPTLY the
-// transcript is adopted, only that it is, so widening it cannot hide a defect
-// while a tight bound turns a starved runner into a red build. 5s expired
-// exactly on a loaded CI runner for work that takes microseconds when the
-// scheduler cooperates.
+//
+// awaitPatience bounds the polls below. It is a test-owned patience bound, not a
+// production budget: nothing here asserts how PROMPTLY the transcript is adopted,
+// only that it is.
+//
+// Do not widen it again to fix a failure. It has been widened twice (5s, then
+// 20s) against a diagnosis of a starved runner, and that diagnosis was wrong both
+// times: the settle deletes its projection, so a settle that fires EARLY drops
+// every later frame and the transcript can never arrive. The expiry was the
+// symptom of a lost settle, which no bound can outwait. The message below dumps
+// what the record actually holds, because "a one-message transcript" is the tell
+// for that bug and "nothing at all" is the tell for a genuinely stuck Forward.
 const awaitPatience = 20 * time.Second
 
 func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, want string) {
@@ -401,9 +407,17 @@ func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, w
 			}
 		}
 		if time.Now().After(stop) {
+			var got []string
+			if ok {
+				for i := range c.Messages {
+					got = append(got, fmt.Sprintf("%s:%q", c.Messages[i].Role, c.Messages[i].Content))
+				}
+			}
 			t.Fatalf("the replayed turn %q never reached the chat's transcript within %v; a "+
-				"resumed chat shows an empty history instead of the conversation KAS replayed",
-				want, awaitPatience)
+				"resumed chat shows an empty history instead of the conversation KAS replayed. "+
+				"The record holds %d message(s): %v (a short transcript means a projection "+
+				"settled before the replay finished and the rest was dropped)",
+				want, awaitPatience, len(got), got)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -421,14 +435,28 @@ func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, w
 func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	// A fresh bridge per spawn, because the utility bridge the rehydrate sweep
 	// starts would otherwise share this one's notification channel and drain the
-	// replay out from under the chat's own Forward loop.
+	// replay out from under the chat's own Forward loop. Each one carries the
+	// transcript, and only the one doing a session/load replays it.
 	cs := newFakeChatStore()
-	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs)
+	h := New(context.Background(), t.TempDir(), func() ACPBridge {
+		b := newFakeBridge()
+		b.notifsOnStart = []*vibekit.RPCResponse{
+			replayNotif(t, "user_message_chunk", "ONE", ""),
+			replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_start"),
+			replayNotif(t, vibekit.ACPUpdateAgentChunk, "reply", ""),
+			replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_end"),
+		}
+		return b
+	}, cs)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
 	const chatID vibekit.ChatID = "c1"
 	loadedChat(t, cs, chatID)
 
+	// The replay is delivered inside this call, the way KAS delivers it inside
+	// session/load, so by the time the load result is recorded every frame is
+	// already in the channel. Pushing them afterwards instead is what let the
+	// barrier settle on a one-frame transcript.
 	sb, err := h.coord.OpenBridge(t.Context(), chatID, "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -437,15 +465,14 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	if !ok {
 		t.Fatalf("the chat's bridge is %T, want the fake", sb.bridge)
 	}
-
-	for _, f := range []*vibekit.RPCResponse{
-		replayNotif(t, "user_message_chunk", "ONE", ""),
-		replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_start"),
-		replayNotif(t, vibekit.ACPUpdateAgentChunk, "reply", ""),
-		replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_end"),
-	} {
-		br.notifCh <- f
+	if opts := br.lastStartOpts(); opts == nil || opts.SessionID == "" {
+		// Without a named session the fake replays nothing, so every assertion
+		// below would pass or fail for a reason that has nothing to do with the
+		// settle. Fail as invalid rather than reporting on an empty replay.
+		t.Fatalf("the chat's bridge was started with StartOpts %+v, want one naming "+
+			"the stored ACP session so the fake replays a transcript", opts)
 	}
+
 	// The bridge exiting is the backstop settle, so completion no longer depends
 	// on which side of the race drained the last frame.
 	br.Stop()
