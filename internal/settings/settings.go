@@ -26,7 +26,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/cplieger/atomicfile/v3"
 	"golang.org/x/sync/singleflight"
@@ -48,9 +47,14 @@ const filename = "config.json"
 // name and can't drift.
 const Filename = filename
 
-// cache provides mtime-based caching for config.json reads.
+// cache provides freshness-checked caching for config.json reads. Staleness is
+// three legs — atomicfile.FileIdentity (mtime AND os.SameFile) plus size —
+// because neither pair alone catches both a rename-published generation of equal
+// length inside one clock tick (same mtime, new inode) and an in-place rewrite of
+// different length (same inode, new size). config.json gets both: the settings
+// handler publishes by rename, the operator edits the volume in place.
 type cache struct {
-	mtime     time.Time
+	id        atomicfile.FileIdentity
 	sfGroup   singleflight.Group
 	parsed    map[string]json.RawMessage
 	configDir string
@@ -104,7 +108,7 @@ func (c *cache) reload() ([]byte, error) {
 		return nil, err
 	}
 	// os.Stat, not an open: stat never blocks on a FIFO (measured), so the
-	// mtime/size fast path stays one syscall.
+	// freshness fast path stays one syscall.
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
@@ -116,7 +120,7 @@ func (c *cache) reload() ([]byte, error) {
 	if cached, ok := c.hit(info); ok {
 		return cached, nil
 	}
-	data, err := readRegular(path)
+	data, readInfo, err := readRegular(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			c.forget()
@@ -124,12 +128,16 @@ func (c *cache) reload() ([]byte, error) {
 		}
 		return nil, err
 	}
-	c.store(data, info)
+	// readInfo, not the stat above: the identity must describe the generation
+	// these bytes came from. Stamping the pre-read stat would label them with a
+	// generation that a concurrent publish may already have replaced.
+	c.store(data, readInfo)
 	return data, nil
 }
 
 // readRegular reads path under MaxBytes, refusing anything that is not a regular
-// file.
+// file, and returns the FileInfo of the descriptor the bytes came from so the
+// caller can cache them under that generation's identity.
 //
 // OpenRegular, not os.Open: os.Open on a FIFO blocks in open(2) until a writer
 // appears and no context deadline rescues it (measured on go1.27.0 — os.Open over
@@ -141,20 +149,27 @@ func (c *cache) reload() ([]byte, error) {
 // ErrNotRegular, and refuses a symlink at the final component, which stops a link
 // at config.json from making another file's bytes decide the agent read filter and
 // the retention window.
-func readRegular(path string) ([]byte, error) {
-	f, _, err := atomicfile.OpenRegular(path)
+func readRegular(path string) (data []byte, info os.FileInfo, err error) {
+	f, info, err := atomicfile.OpenRegular(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return io.ReadAll(io.LimitReader(f, MaxBytes))
+	data, err = io.ReadAll(io.LimitReader(f, MaxBytes))
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, info, nil
 }
 
 // hit reports the cached bytes when info matches what they were read from.
+//
+// A zero identity reports Changed, so the "nothing loaded yet" case needs no
+// separate guard.
 func (c *cache) hit(info os.FileInfo) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.mtime.IsZero() || !info.ModTime().Equal(c.mtime) || info.Size() != c.size {
+	if c.id.Changed(info) || info.Size() != c.size {
 		return nil, false
 	}
 	return c.data, true
@@ -165,7 +180,7 @@ func (c *cache) store(data []byte, info os.FileInfo) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data = data
-	c.mtime = info.ModTime()
+	c.id = atomicfile.Identify(info)
 	c.size = info.Size()
 	c.gen++
 }
@@ -178,7 +193,7 @@ func (c *cache) forget() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data = nil
-	c.mtime = time.Time{}
+	c.id = atomicfile.FileIdentity{}
 	c.size = 0
 	c.gen++
 }

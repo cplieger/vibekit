@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
-	"time"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -32,18 +32,21 @@ func kiroSettingsPath() string {
 	return workspace.KiroSettingsPath("cli.json")
 }
 
-// cachedBoolField reads a boolean value from a JSON file with
-// mtime-based cache invalidation. Reduces per-call cost from
-// os.ReadFile+json.Unmarshal to a single os.Stat in the common case.
+// cachedBoolField reads a boolean value from a JSON file, cutting the per-call
+// cost to one os.Stat once warm. Staleness is three legs —
+// atomicfile.FileIdentity (mtime AND os.SameFile) plus size — because neither
+// pair alone catches both a same-mtime rename and a same-inode rewrite. The
+// subject is kiro-cli's cli.json, published by RENAME (measured on the 2.19.0
+// binary here: a new inode per write), so the SameFile leg is live here. The
+// zero identity reports Changed, so the cold cache needs no valid flag.
 type cachedBoolField struct {
-	mtime      time.Time
+	id         atomicfile.FileIdentity
 	path       string
 	key        string
 	size       int64
 	mu         sync.Mutex
 	defaultVal bool
 	value      bool
-	valid      bool
 }
 
 func newCachedBoolField(path, key string, defaultVal bool) *cachedBoolField {
@@ -59,16 +62,16 @@ func (c *cachedBoolField) get() bool {
 	// is consulted per tool call, so a slow or hung filesystem would block
 	// every caller behind one reader. Two concurrent misses may both read the
 	// file, which is benign for a cache: they derive the same answer, and each
-	// stores the (mtime, size) it actually observed.
+	// stores the (identity, size) it actually observed.
 	info, err := os.Stat(c.path)
 	if err != nil {
 		return c.defaultVal
 	}
 
 	c.mu.Lock()
-	valid, mtime, size, cached := c.valid, c.mtime, c.size, c.value
+	id, size, cached := c.id, c.size, c.value
 	c.mu.Unlock()
-	if valid && info.ModTime().Equal(mtime) && info.Size() == size {
+	if id.Matches(info) && info.Size() == size {
 		return cached
 	}
 
@@ -89,17 +92,17 @@ func (c *cachedBoolField) get() bool {
 		}
 	}
 
-	// Pair the parsed value with the (mtime, size) stat'ed above. If the file
-	// changed in between, the pairing is stale in the safe direction: the next
-	// call stats a different mtime and re-reads.
+	// Pair the parsed value with the identity stat'ed above. If the file changed
+	// in between, the pairing is stale in the safe direction: the next call
+	// stats a different generation and re-reads.
 	c.mu.Lock()
-	c.value, c.mtime, c.size, c.valid = parsed, info.ModTime(), info.Size(), true
+	c.value, c.id, c.size = parsed, atomicfile.Identify(info), info.Size()
 	c.mu.Unlock()
 	return parsed
 }
 
 // hookStatusCache caches the hooks.showStatus setting from
-// ~/.kiro/settings/cli.json with mtime-based invalidation.
+// ~/.kiro/settings/cli.json, invalidating on the file's identity and size.
 // Reduces per-tool-call cost from os.ReadFile+json.Unmarshal to a
 // single os.Stat in the common case (file changes at most once per
 // user session).
