@@ -341,6 +341,10 @@ func TestReadForInline_OversizedFileNamesThePath(t *testing.T) {
 // gauntlet, not in the image branch, so a spreadsheet is bounded by the same rule.
 // Scoping it to images would leave the document path with the defect the whole
 // change exists to fix.
+//
+// It also pins the note, which is the third branch of the same finding: this gate
+// hands a .pdf the same "read it with your file tools" the sibling
+// unsupportedDocExts branch qualifies with a binary caveat.
 func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "book.pdf")
@@ -359,6 +363,11 @@ func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
 	}
 	if spent != 0 {
 		t.Errorf("spent = %d on a refused attachment, want 0", spent)
+	}
+	text, _ := block["text"].(string)
+	if !strings.Contains(text, "may not be readable as text") {
+		t.Errorf("fallback note %q tells the agent to read a PDF with no hint the bytes are "+
+			"binary, while the unsupportedDocExts branch carries that caveat for the same class", text)
 	}
 }
 
@@ -390,5 +399,97 @@ func TestReadForInline_AcceptsAnEncodedPayloadExactlyAtTheCap(t *testing.T) {
 	}
 	if spent != MaxInlineEncodedBytes {
 		t.Errorf("spent = %d, want %d", spent, MaxInlineEncodedBytes)
+	}
+}
+
+// TestReadForInline_OversizedImageDoesNotSendTheAgentToItsFileTools pins the one
+// refusal whose advice was unfollowable rather than merely terse.
+//
+// MaxDocumentBytes IS KAS's MAX_IMAGE_SIZE, so a file this gate refuses is a file
+// the image read tool refuses at the same threshold — the one tool that could look
+// at the picture. "Read it with your file tools" therefore named the only route
+// that was already closed, and the negative assertion below is the load-bearing
+// half: the remedy has to be a smaller file, because there is no tool to try.
+func TestReadForInline_OversizedImageDoesNotSendTheAgentToItsFileTools(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "huge.png")
+	if err := os.WriteFile(abs, make([]byte, MaxDocumentBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, MaxInlineTurnEncodedBytes)
+
+	if got := block[keyType]; got != vibekit.ContentTypeText {
+		t.Fatalf("block type = %v, want text (a path reference)", got)
+	}
+	text, _ := block["text"].(string)
+	if strings.Contains(text, "file tools") {
+		t.Errorf("fallback text %q sends the agent to its file tools, but MaxDocumentBytes (%d) "+
+			"is KAS's MAX_IMAGE_SIZE, so the image tool refuses this file too", text, MaxDocumentBytes)
+	}
+	if !strings.Contains(text, "resized") {
+		t.Errorf("fallback text %q does not name the only remedy left, a smaller image", text)
+	}
+	if !strings.Contains(text, abs) {
+		t.Errorf("fallback text %q carries only a basename; the user cannot tell which file to resize", text)
+	}
+	if spent != 0 {
+		t.Errorf("spent = %d on a refused attachment, want 0", spent)
+	}
+}
+
+// TestReadForInline_BudgetNoteFlagsBinaryBytesOnly covers the second gap and its
+// boundary in one table: the turn-budget refusal tells the agent to read the file,
+// which for a .pdf or .xlsx means reading bytes that are not text.
+//
+// The sibling unsupportedDocExts branch has always carried that caveat, so the
+// two branches disagreed about the same file class. The .csv case is the reason the
+// caveat is keyed on the MIME rather than on the document path: text/csv is the one
+// member of documentExts a file tool really can read, and telling the agent
+// otherwise would be a new false claim rather than a fixed one.
+func TestReadForInline_BudgetNoteFlagsBinaryBytesOnly(t *testing.T) {
+	const caveat = "may not be readable as text"
+	for _, tc := range []struct {
+		name       string
+		file       string
+		wantCaveat bool
+	}{
+		{name: "binary_document", file: "report.pdf", wantCaveat: true},
+		{name: "binary_spreadsheet", file: "book.xlsx", wantCaveat: true},
+		{name: "text_document", file: "rows.csv", wantCaveat: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			abs := filepath.Join(dir, tc.file)
+			if err := os.WriteFile(abs, make([]byte, 4096), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			resolve := func(string) (string, error) { return abs, nil }
+
+			// A budget of 10 encoded bytes cannot hold 4 KiB, so this is the
+			// turn-budget gate rather than either size cap.
+			block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, 10)
+
+			if got := block[keyType]; got != vibekit.ContentTypeText {
+				t.Fatalf("attachmentBlock(%q) type = %v, want text (a path reference)", tc.file, got)
+			}
+			text, _ := block["text"].(string)
+			if got := strings.Contains(text, caveat); got != tc.wantCaveat {
+				t.Errorf("attachmentBlock(%q) note = %q, carries the binary caveat = %v, want %v",
+					tc.file, text, got, tc.wantCaveat)
+			}
+			if !strings.Contains(text, "budget is spent") {
+				t.Errorf("attachmentBlock(%q) note = %q, want it to name the turn budget as the cause",
+					tc.file, text)
+			}
+			if !strings.Contains(text, "file tools") {
+				t.Errorf("attachmentBlock(%q) note = %q, want it to still name the file tools: "+
+					"a document under the size caps is readable, unlike an oversize image", tc.file, text)
+			}
+			if spent != 0 {
+				t.Errorf("attachmentBlock(%q) spent = %d on a refused attachment, want 0", tc.file, spent)
+			}
+		})
 	}
 }
