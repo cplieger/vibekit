@@ -5,6 +5,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -289,4 +290,81 @@ func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	if _, ok := h.lease("wf_1"); !ok {
 		t.Fatal("a runtime with no durable store lost the lease, so the run would be unbounded")
 	}
+}
+
+// TestGrantLease_ReportsAnEnvelopeItCouldNotPersist pins the compensation for the
+// deliberate choice not to fail a launch over a bookkeeping error.
+//
+// The run is already on the wire, so the lease is kept in memory and this process
+// still bounds and attributes it — but only THIS process. A restart then finds a
+// run with no envelope: no deadline, no recipe, no origin, so the orphan sweep
+// cannot recognise it and nothing ever ends it. That line is the only warning
+// anyone gets, and a guard flipped here emits it on every successful launch
+// instead, which is the same as not having it.
+func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
+	const wantLine = "run lease not persisted; this run's envelope will not survive a restart"
+
+	t.Run("a lease that could not be written is reported", func(t *testing.T) {
+		logs := captureLogs(t)
+		h := &Runs{leases: undurableLeaseStore(t)}
+
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+
+		if _, held := h.lease("wf_1"); !held {
+			t.Fatal("the failed persist also dropped the in-memory lease, so this process " +
+				"no longer bounds the run either")
+		}
+		out := logs.String()
+		if !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a run whose envelope was lost said nothing; want a line reading %q. Got: %s",
+				wantLine, out)
+		}
+		if !strings.Contains(out, `"recipe":"publish"`) {
+			t.Errorf("the line does not name the recipe whose run is now unbounded: %s", out)
+		}
+	})
+
+	t.Run("an ordinary launch is quiet about it", func(t *testing.T) {
+		logs := captureLogs(t)
+		h := &Runs{}
+
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+
+		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a lease that persisted fine was reported as lost: %s", out)
+		}
+	})
+}
+
+// TestReleaseLease_ReportsAReleaseItCouldNotWrite is the release's half of the
+// same durability split, and the failure runs the other way: the envelope stays on
+// disk for a run that is over, so a restart resurrects a stale lease and the run
+// reads as still executing to the single-run rule.
+func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
+	const wantLine = "run lease not released on disk"
+
+	t.Run("a release that could not be written is reported", func(t *testing.T) {
+		logs := captureLogs(t)
+		h := &Runs{leases: undurableLeaseStore(t)}
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+
+		h.releaseLease(t.Context(), "wf_1")
+
+		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a release that stayed on disk said nothing; want a line reading %q. Got: %s",
+				wantLine, out)
+		}
+	})
+
+	t.Run("an ordinary release is quiet about it", func(t *testing.T) {
+		logs := captureLogs(t)
+		h := &Runs{}
+		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
+
+		h.releaseLease(t.Context(), "wf_1")
+
+		if out := logs.String(); strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a release that worked was reported as failed: %s", out)
+		}
+	})
 }
