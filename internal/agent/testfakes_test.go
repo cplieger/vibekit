@@ -16,9 +16,13 @@ import (
 // --- Fake ACP bridge ---
 
 type fakeBridge struct {
-	notifCh      chan *vibekit.RPCResponse
-	callResults  map[string]json.RawMessage
-	callErrs     map[string]error
+	notifCh     chan *vibekit.RPCResponse
+	callResults map[string]json.RawMessage
+	callErrs    map[string]error
+	// callRPCErrs makes Call return a REPLY carrying a JSON-RPC error, which is
+	// how KAS actually refuses: the transport succeeds and the reason travels
+	// in-band. callErrs is the other channel — the transport itself failing.
+	callRPCErrs  map[string]*vibekit.RPCError
 	lastParams   map[string]map[string]any
 	callDeadline map[string]bool
 	chunksOnCall map[string][]string
@@ -94,6 +98,10 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 	if err, ok := b.callErrs[method]; ok {
 		b.mu.Unlock()
 		return nil, err
+	}
+	if rpcErr, ok := b.callRPCErrs[method]; ok {
+		b.mu.Unlock()
+		return &vibekit.RPCResponse{Error: rpcErr}, nil
 	}
 	res := json.RawMessage(`{"stopReason":"end_turn"}`)
 	if r, ok := b.callResults[method]; ok {
