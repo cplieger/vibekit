@@ -556,3 +556,47 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 		})
 	}
 }
+
+// TestSessionLoad_HealsTheChatsRestartPausedRuns is the recovery model for
+// agent-launched runs, and the reason there is no Resume button anywhere.
+//
+// A restart kills a chat's bridge, which KAS reconciles by PAUSING the runs that
+// bridge launched. The user's next message respawns the bridge, and this sweep is
+// what makes the run heal with the chat. Without it a restart leaves every
+// agent-launched run parked with nothing in the product able to restart it.
+//
+// The sweep runs off the spawn path deliberately — the user's prompt must not wait
+// behind a run-list round trip — so the resume is awaited rather than assumed. The
+// wait fails closed: a sweep that never ran reports that, instead of passing
+// whenever the goroutine happened to win.
+func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
+	h, cs, br := newTestHub()
+	const chatID vibekit.ChatID = "c1"
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
+		}),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
+		methodKiroWorkflowResume:  json.RawMessage(`{}`),
+	}
+	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		c.RecordSession("sess_owned")
+		return true
+	}); err != nil {
+		t.Fatalf("seed the chat: %v", err)
+	}
+
+	if _, err := h.coord.OpenBridge(t.Context(), chatID, ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+
+	stop := time.Now().Add(5 * time.Second)
+	for !slices.Contains(br.callLog(), methodKiroWorkflowResume) {
+		if time.Now().After(stop) {
+			t.Fatalf("a rehydrated session never resumed the run a restart paused; calls were %v",
+				br.callLog())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
