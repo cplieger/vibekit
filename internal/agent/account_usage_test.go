@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -81,6 +82,55 @@ func TestParseAccountUsage(t *testing.T) {
 	t.Run("Malformed", func(t *testing.T) {
 		if _, err := parseAccountUsage(json.RawMessage(`{not json`)); err == nil {
 			t.Fatal("expected error for malformed JSON")
+		}
+	})
+}
+
+// TestAccountUsage_HandsBackWhatTheBridgeReported closes the gap between the
+// parser's own table and the fetch: TestParseAccountUsage proves the shape is read
+// correctly, and TestAccountUsage_CallHasTimeout proves the call is bounded, but
+// nothing asserted the fetch's two outcomes actually reach the caller.
+//
+// It matters because the footer renders whatever comes back: a nil snapshot with a
+// nil error reads as "no usage to show" rather than as a failure, so the plan and
+// the credit balance quietly vanish from the UI with nothing logged anywhere.
+func TestAccountUsage_HandsBackWhatTheBridgeReported(t *testing.T) {
+	t.Run("a plan reply becomes the snapshot", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{
+			methodKiroGetUsage: json.RawMessage(`{"success":true,"message":"Plan: KIRO POWER",` +
+				`"data":{"planName":"KIRO POWER","billingCycleReset":"2026-09-01",` +
+				`"usageBreakdowns":[{"resourceType":"CREDIT","displayName":"Credits",` +
+				`"used":10,"limit":100,"percentage":10,"hasLimit":true}]}}`),
+		}
+
+		got, err := h.AccountUsage(t.Context())
+		if err != nil {
+			t.Fatalf("AccountUsage: %v", err)
+		}
+		if got == nil {
+			t.Fatal("AccountUsage returned no snapshot and no error, so the footer shows nothing " +
+				"and no failure is recorded anywhere")
+		}
+		if got.PlanName != "KIRO POWER" {
+			t.Errorf("plan = %q, want %q", got.PlanName, "KIRO POWER")
+		}
+		if len(got.Breakdowns) != 1 || got.Breakdowns[0].ResourceType != "CREDIT" {
+			t.Errorf("breakdowns = %+v, want the one CREDIT entry", got.Breakdowns)
+		}
+	})
+
+	t.Run("an unreachable bridge is an error, not an empty snapshot", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callErrs = map[string]error{methodKiroGetUsage: errors.New("kas gone")}
+
+		got, err := h.AccountUsage(t.Context())
+		if err == nil {
+			t.Fatalf("AccountUsage reported success with %+v; the caller cannot tell a fetch that "+
+				"failed from an account with nothing to report", got)
+		}
+		if got != nil {
+			t.Errorf("AccountUsage returned %+v alongside an error, want no snapshot", got)
 		}
 	})
 }

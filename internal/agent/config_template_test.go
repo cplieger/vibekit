@@ -2,6 +2,10 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -68,4 +72,97 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 	if s != `{"modes":[],"models":[],"effort_levels":[]}` {
 		t.Errorf("empty response JSON: %s", s)
 	}
+}
+
+// TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo covers the endpoint's
+// contract in all three directions, because the degradation is what makes the other
+// two matter.
+//
+// The client keeps static fallbacks for a 200 carrying empty lists, so a failure
+// here is INVISIBLE in the UI — the picker simply shows the built-in defaults. The
+// log line is therefore the only evidence, which also means a guard flipped so it
+// fires on success reports a broken catalog on every page load while the real
+// failures look identical.
+func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
+	const goodReply = `{
+	  "modes": {"currentModeId": "vibe", "availableModes": [
+	    {"id": "vibe", "name": "Default", "_meta": {"kiro": {"source": "bundled"}}}
+	  ]},
+	  "configOptions": [
+	    {"id": "model", "currentValue": "m-default", "options": [
+	      {"value": "m-default", "name": "Default Model"}
+	    ]}
+	  ]
+	}`
+
+	serve := func(t *testing.T, h *Runtime) configTemplateResponse {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/config-template", nil)
+		rec := httptest.NewRecorder()
+		h.handleConfigTemplate(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: the client has no error path here, it reads the body",
+				rec.Code)
+		}
+		var got configTemplateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
+		}
+		return got
+	}
+
+	t.Run("a good template becomes the catalog", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{
+			methodKiroConfigTemplate: json.RawMessage(goodReply),
+		}
+
+		got := serve(t, h)
+		if len(got.Modes) != 1 || got.Modes[0].ID != "vibe" {
+			t.Errorf("modes = %+v, want the template's one bundled mode", got.Modes)
+		}
+		if got.DefaultModel != "m-default" {
+			t.Errorf("default model = %q, want m-default", got.DefaultModel)
+		}
+		out := logs.String()
+		if strings.Contains(out, `"msg":"config template failed"`) ||
+			strings.Contains(out, `"msg":"config template decode failed"`) {
+			t.Errorf("a template that served fine reported a failure: %s", out)
+		}
+	})
+
+	t.Run("an unreachable bridge degrades and is reported", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, _, br := newTestHub()
+		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("kas gone")}
+
+		got := serve(t, h)
+		if len(got.Modes) != 0 || len(got.Models) != 0 {
+			t.Errorf("got %+v, want empty lists so the client keeps its fallbacks", got)
+		}
+		const wantLine = "config template failed"
+		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a catalog nobody could fetch said nothing; want a line reading %q. Got: %s",
+				wantLine, out)
+		}
+	})
+
+	t.Run("an undecodable template degrades and is reported", func(t *testing.T) {
+		logs := captureLogs(t)
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{
+			methodKiroConfigTemplate: json.RawMessage(`["not the template shape"]`),
+		}
+
+		got := serve(t, h)
+		if len(got.Modes) != 0 || len(got.Models) != 0 {
+			t.Errorf("got %+v, want empty lists so the client keeps its fallbacks", got)
+		}
+		const wantLine = "config template decode failed"
+		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
+			t.Errorf("a template vibekit could not read said nothing; want a line reading %q. "+
+				"Got: %s", wantLine, out)
+		}
+	})
 }
