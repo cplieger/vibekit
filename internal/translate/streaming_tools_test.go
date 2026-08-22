@@ -14,11 +14,17 @@ import (
 type lineRec struct {
 	lastDiffs []vibekit.ToolDiff
 	calls     int
+	// lastTurn is the turn number the tracker was handed. Recorded because it
+	// is the tracker's eviction key and the number the editor's gutter groups
+	// by: a call that records the right ranges under the wrong turn is a
+	// silent corruption the diff assertions cannot see.
+	lastTurn int
 }
 
-func (r *lineRec) RecordFromDiffs(_ vibekit.ChatID, diffs []vibekit.ToolDiff, _ int, _ string) {
+func (r *lineRec) RecordFromDiffs(_ vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, _ string) {
 	r.calls++
 	r.lastDiffs = diffs
+	r.lastTurn = turn
 }
 
 // lineDeps wraps baseDeps and records the line-tracking calls. It overrides
@@ -85,6 +91,7 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]vibekit.S
 	*events = nil
 	rec.calls = 0
 	rec.lastDiffs = nil
+	rec.lastTurn = 0
 	return tr, rec, deps, events, chatID
 }
 
@@ -198,6 +205,27 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 		}), "")
 		if rec.calls != 1 {
 			t.Errorf("with diff: RecordFromDiffs calls = %d, want 1", rec.calls)
+		}
+		// The first tool call of a chat is turn 1, not turn 0 and not a negative:
+		// the number is the tracker's eviction key and what the editor's
+		// changed-line gutter groups by, so an off-by-one files every range
+		// under a turn no card claims.
+		if rec.lastTurn != 1 {
+			t.Errorf("with diff: RecordFromDiffs turn = %d, want 1 (the chat's first tool call)", rec.lastTurn)
+		}
+		// A second diffed call in the same chat advances to 2, which is what
+		// makes the number a turn rather than a constant.
+		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
+			"toolCallId": "tc-diff-2",
+			"title":      "writeFile",
+			"kind":       "edit",
+			"status":     "pending",
+			"content": []map[string]any{
+				{"type": "diff", "path": "y.go", "oldText": "a", "newText": "b"},
+			},
+		}), "")
+		if rec.lastTurn != 2 {
+			t.Errorf("second diffed call: RecordFromDiffs turn = %d, want 2", rec.lastTurn)
 		}
 	})
 	t.Run("WithoutDiffSkipsLineTracker", func(t *testing.T) {
@@ -678,4 +706,181 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A tool call's subtask attribution can arrive on an UPDATE rather than the
+// create, so it is adopted late — but only into an empty slot, and workflow
+// identity outranks the plain id when a frame carries both. The three rules
+// together are what keep a step's card grouped under the step: adopting over a
+// held value re-parents a card mid-flight, refusing to adopt leaves it in the
+// parent agent's block, and preferring the plain id files it under a uuid the
+// workflow view does not address.
+func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
+	workflowMeta := map[string]any{
+		"workflow": map[string]any{"workflowId": "wf_1", "nodeId": "build"},
+	}
+
+	t.Run("workflow_identity_wins_over_the_plain_id", func(t *testing.T) {
+		tr, _, _, events, chatID := primeToolCall(t)
+		meta := map[string]any{"agentSubtaskId": "uuid-plain"}
+		maps.Copy(meta, workflowMeta)
+
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"_meta":      map[string]any{"kiro": meta},
+		}), "")
+
+		got, ok := lastToolCallUpdate(t, events)
+		if !ok {
+			t.Fatal("no tool_call_update event emitted")
+		}
+		if got.AgentSubtaskID != "wf:wf_1/build" {
+			t.Errorf("ToolCall.AgentSubtaskID after an update carrying both ids = %q, want %q",
+				got.AgentSubtaskID, "wf:wf_1/build")
+		}
+	})
+
+	t.Run("the_plain_id_is_adopted_when_no_workflow_rides_along", func(t *testing.T) {
+		tr, _, _, events, chatID := primeToolCall(t)
+
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-plain"}},
+		}), "")
+
+		got, ok := lastToolCallUpdate(t, events)
+		if !ok {
+			t.Fatal("no tool_call_update event emitted")
+		}
+		if got.AgentSubtaskID != "uuid-plain" {
+			t.Errorf("ToolCall.AgentSubtaskID after an update carrying only the plain id = %q, want %q",
+				got.AgentSubtaskID, "uuid-plain")
+		}
+	})
+
+	t.Run("a_held_id_survives_a_later_frame", func(t *testing.T) {
+		deps, _, events := newLineCaptureDeps()
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
+		chatID := vibekit.ChatID("c1")
+		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"title":      "readFile",
+			"kind":       "read",
+			"status":     "pending",
+			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-first"}},
+		}), "")
+		*events = nil
+
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-second"}},
+		}), "")
+
+		got, ok := lastToolCallUpdate(t, events)
+		if !ok {
+			t.Fatal("no tool_call_update event emitted")
+		}
+		if got.AgentSubtaskID != "uuid-first" {
+			t.Errorf("ToolCall.AgentSubtaskID after a second id arrived = %q, want %q (late adoption never overwrites)",
+				got.AgentSubtaskID, "uuid-first")
+		}
+	})
+}
+
+// A disclosure and a policy denial are both decided when the call is ATTEMPTED,
+// so either can arrive on an update rather than the create. Each is adopted
+// into an empty slot only: overwriting would let a later frame replace the
+// refusal a user is reading with a narrower one.
+func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
+	t.Run("a_disclosure_on_the_update_is_adopted", func(t *testing.T) {
+		tr, _, _, events, chatID := primeToolCall(t)
+
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"_meta": map[string]any{"kiro": map[string]any{
+				"disclosedContext": map[string]any{
+					"type": "skill", "displayName": "deploy-app", "uri": "file:///skills/deploy-app.md",
+				},
+			}},
+		}), "")
+
+		got, ok := lastToolCallUpdate(t, events)
+		if !ok {
+			t.Fatal("no tool_call_update event emitted")
+		}
+		if got.Disclosed == nil {
+			t.Fatalf("ToolCall.Disclosed after an update carrying disclosedContext = nil, want the skill")
+		}
+		if got.Disclosed.DisplayName != "deploy-app" || got.Disclosed.Type != "skill" {
+			t.Errorf("ToolCall.Disclosed = %+v, want type %q name %q", *got.Disclosed, "skill", "deploy-app")
+		}
+	})
+
+	t.Run("a_denial_on_the_update_is_adopted", func(t *testing.T) {
+		tr, _, _, events, chatID := primeToolCall(t)
+
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "failed",
+			"_meta": map[string]any{"kiro": map[string]any{
+				"policyDenial": map[string]any{
+					"capability": "fs.write", "resource": "/etc/passwd", "scope": "workspace", "source": "policy.json",
+				},
+			}},
+		}), "")
+
+		got, ok := lastToolCallUpdate(t, events)
+		if !ok {
+			t.Fatal("no tool_call_update event emitted")
+		}
+		if got.Denial == nil {
+			t.Fatalf("ToolCall.Denial after an update carrying policyDenial = nil, want the refusal")
+		}
+		if got.Denial.Capability != "fs.write" || got.Denial.Resource != "/etc/passwd" {
+			t.Errorf("ToolCall.Denial = %+v, want capability %q resource %q", *got.Denial, "fs.write", "/etc/passwd")
+		}
+	})
+
+	t.Run("values_held_from_the_create_survive_a_later_frame", func(t *testing.T) {
+		deps, _, events := newLineCaptureDeps()
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
+		chatID := vibekit.ChatID("c1")
+		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"title":      "disclose_context",
+			"kind":       "other",
+			"status":     "pending",
+			"_meta": map[string]any{"kiro": map[string]any{
+				"disclosedContext": map[string]any{"type": "skill", "displayName": "first", "uri": "file:///a.md"},
+				"policyDenial":     map[string]any{"capability": "fs.write", "resource": "/first"},
+			}},
+		}), "")
+		*events = nil
+
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"_meta": map[string]any{"kiro": map[string]any{
+				"disclosedContext": map[string]any{"type": "steering", "displayName": "second", "uri": "file:///b.md"},
+				"policyDenial":     map[string]any{"capability": "shell.exec", "resource": "/second"},
+			}},
+		}), "")
+
+		got, ok := lastToolCallUpdate(t, events)
+		if !ok {
+			t.Fatal("no tool_call_update event emitted")
+		}
+		if got.Disclosed == nil || got.Disclosed.DisplayName != "first" {
+			t.Errorf("ToolCall.Disclosed after a second disclosure arrived = %+v, want the one held from the create (%q)",
+				got.Disclosed, "first")
+		}
+		if got.Denial == nil || got.Denial.Resource != "/first" {
+			t.Errorf("ToolCall.Denial after a second denial arrived = %+v, want the one held from the create (%q)",
+				got.Denial, "/first")
+		}
+	})
 }
