@@ -1347,6 +1347,19 @@
   align-items: center;
 }
 
+/* The Always-allow slot when kiro-cli says a saved rule could never match
+   (permission.ts buildAlwaysAllowNote). Same box as .always-allow-details, which
+   it replaces, and the same register as .approval-policy-pointer — tertiary, xs
+   — because like that pointer it is a STATEMENT about the policy rather than a
+   third way to answer the ask. A disabled button here would be a control that
+   does nothing. */
+.always-allow-unavailable {
+  width: 100%;
+  margin-block-start: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
 .chip-input {
   flex: 1;
   padding: var(--sp-1) var(--sp-2);

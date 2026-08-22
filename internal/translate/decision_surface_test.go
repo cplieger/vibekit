@@ -353,3 +353,84 @@ func TestDisplayText_BoundsAnUnboundedUpstreamString(t *testing.T) {
 		t.Errorf("displayText(%q) = %q, want byte-identical", short, displayText(short))
 	}
 }
+
+// upstreamConsentReason stands in for KAS's own
+// `_meta.kiro.consent.persistableConsentReason` (kiro-cli 2.19.1). Shape rather
+// than verbatim text: what the assertion below turns on is the three properties
+// that made the string unfit to forward — it is long, it names a file the
+// vibekit user never hand-edits, and it carries a cmd.exe/PowerShell tail that
+// is unreachable inside this Linux container.
+const upstreamConsentReason = "Cannot save a rule for this command: the shell pattern would not match. " +
+	"Edit ~/.kiro/settings/permissions.yaml by hand, or on Windows run the equivalent from cmd.exe or PowerShell."
+
+// TestPermissionCard_DropsTheUpstreamConsentReason pins the DO-NOT-FORWARD half
+// of the persistability decision. KAS owns the verdict; vibekit owns the copy,
+// so the reason string is read at the seam and dropped there — never persisted,
+// never broadcast, not even as an unused field the client could start rendering.
+//
+// Without this test the field looks helpful and someone re-adds it, at which
+// point the card starts telling a vibekit user to hand-edit a permissions file
+// the Settings pane owns, with a Windows postscript for a shell this container
+// does not have.
+func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+
+	id := int64(9101)
+	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+		ID: &id,
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess_x",
+			"toolCall": map[string]any{
+				"toolCallId": "tc-1",
+				"title":      "for f in *; do rm $f; done",
+				"kind":       "execute",
+			},
+			"options": []map[string]any{
+				{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+			},
+			"_meta": map[string]any{"kiro": map[string]any{
+				"consent": map[string]any{
+					"persistableConsent":       false,
+					"persistableConsentReason": upstreamConsentReason,
+				},
+			}},
+		}),
+	})
+
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	// The verdict must have ARRIVED, or every assertion below passes vacuously:
+	// a broken consent decode drops the reason too, for the wrong reason.
+	if got.AlwaysAllowBlocked != vibekit.AlwaysAllowBlockUnparseable {
+		t.Fatalf("AlwaysAllowBlocked = %q, want %q: the verdict did not decode, so the "+
+			"reason-is-absent checks below would prove nothing",
+			got.AlwaysAllowBlocked, vibekit.AlwaysAllowBlockUnparseable)
+	}
+
+	wire, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	var decoded any
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	// Every string in the payload, keys included, concatenated — the same walk
+	// assertNeutralizedOnTheWire uses, so a fragment hidden in a nested option
+	// or a field added later is still in scope.
+	all := string(flatten(decoded))
+	for _, fragment := range []string{
+		upstreamConsentReason,
+		"permissions.yaml",
+		"PowerShell",
+		"cmd.exe",
+		"would not match",
+	} {
+		if strings.Contains(all, fragment) {
+			t.Errorf("the upstream consent reason reached the wire: %q is present; payload=%s", fragment, wire)
+		}
+	}
+}

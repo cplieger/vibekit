@@ -3,6 +3,7 @@
 import { asObject, reqStr, reqNum, reqBool, optStr, optNum, optBool, reqOneOf, decodeArray, decodeRecord, type Decoder } from "../validators.js";
 import type { AccountUsage, AccountUsageBreakdown, AgentNoticePayload, ApprovalFile, Attachment, Block, CatalogInfo, ChatDeletedPayload, ChatHeader, Check, CodeReference, CodeReferencesPayload, ConfiguredForge, ConnectedPayload, DecisionSettledPayload, DeviceFlowResponse, ElicitationNeededPayload, ElicitationPropertySchema, ElicitationRequestSchema, ErrorPayload, FileChange, GovernanceFeatures, GovernanceStatePayload, Inventory, Issue, Job, JobResponse, JobsResponse, Label, MCPConnectedPayload, MCPDisconnectedPayload, MCPFailedPayload, MCPOAuthPayload, Message, MessageChunkPayload, MeteringItem, OpenExternalURLPayload, PR, PermissionNeededPayload, PermissionOption, PermissionsChangedPayload, PlanEntry, PolicyErrorItem, PolicyErrorPayload, PolicyExplainResult, PolicyRule, PolicyRuleCore, PolicyView, PollResult, Recipe, RecipesResponse, RefusalInfo, Release, RemoveResponse, Repo, RunFinishedPayload, RunLaunchRequest, RunLaunchedResponse, RunProgressPayload, RunStartedPayload, SafetyPropertiesPayload, SafetyProperty, SafetyStatusPayload, SearchHit, SearchResponse, SessionEffortLevel, SessionMode, SessionModel, SteerClearedPayload, SteerInjectedPayload, SteerQueuedPayload, SystemTool, TerminalCreatedPayload, TerminalExitedPayload, TerminalOutputPayload, TextSpan, ToolCall, ToolCallPayload, ToolCallUpdatePayload, ToolCheckpoint, ToolDenial, ToolDenialRule, ToolDiff, ToolDisclosed, ToolInfo, ToolJobChangedPayload, ToolJobOutputPayload, ToolLocation, TurnEndedPayload, TurnStatePayload, Usage, User, UserInputNeededPayload, UserInputOption, UserInputSubOption, WhoamiResponse } from "./types.gen.js";
 
+const ALWAYS_ALLOW_BLOCKS = ["unparseable"] as const;
 const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
 const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "model_not_served", "auth_token_unavailable"] as const;
 const EVENT_KINDS = ["interrupted", "cancelled", "model_switched", "compacted", "compaction_failed", "infra_safety_blocked"] as const;
@@ -588,6 +589,7 @@ export const decodePermissionNeededPayload: Decoder<PermissionNeededPayload> = (
   if (runId !== undefined) out.run_id = runId;
   const nodeId = o["node_id"] === null ? undefined : optStr(o, "node_id", "$.permission_needed_payload");
   if (nodeId !== undefined) out.node_id = nodeId;
+  if (o["always_allow_blocked"] !== undefined && o["always_allow_blocked"] !== null) out.always_allow_blocked = reqOneOf(o, "always_allow_blocked", ALWAYS_ALLOW_BLOCKS, "$.permission_needed_payload");
   if (o["files"] !== undefined && o["files"] !== null) out.files = decodeArray(o["files"], decodeApprovalFile, "$.permission_needed_payload.files");
   return out;
 };

@@ -27,7 +27,12 @@
 //      whatever it forgot.
 // ---------------------------------------------------------------------------
 
-import type { ApprovalFile, PermissionNeededPayload, PermissionOption } from "./types.js";
+import type {
+  AlwaysAllowBlock,
+  ApprovalFile,
+  PermissionNeededPayload,
+  PermissionOption,
+} from "./types.js";
 import { el } from "@cplieger/reactive";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
 import { editNativeRule } from "./actions/permissions.js";
@@ -150,7 +155,12 @@ function buildToolPermissionCard(
   }
 
   if (kind === "execute" && !isModeSwitch) {
-    const alwaysRow = buildAlwaysAllowRow(title, payload.options, onSelect);
+    const alwaysRow = buildAlwaysAllowRow(
+      title,
+      payload.options,
+      payload.always_allow_blocked,
+      onSelect,
+    );
     if (alwaysRow !== null) {
       actions.appendChild(alwaysRow);
     }
@@ -372,34 +382,57 @@ function formatInputPreview(input: unknown): string {
   return text;
 }
 
-/** Characters that make a command's full-string pattern meaningless to the
- *  native policy engine: it evaluates tree-sitter-split SUBCOMMANDS, so a
- *  pattern spanning shell operators can never match; `?` is a glob there
- *  (broader than intended) and `\` is rewritten to `/`. */
-const UNREPRESENTABLE_RE = /[;&|`$><\\"'?\n\r]/;
+/** Copy for each reason the offer to persist a rule is withdrawn. A Record over
+ *  the union rather than a switch, so adding a server-side code without deciding
+ *  what to tell the reader is a type error here.
+ *
+ *  This is vibekit's wording, not KAS's: the server drops the upstream reason
+ *  string at the translate seam and forwards a code (see AlwaysAllowBlock). */
+const ALWAYS_ALLOW_UNAVAILABLE: Record<AlwaysAllowBlock, string> = {
+  unparseable:
+    "Always allow is unavailable: kiro-cli can't parse this command, so a saved rule would never match it.",
+};
+
+/** The Always-allow slot when a saved rule could never match.
+ *
+ *  A one-line NOTE, deliberately not a disabled button: a control that does
+ *  nothing teaches the reader to distrust every other one. There is no second
+ *  escape hatch here either — the card already carries buildPolicyPointer at
+ *  the workspace relaxation, which is the real one. */
+function buildAlwaysAllowNote(blocked: AlwaysAllowBlock): HTMLElement {
+  return el("div", { className: "always-allow-unavailable" }, ALWAYS_ALLOW_UNAVAILABLE[blocked]);
+}
 
 /** Build the "Always allow..." expansion for shell commands: each preset
  *  persists a workspace-scope native allow rule (the same permissions.yaml
  *  the Settings → Permissions editor writes; KAS hot-reloads it), then
  *  approves the pending request. Mirrors the IDE's trust patterns — base
- *  command, base + flags, exact — skipping a leading `sudo`. Returns null
- *  when nothing useful can be offered (no allow option, or the command
- *  contains shell structure the engine evaluates per-subcommand, where a
- *  full-string pattern could never match). */
+ *  command, base + flags, exact — skipping a leading `sudo`.
+ *
+ *  Returns null when there is no allow option to approve with (the offer was
+ *  never there to withdraw), and the note above when `blocked` says a saved
+ *  rule could never match. That verdict is KAS's, arriving on the request
+ *  itself: it generates the same three candidate patterns and probes each
+ *  through the live policy engine. vibekit used to guess at it with a regex
+ *  over shell metacharacters, which was wrong in both directions — it
+ *  suppressed the row for `git commit -m "fix"`, where `git *` matches
+ *  perfectly well, and it OFFERED the row for a command kiro-cli cannot parse,
+ *  where the click wrote a permanent rule that could never fire. */
 function buildAlwaysAllowRow(
   command: string,
   options: readonly PermissionOption[],
+  blocked: AlwaysAllowBlock | undefined,
   onSelect: SelectFn,
-): HTMLDetailsElement | null {
+): HTMLElement | null {
   const allowOpt = options.find((o) => o.kind.startsWith("allow"));
   if (allowOpt === undefined) {
     return null;
   }
+  if (blocked !== undefined) {
+    return buildAlwaysAllowNote(blocked);
+  }
 
   const trimmed = command.trim();
-  if (UNREPRESENTABLE_RE.test(trimmed)) {
-    return null;
-  }
   const parts = trimmed.split(/\s+/);
   // Mirror the IDE: derive patterns from the real command, not the sudo
   // wrapper (a `sudo *` allow would be far broader than intended).
@@ -485,5 +518,5 @@ function buildAlwaysAllowRow(
     { className: "always-allow-details" },
     el("summary", { className: "always-allow-summary" }, "Always allow\u2026"),
     body,
-  ) as HTMLDetailsElement;
+  );
 }
