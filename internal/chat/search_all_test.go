@@ -2,8 +2,13 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -288,4 +293,124 @@ func TestBestHit_PicksTheEarliestTurnAndKeepsTheFirstOfATie(t *testing.T) {
 			}
 		})
 	}
+}
+
+// seedChatFileAt writes one chat file with a chosen modification time.
+//
+// Written directly rather than through Mutate because the mtime IS the property
+// under test: newestEntries orders by the file's own mtime precisely so that it
+// need not read every file, and Mutate cannot stamp one.
+func seedChatFileAt(t *testing.T, s *Store, id, body string, mtime time.Time) {
+	t.Helper()
+	data, err := json.Marshal(&vibekit.Chat{
+		ID:       id,
+		Name:     "seeded",
+		Messages: []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: body}},
+	})
+	if err != nil {
+		t.Fatalf("marshal chat %s: %v", id, err)
+	}
+	path := filepath.Join(s.dir, id+chatFileSuffix)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write chat %s: %v", id, err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("stamp chat %s: %v", id, err)
+	}
+}
+
+// Truncated is the UI's licence to say "older chats were not read", so it must
+// mean the scan actually left something out. Reporting it for a directory the
+// scan covered completely turns an honest empty result into a shrug.
+func TestSearchAll_TruncatedOnlyPastTheScanCap(t *testing.T) {
+	tests := []struct {
+		name          string
+		chats         int
+		wantScanned   int
+		wantTruncated bool
+	}{
+		{name: "one_below_the_cap", chats: 499, wantScanned: 499, wantTruncated: false},
+		{name: "exactly_the_cap", chats: 500, wantScanned: 500, wantTruncated: false},
+		{name: "one_past_the_cap", chats: 501, wantScanned: 500, wantTruncated: true},
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := NewStore(t.TempDir())
+			if err != nil {
+				t.Fatalf("NewStore: %v", err)
+			}
+			for i := range tc.chats {
+				seedChatFileAt(t, s, fmt.Sprintf("chat-%03d", i), "needle",
+					base.Add(time.Duration(i)*time.Minute))
+			}
+
+			got := s.SearchAll(t.Context(), "needle")
+
+			if got.Scanned != tc.wantScanned {
+				t.Errorf("SearchAll over %d chats: Scanned = %d, want %d", tc.chats, got.Scanned, tc.wantScanned)
+			}
+			if got.Truncated != tc.wantTruncated {
+				t.Errorf("SearchAll over %d chats: Truncated = %t, want %t", tc.chats, got.Truncated, tc.wantTruncated)
+			}
+		})
+	}
+}
+
+// When the scan cap bites, the chats it drops are the OLDEST. That ordering is
+// the file's own mtime, and reading it is the whole reason the cap is safe: lose
+// the mtime and the cap keeps an arbitrary 500, so a search for something said
+// this morning comes back empty on a busy workspace.
+//
+// The fixture puts the old chats at MIDDLE filename positions so the verdict
+// cannot ride on how a directory listing happens to be ordered.
+func TestSearchAll_TheScanCapKeepsTheNewestChats(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	t.Run("the_oldest_hundred_are_dropped_past_the_cap", func(t *testing.T) {
+		s, err := NewStore(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		for i := range 600 {
+			body, mtime := "recentword", base.Add(time.Duration(1000+i)*time.Minute)
+			if i >= 250 && i < 350 {
+				body, mtime = "stalewordxyz", base.Add(time.Duration(i-250)*time.Minute)
+			}
+			seedChatFileAt(t, s, fmt.Sprintf("chat-%03d", i), body, mtime)
+		}
+
+		got := s.SearchAll(t.Context(), "stalewordxyz")
+
+		if len(got.Matches) != 0 {
+			t.Errorf("SearchAll(stalewordxyz) over 600 chats returned %d matches, want 0 (the 100 oldest are past the cap)",
+				len(got.Matches))
+		}
+		if !got.Truncated {
+			t.Error("Truncated = false over 600 chats, want true")
+		}
+	})
+
+	// The witness: the same term in the same fixture shape, below the cap. It
+	// fails if the seeding or the term ever stops working, so a zero above
+	// means the cap dropped those chats rather than that nothing was searched.
+	t.Run("the_same_old_chats_are_found_below_the_cap", func(t *testing.T) {
+		s, err := NewStore(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		for i := range 100 {
+			seedChatFileAt(t, s, fmt.Sprintf("chat-%03d", i+250), "stalewordxyz",
+				base.Add(time.Duration(i)*time.Minute))
+		}
+
+		got := s.SearchAll(t.Context(), "stalewordxyz")
+
+		if len(got.Matches) == 0 {
+			t.Error("SearchAll(stalewordxyz) over 100 chats returned no matches; the fixture is not staging what the case above assumes")
+		}
+		if got.Truncated {
+			t.Error("Truncated = true over 100 chats, want false")
+		}
+	})
 }
