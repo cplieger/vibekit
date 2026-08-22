@@ -8,8 +8,8 @@ github.com/cplieger/envx/v2 v2.0.1 h1:s++DgE8adtWOElrNFRaHield1FNSLJzJqRWLHgRPWL
 github.com/cplieger/envx/v2 v2.0.1/go.mod h1:kKvTj6k8bxlYS2CtuF/7Go9zIe7qJYpMzckZNk8ucJc=
 github.com/cplieger/envx/yamlenv/v2 v2.0.0 h1:YNznn50HfSIJMBWzcAtqPw4SWAyHtjU3zC6dWFDNd+A=
 github.com/cplieger/envx/yamlenv/v2 v2.0.0/go.mod h1:5wXZtzDzSl/zu+GPd5b76f5qpBVLW0AdbTFAaDy1aXQ=
-github.com/cplieger/httpx/v5 v5.0.1 h1:MAqJPMJ/esh877C5Y2yVFqm08Xpjxnt67qIZn/fL3Fk=
-github.com/cplieger/httpx/v5 v5.0.1/go.mod h1:3ap2CAq592k7smKhe3lWrwklthtmJ6L4cIWMTMM8O10=
+github.com/cplieger/httpx/v5 v5.0.2 h1:v7azlVn+Sji3Kti1VANCkF+IGqslqP5C9QjsiZEPVoE=
+github.com/cplieger/httpx/v5 v5.0.2/go.mod h1:3ap2CAq592k7smKhe3lWrwklthtmJ6L4cIWMTMM8O10=
 github.com/cplieger/jsoncap/v2 v2.0.0 h1:Q/GLv75foxGGhxG8uTmiXgrPAnv5tUiBiFhvcw5+3XU=
 github.com/cplieger/jsoncap/v2 v2.0.0/go.mod h1:tE1ti+CmjfXHpgAbjNdlbAe7/tZaxIOmGO5sMPQbtAY=
 github.com/cplieger/keyenc v1.0.6 h1:Ac/EoEY8Lgy4ZyTi9I4G4s00RBWGoOlI3RdsjGwHLRo=
@@ -28,8 +28,8 @@ github.com/cplieger/ssrf/v4 v4.1.0 h1:7GqcqAEuZcRBMgfGYxcIWaDe2ikqrOMGBHwLve4MTj
 github.com/cplieger/ssrf/v4 v4.1.0/go.mod h1:Nq8CsFwZcpYNpzDpgqyLV9IRM8XiYTfR1V4Bm93YSFU=
 github.com/cplieger/toolbelt/v3 v3.0.3 h1:/tmfSoZGnabH6lJD2kceH+qwuKtTEA1Fu1vmKa5mtn8=
 github.com/cplieger/toolbelt/v3 v3.0.3/go.mod h1:EBkap2ujYzc0S8b96xge6ZHaMT+VCz5BV4K+aN1i998=
-github.com/cplieger/web-terminal-engine/v5 v5.0.6 h1:NjDW+Fxh9WNXva9yvUBnIe9t8rGHkHq12m70gaPY5O0=
-github.com/cplieger/web-terminal-engine/v5 v5.0.6/go.mod h1:7HlrjnXQMX42WU1YH7IQwF3C4ndCHMTpOu7isoeb9f8=
+github.com/cplieger/web-terminal-engine/v5 v5.0.7 h1:EB5kMd3dPUexr6vGzexLJvpmFqB5H5tDw8iKWLT+JLM=
+github.com/cplieger/web-terminal-engine/v5 v5.0.7/go.mod h1:7HlrjnXQMX42WU1YH7IQwF3C4ndCHMTpOu7isoeb9f8=
 github.com/cplieger/webhttp/v2 v2.0.1 h1:tqyk+deIxW24K94U/+AwPOSkzqaxnciDZ3QZlUBEkYU=
 github.com/cplieger/webhttp/v2 v2.0.1/go.mod h1:63pP3oJEpsk2kEAonLuxjDh6V4IR5bO06N575hvuNag=
 github.com/cplieger/wiregen/v3 v3.0.0 h1:xtwG9WVrDs70NHQttToplgVJNMUu4X8rBwnnftFrkbA=
