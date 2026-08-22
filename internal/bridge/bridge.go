@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/kascap"
 	"github.com/cplieger/vibekit/internal/version"
@@ -257,19 +258,24 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 
 // spawn packages this bridge's per-spawn facts for the kascap table's gated
 // rows. SecretStorage decides the secretStorage key's VALUE (the key is present
-// either way) and Hooks decides whether the hooks key is present AT ALL — two
-// different mechanisms, which is why one boolean would not do.
+// either way), Hooks decides whether the hooks key is present AT ALL, and
+// UserMemoryOptIn decides BOTH for its own key — three mechanisms across three
+// fields, which is why one boolean would not do.
 //
-// Both fields are immutable after Start, so this reads them without the mutex,
+// All three are immutable after Start, so this reads them without the mutex,
 // and it is one method rather than a literal at each call site because the
 // connection door and the session door must describe the SAME spawn: a bridge
 // that declared a capability at initialize and then contradicted itself at
 // session/new would be a defect no test looks for.
 func (b *Bridge) spawn() kascap.Spawn {
-	return kascap.Spawn{SecretStorage: b.secretStorage, Hooks: b.enableHooks}
+	return kascap.Spawn{
+		SecretStorage: b.secretStorage,
+		Hooks:         b.enableHooks,
+	}
 }
 
 func (b *Bridge) initialize(ctx context.Context) error {
+	initStart := time.Now()
 	// The _meta.kiro block is DECLARED in internal/kascap rather than built
 	// here: which call carries each key, how KAS resolves it, whether an ABSENT
 	// key resolves true, whether vibekit sends it at all, and why. Every key's
@@ -350,6 +356,17 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// Developer-oriented intermediate signal; the user-facing
 	// "bridge started" breadcrumb in Start() is the authoritative
 	// "a bridge exists now" Info line.
-	slog.Debug("ACP initialize RPC completed", "version", version.Build)
+	//
+	// elapsed_ms isolates the initialize round trip from the rest of the
+	// handshake, which is what makes an upstream change to that ONE call
+	// attributable. kiro-cli 2.19.0 awaited an experiment-service resolve inside
+	// its initialize handler for any client declaring infrastructureSafety with no
+	// explicit infraSafetyMonitor — vibekit's exact handshake, on every
+	// hooks-bearing spawn — and 2.19.1 removed it. Without this number that is an
+	// argument; with it, it is a measurement.
+	slog.Debug("ACP initialize RPC completed",
+		"version", version.Build,
+		"elapsed_ms", time.Since(initStart).Milliseconds(),
+	)
 	return nil
 }
