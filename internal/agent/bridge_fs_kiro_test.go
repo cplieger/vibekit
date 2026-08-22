@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -415,4 +416,50 @@ func matcherFor(t *testing.T, workDir string, patterns ...string) *ignore.Matche
 		t.Fatalf("write ignore file: %v", err)
 	}
 	return ignore.NewMatcher(t.TempDir(), workDir)
+}
+
+// TestHandleKiroFSRequest_AnOrdinaryRequestNeitherPanicsNorApologises pins the
+// panic net's boundary, which is the half a recover is easy to get wrong.
+//
+// The net exists because these three verbs run on their own goroutine: a panic
+// there would take the process down, and the request it was answering would never
+// be answered, wedging the turn — so it recovers and sends an error instead. But
+// that recovery ALSO responds, and the ordinary path has already responded. A net
+// that fires on a clean return therefore overwrites a good reply with "internal
+// error" on every stat, readDirectory and delete, and logs a panic that never
+// happened.
+func TestHandleKiroFSRequest_AnOrdinaryRequestNeitherPanicsNorApologises(t *testing.T) {
+	logs := captureLogs(t)
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "f.txt"), []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, br := hubForFSTest(t, work)
+
+	if !h.inbound.handleKiroFSRequest(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, "f.txt")) {
+		t.Fatal("handleKiroFSRequest did not claim a stat, so nothing ran")
+	}
+	select {
+	case <-br.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stat never answered")
+	}
+	// Drain the handler's goroutine so the deferred net has certainly run: it fires
+	// AFTER the response, so asserting before the drain would race it.
+	shutdownHub(t, h)
+
+	br.respMu.Lock()
+	got := br.response
+	br.respMu.Unlock()
+	if got.err != nil {
+		t.Errorf("a stat that succeeded answered with %v; the panic net overwrote a good reply",
+			got.err)
+	}
+	if _, ok := got.result.(kiroStatBody); !ok {
+		t.Errorf("result type = %T, want kiroStatBody", got.result)
+	}
+	const panicLine = "kiro fs handler panic"
+	if out := logs.String(); strings.Contains(out, `"msg":"`+panicLine+`"`) {
+		t.Errorf("a handler that returned cleanly was reported as %q: %s", panicLine, out)
+	}
 }

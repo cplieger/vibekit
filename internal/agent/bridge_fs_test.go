@@ -24,8 +24,11 @@ import (
 type respondingBridge struct {
 	*fakeBridge
 
-	done     chan struct{}
-	response struct {
+	done chan struct{}
+	// respondErr makes the write itself fail, which is the case a bridge that
+	// died mid-turn produces: the reply is composed and then goes nowhere.
+	respondErr error
+	response   struct {
 		result any
 		err    error
 		id     int64
@@ -45,12 +48,13 @@ func (b *respondingBridge) Respond(_ context.Context, id int64, result any, err 
 	b.response.id = id
 	b.response.result = result
 	b.response.err = err
+	writeErr := b.respondErr
 	b.respMu.Unlock()
 	select {
 	case b.done <- struct{}{}:
 	default:
 	}
-	return nil
+	return writeErr
 }
 
 // hubForFSTest returns a runtime wired with a respondingBridge so the fs
