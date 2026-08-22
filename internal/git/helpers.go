@@ -31,13 +31,14 @@ func decodePostBody(w http.ResponseWriter, r *http.Request, v any, decodeErrMsg 
 	return httpreply.DecodeBody(w, r, v, decodeErrMsg)
 }
 
-// decodePostBodyOptional enforces the body-size cap and decodes into v.
-// Unlike decodePostBody, a decode failure is silently ignored (v keeps
-// its zero value) because the caller accepts an empty request body.
-// Used by POST handlers whose JSON body is purely advisory
-// (e.g. push/pull/stash with no required fields).
-func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) {
-	httpreply.DecodeBodyOptional(w, r, v)
+// decodePostBodyOptional enforces the body-size cap and decodes into v,
+// reporting whether the caller may proceed. An absent or malformed body is
+// ignored (v keeps its zero value, result true) because the body is purely
+// advisory here — push/pull/stash name no required field. An oversize body
+// returns false with a 413 already written: an unread Repo would resolve to the
+// workspace root and silently retarget the git command.
+func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool {
+	return httpreply.DecodeBodyOptional(w, r, v)
 }
 
 // writeCmdResult writes a git-command result: {jsonKeyOutput:

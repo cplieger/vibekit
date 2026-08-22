@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/webhttp/v2"
 )
 
 // Tests for httpreply.go: vibekit's bare {"error":…} taxonomy, WriteRawJSON, and
@@ -191,5 +193,81 @@ func TestInternalError_does_not_log_when_nil(t *testing.T) {
 	}
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("InternalError(nil) status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// --- DecodeBodyOptional ---
+
+// TestDecodeBodyOptional_ProceedsWhenTheBodyIsAdvisory pins the three bodies
+// this door waves through. Each leaves the response untouched, because the
+// caller's own default is the answer for all of them: an absent body is the
+// normal case, a malformed one is ignored by contract, and a body with trailing
+// data leaves the LEADING value in v (webhttp.DecodeJSONInto reports it, and
+// this door chooses not to).
+func TestDecodeBodyOptional_ProceedsWhenTheBodyIsAdvisory(t *testing.T) {
+	type payload struct {
+		Repo string `json:"repo"`
+	}
+
+	tests := []struct {
+		name     string
+		body     string
+		wantRepo string
+	}{
+		{name: "absent", body: ""},
+		{name: "malformed", body: `{not json`},
+		{name: "valid", body: `{"repo":"vibekit"}`, wantRepo: "vibekit"},
+		{name: "trailingData", body: `{"repo":"vibekit"}{"repo":"other"}`, wantRepo: "vibekit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/git/push", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+
+			var got payload
+			if !DecodeBodyOptional(rec, req, &got) {
+				t.Fatalf("DecodeBodyOptional(%q) = false, want true", tt.body)
+			}
+			if got.Repo != tt.wantRepo {
+				t.Errorf("DecodeBodyOptional(%q) left repo = %q, want %q", tt.body, got.Repo, tt.wantRepo)
+			}
+			if rec.Body.Len() != 0 {
+				t.Errorf("DecodeBodyOptional(%q) wrote %q, want nothing", tt.body, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestDecodeBodyOptional_RefusesAnOversizeBody pins the one body it must not
+// wave through: the server stopped reading before the value arrived, so
+// returning true would hand the caller a zero value that looks exactly like "the
+// client named nothing" — and the four git sync handlers resolve that to the
+// workspace root and run there. The Warn line is asserted because a 413 with no
+// log leaves an operator nothing to correlate.
+func TestDecodeBodyOptional_RefusesAnOversizeBody(t *testing.T) {
+	var got struct {
+		Repo string `json:"repo"`
+	}
+	// One valid JSON object longer than the cap, so the limit fires before the
+	// first value completes and the decoder never sees the repo the client sent.
+	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
+	buf := captureSlog(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/git/push", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	if DecodeBodyOptional(rec, req, &got) {
+		t.Fatalf("DecodeBodyOptional(%d-byte body, cap %d) = true, want false", len(body), webhttp.MaxJSONBody)
+	}
+	if got.Repo != "" {
+		t.Errorf("DecodeBodyOptional(oversize) left repo = %q, want it empty", got.Repo)
+	}
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("DecodeBodyOptional(oversize) status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if !strings.Contains(rec.Body.String(), "request body too large") {
+		t.Errorf("DecodeBodyOptional(oversize) body = %q, want it to name the refusal", rec.Body.String())
+	}
+	if !strings.Contains(buf.String(), "httpreply: decode body too large") {
+		t.Errorf("DecodeBodyOptional(oversize) logged %q, want the too-large Warn line", buf.String())
 	}
 }

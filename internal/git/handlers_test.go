@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp/v2"
 	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"
 )
@@ -624,7 +625,9 @@ func TestDecodePostBodyOptional_MalformedJSONIgnored(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	var got repoBody
-	decodePostBodyOptional(rec, req, &got)
+	if !decodePostBodyOptional(rec, req, &got) {
+		t.Fatalf("decodePostBodyOptional(%q) = false, want true", `{not-json`)
+	}
 
 	// No response was written; caller continues as if body were zero.
 	if got.Repo != "" {
@@ -637,9 +640,52 @@ func TestDecodePostBodyOptional_EmptyBodyIgnored(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	var got repoBody
-	decodePostBodyOptional(rec, req, &got)
+	if !decodePostBodyOptional(rec, req, &got) {
+		t.Fatalf("decodePostBodyOptional(nil body) = false, want true")
+	}
 	if got.Repo != "" {
 		t.Errorf("Repo = %q, want empty on nil body", got.Repo)
+	}
+}
+
+// TestSyncHandlers_OversizeBodyRefusedBeforeGit pins the refusal on the four
+// handlers whose body is advisory. An oversize body means the server stopped
+// reading before Repo arrived, and a zero Repo resolves to the WORKSPACE ROOT
+// (resolveRepoDir), so waving it through runs push/pull/stash against the wrong
+// tree and answers 200 with a success shape.
+//
+// The status is what proves git was not reached: every git result on these paths
+// goes out through writeCmdResult, which writes 200 whether the command
+// succeeded or failed, so a 413 can only come from the decode refusal.
+func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
+	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
+
+	tests := []struct {
+		handler func(h *Handler) http.HandlerFunc
+		name    string
+	}{
+		{func(h *Handler) http.HandlerFunc { return h.handlePush }, "push"},
+		{func(h *Handler) http.HandlerFunc { return h.handlePull }, "pull"},
+		{func(h *Handler) http.HandlerFunc { return h.handleStash }, "stash"},
+		{func(h *Handler) http.HandlerFunc { return h.handleStashPop }, "stash-pop"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(t.TempDir())
+			req := httptest.NewRequest(http.MethodPost, "/api/git/"+tt.name, strings.NewReader(body))
+			rec := httptest.NewRecorder()
+
+			tt.handler(h)(rec, req)
+
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Errorf("%s with a %d-byte body (cap %d): code = %d, want %d",
+					tt.name, len(body), webhttp.MaxJSONBody, rec.Code, http.StatusRequestEntityTooLarge)
+			}
+			if !strings.Contains(rec.Body.String(), "request body too large") {
+				t.Errorf("%s with an oversize body: body = %q, want it to name the refusal",
+					tt.name, rec.Body.String())
+			}
+		})
 	}
 }
 

@@ -27,12 +27,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	// fleet); vibekit keeps its Content-Type gate, the 413/400 split, and its
 	// bare {"error":…} envelope on top — DecodeJSONInto writes nothing itself.
 	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {
-		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("httpreply: decode body too large",
-				"method", r.Method, "path", logsafe.Field(r.URL.Path),
-				"limit", webhttp.MaxJSONBody, "error", maxErr)
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				map[string]string{JSONKeyError: "request body too large"})
+		if refuseTooLarge(w, r, err) {
 			return false
 		}
 		slog.Debug("httpreply: decode invalid json",
@@ -40,5 +35,23 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		BadRequest(w, "invalid json")
 		return false
 	}
+	return true
+}
+
+// refuseTooLarge reports whether err is the body-size refusal
+// (*http.MaxBytesError), writing the 413 and the Warn line when it is and
+// nothing when it is not. Every decode door shares it so the oversize taxonomy
+// — status, client-visible message and log line — has one owner; what the doors
+// disagree about is the malformed-body policy, which stays at each of them.
+func refuseTooLarge(w http.ResponseWriter, r *http.Request, err error) bool {
+	maxErr, ok := errors.AsType[*http.MaxBytesError](err)
+	if !ok {
+		return false
+	}
+	slog.Warn("httpreply: decode body too large",
+		"method", r.Method, "path", logsafe.Field(r.URL.Path),
+		"limit", webhttp.MaxJSONBody, "error", maxErr)
+	webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		map[string]string{JSONKeyError: "request body too large"})
 	return true
 }
