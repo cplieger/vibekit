@@ -84,7 +84,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
 # Fetch @cplieger/fetch TS source (same TS-only pattern). api-client.ts imports
 # createFetch/requestRaw from it; bundled into app.js by cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/fetch
-ARG CPLIEGER_FETCH_VERSION=2.1.1
+ARG CPLIEGER_FETCH_VERSION=2.1.2
 RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/fetch/-/fetch-${CPLIEGER_FETCH_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
