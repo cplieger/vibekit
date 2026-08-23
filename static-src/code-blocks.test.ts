@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Unit tests for code-blocks.ts: the isRunnableShell predicate, the language
 // label the title bar prints, and the two-state decoration (a fence still
 // streaming vs. one that closed).

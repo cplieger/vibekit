@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Table-driven tests for smd-renderer.ts TOKEN_TAG_MAP coverage via
 // add_token_dom verifying all token types produce correct elements.
 

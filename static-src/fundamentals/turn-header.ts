@@ -56,7 +56,7 @@ const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
 };
 
 /** Above this many characters, assume the text overflows three lines when the
- *  environment cannot measure (happy-dom has no layout, so `scrollHeight` is
+ *  environment cannot measure (a detached or unstyled host, where `scrollHeight` is
  *  0 there). Deliberately generous: a false positive shows an unnecessary
  *  show-more, a false negative would make a long prompt unreadable. */
 const CLAMP_FALLBACK_CHARS = 220;

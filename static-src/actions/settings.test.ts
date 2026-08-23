@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for actions/settings.ts: saveSteering, logout, setKiroSetting, patchAppSettings.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

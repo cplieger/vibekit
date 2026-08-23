@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // shell.ts wiring tests.
 //
@@ -20,6 +19,84 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { CreateTerminalOptions, TerminalHandle } from "@cplieger/web-terminal-ui";
 import type * as Shell from "./shell.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
+
+/** The per-test spies and elements the mock factories below read.
+ *
+ * The factories are registered ONCE, at module scope, and they resolve through
+ * this holder rather than closing over a per-test value. That indirection is
+ * required rather than stylistic: `vi.resetModules()` does not re-evaluate a
+ * module in Browser Mode, so a mocked module is evaluated the FIRST time it is
+ * imported and cached forever. A per-test `vi.doMock` therefore re-registers a
+ * factory that never runs again, and the fresh shell instance kept binding its
+ * listeners to the first test's buttons while the test clicked its own.
+ */
+interface Live {
+  createTerminal: (root: HTMLElement, opts: CreateTerminalOptions) => TerminalHandle;
+  localScrollbackStorage: (opts: unknown) => unknown;
+  presetTouch: (...args: unknown[]) => unknown;
+  getScrollEl: () => HTMLElement;
+  setShellRunCallback: (cb: (cmd: string) => void) => void;
+  save: (patch: unknown) => void;
+  load: () => { shell_h: number };
+  restartDispatch: (...args: unknown[]) => Promise<unknown>;
+  confirmMock: (...args: unknown[]) => Promise<boolean>;
+  toastError: (...args: unknown[]) => void;
+  els: Record<string, HTMLElement>;
+}
+let live: Live;
+
+vi.mock("@cplieger/web-terminal-ui", () => ({
+  createTerminal: (root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle =>
+    live.createTerminal(root, opts),
+  localScrollbackStorage: (opts: unknown): unknown => live.localScrollbackStorage(opts),
+}));
+vi.mock("@cplieger/web-terminal-ui/presets/touch", () => ({
+  presetTouch: (...args: unknown[]): unknown => live.presetTouch(...args),
+}));
+vi.mock("./messages.js", () => ({ getScrollEl: (): HTMLElement => live.getScrollEl() }));
+vi.mock("./code-blocks.js", () => ({
+  setShellRunCallback: (cb: (cmd: string) => void): void => live.setShellRunCallback(cb),
+}));
+vi.mock("./ui-state.js", () => ({
+  save: (patch: unknown): void => live.save(patch),
+  load: (): { shell_h: number } => live.load(),
+}));
+vi.mock("./actions/shell.js", () => ({
+  restartShell: {
+    dispatch: (...args: unknown[]): Promise<unknown> => live.restartDispatch(...args),
+  },
+}));
+vi.mock("./confirm.js", () => ({
+  confirm: (...args: unknown[]): Promise<boolean> => live.confirmMock(...args),
+}));
+vi.mock("./toast.js", () => ({
+  error: (...args: unknown[]): void => live.toastError(...args),
+  info: vi.fn(),
+  success: vi.fn(),
+}));
+vi.mock("./dom.js", () => ({
+  $: new Proxy(
+    {},
+    {
+      get: (_t, prop: string) => live.els[prop],
+    },
+  ),
+}));
 
 interface Harness {
   mod: typeof Shell;
@@ -44,7 +121,7 @@ interface Harness {
   endSession: () => void;
 }
 
-/** happy-dom lacks pointer capture; back the three methods with a Set so the
+/** Back the three pointer-capture methods with a Set so the
  *  resize handlers' capture-gated move/up paths run. */
 function stubPointerCapture(el: HTMLElement): void {
   const captured = new Set<number>();
@@ -57,7 +134,7 @@ function stubPointerCapture(el: HTMLElement): void {
   el.hasPointerCapture = (id: number): boolean => captured.has(id);
 }
 
-/** Synthetic pointer event: happy-dom's PointerEvent support is spotty, and
+/** Synthetic pointer event: the handlers do not need a real PointerEvent, and
  *  the handlers only read pointerId/isPrimary/clientY, so a plain Event with
  *  those fields assigned is sufficient. */
 function ptr(
@@ -74,6 +151,7 @@ function ptr(
 
 async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   vi.resetModules();
+  bootSeq++;
 
   const shellBtn = document.createElement("button");
   const shellToggleBtn = document.createElement("button");
@@ -133,19 +211,18 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   // initShellPanel reads load().shell_h to restore a persisted height.
   const load = vi.fn(() => ({ shell_h: uiStateData.shell_h ?? 0 }));
 
-  vi.doMock("@cplieger/web-terminal-ui", () => ({
+  live = {
     createTerminal,
     localScrollbackStorage,
-  }));
-  vi.doMock("@cplieger/web-terminal-ui/presets/touch", () => ({ presetTouch }));
-  vi.doMock("./messages.js", () => ({ getScrollEl }));
-  vi.doMock("./code-blocks.js", () => ({ setShellRunCallback }));
-  vi.doMock("./ui-state.js", () => ({ save, load }));
-  vi.doMock("./actions/shell.js", () => ({ restartShell: { dispatch: restartDispatch } }));
-  vi.doMock("./confirm.js", () => ({ confirm: confirmMock }));
-  vi.doMock("./toast.js", () => ({ error: toastError, info: vi.fn(), success: vi.fn() }));
-  vi.doMock("./dom.js", () => ({
-    $: {
+    presetTouch,
+    getScrollEl,
+    setShellRunCallback,
+    save,
+    load,
+    restartDispatch,
+    confirmMock,
+    toastError,
+    els: {
       shellBtn,
       shellToggleBtn,
       shellRestartBtn,
@@ -154,9 +231,9 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
       shellTerminal,
       shellResize,
     },
-  }));
+  };
 
-  const mod = await import("./shell.js");
+  const mod = (await import(/* @vite-ignore */ `./shell.ts?boot=${bootSeq}`)) as typeof Shell;
   return {
     mod,
     createTerminal,
@@ -186,14 +263,12 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
 }
 
 afterEach(() => {
-  vi.doUnmock("@cplieger/web-terminal-ui");
-  vi.doUnmock("@cplieger/web-terminal-ui/presets/touch");
-  vi.doUnmock("./messages.js");
-  vi.doUnmock("./code-blocks.js");
-  vi.doUnmock("./ui-state.js");
-  vi.doUnmock("./dom.js");
+  // No doUnmock: the mocks above are registered once at module scope and stay,
+  // because a mocked module is evaluated once and cached. Each test gets its
+  // isolation from a fresh `live` holder plus a busted shell specifier.
   vi.useRealTimers();
   vi.resetModules();
+  bootSeq++;
 });
 
 describe("shell.ts: lazy terminal creation", () => {
@@ -493,7 +568,7 @@ describe("shell.ts: resize handle", () => {
   it("drag up grows the panel (bottom-docked math) and persists on release", async () => {
     const h = await setup();
     h.mod.initShellPanel();
-    // happy-dom rects are 0-height, so startH = 0; dragging the pointer up
+    // The harness panel is unstyled, so its rect is 0-height and startH = 0; dragging up
     // by 200px (500 → 300) must yield --shell-h: 200px.
     h.shellResize.dispatchEvent(ptr("pointerdown", 500));
     expect(h.shellResize.classList.contains("dragging")).toBe(true);
@@ -537,7 +612,7 @@ describe("shell.ts: resize handle", () => {
   it("ArrowUp/ArrowDown resize from the keyboard and persist each step", async () => {
     const h = await setup();
     h.mod.initShellPanel();
-    // Panel rect height is 0 in happy-dom → 0 + 32 clamps to the 96px floor.
+    // The unstyled panel's rect height is 0 → 0 + 32 clamps to the 96px floor.
     h.shellResize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
     expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("96px");
     expect(h.save).toHaveBeenCalledWith({ shell_h: 96 });

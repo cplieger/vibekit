@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for checkoutBranch action (optimistic anchor + empty body).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -8,6 +7,13 @@ vi.mock("../toast.js", () =>
 );
 
 vi.mock("../store.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  activeSession: undefined,
+  getActive: undefined,
+  getActiveId: undefined,
   get: () => ({ id: "c1", model: "m1" }),
   setThinking: vi.fn(),
   enqueuePrompt: vi.fn(),

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for handlers/system.ts: the BUS_TRANSPORT_GAP reconcile handler and
 // the mode_changed SSE handler.
@@ -25,6 +24,19 @@ const mockCloseTab = vi.fn();
 const mockHasTab = vi.fn(() => true);
 const mockGetOpenTabIDs = vi.fn(() => [] as string[]);
 vi.mock("../tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  editorTabID: undefined,
+  getActiveTabId: undefined,
+  getActiveTabRoute: undefined,
+  openEditorView: undefined,
+  setGitTab: undefined,
+  setSettingsTab: undefined,
+  setTabDirty: undefined,
+  toggleGitView: undefined,
+  toggleSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
   getOpenTabIDs: () => mockGetOpenTabIDs(),
@@ -32,8 +44,27 @@ vi.mock("../tabs.js", () => ({
 }));
 
 vi.mock("../settings.js", () => ({ syncSettings: vi.fn(() => Promise.resolve({})) }));
-vi.mock("../session-context.js", () => ({ restoreLastModel: vi.fn() }));
-vi.mock("../status.js", () => ({ refreshCompactionThreshold: vi.fn() }));
+vi.mock("../session-context.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  setLastModel: undefined,
+  restoreLastModel: vi.fn(),
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // it, so no path under test changes behavior.
+  setCurrentModel: undefined,
+}));
+vi.mock("../status.js", () => ({
+  refreshCompactionThreshold: vi.fn(),
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // it, so no path under test changes behavior.
+  updateContextBar: undefined,
+}));
 vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
 
 // Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
@@ -42,6 +73,12 @@ import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 const busHandlers = new Map<string, (...args: unknown[]) => void>();
 vi.mock("../bus.js", () =>
   createBusMock({
+    // Present-but-undefined so real-ESM linking succeeds: another module in this
+    // graph imports the name, and Browser Mode links for real rather than reading
+    // properties off a namespace object. `undefined` is what the node runner gave
+    // these, so no path under test changes behavior.
+    emitBus: undefined,
+    lookupSSEDecoder: undefined,
     onBus: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       busHandlers.set(event, handler);
     }),

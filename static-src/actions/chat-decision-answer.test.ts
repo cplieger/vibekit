@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The three interactive asks share one answer path with a THREE-valued outcome.
 // What these pin is that "somebody else answered first" is not a failure: it
 // must not reach the error notification, because decision-dock.ts already
@@ -21,6 +20,16 @@ vi.mock("../transport.js", () => ({
 }));
 
 vi.mock("../store.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  activeSession: undefined,
+  getActive: undefined,
+  getActiveId: undefined,
+  setCurrentMode: undefined,
+  setTurnDone: undefined,
+  setTurnFailed: undefined,
   get: () => ({ id: "c1", model: "m1" }),
   setThinking: vi.fn(),
   recordSteerQueued: vi.fn(),

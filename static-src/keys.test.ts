@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // The keydown handler itself: which keys reach the shortcut table, which ones
 // belong to the field they were typed in, and what Escape does.

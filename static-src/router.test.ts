@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
 import { parseRoute, buildPath, type Route, type SettingsTab, type DocsTab } from "./router";

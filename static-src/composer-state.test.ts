@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Per-chat composer state: the draft text and the staged attachments.
 //
 // The bug these cover is a bleed: one textarea and one pill row served every

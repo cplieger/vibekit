@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for notify.ts action configuration and error paths.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -61,10 +60,15 @@ describe("registerPush", () => {
   });
 
   it("throws when serviceWorker not supported", async () => {
-    // Delete the property so `"serviceWorker" in navigator` is false
-    const orig = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
-
-    delete (navigator as unknown as Record<string, unknown>)["serviceWorker"];
+    // Production asks `"serviceWorker" in navigator`, so the absence has to be
+    // real: an own `undefined` shadow still answers TRUE to `in`, and a `delete`
+    // on the instance removes nothing because the property is an accessor on
+    // Navigator.prototype. Taking it off the PROTOTYPE for the duration is the
+    // only shape that expresses "this browser does not have it", and it is put
+    // back in the finally.
+    const proto = Object.getPrototypeOf(navigator) as object;
+    const orig = Object.getOwnPropertyDescriptor(proto, "serviceWorker");
+    Reflect.deleteProperty(proto, "serviceWorker");
     try {
       const result = await registerPush.dispatch(undefined);
       expect(result).toBeNull();
@@ -73,7 +77,7 @@ describe("registerPush", () => {
       expect(log[0]?.error?.code).toBe("unsupported");
     } finally {
       if (orig) {
-        Object.defineProperty(navigator, "serviceWorker", orig);
+        Object.defineProperty(proto, "serviceWorker", orig);
       }
     }
   });

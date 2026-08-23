@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Unit tests for the event-boundary metadata (EVENT_BOUNDARY_META) derived
 // from messages-events.ts's EVENT_RENDER_MAP.
 import { describe, it, expect, vi } from "vitest";

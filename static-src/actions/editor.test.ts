@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for actions/editor.ts: saveFile, fetchAgentLines, suggestResolution.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

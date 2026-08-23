@@ -16,7 +16,7 @@
 // wins in the :active state, and it must name whatever property the press
 // animates or the press lands in a single frame.
 //
-// A computed-style test cannot hold this. happy-dom does not load the stylesheet
+// A computed-style test cannot hold this. The test page does not load the stylesheet
 // bundle or implement the cascade over it, and the property under test is which
 // of two equal-specificity rules wins — the thing a real browser decides. So
 // this asserts the SOURCE fact instead. Every assertion here fails when its
@@ -24,7 +24,7 @@
 
 import { describe, it, expect } from "vitest";
 // The stylesheet reader is shared with tab-dot.test.ts (see the note there):
-// happy-dom implements no cascade, so both suites assert SOURCE facts, and a
+// no app stylesheet is loaded, so both suites assert SOURCE facts, and a
 // second copy of a brace-matching parser is the duplication to avoid.
 import { loadCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
 

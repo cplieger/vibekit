@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for sendPrompt (409 queued path).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -18,6 +17,14 @@ const { mockGet } = vi.hoisted(() => ({
   mockGet: vi.fn(() => ({ id: "c1", model: "m1" }) as Record<string, unknown> | undefined),
 }));
 vi.mock("../store.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  activeSession: undefined,
+  getActive: undefined,
+  getActiveId: undefined,
+  setCurrentMode: undefined,
   get: mockGet,
   setThinking: vi.fn(),
   setTurnFailed: vi.fn(),

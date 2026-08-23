@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from "vitest";
 import { effect } from "@cplieger/reactive";
 import { routeForPath } from "./editor-core.js";

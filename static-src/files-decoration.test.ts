@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for the file browser's change DECORATION — the git letter on a row and
 // the "changed by this chat" filter. Not the browser's navigation or CRUD.

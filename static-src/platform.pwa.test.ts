@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // PLATFORM DETECTION AND THE TWO PWA-ONLY GESTURES.
 //
@@ -13,16 +12,16 @@
 // static import would freeze whatever the test environment happened to report
 // at collection time and no stub could reach it.
 //
-// happy-dom does not hand you the environment you need for any of this, so
-// three facts are worth stating (measured against happy-dom 20.11.6, the
-// version in this package's lockfile):
+// The runner does not hand you the environment you need for any of this, so
+// three facts about it are worth stating:
 //
-//   * `matchMedia` DOES implement `display-mode`, and answers `false` for
-//     "(display-mode: standalone)" — it models a browser tab. It is stubbed
-//     here anyway, because a test that needs the query to answer `true` cannot
-//     get there otherwise.
-//   * `window.visualViewport` does not exist at all, so `fixIOSViewport`
-//     returns `undefined` unless a viewport is stubbed in.
+//   * `matchMedia` answers `false` for "(display-mode: standalone)" — the page
+//     is a browser tab. It is stubbed here anyway, because a test that needs the
+//     query to answer `true` cannot get there otherwise.
+//   * `window.visualViewport` DOES exist in Chromium, so `fixIOSViewport` has a
+//     real object to read; the tests stub it to pin the numbers. (Under the DOM
+//     emulator this package used before Browser Mode it was absent entirely,
+//     which is why the stubs are unconditional.)
 //   * `navigator.userAgent` and its siblings are accessor-only with no setter,
 //     so `navigator` has to be replaced wholesale rather than patched.
 
@@ -31,6 +30,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // never statically, so the constants it computes at import time can be aimed at
 // a stubbed platform.
 import type * as Platform from "./platform.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 const IPHONE_UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -66,7 +80,8 @@ async function loadPlatform(env: PlatformEnv = {}): Promise<typeof Platform> {
     media,
   }));
   vi.resetModules();
-  return await import("./platform.js");
+  bootSeq++;
+  return (await import(/* @vite-ignore */ `./platform.ts?boot=${bootSeq}`)) as typeof Platform;
 }
 
 afterEach(() => {

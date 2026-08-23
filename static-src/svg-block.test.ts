@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // The one inert SVG render path. The load-bearing assertion is NOT that a diagram
 // appears — it is that it appears through an ELEMENT the code created and assigned

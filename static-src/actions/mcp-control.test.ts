@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for the live MCP control actions: reconnect_server, get_prompt,
 // get_resource — request shaping (method/path/body) + result passthrough.
 

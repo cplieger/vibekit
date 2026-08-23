@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for fundamentals/subagent-block.ts — the collapsible subagent host.
 // Focus: the header identity glyph. While active the slot shows the spinner;

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for the run SSE handlers — the routing, not the surfaces.
 //

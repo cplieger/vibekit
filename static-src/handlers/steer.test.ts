@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for handlers/steer.ts: the only writer of `session.steers`.
 //

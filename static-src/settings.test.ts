@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for settings.ts's diagnostics surface: the pure version extractor and
 // the initDiagnostics DOM flow (copyable textarea + version row + Copy button +
@@ -40,22 +39,130 @@ vi.mock("./persist.js", () => ({
 }));
 // Feature modules settings.ts wires in initUI — inert stubs so the import graph
 // loads without side effects (initUI is never called here).
-vi.mock("./modals.js", () => ({}));
-vi.mock("./tabs.js", () => ({}));
-vi.mock("./git.js", () => ({}));
-vi.mock("./git-tabs.js", () => ({}));
-vi.mock("./files.js", () => ({}));
-vi.mock("./editor-core.js", () => ({}));
-vi.mock("./shell.js", () => ({}));
-vi.mock("./tools.js", () => ({}));
-vi.mock("./notify.js", () => ({}));
+vi.mock("./modals.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initAllModals: undefined,
+}));
+vi.mock("./tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  toggleSettingsView: undefined,
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  toggleGitView: undefined,
+}));
+vi.mock("./git.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initGitPanel: undefined,
+  loadGitRepos: undefined,
+}));
+vi.mock("./git-tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  getGitTab: undefined,
+}));
+vi.mock("./files.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  restoreFileBrowser: undefined,
+}));
+vi.mock("./editor-core.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  restoreEditorTabs: undefined,
+}));
+vi.mock("./shell.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  restoreShell: undefined,
+}));
+vi.mock("./tools.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  loadToolsList: undefined,
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initTools: undefined,
+}));
+vi.mock("./notify.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  restoreNotifications: undefined,
+}));
 vi.mock("./ui-state.js", () => ({}));
-vi.mock("./theme.js", () => ({}));
-vi.mock("./settings-tabs.js", () => ({}));
-vi.mock("./permissions-ui.js", () => ({}));
-vi.mock("./mcp-ui.js", () => ({}));
-vi.mock("./knowledge.js", () => ({}));
-vi.mock("./settings-notifications.js", () => ({}));
+vi.mock("./theme.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initThemeToggle: undefined,
+}));
+vi.mock("./settings-tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initSettingsTabs: undefined,
+}));
+vi.mock("./permissions-ui.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  loadNativePolicy: undefined,
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initNativePolicyUI: undefined,
+  initPermissionsUI: undefined,
+}));
+vi.mock("./mcp-ui.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initMCP: undefined,
+}));
+vi.mock("./knowledge.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initKnowledge: undefined,
+  loadKnowledge: undefined,
+}));
+vi.mock("./settings-notifications.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  initNotificationToggles: undefined,
+}));
 
 const { extractDiagnosticVersion, initDiagnostics } = await import("./settings.js");
 

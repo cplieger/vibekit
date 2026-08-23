@@ -1,8 +1,7 @@
 // Unit tests for render.ts — property-based XSS invariants + table-driven edge cases.
-// @vitest-environment happy-dom
 // Unit tests for markdown.ts — property-based XSS invariants + table-driven
 // edge cases. markdown.ts renders via the smd-parser streaming state machine
-// into real DOM nodes, so happy-dom is required.
+// into real DOM nodes, so a document is required.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";

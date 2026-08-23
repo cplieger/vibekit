@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Accessibility tests: tool-group keyboard nav, file-picker labels, upload progress.
 import { describe, it, expect, vi } from "vitest";
 

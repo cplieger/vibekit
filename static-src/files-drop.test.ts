@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for the composer's upload target and pre-flight. What matters here is
 // the ARGUMENTS initChatAttach hands the upload action: the target directory
 // (which was wrong in production, see the dir="." case below) and the file set

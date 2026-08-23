@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { isDragHandled, setReorderCallback, attachDrag } from "./tabs-drag.js";
 

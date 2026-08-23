@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // A registry search row has to say two things the payload now carries: that an
 // entry is deprecated (the registry still LISTS those, so without a badge a dead
 // entry reads exactly like a live one), and what installing it will ask for.

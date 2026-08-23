@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // D101 / D104, client side.
 //
 // Three things are pinned here, and the first is a CROSS-LANGUAGE contract with no
@@ -7,20 +6,25 @@
 // page handler. Three copies of one literal is what the read below turns into a
 // test rather than a hope.
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import pushTypesGo from "../internal/vibekit/push_types.go?raw";
+import pushServiceGo from "../internal/push/service.go?raw";
+import settingsDefaultsGo from "../internal/settings/defaults.go?raw";
+import swSrc from "./sw.ts?raw";
+import pushMessageSrc from "./handlers/push-message.ts?raw";
 
-const ROOT = join(import.meta.dirname, "..");
+/** The two TypeScript copies of the Go literal, by the path a failure should name. */
+const tsCopies: Record<string, string> = {
+  "static-src/sw.ts": swSrc,
+  "static-src/handlers/push-message.ts": pushMessageSrc,
+};
 
 describe("PR subject prefix", () => {
   it("is the same literal in Go, the service worker and the page handler", () => {
-    const go = readFileSync(join(ROOT, "internal/vibekit/push_types.go"), "utf8");
-    const m = /PRSubjectPrefix = "([^"]+)"/.exec(go);
+    const m = /PRSubjectPrefix = "([^"]+)"/.exec(pushTypesGo);
     expect(m, "vibekit.PRSubjectPrefix not found in internal/vibekit/push_types.go").not.toBeNull();
     const want = m?.[1] ?? "";
     expect(want).not.toBe("");
-    for (const rel of ["static-src/sw.ts", "static-src/handlers/push-message.ts"]) {
-      const ts = readFileSync(join(ROOT, rel), "utf8");
+    for (const [rel, ts] of Object.entries(tsCopies)) {
       expect(ts, `${rel} does not carry the Go prefix ${want}`).toContain(
         `PR_SUBJECT_PREFIX = "${want}"`,
       );
@@ -33,17 +37,17 @@ describe("PR subject prefix", () => {
 describe("keyed push kinds", () => {
   it("names every kind the server registry gives a settings key, and no other", async () => {
     const { KEYED_PUSH_KINDS } = await import("./notify.js");
-    const registry = readFileSync(join(ROOT, "internal/push/service.go"), "utf8");
     // Each keyed entry reads {vibekit.PushKind<Name>, settings.Key<Name>, <default>};
     // the floor is the one entry whose key is the empty string.
-    const entries = [...registry.matchAll(/\{vibekit\.PushKind(\w+),\s*(settings\.Key\w+|""),/g)];
+    const entries = [
+      ...pushServiceGo.matchAll(/\{vibekit\.PushKind(\w+),\s*(settings\.Key\w+|""),/g),
+    ];
     expect(entries.length, "no kindRegistry entries parsed").toBeGreaterThan(1);
     const keyedCount = entries.filter((e) => e[2] !== '""').length;
     expect(Object.keys(KEYED_PUSH_KINDS)).toHaveLength(keyedCount);
     // And the settings keys match the ones the server reads.
-    const defaults = readFileSync(join(ROOT, "internal/settings/defaults.go"), "utf8");
     for (const settingsKey of Object.values(KEYED_PUSH_KINDS)) {
-      expect(defaults, `${settingsKey} is not a declared settings key`).toContain(
+      expect(settingsDefaultsGo, `${settingsKey} is not a declared settings key`).toContain(
         `= "${settingsKey}"`,
       );
     }

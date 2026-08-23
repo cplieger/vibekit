@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The OAuth loopback relay's row affordance. KAS binds its redirect listener on
 // the CONTAINER's localhost, so a browser reaching vibekit from another machine
 // is sent to its own localhost and the sign-in dies with no recovery path. This
@@ -22,7 +21,7 @@ vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) 
 
 // The real mcp-state module is loaded (see its partial mock below) and its
 // controller reaches the network. Stubbing the api-client keeps that off
-// happy-dom's fetch, which otherwise leaves an in-flight request for the
+// the page's fetch, which otherwise leaves an in-flight request for the
 // environment to abort at teardown and prints an AbortError over a green run.
 vi.mock("./api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiClient>();

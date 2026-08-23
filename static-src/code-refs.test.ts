@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for code-refs.ts — the licensed-code attribution footnote renderer.
 // Pure DOM (no store/bus): syncCodeReferences(wrap, m) builds/updates/removes

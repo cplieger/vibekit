@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // The permission card's pointer at the workspace relaxation (D115 caller: "the
 // permission relaxation (D103)").

@@ -26,7 +26,7 @@
    rest of the tab strip.
 
    Values: 01-tokens.css, `--c-selected-*`. Nothing here is a literal.
-   Enforcement: css-tokens.test.ts fails on a selected fill without its border
+   Enforcement: css-tokens.node.test.ts fails on a selected fill without its border
    and ink.
    ========================================================================== */
 

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for the PWA share-target + URL shortcut handling in share-target.ts.
 // chat.ts has a heavy import graph, so it's mocked to a spy — this file only
 // verifies the wiring: which URL params trigger which action.
@@ -13,7 +12,7 @@ vi.mock("./chat.js", () => ({
 }));
 
 // share-target.ts touches only $.promptInput; back it with a real textarea so
-// the value/focus writes work under happy-dom. The element is created inside
+// the value/focus writes land on a real element. The element is created inside
 // the factory (which is hoisted) and read back via the mocked import below,
 // avoiding a top-level TDZ reference.
 vi.mock("./dom.js", () => ({

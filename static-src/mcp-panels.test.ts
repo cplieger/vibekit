@@ -1,10 +1,14 @@
-// @vitest-environment happy-dom
 // Unit tests for mcp-panels.ts — pure functions only.
 import { describe, it, expect, vi } from "vitest";
 import fc from "fast-check";
 
 // Mock DOM-dependent modules that mcp-panels.ts imports at module level.
 vi.mock("./dom.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  byId: undefined,
   $: new Proxy({}, { get: () => document.createElement("div") }),
   el: () => document.createElement("div"),
 }));
@@ -12,11 +16,22 @@ vi.mock("./api-client.js", () => ({
   apiGet: async () => null,
 }));
 vi.mock("./modals.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  RollingOutput: undefined,
+  openModal: undefined,
   closeModal: () => {
     /* noop */
   },
 }));
 vi.mock("./mcp-state.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  discoverySignalFor: undefined,
   mcpState: {
     refetchServers: async () => {
       /* noop */
@@ -39,6 +54,12 @@ vi.mock(import("./icons.js"), async (importOriginal) => {
   return { ...actual };
 });
 vi.mock("./actions/mcp.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  MCP_API: undefined,
+  validationFieldsOf: undefined,
   saveServer: { dispatch: async () => ({}) },
   importServers: { dispatch: async () => ({}) },
   searchRegistry: { cancel: () => undefined },

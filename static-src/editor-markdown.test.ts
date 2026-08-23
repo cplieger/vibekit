@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // The rendered-markdown read mode: what a `.md` file shows when it is not being
 // edited, and that nothing else changed. renderReadSurface is the funnel every
@@ -25,9 +24,23 @@ vi.mock("./dom.js", () => ({ $: surfaces }));
 // highlight() escapes its input by construction and emits only <span> wrappers;
 // the identity stub keeps the raw-source assertion about what the editor SHOWS
 // rather than about the highlighter's markup.
-vi.mock("./highlight.js", () => ({ highlight: (s: string) => s }));
+vi.mock("./highlight.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  highlightByLang: undefined,
+  normalizeLang: undefined,
+  highlight: (s: string) => s,
+}));
 vi.mock("./store.js", () => ({ getActiveId: () => "" }));
 vi.mock("./actions/editor.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  loadDiff: undefined,
+  suggestResolution: undefined,
   fetchAgentLines: { cancel: () => undefined, dispatch: () => Promise.resolve(null) },
 }));
 vi.mock("./editor-scroll.js", () => ({

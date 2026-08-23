@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for account-usage.ts: renders the account/subscription usage into the
 // status-popup footer elements. api-client + the generated decoder are mocked

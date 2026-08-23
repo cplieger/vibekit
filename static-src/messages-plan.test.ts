@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect } from "vitest";
 
 import { buildPlanRow } from "./messages-plan.js";

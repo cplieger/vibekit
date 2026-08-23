@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for chat.ts actions: setSupervised, switchModel, resolvePendingChange,
 // respondPermission, restoreCheckpoint.
 import { describe, it, expect, vi, beforeEach } from "vitest";

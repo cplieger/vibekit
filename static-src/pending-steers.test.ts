@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // The stack is a pure projection of `session.steers`, so these tests drive the
 // store the way the SSE handlers do and read the DOM the way a person does.

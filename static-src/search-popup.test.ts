@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The page search popup, which is what History, the configuration browser and
 // the git view's two panels all are now.
 //

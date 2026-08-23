@@ -1,7 +1,11 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  apiPostTyped: undefined,
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(() => Promise.resolve(null)),
   apiPost: vi.fn(() => Promise.resolve(null)),
@@ -33,7 +37,7 @@ vi.mock("./confirm.js", () => ({
 // The add-pane tests click [data-forge-add], which runs gateAddPaneOnCLI →
 // getToolsStatus.dispatch(). That action fetches directly through the actions
 // framework (bypassing the mocked api-client), so without this mock the probe
-// issues a real happy-dom fetch that is still in flight at window teardown —
+// issues a real fetch that is still in flight at teardown —
 // the "DOMException [AbortError]" teardown noise. Report every CLI installed:
 // no network, and no install banner in the pane (the DOM the tests assert).
 vi.mock("./actions/tools.js", async (importOriginal) => {

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // Behavior of the theme controller wiring (theme.ts). The controller itself is
 // @cplieger/ui-primitives' createTheme; these tests cover vibekit's contract on

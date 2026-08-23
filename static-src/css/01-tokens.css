@@ -92,7 +92,7 @@
      * Ink and surfaces move together; changing one without re-measuring the
      * other is how this token fell behind in the first place, and an `opacity`
      * on the element or any ancestor is a THIRD mover that neither
-     * scripts/css-contrast.py nor css-tokens.test.ts can see — see the opacity
+     * scripts/css-contrast.py nor css-tokens.node.test.ts can see — see the opacity
      * gate in that test. */
     --c-text-tertiary: oklch(66% 0.034 277.1deg);
 
@@ -449,7 +449,7 @@
      *
      * All three channels travel together, always. A fill without its border
      * and ink is what produced surfaces that coloured the icon while their
-     * neighbours coloured the background, and `css-tokens.test.ts` fails on a
+     * neighbours coloured the background, and `css-tokens.node.test.ts` fails on a
      * rule that sets one without the others. */
     --c-selected-bg: color-mix(in oklch, var(--c-accent) 30%, var(--c-bg-secondary));
     --c-selected-border: color-mix(in oklch, var(--c-selected-bg), var(--c-text-primary) 25%);
@@ -509,7 +509,7 @@
      *   in the browser, while `css-contrast.py` reported 0deg of drift because
      *   it implements the powerless rule the authored value had opted out of. So
      *   the instrument and the paint disagreed silently and only a screenshot
-     *   showed it. css-tokens.test.ts now fails on an explicit hue for chroma 0.
+     *   showed it. css-tokens.node.test.ts now fails on an explicit hue for chroma 0.
      *
      * THE TWO FRACTIONS ARE MEASURED, NOT PICKED (`css-contrast.py selected`,
      * which prints the sweep that sizes them). 56% is the smallest single
@@ -634,7 +634,7 @@
      * 15-input.css through `var(--r-lg, 0.75rem)` and never declared, so the
      * app's container radius lived in a fallback literal. stylelint's
      * `no-unknown-custom-properties` cannot catch that — a fallback suppresses
-     * the rule, verified — which is why `css-tokens.test.ts` checks reads WITH
+     * the rule, verified — which is why `css-tokens.node.test.ts` checks reads WITH
      * fallbacks too. 8px did not exist either; it was invented inline. */
     --r-lg: 0.75rem;
     --r-md: 0.5rem;

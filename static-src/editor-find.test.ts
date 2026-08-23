@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Find in the open file's buffer.
 //
 // The gap this closes was a trap, not an omission: Ctrl-F on a file tab routed to
@@ -19,6 +18,21 @@ vi.mock("./editor-scroll.js", () => ({
 import { findInBuffer, formatBufferCount } from "./editor-find.js";
 import type * as EditorFind from "./editor-find.js";
 import type * as Bus from "./bus.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 type EditorFindModule = typeof EditorFind;
 type BusModule = typeof Bus;
@@ -145,10 +159,13 @@ describe("the in-file find bar", () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    bootSeq++;
     scrollToLine.mockReset();
     flashLine.mockReset();
     editorDOM();
-    mod = await import("./editor-find.js");
+    mod = (await import(
+      /* @vite-ignore */ `./editor-find.ts?boot=${bootSeq}`
+    )) as typeof EditorFind;
     // The SAME module registry `mod` came from, or the emit reaches a second copy
     // of the bus that this bar never subscribed to.
     bus = await import("./bus.js");
@@ -263,8 +280,11 @@ describe("the in-file find bar", () => {
     // DOM text, so they take the shared mark engine instead, and the chord stops
     // changing meaning on one tab depending on its mode.
     vi.resetModules();
+    bootSeq++;
     editorDOM();
-    const fresh = await import("./editor-find.js");
+    const fresh = (await import(
+      /* @vite-ignore */ `./editor-find.ts?boot=${bootSeq}`
+    )) as typeof EditorFind;
     await openFile("/workspace/pic.png", "image");
     expect(fresh.openEditorFind()).toBe(false);
     expect(document.querySelector(".editor-find")).toBeNull();
@@ -277,8 +297,11 @@ describe("the in-file find bar", () => {
     ];
     for (const c of cases) {
       vi.resetModules();
+      bootSeq++;
       editorDOM();
-      const fresh = await import("./editor-find.js");
+      const fresh = (await import(
+        /* @vite-ignore */ `./editor-find.ts?boot=${bootSeq}`
+      )) as typeof EditorFind;
       await openFile(c.path, c.mode);
       // The rendered surface is what a `dom` search walks, so it has to be the
       // visible one — `editor-modes.ts` owns that toggle and this asks the DOM
@@ -308,8 +331,11 @@ describe("the in-file find bar", () => {
 
   it("steps between marks on a rendered surface, wrapping like the transcript", async () => {
     vi.resetModules();
+    bootSeq++;
     editorDOM();
-    const fresh = await import("./editor-find.js");
+    const fresh = (await import(
+      /* @vite-ignore */ `./editor-find.ts?boot=${bootSeq}`
+    )) as typeof EditorFind;
     await openFile("/workspace/a.go", "diff");
     const host = document.getElementById("editor-diff-pane");
     if (host === null) {
@@ -397,8 +423,11 @@ describe("the in-file find bar", () => {
   it("closes on Escape, on the ×, and on a TAB SWITCH", async () => {
     for (const how of ["escape", "button", "tab"] as const) {
       vi.resetModules();
+      bootSeq++;
       editorDOM();
-      const fresh = await import("./editor-find.js");
+      const fresh = (await import(
+        /* @vite-ignore */ `./editor-find.ts?boot=${bootSeq}`
+      )) as typeof EditorFind;
       const bus = await import("./bus.js");
       await openFile("/workspace/a.go", "edit");
       fresh.openEditorFind();

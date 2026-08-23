@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Unit test for applyOutputUpdate: kiro-cli sends CUMULATIVE tool output on
 // every tool_call_update, so the card's <pre> must be REPLACED, not appended.
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -7,6 +6,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // pulling the store, subagent modals, tool-card, etc. output-render + reactive
 // stay real (applyOutputUpdate paints through renderOutput + el).
 vi.mock("./store-signals.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  blockKey: undefined,
+  blockTextSigs: undefined,
+  blockThinkingSigs: undefined,
+  streamingReasoningSigs: undefined,
+  streamingTextSigs: undefined,
+  toolCallSigs: undefined,
   ensureToolCallSig: vi.fn(() => ({ value: undefined })),
   clearToolCallSig: vi.fn(),
 }));
@@ -17,6 +26,12 @@ vi.mock("./tool-group.js", () => ({
 }));
 vi.mock("./tool-schema.js", () => ({ isToolDone: vi.fn(() => false) }));
 vi.mock("./tool-card.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  applyOutcome: undefined,
+  expandToolDetails: undefined,
   buildToolCard: vi.fn(() => document.createElement("div")),
   insertDiffPreview: vi.fn(),
 }));

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Two grouping rules of the block dispatcher, which are deliberately OPPOSITE
 // and were documented as the same thing.

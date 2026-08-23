@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // Tests for the Settings -> Tools module over the v2 tools engine:
 // row rendering from the composite GET (state dots, versions, update
@@ -47,6 +46,11 @@ vi.mock("./actions/index.js", () => ({
   bindLoadingState: vi.fn(() => vi.fn()),
 }));
 vi.mock("./actions/tools.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  cancelToolJob: undefined,
   loadTools: { dispatch: mocks.loadDispatch, cancel: mocks.loadCancel },
   createTool: { dispatch: mocks.createDispatch },
   installTool: { dispatch: mocks.installDispatch },

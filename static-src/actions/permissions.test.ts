@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for the native policy actions (editNativeRule / explainPolicy):
 // request wire shape — including the guard_resource pre-flight field the
 // permission dialog's "Always allow" sends — and failure propagation (a

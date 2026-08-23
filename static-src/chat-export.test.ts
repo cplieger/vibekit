@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // chat-export tests: the Export affordance triggers a same-origin anchor
 // download with the right endpoint URL, format, and filename, and never
@@ -10,7 +9,7 @@ import { downloadChatExport } from "./chat-export.js";
 
 /** Runs fn with element.click() stubbed (click lives on HTMLElement.prototype),
  *  returning the element that was clicked (or null if none). The stub prevents
- *  happy-dom from attempting a real navigation. */
+ *  the browser from attempting a real navigation. */
 function captureDownloadAnchor(fn: () => void): HTMLElement | null {
   let clicked: HTMLElement | null = null;
   // Capture the appended anchor from the DOM during the click (it is appended

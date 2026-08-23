@@ -1,10 +1,14 @@
-// @vitest-environment happy-dom
 // The turn card's outcome ledger: the aggregate row, the per-file breakdown it
 // expands into, and the click target on every file row.
 import { describe, it, expect, vi } from "vitest";
 
 const openFileGitDiff = vi.fn();
 vi.mock("../editor-openers.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  openFile: undefined,
   openFileGitDiff: (path: string) => {
     openFileGitDiff(path);
   },

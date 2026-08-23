@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for linkify.ts — drives the REAL linkifyPaths() against a live DOM.
 //
 // Earlier revisions of this file re-declared a private copy of FILE_EXTS and
@@ -13,7 +12,14 @@ import fc from "fast-check";
 
 // openFile pulls in the whole editor subsystem and is only invoked on click;
 // stub it so we can both keep the import light and assert the click wiring.
-vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
+vi.mock("./editor-openers.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  openFileGitDiff: undefined,
+  openFile: vi.fn(),
+}));
 
 import { linkifyPaths } from "./linkify.js";
 import { openFile } from "./editor-openers.js";

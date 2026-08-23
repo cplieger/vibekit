@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The disclosure half of the MCP setup path: what a publisher declared about an
 // env var or header has to reach the form row and the registry result, because
 // dropping it is what let a server install cleanly and then fail with nothing on

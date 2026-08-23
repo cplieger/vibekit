@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The /docs metadata filter (item 7's configuration-browser half).
 //
 // A FILTER, not a search: everything it matches on is already in memory, so there
@@ -303,7 +302,7 @@ describe("Workflows, the tab that used to be excluded", () => {
 });
 
 describe("dismissal", () => {
-  it("closes on Escape, and the CLOSE is what lifts the filter", () => {
+  it("closes on Escape, and the CLOSE is what lifts the filter", async () => {
     // The rule a hidden box needs and a permanent one did not: a popup that closed
     // holding `alp` would leave the page showing one of two rows with nothing on
     // screen saying why, and the way back would be a box the reader has no reason
@@ -316,7 +315,12 @@ describe("dismissal", () => {
     filterInput.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
-    expect(find.focused()).toBe(false);
+    // The popup's leave lifecycle hides the panel on a transitionend (or its
+    // 400ms fallback), and focus only leaves the field once it does — a real
+    // browser does not move focus on the same tick the key was handled.
+    await vi.waitFor(() => {
+      expect(find.focused()).toBe(false);
+    });
     expect(filterInput.value).toBe("");
     expect(names()).toEqual(["alpha", "beta"]);
   });

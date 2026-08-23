@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Find-in-Chat tests.
 //
@@ -16,8 +15,29 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./scroll.js", () => ({ setUserScrolledUp: vi.fn() }));
+// Spy-wrapped rather than replaced: every export keeps its real implementation
+// and becomes observable. `vi.spyOn(namespace, name)` cannot do this in a real
+// browser — an ESM module namespace is not configurable, so the assignment
+// throws — and this suite needs to see one call that the DOM cannot show.
+vi.mock("./chat-search.js", { spy: true });
 
 import { FindEngine, formatCount } from "./find-engine.js";
+import type * as ModFindInChat from "./find-in-chat.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 function root(html: string): HTMLElement {
   const d = document.createElement("div");
@@ -274,6 +294,7 @@ describe("Ctrl-F overlay", () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    bootSeq++;
     document.body.innerHTML = `
       <div id="chat-view" data-tab-view>
         <button type="button" id="find-btn" class="icon-btn" aria-pressed="false"></button>
@@ -288,7 +309,9 @@ describe("Ctrl-F overlay", () => {
         <textarea id="prompt-input"></textarea>
       </div>
       <div id="shell-panel" class="hidden"><textarea id="term-input"></textarea></div>`;
-    const mod = await import("./find-in-chat.js");
+    const mod = (await import(
+      /* @vite-ignore */ `./find-in-chat.ts?boot=${bootSeq}`
+    )) as typeof ModFindInChat;
     onHotkey = mod.handleFindHotkey;
     toggle = mod.toggleChatFind;
     close = mod.closeChatFind;
@@ -338,7 +361,7 @@ describe("Ctrl-F overlay", () => {
   }
 
   it("takes no clicks while closed or fading, in the stylesheet", async () => {
-    // A SOURCE fact, because happy-dom does no hit testing and the pre-open
+    // A SOURCE fact, because the test page loads no app stylesheet and the pre-open
     // instant is not observable from outside `ensureBuilt`.
     //
     // The primitive writes `[hidden]` only at the END of a leave, so between
@@ -580,7 +603,7 @@ describe("Ctrl-F overlay", () => {
     // so the reset early-returns and cannot be observed through the DOM — the call
     // itself is the assertion.
     const chatSearch = await import("./chat-search.js");
-    const reset = vi.spyOn(chatSearch, "resetServerSearch");
+    const reset = vi.mocked(chatSearch.resetServerSearch);
     for (const path of ["escape", "toggle", "tab-switch"] as const) {
       reset.mockClear();
       onHotkey(ctrlF());
@@ -597,7 +620,7 @@ describe("Ctrl-F overlay", () => {
         `${path}: the fold reset must run, or search-opened turns stay open forever`,
       ).toHaveBeenCalledTimes(1);
     }
-    reset.mockRestore();
+    reset.mockClear();
   });
 
   it("is idempotent: closing an already-closed box changes nothing", () => {

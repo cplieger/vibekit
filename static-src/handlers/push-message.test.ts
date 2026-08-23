@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for handlers/push-message.ts's route: which surface a clicked
 // notification lands on.

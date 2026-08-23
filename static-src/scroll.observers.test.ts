@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The observers `init()` wires, and the module-scope boot.
 //
 // A separate file from scroll.test.ts because these paths can only be reached
@@ -8,7 +7,7 @@
 // (`vi.resetModules()` + `await import()`), which is the same discipline
 // platform.pwa.test.ts needs for its module-scope constants.
 //
-// happy-dom's own ResizeObserver never fires and reports 0 for every box, so
+// A harness-built scroller has no real overflow and no box changes of its own, so
 // with the real one the resize half of this module is unobservable: nothing
 // models a layout change. The fake below is a recorder plus a trigger — it is
 // the layout engine's role in the contract, not the module's, so faking it does
@@ -16,6 +15,21 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type * as ScrollModule from "./scroll.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 // The module builds its singleton against $.messages / $.messagesWrap at import
 // and reads $.scrollBottom in init; ids are created on demand so a cleared body
@@ -63,7 +77,7 @@ class FakeResizeObserver {
   disconnect(): void {
     this.targets.clear();
   }
-  /** What happy-dom will not do: report that a box changed. */
+  /** What no real box change will do here: report that a box changed. */
   fire(): void {
     this.cb();
   }
@@ -79,8 +93,11 @@ function stubResizeObserver(): void {
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
 }
 
-/** happy-dom reports 0 for every layout metric, so the scroller's boxes are
- *  faked with writable properties — the same level scroll.test.ts chose. */
+/** The scroller's boxes are faked with writable properties — the same level
+ *  scroll.test.ts chose. Real layout is not the subject here: these tests are
+ *  arithmetic over three numbers, and an element sized by the harness rather
+ *  than by the app's stylesheet would measure whatever the harness happened to
+ *  produce. */
 function fakeGeometry(
   el: HTMLElement,
   init: {
@@ -108,6 +125,19 @@ function fakeGeometry(
       state.scrollTop = v;
     },
   });
+  // `scrollTo` has to be shadowed alongside the metrics, or the faked scrollTop
+  // is bypassed entirely: production reaches the live edge through
+  // `scrollEl.scrollTo({top, behavior})`, and in a real browser that is the
+  // platform's own method writing a real scroll position — which stays 0 on an
+  // element with no overflow, so every pin assertion read 0. An instance
+  // assignment shadows the prototype method (a `delete` would not); the helper
+  // keeps one source of truth for the number under test.
+  el.scrollTo = ((arg?: number | ScrollToOptions, y?: number): void => {
+    const top = typeof arg === "number" ? y : arg?.top;
+    if (top !== undefined) {
+      state.scrollTop = top;
+    }
+  }) as typeof el.scrollTo;
   return state;
 }
 
@@ -118,7 +148,7 @@ async function settle(): Promise<void> {
 }
 
 /** Drain the same queues without depending on `setTimeout`, which a fake-timer
- *  test has replaced. happy-dom's animation frames run on a real `setImmediate`
+ *  test has replaced. Animation frames run on the real clock
  *  captured at its own import, so they still land. */
 async function settleFrames(): Promise<void> {
   for (let i = 0; i < 3; i++) {
@@ -165,7 +195,10 @@ async function freshModule(opts: { withExistingRow?: boolean } = {}): Promise<Ha
   document.body.append(messages, wrap);
   const listeners = vi.spyOn(wrap, "addEventListener");
   vi.resetModules();
-  const scroll = await import("./scroll.js");
+  bootSeq++;
+  const scroll = (await import(
+    /* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`
+  )) as typeof ScrollModule;
   const scrollEl = scroll.getScrollEl();
   expect([FakeResizeObserver.instances.length, scrollEl]).toEqual([1, wrap]);
   return {
@@ -251,7 +284,7 @@ describe("the scroller's resize observer", () => {
 describe("what init wires", () => {
   it("registers the scroll listener as passive", async () => {
     // The transcript is the app's hottest scroller: a non-passive listener makes
-    // the browser wait for this handler before it may scroll. Nothing in happy-dom
+    // the browser wait for this handler before it may scroll. Nothing in the harness
     // models that, so the registration is the observable.
     const h = await freshModule();
     const scrollRegistrations = h.listeners.mock.calls.filter((c) => c[0] === "scroll");
@@ -489,7 +522,7 @@ describe("pagination's skeleton", () => {
 
 describe("pagination's safety timeout", () => {
   /** The load-more window is 15s; only the module's own timer is faked, so
-   *  happy-dom's observers and frames keep running. */
+   *  the real observers and frames keep running. */
   function useLoadTimeout(): void {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   }
@@ -585,6 +618,7 @@ describe("the deferred boot", () => {
     wrap.id = "messagesWrap";
     document.body.append(messages, wrap);
     vi.resetModules();
+    bootSeq++;
   }
 
   it("wires the transcript on import when the document is already parsed", async () => {
@@ -593,7 +627,7 @@ describe("the deferred boot", () => {
     // the transcript unwired until some other module happened to call in.
     expect(document.readyState).toBe("complete");
     stageDocument();
-    await import("./scroll.js");
+    (await import(/* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`)) as typeof ScrollModule;
     expect(FakeResizeObserver.instances).toHaveLength(1);
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("0px");
   });
@@ -604,7 +638,7 @@ describe("the deferred boot", () => {
       get: () => "loading",
     });
     stageDocument();
-    await import("./scroll.js");
+    (await import(/* @vite-ignore */ `./scroll.ts?boot=${bootSeq}`)) as typeof ScrollModule;
     // Nothing wired: no observers, and the gutter the layout reads is unwritten.
     expect(FakeResizeObserver.instances).toHaveLength(0);
     expect(document.documentElement.style.getPropertyValue("--scrollbar-w")).toBe("");

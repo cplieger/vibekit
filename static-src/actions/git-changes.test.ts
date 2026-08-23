@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for actions/git-changes.ts: stage, discard, unstage, pull, push,
 // commit, generateCommitMessage — including the HTTP-200 {error} envelope
 // guard (18-F1). The git server reports subprocess failure as HTTP 200 +

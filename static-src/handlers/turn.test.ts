@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for handlers/turn.ts: the ERROR_ROUTES classification table plus the
 // turn_ended and error SSE handlers.
@@ -75,7 +74,7 @@ vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
 // Only the two FETCHING functions are replaced, and only for their fetch. turn.ts
 // fires refreshTurnRail fire-and-forget on every turn frame, and it was the one
 // module in this graph still reaching api-client: the real one issues
-// GET /api/chats/{id}/turns, which happy-dom sends at its base URL, so each frame
+// GET /api/chats/{id}/turns, which the page sends at its own base URL, so each frame
 // left a request in flight for the window teardown to abort and print as an
 // unhandled AbortError. The count varied run to run (0-9 across the suite)
 // because it was a race between the request failing and the file finishing, which
@@ -88,7 +87,21 @@ vi.mock("../turn-rail.js", async (importOriginal) => ({
 }));
 
 const mockShowBanner = vi.fn();
-vi.mock("../banner-stack.js", () => ({ showBanner: mockShowBanner, onTurnEnded: vi.fn() }));
+vi.mock("../banner-stack.js", () => ({
+  showBanner: mockShowBanner,
+  onTurnEnded: vi.fn(),
+  // The real literal, not a stub: it is a `const` the graph reads as a chat-id
+  // sentinel, and Browser Mode links the name for real rather than reading it
+  // off a namespace object. A stub here would be a different value.
+  GLOBAL_BANNER: "*",
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports these names, and Browser Mode links for real rather than
+  // reading properties off a namespace object. `undefined` is what the node
+  // runner gave them, so no path under test changes behavior.
+  clearBannerCodes: undefined,
+  clearBannersForChat: undefined,
+  ensureBound: undefined,
+}));
 
 // Capture SSE handlers via shared helper.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";

@@ -1,10 +1,9 @@
-// @vitest-environment happy-dom
 //
 // The attention system's BINDING and its trigger rules: the three sinks against a
 // real document, the visible-rows test against real geometry, and initAttention
 // wired to the real tab store.
 //
-// The decisions are attention.test.ts's subject, under `node` with no DOM at all.
+// The decisions are attention-no-dom.node.test.ts's subject, under `node` with no DOM at all.
 // What is here is everything that can only be wrong against a browser:
 //
 //  1. THE TITLE BASE. The retired `setBadge` asserted its own copy of

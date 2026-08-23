@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The turn card's header band: the trigger, its meta row, and the three-line
 // clamp the folded-row navigation model depends on.
 import { describe, it, expect, vi } from "vitest";

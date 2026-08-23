@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // The image read surface, and the SVG rule that rides on it.
 //
@@ -32,12 +31,25 @@ const { surfaces, apiGet } = vi.hoisted(() => ({
 }));
 
 vi.mock("./dom.js", () => ({ $: surfaces }));
-vi.mock("./highlight.js", () => ({ highlight: (s: string) => s }));
+vi.mock("./highlight.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  highlightByLang: undefined,
+  normalizeLang: undefined,
+  highlight: (s: string) => s,
+}));
 vi.mock("./store.js", () => ({ getActiveId: () => "" }));
 // The read route. Nothing in this file may reach it — the assertion is that it
 // stays uncalled for an image.
 vi.mock("./api-client.js", () => ({ apiGet }));
 vi.mock("./actions/editor.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  suggestResolution: undefined,
   fetchAgentLines: { cancel: () => undefined, dispatch: () => Promise.resolve(null) },
   loadDiff: { dispatch: () => ({ outcome: Promise.resolve({ status: "cancelled" }) }) },
 }));
@@ -46,6 +58,12 @@ vi.mock("./editor-scroll.js", () => ({
   flashEditorLine: () => undefined,
 }));
 vi.mock("./tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  setGitTab: undefined,
+  toggleGitView: undefined,
   openEditorView: (_p: string, onShow: () => void) => {
     onShow();
   },

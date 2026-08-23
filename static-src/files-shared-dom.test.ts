@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import { errorRow } from "./files-shared.js";
 

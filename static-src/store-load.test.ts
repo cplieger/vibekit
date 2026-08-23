@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for store-load.ts loadMessages pagination — specifically the id-dedupe
 // when prepending an older page (a timestamp cursor can re-return a boundary
 // message whose ms ts is shared, which must not render/insert twice).

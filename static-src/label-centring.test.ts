@@ -1,5 +1,5 @@
 // The vertical centring of a text label inside a flex row, pinned as a SOURCE
-// fact because happy-dom implements no font metrics and no cascade.
+// fact because the test page loads neither the app stylesheet nor its webfont.
 //
 // The defect: `align-items: center` centres a flex item's BOX, and a text item's
 // box is not symmetric about the letterforms in it. With the baseline `ascent`

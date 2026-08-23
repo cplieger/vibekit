@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for handlers/open-external-url.ts: the open_external_url SSE handler
 // surfaces a clickable banner (never auto-opens) and only for safe URLs.

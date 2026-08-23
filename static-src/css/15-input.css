@@ -366,7 +366,7 @@
      Its COLOUR is here rather than a `stroke="var(…)"` presentation attribute in
      index.html, unlike the disc and the pie beside it. Two reasons, and the
      second is the load-bearing one: a colour belongs in the stylesheet, and
-     css-tokens.test.ts's orphan check reads var() out of the CSS and out of the
+     css-tokens.node.test.ts's orphan check reads var() out of the CSS and out of the
      TS — not out of the HTML — so a token whose only reader is a markup
      attribute registers as declared-and-unused. --c-border and --c-green get
      away with it only because they have many other readers. */

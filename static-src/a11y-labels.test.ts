@@ -1,6 +1,6 @@
-// @vitest-environment happy-dom
 // Accessibility tests: verify missing labels, focus management, and keyboard nav fixes.
 import { describe, it, expect, vi } from "vitest";
+import indexHtml from "../static/index.html?raw";
 import { domRenderer } from "./smd-renderer.js";
 import { CHECKBOX } from "./smd-parser-types.js";
 
@@ -101,31 +101,16 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
   // .rule-form grids (audit C7). Guard the real markup: every control sits
   // inside a <label> that carries a visible .rf-label, and the submit
   // affordance is a labeled button, not an icon-only pill.
-  //
-  // Skipped under Stryker: its sandbox copies static-src only
-  // (ignorePatterns excludes ../static), so the real markup is absent
-  // there; every normal vitest run still enforces this guard.
-  it("every rule-form control has a visible label and a labeled submit button", async (ctx) => {
-    const { existsSync, readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const here = dirname(fileURLToPath(import.meta.url));
-    const indexPath = join(here, "..", "static", "index.html");
-    if (!existsSync(indexPath)) {
-      ctx.skip();
-      return;
-    }
-    const html = readFileSync(indexPath, "utf8");
-
+  it("every rule-form control has a visible label and a labeled submit button", () => {
     // Parse only the permissions-panel slice (comment marker to the next
-    // panel's marker): parsing the full document would make happy-dom chase
-    // the <link rel=stylesheet> over the network.
-    const start = html.indexOf("<!-- Permissions:");
-    const end = html.indexOf("<!-- Instructions:");
+    // panel's marker): a full-document parse would make the runner chase the
+    // <link rel=stylesheet> over the network.
+    const start = indexHtml.indexOf("<!-- Permissions:");
+    const end = indexHtml.indexOf("<!-- Instructions:");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const doc = document.createElement("div");
-    doc.innerHTML = html.slice(start, end);
+    doc.innerHTML = indexHtml.slice(start, end);
 
     const forms = Array.from(doc.querySelectorAll<HTMLElement>(".rule-form"));
     const kinds = forms.map((f) => f.getAttribute("data-rule-form"));
@@ -209,8 +194,23 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       openFileDiff: () => {
         /* noop */
       },
+      // navigate.ts imports this name, and Browser Mode links ESM for real
+      // rather than reading properties off a namespace object, so it has to
+      // exist. `undefined` is what the node runner gave it.
+      openFileGitDiff: undefined,
     }));
     vi.doMock("./tool-group.js", () => ({
+      // The same stubs the sibling doMock below installs for this module. Under
+      // Browser Mode's real linking every name tool-card.ts imports has to exist,
+      // and these three are CALLED on the path under test, so they are noops
+      // rather than undefined.
+      untrackInProgress: () => {
+        /* noop */
+      },
+      maybeCollapseGroup: () => {
+        /* noop */
+      },
+      formatDuration: (ms: number) => String(ms),
       trackInProgress: () => {
         /* noop */
       },
@@ -244,6 +244,10 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       openFileDiff: () => {
         /* noop */
       },
+      // navigate.ts imports this name, and Browser Mode links ESM for real
+      // rather than reading properties off a namespace object, so it has to
+      // exist. `undefined` is what the node runner gave it.
+      openFileGitDiff: undefined,
     }));
     vi.doMock("./tool-group.js", () => ({
       trackInProgress: () => {
@@ -350,14 +354,25 @@ describe("a11y: failed tool aria-expanded", () => {
       /* noop */
     };
     vi.doMock("./scroll.js", () => ({ setUserScrolledUp: noop }));
-    vi.doMock("./editor-openers.js", () => ({ openFile: noop, openFileDiff: noop }));
+    vi.doMock("./editor-openers.js", () => ({
+      openFile: noop,
+      openFileDiff: noop,
+      openFileGitDiff: undefined,
+    }));
     vi.doMock("./tool-group.js", () => ({
       trackInProgress: noop,
       untrackInProgress: noop,
       maybeCollapseGroup: noop,
       formatDuration: (ms: number) => String(ms),
     }));
-    vi.doMock("./actions/index.js", () => ({ bindLoadingState: () => () => undefined }));
+    vi.doMock("./actions/index.js", () => ({
+      // `registerCleanup` is CALLED on this path, so it is a noop rather than
+      // undefined; Browser Mode's real linking requires the name either way.
+      registerCleanup: () => {
+        /* noop */
+      },
+      bindLoadingState: () => () => undefined,
+    }));
 
     const { buildToolCard } = await import("./tool-card.js");
     const { initToolCallbacks, updateToolCall } = await import("./messages-tools.js");
@@ -452,7 +467,11 @@ describe("a11y: History row accessible names", () => {
     vi.doMock("@cplieger/ui-primitives/skeleton", () => ({
       skeletonTiming: () => ({ cancel: noop }),
     }));
-    vi.doMock("./editor-openers.js", () => ({ openFileDiff: noop }));
+    vi.doMock("./editor-openers.js", () => ({
+      openFileDiff: noop,
+      openFile: undefined,
+      openFileGitDiff: undefined,
+    }));
     vi.doMock("./navigate.js", () => ({ openChange: noop, openAtLine: noop }));
     vi.doMock("./scroll.js", () => ({
       setUserScrolledUp: noop,
@@ -465,6 +484,14 @@ describe("a11y: History row accessible names", () => {
     const host = document.createElement("div");
     host.id = "history-table";
     document.body.appendChild(host);
+    // `./tabs.js` was already imported by an earlier case in this file, so the
+    // doMock above cannot take: a mocked module is evaluated once and cached.
+    // The real module's store subscriber renders into `#tab-list`, and `$` throws
+    // on a missing element, so a late render would land in the run as an
+    // unhandled error with no test to attach it to.
+    const tabList = document.createElement("div");
+    tabList.id = "tab-list";
+    document.body.appendChild(tabList);
 
     const { showHistoryView } = await import("./history.js");
     showHistoryView();

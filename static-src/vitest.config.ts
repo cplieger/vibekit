@@ -1,13 +1,49 @@
 // Vitest 4.1 configuration for vibekit TypeScript unit tests.
-// Default environment: node (pure functions, no DOM overhead).
-// DOM modules: add `// @vitest-environment happy-dom` at the top of the
-// test file to get window/document/localStorage/etc. No browser binary
-// needed — happy-dom is a pure JS DOM implementation running in Node.
+//
+// Two projects, and the DEFAULT is the browser. A test file runs in a real
+// headless Chromium unless its name opts out, because the browser is the
+// environment this client actually ships into and a DOM emulator got several of
+// these assertions wrong for free. There is no `environment` option on the
+// browser side and no per-file `@vitest-environment` pragma: Browser Mode is not
+// an environment, it is a runner.
+//
+// The opt-out is the `.node.test.ts` suffix, and it is load-bearing rather than
+// decorative: placement has to be readable off the filename because one of the
+// two reasons a file needs Node fails SILENTLY when it is misplaced.
+//
+//   - A test that needs Node capabilities (spawning a process, walking a
+//     directory) throws on the import when it lands in the browser. Loud,
+//     self-correcting.
+//   - A test that needs the DOM to be ABSENT does not. It passes vacuously,
+//     having exercised nothing. `attention-no-dom.node.test.ts` is that case:
+//     its subject is an architectural invariant enforced by module-load failure,
+//     so the reason lives in the stem (`no-dom`) and the placement in the suffix
+//     (`.node`). It asserts its own premise for the same reason.
+//
+// Fuzz keeps its own axis: `*.fuzz.test.ts` is how ts-ci selects fuzz targets,
+// and a DOM fuzz test needs no marker here at all.
+//
+// `channel: "chromium"` opts into Chromium's newer headless mode, the real
+// browser rather than the separate headless-shell build. CI installs it with
+// `npx playwright install --with-deps chromium`; locally it is a one-time
+// `npx --no-install playwright install chromium`.
+//
 // Run: vitest --run (single pass) or vitest (watch mode)
+import { playwright } from "@vitest/browser-playwright";
 import { configDefaults, defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
+
+// Exclude compiled output and node_modules symlink. `**/.stryker-tmp/**`
+// keeps Stryker's `inPlace: true` backup copy of the suite (and a leftover
+// sandbox from an interrupted run) from being collected a SECOND time: the
+// backup holds every .ts file and none of the fixtures beside them, so a
+// duplicate test file resolves `../css/x.css` inside the backup and fails.
+// Spreading configDefaults.exclude also widens the previous top-level-only
+// `node_modules/**`. Both projects need the whole list: a project's `exclude`
+// REPLACES the root one rather than adding to it.
+const sharedExclude = [...configDefaults.exclude, "../static/**", "**/.stryker-tmp/**"];
 
 export default defineConfig({
   resolve: {
@@ -21,33 +57,80 @@ export default defineConfig({
       },
     ],
   },
+  server: {
+    fs: {
+      // The `?raw` reads that cross the package boundary: the shipped page and
+      // its assets (../static), the Go sources three cross-language contract
+      // tests pin (../internal), and the two scripts a CSS guard reads
+      // (../scripts). Vite's dev-server file guard refuses these otherwise.
+      // Narrowest set that serves them; NOT the repo root.
+      allow: ["../static", "../internal", "../scripts"],
+    },
+  },
   test: {
-    // Default: node. Override per test file with:
-    //   // @vitest-environment happy-dom
-    environment: "node",
-
-    // threads pool: faster than forks for pure Node.js tests with no native
-    // modules (no Prisma, bcrypt, canvas).
-    pool: "threads",
-
-    // Test isolation: each test file runs with its own module graph.
-    // We previously had isolate:false for speed, but action test files
-    // use vi.mock() which pollutes other files in the same worker
-    // (e.g. chat-delete.test.ts mocks ../transport.js, leaking into
-    // transport.test.ts). The performance delta is ~0.5s; correctness wins.
-    isolate: true,
-
-    // Test files co-located with source, named *.test.ts
-    include: ["**/*.test.ts"],
-
-    // Exclude compiled output and node_modules symlink. `**/.stryker-tmp/**`
-    // keeps Stryker's `inPlace: true` backup copy of the suite (and a leftover
-    // sandbox from an interrupted run) from being collected a SECOND time: the
-    // backup holds every .ts file and none of the fixtures beside them, so a
-    // duplicate test file resolves `../css/x.css` inside the backup and fails
-    // ENOENT. Spreading configDefaults.exclude also widens the previous
-    // top-level-only `node_modules/**`.
-    exclude: [...configDefaults.exclude, "../static/**", "**/.stryker-tmp/**"],
+    projects: [
+      {
+        // `extends` is a key of the PROJECT, not of its `test` block. Written
+        // inside `test` it is silently ignored and every root option is lost
+        // while the suite stays green, because losing a strictness option never
+        // fails a test. Verified with a zero-assertion probe: inside `test` the
+        // probe PASSED (requireAssertions gone); here it FAILS.
+        extends: true,
+        test: {
+          name: "node",
+          environment: "node",
+          // threads pool: faster than forks for pure Node.js tests with no
+          // native modules (no Prisma, bcrypt, canvas).
+          pool: "threads",
+          // Test isolation: each test file runs with its own module graph.
+          // We previously had isolate:false for speed, but action test files
+          // use vi.mock() which pollutes other files in the same worker
+          // (e.g. chat-delete.test.ts mocks ../transport.js, leaking into
+          // transport.test.ts). The performance delta is ~0.5s; correctness
+          // wins. Browser Mode isolates per test FILE, so the browser project
+          // needs neither option.
+          isolate: true,
+          // Package-root-relative, because the tests sit at the package root.
+          include: ["**/*.node.test.ts"],
+          exclude: sharedExclude,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "browser",
+          include: ["**/*.test.ts"],
+          exclude: [...sharedExclude, "**/*.node.test.ts"],
+          // One test file at a time. Not a preference: the browser mocker
+          // registers its module-interception routes on the playwright browser
+          // CONTEXT, which is shared by the pages running in parallel, so two
+          // pages mocking the same module race and one request gets fulfilled
+          // twice — `route.fulfill: Route is already handled!`, thrown as an
+          // unhandled rejection that takes the whole run down. Intermittent
+          // under `vitest --run`; reproducible every time under Stryker, whose
+          // four concurrent runners multiply the contention. The suite costs
+          // ~57s serialized instead of ~17s.
+          fileParallelism: false,
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright({
+              launchOptions: {
+                channel: "chromium",
+              },
+            }),
+            instances: [{ browser: "chromium" }],
+            // Fixed viewport so layout-dependent assertions are reproducible; a
+            // real browser computes real boxes, unlike the emulator this
+            // replaced.
+            viewport: { width: 1280, height: 720 },
+            // A failure screenshot per failing test is noise in CI and cannot
+            // be read from a job log; the assertion diff is the artifact.
+            screenshotFailures: false,
+          },
+        },
+      },
+    ],
 
     // Fail loudly if the include pattern matches nothing.
     passWithNoTests: false,
@@ -85,7 +168,8 @@ export default defineConfig({
     testTimeout: 5000,
     hookTimeout: 5000,
 
-    // Flag tests slower than 100ms — pure functions have no I/O.
+    // Flag tests slower than 100ms. Root-only: vitest 4 does not accept
+    // slowTestThreshold per project.
     slowTestThreshold: 100,
 
     // Reproducible ordering. hooks: "stack" = afterEach/afterAll run in
@@ -120,20 +204,18 @@ export default defineConfig({
       exclude: [
         "*.test.ts",
         "*.d.ts",
-        // sw.ts: service worker — runs in ServiceWorkerGlobalScope,
-        // not Window. Neither happy-dom nor jsdom implements
-        // PushEvent/NotificationEvent/ServiceWorkerRegistration.
+        // sw.ts: service worker — runs in ServiceWorkerGlobalScope, not
+        // Window, so a page-context runner cannot host PushEvent /
+        // NotificationEvent / ServiceWorkerRegistration either.
         "sw.ts",
-        // upload.ts: uses XMLHttpRequest.upload progress events.
-        // happy-dom implements XHR but does not fire upload progress
-        // events (no simulated network I/O). The XHR lifecycle is
-        // untestable; the pure path-construction logic is minimal.
+        // upload.ts: uses XMLHttpRequest.upload progress events, which need a
+        // real server to upload to. Chromium can back these — a genuine
+        // follow-up, not a permanent exclusion.
         "upload.ts",
         // shell.ts: the terminal itself is @cplieger/web-terminal-ui's
-        // createTerminal (canvas 2d text measurement + a live WebSocket),
-        // which happy-dom can't back. shell.test.ts covers the panel wiring
-        // with createTerminal mocked, but shell.ts stays coverage-excluded —
-        // its meaningful paths live in the UI package + engine, not here.
+        // createTerminal (canvas 2d text measurement + a live WebSocket).
+        // shell.test.ts covers the panel wiring with createTerminal mocked;
+        // the meaningful paths live in the UI package + engine, not here.
         "shell.ts",
       ],
 
@@ -161,15 +243,5 @@ export default defineConfig({
       showDiff: true,
       includeStack: true,
     },
-
-    // Persistent file system module cache between reruns.
-    // DISABLED: the experimental fsModuleCache causes intermittent parse
-    // failures when the cache is corrupted by interrupted runs or
-    // concurrent vitest invocations. The ~0.5s speedup is not worth the
-    // flake rate. Re-evaluate when vitest stabilises this feature.
-    // experimental: {
-    //   fsModuleCache: true,
-    //   fsModuleCachePath: ".vitest-cache",
-    // },
   },
 });

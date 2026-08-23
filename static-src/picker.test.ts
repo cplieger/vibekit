@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // The picker's visibility is an EFFECT over store state, so these tests drive
 // the store and read the `hidden` class the way a person reads the screen.

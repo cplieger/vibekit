@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for toggleServer and deleteServer optimistic + rollback.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -91,7 +90,7 @@ describe("deleteServer optimistic + rollback", () => {
   it("calls removeConfiguredEntry optimistically", async () => {
     const entry = makeServer("b");
     mockRemove.mockReturnValue([entry, 1]);
-    mockFetch.mockResolvedValue(new Response("", { status: 204 }));
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
     await deleteServer.dispatch({ id: "b" });
     expect(mockRemove).toHaveBeenCalledWith("b");
   });

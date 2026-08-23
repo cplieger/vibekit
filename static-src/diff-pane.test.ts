@@ -1,5 +1,4 @@
 // Table-driven tests for diff-pane.ts countHunks pure function.
-// @vitest-environment happy-dom
 import { describe, it, expect } from "vitest";
 import { countHunks, renderDiffPane } from "./diff-pane.js";
 import type { DiffLine } from "./diff.js";

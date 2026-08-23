@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // The protected-approval floor (D103), client side.
 //
@@ -15,18 +14,14 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = dirname(fileURLToPath(import.meta.url));
-
-function read(...parts: string[]): string {
-  return readFileSync(join(here, ...parts), "utf8");
-}
+import indexHtml from "../static/index.html?raw";
+import notifySrc from "./notify.ts?raw";
+import persistSrc from "./persist.ts?raw";
+import domSrc from "./dom.ts?raw";
+import turnHandlerSrc from "./handlers/turn.ts?raw";
 
 describe("the permission notification has no off switch", () => {
-  const html = read("..", "static", "index.html");
+  const html = indexHtml;
 
   it("has no permission toggle in the markup", () => {
     expect(html).not.toContain("notify-permission-toggle");
@@ -54,37 +49,34 @@ describe("the permission notification has no off switch", () => {
 
 describe("no client code can address the removed setting", () => {
   it("notify.ts exports no per-kind permission getter or setter", () => {
-    const src = read("notify.ts");
-    expect(src).not.toContain("isPermissionNeededEnabled");
-    expect(src).not.toContain("setPermissionNeededEnabled");
+    expect(notifySrc).not.toContain("isPermissionNeededEnabled");
+    expect(notifySrc).not.toContain("setPermissionNeededEnabled");
   });
 
   // restoreNotifications is the one place a config.json value reaches the
   // client's notification state. A read here is what would let a stale key
   // silence the ask on this device even with the server's floor holding.
   it("notify.ts never reads notify_permission from the settings payload", () => {
-    const src = read("notify.ts");
     // The property read and the type field, not the bare word: the module names
     // the removed key in a comment explaining why it is gone, and a test that
     // forbade the word would be a test against its own documentation.
-    expect(src).not.toMatch(/\.notify_permission\b/);
-    expect(src).not.toMatch(/^\s*notify_permission\?/m);
+    expect(notifySrc).not.toMatch(/\.notify_permission\b/);
+    expect(notifySrc).not.toMatch(/^\s*notify_permission\?/m);
   });
 
   it("AppSettings does not declare the key", () => {
-    const src = read("persist.ts");
-    expect(src).not.toMatch(/^\s*notify_permission\?/m);
+    expect(persistSrc).not.toMatch(/^\s*notify_permission\?/m);
   });
 
   it("the DOM registry has no getter for the removed toggle", () => {
-    expect(read("dom.ts")).not.toContain("notifyPermissionToggle");
+    expect(domSrc).not.toContain("notifyPermissionToggle");
   });
 
   // The three turn-blocking asks must notify with no per-kind gate. Asserted on
   // the source because the behavioural half lives in handlers/turn.test.ts and
   // this is the structural claim: no gate exists to reintroduce.
   it("the ask handlers carry no per-kind gate", () => {
-    expect(read("handlers", "turn.ts")).not.toContain("isPermissionNeededEnabled");
+    expect(turnHandlerSrc).not.toContain("isPermissionNeededEnabled");
   });
 });
 

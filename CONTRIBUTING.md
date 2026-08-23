@@ -176,7 +176,7 @@ Naming convention: `<area>.<verb>`, lowercase with underscores (`chat.delete`,
 `files.rename`, `mcp.add_server`). Names are registry keys that tests grep, so
 don't rename them casually.
 
-A regression test, `actions/lint.test.ts`, scans the source tree and fails on
+A regression test, `actions/lint.node.test.ts`, scans the source tree and fails on
 new write-shaped calls (`void`/`await apiPost`, `apiDelete`, `apiPutOrError`,
 `transport.send`) outside the action files. If you are adding a legitimate
 background poll or fire-and-forget cleanup, add the file's basename to
@@ -392,10 +392,14 @@ Tests live beside the code they cover, standard for both ecosystems:
 - **Go**: `foo.go` → `foo_test.go` in the same package. Property-based tests use
   `pgregory.net/rapid`. Run the race detector (`go test -race ./...`) on changes
   to concurrent code (the agent runtime, bridge, chat store, buffers).
-- **TypeScript**: `foo.ts` → `foo.test.ts`, co-located. The runner is vitest;
-  property-based tests use `fast-check`. DOM-dependent tests opt into happy-dom
-  with `// @vitest-environment happy-dom` at the file top. For action tests, mock
-  `../toast.js`, dispatch, and assert against `getActionLog()`.
+- **TypeScript**: `foo.ts` → `foo.test.ts`, co-located. The runner is vitest in
+  **Browser Mode**: every test runs in headless Chromium unless its filename
+  opts out with the `*.node.test.ts` suffix, which is for a test needing genuine
+  Node capabilities or needing the DOM to be absent. There is no
+  `@vitest-environment` pragma. Property-based tests use `fast-check`. For action
+  tests, mock `../toast.js`, dispatch, and assert against `getActionLog()`. See
+  `static-src/README.md` for the two rules a real browser adds (busted specifiers
+  in place of `vi.resetModules()`, and mock factories that name every export).
 
 Add or update tests with every behaviour change, and make sure the relevant
 checks above pass before opening a PR.

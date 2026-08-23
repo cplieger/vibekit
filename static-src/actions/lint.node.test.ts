@@ -1,4 +1,3 @@
-// @vitest-environment node
 // Lint test: catches regressions to the action framework policy.
 //
 // Policy: user-initiated mutations must go through the actions
@@ -118,7 +117,7 @@ describe("action framework — regression guard", () => {
       const message = [
         "User-initiated mutations must go through the actions framework.",
         "See web/static-src/actions/index.ts.",
-        "If this is a legitimate background poll, add the file to BACKGROUND_ALLOWLIST in actions/lint.test.ts.",
+        "If this is a legitimate background poll, add the file to BACKGROUND_ALLOWLIST in actions/lint.node.test.ts.",
         "",
         "Violations:",
         ...violations.map((v) => `  ${v}`),

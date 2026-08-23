@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for the shared git-status store: the per-path lookup the docs page and
 // the file browser read, and the index rules behind it.
 import { describe, it, expect, beforeEach } from "vitest";

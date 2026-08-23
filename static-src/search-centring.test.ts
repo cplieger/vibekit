@@ -35,11 +35,26 @@
 // ((ascent - descent)/2 - band/2)em and has no line-height term in it (CSS2.1
 // 10.8.1 splits leading symmetrically), so one would move the glyphs by zero.
 //
-// Node environment: these read the shipped stylesheets as text, because happy-dom
-// implements no font metrics and no cascade.
+// These read the shipped stylesheets as text, because the test page loads no app
+// stylesheet: nothing links `css/MANIFEST`, so `getComputedStyle` has no cascade
+// to report on. Source text is the only fact available here.
 
 import { describe, it, expect } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import findInChatSrc from "./find-in-chat.ts?raw";
+import filesSearchSrc from "./files-search.ts?raw";
+import editorFindSrc from "./editor-find.ts?raw";
+import searchShellSrc from "./search-shell.ts?raw";
+import searchPopupSrc from "./search-popup.ts?raw";
+
+/** The five builders the glyph scan below is the whole population of. */
+const searchBuilderSources: Record<string, string> = {
+  "find-in-chat.ts": findInChatSrc,
+  "files-search.ts": filesSearchSrc,
+  "editor-find.ts": editorFindSrc,
+  "search-shell.ts": searchShellSrc,
+  "search-popup.ts": searchPopupSrc,
+};
 
 /** The three search bars, and where each one's button rules live. All three are
  *  in the table on purpose: the SAME defect was in each, so a fix in one would
@@ -196,25 +211,13 @@ describe("the Aa match-case toggle", () => {
 
 describe("the close × is a real element, not a character", () => {
   // The DOM half of this contract — that `searchIconButton` produces an <svg> and
-  // no text node — is in search-shell.test.ts, which runs under happy-dom. This
-  // file stays a node-environment stylesheet reader, so its half is the source
-  // scan below.
-  it("is never a bare × character anywhere in a search bar's builder", async () => {
+  // no text node — is in search-shell.test.ts. This file's half is the source
+  // scan below, read through Vite `?raw` imports rather than `node:fs`.
+  it("is never a bare × character anywhere in a search bar's builder", () => {
     // A grep-shaped guard, because the failure mode is a NEW button rather than an
     // edit to an existing one: the three builders are the population, and a `×`,
     // `↑` or `↓` in any of them is the bug coming back.
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const here = dirname(fileURLToPath(import.meta.url));
-    for (const file of [
-      "find-in-chat.ts",
-      "files-search.ts",
-      "editor-find.ts",
-      "search-shell.ts",
-      "search-popup.ts",
-    ]) {
-      const src = readFileSync(join(here, file), "utf8");
+    for (const [file, src] of Object.entries(searchBuilderSources)) {
       // Comments explain the glyphs, so they are stripped before the scan.
       const code = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
       for (const glyph of ["\\u00d7", "\\u2191", "\\u2193"]) {

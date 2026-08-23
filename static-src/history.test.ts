@@ -1,6 +1,21 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PageFind } from "./find-registry.js";
+import type * as ModHistory from "./history.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 const dispatch = vi.fn();
 const cancelSessions = vi.fn();
@@ -99,7 +114,9 @@ const runAt = (status: string) => ({ ...runRow, status });
 async function render(payload: unknown): Promise<HTMLElement> {
   document.body.innerHTML = `<div id="history-table"></div>`;
   dispatch.mockResolvedValue(payload);
-  const { showHistoryView } = await import("./history.js");
+  const { showHistoryView } = (await import(
+    /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+  )) as typeof ModHistory;
   showHistoryView();
   await vi.waitFor(() => {
     if (document.querySelectorAll("#history-table [data-key]").length === 0) {
@@ -113,6 +130,7 @@ describe("history: previous chats and runs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     toggleHistoryView.mockImplementation((onShow: () => void) => {
       onShow();
@@ -165,7 +183,9 @@ describe("history: previous chats and runs", () => {
   it("offers a Retry on load failure instead of an empty state", async () => {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue(null);
-    const { showHistoryView } = await import("./history.js");
+    const { showHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
     showHistoryView();
     await vi.waitFor(() => {
       if (document.querySelector(".history-error") === null) {
@@ -186,7 +206,9 @@ describe("history: previous chats and runs", () => {
   it("says so when the workspace has nothing", async () => {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue({ sessions: [], runs: [] });
-    const { showHistoryView } = await import("./history.js");
+    const { showHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
     showHistoryView();
     await vi.waitFor(() => {
       const t = document.getElementById("history-table")?.textContent ?? "";
@@ -211,6 +233,7 @@ describe("history: chats already open in a tab here", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     toggleHistoryView.mockImplementation((onShow: () => void) => {
       onShow();
@@ -257,6 +280,7 @@ describe("history: a run's outcome is a glyph, not a word", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     toggleHistoryView.mockImplementation((onShow: () => void) => {
       onShow();
@@ -345,6 +369,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     toggleHistoryView.mockImplementation((onShow: () => void) => {
       onShow();
@@ -442,6 +467,7 @@ describe("history: the tab-restore loader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     toggleHistoryView.mockImplementation((onShow: () => void) => {
       onShow();
@@ -451,7 +477,9 @@ describe("history: the tab-restore loader", () => {
   async function restore(): Promise<HTMLElement> {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
-    const { loadHistoryView } = await import("./history.js");
+    const { loadHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
     loadHistoryView();
     await vi.waitFor(() => {
       if (document.querySelectorAll("#history-table [data-key]").length === 0) {
@@ -470,7 +498,9 @@ describe("history: the tab-restore loader", () => {
 
   it("is a reload when fired again, never a close", async () => {
     const c = await restore();
-    const { loadHistoryView } = await import("./history.js");
+    const { loadHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
     loadHistoryView();
     await vi.waitFor(() => {
       if (dispatch.mock.calls.length < 2) {
@@ -483,7 +513,9 @@ describe("history: the tab-restore loader", () => {
 
   it("tears the page's in-flight work down on close", async () => {
     await restore();
-    const { teardownHistoryView } = await import("./history.js");
+    const { teardownHistoryView } = (await import(
+      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+    )) as typeof ModHistory;
     cancelSessions.mockClear();
     teardownHistoryView();
     expect(cancelSessions).toHaveBeenCalled();
@@ -537,7 +569,9 @@ async function search(
   document.body.innerHTML = `<div id="history-view"><div id="history-table"></div></div>`;
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
-  const { showHistoryView } = await import("./history.js");
+  const { showHistoryView } = (await import(
+    /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
+  )) as typeof ModHistory;
   showHistoryView();
   const find = await openFind();
 
@@ -565,6 +599,7 @@ describe("history: cross-chat search", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     toggleHistoryView.mockImplementation((onShow: () => void) => {
       onShow();
@@ -669,7 +704,12 @@ describe("history: cross-chat search", () => {
     input.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
-    expect(find.focused()).toBe(false);
+    // The popup's leave lifecycle hides the panel on a transitionend (or its
+    // 400ms fallback), and focus only leaves the field once it does — a real
+    // browser does not move focus on the same tick the key was handled.
+    await vi.waitFor(() => {
+      expect(find.focused()).toBe(false);
+    });
     expect(input.value).toBe("");
     await vi.waitFor(() => {
       if (table.querySelectorAll("[data-key]").length === 0) {
@@ -699,6 +739,7 @@ describe("history: the per-row delete", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     confirmMock.mockResolvedValue(true);
     deleteChatDispatch.mockResolvedValue({ ok: true });
@@ -795,6 +836,7 @@ describe("history: the row's facts line", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    bootSeq++;
     hasTab.mockReturnValue(false);
     storeGet.mockReturnValue(undefined);
     toggleHistoryView.mockImplementation((onShow: () => void) => {

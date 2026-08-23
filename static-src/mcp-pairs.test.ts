@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Unit tests for mcp-pairs.ts — collectKeyPairs and renderKeyPairList.
 import { describe, it, expect, vi } from "vitest";
 

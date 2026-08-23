@@ -259,7 +259,7 @@ function reveal(): void {
 
 function revealMark(): void {
   const mark = domFind?.currentMark() ?? null;
-  // happy-dom implements no scrolling, so the call is guarded rather than
+  // The method is optional on the platform, so the call is guarded rather than
   // assumed — the same shape find-in-chat.ts uses.
   const scrollFn = (mark as { scrollIntoView?: (o?: ScrollIntoViewOptions) => void } | null)
     ?.scrollIntoView;

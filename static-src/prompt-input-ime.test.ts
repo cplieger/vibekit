@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The IME guard on the composer's Enter key.
 //
 // Without it, the Enter that COMMITS a Japanese, Chinese or Korean candidate
@@ -8,6 +7,22 @@
 // false, which is the case the port exists for and the reason it was not
 // reinvented from `isComposing` alone.
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import type * as ModPromptInput from "./prompt-input.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 vi.mock("./platform.js", () => ({ fixIOSViewport: vi.fn() }));
 vi.mock("./pill-expand.js", () => ({ collapseAll: vi.fn() }));
@@ -31,7 +46,7 @@ vi.mock("./store.js", () => ({
 let submits = 0;
 
 /** Press Enter with an explicit IME state. `keyCode` is set through the init
- *  dict because happy-dom derives it from `key` otherwise. */
+ *  dict, because a KeyboardEvent derives it from `key` otherwise. */
 function pressEnter(opts: { isComposing?: boolean; keyCode?: number } = {}): KeyboardEvent {
   const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
   const e = new KeyboardEvent("keydown", {
@@ -52,6 +67,7 @@ function compose(type: "compositionstart" | "compositionend"): void {
 beforeEach(async () => {
   vi.useFakeTimers();
   vi.resetModules();
+  bootSeq++;
   submits = 0;
   document.body.innerHTML = `
     <form id="prompt-form">
@@ -60,7 +76,9 @@ beforeEach(async () => {
       </div>
       <button id="send-btn" type="submit"></button>
     </form>`;
-  const mod = await import("./prompt-input.js");
+  const mod = (await import(
+    /* @vite-ignore */ `./prompt-input.ts?boot=${bootSeq}`
+  )) as typeof ModPromptInput;
   mod.initPromptInput(
     () => {
       submits += 1;

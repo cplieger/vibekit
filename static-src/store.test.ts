@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Unit tests for store.ts — property-based idempotency invariants.
 import { describe, it, expect, vi } from "vitest";
 import * as fc from "fast-check";
