@@ -84,7 +84,6 @@ vi.mock("@cplieger/ui-primitives/roving-focus", () => ({
   rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
 }));
 
-import { flushSync } from "@cplieger/reactive";
 import { activeSession } from "./store.js";
 import { initModelSwitcher, setCatalogEfforts } from "./model-switcher.js";
 
@@ -101,7 +100,6 @@ function model(id: string, dflt?: string): ModelInfo {
 /** Open the card and return the tier buttons it rendered. */
 function openCard(): HTMLButtonElement[] {
   onExpand.fn?.();
-  flushSync();
   return [...document.querySelectorAll<HTMLButtonElement>(".effort-btn")];
 }
 
@@ -119,7 +117,6 @@ function markedTier(): string {
 
 function setSession(s: TestSession): void {
   (activeSession as unknown as { value: TestSession }).value = s;
-  flushSync();
 }
 
 /** The five-tier vocabulary as catalog entries. */

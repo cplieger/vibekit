@@ -9,7 +9,6 @@
 // no controls, Discard always clears every unread message, and Edit is offered
 // only when exactly one is unread. Each of those is a case below.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { flushSync } from "@cplieger/reactive";
 
 // The controls dispatch an action and open a confirm; the stack's rendering and
 // its wire discipline are what is under test, and the real modules would pull
@@ -113,7 +112,6 @@ describe("the steer stack", () => {
     // is the only input, which is what makes the reset one line.
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
-    flushSync();
     expect(rows()).toHaveLength(0);
     clearDispatch.mockClear();
     confirmMock.mockClear();
@@ -127,7 +125,6 @@ describe("the steer stack", () => {
   // same way a permission ask does.
   it("renders into the bottom-bar stack rather than inside the composer", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
-    flushSync();
     expect(firstRow().closest("#steer-stack")).not.toBeNull();
     expect(firstRow().closest("#prompt-box")).toBeNull();
   });
@@ -136,7 +133,6 @@ describe("the steer stack", () => {
     const stack = document.getElementById("steer-stack");
     expect(stack?.classList.contains("hidden")).toBe(true);
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    flushSync();
     expect(stack?.classList.contains("hidden")).toBe(false);
   });
 
@@ -146,7 +142,6 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "first" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "second" });
     recordSteerQueued("chat-1", { id: "steer-3", text: "third" });
-    flushSync();
     expect(rows().map(textOf)).toEqual(["first", "second", "third"]);
   });
 
@@ -156,7 +151,6 @@ describe("the steer stack", () => {
   // draft, and the agent has not seen it yet.
   it("says a message has been sent and is waiting", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
-    flushSync();
 
     const row = firstRow();
     expect(row.dataset["state"]).toBe("sent");
@@ -168,7 +162,6 @@ describe("the steer stack", () => {
   it("flips to read with no verdict when the agent said nothing about it", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
     markSteerInjected("chat-1", "steer-1", "use tabs instead");
-    flushSync();
 
     const row = firstRow();
     expect(row.dataset["state"]).toBe("read");
@@ -181,7 +174,6 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main" });
     markSteerInjected("chat-1", "steer-1", "actually target main");
     markSteerInjected("chat-1", "steer-1", "", "rebased onto main instead");
-    flushSync();
 
     const row = firstRow();
     expect(ackOf(row)).toBe("rebased onto main instead");
@@ -200,11 +192,9 @@ describe("the steer stack", () => {
   it("repaints when only the ack changed", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
     markSteerInjected("chat-1", "steer-1", "one");
-    flushSync();
     expect(ackOf(firstRow())).toBeNull();
 
     markSteerInjected("chat-1", "steer-1", "", "did the thing");
-    flushSync();
     expect(ackOf(firstRow())).toBe("did the thing");
   });
 
@@ -217,14 +207,12 @@ describe("the steer stack", () => {
     const long =
       "stop rewriting the parser and instead widen the existing front-matter struct with the missing field";
     recordSteerQueued("chat-1", { id: "steer-1", text: long });
-    flushSync();
     expect(textOf(firstRow())).toBe(long);
     expect(textOf(firstRow())).not.toContain("\u2026");
   });
 
   it("collapses whitespace so a multi-line message is one block", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "first line\n\n   second line" });
-    flushSync();
     expect(textOf(firstRow())).toBe("first line second line");
     expect(firstRow().getAttribute("aria-label")).toBe(
       "Sent, waiting for the agent: first line second line",
@@ -238,7 +226,6 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-2", text: "second ask" });
     markSteerInjected("chat-1", "steer-1", "first ask", "answered the first");
     markSteerInjected("chat-1", "steer-2", "second ask", "answered the second");
-    flushSync();
 
     expect(rows().map((r) => [textOf(r), ackOf(r)])).toEqual([
       ["first ask", "answered the first"],
@@ -253,13 +240,11 @@ describe("the steer stack", () => {
   it("offers no controls on a message the agent has read", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
     markSteerInjected("chat-1", "steer-1", "one");
-    flushSync();
     expect(actions(firstRow())).toEqual([]);
   });
 
   it("offers Edit and Discard on the only unread message", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    flushSync();
     expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
   });
 
@@ -268,7 +253,6 @@ describe("the steer stack", () => {
   it("withholds Edit once more than one message is unread", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
-    flushSync();
     for (const row of rows()) {
       expect(actions(row)).toEqual(["Discard all 2 unread messages"]);
     }
@@ -280,7 +264,6 @@ describe("the steer stack", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
     markSteerInjected("chat-1", "steer-1", "one");
-    flushSync();
     const [read, unread] = rows();
     expect(actions(read as HTMLElement)).toEqual([]);
     expect(actions(unread as HTMLElement)).toEqual(["Edit this message", "Discard this message"]);
@@ -288,7 +271,6 @@ describe("the steer stack", () => {
 
   it("fills the composer and clears the buffer when a message is edited", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main" });
-    flushSync();
     clickAction(firstRow(), "Edit");
     await vi.waitFor(() => {
       expect(clearDispatch).toHaveBeenCalledWith({ chatID: "chat-1" });
@@ -303,7 +285,6 @@ describe("the steer stack", () => {
   // would be a click that teaches nothing.
   it("discards a single unread message without asking", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    flushSync();
     clickAction(firstRow(), "Discard");
     await vi.waitFor(() => {
       expect(clearDispatch).toHaveBeenCalledWith({ chatID: "chat-1" });
@@ -316,7 +297,6 @@ describe("the steer stack", () => {
   it("confirms before discarding when more than one would go", async () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
-    flushSync();
     clickAction(firstRow(), "Discard");
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
@@ -328,7 +308,6 @@ describe("the steer stack", () => {
     confirmMock.mockResolvedValueOnce(false);
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
-    flushSync();
     clickAction(firstRow(), "Discard");
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();

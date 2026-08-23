@@ -18,11 +18,17 @@
 //
 // INSTANCE ALIGNMENT: each test does `vi.resetModules()` so banner-stack gets
 // fresh module-level state. That also re-imports `@cplieger/reactive`, so the
-// signal driving the test (`activeSig`) AND the `flushSync` that drains the
-// bindList effect MUST come from that same post-reset instance — otherwise the
-// computed view tracks a foreign signal (no subscription crosses instances)
-// and never re-derives on switch. So setup() imports reactive fresh, builds
-// `activeSig` from it, and returns its `flushSync`.
+// signal driving the test (`activeSig`) MUST come from that same post-reset
+// instance — otherwise the computed view tracks a foreign signal (no
+// subscription crosses instances) and never re-derives on switch. So setup()
+// imports reactive fresh and builds `activeSig` from it.
+//
+// There is no drain call here and none is needed: a write flushes before the
+// assignment returns, so `activeSig.value = …` has already re-run the bindList
+// effect. (This used to also return the module's `flushSync`, on the belief that
+// the barrier had to come from the aligned instance too. The instance reasoning
+// is right about the signal and was moot for the barrier, which did nothing on
+// either instance.)
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -39,7 +45,6 @@ let dismissed: string[] = [];
 async function setup(): Promise<{
   container: HTMLDivElement;
   mod: typeof BannerStack;
-  flush: () => void;
 }> {
   vi.resetModules();
   const reactive = await import("@cplieger/reactive");
@@ -57,7 +62,7 @@ async function setup(): Promise<{
   }));
   vi.doMock("./dom.js", () => ({ $: { bannerStack: container } }));
   const mod = await import("./banner-stack.js");
-  return { container, mod, flush: reactive.flushSync };
+  return { container, mod };
 }
 
 afterEach(() => {
@@ -69,55 +74,48 @@ afterEach(() => {
 
 describe("banner-stack: active-chat scoping", () => {
   it("shows a banner only for its active chat and never resurrects a cleared one", async () => {
-    const { container, mod, flush } = await setup();
+    const { container, mod } = await setup();
 
     activeSig.value = { id: "A" };
     mod.ensureBound();
     mod.showBanner("A", "x", "boom", "error", false);
-    flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(1);
 
     // Switch away: chat A's banner must hide (chat B has none).
     activeSig.value = { id: "B" };
-    flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(0);
 
     // Clear chat A's banner while it is hidden, then switch back: the bug was
     // that a stale render source resurrected it. It must stay gone.
     mod.clearBannerCodes("A", ["x"]);
     activeSig.value = { id: "A" };
-    flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(0);
   });
 
   it("reuses the same banner node across A -> B -> A switches", async () => {
-    const { container, mod, flush } = await setup();
+    const { container, mod } = await setup();
 
     activeSig.value = { id: "A" };
     mod.ensureBound();
     mod.showBanner("A", "x", "boom", "error", false);
-    flush();
     const node1 = container.querySelector(".banner");
     expect(node1).not.toBeNull();
 
     activeSig.value = { id: "B" };
-    flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(0);
 
     activeSig.value = { id: "A" };
-    flush();
     const node2 = container.querySelector(".banner");
     expect(node2).toBe(node1);
   });
 
   it("ensureBound() is idempotent: a second call does not double-bind", async () => {
-    const { container, mod, flush } = await setup();
+    const { container, mod } = await setup();
 
     activeSig.value = { id: "A" };
     mod.ensureBound();
     mod.ensureBound();
     mod.showBanner("A", "x", "boom", "error", false);
-    flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(1);
   });
 });
@@ -129,13 +127,12 @@ describe("banner-stack: composite key (keyenc)", () => {
     // literal, so keyenc emits both verbatim and the key is byte-identical to
     // the old `${chatID}:${code}` template. Asserted through the public API: a
     // dismissal recorded in the OLD format must still suppress its banner.
-    const { container, mod, flush } = await setup();
+    const { container, mod } = await setup();
     dismissed = ["c-1750000000000-ab12cd:rate_limit"];
 
     activeSig.value = { id: "c-1750000000000-ab12cd" };
     mod.ensureBound();
     mod.showBanner("c-1750000000000-ab12cd", "rate_limit", "slow down", "warning", true);
-    flush();
 
     expect(container.querySelectorAll(".banner")).toHaveLength(0);
   });
@@ -145,23 +142,20 @@ describe("banner-stack: composite key (keyenc)", () => {
     // so a future loosening of either field can't silently collide two
     // banners into one collection slot. Under the old template ("a:b" + "c")
     // and ("a" + "b:c") were the same key.
-    const { container, mod, flush } = await setup();
+    const { container, mod } = await setup();
 
     activeSig.value = { id: "a:b" };
     mod.ensureBound();
     mod.showBanner("a:b", "c", "first", "error", false);
-    flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(1);
 
     // Same forged key under the old scheme, different chat: must not be seen
     // as the same entry, and must not show on chat "a:b".
     mod.showBanner("a", "b:c", "second", "error", false);
-    flush();
     expect(container.querySelectorAll(".banner")).toHaveLength(1);
     expect(container.textContent).toContain("first");
 
     activeSig.value = { id: "a" };
-    flush();
     expect(container.textContent).toContain("second");
   });
 
@@ -169,34 +163,31 @@ describe("banner-stack: composite key (keyenc)", () => {
     // clearBannersForChat keeps a `${chatID}:` prefix scan (keyenc exports no
     // prefix primitive). The trailing ":" is what bounds it — this is the
     // regression test named in that function's comment.
-    const { container, mod, flush } = await setup();
+    const { container, mod } = await setup();
 
     activeSig.value = { id: "abc" };
     mod.ensureBound();
     mod.showBanner("abc", "x", "short", "error", true);
     mod.showBanner("abcd", "x", "long", "error", true);
-    flush();
     expect(container.textContent).toContain("short");
 
     // Persist both dismissals so the localStorage half of the scan is covered.
     dismissed = ["abc:x", "abcd:x"];
 
     mod.clearBannersForChat("abc");
-    flush();
 
     // Only chat abc's persisted dismissal was pruned.
     expect(dismissed).toEqual(["abcd:x"]);
 
     // And the sibling chat's in-memory banner survived the sweep.
     activeSig.value = { id: "abcd" };
-    flush();
     expect(container.textContent).toContain("long");
   });
 });
 
 describe("banner-stack: single live region", () => {
   it("marks only the stack container as a live region; banners are not separately live", async () => {
-    const { container, mod, flush } = await setup();
+    const { container, mod } = await setup();
 
     activeSig.value = { id: "A" };
     mod.ensureBound();
@@ -205,7 +196,6 @@ describe("banner-stack: single live region", () => {
 
     mod.showBanner("A", "err", "boom", "error", false);
     mod.showBanner("A", "inf", "note", "info", false);
-    flush();
 
     const nodes = container.querySelectorAll(".banner");
     expect(nodes).toHaveLength(2);

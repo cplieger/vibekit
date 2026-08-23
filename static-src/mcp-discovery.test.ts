@@ -6,7 +6,7 @@
 // into vibekit's config record as `known_tools`.
 
 import { describe, it, expect } from "vitest";
-import { effect, flushSync } from "@cplieger/reactive";
+import { effect } from "@cplieger/reactive";
 import { mcpState, discoverySignalFor } from "./mcp-state.js";
 import type { MCPPromptInfo, MCPResourceInfo } from "./mcp-state.js";
 
@@ -58,10 +58,8 @@ describe("discovery signals", () => {
       void discoverySignalFor("disc-c").value.prompts.length;
       runs++;
     });
-    flushSync();
     const before = runs;
     mcpState.setDiscovery("disc-c", tools, prompts, resources);
-    flushSync();
     expect(runs).toBeGreaterThan(before);
     dispose();
   });

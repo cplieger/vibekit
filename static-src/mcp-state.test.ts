@@ -2,7 +2,7 @@
 // characterization of the optimistic mutation helpers (insert/remove/update)
 // over the shared `servers` collection.
 import { describe, it, expect, beforeEach } from "vitest";
-import { effect, flushSync } from "@cplieger/reactive";
+import { effect } from "@cplieger/reactive";
 import {
   adaptStatus,
   servers,
@@ -221,7 +221,6 @@ describe("configured-server mutation helpers", () => {
     // writes a's value back as the SAME object reference, so Object.is dedup on
     // a's per-entity signal means it never fires.
     insertConfiguredEntry(b, 0);
-    flushSync();
 
     expect(aRuns).toBe(1); // a's effect did NOT re-fire
     expect(orderedIds()).toEqual(["b", "a"]); // structure did change
