@@ -8,7 +8,6 @@
 // through one of them left it covering the transcript, which is what `/goal` in
 // a fresh chat did. Each case below is one of those paths.
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { flushSync } from "@cplieger/reactive";
 
 import { setSessions, setActive, setThinking } from "./store.js";
 import { initModelPicker, setPickerModels } from "./picker.js";
@@ -74,7 +73,6 @@ describe("model picker visibility", () => {
   beforeEach(() => {
     setSessions([makeSession()]);
     setActive("chat-1");
-    flushSync();
   });
 
   it("shows for an empty idle chat", () => {
@@ -87,14 +85,12 @@ describe("model picker visibility", () => {
   it("hides once the chat holds a message", () => {
     setSessions([makeSession({ messages: [userMessage("hello")] })]);
     setActive("chat-1");
-    flushSync();
     expect(hidden()).toBe(true);
   });
 
   it("hides for a chat the server already counts messages for", () => {
     setSessions([makeSession({ message_count: 4 })]);
     setActive("chat-1");
-    flushSync();
     expect(hidden()).toBe(true);
   });
 
@@ -104,7 +100,6 @@ describe("model picker visibility", () => {
   // row, and anything added later.
   it("hides as soon as a turn starts, before any message lands", () => {
     setThinking("chat-1", true);
-    flushSync();
     expect(hidden()).toBe(true);
   });
 
@@ -115,9 +110,7 @@ describe("model picker visibility", () => {
     setSessions([makeSession({ messages: [userMessage("/goal do the thing")] })]);
     setActive("chat-1");
     setThinking("chat-1", true);
-    flushSync();
     setThinking("chat-1", false);
-    flushSync();
     expect(hidden()).toBe(true);
   });
 
@@ -126,7 +119,6 @@ describe("model picker visibility", () => {
   // the pre-session surface is the model pill's inline list.
   it("hides when no chat is active", () => {
     setActive("");
-    flushSync();
     expect(hidden()).toBe(true);
   });
 });

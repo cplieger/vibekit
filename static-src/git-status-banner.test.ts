@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { flushSync } from "@cplieger/reactive";
 
 import {
   initStatusBanner,
@@ -175,19 +174,16 @@ describe("git-status-banner", () => {
 
     // Single set → one render.
     setBanner("forge-auth-failed");
-    flushSync();
     expect(spy).toHaveBeenCalledTimes(1);
 
     // A lower-priority key arriving under the shown top mutates the active set,
     // but the visible topKey is unchanged, so the deduped computed does not
     // re-notify the effect → no extra render.
     setBanner("gh-cli-missing");
-    flushSync();
     expect(spy).toHaveBeenCalledTimes(1);
 
     // Dismiss the top: one signal write → one render (hides; no fall-through).
     root.querySelector<HTMLButtonElement>("[data-banner-dismiss]")?.click();
-    flushSync();
     expect(spy).toHaveBeenCalledTimes(2);
     expect(visibleState()).toBeNull();
 
@@ -195,7 +191,6 @@ describe("git-status-banner", () => {
     // reset because dism === cleared key) — two signal writes — but batch()
     // coalesces them into a single effect run.
     clearBanner("forge-auth-failed");
-    flushSync();
     expect(spy).toHaveBeenCalledTimes(3);
     expect(visibleState()).toBe("gh-cli-missing");
   });
@@ -204,19 +199,16 @@ describe("git-status-banner", () => {
     // Highest-priority active wins regardless of insertion order.
     setBanner("gh-cli-missing");
     setBanner("forge-auth-failed");
-    flushSync();
     expect(visibleState()).toBe("forge-auth-failed");
 
     // Dismissing the top yields no visible banner: the dismissed top is
     // skipped and the banner hides rather than falling through to the
     // lower-priority gh-cli-missing.
     bannerEl().querySelector<HTMLButtonElement>("[data-banner-dismiss]")?.click();
-    flushSync();
     expect(visibleState()).toBeNull();
 
     // Clearing the dismissed top now reveals the next-priority active key.
     clearBanner("forge-auth-failed");
-    flushSync();
     expect(visibleState()).toBe("gh-cli-missing");
   });
 });

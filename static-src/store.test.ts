@@ -27,7 +27,7 @@ import {
   setModel,
 } from "./store.js";
 import type { ChatHeader, Session } from "./types.js";
-import { effect, flushSync } from "@cplieger/reactive";
+import { effect } from "@cplieger/reactive";
 
 // Arbitrary generators for domain types.
 const arbMessage = () =>
@@ -237,7 +237,6 @@ describe("activeSession reactivity (two-tier tracking + batch)", () => {
 
     // A field change on the ACTIVE session re-derives activeSession.
     setWorkingLabel("a", "x");
-    flushSync();
     expect(count).toBe(afterRegister + 1);
     expect(activeSession.value?.working_label).toBe("x");
 
@@ -246,7 +245,6 @@ describe("activeSession reactivity (two-tier tracking + batch)", () => {
     // A field change on an INACTIVE session fires only that session's signal,
     // which activeSession does not track — so the counter must not move.
     setWorkingLabel("b", "y");
-    flushSync();
     expect(count).toBe(afterActiveChange);
 
     dispose();
@@ -323,7 +321,6 @@ describe("activeSession reactivity (two-tier tracking + batch)", () => {
     count = 0;
 
     removeChat("rc-a");
-    flushSync();
 
     // The batch() in removeChat coalesces sessions.remove (sessions.ids) and the
     // activeId reassignment into ONE re-derive of activeSession. Without it this

@@ -3,7 +3,6 @@
 // the reactive store (activeSession), pushing to prompt-input via a single
 // effect with NO manual recompute call.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { flushSync } from "@cplieger/reactive";
 import type { SendState } from "./prompt-input.js";
 import { setSendState } from "./prompt-input.js";
 import { setSSEStatus, setLastError, clearLastError } from "./send-state.js";
@@ -51,7 +50,6 @@ beforeEach(() => {
   setSessions([]);
   clearLastError();
   setSSEStatus("connecting");
-  flushSync();
   pushed.mockClear();
 });
 
@@ -64,7 +62,6 @@ describe("send-state precedence", () => {
     setThinking(id, true);
     setLastError("boom");
     setSSEStatus("disconnected");
-    flushSync();
     expect(lastPushed()).toEqual({
       kind: "error",
       reason: "Disconnected from the server. Reconnecting…",
@@ -73,20 +70,17 @@ describe("send-state precedence", () => {
     // Drop disconnected via "connecting" (not "connected", which would clear
     // lastError) → lastError now wins.
     setSSEStatus("connecting");
-    flushSync();
     expect(lastPushed()).toEqual({ kind: "error", reason: "boom" });
 
     // Clear the error → STREAMING wins. Cancelling the turn is what the one
     // control has to guarantee, so nothing below it may take the button.
     clearLastError();
-    flushSync();
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
     // Turn ends → idle. There is no state between the two: a message typed
     // mid-turn was steered into that turn, so nothing is pending client-side to
     // report.
     setThinking(id, false);
-    flushSync();
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
@@ -100,15 +94,12 @@ describe("send-state precedence", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    flushSync();
 
     setLastError('{"errorType":"ClientThrottleError","retryErrorType":"THROTTLING"}');
-    flushSync();
     expect(lastPushed()?.kind).toBe("error");
 
     clearLastError();
     setSSEStatus("disconnected");
-    flushSync();
     expect(lastPushed()?.kind).toBe("error");
   });
 
@@ -122,11 +113,9 @@ describe("send-state precedence", () => {
     setSSEStatus("connected");
     recordSteerQueued(id, { id: "steer-1", text: "one" });
     recordSteerQueued(id, { id: "steer-2", text: "two" });
-    flushSync();
     expect(lastPushed()).toEqual({ kind: "idle" });
 
     setThinking(id, true);
-    flushSync();
     expect(lastPushed()).toEqual({ kind: "streaming" });
   });
 });
@@ -137,13 +126,11 @@ describe("send-state auto-tracking", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    flushSync();
     expect(lastPushed()).toEqual({ kind: "idle" });
     pushed.mockClear();
 
     // Only a store mutation + flush — the computed re-derives on its own.
     setThinking(id, true);
-    flushSync();
     expect(pushed).toHaveBeenCalledTimes(1);
     expect(lastPushed()).toEqual({ kind: "streaming" });
   });
@@ -156,11 +143,9 @@ describe("send-state disconnected override", () => {
     setActive(id);
     setSSEStatus("connected");
     setThinking(id, true);
-    flushSync();
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
     setSSEStatus("disconnected");
-    flushSync();
     expect(lastPushed()).toEqual({
       kind: "error",
       reason: "Disconnected from the server. Reconnecting…",
