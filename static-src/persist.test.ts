@@ -424,3 +424,90 @@ describe("loadSettings", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The save indicator belongs to the NEWEST write.
+//
+// Each dispatch takes a generation stamp and compares it against the module's
+// counter when its response lands, so a response that has been overtaken cannot
+// paint the indicator for a write that has since been superseded. The two
+// halves of that are separately live: `patchAppSettings` is scope-serialized, so
+// the second PATCH does not reach the network until the first answers — but the
+// debounce timer does not wait for the network, so the second `executePatch`
+// (and its generation bump) has already happened by then. Without the
+// comparison the user reads "Saved" for a value the server has not been asked
+// about yet, and "failed" for one that is still in the air.
+//
+// Both tests need a response that is OUTSTANDING while the next write is
+// queued, which the immediate `Promise.resolve(...)` stub used elsewhere in this
+// file cannot express — hence the deferred stub that hands back its resolver.
+// ---------------------------------------------------------------------------
+
+describe("patchSettings generation guard", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let pending: ((r: Response) => void)[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    pending = [];
+    fetchSpy = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    __testResetTracking();
+  });
+
+  afterEach(async () => {
+    // Drain: an unresolved response holds the action's scope chain, and the
+    // chain is module state that would stall the next test in this file. A
+    // queued dispatch reaches the network as its predecessor answers, so this
+    // walks the list as it grows.
+    for (const resolve of pending) {
+      resolve(new Response("{}", { status: 200 }));
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /** Send two writes: the first is on the wire, the second is queued behind it
+   *  and has already claimed the newer generation. */
+  async function firstOnTheWireSecondQueued(): Promise<void> {
+    patchSettings({ last_model: "first" });
+    await vi.advanceTimersByTimeAsync(350);
+    patchSettings({ last_model: "second" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  }
+
+  it("does not report Saved for a response a newer write has overtaken", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    await firstOnTheWireSecondQueued();
+
+    pending[0]?.(new Response("{}", { status: 200 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(showSaved).not.toHaveBeenCalled();
+
+    // The newest write owns the indicator, and it still gets to say so.
+    pending[1]?.(new Response("{}", { status: 200 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(showSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a failure a newer write has overtaken", async () => {
+    const { showError } = await import("./save-indicator.js");
+    await firstOnTheWireSecondQueued();
+
+    pending[0]?.(new Response("nope", { status: 500 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(showError).not.toHaveBeenCalled();
+
+    pending[1]?.(new Response("nope", { status: 500 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(showError).toHaveBeenCalledTimes(1);
+  });
+});
