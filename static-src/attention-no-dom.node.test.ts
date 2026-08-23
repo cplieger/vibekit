@@ -31,6 +31,9 @@
 //     alone it swallows the cue of the one chat a single-chat user left running,
 //     which is the case these surfaces exist for.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
 import { describe, it, expect, vi } from "vitest";
 
 // The four modules the WIRING half imports, stubbed to nothing. They are what
@@ -82,46 +85,225 @@ function seen(entries: Record<string, CueStatus> = {}): Map<string, CueStatus> {
 // ---------------------------------------------------------------------------
 // 0. The premise.
 //
-// Everything below rests on this realm having no DOM, and an absence cannot be
-// observed by a test that never looks for it. Without this case, dropping the
-// file into the browser project would turn the whole suite into a vacuous pass:
-// `attention.ts` would import fine, the four mocks above would stop mattering,
-// and a decision module that had started reading `document` at load would go
-// unnoticed. With it, a misplacement fails on the first case in the file.
+// Two mechanisms, and each covers what the other structurally cannot.
 //
-// `typeof` rather than a property read, because in a browser `document` is a
-// prototype accessor: `Reflect.deleteProperty(globalThis, "document")` removes an
-// own-property shadow and restores reality, so no site-local shadow can express
-// this. The realm is the mechanism.
+// PLACEMENT is the realm. `document` and `window` do not exist in the node
+// project, so a decision module that started reading either at load would stop
+// this file loading, and moving the file into the browser project fails on the
+// first case rather than turning all 65 below into a vacuous pass. `typeof`
+// rather than a property read, because in a browser `document` is a prototype
+// accessor: `Reflect.deleteProperty(globalThis, "document")` removes an
+// own-property shadow and restores reality. `window` is non-configurable there,
+// so no site-local shadow can express its absence either. The realm is the only
+// mechanism for those two.
 //
-// One half of the header's claim does NOT hold and is recorded here rather than
-// asserted away: Node has provided a `navigator` global since v21, so a decision
-// module that started reading `navigator` at load would NOT stop this file
-// loading. Only the `document` and `window` halves are enforced by the
-// environment. `attention.ts` reads `globalThis.navigator` inside
-// `browserAttentionEnv()` — a function body, not module scope — so the invariant
-// is intact today; what is missing is the mechanical guard against it moving.
+// THE INVARIANT is the scan below, and it is deliberately NOT the realm. A realm
+// only answers for the globals it happens to lack, and this one lacks the wrong
+// set: measured on the Node the gate runs (v24.18.0; ts-ci pins node-version
+// '24'), `navigator` is a populated `Navigator` instance, so a module-scope
+// `navigator.setAppBadge` read would import cleanly and every assertion below
+// would still pass. `localStorage` is absent today and one
+// `--experimental-webstorage` from present, so it is the same hole queued behind
+// a flag. The scan reads attention.ts's own module scope and asserts it
+// references nothing outside itself and executes nothing, which covers every
+// global at once and stays true whatever a runtime adds.
+//
+// The last case plants a read and watches the scan report it. Without it a
+// scanner with a bug returns an empty list forever, which is this file's own
+// failure mode rebuilt one level up.
 // ---------------------------------------------------------------------------
 
-describe("the premise: this file evaluates with no DOM in scope", () => {
-  it("has no document and no window", () => {
-    expect(typeof document, "a DOM here makes every assertion below vacuous").toBe("undefined");
+/** The decision module's path, resolved the way every fixture read in this
+ *  package is (actions/lint.node.test.ts), so it survives a runner that moves
+ *  process.cwd(). */
+const DECISIONS = join(import.meta.dirname, "attention.ts");
+
+/** What attention.ts reads from OUTSIDE itself when it is imported, and what it
+ *  EXECUTES while doing so. Both are empty for a module whose top level is
+ *  imports, literals and declarations, which is the whole invariant.
+ *
+ *  `globals` is every free identifier in code that runs at import: a direct
+ *  `document`, `navigator`, `localStorage` or `globalThis` read. No list of
+ *  global names appears anywhere here, which is the point — the set of globals a
+ *  runtime provides is exactly the thing that drifted.
+ *
+ *  `runs` is everything that executes at import beyond reading a binding: a
+ *  call, a `new`, an `await`, a tagged template, a class or enum declaration. It
+ *  catches the INDIRECT read, which the first rule structurally cannot see: an
+ *  IIFE's body and an imported function's body are both invisible to it, and a
+ *  call into one of this file's four mocked imports has no globals to read here
+ *  and would have them in production.
+ *
+ *  A `function` declaration is in neither set, so the entire browser-binding
+ *  half of attention.ts is untouched. Type positions are skipped: a
+ *  `Record<CueStatus, …>` annotation is erased before anything runs. */
+function moduleScopeEffects(source: string): { globals: string[]; runs: string[] } {
+  const sf = ts.createSourceFile(
+    "attention.ts",
+    source,
+    ts.ScriptTarget.ESNext,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declared = new Set<string>();
+  const globals: string[] = [];
+  const runs: string[] = [];
+  const at = (node: ts.Node): string =>
+    `line ${String(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1)}`;
+  const head = (node: ts.Node): string => `${node.getText(sf).split("\n")[0] ?? ""} (${at(node)})`;
+
+  // Every name the module binds itself. A reference to one of these is not a
+  // read from outside, whatever it is called.
+  for (const st of sf.statements) {
+    if (ts.isImportDeclaration(st)) {
+      const clause = st.importClause;
+      if (clause === undefined) {
+        continue;
+      }
+      if (clause.name !== undefined) {
+        declared.add(clause.name.text);
+      }
+      const bound = clause.namedBindings;
+      if (bound === undefined) {
+        continue;
+      }
+      if (ts.isNamespaceImport(bound)) {
+        declared.add(bound.name.text);
+      } else {
+        for (const spec of bound.elements) {
+          declared.add(spec.name.text);
+        }
+      }
+    } else if (ts.isVariableStatement(st)) {
+      for (const decl of st.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name)) {
+          declared.add(decl.name.text);
+        }
+      }
+    } else if (
+      ts.isFunctionDeclaration(st) ||
+      ts.isClassDeclaration(st) ||
+      ts.isEnumDeclaration(st)
+    ) {
+      if (st.name !== undefined) {
+        declared.add(st.name.text);
+      }
+    }
+  }
+
+  const walk = (node: ts.Node): void => {
+    if (ts.isTypeNode(node) || ts.isTypeParameterDeclaration(node)) {
+      return;
+    }
+    // A function VALUE is not invoked by being written down.
+    if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node)) {
+      return;
+    }
+    // A class or enum body runs code this walk does not model (static blocks,
+    // field initializers, the extends clause), so it is reported rather than
+    // descended into. attention.ts has neither.
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node) || ts.isEnumDeclaration(node)) {
+      runs.push(head(node));
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      if (!declared.has(node.text)) {
+        globals.push(`${node.text} (${at(node)})`);
+      }
+      return;
+    }
+    // `a.b` reads `a`; `b` is a property name, not a binding.
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      walk(node.expression);
+      return;
+    }
+    if (ts.isPropertyAssignment(node)) {
+      if (ts.isComputedPropertyName(node.name)) {
+        walk(node.name.expression);
+      }
+      walk(node.initializer);
+      return;
+    }
+    if (ts.isShorthandPropertyAssignment(node)) {
+      if (!declared.has(node.name.text)) {
+        globals.push(`${node.name.text} (${at(node)})`);
+      }
+      return;
+    }
+    // Recorded AND descended into, so `localStorage.getItem(k)` reports the call
+    // and the global rather than one of the two.
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isAwaitExpression(node)
+    ) {
+      runs.push(head(node));
+    }
+    node.forEachChild(walk);
+  };
+
+  for (const st of sf.statements) {
+    // Erased or declaration-only: nothing here runs at import.
+    if (
+      ts.isImportDeclaration(st) ||
+      ts.isInterfaceDeclaration(st) ||
+      ts.isTypeAliasDeclaration(st) ||
+      ts.isFunctionDeclaration(st) ||
+      ts.isModuleDeclaration(st) ||
+      ts.isExportDeclaration(st)
+    ) {
+      continue;
+    }
+    if (ts.isVariableStatement(st)) {
+      for (const decl of st.declarationList.declarations) {
+        if (decl.initializer !== undefined) {
+          walk(decl.initializer);
+        }
+      }
+      continue;
+    }
+    walk(st);
+  }
+  return { globals, runs };
+}
+
+describe("the premise: attention.ts reads nothing from outside itself at load", () => {
+  it("runs in the node project, where document and window do not exist", () => {
+    // Placement, not the invariant. Its job is to make the four mocks above
+    // load-bearing and to keep the browser sibling's half of the split true.
+    expect(typeof document, "a DOM here makes the four mocks above decoration").toBe("undefined");
     expect(typeof window).toBe("undefined");
   });
 
-  it("does have navigator, which is the half of the claim the realm cannot keep", () => {
-    // Stated as a fact rather than left implicit: if this ever becomes
-    // "undefined" the guard got stronger, and if a decision module starts
-    // reading navigator at load nothing here will catch it.
-    expect(typeof navigator).toBe("object");
-  });
-
-  it("loaded attention.js anyway, which is the invariant", () => {
-    // Reaching this line means the decision module's evaluation touched no
-    // browser global. The import is at the top of the file; the assertion is
-    // that the module object exists.
+  it("loaded attention.js anyway", () => {
+    // The import is at the top of the file, static, the shape production uses.
+    // Reaching this line means the module evaluated.
     expect(typeof createAttention).toBe("function");
     expect(typeof createAttentionController).toBe("function");
+  });
+
+  it("references no identifier from outside the module in code that runs at import", () => {
+    const { globals } = moduleScopeEffects(readFileSync(DECISIONS, "utf8"));
+    expect(globals, "a decision now reads a global at load; move it into the binding").toEqual([]);
+  });
+
+  it("executes nothing at import", () => {
+    // A call at module scope can read a global through a callee this scan cannot
+    // see, including one of the four mocked imports, which have no globals here
+    // and do have them in production.
+    const { runs } = moduleScopeEffects(readFileSync(DECISIONS, "utf8"));
+    expect(runs, "module scope must be imports, literals and declarations").toEqual([]);
+  });
+
+  it("would report a module-scope global read, so the two empty lists mean something", () => {
+    // Guard the guard. A scan with a bug returns [] forever, which is this
+    // file's own failure mode one level up. `navigator` is the plant on purpose:
+    // it is the global the realm cannot rule out.
+    const planted = `${readFileSync(DECISIONS, "utf8")}\nconst planted = navigator.userAgent;\n`;
+    const { globals } = moduleScopeEffects(planted);
+    expect(globals).toHaveLength(1);
+    expect(globals[0]).toContain("navigator");
   });
 });
 
