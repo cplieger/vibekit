@@ -1,5 +1,5 @@
-// @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 
 import {
   clipboardFiles,
@@ -114,7 +114,7 @@ describe("shouldSpillPaste", () => {
 
 describe("downscaleImage", () => {
   it("returns the input untouched when the browser lacks the APIs", async () => {
-    // No OffscreenCanvas in happy-dom, which is also the real fallback path.
+    // The no-OffscreenCanvas branch, which is also the real fallback path.
     const f = new File(["x"], "a.png", { type: "image/png" });
     await expect(downscaleImage(f)).resolves.toBe(f);
   });
@@ -157,7 +157,7 @@ describe("installComposerPaste", () => {
   async function paste(
     dt: { files?: File[]; text?: string },
     target: HTMLElement,
-    onFiles: (files: FileList) => void,
+    onFiles: Mock<(files: FileList) => void>,
   ): Promise<Event> {
     installComposerPaste(target, onFiles);
     const event = new Event("paste", { bubbles: true, cancelable: true });
@@ -168,9 +168,19 @@ describe("installComposerPaste", () => {
       },
     });
     target.dispatchEvent(event);
-    // The file branch prepares images asynchronously before calling onFiles.
-    await Promise.resolve();
-    await Promise.resolve();
+    // The file branch prepares images asynchronously before calling onFiles, and
+    // in a real browser that involves `createImageBitmap` — a genuine async
+    // decode (which FAILS for these one-byte fixtures, and the failure is caught
+    // and falls back to the original file). Two microtask turns were enough for
+    // a DOM emulator with no decoder; here the wait has to be for the callback.
+    if (dt.files !== undefined && dt.files.length > 0) {
+      await vi.waitFor(() => {
+        expect(onFiles).toHaveBeenCalled();
+      });
+    } else {
+      await Promise.resolve();
+      await Promise.resolve();
+    }
     return event;
   }
 

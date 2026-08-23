@@ -10,7 +10,7 @@
 // The colour maths lives in scripts/css-contrast.py — sRGB decode, OKLCH
 // conversion, the WCAG ratio, alpha compositing — and this file shells out to it
 // rather than reimplementing any of it in TypeScript, for the reason
-// send-btn-contrast.test.ts gives: a second implementation is a second thing to
+// send-btn-contrast.node.test.ts gives: a second implementation is a second thing to
 // be wrong, and the numbers in the stylesheet comments were measured with the
 // first one. It uses `ansi-check --tsv`, which emits every measurement in one
 // process; 576 gated checks as individual `pair` calls would be 576 subprocesses.

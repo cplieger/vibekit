@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for retry behavior of forge actions post round-2 changes:
 // - signOut: NOT retryable (destructive DELETE may succeed on timeout)
 // - startDeviceFlow: retryable, no auto-retry (no toast — error: false)

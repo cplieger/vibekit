@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // T15: a server the agent reports that this page does not configure gets a
 // read-only row with a provenance chip, instead of being invisible while its
 // tools sit in the agent's tool list.

@@ -1,13 +1,19 @@
-// @vitest-environment node
 //
 // The out-of-page attention system's DECISIONS: the fold, the two orders it
 // depends on, the acknowledgement store, the sinks, and the raise rule.
 //
-// Deliberately `node`, with no DOM at all. That is the property under test as
-// much as any assertion here: every capability the sinks use arrives through an
-// injected env, so if a decision ever starts reading `document` or `navigator`
+// Deliberately the `node` project, with no DOM at all. That is the property under
+// test as much as any assertion here: every capability the sinks use arrives
+// through an injected env, so if a decision ever starts reading `document`
 // directly this file stops loading. The browser binding and the wiring are the
-// sibling attention-wiring.test.ts's subject, under happy-dom.
+// sibling attention-wiring.test.ts's subject, in the browser project.
+//
+// The premise is ASSERTED rather than assumed (see "the premise" below), because
+// the whole mechanism is an absence: in a DOM-bearing project this file would
+// import cleanly, the vi.mocks would become decoration, and every assertion
+// below would still pass while the invariant they exist to enforce went
+// unchecked. A misplacement has to fail loudly, and one explicit test is what
+// makes it do so.
 //
 // Four things here are vibekit's own rather than the reference's, and each is
 // pinned because a port gets them wrong silently:
@@ -31,7 +37,7 @@ import { describe, it, expect, vi } from "vitest";
 // pull a DOM into the graph (tabs.ts reaches router.ts, which adds a popstate
 // listener at load), and no function under test here touches any of them. With
 // them stubbed and no `document` or `navigator` in scope at all, this file
-// passing IS the statement that every decision below arrives at its capabilities
+// loading IS the statement that every decision below arrives at its capabilities
 // through an injected env.
 vi.mock("./store.js", () => ({ getActiveId: (): string => "" }));
 vi.mock("./tabs.js", () => ({
@@ -72,6 +78,52 @@ import {
 function seen(entries: Record<string, CueStatus> = {}): Map<string, CueStatus> {
   return new Map(Object.entries(entries));
 }
+
+// ---------------------------------------------------------------------------
+// 0. The premise.
+//
+// Everything below rests on this realm having no DOM, and an absence cannot be
+// observed by a test that never looks for it. Without this case, dropping the
+// file into the browser project would turn the whole suite into a vacuous pass:
+// `attention.ts` would import fine, the four mocks above would stop mattering,
+// and a decision module that had started reading `document` at load would go
+// unnoticed. With it, a misplacement fails on the first case in the file.
+//
+// `typeof` rather than a property read, because in a browser `document` is a
+// prototype accessor: `Reflect.deleteProperty(globalThis, "document")` removes an
+// own-property shadow and restores reality, so no site-local shadow can express
+// this. The realm is the mechanism.
+//
+// One half of the header's claim does NOT hold and is recorded here rather than
+// asserted away: Node has provided a `navigator` global since v21, so a decision
+// module that started reading `navigator` at load would NOT stop this file
+// loading. Only the `document` and `window` halves are enforced by the
+// environment. `attention.ts` reads `globalThis.navigator` inside
+// `browserAttentionEnv()` — a function body, not module scope — so the invariant
+// is intact today; what is missing is the mechanical guard against it moving.
+// ---------------------------------------------------------------------------
+
+describe("the premise: this file evaluates with no DOM in scope", () => {
+  it("has no document and no window", () => {
+    expect(typeof document, "a DOM here makes every assertion below vacuous").toBe("undefined");
+    expect(typeof window).toBe("undefined");
+  });
+
+  it("does have navigator, which is the half of the claim the realm cannot keep", () => {
+    // Stated as a fact rather than left implicit: if this ever becomes
+    // "undefined" the guard got stronger, and if a decision module starts
+    // reading navigator at load nothing here will catch it.
+    expect(typeof navigator).toBe("object");
+  });
+
+  it("loaded attention.js anyway, which is the invariant", () => {
+    // Reaching this line means the decision module's evaluation touched no
+    // browser global. The import is at the top of the file; the assertion is
+    // that the module object exists.
+    expect(typeof createAttention).toBe("function");
+    expect(typeof createAttentionController).toBe("function");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // 1. The cue set and its two orders.

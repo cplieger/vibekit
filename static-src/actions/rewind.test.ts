@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for actions/rewind.ts. ONE action: rewind reverts the chat it is in.
 // The create/promote/discard trio went with the branch it existed to resolve.
 import { describe, it, expect, vi, beforeEach } from "vitest";

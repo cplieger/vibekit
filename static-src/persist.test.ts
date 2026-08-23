@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
@@ -301,8 +300,13 @@ describe("patchSettings failure handling", () => {
     const { showError } = await import("./save-indicator.js");
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
     patchSettings({ last_model: "opus" });
-    await vi.advanceTimersByTimeAsync(350);
-    expect(showError).toHaveBeenCalled();
+    // waitFor rather than a fixed advance: a real browser reads a failed
+    // response's body through a stream, so the error path settles a macrotask
+    // or two after the debounce fires. The assertion is unchanged; only the
+    // wait is event-driven instead of a guessed constant.
+    await vi.waitFor(() => {
+      expect(showError).toHaveBeenCalled();
+    });
   });
 
   it("re-sends a value the server rejected instead of filtering it as sent", async () => {
@@ -488,26 +492,38 @@ describe("patchSettings generation guard", () => {
     const { showSaved } = await import("./save-indicator.js");
     await firstOnTheWireSecondQueued();
 
+    // The queued write reaches the network only as its predecessor answers, and
+    // a real browser settles a response body over a stream rather than in a
+    // microtask, so both halves wait for the observable event instead of a fixed
+    // tick count. The negative is asserted only once the second request is on
+    // the wire, which is strictly later than the overtaken report would land.
     pending[0]?.(new Response("{}", { status: 200 }));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(pending).toHaveLength(2);
+    });
     expect(showSaved).not.toHaveBeenCalled();
 
     // The newest write owns the indicator, and it still gets to say so.
     pending[1]?.(new Response("{}", { status: 200 }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(showSaved).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("does not report a failure a newer write has overtaken", async () => {
     const { showError } = await import("./save-indicator.js");
     await firstOnTheWireSecondQueued();
 
+    // Same two-phase wait as the Saved case above.
     pending[0]?.(new Response("nope", { status: 500 }));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(pending).toHaveLength(2);
+    });
     expect(showError).not.toHaveBeenCalled();
 
     pending[1]?.(new Response("nope", { status: 500 }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(showError).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(showError).toHaveBeenCalledTimes(1);
+    });
   });
 });

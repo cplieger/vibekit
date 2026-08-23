@@ -8,7 +8,7 @@
 // to decide.
 //
 // It routes through an action definition rather than a raw apiPost because
-// actions/lint.test.ts fails on the latter, and because the shared framework is
+// actions/lint.node.test.ts fails on the latter, and because the shared framework is
 // what gives this its idempotency key and its toast.
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";

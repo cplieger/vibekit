@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for settings-highlight.ts (D115): the ?highlight=<id> deep link.
 //
@@ -46,7 +45,7 @@ async function frames(n = 3): Promise<void> {
   }
 }
 
-/** happy-dom reports no layout, so offsetParent is null for everything and the
+/** A detached host has no layout, so offsetParent is null for everything and the
  *  module's "is it laid out" probe would never pass. getClientRects is the other
  *  half of that probe; stubbing it per element is how a test says "this one is
  *  on screen" without faking a layout engine. */

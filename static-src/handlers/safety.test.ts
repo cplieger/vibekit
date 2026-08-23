@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for handlers/safety.ts: the defensive Infrastructure-Safety status
 // handler surfaces a transient banner while the gate is active, folds in the

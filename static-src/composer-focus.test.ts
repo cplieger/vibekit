@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // THE COMPOSER'S FOCUS TREATMENT, TESTED AS AN EVENT ORDER.
 //
@@ -16,11 +15,12 @@
 // across the gesture, for a press on a non-focusable descendant.
 //
 // Two halves, and both are needed. The source half reads which predicate the
-// stylesheet actually uses, because happy-dom implements no cascade. The event
+// stylesheet actually uses, because the test page loads no app stylesheet. The event
 // half drives the real order against the real menu and evaluates that predicate
-// with `matches()` at every step — happy-dom does support `:has(… :focus)`, so
+// with `matches()` at every step — the browser supports `:has(… :focus)`, so
 // this is the shipped selector being asked the question, not a re-description of
-// it. `:focus-within` is modelled by hand (happy-dom does not implement it) and
+// it. `:focus-within` is modelled by hand (the assertion is about the authored
+// rule, not about the live selector) and
 // labelled as such; it is here to show the round trip the fix removes.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -64,7 +64,8 @@ function focusSelector(): string {
   return `.prompt-box${m![1]}`;
 }
 
-/** `:focus-within`, hand-modelled: happy-dom returns false for it even with a
+/** `:focus-within`, hand-modelled, so the assertion is about the authored rule
+ *  rather than about a live selector match on a
  *  focused descendant, so the OLD behaviour has to be expressed rather than
  *  queried. This IS its definition — some descendant is the active element. */
 function focusWithinModel(box: Element): boolean {
@@ -150,7 +151,7 @@ describe("the composer's focus treatment", () => {
 
     // mousedown. The browser walks up from the label for a mouse-focusable
     // ancestor, finds none, and clears focus to <body>. Modelled explicitly
-    // because happy-dom does not move focus on pointer events; this IS the step
+    // because a synthetic pointer event moves no focus; this IS the step
     // the diagnosis names.
     label.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     input.blur();
@@ -175,7 +176,7 @@ describe("the composer's focus treatment", () => {
 
     // The border must be LIT at the start, or the rest of this proves nothing:
     // a selector that is false throughout cannot round-trip either, and reverting
-    // to `:focus-within` (which happy-dom reports as always false) would make the
+    // to a live `:focus-within` match would make the
     // round-trip check below pass vacuously.
     expect(
       lit[0],

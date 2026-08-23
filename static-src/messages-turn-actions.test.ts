@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The assistant turn's action row: copy, export, and the raw-markdown toggle.
 //
 // The toggle's two mechanical constraints are what most of this file pins. It

@@ -1,10 +1,19 @@
 // Reading the SHIPPED stylesheets as source, for the guards that cannot be
 // written any other way.
 //
-// happy-dom does not implement the cascade — `getComputedStyle` returns the last
-// declaration parsed, not the winner — so a test that needs to know which of two
-// rules applies, or whether a declaration belongs to a given selector, has to
-// assert the SOURCE fact. These three helpers are that reader.
+// These suites assert SOURCE facts — which of two rules applies, whether a
+// declaration belongs to a given selector — rather than computed ones, because
+// the test page loads no app stylesheet: nothing links `css/MANIFEST`, so
+// `getComputedStyle` has no cascade to report on. These three helpers are that
+// reader. (Before Browser Mode the reason was happy-dom, which implemented no
+// cascade at all and returned the last declaration parsed rather than the
+// winner. Asserting the computed fact in Chromium instead is a real
+// opportunity, and a separate piece of work from this migration.)
+//
+// The stylesheets arrive as Vite `?raw` imports rather than `node:fs` reads, so
+// this helper — and the eleven suites that import it — run in the browser
+// project. `import.meta.glob` is eager, so every sheet is inlined at transform
+// time and `loadCSS` is a map lookup.
 //
 // Extracted from pill-press.test.ts when a second suite (tab-dot.test.ts) needed
 // `ruleContaining`. The alternative was a second copy of a brace-matching
@@ -12,14 +21,20 @@
 // prevent.
 
 import { expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+
+const sheets = import.meta.glob<string>("../css/*.css", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
 
 /** One stylesheet from css/, by filename. */
 export function loadCSS(name: string): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return readFileSync(join(here, "..", "css", name), "utf8");
+  const hit = sheets[`../css/${name}`];
+  if (hit === undefined) {
+    throw new Error(`no stylesheet ../css/${name}`);
+  }
+  return hit;
 }
 
 /** The body of a top-level rule, by its exact selector line. Nested `&` blocks

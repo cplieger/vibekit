@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Unit tests for tool-card.ts pure functions (extractSubtitle, mcpHue).
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import fc from "fast-check";

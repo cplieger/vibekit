@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for refusal.ts — the model-refusal callout (kiro-cli 2.13 contract).
 // syncRefusal(wrap, m) mounts/removes the callout off m.refusal; the Rewind

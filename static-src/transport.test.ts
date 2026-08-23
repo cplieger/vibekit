@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Property-based tests for transport.ts newRequestID/newMessageID format
 // invariants. Verifies prefix, charset, uniqueness, and structural properties
 // that consumers depend on (dedup keys, URL-safe path segments, JSON keys).

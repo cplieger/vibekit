@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 
 // updateGutter is the sole owner of the gutter DOM via a keyed reconcile.
@@ -22,6 +21,12 @@ vi.mock("./dom.js", () => ({
 }));
 
 vi.mock("./highlight.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  highlightByLang: undefined,
+  normalizeLang: undefined,
   highlight: () => "",
 }));
 
@@ -30,6 +35,12 @@ vi.mock("./store.js", () => ({
 }));
 
 vi.mock("./actions/editor.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  loadDiff: undefined,
+  suggestResolution: undefined,
   fetchAgentLines: {
     cancel: () => {
       /* noop */

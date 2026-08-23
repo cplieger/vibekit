@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for retention.ts: reads the vibekit-owned chat_retention_days from
 // /api/settings; state + listeners; the off(0)/forever(-1)/N-days semantics.
 

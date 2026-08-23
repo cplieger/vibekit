@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Structural guard for the expandable-pill markup (static/index.html).
 //
 // Every expanded card is a SIBLING of its trigger, never a descendant of it.
@@ -12,24 +11,13 @@
 //   2. A card holding buttons (the model list, the mode list) puts
 //      interactive content inside a <button>: invalid HTML, and assistive
 //      tech flattens it.
-//
-// Skipped under Stryker: its sandbox copies static-src only (ignorePatterns
-// excludes ../static), so the real markup is absent there.
 
 import { describe, it, expect } from "vitest";
+import indexHtml from "../static/index.html?raw";
 
-async function loadIndex(): Promise<string | null> {
-  const { existsSync, readFileSync } = await import("node:fs");
-  const { dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const here = dirname(fileURLToPath(import.meta.url));
-  const indexPath = join(here, "..", "static", "index.html");
-  return existsSync(indexPath) ? readFileSync(indexPath, "utf8") : null;
-}
-
-// Parse only the two regions that hold expandable pills: parsing the full
-// document would make happy-dom chase the <link rel=stylesheet> over the
-// network.
+// Parse only the two regions that hold expandable pills, rather than the whole
+// document: a full-document parse would make the runner chase the
+// <link rel=stylesheet> over the network.
 function slice(html: string, from: string, to: string): HTMLElement {
   const start = html.indexOf(from);
   const end = html.indexOf(to, start + 1);
@@ -41,15 +29,10 @@ function slice(html: string, from: string, to: string): HTMLElement {
 }
 
 describe("expandable pill markup (static/index.html)", () => {
-  it("puts every expand card beside its trigger, never inside a button", async (ctx) => {
-    const html = await loadIndex();
-    if (html === null) {
-      ctx.skip();
-      return;
-    }
+  it("puts every expand card beside its trigger, never inside a button", () => {
     const regions = [
-      slice(html, '<div class="prompt-pills">', "</form>"),
-      slice(html, '<div class="sidebar-footer">', '<a id="user-email"'),
+      slice(indexHtml, '<div class="prompt-pills">', "</form>"),
+      slice(indexHtml, '<div class="sidebar-footer">', '<a id="user-email"'),
     ];
 
     let cards = 0;
@@ -69,15 +52,10 @@ describe("expandable pill markup (static/index.html)", () => {
     expect(cards).toBe(6);
   });
 
-  it("gives every expandable trigger a card next to it", async (ctx) => {
-    const html = await loadIndex();
-    if (html === null) {
-      ctx.skip();
-      return;
-    }
+  it("gives every expandable trigger a card next to it", () => {
     const regions = [
-      slice(html, '<div class="prompt-pills">', "</form>"),
-      slice(html, '<div class="sidebar-footer">', '<a id="user-email"'),
+      slice(indexHtml, '<div class="prompt-pills">', "</form>"),
+      slice(indexHtml, '<div class="sidebar-footer">', '<a id="user-email"'),
     ];
 
     for (const region of regions) {

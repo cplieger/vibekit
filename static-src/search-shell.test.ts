@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The shared search shell: what every box gets for free, and what each consumer
 // still supplies.
 //

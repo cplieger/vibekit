@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for sendPrompt's dead-POST/live-SSE rescue (P9 residue): a
 // prompt POST that dies while the turn runs on must not surface a
 // false failure when the server's message_appended echo proves the
@@ -19,6 +18,13 @@ vi.mock("../transport.js", () => ({
 
 const storeMessages: { id: string }[] = [];
 vi.mock("../store.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  setCurrentMode: undefined,
+  setTurnDone: undefined,
+  setTurnFailed: undefined,
   get: () => ({ id: "c1", model: "m1", messages: storeMessages }),
   setThinking: vi.fn(),
   setModel: vi.fn(),

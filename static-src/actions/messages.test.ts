@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for actions/messages.ts: copyClipboard, explainError, undoEdit.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for knowledge.ts: list render (contexts + live indexing progress),
 // merge-by-name dedup, empty/error states, the inline add form, destructive
@@ -257,7 +256,10 @@ describe("indexing poll", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
+    // 400 real fetch-shaped turns in a real browser do not fit the 5s default:
+    // each poll settles a promise chain rather than a synchronous stub. The
+    // budget moved; the assertion did not.
+  }, 30_000);
 
   it("gives up once progress stalls", async () => {
     vi.useFakeTimers();

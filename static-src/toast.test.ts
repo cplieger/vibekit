@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { info, success, error, showToast, _resetForTest } from "./toast.js";
@@ -94,7 +93,7 @@ describe("toast — auto-dismiss", () => {
     flushRaf();
     expect(toasts().length).toBe(1);
     vi.advanceTimersByTime(4000);
-    // Trigger the leave fallback (transitionend may not fire in happy-dom).
+    // Trigger the leave fallback (no stylesheet is loaded, so no transition runs).
     vi.advanceTimersByTime(500);
     expect(toasts().length).toBe(0);
   });

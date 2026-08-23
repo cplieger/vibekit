@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The follow model's two compensation MODES.
 //
 // These are worth pinning because measuring the wrong one compensates by ZERO
@@ -33,9 +32,8 @@ vi.mock("./skeleton.js", () => ({ loadMoreSkeleton: () => document.createElement
 
 const scroll = await import("./scroll.js");
 
-/** happy-dom reports 0 for every layout metric, so the scroller is faked with
- *  writable properties. That is the right level here: the helper's contract is
- *  arithmetic over three numbers, not real layout. */
+/** The scroller is faked with writable properties. That is the right level here:
+ *  the helper's contract is arithmetic over three numbers, not real layout. */
 function fakeScroller(init: { scrollHeight: number; clientHeight: number; scrollTop: number }) {
   const el = scroll.getScrollEl();
   const state = { ...init };
@@ -52,6 +50,19 @@ function fakeScroller(init: { scrollHeight: number; clientHeight: number; scroll
       state.scrollTop = v;
     },
   });
+  // `scrollTo` has to be shadowed alongside the metrics, or the faked scrollTop
+  // is bypassed entirely: production reaches the live edge through
+  // `scrollEl.scrollTo({top, behavior})`, and in a real browser that is the
+  // platform's own method writing a real scroll position — which stays 0 on an
+  // element with no overflow, so every pin assertion read 0. An instance
+  // assignment shadows the prototype method (a `delete` would not); the helper
+  // keeps one source of truth for the number under test.
+  el.scrollTo = ((arg?: number | ScrollToOptions, y?: number): void => {
+    const top = typeof arg === "number" ? y : arg?.top;
+    if (top !== undefined) {
+      state.scrollTop = top;
+    }
+  }) as typeof el.scrollTo;
   return state;
 }
 
@@ -213,7 +224,7 @@ describe("readingState", () => {
 // ---------------------------------------------------------------------------
 // The rest of the module: the event paths `init()` wires up, the streaming
 // anchor, and pagination. The fake stays at the level the file already chose —
-// happy-dom reports 0 for every layout metric, so the scroller's three numbers
+// A harness-built scroller has no real overflow, so its three numbers
 // are faked and the assertions are on what the module DERIVES from them (a named
 // state, a scrollTop, a fetch, a control's visibility), never on layout itself.
 // ---------------------------------------------------------------------------
@@ -222,7 +233,7 @@ const messagesEl = document.getElementById("messages")!;
 const scrollBtn = document.getElementById("scrollBottom")!;
 
 /** Drain the MutationObserver callback, the queued animation frame, and a smooth
- *  scrollTo's deferred write. happy-dom defers `behavior: "smooth"` to a timeout,
+ *  scrollTo's deferred write. `behavior: "smooth"` lands on a later frame,
  *  so an assertion on scrollTop after `resume()` needs this; `behavior: "instant"`
  *  lands inside the frame. */
 async function settle(): Promise<void> {

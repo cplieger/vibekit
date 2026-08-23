@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Find in files: the request it builds, the honesty of its note, and the
 // second-press escape hatch that is the a11y justification for overriding Ctrl-F
 // at all.

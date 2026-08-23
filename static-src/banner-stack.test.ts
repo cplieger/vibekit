@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // banner-stack regression tests.
 //
@@ -32,44 +31,85 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { Signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/reactive";
 import type * as BannerStack from "./banner-stack.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 interface MiniSession {
   readonly id: string;
 }
 
-let activeSig: Signal<MiniSession | undefined>;
+// ONE signal for the whole file, reset per test rather than replaced. The mocks
+// below are registered once at module scope and their factories run once, so a
+// re-created signal would leave every banner-stack instance after the first
+// subscribed to a dead one. (A getter does not help: the mocked module's exports
+// are read out of the factory result once, when that module is evaluated.)
+const activeSig = signal<MiniSession | undefined>(undefined);
 let dismissed: string[] = [];
+let container: HTMLDivElement;
+
+// The three mocks are registered ONCE, at module scope, and reach the per-test
+// values through this file's module state rather than closing over per-test
+// values. A mocked module is evaluated the first time it is imported and then
+// cached, so a per-test `vi.doMock` re-registers a factory that never runs again:
+// the second test's banner-stack instance kept reading the FIRST test's signal
+// and container. `$` stays a getter because a property read on the exported
+// object IS live.
+vi.mock("./store.js", () => ({ activeSession: activeSig }));
+vi.mock("./ui-state.js", () => ({
+  load: (): { dismissed_banners: string[] } => ({ dismissed_banners: dismissed }),
+  save: (patch: { dismissed_banners?: string[] }): void => {
+    if (patch.dismissed_banners !== undefined) {
+      dismissed = patch.dismissed_banners;
+    }
+  },
+}));
+vi.mock("./dom.js", () => ({
+  $: {
+    get bannerStack(): HTMLDivElement {
+      return container;
+    },
+  },
+}));
 
 async function setup(): Promise<{
   container: HTMLDivElement;
   mod: typeof BannerStack;
 }> {
   vi.resetModules();
-  const reactive = await import("@cplieger/reactive");
-  activeSig = reactive.signal<MiniSession | undefined>(undefined);
+  bootSeq++;
+  // One reactive instance exists for the whole run now — nothing re-evaluates it
+  // — so the signal driving the test and the one the module subscribes to are
+  // necessarily the same. (This used to be delicate: under a runner where
+  // resetModules re-evaluated the graph, a signal built before the reset tracked
+  // a foreign instance and never re-derived.)
+  activeSig.value = undefined;
   dismissed = [];
-  const container = document.createElement("div");
-  vi.doMock("./store.js", () => ({ activeSession: activeSig }));
-  vi.doMock("./ui-state.js", () => ({
-    load: (): { dismissed_banners: string[] } => ({ dismissed_banners: dismissed }),
-    save: (patch: { dismissed_banners?: string[] }): void => {
-      if (patch.dismissed_banners !== undefined) {
-        dismissed = patch.dismissed_banners;
-      }
-    },
-  }));
-  vi.doMock("./dom.js", () => ({ $: { bannerStack: container } }));
-  const mod = await import("./banner-stack.js");
+  container = document.createElement("div");
+  const mod = (await import(
+    /* @vite-ignore */ `./banner-stack.ts?boot=${bootSeq}`
+  )) as typeof BannerStack;
   return { container, mod };
 }
 
 afterEach(() => {
-  vi.doUnmock("./store.js");
-  vi.doUnmock("./ui-state.js");
-  vi.doUnmock("./dom.js");
+  // No doUnmock: the mocks above are module-scoped and permanent by necessity.
   vi.resetModules();
+  bootSeq++;
 });
 
 describe("banner-stack: active-chat scoping", () => {

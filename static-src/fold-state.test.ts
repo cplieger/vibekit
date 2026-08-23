@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Which turns are open. The rule has three overriding layers and the ORDER
 // between them is the whole design, so each is pinned against the others.
 import { describe, it, expect, beforeEach } from "vitest";

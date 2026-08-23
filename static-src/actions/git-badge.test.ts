@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for the git badge's FORGES action.
 //
 // This file used to test a combined action that fetched /api/git/status-all and

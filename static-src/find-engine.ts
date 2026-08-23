@@ -20,7 +20,7 @@
 // a reader sees the same colour mean the same thing in a transcript and in a diff.
 //
 // DOM-only (no scroll, no overlay, no counter chrome) so it is unit-testable
-// under happy-dom.
+// where the API is absent.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -52,7 +52,7 @@ export function formatCount(total: number, current: number, query: string): stri
  *  attr, .hidden class, aria-hidden, closed <details>), the live-streaming
  *  bubble (its markdown writer owns those nodes), and — in a real browser —
  *  anything hidden by CSS via Element.checkVisibility(). The structural checks
- *  work under happy-dom too (checkVisibility is optional and skipped there). */
+ *  work where `checkVisibility` is absent (it is optional and skipped there). */
 function isSearchableElement(elem: Element): boolean {
   const tag = elem.tagName;
   if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // Tests for the workspace Cedar relaxation switch (D103) in permissions-ui.ts.
 //

@@ -1,6 +1,21 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TABS, TAB_LABELS } from "./settings-tabs.js";
+import type * as ModSettingsTabs from "./settings-tabs.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 // maybeViewTransition spy: runs its callback synchronously (so the panel swap
 // still happens) while recording every invocation. One invocation == one swap.
@@ -102,6 +117,7 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     // Fresh module per test → activeTab defaults to "general" and exactly one
     // onTabChange subscriber exists (one initSettingsTabs() per test).
     vi.resetModules();
+    bootSeq++;
     buildSettingsDom();
     viewTransitionSpy.mockClear();
   });
@@ -111,7 +127,9 @@ describe("settings-tabs forceSettingsTab dedup", () => {
   });
 
   it("forceSettingsTab on already-active tab does not re-run the panel swap", async () => {
-    const { initSettingsTabs, forceSettingsTab } = await import("./settings-tabs.js");
+    const { initSettingsTabs, forceSettingsTab } = (await import(
+      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModSettingsTabs;
     initSettingsTabs(); // subscribe fires immediately → one swap for the default "general" tab
     viewTransitionSpy.mockClear();
 
@@ -121,7 +139,9 @@ describe("settings-tabs forceSettingsTab dedup", () => {
   });
 
   it("two consecutive forceSettingsTab(tools) swap once", async () => {
-    const { initSettingsTabs, forceSettingsTab } = await import("./settings-tabs.js");
+    const { initSettingsTabs, forceSettingsTab } = (await import(
+      /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModSettingsTabs;
     initSettingsTabs();
     viewTransitionSpy.mockClear();
 

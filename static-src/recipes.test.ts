@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for the Workflows sub-tab. Two halves.
 //
@@ -20,17 +19,22 @@
 // before it.
 //
 // The layout cases are a DOM half and a SOURCE half, and they need each other.
-// happy-dom implements no layout and no cascade, so "these blocks share a left
+// The test page loads no app stylesheet, so "these blocks share a left
 // edge" is not observable at runtime; it is the conjunction of two facts that
 // are — the blocks are siblings of one container, and that container is a
 // stretch column whose members carry no inline-start offset.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { loadCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
+
+/** Every authored client source file plus the shipped page, inlined as text.
+ *  `import.meta.glob` replaces the directory walk this used to do with `readdir`:
+ *  the corpus is the same set of files, resolved at transform time instead. */
+const authoredSource = import.meta.glob<string>(
+  ["./*.ts", "./actions/*.ts", "./handlers/*.ts", "./fundamentals/*.ts", "../static/index.html"],
+  { query: "?raw", import: "default", eager: true },
+);
 
 const dispatched: { name: string; args: unknown }[] = [];
 
@@ -351,26 +355,16 @@ describe("the muted classes are gone rather than defined", () => {
   // sets colour unlayered) and won at others — a class that works in some places
   // is worse than one that works nowhere. Each site takes its ink from its own
   // component rule instead.
-  const here = dirname(fileURLToPath(import.meta.url));
 
   it("names neither class anywhere in authored source", () => {
-    const roots = [here, join(here, "actions"), join(here, "handlers"), join(here, "fundamentals")];
-    const files = roots.flatMap((dir) =>
-      readdirSync(dir, { withFileTypes: true })
-        .filter((e) => e.isFile() && (e.name.endsWith(".ts") || e.name.endsWith(".html")))
-        .map((e) => join(dir, e.name)),
-    );
-    files.push(join(here, "..", "static", "index.html"));
-
     const offenders: string[] = [];
-    for (const f of files) {
+    for (const [path, text] of Object.entries(authoredSource)) {
       // The test file naming the classes in its own prose is not a use site.
-      if (f.endsWith("recipes.test.ts")) {
+      if (path.endsWith("recipes.test.ts")) {
         continue;
       }
-      const text = readFileSync(f, "utf8");
       if (/\btext-muted\b|\btext-sm\b/.test(text)) {
-        offenders.push(f.slice(here.length + 1));
+        offenders.push(path.replace(/^\.\//, ""));
       }
     }
     expect(offenders).toEqual([]);

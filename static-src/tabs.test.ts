@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock dependencies that tabs.ts imports at module level.
@@ -357,7 +356,8 @@ describe("closing the last tab", () => {
   });
 
   // The whole point of rendering the empty state: the respawn must find an empty
-  // strip. happy-dom runs no animations, so the removal is driven by hand here —
+  // strip. No app stylesheet is loaded, so no animation runs and the removal is
+  // driven by hand here —
   // the browser's animationend does it, and the exit is 0.18s against the 500ms
   // empty-state delay.
   it("leaves the strip empty before the empty-state callback fires", async () => {

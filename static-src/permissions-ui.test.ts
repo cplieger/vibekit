@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // Characterization + regression tests for the agent-ignore chip rendering
 // and the supervised-default toggle in permissions-ui.ts. These guard the
@@ -13,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // Mock only the I/O edges. ui-primitives (buildChip), reconcile,
-// @cplieger/reactive (el), icons, and dom (byId/maybeEl over happy-dom's real
+// @cplieger/reactive (el), icons, and dom (byId/maybeEl over the real
 // document) stay real so we exercise the actual DOM behaviour.
 vi.mock("./api-client.js", () => ({ apiGet: mocks.apiGet }));
 vi.mock("./persist.js", () => ({ patchSettings: mocks.patchSettings }));

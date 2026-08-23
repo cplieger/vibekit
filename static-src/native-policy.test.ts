@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // Tests for the native (Cedar) policy view + conservative editor added to
 // permissions-ui.ts (initNativePolicyUI). Guards: the scope-grouped render

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The typed-command table. Small on purpose, and what matters is the BOUNDARY:
 // everything the table does not claim must fall through untouched, or vibekit
 // starts silently swallowing text KAS itself parses.

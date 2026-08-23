@@ -1,8 +1,7 @@
-// @vitest-environment happy-dom
 // The rail's layout arithmetic: when per-turn markers fit, when they must
 // compress, and how time becomes space. Driven through railRows rather than the
 // DOM because the interesting part is the capacity rule, and asserting it
-// through rendered pixels would test the browser instead. (happy-dom only
+// through rendered pixels would test the browser instead. (The harness only
 // because the module's scroll.ts import self-initialises against `document`.)
 import { describe, it, expect, vi } from "vitest";
 

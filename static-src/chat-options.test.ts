@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The chat-actions menu: four rows, each of which must do what it says.
 //
 // What is worth pinning here is the DISPATCH each row makes, because three of the
@@ -86,6 +85,21 @@ vi.mock("./transport.js", () => ({ send: transportSend, newMessageID: () => "m-1
 
 import type * as ChatOptionsModule from "./chat-options.js";
 
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
+
 /** KAS's `parseGoalCommand`, transcribed verbatim from the 2.18.1 bundle
  *  (`node_modules/@kiro/agent/dist/server/acp-server.js`, offset 19305949).
  *
@@ -132,7 +146,10 @@ async function mountMenu(): Promise<{ card: HTMLElement; mod: typeof ChatOptions
     </span>
   `;
   vi.resetModules();
-  const mod = await import("./chat-options.js");
+  bootSeq++;
+  const mod = (await import(
+    /* @vite-ignore */ `./chat-options.ts?boot=${bootSeq}`
+  )) as typeof ChatOptionsModule;
   mod.initChatOptions();
   return { card: document.getElementById("chat-options-card") as HTMLElement, mod };
 }

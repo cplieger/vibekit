@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // mathml.ts — the LaTeX-subset to MathML converter.
 //
 // Two things are asserted everywhere and both are the point of the module:

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 //
 // The tab activity dot: the state mapping, the accessible name, and the
 // reduced-motion degradation.
@@ -29,14 +28,13 @@
 //     welded to the disc forever. `content: none` is what prevents that, and
 //     nothing about the global rule makes it obvious.
 //
-// The CSS half asserts SOURCE facts because happy-dom implements no cascade:
-// `getComputedStyle` returns the last declaration parsed, not the winner, so it
-// cannot answer "which rule applies".
+// The CSS half asserts SOURCE facts because the test page loads no app
+// stylesheet: nothing links `css/MANIFEST`, so `getComputedStyle` has no cascade
+// to report on and cannot answer "which rule applies".
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import cssContrastScript from "../scripts/css-contrast.py?raw";
+import chatSrc from "./chat.ts?raw";
 import { ruleContaining, loadCSS } from "./__test-helpers__/css-rules.js";
 import {
   tabStatusFor,
@@ -162,7 +160,14 @@ vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
 
 // The dock's two leaves that reach for DOM it does not own, plus the toast,
 // mocked exactly as decision-dock.test.ts mocks them.
-vi.mock("./editor-openers.js", () => ({ openFileGitDiff: vi.fn() }));
+vi.mock("./editor-openers.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  openFile: undefined,
+  openFileGitDiff: vi.fn(),
+}));
 vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
 vi.mock("./toast.js", () => ({ info: vi.fn() }));
 
@@ -170,6 +175,11 @@ vi.mock("./toast.js", () => ({ info: vi.fn() }));
 vi.mock("./dom.js", () => {
   const cache = new Map<string, HTMLElement>();
   return {
+    // Present-but-undefined so real-ESM linking succeeds: another module in this
+    // graph imports the name, and Browser Mode links for real rather than
+    // reading properties off a namespace object. `undefined` is what the node
+    // runner gave it, so no path under test changes behavior.
+    maybeViewTransition: undefined,
     $: new Proxy(
       {},
       {
@@ -197,7 +207,7 @@ async function paint(): Promise<void> {
 /** What a screen reader computes for the `role="tab"` row: its name from
  *  contents, in DOM order.
  *
- *  happy-dom implements no accessible-name algorithm and applies none of the
+ *  no accessible-name algorithm is consulted here and none of the
  *  app's CSS, so this is the traversal, and its two exclusions are the model
  *  rather than convenience:
  *
@@ -582,9 +592,7 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
     // here would exempt from the check the exact pair whose only separator is fill —
     // letting a merge come back with the check still reporting PASS, which is the
     // one failure mode a mechanical gate has that a human reviewer does not.
-    const here = dirname(fileURLToPath(import.meta.url));
-    const script = readFileSync(join(here, "..", "scripts", "css-contrast.py"), "utf8");
-    expect(script).toContain("DOT_ALIASES: list[tuple[str, str]] = []");
+    expect(cssContrastScript).toContain("DOT_ALIASES: list[tuple[str, str]] = []");
   });
 });
 
@@ -647,9 +655,7 @@ describe("the finished-turn latch reports done without the agent's tool call", (
     // the exact moment a turn completed in front of the reader. web-terminal-kiro
     // latches its own `done` in the engine, focus-blind and cleared only by the
     // next turn's progress state, and this is now the same rule.
-    const here = dirname(fileURLToPath(import.meta.url));
-    const chat = readFileSync(join(here, "chat.ts"), "utf8");
-    expect(chat).not.toContain("clearTurnDone");
+    expect(chatSrc).not.toContain("clearTurnDone");
     // The function still exists and still works; nothing but a dropped stream is
     // entitled to call it.
     setSessions([session({ id: "c1", turn_done: true })]);

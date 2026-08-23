@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // D77: a toast when a broken MCP server is actually used.
 //
 // Two properties, and both are the item's own implementation notes rather than

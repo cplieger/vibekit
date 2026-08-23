@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for tools.ts action configuration: scope, retry, dedupe,
 // idempotencyKey, and the v2 wire shapes (202 + job envelopes, the
 // delete 409 pass-through, the ensure create->install fallback).

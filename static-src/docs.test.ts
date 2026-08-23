@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for the Kiro configuration browser's pure pieces: the repo/path split
 // that makes a git letter resolvable, and the per-category metadata shaping.
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
@@ -8,17 +7,42 @@ type GitStatusStoreModule = typeof GitStatusStore;
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
-vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
+vi.mock("./editor-openers.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  openFileGitDiff: undefined,
+  openFile: vi.fn(),
+}));
 // toggleDocsView RUNS its onShow callback, because that callback is what wires
 // the page (initDocsView) and loads it. A mock that swallowed it would leave the
 // SSE cases below asserting against a page that was never opened.
 vi.mock("./tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  getActiveTabRoute: undefined,
+  openRunTab: undefined,
+  setGitTab: undefined,
+  setSettingsTab: undefined,
+  toggleGitView: undefined,
+  toggleSettingsView: undefined,
   setDocsTab: vi.fn(),
   toggleDocsView: vi.fn((_tab: string, onShow: () => void) => {
     onShow();
   }),
 }));
-vi.mock("./bus.js", () => ({ onSSE: vi.fn(() => () => undefined) }));
+vi.mock("./bus.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  BUS_RUNS_CHANGED: undefined,
+  onBus: undefined,
+  onSSE: vi.fn(() => () => undefined),
+}));
 // Only the POLL is replaced. initGitStatusStore starts one that reaches
 // /api/git/status-all through the actions transport — which the api-client mock
 // above does not cover — so the first request outlived the window teardown and
@@ -708,7 +732,7 @@ describe("the Hooks tab: staying current", () => {
         <div data-docs-panel="steering" class="list-container docs-panel"></div>
         <div data-docs-panel="hooks" class="list-container docs-panel hidden"></div>
       </div>`;
-    // offsetParent is null in happy-dom, and both SSE handlers gate on it to skip
+    // offsetParent is null for a detached host, and both SSE handlers gate on it to skip
     // work while the page is closed. Force it truthy so the OPEN case is what
     // these tests exercise.
     Object.defineProperty(document.getElementById("docs-view"), "offsetParent", {

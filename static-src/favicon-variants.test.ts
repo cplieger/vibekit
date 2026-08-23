@@ -16,11 +16,21 @@
 //   python3 .kiro/scripts/gen-attention-icons.py --app vibekit --static vibekit/static
 // which reads the base icon and appends one dot rather than redrawing anything.
 //
-// Skipped under Stryker: its sandbox copies static-src only (ignorePatterns
-// excludes ../static), so the real assets are absent there.
+// Skipped assets under Stryker: its sandbox copies static-src only
+// (ignorePatterns excludes ../static), so the real assets may be absent there.
+// A GLOB rather than static imports is what preserves that: a missing key reads
+// as absent, exactly as the existsSync guard it replaced did, where a static
+// `?raw` import of a missing file would fail the whole module instead.
 
 import { describe, it, expect } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+
+/** The shipped page and every favicon beside it, inlined as text. */
+const staticAssets = import.meta.glob<string>(["../static/*.svg", "../static/index.html"], {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
 
 /** One entry per cue, and each field pins a different link in the chain the
  *  generator walks.
@@ -82,17 +92,8 @@ const DOT_R = 5.5;
 const PAD = 3;
 const UNIT = 32;
 
-async function staticDir(): Promise<string> {
-  const { dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  return join(dirname(fileURLToPath(import.meta.url)), "..", "static");
-}
-
 async function readStatic(name: string): Promise<string | null> {
-  const { existsSync, readFileSync } = await import("node:fs");
-  const { join } = await import("node:path");
-  const path = join(await staticDir(), name);
-  return existsSync(path) ? readFileSync(path, "utf8") : null;
+  return Promise.resolve(staticAssets[`../static/${name}`] ?? null);
 }
 
 describe("attention favicon variants", () => {
@@ -261,14 +262,8 @@ describe("attention favicon variants", () => {
     expect(svg).not.toContain("stroke");
   });
 
-  it("keeps each cue's colour token where the generator reads it from", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const css = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "css", "01-tokens.css"),
-      "utf8",
-    );
+  it("keeps each cue's colour token where the generator reads it from", () => {
+    const css = loadCSS("01-tokens.css");
     for (const variant of VARIANTS) {
       const { token, oklch } = CUES[variant];
       // The FIRST declaration, which is the default theme's :root — that is the

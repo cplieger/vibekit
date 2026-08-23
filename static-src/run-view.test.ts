@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for the shared run view's FLAVOUR gate — which door you came through
 // decides whether the run is actionable, and status alone never does.

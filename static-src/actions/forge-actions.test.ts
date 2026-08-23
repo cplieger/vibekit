@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for forge.ts: startDeviceFlow, signOut, cloneRepo, deleteLocal, connectPAT.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -73,7 +72,7 @@ describe("forge.start_device_flow", () => {
 
 describe("forge.sign_out", () => {
   it("DELETEs /api/forges/:id", async () => {
-    mockFetch.mockResolvedValue(new Response("", { status: 204 }));
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
     const { signOut } = await import("./forge.js");
     await signOut.dispatch({ forgeId: "github:user" });
     const [url, opts] = mockFetch.mock.calls[0]!;

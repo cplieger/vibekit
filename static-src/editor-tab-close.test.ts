@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Closing an editor tab, across the REAL tab store and the REAL editor openers.
 //

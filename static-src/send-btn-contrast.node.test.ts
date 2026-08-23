@@ -21,13 +21,25 @@
 
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
-import { existsSync } from "node:fs";
+import { ruleBody } from "./__test-helpers__/css-rules.js";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "..", "scripts", "css-contrast.py");
+
+/** The stylesheet, read with `node:fs` rather than through the shared helper's
+ *  `?raw` glob. Measured: in vitest's NODE project a `*.css?raw` import resolves
+ *  to the EMPTY STRING — Vite's CSS pipeline claims the module for the
+ *  server-side environment, where a stylesheet is a side effect with no value —
+ *  while `*.ts?raw` and every other extension resolve normally, and `*.css?raw`
+ *  in the browser project resolves normally too. This is the only node-project
+ *  test that needs a stylesheet, so it reads its own; `ruleBody` above is the
+ *  shared parser and needs no import of the file. */
+function loadCSS(name: string): string {
+  return readFileSync(join(here, "css", name), "utf8");
+}
 
 /** The faces and the depth ladder are READ OUT OF THE STYLESHEET, not restated
  *  here. A floor asserted against numbers the test carries itself would keep

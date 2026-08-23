@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for submit.ts — what Send MEANS, which depends on whether a turn is
 // already running. Drives the REAL store (so the steer projection is
@@ -47,7 +46,15 @@ vi.mock("./attachments.js", () => ({
 }));
 // Both are mocked for the same reason the others are: they own real DOM, and
 // send-state's module-level effect paints the send button on import.
-vi.mock("./send-state.js", () => ({ clearLastError: mockClearLastError }));
+vi.mock("./send-state.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  setLastError: undefined,
+  setSSEStatus: undefined,
+  clearLastError: mockClearLastError,
+}));
 vi.mock("./prompt-input.js", () => ({ restorePromptText: mockRestorePromptText }));
 
 import { submitPrompt } from "./submit.js";

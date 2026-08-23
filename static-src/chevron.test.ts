@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // The disclosure chevron is ONE vocabulary, pinned in both directions.
 //
@@ -10,7 +9,7 @@
 // grows a fourth technique.
 //
 // The DOM half runs the real builders. The SOURCE half reads the shipped
-// stylesheets, because happy-dom implements no cascade — see
+// stylesheets, because the test page loads no app stylesheet — see
 // __test-helpers__/css-rules.ts.
 // ---------------------------------------------------------------------------
 

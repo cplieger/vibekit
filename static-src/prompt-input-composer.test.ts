@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The composer has ONE textarea and three modules writing to it, and exactly one
 // of them owns what the draft IS.
 //
@@ -32,6 +31,21 @@ import type * as ComposerState from "./composer-state.js";
 import type * as PromptInput from "./prompt-input.js";
 import type * as ShareTarget from "./share-target.js";
 import type { Session } from "./types.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 const { mockDispatch, mockFlush, mockPending, mockSubmit } = vi.hoisted(() => ({
   mockDispatch: vi.fn(),
@@ -100,6 +114,7 @@ interface Mounted {
  *  case's element and history position. */
 async function mount(): Promise<Mounted> {
   vi.resetModules();
+  bootSeq++;
   document.body.innerHTML = `
     <div id="chat-area">
       <form id="prompt-form">
@@ -112,8 +127,17 @@ async function mount(): Promise<Mounted> {
     </div>`;
   const store = await import("./store.js");
   const composerState = await import("./composer-state.js");
-  const promptInput = await import("./prompt-input.js");
-  const shareTarget = await import("./share-target.js");
+  // composer-state is NOT busted: prompt-input imports it, and a busted copy here
+  // would be a SECOND instance holding a different drafts map from the one the
+  // module under test writes. It gets its per-test reset through its own test
+  // seam instead, which is what `vi.resetModules()` used to do for it.
+  composerState._resetComposerStateForTest();
+  const promptInput = (await import(
+    /* @vite-ignore */ `./prompt-input.ts?boot=${bootSeq}`
+  )) as typeof PromptInput;
+  const shareTarget = (await import(
+    /* @vite-ignore */ `./share-target.ts?boot=${bootSeq}`
+  )) as typeof ShareTarget;
   store.setSessions([makeSession("c1", [PRIOR_PROMPT]), makeSession("c2", [])]);
   store.setActive("c1");
   // The order app.ts uses: the draft layer is listening before anything writes.

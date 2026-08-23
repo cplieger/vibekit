@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The attachment pill: one component for the composer's staged row and a sent
 // turn's header. The two assertions that matter are that the body OPENS and the
 // `×` does not, in both directions — the pill is the only place in the app where

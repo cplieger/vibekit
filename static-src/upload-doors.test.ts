@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // The upload doors OTHER than the composer's.
 //
@@ -12,7 +11,7 @@
 // The composer's own door is covered by files-drop.test.ts. The two DIALOG doors
 // (the browser toolbar's Upload, and the picker's "Upload here") are deliberately
 // absent: each builds its <input type="file"> on demand, never puts it in the
-// document, and relies on an OS dialog happy-dom cannot open, so a test has no
+// document, and relies on an OS dialog no test runner can open, so a test has no
 // handle on the element and no way to produce a selection. What they screen with
 // is screenUploads, which upload-policy.test.ts drives directly, and the call
 // itself is one statement above the dispatch in each.

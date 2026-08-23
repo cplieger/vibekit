@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The agent-terminal → tool-card seam: what happens to live chunks that arrive
 // before a card has claimed their terminal id.
 //
@@ -13,6 +12,16 @@ import type { TextSpan } from "./types.js";
 // sees `next === lastApplied` and does not re-enter applyToolCallUpdate. The real
 // store-signals module would drag the whole chat store in.
 vi.mock("./store-signals.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  blockKey: undefined,
+  blockTextSigs: undefined,
+  blockThinkingSigs: undefined,
+  streamingReasoningSigs: undefined,
+  streamingTextSigs: undefined,
+  toolCallSigs: undefined,
   ensureToolCallSig: vi.fn((_id: string, tc: unknown) => ({ value: tc })),
   clearToolCallSig: vi.fn(),
 }));

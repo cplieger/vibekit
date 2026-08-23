@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The composer's staged attachment row. The module had no test file at all
 // before the pill body became clickable, and the click is exactly the behaviour
 // that needed one: the row is bound once behind a latch, so a pill built for the

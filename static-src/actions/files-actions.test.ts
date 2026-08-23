@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for files.ts: createFile, createFolder, renameFile, deleteFilesBatch, upload.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -9,6 +8,11 @@ vi.mock("../toast.js", () =>
 );
 
 vi.mock("../api-client.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  apiGet: undefined,
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
 }));

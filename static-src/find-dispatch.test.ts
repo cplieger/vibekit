@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Ctrl-F is scoped by the active TAB, and so is the toolbar button that opens
 // it. What this pins is the routing and the three things that make it safe:
 // exactly one destination per press (no extra meaning on the chord), a

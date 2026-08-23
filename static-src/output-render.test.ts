@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for output-render.ts — the transcript's command-output painter.
 //
 // The load-bearing property is that NOTHING here parses HTML: every one of
@@ -163,31 +162,36 @@ describe("outputFragment", () => {
   // The 256-colour palette is computed rather than tabulated, so these pin the
   // formula: index 16 is the cube origin, 231 its far corner, and 232-255 the
   // grey ramp from 8 in steps of 10.
+  //
+  // The expectations carry Chromium's SERIALIZATION of an inline colour, which
+  // is the comma form `rgb(0, 0, 0)` whatever the space-separated `rgb(0 0 0)`
+  // the renderer authored. Same colour, read back through the real CSSOM; the
+  // emulator this replaced echoed the authored string instead.
   it("computes the 256-colour cube", () => {
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 16 })]));
-    expect(host.querySelector("span")!.style.color).toBe("rgb(0 0 0)");
+    expect(host.querySelector("span")!.style.color).toBe("rgb(0, 0, 0)");
 
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 231 })]));
-    expect(host.querySelector("span")!.style.color).toBe("rgb(255 255 255)");
+    expect(host.querySelector("span")!.style.color).toBe("rgb(255, 255, 255)");
 
     // 208 is the familiar orange: n=192, so 192/36=5 → 255 red, (192/6)%6=2 →
     // 135 green, 192%6=0 → 0 blue.
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 208 })]));
-    expect(host.querySelector("span")!.style.color).toBe("rgb(255 135 0)");
+    expect(host.querySelector("span")!.style.color).toBe("rgb(255, 135, 0)");
   });
 
   it("computes the 256-colour grey ramp", () => {
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 232 })]));
-    expect(host.querySelector("span")!.style.color).toBe("rgb(8 8 8)");
+    expect(host.querySelector("span")!.style.color).toBe("rgb(8, 8, 8)");
     host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 255 })]));
-    expect(host.querySelector("span")!.style.color).toBe("rgb(238 238 238)");
+    expect(host.querySelector("span")!.style.color).toBe("rgb(238, 238, 238)");
   });
 
   it("renders truecolour as an rgb value", () => {
     // 0x1000000 | (10<<16) | (20<<8) | 30
     const packed = 0x1000000 | (10 << 16) | (20 << 8) | 30;
     host.appendChild(outputFragment("x", [span(0, 1, { fg: packed })]));
-    expect(host.querySelector("span")!.style.color).toBe("rgb(10 20 30)");
+    expect(host.querySelector("span")!.style.color).toBe("rgb(10, 20, 30)");
   });
 
   // Conceal has to beat whatever the foreground resolved to, and a CLASS cannot:

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Tests for renderDevicePrompt's CSP-safe el()-built DOM: the user_code
 // lands in a <code>, a verification_uri is only ever rendered as an
 // anchor when it is http(s), and an attacker-controlled uri is inert

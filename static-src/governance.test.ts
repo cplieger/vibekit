@@ -1,6 +1,21 @@
-// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GovernanceStatePayload } from "./types.js";
+import type * as ModGovernance from "./governance.js";
+
+/** Cache-buster for the re-imports below.
+ *
+ * `vi.resetModules()` does not re-evaluate a module in Browser Mode: the module
+ * map is URL-keyed, so a following `await import()` hands back the CACHED
+ * instance and every test after the first observes stale module state. Busting
+ * the specifier per evaluation is what actually mints a fresh instance. The `.ts`
+ * extension is load-bearing — written `.js` the suite still passes while coverage
+ * silently attributes every evaluation to a file that does not exist.
+ *
+ * Only the module under test is busted. Its own dependencies keep their plain
+ * specifiers, so `vi.mock` still intercepts them and a shared module the test
+ * also imports is the same instance the fresh module got.
+ */
+let bootSeq = 0;
 
 // The REST snapshot path is exercised server-side; here we drive state purely
 // through the governance_state SSE, so stub the fetch to a harmless null.
@@ -31,7 +46,10 @@ function govState(over: Partial<GovernanceStatePayload> = {}): GovernanceStatePa
 // to avoid inline import() type annotations (consistent-type-imports).
 async function load() {
   vi.resetModules();
-  const gov = await import("./governance.js");
+  bootSeq++;
+  const gov = (await import(
+    /* @vite-ignore */ `./governance.ts?boot=${bootSeq}`
+  )) as typeof ModGovernance;
   const bus = await import("./bus.js");
   return { gov, bus };
 }

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for handlers/chat.ts SSE event routing.
 //
@@ -18,6 +17,19 @@ import type { Session, ChatHeader } from "../types.js";
 const mockCloseTab = vi.fn();
 const mockHasTab = vi.fn(() => false);
 vi.mock("../tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  editorTabID: undefined,
+  getActiveTabId: undefined,
+  getActiveTabRoute: undefined,
+  openEditorView: undefined,
+  setGitTab: undefined,
+  setSettingsTab: undefined,
+  setTabDirty: undefined,
+  toggleGitView: undefined,
+  toggleSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
 }));

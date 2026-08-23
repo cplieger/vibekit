@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Table-driven tests for platform.ts guardAction debounce behavior.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { guardAction } from "./platform.js";

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for user-input.ts — the agent's structured-question CARD (kiro-cli v3
 // _kiro/userInput), as rendered in the interaction dock. Options render as

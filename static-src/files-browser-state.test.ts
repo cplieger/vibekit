@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Unit tests for FileBrowserState navigation logic (pure state machine).
 import { describe, it, expect, vi } from "vitest";
 
@@ -10,13 +9,34 @@ vi.mock("./dom.js", () => ({
   },
   el: () => document.createElement("div"),
 }));
-vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_KEYS_ESCAPE: "escape" }));
+vi.mock("./bus.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  onSSE: undefined,
+  onBus: vi.fn(),
+  BUS_KEYS_ESCAPE: "escape",
+}));
 vi.mock("./tabs.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  setGitTab: undefined,
+  toggleGitView: undefined,
   toggleFilesView: vi.fn(),
   showFilesView: vi.fn(),
   getActiveTabKind: vi.fn(() => "files"),
 }));
-vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
+vi.mock("./editor-openers.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  openFileGitDiff: undefined,
+  openFile: vi.fn(),
+}));
 vi.mock("./modals.js", () => ({ closeModal: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn().mockResolvedValue(true) }));
 vi.mock("./ui-state.js", () => ({ save: vi.fn() }));
@@ -37,6 +57,11 @@ vi.mock("./scroll.js", () => ({
 }));
 vi.mock("./transport.js", () => ({ send: vi.fn() }));
 vi.mock("./store.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  activeSession: undefined,
   getActiveId: vi.fn(() => ""),
 }));
 

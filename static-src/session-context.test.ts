@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock persist.js so we observe patchSettings calls without touching the

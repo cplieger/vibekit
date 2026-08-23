@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
 // Tests for decision-dock.ts — the queue, not the cards.
 //
@@ -19,7 +18,14 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // real `activeSession` computed, and a stubbed signal would test the stub's
 // reactivity rather than the wiring that ships. Only the two leaves that reach
 // for DOM the dock does not own are mocked.
-vi.mock("./editor-openers.js", () => ({ openFileGitDiff: vi.fn() }));
+vi.mock("./editor-openers.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  openFile: undefined,
+  openFileGitDiff: vi.fn(),
+}));
 vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
 // The attribution toast is the observable half of a card collapsing under the
 // reader, so it is mocked to be asserted rather than to be silenced.

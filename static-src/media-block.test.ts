@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // File-role rendering for a workspace file the agent presented with `![](…)`.
 // Native elements only, so the assertions are about which ELEMENT each role gets.
 import { describe, it, expect } from "vitest";

@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The keyboard shortcut reference sheet: its content, and the binding that opens
 // it.
 //

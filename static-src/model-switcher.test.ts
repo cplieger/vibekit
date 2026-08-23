@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // The effort section of the model card, which had two defects a user hit in the
 // same click:
 //

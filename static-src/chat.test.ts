@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 // Focused test for createPlannerSession — the ?agent=planner share shortcut's
 // server-side handoff. chat.ts has a heavy import graph, so every direct
 // dependency is mocked at the first hop; the store mock is stateful for
@@ -17,6 +16,11 @@ const { setModeDispatch, forkDispatch, submitPromptMock, messagesEl } = vi.hoist
 let activeId = "";
 
 vi.mock("./store.js", () => ({
+  // Present-but-undefined so real-ESM linking succeeds: another module in this
+  // graph imports the name, and Browser Mode links for real rather than reading
+  // properties off a namespace object. `undefined` is what the node runner gave
+  // these, so no path under test changes behavior.
+  setModel: undefined,
   getActiveId: () => activeId,
   getActive: vi.fn(() => undefined),
   get: vi.fn(() => undefined),
