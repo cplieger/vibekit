@@ -133,7 +133,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
 # API. This ARG and static-src/package.json's @cplieger/ui-primitives pin
 # track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui-primitives
-ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.0.5
+ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.0.6
 RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
