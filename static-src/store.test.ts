@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Unit tests for store.ts — property-based idempotency invariants.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as fc from "fast-check";
 import {
   parseContextSize,
@@ -8,6 +8,7 @@ import {
   getSessions,
   get,
   setActive,
+  getActive,
   appendMessage,
   upsertMessage,
   upsertHeader,
@@ -199,6 +200,25 @@ describe("setActive updates the active session", () => {
     expect(activeSession.peek()).toBeUndefined();
     setActive("");
     expect(getActiveId()).toBe("");
+  });
+
+  // The empty string is the store's sentinel for "nothing is active":
+  // `getActiveId` returns it before the first `setActive`, and `setActive("")`
+  // is how a selection is cleared. `setSessions` is fed straight from the
+  // server's chat list, so a row whose id decoded to "" is a shape it can
+  // receive — and it must not become the active chat by matching the sentinel,
+  // which would show a phantom conversation to a user who has none selected.
+  it("never resolves the no-active sentinel to a row whose id is empty", () => {
+    setSessions([makeSession("real"), makeSession("")]);
+    setActive("real");
+    setActive("");
+
+    expect(getActiveId()).toBe("");
+    expect(getActive()).toBeUndefined();
+    expect(activeSession.peek()).toBeUndefined();
+    // The malformed row is still in the list; it is only barred from being the
+    // active one, since dropping rows is not this function's job.
+    expect(get("")?.id).toBe("");
   });
 });
 
@@ -2132,5 +2152,76 @@ describe("Store steer projection, frame by frame", () => {
     recordSteerQueued("st-4", { id: "s-1", text: "use tabs" });
     markSteerInjected("st-4", "s-1", "use tabs", "");
     expect(get("st-4")?.steers).toEqual([{ id: "s-1", text: "use tabs", injected: true }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A message the store has not seen before has to reach the LIST, whatever is
+// already mounted.
+//
+// The signal maps are module-global and keyed by message id, so a signal can
+// outlive the row that created it — a paginated window drops resident messages,
+// and a re-created message keeps its id. When the row itself is new, feeding
+// that leftover signal is not enough: nothing has mounted the row, so the only
+// channel that can put it on screen is the keyed reconcile behind
+// `messagesVersion`. This is the one case where the "a mounted signal carries
+// the delta, so stay off the list" discipline above does NOT apply.
+// ---------------------------------------------------------------------------
+
+describe("Store appendChunk on a first sighting", () => {
+  it("repaints the list even when a signal for that id is already mounted", async () => {
+    resetStore("fs-1");
+    const sig = ensureStreamingSig("m-unseen", "");
+    const before = messagesVersion.peek();
+
+    appendChunk("fs-1", "m-unseen", "hello", false, 0, "");
+    await tick();
+
+    expect(get("fs-1")?.messages[0]?.content).toBe("hello");
+    expect(messagesVersion.peek()).toBe(before + 1);
+    // The leftover signal is not the channel for a row that has yet to mount.
+    expect(sig.value).toBe("");
+    clearStreamingSig("m-unseen");
+  });
+
+  it("repaints for a first reasoning delta with a mounted reasoning signal", async () => {
+    resetStore("fs-2");
+    const sig = ensureReasoningSig("m-unseen-r", "");
+    const before = messagesVersion.peek();
+
+    appendChunk("fs-2", "m-unseen-r", "why", true, 0, "");
+    await tick();
+
+    expect(get("fs-2")?.messages[0]?.reasoning).toBe("why");
+    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(sig.value).toBe("");
+    clearReasoningSig("m-unseen-r");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The coalescer's flag, read at the module's first list change.
+//
+// `scheduleMessages` guards itself with a module-scope boolean so several
+// changes in one tick cost one repaint. That initial value is computed once when
+// the module is evaluated, which a static import freezes at collection time — so
+// this test loads its own copy of the store, the way `platform.pwa.test.ts` does
+// for the constants it stubs a platform for. Without a fresh module the very
+// first repaint of the page is not observable at all.
+// ---------------------------------------------------------------------------
+
+describe("the deferred-repaint guard", () => {
+  it("is clear on a freshly loaded module, so the first list change repaints", async () => {
+    vi.resetModules();
+    const store = await import("./store.js");
+    store.setSessions([makeSession("boot-1")]);
+    const before = store.messagesVersion.peek();
+
+    store.appendChunk("boot-1", "m-1", "a", false, 0, "");
+    // Deferred by one microtask, so nothing has repainted yet.
+    expect(store.messagesVersion.peek()).toBe(before);
+
+    await tick();
+    expect(store.messagesVersion.peek()).toBe(before + 1);
   });
 });

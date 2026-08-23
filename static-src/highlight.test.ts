@@ -612,3 +612,44 @@ describe("language routing", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The punctuation table, whole.
+//
+// `PUNCT_CODES` is built once when the module is evaluated, and the tests above
+// reach only the four or five characters their snippets happen to contain — so
+// the table's contents are asserted here, one character at a time, against the
+// comment that documents it beside the codes.
+//
+// The module is loaded DYNAMICALLY for the same reason `platform.pwa.test.ts`
+// does it: a module-scope initializer runs at import time, which a static import
+// has already done before the first test is collected, so a test that means to
+// observe the table has to be the thing that builds it.
+// ---------------------------------------------------------------------------
+
+import { vi } from "vitest";
+
+describe("the punctuation table", () => {
+  // The set's own trailing comment, in order:
+  //   { } ( ) [ ] ; , . : ! & | < > = + - * / % ^ ~ ? @
+  const PUNCT = [..."{}()[];,.:!&|<>=+-*/%^~?@"];
+
+  it("tokenizes every character it lists as punctuation", async () => {
+    vi.resetModules();
+    const { highlightByLang: fresh } = await import("./highlight.js");
+    for (const ch of PUNCT) {
+      expect(extractSpans(fresh(ch, "go"))).toEqual([{ type: "punctuation", value: ch }]);
+    }
+  });
+
+  it("leaves a character outside the table as plain text", async () => {
+    vi.resetModules();
+    const { highlightByLang: fresh } = await import("./highlight.js");
+    // Neither punctuation nor an identifier start nor a digit nor a quote: the
+    // tokenizer's last branch, which is what "not in the table" has to mean.
+    for (const ch of [..."\\\u00a7\u00b0"]) {
+      expect(extractSpans(fresh(ch, "go"))).toEqual([]);
+      expect(fresh(ch, "go")).toBe(ch);
+    }
+  });
+});
