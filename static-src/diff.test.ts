@@ -744,3 +744,114 @@ describe("lineDiff past the time budget", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The prefix and suffix trims walk toward each other over the SHORTER file, so
+// their shared bound is min(a, b). With max, a repeated line at the join is
+// counted twice — once as trimmed prefix and once as trimmed suffix — and the
+// edit that is really there is reported as context: the reader is shown a line
+// as unchanged when it was added, and one file's line numbers repeat.
+// ---------------------------------------------------------------------------
+describe("lineDiff prefix and suffix trimming", () => {
+  it("does not count a repeated line as both prefix and suffix on an append", () => {
+    expect(lineDiff("x\nx", "x\nx\nx")).toEqual([
+      { kind: "ctx", oldNo: 1, newNo: 1, text: "x" },
+      { kind: "ctx", oldNo: 2, newNo: 2, text: "x" },
+      { kind: "add", oldNo: 0, newNo: 3, text: "x" },
+    ]);
+  });
+
+  it("does not count a repeated line as both prefix and suffix on a truncation", () => {
+    expect(lineDiff("x\nx\nx", "x\nx")).toEqual([
+      { kind: "ctx", oldNo: 1, newNo: 1, text: "x" },
+      { kind: "ctx", oldNo: 2, newNo: 2, text: "x" },
+      { kind: "del", oldNo: 3, newNo: 0, text: "x" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The linear-space recursion bottoms out at ONE old line against a range of new
+// ones, and that base case emits three groups in order: the new lines before the
+// match, the match itself, and the new lines AFTER it. The fixtures above reach
+// the base case two thousand times over but almost always with the match at the
+// end of its range, so the third group is never emitted and its line numbering
+// is never read. One insertion every fourth line puts a new line behind a
+// matched one at the deepest level.
+//
+// 2001 old lines against 2502 new ones is 5.0M cells after the trim, past
+// SPACE_THRESHOLD, so this is the recursion and not the dense table.
+// ---------------------------------------------------------------------------
+describe("lineDiff on the linear-space path, one old line against many new", () => {
+  const oldLines = Array.from({ length: 2001 }, (_, i) => `L${String(i).padStart(4, "0")}`);
+  const newLines = oldLines.flatMap((l, i) => (i % 4 === 0 ? [l, `INS-${String(i)}`] : [l]));
+  const oldText = oldLines.join("\n");
+  const newText = newLines.join("\n");
+  // Computed per test rather than in a hook: a hook's work is attributed to no
+  // test under perTest coverage (see the note on sparseDiff above).
+  const scatteredDiff = (): DiffLine[] => lineDiff(oldText, newText);
+
+  it("keeps every insertion, including the one behind the last match", () => {
+    // 501 of the 2001 lines are followed by an insertion, nothing is deleted, and
+    // every old line survives.
+    expect(stats(scatteredDiff())).toEqual({ adds: 501, dels: 0, ctx: 2001 });
+  });
+
+  it("numbers an insertion that follows its matched line", () => {
+    // The final insertion is the one the base case emits AFTER the match rather
+    // than before it, so it is the only entry in the whole diff whose number
+    // comes from that third group.
+    expect(scatteredDiff().find((l) => l.text === "INS-2000")).toEqual({
+      kind: "add",
+      oldNo: 0,
+      newNo: 2502,
+      text: "INS-2000",
+    });
+  });
+
+  it("gives every entry the line number of the line its text came from", () => {
+    // The invariant behind every hand-checked number above, over a diff too long
+    // to enumerate: an entry addresses its own file at its own number, and the
+    // two files are walked strictly forward. A recursion that offsets one group
+    // by a constant stays a valid edit script and lands the reader on the wrong
+    // line.
+    let lastOld = 0;
+    let lastNew = 0;
+    for (const l of scatteredDiff()) {
+      if (l.kind === "add") {
+        expect(l.oldNo).toBe(0);
+      } else {
+        expect(l.oldNo).toBeGreaterThan(lastOld);
+        expect(oldLines[l.oldNo - 1]).toBe(l.text);
+        lastOld = l.oldNo;
+      }
+      if (l.kind === "del") {
+        expect(l.newNo).toBe(0);
+      } else {
+        expect(l.newNo).toBeGreaterThan(lastNew);
+        expect(newLines[l.newNo - 1]).toBe(l.text);
+        lastNew = l.newNo;
+      }
+    }
+    expect([lastOld, lastNew]).toEqual([2001, 2502]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The budget is a ceiling the input may reach: the guard is `>`, so an input of
+// exactly TIME_BUDGET_CELLS still gets the exact algorithm. The describe above
+// covers one cell past it; this covers the last input that is not past it, which
+// is the only place the comparison itself is visible.
+// ---------------------------------------------------------------------------
+describe("lineDiff at the time budget", () => {
+  it("still finds the shared body at exactly the budget", () => {
+    // 5000x5000 = 25,000,000 cells after the trim, which trims nothing: both
+    // files differ on their first and last line.
+    const body = Array.from({ length: 4998 }, (_, i) => `B${String(i).padStart(4, "0")}`);
+    const d = lineDiff(
+      ["A-HEAD", ...body, "A-TAIL"].join("\n"),
+      ["B-HEAD", ...body, "B-TAIL"].join("\n"),
+    );
+    expect(stats(d)).toEqual({ adds: 2, dels: 2, ctx: 4998 });
+  });
+});
