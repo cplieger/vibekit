@@ -1171,7 +1171,7 @@ ANSI_PAIR_FLOOR = 4.5
 # fallbacks for the DEFAULT colour, not a code a program can select, and they
 # arrived here as a palette entry measuring --c-bg-secondary against itself at
 # 1.000:1. Renaming them to -ink/-fill fixed that instance; an alternation is what
-# makes the next one impossible. The count assertions in ansi-palette.test.ts keep
+# makes the next one impossible. The count assertions in ansi-palette.node.test.ts keep
 # this list honest in the other direction.
 ANSI_CODES = (
     "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
@@ -1519,7 +1519,7 @@ def main() -> int:
                 # the output for combinations the app does not contain — which
                 # teaches a reader to skip the whole section. The rule is asserted
                 # where it can actually be checked, over the stylesheets:
-                # css-tokens.test.ts, "keeps the hint ink off a raised fill".
+                # css-tokens.node.test.ts, "keeps the hint ink off a raised fill".
                 #
                 # NEITHER gate sees an `opacity`, which multiplies whatever is
                 # measured here. That hole is covered by a third check in the same

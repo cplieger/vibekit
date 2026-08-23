@@ -10,7 +10,7 @@
     "that is still streaming.",
     "",
     "This file is the contract between them. It is read by TestTurnOutcomeContract",
-    "(Go) and by turns.test.ts (TypeScript). Changing the rule in one language",
+    "(Go) and by turns.node.test.ts (TypeScript). Changing the rule in one language",
     "fails the other language's test, which is the only mechanism keeping the two",
     "in agreement — there is no code generation for behaviour.",
     "",
