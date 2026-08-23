@@ -9,7 +9,7 @@ package vibekit
 // IN-FLIGHT turn's outcome, which no fetched summary can know. Neither side can
 // be deleted, so both are pinned against one shared fixture —
 // `internal/chat/testdata/turn_outcomes.json`, read beside the projection by
-// chat's TestTurnOutcomeContract and by turns.test.ts there. Change the rule in
+// chat's TestTurnOutcomeContract and by turns.node.test.ts there. Change the rule in
 // one language and the other language's test fails, which is the only thing
 // keeping the two honest.
 type TurnOutcome string

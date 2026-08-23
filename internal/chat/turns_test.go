@@ -25,7 +25,7 @@ type outcomeFixture struct {
 	} `json:"cases"`
 }
 
-// TestTurnOutcomeContract is one half of a cross-language pin: turns.test.ts
+// TestTurnOutcomeContract is one half of a cross-language pin: turns.node.test.ts
 // runs the same table against the TypeScript implementation. A rule changed in
 // only one language fails in the other.
 func TestTurnOutcomeContract(t *testing.T) {
