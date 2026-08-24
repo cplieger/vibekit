@@ -217,7 +217,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.repoDir(body.Repo)
-	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
+	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", remoteOrigin)
 	if err != nil {
 		slog.Warn("git pr-fetch: origin lookup failed", "repo", body.Repo, "pr", body.Number, "error", err)
 		writeCmdResult(w, remote, err)
@@ -228,7 +228,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	if body.Head != "" {
 		local = body.Head
 	}
-	args := []string{"fetch", "origin", fmt.Sprintf(refShape, body.Number) + ":" + local}
+	args := []string{subFetch, remoteOrigin, fmt.Sprintf(refShape, body.Number) + ":" + local}
 	slog.Info("git pr-fetch", "repo", body.Repo, "number", body.Number, "local", local)
 	out, err := gitCmdWithCreds(r.Context(), h.timeouts.Push, dir, remote, args...)
 	writeCmdResult(w, out, err)

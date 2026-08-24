@@ -74,6 +74,25 @@ export function renderRepoState(cloned: boolean): HTMLElement {
   return state;
 }
 
+/** Run a row action with button feedback AND a toast on failure.
+ *
+ *  withAsyncFeedback awaits without rethrowing, so a bare throw inside it
+ *  reaches nobody: the button shows a ✗ glyph for 1.2s and any repaint of
+ *  the actions row (a background revalidate, a forges_changed event)
+ *  erases even that. A clone that git refused therefore read as a spinner
+ *  followed by nothing at all. The toast is what actually reports the
+ *  reason; the rethrow keeps the button's own error state. */
+function withRowFeedback(btn: HTMLButtonElement, fn: () => Promise<void>): void {
+  void withAsyncFeedback(btn, async () => {
+    try {
+      await fn();
+    } catch (e) {
+      toastError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  });
+}
+
 export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): HTMLElement {
   const actions = el("span", { className: "forge-account-repo-actions" });
 
@@ -105,7 +124,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
       iconEl(ICON_TRASH),
     ) as HTMLButtonElement;
     trash.addEventListener("click", () => {
-      void withAsyncFeedback(trash, () => removeLocalRepo(repo, deps));
+      withRowFeedback(trash, () => removeLocalRepo(repo, deps));
     });
     actions.appendChild(trash);
   } else if (repo.clone_url !== undefined && repo.clone_url !== "") {
@@ -120,7 +139,7 @@ export function renderRepoActions(repo: Repo, cloned: boolean, deps: RepoDeps): 
       iconEl(ICON_DOWNLOAD),
     ) as HTMLButtonElement;
     clone.addEventListener("click", () => {
-      void withAsyncFeedback(clone, () => cloneRepo(repo, deps));
+      withRowFeedback(clone, () => cloneRepo(repo, deps));
     });
     actions.appendChild(clone);
   }
@@ -133,8 +152,9 @@ async function cloneRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   if (url === "") {
     throw new Error("no clone URL");
   }
-  // Typed outcome: the caller toasts this throw (error: false on the action),
-  // so carry the real failure reason instead of a synthetic "clone failed".
+  // Typed outcome: withRowFeedback toasts this throw (error: false on the
+  // action suppresses the framework's own), so carry the real failure
+  // reason instead of a synthetic "clone failed".
   const o = await cloneRepoAction.dispatch({ url }).outcome;
   if (o.status !== "success") {
     throw new Error(o.status === "error" ? o.error.message : "clone cancelled");

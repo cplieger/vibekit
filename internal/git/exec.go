@@ -11,6 +11,7 @@ import (
 	"context"
 	"net/url"
 	"os/exec"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -102,20 +103,22 @@ func scrubAuth(s string) string {
 // Subcommand names this package builds argv from in more than one place, so the
 // allowlist entry and every call site are the same token by construction.
 const (
+	subAdd      = "add"
 	subCheckout = "checkout"
+	subFetch    = "fetch"
 	subRemote   = "remote"
 	subReset    = "reset"
 )
 
 var allowedSubcommands = map[string]struct{}{
-	"add":          {},
+	subAdd:         {},
 	"branch":       {},
 	subCheckout:    {},
 	"clone":        {},
 	"commit":       {},
 	"config":       {},
 	"diff":         {},
-	"fetch":        {},
+	subFetch:       {},
 	"init":         {},
 	"log":          {},
 	"ls-remote":    {},
@@ -294,6 +297,46 @@ func parseRemoteHost(raw string) string {
 	return sanitizeHost(u.Hostname())
 }
 
+// cloneDirName derives the directory `git clone <url>` creates, mirroring
+// git's own guess_dir_name for the two URL shapes this surface accepts
+// (https:// and scp-style git@host:path): the last path component with a
+// trailing ".git" removed.
+//
+// Returns "" when the answer is not one ordinary directory component,
+// which is the signal for the caller to let git derive the destination
+// itself rather than act on a guess.
+func cloneDirName(raw string) string {
+	s := strings.TrimSpace(raw)
+	// Neither a query nor a fragment is part of a repository path.
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
+	if _, p, ok := parseSCPStyle(s); ok {
+		s = p
+	} else {
+		u, err := url.Parse(s)
+		if err != nil {
+			return ""
+		}
+		s = u.Path
+	}
+	s = strings.TrimRight(s, "/")
+	if s == "" {
+		return ""
+	}
+	name := strings.TrimSuffix(path.Base(s), ".git")
+	// A traversal component, a nested path, a flag-shaped name, or git's
+	// own metadata directory is never acted on here.
+	switch name {
+	case "", ".", "..", ".git":
+		return ""
+	}
+	if strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, "-") {
+		return ""
+	}
+	return name
+}
+
 // sanitizeHost returns "" if host contains control characters or is empty.
 func sanitizeHost(h string) string {
 	for _, c := range h {
@@ -305,10 +348,14 @@ func sanitizeHost(h string) string {
 }
 
 // parseSCPStyle recognises git's scp-like remote syntax (user@host:path)
-// and returns (host, path, true) on a successful match. Returns ok=false
+// and returns (host, repoPath, true) on a successful match. Returns ok=false
 // for anything else, including URLs with a :// scheme, strings without @,
 // and ext:: remote-helper prefixes.
-func parseSCPStyle(raw string) (host, path string, ok bool) {
+//
+// The second result is NOT named `path`: this file uses the path package,
+// and a result named after an imported package shadows it for the whole
+// function body.
+func parseSCPStyle(raw string) (host, repoPath string, ok bool) {
 	if strings.Contains(raw, "://") {
 		return "", "", false
 	}
