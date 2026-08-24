@@ -14,6 +14,7 @@ import (
 const (
 	jsonKeyOutput  = httpreply.JSONKeyOutput
 	refHEAD        = "HEAD"
+	remoteOrigin   = "origin"
 	msgNotAGitRepo = "not a git repo"
 )
 

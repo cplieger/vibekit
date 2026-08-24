@@ -41,7 +41,7 @@ func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchF
 	if b, err := gitCmd(ctx, dir, "branch", "--show-current"); err == nil {
 		st.Branch = b
 	}
-	if rem, err := gitCmd(ctx, dir, subRemote, "get-url", "origin"); err == nil {
+	if rem, err := gitCmd(ctx, dir, subRemote, "get-url", remoteOrigin); err == nil {
 		st.Remote = scrubAuth(rem)
 	}
 	if doFetch {
@@ -160,7 +160,7 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
-	args := append([]string{"add", "--"}, files...)
+	args := append([]string{subAdd, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
 		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(out)))
 		return

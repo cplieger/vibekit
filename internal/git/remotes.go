@@ -41,7 +41,7 @@ func (h *Handler) RepoRemotes(ctx context.Context) []RepoRemote {
 	repos := h.cachedDiscoverRepos(ctx)
 	out := make([]RepoRemote, 0, len(repos))
 	for _, r := range repos {
-		raw, err := gitCmd(ctx, r.Dir, subRemote, "get-url", "origin")
+		raw, err := gitCmd(ctx, r.Dir, subRemote, "get-url", remoteOrigin)
 		if err != nil {
 			// A repo with no origin is ordinary here (a scratch clone, a local-only
 			// tree), so this is Debug rather than Warn.

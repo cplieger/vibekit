@@ -984,8 +984,255 @@ func TestHandleClone_RejectsInvalidSchemes(t *testing.T) {
 	}
 }
 
-// --- handleCheckout ---
+func TestCloneDirName(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"https with .git suffix", "https://github.com/cplieger/vibekit.git", "vibekit"},
+		{"https without .git suffix", "https://github.com/cplieger/vibekit", "vibekit"},
+		{"dot-named repo", "https://github.com/cplieger/.kiro.git", ".kiro"},
+		{"trailing slash", "https://github.com/cplieger/vibekit.git/", "vibekit"},
+		{"scp style", "git@github.com:cplieger/.kiro.git", ".kiro"},
+		{"scp style without suffix", "git@github.com:cplieger/vibekit", "vibekit"},
+		{"query stripped", "https://example.com/o/r.git?ref=main", "r"},
+		{"host only", "https://github.com", ""},
+		{"root path only", "https://github.com/", ""},
+		{"repo named .git refused", "https://github.com/o/.git.git", ""},
+		{"dot refused", "https://github.com/o/.", ""},
+		{"parent traversal refused", "https://github.com/o/..", ""},
+		{"flag-shaped name refused", "https://github.com/o/-x.git", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cloneDirName(tc.url); got != tc.want {
+				t.Errorf("cloneDirName(%q) = %q, want %q", tc.url, got, tc.want)
+			}
+		})
+	}
+}
 
+func TestInspectCloneDest(t *testing.T) {
+	stateName := func(s destState) string {
+		switch s {
+		case destAbsent:
+			return "destAbsent"
+		case destEmpty:
+			return "destEmpty"
+		case destRepo:
+			return "destRepo"
+		case destOccupied:
+			return "destOccupied"
+		}
+		return "unknown"
+	}
+
+	base := t.TempDir()
+	mkdir := func(rel string) string {
+		p := filepath.Join(base, rel)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	write := func(p string) {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	empty := mkdir("empty")
+	repo := mkdir("repo/.git")
+	_ = repo
+	write(filepath.Join(mkdir("occupied/settings"), "lsp.json"))
+	plainFile := filepath.Join(base, "afile")
+	write(plainFile)
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(empty, link); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		dir  string
+		want destState
+	}{
+		{"absent", filepath.Join(base, "nope"), destAbsent},
+		{"plain file", plainFile, destAbsent},
+		{"symlink to a directory", link, destAbsent},
+		{"empty directory", empty, destEmpty},
+		{"git repository", filepath.Join(base, "repo"), destRepo},
+		{"directory with content", filepath.Join(base, "occupied"), destOccupied},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inspectCloneDest(t.Context(), tc.dir)
+			if got != tc.want {
+				t.Errorf("inspectCloneDest(%q) = %s, want %s", tc.dir, stateName(got), stateName(tc.want))
+			}
+		})
+	}
+}
+
+// TestClone_ExistingRepoIsReportedByName replaces git's opaque "already
+// exists and is not an empty directory" with a message naming the repo and
+// the way out. Reaches no network: the destination check short-circuits
+// before any git subprocess runs.
+func TestClone_ExistingRepoIsReportedByName(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workDir, "vibekit", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(workDir)
+	out, err := h.clone(t.Context(), "https://github.com/cplieger/vibekit.git")
+	if err == nil {
+		t.Fatalf("clone into an existing repo: err = nil, want a refusal (out %q)", out)
+	}
+	if !strings.Contains(err.Error(), "vibekit") || !strings.Contains(err.Error(), "re-clone") {
+		t.Errorf("err = %q, want it to name the repo and point at re-clone", err)
+	}
+}
+
+// serveFixtureRepo builds a fixture repo under work and publishes it over
+// git's dumb HTTP protocol, returning the remote URL.
+//
+// A local path cannot serve as the remote here: gitExec sets
+// GIT_PROTOCOL_FROM_USER=0, which is exactly what makes git refuse the
+// `file` transport ("fatal: transport 'file' not allowed"). Reaching the
+// real gitExec path therefore needs a real HTTP remote. The repo tracks
+// one file, README.md, on branch main.
+func serveFixtureRepo(t *testing.T, work string) string {
+	t.Helper()
+	skipNoGit(t)
+	src := filepath.Join(work, "src")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initFixtureRepo(t, src)
+	runGit(t, work, "clone", "--bare", "-q", "src", "srv.git")
+	runGit(t, filepath.Join(work, "srv.git"), "update-server-info")
+	srv := httptest.NewServer(http.FileServer(http.Dir(work)))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/srv.git"
+}
+
+// TestClone_AdoptsAnOccupiedDestination covers the routing rather than the
+// mechanism: h.clone must send an occupied destination to adoptDestination
+// instead of to the plain `git clone` that refused it.
+func TestClone_AdoptsAnOccupiedDestination(t *testing.T) {
+	base := t.TempDir()
+	remote := serveFixtureRepo(t, base)
+	// serveFixtureRepo publishes the repo as srv.git, so the destination
+	// git would derive, and that h.clone must inspect, is "srv".
+	const name = "srv"
+
+	workDir := filepath.Join(base, "work")
+	dest := filepath.Join(workDir, name)
+	if err := os.MkdirAll(filepath.Join(dest, "settings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "settings", "lsp.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(workDir)
+	out, err := h.clone(t.Context(), remote)
+	if err != nil {
+		t.Fatalf("clone into an occupied destination = %v, want nil\n%s", err, out)
+	}
+	if !IsRepo(t.Context(), dest) {
+		t.Errorf("IsRepo(%q) = false, want true", dest)
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "README.md")); statErr != nil {
+		t.Errorf("tracked file not checked out: %v", statErr)
+	}
+}
+
+// TestAdoptDestination_ClonesIntoAnOccupiedDirectory is the regression test
+// for the reported defect. Cloning a repo NAMED .kiro failed because vibekit
+// had already written <workspace>/.kiro/settings/lsp.json when it activated
+// code intelligence, so plain `git clone` refused the non-empty destination
+// in a few milliseconds and the repo could never be cloned at all.
+func TestAdoptDestination_ClonesIntoAnOccupiedDirectory(t *testing.T) {
+	base := t.TempDir()
+	remote := serveFixtureRepo(t, base)
+
+	// The destination exactly as vibekit leaves it: present, non-empty,
+	// not a git repository.
+	dest := filepath.Join(base, "work", ".kiro")
+	if err := os.MkdirAll(filepath.Join(dest, "settings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lsp := filepath.Join(dest, "settings", "lsp.json")
+	if err := os.WriteFile(lsp, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := adoptDestination(t.Context(), dest, remote)
+	if err != nil {
+		t.Fatalf("adoptDestination(%q, %q) = %v, want nil\n%s", dest, remote, err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "README.md")); statErr != nil {
+		t.Errorf("tracked file not checked out: %v", statErr)
+	}
+	// Without this the Sources row keeps offering Clone forever, which is
+	// the second half of the reported symptom.
+	if !IsRepo(t.Context(), dest) {
+		t.Error("IsRepo(dest) = false, want true")
+	}
+	// The pre-existing file is untouched. This is the whole safety claim.
+	got, readErr := os.ReadFile(lsp)
+	if readErr != nil {
+		t.Fatalf("read %s: %v", lsp, readErr)
+	}
+	if string(got) != "{}" {
+		t.Errorf("lsp.json = %q, want %q", got, "{}")
+	}
+	// A tracking branch, exactly what a plain clone leaves behind.
+	branch, revErr := gitCmd(t.Context(), dest, "rev-parse", "--abbrev-ref", "HEAD")
+	if revErr != nil {
+		t.Fatalf("rev-parse --abbrev-ref HEAD: %v", revErr)
+	}
+	if branch != "main" {
+		t.Errorf("checked-out branch = %q, want %q", branch, "main")
+	}
+}
+
+// TestAdoptDestination_RefusesToOverwriteUntrackedContent pins the property
+// that makes adoption acceptable at all: git's own checkout refuses a
+// collision, so pre-existing content is never overwritten silently.
+func TestAdoptDestination_RefusesToOverwriteUntrackedContent(t *testing.T) {
+	base := t.TempDir()
+	remote := serveFixtureRepo(t, base)
+
+	dest := filepath.Join(base, "work", "repo")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Same name as a tracked file, different content.
+	readme := filepath.Join(dest, "README.md")
+	if err := os.WriteFile(readme, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := adoptDestination(t.Context(), dest, remote)
+	if err == nil {
+		t.Fatalf("adoptDestination(%q, %q) = nil, want a checkout refusal\n%s", dest, remote, out)
+	}
+	if !strings.Contains(out, "README.md") {
+		t.Errorf("output %q does not name the colliding file", out)
+	}
+	got, readErr := os.ReadFile(readme)
+	if readErr != nil {
+		t.Fatalf("read %s: %v", readme, readErr)
+	}
+	if string(got) != "mine\n" {
+		t.Errorf("README.md = %q, want %q: adoption overwrote it", got, "mine\n")
+	}
+}
+
+// --- handleCheckout ---
 func TestHandleCheckout_MalformedBodyRejected(t *testing.T) {
 	h := NewHandler(t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "/api/git/checkout", strings.NewReader("{"))

@@ -228,7 +228,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			lines = append(lines, line)
 		}
 	}
-	remote, rErr := gitCmd(ctx, dir, subRemote, "get-url", "origin")
+	remote, rErr := gitCmd(ctx, dir, subRemote, "get-url", remoteOrigin)
 	if rErr != nil {
 		slog.Debug("git remote get-url failed during log", "repo", dir, "error", rErr)
 	}

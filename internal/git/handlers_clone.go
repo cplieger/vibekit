@@ -6,6 +6,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -44,9 +45,138 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git clone", "url", scrubAuth(body.URL))
 	cloneCtx, cancel := context.WithTimeout(r.Context(), h.timeouts.Clone)
 	defer cancel()
-	cmd := gitExec(cloneCtx, h.workDir, "clone", "--", body.URL)
-	out, err := cmd.CombinedOutput()
-	writeCmdResult(w, strings.TrimSpace(string(out)), err)
+	out, err := h.clone(cloneCtx, body.URL)
+	if err != nil {
+		// handleReclone logs its clone failure and this handler did not,
+		// so a failed clone left an "it started" line and nothing saying
+		// why it stopped: the reason existed only in the HTTP response
+		// body, which the browser discards.
+		slog.Error("git clone: failed", "url", scrubAuth(body.URL), "error", err, "out", scrubAuth(out))
+	}
+	writeCmdResult(w, out, err)
+}
+
+// clone runs the clone for handleClone, choosing between a plain
+// `git clone` and adoptDestination by what already sits at the
+// destination.
+func (h *Handler) clone(ctx context.Context, remote string) (string, error) {
+	name := cloneDirName(remote)
+	if name == "" {
+		// The destination is not predictable from this URL, so let git
+		// derive it and report whatever it finds.
+		return gitCmd(ctx, h.workDir, "clone", "--", remote)
+	}
+	dir := filepath.Join(h.workDir, name)
+	if dir == h.workDir {
+		// Unreachable through cloneDirName, which refuses "." and "..".
+		// Kept so a future change there cannot turn the workspace root
+		// into an adoption target.
+		return gitCmd(ctx, h.workDir, "clone", "--", remote)
+	}
+	switch inspectCloneDest(ctx, dir) {
+	case destRepo:
+		return "", fmt.Errorf("%s already exists and is a git repository; delete it or use re-clone to replace it", name)
+	case destOccupied:
+		slog.Info("git clone: adopting an existing directory", "dir", name)
+		return adoptDestination(ctx, dir, remote)
+	}
+	// destAbsent and destEmpty are both git's to handle: it creates the
+	// directory, and it clones into an existing empty one. A state added
+	// to destState later lands here too, which is the safe default.
+	return gitCmd(ctx, h.workDir, "clone", "--", remote)
+}
+
+// destState describes what occupies a clone destination.
+type destState int
+
+const (
+	// destAbsent is nothing at the name, or something that is not a
+	// directory. Both are git's to report.
+	destAbsent destState = iota
+	// destEmpty is an existing directory with no entries.
+	destEmpty
+	// destRepo is an existing git repository.
+	destRepo
+	// destOccupied is an existing directory holding other content.
+	destOccupied
+)
+
+// inspectCloneDest reports what sits at dir. A symlink reads as
+// destAbsent deliberately: adopting one would write through it to a
+// target the caller never named, so it stays git's error to report.
+func inspectCloneDest(ctx context.Context, dir string) destState {
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() {
+		return destAbsent
+	}
+	if IsRepo(ctx, dir) {
+		return destRepo
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil || len(ents) == 0 {
+		// An unreadable directory falls through to plain clone, whose
+		// failure names the real reason.
+		return destEmpty
+	}
+	return destOccupied
+}
+
+// adoptDestination clones remote into dir, an existing directory that
+// already holds content. Plain `git clone` refuses that outright
+// ("destination path ... already exists and is not an empty directory"),
+// which made a whole class of repository unclonable here: activating code
+// intelligence writes <workspace>/.kiro/settings/lsp.json, so the
+// destination for a repo NAMED .kiro exists before anyone asks to clone
+// it, and every attempt failed in a few milliseconds.
+//
+// The sequence is git's own way to populate a directory that already has
+// content, and it keeps the property that made plain clone refuse in the
+// first place: the final checkout REFUSES to overwrite an untracked file,
+// so pre-existing content is either left untouched or the operation fails
+// with git naming the colliding paths. Nothing here deletes or overwrites.
+func adoptDestination(ctx context.Context, dir, remote string) (string, error) {
+	var combined strings.Builder
+	run := func(args ...string) (string, error) {
+		out, err := gitCmd(ctx, dir, args...)
+		if out != "" {
+			combined.WriteString(out)
+			combined.WriteString("\n")
+		}
+		return out, err
+	}
+	report := func() string { return strings.TrimSpace(combined.String()) }
+
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		// `--` barrier for the same reason handleClone passes one.
+		{subRemote, "add", remoteOrigin, "--", remote},
+		{subFetch, "--quiet", "--no-tags", remoteOrigin},
+	} {
+		if _, err := run(args...); err != nil {
+			return report(), err
+		}
+	}
+	// origin/HEAD names the branch a plain clone would have checked out.
+	// A remote with no commits cannot answer, and that is not a failure:
+	// the repository is initialised and tracked, there is simply nothing
+	// to check out yet.
+	if _, err := run(subRemote, "set-head", remoteOrigin, "--auto"); err != nil {
+		return report(), nil
+	}
+	head, err := run("symbolic-ref", "--short", "refs/remotes/"+remoteOrigin+"/HEAD")
+	if err != nil {
+		return report(), nil
+	}
+	// --short answers "origin/<branch>"; the local branch is what remains.
+	branch := strings.TrimPrefix(strings.TrimSpace(head), remoteOrigin+"/")
+	if !isValidGitRef(branch) {
+		return report(), fmt.Errorf("remote HEAD is not a usable branch name: %q", branch)
+	}
+	// A tracking branch by DWIM, exactly what clone would have left behind.
+	if _, err := run(subCheckout, branch); err != nil {
+		return report(), err
+	}
+	return report(), nil
 }
 
 // handleReclone deletes the local copy of `repo` and re-clones it from its
@@ -88,7 +218,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, msgNotAGitRepo)
 		return
 	}
-	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
+	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", remoteOrigin)
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
 		webhttp.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
