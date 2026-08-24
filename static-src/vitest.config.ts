@@ -161,6 +161,32 @@ export default defineConfig({
     // Fail fast on first suite error in CI; run all in watch mode.
     bail: process.env["CI"] ? 1 : 0,
 
+    // ONE retry in CI, and it exists for a single named upstream defect: the
+    // playwright provider's module mocker keeps its route bookkeeping on the
+    // shared browser CONTEXT keyed by `sessionId:moduleUrl`, and its async
+    // `register` / `clear` RPCs interleave across test FILES. `clear` walks a
+    // per-session id set that is never pruned, so a teardown landing after the
+    // next file has registered can `unroute` the predicate that file just
+    // installed. The real module is then served, `vi.mocked(x)` hands back the
+    // real function, and the test dies on `x.mockReturnValue is not a
+    // function`. It needs two files mocking the same URL, which is every file
+    // that touches ../api-client.js. Upstream discussion:
+    // https://github.com/vitest-dev/vitest/discussions/8602 (open; 4.1.11 is
+    // latest, so there is no version to bump to). Measured here at ~1 run in
+    // 25 after the browser-mode migration, and with `bail: 1` above it takes
+    // the whole suite with it.
+    //
+    // A retry does NOT hide a product flake: vitest reports a test that only
+    // passed on the retry as `flaky` in its own summary line, so the signal
+    // survives while the gate stops blocking on someone else's race. Deleting
+    // this is correct the moment the upstream fix ships.
+    //
+    // Dropping the provider's `mocker` to fall back to vitest's server-side
+    // interceptor was tried and rejected: it works, but it re-transforms the
+    // module graph per registration and the 195-file suite did not finish 4
+    // files in 28 minutes.
+    retry: process.env["CI"] ? 1 : 0,
+
     // Pure functions should complete in milliseconds. Property-based
     // tests (fast-check 1000-iteration) need more headroom under
     // container load — bumped from 2s to 5s. Aligns with the 10s
