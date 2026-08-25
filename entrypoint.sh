@@ -19,12 +19,12 @@ TOOLS="$CONFIG_DIR/tools"
 # comments intact: the shared custom datasource matches on exactly this shape,
 # and tests/shell/pins_export_test.sh asserts it along with the export below.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.19.1"
-KIRO_CLI_SHA256="7cde2ce720c73912e98a19c56311776655d59e0cca85d75272c79be74c126d23"
+KIRO_CLI_VERSION="2.19.2"
+KIRO_CLI_SHA256="940d1d348d990ac9d479fd7b41d6ec51f3aafe345a40bff22f5744893f1438aa"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="6988e255f994f508e1299ddff937e6cb1157e06d43875d26c9f407cc2f12f299" # kiro-cli 2.19.1
+KIRO_CLI_SHA256_ARM64="36eba43b2b9188d013ada3a1c12d3c8f393f6283c02c3ceed8f6e5fe0e3d4a41" # kiro-cli 2.19.2
 
 # Export the pins to the server, which owns the install. Without this the server
 # sees no pins, resolves kiro-cli by bare name and turns its readiness gate OFF —
