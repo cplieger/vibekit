@@ -24,12 +24,19 @@
 .docs-row {
   flex-direction: row;
   align-items: center;
-  gap: var(--sp-1);
+  gap: var(--sp-2);
+
+  /* Roomier than the shared .list-row's 4px. These rows carry three stacked
+     blocks (title, badges, description) rather than the single centred line
+     every other list on the page shows, so the shared padding packed adjacent
+     rows' text against the 1px separator and the whole panel read as one dense
+     block. Scoped here so History, Tools and the git rows keep their density. */
+  padding-block: var(--sp-2);
 }
 
-/* The surface carries the two lines (name row, then the description) that
-   .list-row's single centred line does not assume, so its own axis is the column
-   one the row used to have.
+/* The surface carries the stacked blocks (title, then the badge line, then the
+   description) that .list-row's single centred line does not assume, so its own
+   axis is the column one the row used to have.
 
    EVERY block of a docs row belongs in here, not beside it. The row's axis is
    horizontal, so a block appended to the ROW becomes a column sitting next to
@@ -41,7 +48,11 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.125rem;
+
+  /* 4px, not the 2px this carried while the surface held two lines. Three
+     stacked blocks at 2px read as one paragraph with odd leading rather than as
+     a title, its badges and its description. */
+  gap: var(--sp-1);
   flex: 1 1 auto;
   min-width: 0;
 
@@ -72,38 +83,47 @@
    one set, which is the unit the tab bar makes the user compare. */
 .docs-row .list-row-name {
   font-weight: var(--fw-medium);
+
+  /* Content-sized rather than .list-row-name's `flex: 1`. That flex existed to
+     push the inclusion badge to the far edge of the title line; with the badges
+     moved to their own block the only thing left beside the name is the git
+     status letter, and absorbing the free space would fling that letter to the
+     opposite end of the row from the file it describes. It still ellipsizes when
+     the row is too narrow — the shrink factor and min-width are the base rule's. */
+  flex: 0 1 auto;
 }
 
-/* The trailing controls. Reveal on row hover / control focus, so a resting list
-   stays quiet; a keyboard user reaches the delete by Tab, which is why
-   focus-within is part of the condition rather than hover alone. */
+/* The trailing controls, VISIBLE AT REST.
+ *
+ * They used to fade in on row hover / control focus, and that reveal is what
+ * produced the empty right-hand column this page was reported for: the slot held
+ * its width on every row of all five document tabs and painted nothing in it —
+ * 60px on Steering, Skills, Agents and Specs, 108px on Hooks, where it also
+ * carries the enable switch. Showing them costs the quiet resting list the
+ * reveal was for and buys three things back. The column is no longer dead space.
+ * The affordances are discoverable, which they were not: a delete you have to
+ * hover a row to learn about is a delete nobody knows the page has. And the hook
+ * enable switch is a STATE read-out that was inheriting the reveal, so whether a
+ * hook was on or off could not be read without pointing at its row.
+ *
+ * It also drops a touch problem rather than papering over it. Without hover
+ * there is no reveal, so on a phone or an iPad these were controls the device
+ * could never show — while still occupying their column and still accepting
+ * taps, an invisible delete button at the edge of every row. */
 .docs-row-controls {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   flex-shrink: 0;
   color: var(--c-text-tertiary);
-  opacity: 0;
-  transition: opacity var(--dur-micro) var(--ease-standard);
-}
-
-.docs-row:hover > .docs-row-controls,
-.docs-row:focus-within > .docs-row-controls {
-  opacity: 1;
-}
-
-/* A read-only row has no controls to reveal, so its badge is always visible —
-   an affordance that appears on hover and then refuses is the click-then-fail
-   this gate exists to remove. */
-.docs-row-controls:has(> .docs-badge-link) {
-  opacity: 1;
 }
 
 .docs-row-delete:hover {
   color: var(--c-red);
 }
 
-/* The first line: name, git letter, then the metadata badges pushed right. */
+/* The title line: name, then the git letter. The badges are NOT here any more —
+   they are the surface's second block (see .docs-row-meta). */
 .docs-row-top {
   display: flex;
   align-items: center;
@@ -111,10 +131,25 @@
   min-width: 0;
 }
 
+/* The badge line, under the title. Left-aligned with the title and the
+   description, so the three blocks share one edge a reader scans down; pushing
+   the pills to the far right is what made them read as stranded.
+
+   wrap, because Hooks rows carry a trigger badge plus a global/disabled badge
+   plus the enable switch, and on a phone that is more than one line of pills.
+   docs.ts appends this block only when a document has a badge, so nothing here
+   needs an :empty guard — a Skills row with no declared inclusion mode gets no
+   block and therefore no gap after its title. */
 .docs-row-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-1);
+
+  /* For the Workflows tab, where recipes.ts keeps this block inside the title
+     line as a badge that hugs the name (see the Workflows section). Inert in the
+     column the document tabs put it in — the surface has no fixed height, so
+     there is nothing for a column child to shrink against. */
   flex-shrink: 0;
 }
 
