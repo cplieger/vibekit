@@ -79,6 +79,38 @@ export function initBlockRenderer(c: BlockCbs): void {
   cbs = c;
 }
 
+/**
+ * The live TOP-LEVEL text bubble under `root`, or null.
+ *
+ * This is what Following pins to (`scroll.ts` `setAnchorProvider`), and it lives
+ * here because this module is what puts `.streaming` on a bubble and what builds
+ * the delegate boxes. Two rules, and both exist because a pin above the live edge
+ * strands the reader mid-transcript:
+ *
+ *   - THE LAST match, not the first. `sealLiveBubble` is per-MESSAGE state, so a
+ *     turn split across two assistant messages (a mid-turn model switch does
+ *     that) leaves the earlier message's trailing bubble marked until the turn
+ *     finalizes. A `querySelector` returns document order, which is the OLDEST
+ *     of them.
+ *   - NOT a delegate's bubble. A subagent's or workflow step's live text streams
+ *     inside a box that is collapsed by default, and `height: 0` +
+ *     `overflow: hidden` clips that content without taking it out of layout — so
+ *     it reports offsets inside a box contributing no height to the document,
+ *     and the pin they produce points at nothing the reader can see. With no
+ *     top-level bubble streaming, null is the right answer: the document bottom
+ *     is where the box's own rolling tail and its footer are.
+ */
+export function liveTextAnchor(root: HTMLElement): HTMLElement | null {
+  const live = root.querySelectorAll<HTMLElement>(".message.assistant.streaming");
+  for (let i = live.length - 1; i >= 0; i--) {
+    const bubble = live[i];
+    if (bubble?.closest(".subagent-body") === null) {
+      return bubble;
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Per-message render state
 // ---------------------------------------------------------------------------
@@ -102,6 +134,12 @@ interface MsgRender {
   subagentMembers: Map<string, Set<string>>;
   /** Every mounted bubble handle (for finalize end()). */
   bubbles: AssistantBubble[];
+  /** The one bubble currently carrying the streaming caret, or null. The caret
+   *  is a `::after` on `.message.assistant.streaming`, and `bubbles` is
+   *  append-only with no notion of which entry is at the tail — so without this
+   *  pointer nothing can seal the block that WAS the tail when a new one opens,
+   *  and each streamed block keeps its caret for the rest of the turn. */
+  liveBubble: AssistantBubble | null;
   /** Every mounted reasoning handle (for finalize seal()). */
   reasonings: ReasoningView[];
   /** The still-open reasoning block per container (auto-collapse on sibling). */
@@ -127,6 +165,7 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
     subagents: new Map(),
     subagentMembers: new Map(),
     bubbles: [],
+    liveBubble: null,
     reasonings: [],
     openReasoning: new Map(),
     toolGroups: new Map(),
@@ -187,8 +226,12 @@ export function finalizeAssistantBody(msgId: string): void {
     return;
   }
   for (const b of st.bubbles) {
+    // end(), not finishNow(): the turn is over but the last block's reveal may
+    // still be behind the live edge, and that residue is text the model really
+    // did produce last. It keeps flowing (with its caret) until it lands.
     b.end();
   }
+  st.liveBubble = null;
   for (const r of st.reasonings) {
     r.seal();
   }
@@ -196,10 +239,23 @@ export function finalizeAssistantBody(msgId: string): void {
 
 /** Drop a message's render state (reconcile.onRemove / chat switch). */
 export function disposeAssistantBody(msgId: string): void {
+  const st = renders.get(msgId);
+  if (st !== undefined) {
+    // A bubble mid-reveal holds a frame loop. Its DOM is about to go, so finish
+    // it here rather than letting it drain into a detached node.
+    for (const b of st.bubbles) {
+      b.finishNow();
+    }
+  }
   renders.delete(msgId);
 }
 
 export function resetBlockRenders(): void {
+  for (const st of renders.values()) {
+    for (const b of st.bubbles) {
+      b.finishNow();
+    }
+  }
   renders.clear();
 }
 
@@ -210,6 +266,14 @@ export function resetBlockRenders(): void {
 function renderRange(st: MsgRender, m: Message, from: number, to: number, live: boolean): void {
   const blocks = m.blocks ?? [];
   const lastIdx = blocks.length - 1;
+  if (to > from) {
+    // A block is being appended, so whatever held the caret is no longer the
+    // tail. Seal it here rather than in mountText: the new tail may be a
+    // thinking block or a tool card, and the previous text block stops
+    // streaming either way. Idempotent — `end()` nulls its own stream and
+    // `classList.remove` is a no-op when the class is absent.
+    sealLiveBubble(st);
+  }
   for (let i = from; i < to; i++) {
     const block = blocks[i];
     if (block === undefined) {
@@ -220,6 +284,19 @@ function renderRange(st: MsgRender, m: Message, from: number, to: number, live: 
     placeBlock(st, m, block, i, live && i === lastIdx);
   }
   st.rendered = to;
+}
+
+/** End the bubble currently carrying the caret, if any. */
+function sealLiveBubble(st: MsgRender): void {
+  // finishNow, not end: the tail MOVED, so the model is already producing
+  // something else and this block's residual reveal is no longer live text. Left
+  // to drain it would carry its caret alongside the new tail's for the reveal's
+  // lag, and "exactly one streaming caret" is the invariant this function exists
+  // to keep. The cost is up to LAG_SECS of prose landing at once, at the moment a
+  // new block is appearing anyway. The turn's LAST block is different and gets
+  // the graceful drain — see finalizeAssistantBody.
+  st.liveBubble?.finishNow();
+  st.liveBubble = null;
 }
 
 /** Resolve the container a block renders into: the top-level `.assistant-blocks`
@@ -304,6 +381,9 @@ function mountText(
   const initial = block.text ?? "";
   const bubble = buildAssistantBubble(initial, live);
   st.bubbles.push(bubble);
+  if (live) {
+    st.liveBubble = bubble;
+  }
   st.blockText.set(i, (full) => {
     bubble.setText(full);
   });

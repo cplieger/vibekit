@@ -30,7 +30,7 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-const { buildAssistantBody, updateAssistantBody, finalizeAssistantBody } =
+const { buildAssistantBody, updateAssistantBody, finalizeAssistantBody, liveTextAnchor } =
   await import("./messages-blocks.js");
 
 function text(t: string, subtask = ""): Record<string, unknown> {
@@ -218,5 +218,201 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
     expect(wrap.querySelector(".subagent-body")?.textContent).toContain(
       "delegate finished its walk",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The streaming caret has an END, and there is exactly one of it.
+//
+// The caret is a single CSS pseudo-element on `.message.assistant.streaming`,
+// added by `buildAssistantBubble(initial, live)` and removed only by that
+// bubble's `end()`. `renderRange` decides liveness as `live && i === lastIdx`,
+// evaluated once when a block MOUNTS, and mounting is append-only — so a turn
+// shaped "prose → tool call → prose → tool call → prose" opened three text
+// blocks, each of which was the tail when it mounted, and nothing ever sealed
+// the one that stopped being the tail. The reader saw a caret per block for the
+// whole turn (3, 4, 5 of them), and a leaked class also pins the transcript's
+// `:has(.message.assistant.streaming)` 50dvh viewport reserve on permanently.
+// ---------------------------------------------------------------------------
+
+describe("exactly one streaming caret, and it ends", () => {
+  const CARET = ".message.assistant.streaming";
+
+  function liveMessage(blocks: Record<string, unknown>[]): Message {
+    return {
+      id: `m-caret-${String(Math.random())}`,
+      role: "assistant",
+      content: "",
+      blocks,
+      tool_calls: [],
+    } as unknown as Message;
+  }
+
+  it("moves the caret to the new tail instead of accumulating one per block", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("first paragraph")];
+    const m = liveMessage(blocks);
+    buildAssistantBody(wrap, m, true);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
+
+    // Three more text blocks arrive, each becoming the tail in turn. This is the
+    // ordinary shape of a turn that interleaves prose and tool calls.
+    for (const next of ["second paragraph", "third paragraph", "fourth paragraph"]) {
+      blocks.push(text(next));
+      updateAssistantBody(wrap, m, true);
+      expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
+    }
+    // ...and it is the LAST bubble that carries it.
+    const bubbles = [...wrap.querySelectorAll(".message.assistant")];
+    expect(bubbles).toHaveLength(4);
+    expect(bubbles.at(-1)?.classList.contains("streaming")).toBe(true);
+  });
+
+  it("seals the previous text block when the new tail is a tool call", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("about to run something")];
+    const m = liveMessage(blocks);
+    buildAssistantBody(wrap, m, true);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
+
+    blocks.push(toolUse("t1"));
+    updateAssistantBody(wrap, m, true);
+    // Prose that has been superseded by a tool call is not streaming; a tool
+    // card carries its own status affordance and never a caret.
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
+  });
+
+  it("leaves no caret behind after finalize", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("one")];
+    const m = liveMessage(blocks);
+    buildAssistantBody(wrap, m, true);
+    blocks.push(text("two"));
+    updateAssistantBody(wrap, m, true);
+
+    finalizeAssistantBody(m.id);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
+  });
+
+  it("is idempotent: finalize twice, and a repaint after it, stay caret-free", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("one")];
+    const m = liveMessage(blocks);
+    buildAssistantBody(wrap, m, true);
+
+    finalizeAssistantBody(m.id);
+    finalizeAssistantBody(m.id);
+    updateAssistantBody(wrap, m, false);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
+  });
+
+  it("never opens a caret on a replayed message", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("a"), toolUse("t1"), text("b")];
+    const m = liveMessage(blocks);
+    buildAssistantBody(wrap, m, false);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
+  });
+
+  it("holds one caret across the whole message when a subagent streams", () => {
+    // `mountText` is the same function for a top-level bubble and one inside a
+    // SubagentBlock body, so a delegate's tail block used to add a caret of its
+    // own nested inside the collapsible box.
+    const wrap = document.createElement("div");
+    const blocks = [text("parent prose")];
+    const m = liveMessage(blocks);
+    buildAssistantBody(wrap, m, true);
+
+    blocks.push(text("delegate prose", "sub-A"));
+    updateAssistantBody(wrap, m, true);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
+
+    blocks.push(text("parent again"));
+    updateAssistantBody(wrap, m, true);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
+
+    finalizeAssistantBody(m.id);
+    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which bubble Following pins to.
+//
+// The pin puts the anchor's bottom at the viewport's bottom, so an anchor that
+// sits ABOVE the live edge parks the reader mid-transcript with the newest work
+// off-screen — and, before the scroll listener learned to ignore the controller's
+// own landing, latched the auto-scroll off entirely.
+// ---------------------------------------------------------------------------
+describe("liveTextAnchor", () => {
+  const CARETS = ".message.assistant.streaming";
+
+  function liveMsg(blocks: Record<string, unknown>[]): Message {
+    return {
+      id: `m-${String(Math.random())}`,
+      role: "assistant",
+      content: "",
+      blocks,
+      tool_calls: [],
+    } as unknown as Message;
+  }
+
+  it("has no anchor when nothing is streaming", () => {
+    const wrap = document.createElement("div");
+    buildAssistantBody(wrap, liveMsg([text("done")]), false);
+    expect(liveTextAnchor(wrap)).toBeNull();
+  });
+
+  it("takes the LAST live bubble, not the first in document order", () => {
+    // One turn, two assistant messages: a mid-turn model switch splits it, and
+    // the seal that drops `.streaming` is per-MESSAGE state, so the earlier
+    // message's trailing bubble stays marked until the turn finalizes. A
+    // `querySelector` would hand back that one, which is the older of the two.
+    const wrap = document.createElement("div");
+    buildAssistantBody(wrap, liveMsg([text("the earlier message")]), true);
+    buildAssistantBody(wrap, liveMsg([text("the message still streaming")]), true);
+
+    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
+    expect(live).toHaveLength(2);
+    expect(liveTextAnchor(wrap)).toBe(live[1]);
+  });
+
+  it("has no anchor when only a DELEGATE is streaming", () => {
+    // The dispatcher seals the parent's bubble when the delegate's block
+    // appends, so this is the ordinary shape of a running subagent. Null is the
+    // answer rather than the delegate's bubble: that bubble sits inside a box
+    // collapsed to `height: 0` with `overflow: hidden`, which clips it without
+    // taking it out of layout, so its offsets describe a position the reader
+    // cannot see. The document bottom is where the box's tail and footer are.
+    const wrap = document.createElement("div");
+    const blocks = [text("parent prose")];
+    const m = liveMsg(blocks);
+    buildAssistantBody(wrap, m, true);
+    blocks.push(text("delegate prose", "sub-A"));
+    updateAssistantBody(wrap, m, true);
+
+    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
+    expect(live).toHaveLength(1);
+    expect(live[0]?.closest(".subagent-body")).not.toBeNull();
+    expect(liveTextAnchor(wrap)).toBeNull();
+  });
+
+  it("prefers a top-level bubble over a later delegate bubble", () => {
+    // Two messages again, and this is the case that makes "last match" and
+    // "skip delegates" two separate rules rather than one: the delegate's bubble
+    // is the LAST in document order while the top-level one is what the reader
+    // is following.
+    const wrap = document.createElement("div");
+    const withDelegate = liveMsg([text("older parent prose")]);
+    const blocks = withDelegate.blocks as unknown as Record<string, unknown>[];
+    buildAssistantBody(wrap, withDelegate, true);
+    blocks.push(text("delegate prose", "sub-A"));
+    updateAssistantBody(wrap, withDelegate, true);
+    buildAssistantBody(wrap, liveMsg([text("newer parent prose")]), true);
+
+    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
+    expect(live).toHaveLength(2);
+    expect(live[1]?.closest(".subagent-body")).toBeNull();
+    expect(liveTextAnchor(wrap)).toBe(live[1]);
   });
 });

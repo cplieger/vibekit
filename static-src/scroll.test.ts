@@ -360,13 +360,17 @@ describe("the End key", () => {
     target.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, ...init }));
   }
 
+  // The live edge is `scrollHeight - clientHeight` — the largest scrollTop the
+  // box actually has. Every landing is clamped to it, because the marker that
+  // tells the scroll listener a scroll was the controller's own has to be the
+  // position the browser will really reach.
   it("resumes Following and pins to the live edge", async () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     scroll.setUserScrolledUp(true);
     pressEnd(document.body);
     expect(scroll.readingState()).toBe("following");
     await settle();
-    expect(s.scrollTop).toBe(2000);
+    expect(s.scrollTop).toBe(1500);
   });
 
   it("leaves the reader alone when they are already Following", async () => {
@@ -462,7 +466,7 @@ describe("the resume control", () => {
     scrollBtn.click();
     expect(scroll.readingState()).toBe("following");
     await settle();
-    expect(s.scrollTop).toBe(2000);
+    expect(s.scrollTop).toBe(1500);
   });
 
   it("carries the label the caller sets", () => {
@@ -480,7 +484,7 @@ describe("scrollToBottom", () => {
     scroll.scrollToBottom();
     expect(scroll.readingState()).toBe("following");
     await settle();
-    expect(s.scrollTop).toBe(2000);
+    expect(s.scrollTop).toBe(1500);
   });
 
   it("hides the resume control once the jump has landed", async () => {
@@ -507,7 +511,7 @@ describe("the streaming auto-scroll", () => {
     const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 100 });
     messagesEl.appendChild(document.createElement("div"));
     await settle();
-    expect(s.scrollTop).toBe(2000);
+    expect(s.scrollTop).toBe(1500);
   });
 
   it("does not move the reader while they are Reading", async () => {
@@ -547,13 +551,14 @@ describe("the streaming auto-scroll", () => {
   });
 
   it("never scrolls past the end of the content", async () => {
-    // 9000 + 100 - 500 + 50 is past a 1000px transcript.
+    // 9000 + 100 - 500 + 50 is past a 1000px transcript, so the landing is the
+    // maximum scrollTop a 500px viewport over 1000px of content has.
     const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 0 });
     const anchor = fakeAnchor(9000, 100);
     scroll.setAnchorProvider(() => anchor);
     messagesEl.appendChild(anchor);
     await settle();
-    expect(s.scrollTop).toBe(1000);
+    expect(s.scrollTop).toBe(500);
   });
 
   // One frame per burst of mutations, but the guard has to re-arm or the second
@@ -566,7 +571,7 @@ describe("the streaming auto-scroll", () => {
     s.scrollHeight = 3000;
     messagesEl.appendChild(document.createElement("div"));
     await settle();
-    expect([afterFirst, s.scrollTop]).toEqual([2000, 3000]);
+    expect([afterFirst, s.scrollTop]).toEqual([1500, 2500]);
   });
 });
 
@@ -717,5 +722,138 @@ describe("fillViewport", () => {
     scroll.fillViewport();
     scroll.fillViewport();
     expect(load).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REAL LAYOUT. This section is the one that must not use `fakeScroller`, and
+// the reason is mechanical rather than stylistic: the fake shadows `scrollTo`
+// with a plain assignment to its own `scrollTop` number, which fires no `scroll`
+// event. The defect below lives entirely in that event — the controller's own
+// pin re-entering its own listener — so a faked scroller reports every one of
+// these as passing while the feature is broken in the browser.
+//
+// So the scroller here is a real overflowing box, the writes are the platform's
+// own, and the events are the ones a reader would produce.
+// ---------------------------------------------------------------------------
+describe("a large tool card below the streaming block", () => {
+  /** Undo the fake and give the singleton's element real overflow. */
+  function realScroller(): HTMLElement {
+    const wrap = scroll.getScrollEl();
+    // `Reflect.deleteProperty` rather than `delete`: the keys are computed, and
+    // the point is to drop `fakeScroller`'s redefinitions so the platform's own
+    // metrics and `scrollTo` come back.
+    for (const key of ["scrollHeight", "clientHeight", "scrollTop", "scrollTo"]) {
+      Reflect.deleteProperty(wrap, key);
+    }
+    wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;";
+    if (messagesEl.parentElement !== wrap) {
+      wrap.appendChild(messagesEl);
+    }
+    messagesEl.replaceChildren();
+    wrap.scrollTop = 0;
+    return wrap;
+  }
+
+  /** A block with real height, appended to the transcript. */
+  function block(px: number, className = ""): HTMLElement {
+    const d = document.createElement("div");
+    if (className !== "") {
+      d.className = className;
+    }
+    d.style.cssText = `height:${String(px)}px;`;
+    messagesEl.appendChild(d);
+    return d;
+  }
+
+  /** Longer than `settle()`: a real scroll event is delivered on its own turn,
+   *  after the frame the write happened in. */
+  async function land(): Promise<void> {
+    await new Promise((r) => setTimeout(r, 120));
+  }
+
+  beforeEach(async () => {
+    scroll.setAnchorProvider(null);
+    realScroller();
+    await land();
+    scroll.resetScrollState();
+  });
+
+  it("keeps Following when the pin lands far from the document bottom", async () => {
+    // The reported failure: the agent streams a sentence, a 900px tool card
+    // renders below it, and the anchored pin lands 850px above the bottom. The
+    // controller used to read its own landing through `isAtBottom` and declare
+    // the reader Reading, which is the state that switches the auto-scroll off.
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    const wrap = scroll.getScrollEl();
+    expect(scroll.readingState()).toBe("following");
+    expect(wrap.scrollTop).toBe(1350);
+    expect(wrap.scrollHeight - wrap.clientHeight).toBe(2200);
+  });
+
+  it("keeps Following when the anchor sits in a collapsed disclosure", async () => {
+    // A subagent's live text block streams inside a box that is collapsed by
+    // default. `height: 0` + `overflow: hidden` clips it without removing it
+    // from layout, so it still reports the offsets the pin arithmetic reads —
+    // offsets that overflow a document the box contributes no height to.
+    block(1500);
+    const box = block(0);
+    box.style.cssText = "height:0;overflow:hidden;";
+    const streaming = document.createElement("div");
+    streaming.className = "message assistant streaming";
+    streaming.style.cssText = "height:300px;";
+    box.appendChild(streaming);
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land();
+
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("still parks the reader in Reading when THEY scroll up", async () => {
+    // The guard excuses the controller's own landing and nothing else, so the
+    // gesture the state exists for has to keep working over the same DOM.
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    scroll.getScrollEl().scrollTop = 200;
+    await land();
+    expect(scroll.readingState()).toBe("reading");
+  });
+
+  it("re-pins on every chunk rather than once per debounce window", async () => {
+    // The self-scroll also used to arm the user-scroll debounce, throttling the
+    // pin to one landing every 150ms for as long as a turn streamed.
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    const wrap = scroll.getScrollEl();
+    streaming.style.height = "400px";
+    streaming.appendChild(document.createTextNode("chunk one"));
+    await land();
+    const first = wrap.scrollTop;
+    streaming.style.height = "600px";
+    streaming.appendChild(document.createTextNode("chunk two"));
+    await land();
+    // Two distinct pin positions, not two landings on a clamped maximum: the
+    // 900px card below keeps both pins short of the document's end.
+    expect([first, wrap.scrollTop]).toEqual([1550, 1750]);
   });
 });

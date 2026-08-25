@@ -270,7 +270,7 @@ describe("the scroller's resize observer", () => {
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     h.ro.fire();
     await settle();
-    expect(g.scrollTop).toBe(2000);
+    expect(g.scrollTop).toBe(1500);
   });
 });
 
@@ -326,7 +326,7 @@ describe("the transcript's mutation observer", () => {
     g.scrollTop = 0;
     row.appendChild(document.createElement("span"));
     await settle();
-    expect(g.scrollTop).toBe(2000);
+    expect(g.scrollTop).toBe(1500);
   });
 
   it("scrolls when a row's text grows", async () => {
@@ -342,7 +342,7 @@ describe("the transcript's mutation observer", () => {
     g.scrollTop = 0;
     text.data += "tence";
     await settle();
-    expect(g.scrollTop).toBe(2000);
+    expect(g.scrollTop).toBe(1500);
   });
 });
 
@@ -459,7 +459,7 @@ describe("the user-scroll debounce window", () => {
     now.mockReturnValue(1150);
     h.messagesEl.appendChild(document.createElement("div"));
     await settle();
-    expect(g.scrollTop).toBe(2000);
+    expect(g.scrollTop).toBe(1500);
   });
 
   it("holds a chunk that arrives one millisecond earlier", async () => {

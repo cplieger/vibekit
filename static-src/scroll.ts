@@ -10,6 +10,15 @@
 // reader Following). It is left by reaching the bottom again, by the resume
 // control, or by End.
 //
+// ONLY A READER GESTURE MAY ENTER READING. Every scroll this module performs
+// records its landing (`scrollSelfTo`) and the listener drops the event that
+// write produces, because Following pins to the ANCHOR rather than to the
+// document bottom: the pin is legitimately far from the bottom whenever tall
+// evidence renders below the live text block, so a controller that re-derived
+// its state from its own pin declared the reader Reading and switched its own
+// auto-scroll off. That is how a large tool card used to stop the transcript
+// following, with the resume control appearing untouched.
+//
 // The value of naming the state is that the user stops fighting an invisible
 // heuristic. Log viewers have taught this for decades, and an agent transcript
 // IS a log.
@@ -87,6 +96,26 @@ class ScrollController {
 
   private rafPending = false;
 
+  /** The scrollTop this controller last wrote, or -1.
+   *
+   *  A `scroll` event landing on it is the controller's OWN and must not be read
+   *  as a reader gesture. Following pins to the ANCHOR, which is deliberately
+   *  not the document bottom, so deriving the state from a self-inflicted scroll
+   *  declared the reader Reading — and Reading is what makes
+   *  `autoScrollIfAnchored` return early, so the auto-scroll latched off for the
+   *  rest of the session. Measured in a real browser: an anchor 200px tall at
+   *  offsetTop 1500 in a 400px viewport with a 900px tool card below it pins to
+   *  1350 against a maximum of 2200, which is 850px from the bottom, so the
+   *  controller's own pin failed its own `isAtBottom` check by 750px. The reader
+   *  saw the transcript stop following and the `Latest` control appear without
+   *  having touched anything.
+   *
+   *  Compared as a POSITION rather than tracked as a boolean, because a
+   *  programmatic scroll that changes nothing fires no event at all and a flag
+   *  would then swallow the reader's next real gesture. Consumed on the first
+   *  event either way, so a stale marker cannot outlive one. */
+  private selfScrollTop = -1;
+
   /** Last value written to `--scrollbar-w`, so a resize storm costs at most one
    *  style invalidation. */
   private scrollbarWidth = "";
@@ -111,6 +140,18 @@ class ScrollController {
     this.scrollEl.addEventListener(
       "scroll",
       () => {
+        // Consume the marker whichever branch runs: it may only ever excuse the
+        // one event its own write produced.
+        const self = this.selfScrollTop;
+        this.selfScrollTop = -1;
+        if (self >= 0 && Math.abs(this.scrollEl.scrollTop - self) <= 1) {
+          // The controller's own landing. It says nothing about where the reader
+          // wants to be, so neither the state nor the debounce may move — and
+          // the debounce moving is what throttled the pin to one per 150ms
+          // while a turn streamed.
+          this.maybeLoadMore();
+          return;
+        }
         this.userScrollingUntil = Date.now() + USER_SCROLL_DEBOUNCE_MS;
         this.setState(this.isAtBottom() ? "following" : "reading");
         this.maybeLoadMore();
@@ -222,7 +263,7 @@ class ScrollController {
   resume(): void {
     this.setState("following");
     this.userScrollingUntil = 0;
-    this.scrollEl.scrollTo({ top: this.scrollEl.scrollHeight, behavior: "smooth" });
+    this.scrollSelfTo(this.scrollEl.scrollHeight, "smooth");
   }
 
   /** Enter Reading explicitly — a collapse the user asked for parks them on the
@@ -321,7 +362,7 @@ class ScrollController {
     this.setState("following");
     this.userScrollingUntil = 0;
     requestAnimationFrame(() => {
-      this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+      this.scrollSelfTo(this.scrollEl.scrollHeight, "instant");
     });
   }
 
@@ -356,6 +397,7 @@ class ScrollController {
     this.loadingMore = false;
     this.state = "following";
     this.userScrollingUntil = 0;
+    this.selfScrollTop = -1;
     this.deferred = [];
   }
 
@@ -425,8 +467,24 @@ class ScrollController {
       this.rafPending = false;
       const anchor = this.anchorProvider?.() ?? null;
       const target = anchor === null ? this.scrollEl.scrollHeight : this.anchorTop(anchor);
-      this.scrollEl.scrollTo({ top: target, behavior: "instant" });
+      this.scrollSelfTo(target, "instant");
     });
+  }
+
+  /** Move the scroller and record where it will LAND, so the `scroll` event the
+   *  write produces is recognised as this controller's own.
+   *
+   *  The clamp is not tidiness: the marker has to be the position the browser
+   *  will actually reach, and both callers pass values the platform clamps for
+   *  them (`scrollHeight` is a whole viewport past the maximum, and an anchor
+   *  inside a collapsed disclosure reports offsets that overflow the document
+   *  it no longer contributes height to). An unclamped marker never matches the
+   *  event, which is the same as having no marker at all. */
+  private scrollSelfTo(top: number, behavior: ScrollBehavior): void {
+    const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
+    const landing = Math.max(0, Math.min(top, max));
+    this.selfScrollTop = landing;
+    this.scrollEl.scrollTo({ top: landing, behavior });
   }
 
   /** The scrollTop that puts `anchor`'s bottom at the viewport's bottom, never
