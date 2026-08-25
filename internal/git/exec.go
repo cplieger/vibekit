@@ -9,6 +9,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os/exec"
 	"path"
@@ -105,6 +106,7 @@ func scrubAuth(s string) string {
 const (
 	subAdd      = "add"
 	subCheckout = "checkout"
+	subClean    = "clean"
 	subFetch    = "fetch"
 	subRemote   = "remote"
 	subReset    = "reset"
@@ -114,6 +116,7 @@ var allowedSubcommands = map[string]struct{}{
 	subAdd:         {},
 	"branch":       {},
 	subCheckout:    {},
+	subClean:       {},
 	"clone":        {},
 	"commit":       {},
 	"config":       {},
@@ -222,16 +225,20 @@ func firstSubcommand(args []string) string {
 //
 // Callers must supply a context with an appropriate timeout.
 func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	sub := firstSubcommand(args)
-	if _, ok := allowedSubcommands[sub]; !ok {
-		// Build a synthetic command that errors out cleanly. /bin/false
-		// always exits 1 and produces no output; CombinedOutput will
-		// surface a sentinel via stderr we set in cmd.Args[0].
+	if _, ok := allowedSubcommand(args); !ok {
+		// Build a synthetic command that fails without launching git. /bin/false
+		// always exits 1, and this branch deliberately spawns no shell: giving it
+		// an argv it could interpolate would hand a command-injection taint path
+		// to the exact boundary this allowlist exists to close.
+		//
+		// It also produces no OUTPUT, which used to be the whole diagnostic
+		// problem — a caller composing the output into its own message rendered a
+		// bare "clean:" naming no cause. That is fixed one layer up rather than
+		// here: gitCmd runs the same check and returns a real error, so the only
+		// callers that can reach this branch are the two that pass gitExec a
+		// literal subcommand, for which it is pure defence-in-depth.
 		cmd := exec.CommandContext(ctx, "/bin/false")
 		cmd.Dir = dir
-		// Stash a useful error string in Args so callers logging
-		// CombinedOutput see why; /bin/false ignores its args.
-		cmd.Args = append(cmd.Args, "git: subcommand not allowed: "+sub)
 		return cmd
 	}
 	// Prepend hardening -c flags. Command-line -c values take priority
@@ -269,7 +276,25 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 }
 
 // gitCmd executes a git subprocess and returns trimmed combined output.
+// allowedSubcommand reports the subcommand `args` names and whether it is
+// allowlisted. Shared by gitExec (which refuses to launch) and gitCmd (which
+// reports WHY), so the two can never disagree about what is permitted.
+func allowedSubcommand(args []string) (string, bool) {
+	sub := firstSubcommand(args)
+	_, ok := allowedSubcommands[sub]
+	return sub, ok
+}
+
 func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
+	// Checked here as well as in gitExec, because only this layer can return a
+	// message. gitExec's refusal is a command that exits 1 in silence, and a
+	// caller composing that silence into its own error produced a string ending
+	// at its own colon — which is how a missing allowlist entry presented as
+	// "Couldn't discard 6 files: clean:" and named nothing. No subprocess is
+	// spawned on this path at all.
+	if sub, ok := allowedSubcommand(args); !ok {
+		return "", fmt.Errorf("git: subcommand not allowed: %s", sub)
+	}
 	out, err := gitExec(ctx, dir, args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }

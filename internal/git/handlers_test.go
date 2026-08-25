@@ -1791,6 +1791,81 @@ func TestParseGitStatus_UnquotesSpecialFilenames(t *testing.T) {
 	}
 }
 
+// "Discard all" sends every dirty path in one request, so the handler must
+// clear tracked and untracked files together. Only the tracked half ever had a
+// test: `clean` was absent from the exec allowlist, so the untracked half ran
+// /bin/false and reported `clean:` with nothing after the colon while the
+// tracked half genuinely succeeded. The three file states below are what one
+// real "Discard all" click carries.
+func TestHandleDiscard_ClearsTrackedAndUntracked(t *testing.T) {
+	dir := t.TempDir()
+	initFixtureRepo(t, dir) // commits README.md ("hi\n") on main
+
+	// A modified tracked file, an untracked file, and a STAGED new file —
+	// the last lands in the untracked bucket because the handler unstages
+	// before discarding, so it also exercises the clean path.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "staged-new.txt"), []byte("y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "staged-new.txt")
+
+	h := NewHandler(dir)
+	body := `{"files":["README.md","untracked.txt","staged-new.txt"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/git/discard", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleDiscard(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want %d (body %q)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	// The failure is a 200 carrying an error envelope, so the status alone
+	// proves nothing — this is the assertion the bug would have tripped.
+	if strings.Contains(rec.Body.String(), `"error"`) {
+		t.Fatalf("body = %q, want no error envelope", rec.Body.String())
+	}
+
+	if got, err := os.ReadFile(filepath.Join(dir, "README.md")); err != nil {
+		t.Errorf("README.md after discard: %v", err)
+	} else if string(got) != "hi\n" {
+		t.Errorf("README.md = %q, want the committed %q restored", got, "hi\n")
+	}
+	for _, name := range []string{"untracked.txt", "staged-new.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s still present after discard (stat err = %v), want removed", name, err)
+		}
+	}
+}
+
+// A discard failure must name a cause. The message is built by joining
+// per-subcommand failures, so an empty subprocess output used to render as a
+// bare "<subcommand>:" that told the user nothing.
+func TestHandleDiscard_FailureNamesACause(t *testing.T) {
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+
+	h := NewHandler(dir)
+	// A tracked path that does not exist: checkout fails with a real message.
+	body := `{"files":["no-such-file.txt"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/git/discard", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleDiscard(rec, req)
+
+	got := rec.Body.String()
+	// Either it succeeded (nothing to do) or it failed with a stated cause;
+	// what it may never do is fail with a message ending at its own colon.
+	for _, sub := range []string{subCheckout, subClean} {
+		if strings.Contains(got, sub+`: "`) || strings.Contains(got, sub+`:\n`) {
+			t.Errorf("body = %q, want a cause after %q, not an empty one", got, sub+":")
+		}
+	}
+}
+
 func TestHandleLog_RepoReturnsCommitLines(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
