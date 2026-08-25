@@ -31,9 +31,9 @@ function turns(count: number, outcome: TurnOutcome = "completed"): TurnSummary[]
   return Array.from({ length: count }, (_, i) => turn(i + 1, { outcome }));
 }
 
-/** A rail tall enough for `n` conforming 24px markers. */
+/** A rail tall enough for `n` rows at the pitch production lays them out in. */
 function railFor(n: number): number {
-  return n * 24;
+  return n * ROW_PITCH_PX;
 }
 
 describe("railRows capacity", () => {

@@ -529,27 +529,48 @@
    ========================================================================== */
 
 .turn-rail {
+  --rail-w: 1.75rem;
+
   position: absolute;
 
   /* Starts BELOW the chat toolbar, not at the top of the transcript. The
    * toolbar is anchored to the same corner with z-index 10 against this rail's
    * 4, so a rail beginning at `--sp-3` put its first two markers underneath it:
    * measured at 1440 wide, marker #1 (y 12..36) sat inside the toolbar's
-   * 12..54 band and was invisible and unclickable. The offset is derived from
-   * the toolbar's own metrics, exactly as `.chat-find` derives its own
-   * (24-find.css), so the three cannot drift apart. */
-  inset-block: calc(
-      var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
-    )
-    var(--sp-3);
-  inset-inline-end: var(--sp-1);
+   * 12..54 band and was invisible and unclickable. `--below-chat-toolbar` is the
+   * shared derivation from the toolbar's own metrics (12-chat.css). This line
+   * used to inline a byte-identical copy of that calc under a comment saying the
+   * offsets could not drift apart, which a copy is precisely how they could. */
+  inset-block: var(--below-chat-toolbar) var(--sp-3);
+
+  /* STUCK TO THE TURN CARDS' EDGE, not to the window's. `50% - --content-max-w /
+   * 2` is the distance from this wrapper's inline-end to the column's right
+   * edge, and the scrollbar terms cancel exactly rather than being ignored: the
+   * scroller reserves a stable gutter of `--scrollbar-w` and gives the same
+   * width back out of its own inline-end padding (13-messages.css), so the
+   * centred column sits `(width - cap) / 2` from either edge whether or not a
+   * bar is present. Measured at 1440 with a 10px bar: wrapper 1180 wide, cards
+   * ending at 1250, formula 1440 - 1250 = 190.
+   *
+   * The rail then hangs one `--sp-2` outside that edge. At the window's border
+   * it read as a floating column of numbers with nothing to do with the
+   * transcript — 158px of empty space between the cards and the rail at 1440.
+   * There is deliberately no clamp on this value: the container query below is
+   * what guarantees the gutter can hold the rail (at its 55.5rem threshold the
+   * leftover is 2.75rem against this rail's 1.75rem plus the 0.5rem gap), and a
+   * clamp would quietly put the rail back on top of the cards instead of
+   * hiding it. */
+  inset-inline-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   z-index: 4;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  gap: 2px;
-  width: 1.75rem;
+
+  /* The markers' gap is also the axis's only visible stretch, so it is charged
+   * against capacity in turn-rail.ts (`ROW_PITCH_PX`) rather than being free. */
+  gap: var(--sp-1);
+  width: var(--rail-w);
   pointer-events: none;
 }
 
@@ -557,13 +578,40 @@
   display: none;
 }
 
+/* THE AXIS: one line, with the turns on it. It spans the whole band rather than
+ * just the markers, because the common session here is one or two turns — a line
+ * drawn only across the markers would be entirely hidden behind them, which is
+ * every case where the reader most needs to see what the column IS.
+ *
+ * `z-index: -1` puts it behind the rows: markers are `position: relative` (for
+ * the search-hit dot) while clusters and gap rows are static, so paint order
+ * alone would have the line strike through some rows and not others. The rail
+ * paints no background of its own, so behind the rows is still in front of the
+ * page. Each row then carries an opaque background, which is what turns the line
+ * into a sequence of nodes instead of a rule drawn across a column of digits. */
+.turn-rail::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset-block: 0;
+  inset-inline-start: calc(50% - 0.5px);
+  width: 1px;
+  background: var(--c-border);
+}
+
 .turn-rail > * {
   pointer-events: auto;
 }
 
-/* One marker per turn: its number, in its outcome's colour. WCAG 2.5.8 wants a
- * 24px target, and that number is what the capacity arithmetic in turn-rail.ts
- * clusters against — keep them in step if this changes. */
+/* One node per turn: its number, in its outcome's colour, sitting ON the axis.
+ * WCAG 2.5.8 wants a 24px target, and that number plus this row's share of the
+ * gap is what the capacity arithmetic in turn-rail.ts clusters against — keep
+ * them in step if this changes.
+ *
+ * The background is OPAQUE rather than `none`: it is what interrupts the axis at
+ * each node, so the line reads as passing between the numbers instead of through
+ * them. It matches the page rather than a raised surface because the rail hangs
+ * in the gutter beside the cards, over nothing else. */
 .rail-marker,
 .rail-cluster,
 .rail-zoom-out {
@@ -575,7 +623,7 @@
   padding: 0 2px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
-  background: none;
+  background: var(--c-bg-primary);
   color: var(--c-text-tertiary);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -651,13 +699,16 @@
 }
 
 /* Time as space: a pause between turns takes a row, so an overnight break is
- * visible on the rail instead of being invisible in a flat message list. */
+ * visible on the rail instead of being invisible in a flat message list. On the
+ * axis it reads as a labelled BREAK — the row's opaque background is what cuts
+ * the line, which is the seam, and the tick below marks it. */
 .rail-gap {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 1rem;
+  background: var(--c-bg-primary);
   color: var(--c-text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.5625rem;
@@ -684,12 +735,16 @@
  * measure (`--sp-4` of side inset plus the `--content-max-w` cap), so the rail
  * gets the space left over and nothing else: at 55.5rem of chat area the column
  * has stopped growing and the leftover gutter is 2.75rem, which clears the
- * rail's 2rem by 0.75rem. Below that there is no room, so it hides — the same
- * trade already accepted on phones, where content search is how a reader
- * navigates. This replaces a viewport-keyed hide at 40rem plus an inline-end
- * padding reservation on `#messages`: the reservation sat INSIDE the cap, so it
- * bought the rail's column out of the transcript's own width, leaving every
- * turn card 1.75rem narrower than the prompt box and off its axis.
+ * rail's 1.75rem plus its 0.5rem gap from the cards by 0.5rem. Below that there
+ * is no room, so it hides — the same trade already accepted on phones, where
+ * content search is how a reader navigates. This replaces a viewport-keyed hide
+ * at 40rem plus an inline-end padding reservation on `#messages`: the
+ * reservation sat INSIDE the cap, so it bought the rail's column out of the
+ * transcript's own width, leaving every turn card 1.75rem narrower than the
+ * prompt box and off its axis.
+ *
+ * The threshold is also what lets `inset-inline-end` above go unclamped, since
+ * the gutter it computes into is guaranteed to exist here.
  *
  * Keyed on the `chat-area` container (12-chat.css), not the viewport, because
  * the sidebar's width is what decides how much of the window the transcript

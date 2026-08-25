@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
-// The timeline rail — a fixed vertical column of numbered turn markers at the
-// right edge of the transcript.
+// The timeline rail — numbered turn markers on a vertical axis, in the gutter
+// immediately beside the transcript's right edge (29-turns.css derives that
+// offset from the column's own cap, so the rail travels with the cards instead
+// of sitting at the window's border).
 //
 // Three reasons it carries NUMBERS rather than being a decorative spine (an
 // earlier left-hand spine was deleted, not kept alongside):
@@ -48,9 +50,18 @@ export interface TurnSummary {
 const GAP_THRESHOLD_MS = 20 * 60 * 1000;
 
 /** The minimum hit area for one marker, in CSS pixels. WCAG 2.5.8 asks for
- *  24x24 or equivalent spacing, and this is the number the capacity arithmetic
- *  is built on — markers cluster the moment one can no longer own this much. */
+ *  24x24 or equivalent spacing. */
 const MARKER_MIN_PX = 24;
+
+/** What one row actually COSTS: its hit area plus the gap below it (`--sp-1` in
+ *  29-turns.css, which is also the axis's only visible stretch). This is the
+ *  number the capacity arithmetic divides by, and it is not the same as the hit
+ *  area — dividing by 24 over-counted every rail by one row per twelve, because
+ *  the gap between markers was spent but never charged.
+ *
+ *  Exported so the tests measure rails in the unit production lays them out in,
+ *  rather than keeping a second copy of the pitch that can drift from this one. */
+export const ROW_PITCH_PX = MARKER_MIN_PX + 4;
 
 /** Outcome severity, worst first. A cluster reports its worst member, because a
  *  range containing one failure is a range you want to look at. */
@@ -205,9 +216,9 @@ export function railRows(
   const gaps = countGaps(turns);
   // The threshold is COMPUTED, never a constant: the rail's height is responsive
   // and the gap rows are data-dependent, so any hardcoded turn count would be
-  // wrong at some viewport. A rail of 900px fits 37 conforming markers, fewer
+  // wrong at some viewport. A rail of 900px fits 32 conforming markers, fewer
   // once the gaps below take their rows.
-  const capacity = Math.max(1, Math.floor(railHeightPx / MARKER_MIN_PX) - gaps);
+  const capacity = Math.max(1, Math.floor(railHeightPx / ROW_PITCH_PX) - gaps);
   if (turns.length <= capacity) {
     return withGaps(turns);
   }
