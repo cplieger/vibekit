@@ -1004,18 +1004,35 @@
   }
 }
 
+/* ONE box, and the WRAPPER draws it.
+ *
+ * The head and the pre used to draw half each, and the two halves never met: the
+ * head carried a 1px border with square bottom corners, the pre carried no
+ * border and a 6px radius on all four, so the seam showed a notch on both sides
+ * and the head's side lines stopped dead at it.
+ *
+ * The pre's top pair was meant to be squared by `.code-wrap > pre`, and that
+ * override could never land. The prose skin's own `pre` defaults are nested
+ * under `.message { &.assistant { … } }`, so `& :where(pre)` resolves to
+ * `.message.assistant :where(pre)` at (0,2,0): `:where()` zeroes its own
+ * argument but cannot lower what `&` inherits from the parent selector, and
+ * `.code-wrap > pre` scores (0,2,0)'s inferior (0,1,1). Measured on the live
+ * page, every corner of the pre read 6px.
+ *
+ * Clipping settles it without a specificity fight. `overflow: hidden` rounds
+ * whatever radius a child carries, so the outline and the corners have one
+ * owner, and the head needs only the hairline that separates it from the code. */
 .code-wrap {
   position: relative;
   margin: var(--sp-2) 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  overflow: hidden;
 }
 
 .code-wrap > pre {
   /* stylelint-disable-next-line declaration-no-important -- must beat highlight.js theme margins injected at runtime */
   margin: 0 !important;
-
-  /* The head owns the top corners now; the pre closes the bottom pair. */
-  border-start-start-radius: 0;
-  border-start-end-radius: 0;
 }
 
 /* The block's title bar: which language on the left, the block's actions on the
@@ -1031,9 +1048,7 @@
   min-height: 1.75rem;
   padding: 0.125rem var(--sp-2);
   background: var(--c-bg-tertiary);
-  border: 1px solid var(--c-border);
-  border-block-end: none;
-  border-radius: var(--r) var(--r) 0 0;
+  border-block-end: 1px solid var(--c-border);
 }
 
 /* The RAW fence tag, as the author wrote it. highlight.ts exposes no
