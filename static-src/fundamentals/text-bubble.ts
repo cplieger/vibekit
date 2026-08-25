@@ -18,6 +18,12 @@ export interface AssistantBubble {
   readonly root: HTMLDivElement;
   /** Feed a streamed markdown delta through the incremental parser. */
   append(delta: string): void;
+  /** Replace-to-full: render only the tail beyond what's rendered. The twin of
+   *  ReasoningView.setText, and the same reason — it lets a caller holding the
+   *  block's whole text bring a bubble up to date without knowing how much of it
+   *  already landed. A no-op when nothing grew, so a settled block costs one
+   *  integer comparison. */
+  setText(full: string): void;
   /** Flush + finalize the markdown stream and drop the streaming pulse. */
   end(): void;
 }
@@ -29,28 +35,58 @@ export interface AssistantBubble {
 export function buildAssistantBubble(initial: string, live: boolean): AssistantBubble {
   const root = el("div", { className: "message assistant" }) as HTMLDivElement;
   let stream: MarkdownStream | null = null;
-  const ensureStream = (): MarkdownStream => {
-    stream ??= createMarkdownStream(root);
-    return stream;
+  let text = "";
+
+  /** Append `delta`, opening the incremental renderer when there is not one yet.
+   *
+   *  Two callers reach the no-stream branch and they want the same thing. A live
+   *  bubble's first delta arrives with nothing rendered. A REPLAY bubble that
+   *  grows arrives with its text already rendered one-shot, which leaves no
+   *  parser state to append to — so it re-renders the accumulated text through a
+   *  fresh stream once, then appends normally from there. `flush` is what keeps
+   *  that swap invisible: `wasRendered` says the text was on screen a moment ago,
+   *  and without the flush the bubble sits blank for the stream's 200ms buffer
+   *  having just thrown away what the reader was looking at.
+   *
+   *  The replay branch runs when the caller's live/replay judgement was wrong
+   *  about this block, and a bubble frozen at its first chunk is what it
+   *  replaces. */
+  const write = (delta: string): void => {
+    if (delta === "") {
+      return;
+    }
+    text += delta;
+    if (stream !== null) {
+      stream.writeDelta(delta);
+      return;
+    }
+    const wasRendered = root.firstChild !== null;
+    root.replaceChildren();
+    stream = createMarkdownStream(root);
+    stream.writeDelta(text);
+    if (wasRendered) {
+      stream.flush();
+    }
   };
 
-  if (initial !== "") {
-    if (live) {
-      ensureStream().writeDelta(initial);
-    } else {
-      renderMarkdownInto(root, initial);
-    }
-  }
   if (live) {
     root.classList.add("streaming");
+    write(initial);
+  } else {
+    text = initial;
+    if (initial !== "") {
+      renderMarkdownInto(root, initial);
+    }
   }
 
   return {
     root,
-    append(delta: string): void {
-      if (delta !== "") {
-        ensureStream().writeDelta(delta);
+    append: write,
+    setText(full: string): void {
+      if (full.length <= text.length) {
+        return;
       }
+      write(full.slice(text.length));
     },
     end(): void {
       stream?.end();

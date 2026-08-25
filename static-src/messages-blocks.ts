@@ -88,6 +88,12 @@ interface MsgRender {
   blocksEl: HTMLElement;
   /** Count of blocks already mounted (index into m.blocks). */
   rendered: number;
+  /** block index → a call that brings that block's DOM up to a full text. Wraps
+   *  the handle's `setText` in an arrow rather than storing the method itself:
+   *  both handles keep their state in a closure and never read `this`, but a
+   *  detached method reference is a shape the linter rightly refuses to take on
+   *  trust. Read by `syncMountedText`. */
+  blockText: Map<number, (full: string) => void>;
   /** subtask id → its SubagentBlock view. */
   subagents: Map<string, SubagentView>;
   /** subtask id → the tool-call ids routed into that box, for the footer's
@@ -117,6 +123,7 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
   const st: MsgRender = {
     blocksEl,
     rendered: 0,
+    blockText: new Map(),
     subagents: new Map(),
     subagentMembers: new Map(),
     bubbles: [],
@@ -130,9 +137,8 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
   mountPlan(wrap, m);
 }
 
-/** Incrementally sync the assistant body: mount newly-arrived blocks and
- *  update the plan. Per-block/per-tool signals feed deltas into blocks already
- *  mounted, so this only handles structural growth. */
+/** Incrementally sync the assistant body: mount newly-arrived blocks, bring
+ *  already-mounted ones up to the store's text, and update the plan. */
 export function updateAssistantBody(wrap: HTMLElement, m: Message, streaming: boolean): void {
   const st = renders.get(m.id);
   if (st === undefined) {
@@ -144,7 +150,34 @@ export function updateAssistantBody(wrap: HTMLElement, m: Message, streaming: bo
   if (blocks.length > st.rendered) {
     renderRange(st, m, st.rendered, blocks.length, streaming);
   }
+  syncMountedText(st, m);
   mountPlan(wrap, m);
+}
+
+/** Bring every mounted block up to the store's current text for that block.
+ *
+ *  The per-block signal effect is the FAST path: a chunk writes the signal and
+ *  the DOM updates with no reconcile at all. This is the FALLBACK, and it exists
+ *  because that effect is only created for a block the renderer judged live.
+ *  `store.appendChunk` already schedules a full repaint for any block with no
+ *  signal, but until this sweep the repaint only mounted NEW blocks and never
+ *  revisited the text of a mounted one — so a block whose liveness was misjudged
+ *  froze at whatever text existed when it mounted, with no ellipsis and no way
+ *  back except a reload. A misjudgement is cheap to cause: any mid-turn event
+ *  that clears the chat's `thinking` flag does it for the rest of the turn.
+ *
+ *  Safe to run over a subscribed block too. Both handles own their own rendered
+ *  watermark, so whichever writer arrives first wins and the other compares two
+ *  lengths and returns. */
+function syncMountedText(st: MsgRender, m: Message): void {
+  const blocks = m.blocks ?? [];
+  for (const [i, setText] of st.blockText) {
+    const block = blocks[i];
+    if (block === undefined) {
+      continue;
+    }
+    setText((block.type === "thinking" ? block.thinking : block.text) ?? "");
+  }
 }
 
 /** Finalize: flush every markdown stream + seal every reasoning trace. */
@@ -271,6 +304,9 @@ function mountText(
   const initial = block.text ?? "";
   const bubble = buildAssistantBubble(initial, live);
   st.bubbles.push(bubble);
+  st.blockText.set(i, (full) => {
+    bubble.setText(full);
+  });
   // Top-level bubbles carry an avatar row; subagent-body bubbles don't (the
   // subagent header is the identity — matches the IDE's indented nesting).
   if (container === st.blocksEl) {
@@ -282,14 +318,8 @@ function mountText(
   }
   if (live) {
     const sig = ensureBlockTextSig(msgId, i, initial);
-    let lastLen = initial.length;
     const cleanup = effect(() => {
-      const full = sig.value;
-      if (full.length <= lastLen) {
-        return;
-      }
-      bubble.append(full.slice(lastLen));
-      lastLen = full.length;
+      bubble.setText(sig.value);
     });
     cbs.pushStreamingEffect(msgId, cleanup);
   }
@@ -309,6 +339,9 @@ function mountThinking(
   }
   const view = buildReasoning(initial, live);
   st.reasonings.push(view);
+  st.blockText.set(i, (full) => {
+    view.setText(full);
+  });
   st.openReasoning.set(container, view);
   container.appendChild(view.root);
   if (live) {

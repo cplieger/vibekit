@@ -30,7 +30,8 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-const { buildAssistantBody } = await import("./messages-blocks.js");
+const { buildAssistantBody, updateAssistantBody, finalizeAssistantBody } =
+  await import("./messages-blocks.js");
 
 function text(t: string, subtask = ""): Record<string, unknown> {
   return { type: "text", text: t, agent_subtask_id: subtask };
@@ -121,5 +122,101 @@ describe("tool grouping IS contiguous, which is the contrast", () => {
       [call("t1", "Run Command"), call("t2", "Run Command"), call("t3", "Run Command")],
     );
     expect(shape(wrap)).toEqual(["group(3)"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A mounted block tracks the store's text whether or not it was mounted live.
+//
+// The fast path for a live turn is the per-block signal effect: a chunk writes
+// the signal and the DOM updates with no reconcile. That effect only exists for
+// a block the renderer judged LIVE, and `store.appendChunk` falls back to
+// scheduling a full repaint for any block with no signal — so the repaint is the
+// only channel left for a block whose liveness was misjudged, and it used to
+// mount new blocks and never revisit a mounted one. The measured symptom was an
+// assistant reply frozen at its first streamed chunk (`<p>Here's v</p>`), with
+// no ellipsis, healed only by reloading the page.
+//
+// Liveness is misjudged cheaply: `isLikelyLiveStreaming` requires the chat's
+// `thinking` flag, and any mid-turn event that clears it (a `.kiro/agents` parse
+// error arriving at session construction was the real one) makes every later
+// block of that turn mount for replay.
+// ---------------------------------------------------------------------------
+
+describe("a mounted block picks up text that arrived after it mounted", () => {
+  function growingMessage(blocks: Record<string, unknown>[]): Message {
+    return {
+      id: "m-grow",
+      role: "assistant",
+      content: "",
+      blocks,
+      tool_calls: [],
+    } as unknown as Message;
+  }
+
+  it("renders a text block's tail on the next repaint, mounted for REPLAY", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("Here's v")];
+    const m = growingMessage(blocks);
+    // live: false — the frozen case.
+    buildAssistantBody(wrap, m, false);
+    expect(wrap.querySelector(".message.assistant")?.textContent).toBe("Here's v");
+
+    blocks[0]!["text"] = "Here's version two of the plan.";
+    updateAssistantBody(wrap, m, false);
+    // The grown bubble is on the incremental renderer now, which holds its last
+    // character provisionally until the next write or the finalize — the same
+    // contract a live turn has. What matters here is that the tail arrived at all.
+    expect(wrap.querySelector(".message.assistant")?.textContent).toContain(
+      "Here's version two of the plan",
+    );
+
+    finalizeAssistantBody(m.id);
+    expect(wrap.querySelector(".message.assistant")?.textContent).toBe(
+      "Here's version two of the plan.",
+    );
+  });
+
+  it("renders a thinking block's tail the same way", () => {
+    const wrap = document.createElement("div");
+    const blocks: Record<string, unknown>[] = [
+      { type: "thinking", thinking: "I", agent_subtask_id: "" },
+    ];
+    const m = growingMessage(blocks);
+    buildAssistantBody(wrap, m, false);
+    expect(wrap.querySelector(".reasoning-body")?.textContent).toBe("I");
+
+    blocks[0]!["thinking"] = "I should read the file first.";
+    updateAssistantBody(wrap, m, false);
+    expect(wrap.querySelector(".reasoning-body")?.textContent).toBe(
+      "I should read the file first.",
+    );
+  });
+
+  it("adds nothing when the block did not grow", () => {
+    // The sweep runs on every repaint of every mounted block, so a settled
+    // transcript must cost a length comparison and produce no DOM churn.
+    const wrap = document.createElement("div");
+    const blocks = [text("settled")];
+    const m = growingMessage(blocks);
+    buildAssistantBody(wrap, m, false);
+    const before = wrap.querySelector(".message.assistant")?.innerHTML;
+
+    updateAssistantBody(wrap, m, false);
+    updateAssistantBody(wrap, m, false);
+    expect(wrap.querySelector(".message.assistant")?.innerHTML).toBe(before);
+  });
+
+  it("reaches a block inside a subagent card too", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("delegate ", "sub-A")];
+    const m = growingMessage(blocks);
+    buildAssistantBody(wrap, m, false);
+
+    blocks[0]!["text"] = "delegate finished its walk.";
+    updateAssistantBody(wrap, m, false);
+    expect(wrap.querySelector(".subagent-body")?.textContent).toContain(
+      "delegate finished its walk",
+    );
   });
 });

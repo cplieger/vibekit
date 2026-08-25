@@ -38,6 +38,7 @@ import { openSetting } from "../settings-highlight.js";
 import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
+import type { ErrorCode } from "../wire/types.gen.js";
 import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
 
@@ -287,20 +288,44 @@ function bannerLinkFor(action: ErrorAction | undefined): BannerLink | undefined 
   }
 }
 
-onSSE("error", (chatID, p) => {
-  // --- Side-effects: fire unconditionally regardless of active chat ---
-  // Unfreeze thinking so send-state can settle correctly.
-  setThinking(chatID, false);
-  // Latch the failure on the CHAT, then re-derive its tab dot. This half has to
-  // run for a background chat: the prose below deliberately does not (one chat's
-  // failure must not claim another's send button), which left a failed
-  // background turn with no marker anywhere — its dot simply went out, exactly
-  // as if the turn had finished cleanly.
-  setTurnFailed(chatID);
-  setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
+/** Does this error END the running turn?
+ *
+ *  `surface` already carries that judgement and the routing table states it per
+ *  code: a `send-error` means THIS send failed, a `banner` means something else
+ *  is wrong while the turn runs on ("A banner rather than a send-error because
+ *  it is not this send that is broken"). Deriving the answer keeps one table
+ *  instead of a second field that is a pure function of the first.
+ *
+ *  An unknown code ends the turn, because a `thinking` left stuck true holds the
+ *  composer on Cancel for a turn nothing will ever finish. */
+function endsTurn(code: ErrorCode): boolean {
+  return ERROR_ROUTES[code]?.surface !== "banner";
+}
 
+onSSE("error", (chatID, p) => {
   const code = p.code;
   const msg = p.message;
+
+  // --- Side-effects: fire regardless of active chat ---
+  // A banner-surfaced error must NOT touch the turn lifecycle. `agent_config_error`
+  // is the measured case: KAS scans `.kiro/agents/**` at session construction, so
+  // one malformed file there fires this event at the START of the first turn. That
+  // cleared `thinking`, and `thinking` is what messages.ts reads to decide whether
+  // an assistant bubble subscribes to its own deltas — so a `.kiro` typo froze the
+  // whole transcript at its first streamed chunk. Same shape for `agent_not_found`
+  // (a fallback notice), `rate_limit` (the model is retrying), `mode_not_applied`
+  // (the chat is running, in another mode) and `compaction_failed`.
+  if (endsTurn(code)) {
+    // Unfreeze thinking so send-state can settle correctly.
+    setThinking(chatID, false);
+    // Latch the failure on the CHAT, then re-derive its tab dot. This half has to
+    // run for a background chat: the prose below deliberately does not (one chat's
+    // failure must not claim another's send button), which left a failed
+    // background turn with no marker anywhere — its dot simply went out, exactly
+    // as if the turn had finished cleanly.
+    setTurnFailed(chatID);
+    setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
+  }
 
   // Only surface the error PROSE for the active chat, to avoid polluting the
   // send-button state with errors from background chats.
