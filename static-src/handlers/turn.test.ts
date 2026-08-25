@@ -378,11 +378,18 @@ describe("turn_ended side effects", () => {
 });
 
 describe("error handler", () => {
-  it("clears thinking and routes a banner-class error to showBanner", () => {
+  // The turn lifecycle and the error PROSE are two different questions, and the
+  // routing table's `surface` is what answers the first: a `send-error` means this
+  // send failed, a `banner` means something else is wrong while the turn runs on.
+  // The handler used to clear `thinking` for every code, and `thinking` is what
+  // the renderer reads to decide whether an assistant bubble subscribes to its own
+  // deltas — so a `.kiro/agents` typo, which fires `agent_config_error` at session
+  // construction, froze the whole first turn at its first streamed chunk.
+  it("leaves the turn running for a banner-class error and routes it to showBanner", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "rate_limit", message: "slow down" });
-    expect(get("chat-1")?.thinking).toBe(false);
+    expect(get("chat-1")?.thinking).toBe(true);
     expect(mockShowBanner).toHaveBeenCalledWith(
       "chat-1",
       "rate_limit",
@@ -391,6 +398,31 @@ describe("error handler", () => {
       true,
       undefined,
     );
+    expect(mockSetLastError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "agent_not_found",
+    "agent_config_error",
+    "rate_limit",
+    "compaction_failed",
+    "mode_not_applied",
+    "auth_token_unavailable",
+  ])("keeps thinking set for %s, which says nothing about this turn", (code) => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code, message: "something is wrong elsewhere" });
+    expect(get("chat-1")?.thinking).toBe(true);
+  });
+
+  it("leaves a BACKGROUND chat's turn running for a banner-class error too", () => {
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+    fireSSE("error", "chat-1", { code: "agent_config_error", message: "bad agent front matter" });
+    expect(get("chat-1")?.thinking).toBe(true);
+    // The prose is still active-chat only, so a background chat's config error
+    // must not claim the reader's banner or send button either.
+    expect(mockShowBanner).not.toHaveBeenCalled();
     expect(mockSetLastError).not.toHaveBeenCalled();
   });
 

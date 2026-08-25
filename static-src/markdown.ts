@@ -101,6 +101,14 @@ export interface MarkdownStream {
    *  the internal flush; large flushes yield across tasks. Returns
    *  immediately; parsing may complete asynchronously. */
   writeDelta(delta: string): void;
+  /** Parse everything written so far, now, without finalizing.
+   *
+   *  `writeDelta` buffers for 200ms, which is right while text arrives a token
+   *  at a time and wrong for a write the reader is already looking at — a bubble
+   *  re-rendered from its accumulated text would otherwise sit blank for the
+   *  interval. The first 4KB lands synchronously and any remainder yields across
+   *  tasks, same as the streaming path. */
+  flush(): void;
   /** Finalize the stream: flush + drain any pending tasks
    *  synchronously, then end the parser. Idempotent — safe to call
    *  multiple times; subsequent calls are no-ops. */
@@ -166,6 +174,12 @@ export function createMarkdownStream(host: HTMLElement): MarkdownStream {
       }
       buffer += delta;
       flushTimer ??= setTimeout(flush, FLUSH_INTERVAL_MS);
+    },
+    flush(): void {
+      if (ended) {
+        return;
+      }
+      flush();
     },
     end(): void {
       if (ended) {
