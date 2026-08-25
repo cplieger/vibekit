@@ -569,3 +569,129 @@ func TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile(t *testing.T) {
 		})
 	}
 }
+
+// KAS reports one rule several times, and the panel rendered every copy.
+//
+// Measured live on kiro-cli 2.19.0 against a workspace permissions.yaml holding
+// exactly ONE rule: `_kiro/permissions/list` answered with 25 rules of which TEN
+// were byte-identical copies of that one, same scope and same source path, while
+// every other rule in the reply appeared once. The fixture below is that reply's
+// shape. The user saw their single "allow all *" rule ten times over, each row
+// carrying its own remove button.
+func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
+	// The rule as it actually arrived, ten times.
+	dup := vibekit.PolicyRule{
+		Capability: "all",
+		Effect:     "allow",
+		Scope:      policyfile.ScopeWorkspace,
+		Source:     "/config/home/.kiro/workspace-roots/c52ddf65534b7b46/permissions.yaml",
+		Match:      []string{"*"},
+	}
+	rules := []vibekit.PolicyRule{
+		{Capability: "fs_write", Effect: "deny", Scope: "kiro", Source: "kiro-scope", Match: []string{".kiro/settings/"}},
+	}
+	for range 10 {
+		rules = append(rules, dup)
+	}
+	rules = append(rules, vibekit.PolicyRule{
+		Capability: "fs_read", Effect: "allow", Scope: "agent", Source: "agent-profile", Match: []string{"./**"},
+	})
+
+	s := &Server{policy: &fakePolicy{rules: rules}, workDir: t.TempDir()}
+	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
+	rec := httptest.NewRecorder()
+	s.handlePolicyView(rec, req)
+
+	var got vibekit.PolicyView
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rules) != 3 {
+		t.Fatalf("Rules length = %d, want 3 (one per distinct rule); got %+v", len(got.Rules), got.Rules)
+	}
+	// Order is the order the first copy arrived in, so the reader's rows do not
+	// reshuffle between two reads of an unchanged policy.
+	wantCaps := []string{"fs_write", "all", "fs_read"}
+	for i, want := range wantCaps {
+		if got.Rules[i].Capability != want {
+			t.Errorf("Rules[%d].Capability = %q, want %q", i, got.Rules[i].Capability, want)
+		}
+	}
+}
+
+// The same rule in the user file AND the workspace file is TWO rules: a reader
+// needs both rows to know which file to edit, and removing one must not remove
+// the other. This is why the key spans scope and source rather than being a
+// signature over capability + effect + globs.
+func TestDedupePolicyRules_KeepsTheSameRuleInTwoScopes(t *testing.T) {
+	rules := []vibekit.PolicyRule{
+		{Capability: "shell", Effect: "ask", Scope: policyfile.ScopeUser, Source: "/home/u/.kiro/settings/permissions.yaml", Match: []string{"rm *"}},
+		{Capability: "shell", Effect: "ask", Scope: policyfile.ScopeWorkspace, Source: "/w/.kiro/settings/permissions.yaml", Match: []string{"rm *"}},
+	}
+	if got := dedupePolicyRules(rules); len(got) != 2 {
+		t.Errorf("dedupePolicyRules kept %d of 2 cross-scope rules; got %+v", len(got), got)
+	}
+}
+
+func TestDedupePolicyRules_EmptyStaysNonNil(t *testing.T) {
+	got := dedupePolicyRules(nil)
+	if got == nil {
+		t.Error("dedupePolicyRules(nil) = nil, want an empty slice (the wire field must not degrade to null)")
+	}
+	if len(got) != 0 {
+		t.Errorf("dedupePolicyRules(nil) = %+v, want empty", got)
+	}
+}
+
+// The key is length-prefixed per element so no glob content can forge a
+// collision. Two rules differing only in where a separator falls inside their
+// globs must stay two rules, because a glob is arbitrary user text.
+func TestPolicyRuleKey_GlobContentCannotForgeACollision(t *testing.T) {
+	cases := map[string][2]vibekit.PolicyRule{
+		"split differs": {
+			{Capability: "shell", Effect: "allow", Match: []string{"a", "b"}},
+			{Capability: "shell", Effect: "allow", Match: []string{"a:b"}},
+		},
+		"separator inside one glob": {
+			{Capability: "shell", Effect: "allow", Match: []string{"a|b"}},
+			{Capability: "shell", Effect: "allow", Match: []string{"a", "b"}},
+		},
+		"match vs exclude": {
+			{Capability: "shell", Effect: "allow", Match: []string{"x"}},
+			{Capability: "shell", Effect: "allow", Exclude: []string{"x"}},
+		},
+		"glob order": {
+			{Capability: "shell", Effect: "allow", Match: []string{"a", "b"}},
+			{Capability: "shell", Effect: "allow", Match: []string{"b", "a"}},
+		},
+		"scope differs": {
+			{Capability: "all", Effect: "allow", Scope: "user"},
+			{Capability: "all", Effect: "allow", Scope: "workspace"},
+		},
+	}
+	for name, pair := range cases {
+		t.Run(name, func(t *testing.T) {
+			if a, b := policyRuleKey(&pair[0]), policyRuleKey(&pair[1]); a == b {
+				t.Errorf("policyRuleKey collided on distinct rules: %q", a)
+			}
+			if got := dedupePolicyRules([]vibekit.PolicyRule{pair[0], pair[1]}); len(got) != 2 {
+				t.Errorf("dedupePolicyRules merged distinct rules: %+v", got)
+			}
+		})
+	}
+}
+
+func TestPolicyRuleKey_IdenticalRulesAgree(t *testing.T) {
+	r := vibekit.PolicyRule{
+		Capability: "all", Effect: "allow", Scope: "workspace", Source: "/w/p.yaml",
+		Match: []string{"*"}, Exclude: []string{"secret/**"},
+	}
+	// A separate value with equal fields, not the same variable.
+	same := vibekit.PolicyRule{
+		Capability: "all", Effect: "allow", Scope: "workspace", Source: "/w/p.yaml",
+		Match: []string{"*"}, Exclude: []string{"secret/**"},
+	}
+	if policyRuleKey(&r) != policyRuleKey(&same) {
+		t.Errorf("policyRuleKey disagreed on equal rules:\n %q\n %q", policyRuleKey(&r), policyRuleKey(&same))
+	}
+}

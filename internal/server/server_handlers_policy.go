@@ -2,6 +2,7 @@ package server
 
 import (
 	"cmp"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -57,8 +58,8 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	if s.policy != nil {
 		rules, err := s.policy.PolicyList(r.Context(), scope)
 		if err == nil {
-			view.Rules = rules
-			view.Capabilities = pickerCapabilities(rules)
+			view.Rules = dedupePolicyRules(rules)
+			view.Capabilities = pickerCapabilities(view.Rules)
 			webhttp.WriteJSON(w, view)
 			return
 		}
@@ -67,9 +68,73 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Fallback: read the editable files directly so the editor works even
 	// when no bridge can answer (e.g. not signed in).
 	view.Available = false
-	view.Rules = s.policyRulesFromFiles(scope)
+	view.Rules = dedupePolicyRules(s.policyRulesFromFiles(scope))
 	view.Capabilities = pickerCapabilities(view.Rules)
 	webhttp.WriteJSON(w, view)
+}
+
+// dedupePolicyRules drops rules that are identical in EVERY field, preserving
+// the order the first copy arrived in.
+//
+// KAS's `_kiro/permissions/list` reports one rule several times. Measured live
+// on kiro-cli 2.19.0: a workspace file holding exactly one rule
+// (`capability: all, effect: allow, match: ['*']`) came back as TEN byte-
+// identical entries carrying the same scope and the same source path, while
+// every other rule in the same reply appeared once. vibekit forwarded them
+// verbatim, so Settings -> Permissions rendered the user's single rule ten
+// times, each with its own remove button.
+//
+// The key is the whole VALUE rather than a signature over capability + effect +
+// globs, because scope and source are what legitimately separate two rows: the
+// same rule written into both the user and the workspace file is two rules, and
+// a reader needs to see both to know which file to edit. Two rows agreeing on
+// all six fields cannot be told apart by anyone — including the remove button,
+// which would delete "one of them" with nothing to say which.
+//
+// Done here rather than in the agent's PolicyList because this handler is the
+// one place BOTH the live and the file-fallback projections pass through, and
+// the fallback can produce a genuine cross-scope pair that must survive.
+func dedupePolicyRules(rules []vibekit.PolicyRule) []vibekit.PolicyRule {
+	if len(rules) == 0 {
+		// Preserve the empty-not-null contract the wire field carries.
+		return []vibekit.PolicyRule{}
+	}
+	out := make([]vibekit.PolicyRule, 0, len(rules))
+	seen := make(map[string]struct{}, len(rules))
+	for _, r := range rules {
+		key := policyRuleKey(&r)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, r)
+	}
+	if dropped := len(rules) - len(out); dropped > 0 {
+		slog.Debug("policy view: dropped identical duplicate rules", "dropped", dropped, "kept", len(out))
+	}
+	return out
+}
+
+// policyRuleKey is a total, collision-free key over a rule's six fields.
+//
+// Length-prefixing every element is what makes it collision-free: joining the
+// glob lists with a separator would let `match: ["a", "b"]` and
+// `match: ["a<sep>b"]` produce one key, and a glob is arbitrary user text that
+// can contain any separator a reader might pick. The order of a rule's globs is
+// significant here — two rules differing only in glob order are left as two
+// rows, because reordering is not vibekit's call to make on the user's file.
+func policyRuleKey(r *vibekit.PolicyRule) string {
+	var b strings.Builder
+	for _, s := range []string{r.Capability, r.Effect, r.Scope, r.Source} {
+		fmt.Fprintf(&b, "%d:%s", len(s), s)
+	}
+	for _, list := range [][]string{r.Match, r.Exclude} {
+		fmt.Fprintf(&b, "|%d|", len(list))
+		for _, s := range list {
+			fmt.Fprintf(&b, "%d:%s", len(s), s)
+		}
+	}
+	return b.String()
 }
 
 // pickerCapabilities is what the capability dropdowns offer: vibekit's suggested
