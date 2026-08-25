@@ -6,6 +6,15 @@
 // feature module whose DOM ids aren't worth registering on the global
 // Elements class. Modal-local ids (tool-*, filepicker-*, etc.) stay in
 // their own modules but use this helper instead of redefining it.
+//
+// A GETTER NOTHING READS IS DELETED, not left as documentation. 43 of 154 had no
+// `$.<name>` reader (2026-08), and 20 of those looked up an id that exists in no
+// HTML — `byId` throws on a missing element, so each was a call that could only
+// ever raise. Three whole regions went with them (the single-repo git panel, the
+// PR panel, the CI pill): those features build their DOM in TS now, so their
+// registry entries described markup that no longer exists. The check is one
+// grep, `$.<name>` against this file's getter list, and nothing dynamic defeats
+// it — `$` is never aliased on import, never destructured and never indexed.
 // ---------------------------------------------------------------------------
 
 import { viewTransition } from "@cplieger/ui-primitives/view-transition";
@@ -92,11 +101,6 @@ class Elements {
   }
   get promptInput(): HTMLTextAreaElement {
     return byId("prompt-input");
-  }
-  /** The bordered box holding the textarea and the pill rows. Registered
-   *  because the pill rows read the box's focus-within state. */
-  get promptBox(): HTMLDivElement {
-    return byId("prompt-box");
   }
   get attachmentRow(): HTMLUListElement {
     return byId("attachment-row");
@@ -223,12 +227,6 @@ class Elements {
   get shellTerminal(): HTMLDivElement {
     return byId("shell-terminal");
   }
-  get shellStatus(): HTMLElement {
-    return byId("shell-status");
-  }
-  get shellTitle(): HTMLElement {
-    return byId("shell-title-text");
-  }
   get shellResize(): HTMLDivElement {
     return byId("shell-resize");
   }
@@ -239,9 +237,6 @@ class Elements {
   }
   get gitBadge(): HTMLElement {
     return byId("git-badge");
-  }
-  get gitBranchBtn(): HTMLButtonElement {
-    return byId("git-branch-btn");
   }
 
   // File browser
@@ -374,123 +369,6 @@ class Elements {
   get toolModal(): HTMLDivElement {
     return byId("tool-modal");
   }
-  get gitOutputModal(): HTMLDivElement {
-    return byId("git-output-modal");
-  }
-  get gitBranchModal(): HTMLDivElement {
-    return byId("git-branch-modal");
-  }
-
-  // Git panel (added 2026 audit)
-  get gitOutputBar(): HTMLDivElement {
-    return byId("git-output-bar");
-  }
-  get gitRepoSection(): HTMLDivElement {
-    return byId("git-repo-section");
-  }
-  get gitStagedSection(): HTMLDivElement {
-    return byId("git-staged-section");
-  }
-  get gitStagedList(): HTMLDivElement {
-    return byId("git-staged-list");
-  }
-  get gitChangedList(): HTMLDivElement {
-    return byId("git-changed-list");
-  }
-  get gitLogList(): HTMLDivElement {
-    return byId("git-log-list");
-  }
-  get gitRepoBar(): HTMLDivElement {
-    return byId("git-repo-bar");
-  }
-  get gitCommitMsg(): HTMLTextAreaElement {
-    return byId("git-commit-msg");
-  }
-  get gitNewBranch(): HTMLInputElement {
-    return byId("git-new-branch");
-  }
-  get gitBranchList(): HTMLDivElement {
-    return byId("git-branch-list");
-  }
-  get gitRefreshBtn(): HTMLButtonElement {
-    return byId("git-refresh-btn");
-  }
-  get gitStageAllBtn(): HTMLButtonElement {
-    return byId("git-stage-all-btn");
-  }
-  get gitUnstageAllBtn(): HTMLButtonElement {
-    return byId("git-unstage-all-btn");
-  }
-  get gitDiscardAllBtn(): HTMLButtonElement {
-    return byId("git-discard-all-btn");
-  }
-  get gitCommitBtn(): HTMLButtonElement {
-    return byId("git-commit-btn");
-  }
-  get gitPushBtn(): HTMLButtonElement {
-    return byId("git-push-btn");
-  }
-  get gitCreateBranchBtn(): HTMLButtonElement {
-    return byId("git-create-branch-btn");
-  }
-  get gitStashBtn(): HTMLButtonElement {
-    return byId("git-stash-btn");
-  }
-  get gitStashPopBtn(): HTMLButtonElement {
-    return byId("git-stash-pop-btn");
-  }
-
-  // PR panel
-  get prSection(): HTMLElement {
-    return byId("git-pr-section");
-  }
-  get prList(): HTMLDivElement {
-    return byId("git-pr-list");
-  }
-  get prEmpty(): HTMLElement {
-    return byId("git-pr-empty");
-  }
-  get prPlaceholder(): HTMLElement {
-    return byId("git-pr-placeholder");
-  }
-  get prCreateDialog(): HTMLDialogElement {
-    return byId("pr-create-dialog");
-  }
-  get prDialogStatus(): HTMLElement {
-    return byId("pr-dialog-status");
-  }
-  get prBase(): HTMLInputElement {
-    return byId("pr-base");
-  }
-  get prHead(): HTMLInputElement {
-    return byId("pr-head");
-  }
-  get prTitle(): HTMLInputElement {
-    return byId("pr-title");
-  }
-  get prBody(): HTMLTextAreaElement {
-    return byId("pr-body");
-  }
-  get prDraft(): HTMLInputElement {
-    return byId("pr-draft");
-  }
-  get prSubmitBtn(): HTMLButtonElement {
-    return byId("pr-submit-btn");
-  }
-  get prGenerateBtn(): HTMLButtonElement {
-    return byId("pr-generate-btn");
-  }
-  get prNewBtn(): HTMLButtonElement {
-    return byId("git-pr-new-btn");
-  }
-
-  // CI pill
-  get ciPill(): HTMLButtonElement {
-    return byId("git-ci-pill");
-  }
-  get ciPanel(): HTMLDivElement {
-    return byId("git-ci-panel");
-  }
 
   // Settings panel (extra getters added by api-client migration)
   get settingsSaveStatus(): HTMLSpanElement {
@@ -504,12 +382,6 @@ class Elements {
   }
   get notifySubOptions(): HTMLDivElement {
     return byId("notify-sub-options");
-  }
-  get notifyPRStatusToggle(): HTMLInputElement {
-    return byId("notify-pr-status-toggle");
-  }
-  get notifyFinishedToggle(): HTMLInputElement {
-    return byId("notify-finished-toggle");
   }
 
   // Settings tab bar (mobile dropdown + desktop segmented control)
