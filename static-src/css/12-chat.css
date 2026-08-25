@@ -15,6 +15,25 @@
   display: none;
 }
 
+/* The y at which content clears the chat toolbar, derived from the toolbar's own
+   metrics below: its `--sp-3` top inset, one `--btn-h` row, its 2×0.125rem
+   padding, a `--sp-2` gap, and the safe-area inset it also honours.
+
+   FOUR SURFACES need this number and it is declared once here, beside the
+   element it measures, so a change to the toolbar's padding reaches all of them:
+   `.chat-find` and `.search-pop` (24-find.css), `.turn-rail` (29-turns.css) and
+   `.banner-stack` (13-messages.css). Each of the first three learned it the same
+   way — the toolbar is opaque at z-index 10, so anything sharing that corner is
+   invisible AND unclickable underneath it, measured at a 198px overlap for
+   search and at markers #1-#2 for the rail. The rail carried a byte-identical
+   copy of the calc under a comment claiming the three could not drift apart; a
+   copy is exactly how they could. */
+:root {
+  --below-chat-toolbar: calc(
+    var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
+  );
+}
+
 .chat-toolbar {
   --toolbar-gap: 0.125rem;
 
