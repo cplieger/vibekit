@@ -518,16 +518,12 @@ type ChatStatusPayload struct {
 	Description string `json:"description,omitempty"`
 }
 
-// The ChatStatusPayload.Status vocabulary, as KAS's focus_update channel spells
-// it. Named because one member is load-bearing on the server: waiting_on_user is
-// the only status whose meaning OUTLIVES its turn, so it is the one the
-// connect-time replay retains (see agent.chatStatusCache.ClearAtTurnEnd).
-const (
-	ChatStatusInProgress    = "in_progress"
-	ChatStatusWaitingOnUser = "waiting_on_user"
-	ChatStatusCompleted     = "completed"
-	ChatStatusIdle          = "idle"
-)
+// ChatStatusWaitingOnUser is the one ChatStatusPayload.Status value the server
+// branches on, as KAS's focus_update channel spells it. It is the only status
+// whose meaning OUTLIVES its turn, so it is the one the connect-time replay
+// retains (see agent.chatStatusCache.ClearAtTurnEnd). Every other value KAS
+// sends on that channel travels through as an opaque string.
+const ChatStatusWaitingOnUser = "waiting_on_user"
 
 // MCPConfigChangedPayload is the payload for type="mcp_config_changed".
 type MCPConfigChangedPayload struct{}
