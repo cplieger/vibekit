@@ -17,11 +17,12 @@
 #          a packet to establish. `components` ranks BELOW `utilities` and
 #          `mobile` in the declaration above, so 50-mobile.css's overrides beat
 #          10-shell-app.css whatever their specificity. Unlayering it would put
-#          it above every layer and flip four pairs, all mobile regressions:
+#          it above every layer and flip three pairs, all mobile regressions:
 #          #sidebar width+z-index (the drawer stops being full-width and drops
 #          behind other chrome), .tab-close width+height (44px touch target
-#          falls back to 24px), .sidebar-close-only display (the drawer can no
-#          longer be closed) and #user-popup min-width. Enumerate with
+#          falls back to 24px) and .sidebar-close-only display (the drawer can no
+#          longer be closed). It was FOUR until the dead #user-popup pair went
+#          with the old sidebar popup it styled. Enumerate with
 #          `python3 scripts/css-cascade-audit.py` before touching this.
 #   30     @layer utilities
 #   40     a11y (between utilities-close and mobile-open)

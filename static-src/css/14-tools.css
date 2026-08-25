@@ -1136,31 +1136,6 @@
   flex: 1;
 }
 
-[id="git-branch-btn"] {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  cursor: pointer;
-  font-family: var(--font-mono);
-  font-weight: var(--fw-medium);
-  color: var(--c-accent);
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--fs-sm);
-  line-height: 1;
-  min-height: var(--btn-h);
-  white-space: nowrap;
-  transition:
-    background var(--dur-micro),
-    color var(--dur-micro) var(--ease-standard);
-
-  &:hover {
-    background: var(--c-bg-tertiary);
-  }
-}
-
 /* Sidebar git button dot. Colors derived from data-state via
  * git-badge.ts. Priority: error > both > local > remote > hidden.
  * Each state gets a distinct hue so the user can tell at a glance
@@ -1198,7 +1173,6 @@
   overflow: visible;
 }
 
-.git-output-bar,
 .rolling-output {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -1218,7 +1192,6 @@
   position: relative;
 }
 
-.git-output-bar:hover,
 .rolling-output:hover {
   color: var(--c-text-secondary);
 }

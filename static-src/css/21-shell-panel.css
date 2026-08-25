@@ -94,13 +94,6 @@
   flex: 1;
 }
 
-.shell-status {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  font-family: var(--font-mono);
-  line-height: 1;
-}
-
 .shell-header-btn {
   background: none;
   border: none;
@@ -162,14 +155,6 @@
 }
 
 /* Subtle top-border glow when disconnected / reconnecting */
-.shell-panel.shell-disconnected {
-  border-block-start-color: var(--c-yellow);
-}
-
-.shell-panel.shell-disconnected .shell-status {
-  color: var(--c-yellow);
-}
-
 /* Confirm dialog */
 .confirm-card {
   width: 18.75rem;
