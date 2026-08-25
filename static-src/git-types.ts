@@ -97,3 +97,18 @@ export function statusLetter(s: string): string {
 export function describeStatus(s: string): string {
   return GIT_STATUS_LABELS[s.charAt(0)] ?? s;
 }
+
+/** How many of these entries `git stash push` would actually take.
+ *
+ *  It is NOT `files.length`. The server runs `stash push` with no `-u`
+ *  (internal/git/handlers_sync.go), so an untracked file is not stashed, while
+ *  the status parse runs `-uall` and therefore DOES report untracked entries
+ *  (status `?`). A tree whose only changes are new files is `has_dirty: true`
+ *  and yet git answers "No local changes to save" — so the two questions
+ *  genuinely have different answers and only this one gates the Stash control.
+ *
+ *  Here rather than at the call site because the rule is about git's status
+ *  vocabulary, which this module owns, not about how the git panel lays out. */
+export function stashableCount(files: readonly GitFileEntry[]): number {
+  return files.filter((f) => statusLetter(f.status) !== "?").length;
+}
