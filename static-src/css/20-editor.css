@@ -84,16 +84,40 @@
    pane and the textarea, so exactly one of the four is ever visible; the gutter
    column collapses with it because `.hidden` is display:none.
 
-   No prose rules here on purpose. The prose container inside carries
-   `.message.assistant` — the app's one rendered-markdown skin, whose ~40rem cap
-   is the reading measure — rather than a second copy of it that would drift. */
+   The PROSE MEASURE is declared here, and it belongs here. The prose container
+   inside carries `.message.assistant` — the app's one rendered-markdown skin,
+   which is right, because a second copy of the skin would drift. But that class
+   no longer caps its own width: it did, at `40.75rem`, and that figure was the
+   old chat bubble's stagger rather than a reading measure, so it was deleted
+   where it did harm (a 122px dead gutter inside every turn card, see
+   13-messages.css). A full-page DOCUMENT read is the one surface with a real
+   claim to a measure, so it states one instead of inheriting a number derived
+   from a layout it never had.
+
+   ONE declaration, read by both children. The front-matter block used to carry
+   its own `40.75rem` literal to line up with the prose, which is how the number
+   came to exist in four places at once; `--doc-measure` is what keeps the two
+   edges together when the value changes.
+
+   `40.75rem` is deliberately the value this view renders today, not the ~35rem a
+   true 75-character measure would be at this font: narrowing the document view
+   is a separate judgement with its own tradeoff (shorter lines, wider gutter)
+   and it is not what the gutter fix was about. Change it here if that tradeoff
+   is wanted; nothing outside this block reads it. */
 .editor-markdown {
+  --doc-measure: 40.75rem;
+
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
   padding: var(--sp-4) var(--sp-4) var(--sp-5);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
+
+  & > .message.assistant,
+  & > .editor-fm {
+    max-width: var(--doc-measure);
+  }
 }
 
 /* The image read surface. Same grid slot as the markdown surface — it is the
@@ -123,10 +147,12 @@
 /* The document's YAML front-matter, rendered rather than stripped: for a
    steering doc the inclusion mode and fileMatchPattern are the facts a reader
    came for. Set apart from the prose because it is metadata about the file, not
-   part of it. */
+   part of it.
+
+   No `max-width` of its own: the document measure is declared once on
+   `.editor-markdown` above and applied to this block and the prose together. */
 .editor-fm {
   display: block;
-  max-width: 40.75rem;
   margin-block-end: var(--sp-4);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--c-border);

@@ -252,12 +252,37 @@
      * would be a bubble by another name. The streaming wash below stays — that
      * one carries live state rather than identity.
      *
-     * `max-width` is NOT decoration here: it is the PROSE measure, ~40rem,
-     * which is where reading speed peaks. Evidence renders as siblings of this
-     * element and is deliberately uncapped. */
+     * NO `max-width`, and the rule that used to sit here was the LAST BUBBLE in
+     * the stylesheet. It read `40.75rem`, called itself the prose measure, and
+     * was neither: in the repo's first commit this element had
+     * `background: var(--c-agent-bubble)`, a `::before` tail and a 1.5rem
+     * `.msg-avatar` beside it, `.message` carried `max-width: 85%`, and the flex
+     * line was 48rem — so 85% of 48rem is 40.8rem, which is 40.75rem on the
+     * quarter-rem grid. The number was the bubble's STAGGER pinned as an
+     * absolute length so it stopped growing on wide screens.
+     *
+     * Measured on the live page it cost 122px of dead gutter on the right of
+     * every reply, inside a `.turn-body` whose content box is 774px: the tool
+     * cards, the tool groups and the header and footer bands all ended at the
+     * same x, and the prose alone stopped 122px short. Third time this value has
+     * been deleted — 14-tools.css took it off every evidence card (as
+     * `39.25rem`, the same figure minus the avatar column) and
+     * `.subagent-body .message` cancels it for nested prose. This is the last
+     * holder.
+     *
+     * The reading-measure defence does not survive its own numbers. At 14px
+     * system-ui the average lowercase glyph is 7.42px, so the cap gave 88
+     * characters per line against 104 uncapped, and the range every source
+     * cites tops out near 75, which would be ~35rem. It shaved 16 characters
+     * off a line that was too long either way. Two other kinds of prose in the
+     * same card were never capped at all (`.reasoning-block` runs the full body
+     * width), and the cap also caught every code block, table and image a reply
+     * contains, which no reading measure has a claim on.
+     *
+     * The one surface that DOES want a measure is the editor's rendered-markdown
+     * view, which reuses this class; it declares its own now (20-editor.css). */
     color: var(--c-text-primary);
     position: relative;
-    max-width: 40.75rem;
     width: 100%;
 
     /* Streaming: height grows naturally as content arrives. We
@@ -1067,12 +1092,16 @@
 
 /* The reply's markdown SOURCE, shown in place of its rendering.
  *
- * A sibling of the rendered bubbles rather than a replacement of them, and
- * hidden with `.hidden` rather than opacity — see the reasoning in
- * messages-turn-actions.ts toggleRawSource. Same prose measure as the rendering
- * it stands in for, so toggling does not change the column width. */
+ * A sibling of the whole rendered block region rather than a replacement of it,
+ * and hidden with `.hidden` rather than opacity — see the reasoning in
+ * messages-turn-actions.ts toggleRawSource.
+ *
+ * NO `max-width`, for the same reason the rendering it stands in for has none
+ * (`.message.assistant` above). It used to carry a second copy of the same
+ * `40.75rem` literal so that toggling did not change the column width; that
+ * promise is now kept by both sides filling the turn body, and a source view is
+ * the last place to wrap early anyway. */
 .turn-raw {
-  max-width: 40.75rem;
   margin: 0;
   padding: var(--sp-3);
   background: var(--c-code-bg);

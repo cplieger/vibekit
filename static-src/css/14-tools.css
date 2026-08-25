@@ -6,8 +6,9 @@
  * of bubble-era residue. This comment is the one copy; the other evidence
  * blocks (.tool-group, .subagent-block, .todo-list, .plan-message) point here.
  *
- * The cap was `max-width: 39.25rem` — the prose measure (40.75rem, still on
- * `.message.assistant`) minus the avatar column — so a diff, a command's output
+ * The cap was `max-width: 39.25rem` — the assistant bubble's stagger (40.75rem,
+ * which has since been deleted from `.message.assistant` too) minus the avatar
+ * column — so a diff, a command's output
  * and a subagent's whole transcript were all wrapped at the width that suits
  * PROSE. In a 50rem turn body that left every card about 127px short of the
  * right edge while the card it sat in ran the full width, which is the "70% of
@@ -617,16 +618,13 @@
   padding-inline: var(--sp-2);
 }
 
-/* Nested prose fills the subagent body: the 40.75rem PROSE measure on
- * `.message.assistant` is a whole-transcript reading measure, and inside a card
- * that is already narrower it would only wrap earlier still. The `.tool-group` /
- * `.todo-list` entries this rule used to carry are gone with the caps they
- * cancelled (see .tool-call). */
-.subagent-body .message,
-.subagent-body .reasoning-block {
-  max-width: 100%;
-  margin-inline-start: 0;
-}
+/* Nested prose fills the subagent body, and now it does so with no rule here.
+ * This block used to cancel a `max-width` and a `margin-inline-start` that the
+ * prose skin no longer sets: `.message.assistant`'s `40.75rem` was deleted (it
+ * was the old bubble's stagger, see 13-messages.css) and `.reasoning-block`'s
+ * cap is `--content-max-w`, which is wider than any subagent body, so both
+ * declarations had become no-ops. The `.tool-group` / `.todo-list` entries went
+ * earlier with the caps they cancelled (see .tool-call). Nothing replaced it. */
 
 /* Todo checklist (kiro-cli todo_list tool → a first-class checklist).
    Uncapped and unindented — see .tool-call. */
