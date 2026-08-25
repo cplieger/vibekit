@@ -57,14 +57,24 @@ func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool 
 // rewritten URL. Matches the forges package semantics.
 func writeCmdResult(w http.ResponseWriter, out string, err error) {
 	if err != nil {
-		msg := out
-		if strings.TrimSpace(msg) == "" {
-			msg = err.Error()
-		}
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(msg)))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(cmdFailure(out, err))))
 		return
 	}
 	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: scrubAuth(out)})
+}
+
+// cmdFailure names WHY a git subprocess failed, for a caller that composes
+// several failures into one message rather than writing the envelope itself.
+// A git subprocess can fail with nothing on either stream — a rejected
+// subcommand used to be the routine case — and a caller interpolating that
+// empty output produced a message ending at its own colon ("clean:"), which
+// reads as truncated and names no cause. The exit status is a poor message
+// and a present one, so it stands in.
+func cmdFailure(out string, err error) string {
+	if strings.TrimSpace(out) != "" {
+		return out
+	}
+	return err.Error()
 }
 
 // gitCmdWithCreds runs a git subprocess for network operations

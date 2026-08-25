@@ -234,14 +234,14 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		args := append([]string{subCheckout, "--"}, tracked...)
 		if out, err := gitCmd(ctx, dir, args...); err != nil {
 			slog.Warn("git discard checkout failed", "repo", body.Repo, "count", len(tracked), "error", err, "out", scrubAuth(out))
-			errs = append(errs, "checkout: "+out)
+			errs = append(errs, subCheckout+": "+cmdFailure(out, err))
 		}
 	}
 	if len(untracked) > 0 {
-		args := append([]string{"clean", "-fd", "--"}, untracked...)
+		args := append([]string{subClean, "-fd", "--"}, untracked...)
 		if out, err := gitCmd(ctx, dir, args...); err != nil {
 			slog.Warn("git discard clean failed", "repo", body.Repo, "count", len(untracked), "error", err, "out", scrubAuth(out))
-			errs = append(errs, "clean: "+out)
+			errs = append(errs, subClean+": "+cmdFailure(out, err))
 		}
 	}
 	if len(errs) > 0 {

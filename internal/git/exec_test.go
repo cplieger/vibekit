@@ -1,6 +1,8 @@
 package git
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -167,6 +169,66 @@ func TestGitExec_RefusedSubcommandGetsNoHardening(t *testing.T) {
 	for _, a := range args {
 		if a == "core.fsmonitor=" || a == "protocol.ext.allow=never" {
 			t.Errorf("Args = %v, want no hardening on the refusal path", args)
+		}
+	}
+}
+
+// A refused subcommand must fail with a message that NAMES it. The refusal
+// path used to run /bin/false, which exits 1 and writes nothing to either
+// stream, so a caller composing the output into its own message produced a
+// string ending at its own colon ("clean: ") that named no cause and read as
+// truncated. That is exactly how the missing `clean` entry presented, so the
+// output is asserted rather than only the exit status.
+func TestGitCmd_RefusedSubcommandSaysWhy(t *testing.T) {
+	t.Parallel()
+
+	out, err := gitCmd(t.Context(), t.TempDir(), "cat-file", "-p", "HEAD")
+	if err == nil {
+		t.Fatalf("gitCmd(cat-file) err = nil, want a refusal (out %q)", out)
+	}
+	// The reason travels in the ERROR, and no subprocess is spawned: giving the
+	// refusal branch a shell it could interpolate the name into would hand a
+	// command-injection taint path to the boundary the allowlist exists to close.
+	if !strings.Contains(err.Error(), "cat-file") {
+		t.Errorf("gitCmd(cat-file) err = %v, want it to name the refused subcommand", err)
+	}
+	// And cmdFailure is what turns it into something a user can read, since the
+	// subprocess output is empty on this path.
+	if got := cmdFailure(out, err); !strings.Contains(got, "cat-file") {
+		t.Errorf("cmdFailure(%q, %v) = %q, want it to name the subcommand", out, err, got)
+	}
+}
+
+// cmdFailure stands in the exit status when the subprocess said nothing, so a
+// caller that interpolates it can never render a message ending at its colon.
+func TestCmdFailure_FallsBackToExitStatus(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("exit status 1")
+	cases := map[string]struct{ out, want string }{
+		"output wins":           {"fatal: pathspec did not match", "fatal: pathspec did not match"},
+		"empty falls back":      {"", "exit status 1"},
+		"whitespace falls back": {"  \n\t ", "exit status 1"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := cmdFailure(tc.out, sentinel); got != tc.want {
+				t.Errorf("cmdFailure(%q, %v) = %q, want %q", tc.out, sentinel, got, tc.want)
+			}
+		})
+	}
+}
+
+// Every subcommand this package builds argv from must be allowlisted, or
+// gitExec substitutes a failing command and the feature is silently dead.
+// `clean` shipped missing, which broke "Discard all" for untracked files.
+func TestAllowedSubcommands_CoversEveryConstant(t *testing.T) {
+	t.Parallel()
+
+	for _, sub := range []string{subAdd, subCheckout, subClean, subFetch, subRemote, subReset} {
+		if _, ok := allowedSubcommands[sub]; !ok {
+			t.Errorf("allowedSubcommands is missing %q; gitExec refuses it", sub)
 		}
 	}
 }
