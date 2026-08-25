@@ -2,20 +2,17 @@
 // Forge authentication UI.
 //
 // Layout: four always-visible sections (one per supported forge kind:
-// GitHub, GitLab, Codeberg, Gitea). Each section shows:
+// GitHub, GitLab, Codeberg, Gitea). Each section shows, top to bottom:
 //
-//   - Section header: kind name.
+//   - Section header: kind badge, kind name, and the "+" button that
+//     opens the add-account pane.
+//   - The add-account pane (empty until "+" is clicked): OAuth device
+//     flow for GitHub plus a PAT paste form, or the PAT form alone for
+//     GitLab/Gitea/Codeberg. It is ABOVE the account list on purpose,
+//     so it opens next to the button that asked for it.
 //   - Account list: zero or more slim rows. Each row has the email or
 //     username, the host, a "Manage" link to the forge's account page,
 //     and a "Sign out" button.
-//   - Action buttons:
-//       [+ Add account]   triggers OAuth (GitHub) or PAT inline form
-//                         (GitLab/Gitea/Codeberg).
-//       [+ Add a PAT]     extra button on the GitHub section: lets the
-//                         user paste a PAT instead of going through the
-//                         OAuth device flow. The backend `LoginWithPAT`
-//                         is kind-agnostic, so this works without
-//                         server changes.
 //
 // Multi-account note: the data model and UI render a list of N
 // accounts per kind, but the underlying CLIs (gh, glab) store one
@@ -490,16 +487,23 @@ function buildKindSection(kind: ForgeKind): HTMLElement {
   const header = el("header", { className: "forge-kind-header" }, badge, title, addBtn);
   section.appendChild(header);
 
+  // Inline mount point for the add-account pane (OAuth + PAT) and
+  // status messages. Non-keyed sibling — survives reconcile.
+  //
+  // It sits DIRECTLY under the header, above the account list, because
+  // the "+" that opens it is in that header. Below the list, the pane
+  // opened one account row plus one expanded repo list away from the
+  // click that asked for it, so on a kind that already has an account
+  // the button read as doing nothing. Same rule the knowledge-base add
+  // form follows (`knowledge-list`.before(form)).
+  const slot = el("div", { className: "forge-kind-slot", "data-forge-slot": kind });
+  section.appendChild(slot);
+
   // Always present an account list container so reconcile has a
   // deterministic mount point. Empty list renders nothing.
   const list = el("ul", { className: "forge-account-list" });
   section.appendChild(list);
   reconcile(list, accountsForKind(kind), accountSpec);
-
-  // Inline mount point for the add-account pane (OAuth + PAT) and
-  // status messages. Non-keyed sibling — survives reconcile.
-  const slot = el("div", { className: "forge-kind-slot", "data-forge-slot": kind });
-  section.appendChild(slot);
 
   return section;
 }

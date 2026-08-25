@@ -156,6 +156,35 @@ describe("forge-auth: 4-section layout", () => {
     }
   });
 
+  it("the add pane opens above the account list, next to the + that opened it", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "alice",
+          email: "a@x.io",
+          connected: true,
+        },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel({ revalidate: false });
+    const section = panel().querySelector<HTMLElement>(".forge-kind-section[data-kind='github']")!;
+    section.querySelector<HTMLButtonElement>("[data-forge-add]")!.click();
+
+    const kids = [...section.children];
+    const header = kids.indexOf(section.querySelector(".forge-kind-header")!);
+    const slot = kids.indexOf(section.querySelector("[data-forge-slot]")!);
+    const list = kids.indexOf(section.querySelector(".forge-account-list")!);
+    // Below the list, the pane opened past an account row (and its expanded
+    // repo list), so the + read as doing nothing on a populated section.
+    expect(section.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(header).toBeLessThan(slot);
+    expect(slot).toBeLessThan(list);
+  });
+
   it("clicking the + button opens a unified add pane (no separate Add-a-PAT button)", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
