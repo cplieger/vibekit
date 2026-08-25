@@ -168,19 +168,35 @@ const RAW_CLASS = "turn-raw";
 /**
  * Show the reply's markdown SOURCE in place of its rendering, and back.
  *
- * Two mechanical constraints decide the shape, and both were paid for once
- * already elsewhere in this module:
+ * The WHOLE rendered body swaps — tool cards, reasoning traces and subagent
+ * boxes included, not just the text bubbles. The source is one document, so
+ * every word the model wrote arrives at the top of it, while evidence that was
+ * interleaved with that prose keeps its own position; a half-swap therefore
+ * showed the same turn in two different orders at once. Showing only the source
+ * answers the question the button asks: what did the model actually emit.
+ *
+ * Three mechanical constraints decide the shape:
  *
  *   - The raw view is a SIBLING that gets ADDED, never a replacement of the
  *     rendered children. `messageSpec.update` runs `updateAssistantBody` on
  *     every repaint — including every streamed chunk of a LATER turn — so a
  *     toggle that replaced the body would be silently undone.
- *   - Exactly one of the two carries `.hidden` (`display: none`), because
- *     find-in-chat's walker prunes `.hidden` subtrees. Hiding with `opacity` or
- *     `visibility` would leave both in the tree and double-count every match.
+ *   - Exactly one of the two carries `.hidden` (`display: none !important`,
+ *     40-a11y.css), because find-in-chat's walker prunes `.hidden` subtrees.
+ *     Hiding with `opacity` or `visibility` would leave both in the tree and
+ *     double-count every match.
+ *   - The CONTAINER hides, never its children one by one. A block that arrives
+ *     after the toggle (a late `tool_call_update` growing the message) lands
+ *     inside an already-hidden region, so the raw view stays clean with no
+ *     bookkeeping; per-child hiding would leak that block into it. `.hidden`
+ *     beats `.assistant-blocks`'s `display: contents` on the `!important`, and
+ *     because that container generates no box either way, the source occupies
+ *     exactly the position and measure of the prose it stands in for.
  *
- * Only the rendered TEXT bubbles swap out. Tool cards stay put: they are not in
- * the markdown, so hiding them would answer a question nobody asked.
+ * The plan card, the licensed-code footnote and the refusal callout are wrap
+ * SIBLINGS of the block region rather than members of it, and they stay put:
+ * none is rendered from `blocks[]`, the swap does not reorder them, and the
+ * refusal callout carries the turn's only Rewind and Switch-model controls.
  */
 function toggleRawSource(
   wrap: HTMLElement | null,
@@ -193,14 +209,13 @@ function toggleRawSource(
   if (host === null) {
     return;
   }
+  const rendered = renderedRegions(host, contentEl);
   let raw = host.querySelector<HTMLElement>(`.${RAW_CLASS}`);
   if (raw === null) {
     raw = el("pre", { className: `${RAW_CLASS} hidden` });
-    // First child of the block region, which is where the prose it replaces
-    // sits. New blocks append after it, so streaming cannot displace it.
-    const blocks = host.querySelector<HTMLElement>(":scope > .assistant-blocks");
-    if (blocks !== null) {
-      blocks.prepend(raw);
+    const first = rendered[0];
+    if (first !== undefined) {
+      first.insertAdjacentElement("beforebegin", raw);
     } else {
       host.appendChild(raw);
     }
@@ -210,13 +225,24 @@ function toggleRawSource(
     raw.textContent = currentSource(msgID, wrap, contentEl, fallback);
   }
   raw.classList.toggle("hidden", !showRaw);
-  for (const bubble of host.querySelectorAll<HTMLElement>(".message.assistant")) {
-    bubble.classList.toggle("hidden", showRaw);
+  for (const region of rendered) {
+    region.classList.toggle("hidden", showRaw);
   }
   const label = showRaw ? "View rendered reply" : "View markdown source";
   btn.setAttribute("aria-pressed", showRaw ? "true" : "false");
   btn.setAttribute("aria-label", label);
   btn.setAttribute("data-tooltip", label);
+}
+
+/** The rendered body the source stands in for: the message's block region.
+ *  Queried plural rather than once because `updateAssistantBody`'s self-healing
+ *  path rebuilds the region when its render state is missing, which can leave
+ *  two behind; hiding only the first would leave a stray body on screen. Falls
+ *  back to the bubble itself when the host carries no block region, which is the
+ *  same degraded shape `attachTurnActions` handles for a missing wrap. */
+function renderedRegions(host: HTMLElement, contentEl: HTMLDivElement): HTMLElement[] {
+  const regions = [...host.querySelectorAll<HTMLElement>(":scope > .assistant-blocks")];
+  return regions.length > 0 ? regions : [contentEl];
 }
 
 /** The message's markdown as the store holds it NOW, falling back to whatever
