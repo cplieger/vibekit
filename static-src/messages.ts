@@ -64,6 +64,7 @@ import {
   resetBlockRenders,
   refreshGroupHeader,
   initBlockRenderer,
+  liveTextAnchor,
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
@@ -235,10 +236,11 @@ function initFollowModel(): void {
   // below it, and pinning to scrollHeight scrolls the sentence being read off
   // the top — an edge case before evidence went full width, and the common case
   // after. Tall evidence stays below the fold until the reader goes to it.
-  setAnchorProvider(() => {
-    const streaming = messagesEl.querySelector<HTMLElement>(".message.assistant.streaming");
-    return streaming;
-  });
+  //
+  // WHICH bubble is `liveTextAnchor`'s call, in messages-blocks.ts: that module
+  // owns the `.streaming` class and the delegate boxes, and both of its rules are
+  // about never handing back a bubble that sits above the live edge.
+  setAnchorProvider(() => liveTextAnchor(messagesEl));
   onReadingStateChange((next) => {
     if (next === "reading") {
       followBaseline = blockCount(getActive()?.messages ?? []);
@@ -864,21 +866,33 @@ function finalizeTurn(id: string, root: HTMLElement): void {
  *  the DOM, to decide which live turns to finalize: a streaming turn finalizes
  *  when either (a) another message arrived after it, or (b) the agent stopped
  *  thinking (turn ended). Driven from the same effect that paints, so it stays
- *  consistent with store state. */
+ *  consistent with store state.
+ *
+ *  It does NOT gate on `st.streaming` alone. That flag is frozen at mount time
+ *  from `isLikelyLiveStreaming`, and a misjudgement is cheap to cause — any
+ *  mid-turn event that clears the chat's `thinking` flag does it for the rest of
+ *  the turn (the same misjudgement `syncMountedText` exists to absorb). A
+ *  message recorded `streaming: false` could therefore never be finalized,
+ *  while a bubble inside it built live kept its caret until the row was torn
+ *  down; that is why a finished turn showed several at once. A DOM check for a
+ *  surviving caret is the second door, and `finalizeAssistantBody` is
+ *  idempotent, so taking it twice costs nothing. */
 function finalizeStreamingIfNeeded(messages: readonly Message[]): void {
   const lastAssistantIdx = lastAssistantIndex(messages);
   const session = getActive();
   const isThinking = session?.thinking ?? false;
   for (const [id, st] of messageStates) {
-    if (!st.streaming) {
+    const stillLast = id === messages[lastAssistantIdx]?.id;
+    if (stillLast && isThinking) {
       continue;
     }
-    const stillLast = id === messages[lastAssistantIdx]?.id;
-    if (!stillLast || !isThinking) {
-      st.streaming = false;
-      finalizeTurn(id, st.el);
-      disposeStreamingEffect(id);
+    // Already finalized once: re-run only if a caret survived it.
+    if (!st.streaming && st.el.querySelector(".message.assistant.streaming") === null) {
+      continue;
     }
+    st.streaming = false;
+    finalizeTurn(id, st.el);
+    disposeStreamingEffect(id);
   }
 }
 

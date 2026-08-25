@@ -103,7 +103,7 @@ export interface MarkdownStream {
   writeDelta(delta: string): void;
   /** Parse everything written so far, now, without finalizing.
    *
-   *  `writeDelta` buffers for 200ms, which is right while text arrives a token
+   *  `writeDelta` buffers by default, which is right while text arrives a token
    *  at a time and wrong for a write the reader is already looking at — a bubble
    *  re-rendered from its accumulated text would otherwise sit blank for the
    *  interval. The first 4KB lands synchronously and any remainder yields across
@@ -115,10 +115,25 @@ export interface MarkdownStream {
   end(): void;
 }
 
+export interface MarkdownStreamOptions {
+  /** Milliseconds to buffer a `writeDelta` before parsing. Defaults to
+   *  FLUSH_INTERVAL_MS; `0` parses on write.
+   *
+   *  A caller that regulates its own write cadence wants 0 — see `reveal.ts`,
+   *  which spreads the network's lumps across frames on purpose. Holding a
+   *  frame's worth for another 200ms would re-lump exactly what it spread, so
+   *  the smoothing would be undone one stage downstream of itself. */
+  flushIntervalMs?: number;
+}
+
 /** Streaming markdown renderer for live assistant bubbles. Owns its
- *  own write buffer, 200ms flush schedule, and per-block decoration +
+ *  own write buffer, flush schedule, and per-block decoration +
  *  animation hooks. Large writes split across tasks. */
-export function createMarkdownStream(host: HTMLElement): MarkdownStream {
+export function createMarkdownStream(
+  host: HTMLElement,
+  options: MarkdownStreamOptions = {},
+): MarkdownStream {
+  const flushAfter = options.flushIntervalMs ?? FLUSH_INTERVAL_MS;
   const p: Parser = parser(
     domRenderer(host, {
       onBlockComplete: decorateAndAnimate,
@@ -173,7 +188,11 @@ export function createMarkdownStream(host: HTMLElement): MarkdownStream {
         return;
       }
       buffer += delta;
-      flushTimer ??= setTimeout(flush, FLUSH_INTERVAL_MS);
+      if (flushAfter <= 0) {
+        flush();
+        return;
+      }
+      flushTimer ??= setTimeout(flush, flushAfter);
     },
     flush(): void {
       if (ended) {
