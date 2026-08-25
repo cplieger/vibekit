@@ -5,9 +5,10 @@
 //   Following — pinned to the live edge. The default while a turn streams.
 //   Reading   — parked on purpose. Nothing may move under the reader.
 //
-// Reading is entered by scrolling up, by clicking a timeline marker, or by
-// jumping to a search hit. It is left by reaching the bottom again, by the
-// resume control, or by End.
+// Reading is entered by scrolling up, and by a timeline or search jump that
+// actually leaves the live edge (`jumpTo` — a jump with nowhere to go keeps the
+// reader Following). It is left by reaching the bottom again, by the resume
+// control, or by End.
 //
 // The value of naming the state is that the user stops fighting an invisible
 // heuristic. Log viewers have taught this for decades, and an agent transcript
@@ -224,10 +225,56 @@ class ScrollController {
     this.scrollEl.scrollTo({ top: this.scrollEl.scrollHeight, behavior: "smooth" });
   }
 
-  /** Enter Reading explicitly — a timeline jump or a search hit parks the reader
-   *  somewhere on purpose, and nothing may then move under them. */
+  /** Enter Reading explicitly — a collapse the user asked for parks them on the
+   *  content above it, and nothing may then move under them. */
   setUserScrolledUp(v: boolean): void {
     this.setState(v ? "reading" : "following");
+  }
+
+  /**
+   * Park the reader on `target`: a timeline marker's jump, or a search hit.
+   *
+   * Reading is entered ONLY when the jump actually leaves the live edge, and
+   * that condition is why this lives here rather than at the two call sites. A
+   * transcript that does not overflow cannot move, and a target already at the
+   * bottom does not move the reader off it — so declaring Reading there shows
+   * the resume control with nothing to resume from, and because nothing
+   * scrolled, no scroll event arrives to re-derive the state. It sticks until
+   * the reader happens to scroll something. Measured on a one-turn chat with no
+   * scrollbar: clicking the rail's marker 1 raised `Latest` while `scrollTop`
+   * never left 0.
+   */
+  jumpTo(target: HTMLElement, opts: ScrollIntoViewOptions = {}): void {
+    this.setState(this.landsAtLiveEdge(target, opts.block ?? "start") ? "following" : "reading");
+    // Guarded because jsdom does not implement scrollIntoView, and both callers
+    // are unit-tested against the DOM they build.
+    const fn = (target as { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }).scrollIntoView;
+    if (typeof fn === "function") {
+      fn.call(target, { block: "start", behavior: "smooth", ...opts });
+    }
+  }
+
+  /** Would a jump to `target` leave the reader at the live edge?
+   *
+   *  Answered from the CLAMPED landing position, which is what makes the
+   *  non-overflowing case fall out rather than needing its own branch: such a
+   *  scroller's only landing is 0, and 0 is also its bottom. */
+  private landsAtLiveEdge(target: HTMLElement, block: ScrollLogicalPosition): boolean {
+    const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
+    // Read off rects so the answer holds whatever the offsetParent turns out to
+    // be — the transcript's scroller is a positioned ancestor, its column is not.
+    const top =
+      this.scrollEl.scrollTop +
+      (target.getBoundingClientRect().top - this.scrollEl.getBoundingClientRect().top);
+    const room = this.scrollEl.clientHeight - target.offsetHeight;
+    let wanted = top;
+    if (block === "center") {
+      wanted = top - room / 2;
+    } else if (block === "end") {
+      wanted = top - room;
+    }
+    const landing = Math.max(0, Math.min(wanted, max));
+    return landing >= max - BOTTOM_TOLERANCE_PX;
   }
 
   /**
@@ -480,6 +527,9 @@ export function getScrollEl(): HTMLElement {
 
 export function setUserScrolledUp(v: boolean): void {
   getInstance().setUserScrolledUp(v);
+}
+export function jumpTo(target: HTMLElement, opts?: ScrollIntoViewOptions): void {
+  getInstance().jumpTo(target, opts);
 }
 export function scrollToBottom(): void {
   getInstance().scrollToBottom();

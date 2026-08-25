@@ -196,12 +196,68 @@ describe("deferWhileReading", () => {
   });
 });
 
+// A jump is the one way into Reading that can have nowhere to go. Pinned
+// because the failure was silent and sticky: the resume control appeared over a
+// transcript that had not moved, and since nothing scrolled, no scroll event
+// arrived to put the state back.
+describe("jumpTo", () => {
+  /** A target at `top` relative to the scroller's own top. jsdom gives every
+   *  rect zeros, so the scroller's own rect needs no faking. */
+  function target(top: number, height: number): HTMLElement {
+    const e = document.createElement("div");
+    e.getBoundingClientRect = (() => ({ top, height })) as never;
+    Object.defineProperty(e, "offsetHeight", { configurable: true, get: () => height });
+    e.scrollIntoView = () => {
+      /* jsdom has no layout; the state decision is what is under test */
+    };
+    return e;
+  }
+
+  it("stays Following when the transcript cannot scroll", () => {
+    fakeScroller({ scrollHeight: 800, clientHeight: 800, scrollTop: 0 });
+    scroll.jumpTo(target(100, 400));
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("parks the reader when the jump leaves the live edge", () => {
+    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 3200 });
+    scroll.jumpTo(target(-3000, 400));
+    expect(scroll.readingState()).toBe("reading");
+    expect(document.getElementById("scrollBottom")?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("returns to Following, and hides the resume control, when the jump lands at the bottom", () => {
+    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 3200 });
+    scroll.jumpTo(target(-3000, 400));
+    expect(scroll.readingState()).toBe("reading");
+
+    // The last turn: its top is past the scroller's own maximum, so the landing
+    // clamps to the bottom and there is nothing to resume from.
+    scroll.jumpTo(target(3100, 400));
+    expect(scroll.readingState()).toBe("following");
+    expect(document.getElementById("scrollBottom")?.classList.contains("hidden")).toBe(true);
+  });
+
+  // find-in-chat centres its hit, which lands the reader half a viewport higher
+  // than a `start` jump would. Measuring that as `start` would call a centred hit
+  // near the bottom "at the live edge" and unfreeze a reader who is not.
+  it("accounts for the requested block when deciding", () => {
+    fakeScroller({ scrollHeight: 4000, clientHeight: 800, scrollTop: 0 });
+    const nearBottom = target(3300, 20);
+    scroll.jumpTo(nearBottom, { block: "start" });
+    expect(scroll.readingState()).toBe("following");
+
+    scroll.resetScrollState();
+    scroll.jumpTo(nearBottom, { block: "center" });
+    expect(scroll.readingState()).toBe("reading");
+  });
+});
+
 describe("readingState", () => {
   it("starts Following", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 500 });
     expect(scroll.readingState()).toBe("following");
   });
-
   it("names the state rather than exposing a boolean", () => {
     fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
     scroll.setUserScrolledUp(true);
