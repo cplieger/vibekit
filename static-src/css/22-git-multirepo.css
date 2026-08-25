@@ -508,13 +508,21 @@
   color: var(--c-text-tertiary);
 }
 
+/* The status label is a WORD ("Untracked", "Modified"), not git's raw status
+ * letter — see git-changes-tab.ts, which renders `f.display` and falls back to
+ * a letter only when the server left it empty. So the box sizes to its content
+ * with a floor, never a fixed width: an 18px box held ~54px of text with no
+ * overflow rule, and `text-align: center` (inherited from a duplicate rule
+ * authored for the letter) spilled it over the filename on BOTH sides. */
 .git-file-status {
   display: inline-block;
-  width: 18px;
+  min-width: 18px;
+  flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
   color: var(--c-text-tertiary);
-  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .git-file-path {
