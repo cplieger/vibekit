@@ -1050,10 +1050,21 @@ function rowParts(doc: KiroDoc): HTMLElement[] {
       meta.appendChild(badge);
     }
   }
-  children.push(meta);
 
+  // The badges are their own line UNDER the title, not the tail of the title
+  // line. On the title line they competed with the name for the same row of
+  // pixels and had to be pushed to the far edge to stay legible, which is what
+  // made them read as floating; a line of their own puts them where a reader
+  // scans DOWN a column of pills instead of across.
+  //
+  // Appended only when a document HAS one — an empty span still consumes the
+  // surface's row gap, and the Skills tab is mostly documents with no inclusion
+  // mode declared, so it would show a blank line after every title.
   const sub = subtitleFor(doc);
   const surfaceChildren: HTMLElement[] = [el("div", { className: "docs-row-top" }, ...children)];
+  if (meta.children.length > 0) {
+    surfaceChildren.push(meta);
+  }
   if (sub !== "") {
     surfaceChildren.push(el("div", { className: "docs-row-sub" }, sub));
   }
