@@ -13,12 +13,17 @@
    conveys. The distinction is carried by BACKGROUND and RULE instead, which
    survives at any width, on mobile, and when the request is three paragraphs.
 
-   Two measures, deliberately: prose is capped near 40rem (13-messages.css's
-   `.message.assistant`) because that is where reading speed peaks; evidence —
-   diffs, tool cards, terminal output — is UNCAPPED, because a diff wrapped at
-   40rem is a worse diff. Those are siblings inside `.turn-body`, so the two
-   measures fall out of the existing structure rather than needing a second
-   container.
+   ONE measure, and the card is it. Prose, evidence, the request band and the
+   footer all end on the same x, at the body's own content edge. There used to be
+   two: `.message.assistant` capped prose at `40.75rem` and `.turn-req-text`
+   repeated the figure for the request, which left both stopping 122px short of
+   the 774px the card gives them while every tool card and diff beside them ran
+   the full width. That number was the old chat bubble's 85% stagger written as
+   an absolute length, not a reading measure, and it did not survive its own
+   numbers (88 characters per line against a 75 ideal). The derivation and the
+   measurements are in 13-messages.css on `.message.assistant`. A real reading
+   measure now lives only where a full-page document is read, on
+   `.editor-markdown` (20-editor.css).
 
    Unlayered like the other component slices, so it wins over the layered base
    by source order. Reduced motion is handled globally in 40-a11y.css.
@@ -199,8 +204,19 @@
   color: var(--c-text-primary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  /* Prose measure applies to the request too — it is running text. */
-  max-width: 40.75rem;
+
+  /* NO `max-width`. This carried `40.75rem` under the comment "prose measure
+   * applies to the request too", and that measure was the old assistant
+   * BUBBLE's stagger rather than a reading measure (13-messages.css, on
+   * `.message.assistant`, where the derivation is written out). It put the same
+   * 122px dead gutter on the header band that the reply had in the body, and
+   * since the reply no longer wraps early, a request that still did would leave
+   * the card ragged on one row and flush on the next.
+   *
+   * It also fought the clamp below: narrower text wraps sooner, so three lines
+   * of a 652px column showed less of the request than three lines of the 774px
+   * the band actually has. Removing the cap shows more of it in the same three
+   * lines, which is what the clamp is for. */
 }
 
 /* THE CLAMP. Three lines, then a show-more.
