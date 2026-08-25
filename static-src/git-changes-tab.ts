@@ -48,7 +48,7 @@ class CancelledError extends Error {
 // --- Wire types ---
 
 import type { GitFileEntry as FileEntry, GitRepoStatus as RepoStatus } from "./git-types.js";
-import { statusLetter, describeStatus } from "./git-types.js";
+import { statusLetter, describeStatus, stashableCount } from "./git-types.js";
 
 interface StatusAllResponse {
   repos: RepoStatus[];
@@ -564,8 +564,8 @@ function renderActionBar(r: RepoStatus): HTMLElement {
   // State-gated rendering (18-F2), mirroring the existing Push/Pop
   // pattern: an action the repo state can't service (Stage all on a
   // fully-staged tree, Discard all on a clean repo, Pull when not
-  // behind) doesn't render at all — no confirm-then-noop paths, no
-  // "Already up to date" pulls.
+  // behind, Stash with nothing tracked to stash) doesn't render at all —
+  // no confirm-then-noop paths, no "Already up to date" pulls.
   const unstagedCount = r.files.filter((f) => !f.staged).length;
   const dirtyCount = r.files.length; // has_dirty ⇔ dirtyCount > 0
 
@@ -661,17 +661,27 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     );
   }
 
-  const stashBtn = btn("Stash", "Stash uncommitted changes");
-  stashBtn.addEventListener("click", () => {
-    void withAsyncFeedback(stashBtn, async () => {
-      assertOk(await stash.dispatch({ repo: r.repo }));
-      await refreshChanges();
+  // `git stash push` runs WITHOUT `-u`, so an untracked file is not stashable
+  // even though the status parse reports it — `stashableCount` (git-types.ts)
+  // carries that rule and why the two counts differ. Gating on `dirtyCount`
+  // would still offer Stash on a tree whose only changes are new files, and git
+  // would answer "No local changes to save": exactly the confirm-then-noop this
+  // bar's rule exists to prevent.
+  const stashable = stashableCount(r.files);
+
+  if (stashable > 0) {
+    const stashBtn = btn("Stash", "Stash uncommitted changes to tracked files");
+    stashBtn.addEventListener("click", () => {
+      void withAsyncFeedback(stashBtn, async () => {
+        assertOk(await stash.dispatch({ repo: r.repo }));
+        await refreshChanges();
+      });
     });
-  });
-  bar.appendChild(stashBtn);
-  bindingCleanups.push(
-    bindLoadingState(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn),
-  );
+    bar.appendChild(stashBtn);
+    bindingCleanups.push(
+      bindLoadingState(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn),
+    );
+  }
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
