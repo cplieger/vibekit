@@ -1,10 +1,12 @@
 // The assistant turn's action row: copy, export, and the raw-markdown toggle.
 //
-// The toggle's two mechanical constraints are what most of this file pins. It
+// The toggle's three mechanical constraints are what most of this file pins. It
 // must ADD a sibling rather than replace the rendered children, because
-// reconcile re-runs the body updater on every repaint; and it must hide with
+// reconcile re-runs the body updater on every repaint; it must hide with
 // `.hidden`, because find-in-chat's walker prunes `.hidden` subtrees and would
-// otherwise count every match twice.
+// otherwise count every match twice; and it must hide the block CONTAINER
+// rather than its children, so a block arriving after the toggle cannot leak
+// into the raw view.
 import { describe, it, expect, vi } from "vitest";
 import type { Message } from "./types.js";
 
@@ -52,9 +54,11 @@ interface Fixture {
   wrap: HTMLElement;
   blocks: HTMLElement;
   bubble: HTMLDivElement;
+  tool: HTMLElement;
 }
 
-/** The DOM shape buildAssistant + buildAssistantBody produce for one turn. */
+/** The DOM shape buildAssistant + buildAssistantBody produce for one turn: a
+ *  text bubble and a tool card, both inside the `.assistant-blocks` region. */
 function fixture(msg: Message, rendered = "rendered reply"): Fixture {
   document.body.innerHTML = "";
   const wrap = document.createElement("div");
@@ -69,10 +73,14 @@ function fixture(msg: Message, rendered = "rendered reply"): Fixture {
   bubble.textContent = rendered;
   row.appendChild(bubble);
   blocks.appendChild(row);
+  const tool = document.createElement("div");
+  tool.className = "tool-group";
+  tool.textContent = "ran a command";
+  blocks.appendChild(tool);
   wrap.appendChild(blocks);
   document.body.appendChild(wrap);
   active = { id: "c1", name: "chat", messages: [msg] };
-  return { wrap, blocks, bubble };
+  return { wrap, blocks, bubble, tool };
 }
 
 function assistant(over: Partial<Message> = {}): Message {
@@ -141,16 +149,29 @@ describe("the raw-markdown toggle", () => {
     expect(sourceButton(f.wrap).getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("shows the source and hides the rendered bubble with .hidden", () => {
+  it("shows the source and hides the whole rendered body with .hidden", () => {
     const f = fixture(assistant({ content: "# hi" }));
     attachTurnActions(f.bubble);
     sourceButton(f.wrap).click();
     expect(raw(f.wrap)?.textContent).toBe("# hi");
-    // `.hidden` specifically: find-in-chat prunes it, so exactly one of the two
+    // The CONTAINER hides, so prose and evidence go together. `.hidden`
+    // specifically: find-in-chat prunes it, so exactly one of the two
     // renderings is searchable and matches are never double-counted.
-    expect(f.bubble.classList.contains("hidden")).toBe(true);
+    expect(f.blocks.classList.contains("hidden")).toBe(true);
     expect(raw(f.wrap)?.classList.contains("hidden")).toBe(false);
     expect(sourceButton(f.wrap).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("takes the tool cards with it, so the raw view is source and nothing else", () => {
+    // The source is one document: every word the model wrote lands at the top
+    // of it, while a tool card left behind keeps the position it had between
+    // two paragraphs. Half a swap shows one turn in two orders at once.
+    const f = fixture(assistant());
+    attachTurnActions(f.bubble);
+    sourceButton(f.wrap).click();
+    expect(f.tool.closest(".hidden")).toBe(f.blocks);
+    const shown = [...f.wrap.children].filter((c) => !c.classList.contains("hidden"));
+    expect(shown.map((c) => c.className)).toEqual(["turn-raw", "turn-actions"]);
   });
 
   it("toggles back to the rendering", () => {
@@ -160,7 +181,8 @@ describe("the raw-markdown toggle", () => {
     btn.click();
     btn.click();
     expect(raw(f.wrap)?.classList.contains("hidden")).toBe(true);
-    expect(f.bubble.classList.contains("hidden")).toBe(false);
+    expect(f.blocks.classList.contains("hidden")).toBe(false);
+    expect(f.tool.closest(".hidden")).toBeNull();
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });
 
@@ -171,21 +193,27 @@ describe("the raw-markdown toggle", () => {
     attachTurnActions(f.bubble);
     sourceButton(f.wrap).click();
     expect(f.bubble.isConnected).toBe(true);
-    expect(raw(f.wrap)?.parentElement).toBe(f.blocks);
+    expect(f.blocks.isConnected).toBe(true);
+    // Immediately before the body it stands in for, so toggling does not move
+    // the reply up or down the card.
+    expect(raw(f.wrap)?.nextElementSibling).toBe(f.blocks);
   });
 
-  it("survives a repaint that appends a new block", () => {
+  it("swallows a block that arrives after the toggle", () => {
     const f = fixture(assistant());
     attachTurnActions(f.bubble);
     sourceButton(f.wrap).click();
     // What updateAssistantBody does on every repaint: append newly-arrived
-    // blocks into `.assistant-blocks`. Nothing here may disturb the raw view.
+    // blocks into `.assistant-blocks`. Nothing here may disturb the raw view,
+    // and the late block must not surface inside it — which is the whole
+    // reason the container hides instead of its children.
     const later = document.createElement("div");
     later.className = "tool-call";
     f.blocks.appendChild(later);
     attachTurnActions(f.bubble);
     expect(raw(f.wrap)).not.toBeNull();
     expect(raw(f.wrap)?.classList.contains("hidden")).toBe(false);
+    expect(later.closest(".hidden")).toBe(f.blocks);
     expect(f.wrap.querySelectorAll(".turn-raw")).toHaveLength(1);
     expect(f.wrap.querySelectorAll(".turn-actions")).toHaveLength(1);
   });
