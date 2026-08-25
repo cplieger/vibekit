@@ -34,6 +34,7 @@ import (
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/vibekit/internal/uistate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
@@ -294,6 +295,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithKiroRescan(kiro.rescan),
 		server.WithAuthUnavailable(h.AuthTokenUnavailable),
 		server.WithConfigDir(cfg.ConfigDir),
+		server.WithUIState(openUIStateStore(cfg.ConfigDir)),
 		server.WithWorkDir(cfg.WorkDir),
 		server.WithTrustedProxies(cfg.TrustedProxies),
 		server.WithHostPolicy(cfg.HostPolicy),
@@ -809,6 +811,20 @@ func openScheduleStore(dir string) *schedule.Store {
 	if err != nil {
 		slog.Warn("workflow scheduling disabled", "error", err)
 		return nil
+	}
+	return st
+}
+
+// openUIStateStore opens the synced UI-arrangement store.
+//
+// It ALWAYS returns a store: uistate.NewStore hands back a usable empty one
+// alongside a parse error, and the arrangement is re-derivable by opening the
+// tabs again. Disabling the sync instead would put the client back on a local
+// copy, which is the exact shape whose per-device drift this store replaced.
+func openUIStateStore(dir string) *uistate.Store {
+	st, err := uistate.NewStore(dir)
+	if err != nil {
+		slog.Warn("ui arrangement starting empty", "error", err)
 	}
 	return st
 }

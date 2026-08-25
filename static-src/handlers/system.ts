@@ -28,6 +28,7 @@ import { loadList, loadMessages } from "../store-load.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
+import { applyRemote as applyRemoteUIState } from "../ui-state.js";
 import { closeTab, hasTab, getOpenTabIDs, isEditorTabID } from "../tabs.js";
 
 // The handshake states the workspace root. It is the only way the client learns
@@ -40,6 +41,16 @@ onSSE("connected", (_chatID, p) => {
   if (typeof p.workspace === "string" && p.workspace !== "") {
     setWorkspaceRoot(p.workspace);
   }
+});
+
+onSSE("ui_state_changed", (_chatID, p) => {
+  // The arrangement is server-owned, so another device's tab open, close,
+  // reorder or pin arrives here. `applyRemote` folds it in, ignores this
+  // device's own echo (comparing the synced half, so a tab just dragged does
+  // not snap back), and notifies subscribers only when something really
+  // changed. It carries the STATE rather than being an invalidation, so no
+  // refetch is needed and every device learns the revision to write next.
+  applyRemoteUIState(p);
 });
 
 onSSE("settings_updated", () => {

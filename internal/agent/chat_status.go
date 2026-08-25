@@ -15,6 +15,7 @@ package agent
 // replay cannot resurrect a stale "in_progress").
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -48,8 +49,37 @@ func (c *chatStatusCache) Get(chatID vibekit.ChatID) vibekit.ChatStatusPayload {
 	return c.byChat[chatID]
 }
 
-// Clear drops a chat's status at turn end, so a later connect cannot report a
-// finished turn's label as current.
+// Snapshot copies every retained status, for the connect-time replay.
+func (c *chatStatusCache) Snapshot() map[vibekit.ChatID]vibekit.ChatStatusPayload {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.byChat)
+}
+
+// ClearAtTurnEnd drops a chat's status at turn end, so a later connect cannot
+// report a finished turn's label as current — EXCEPT waiting_on_user, which is
+// the one status whose whole meaning is that the turn ended and a person still
+// owes an answer.
+//
+// Clearing that one unconditionally is what made the amber dot unrecoverable.
+// The client renders `waiting_on_user` as a dot that survives turn end (it is
+// the only status that does), but the cache dropped it in the same breath as the
+// turn — so the dot existed only for a client that happened to be connected when
+// the event fired. A refresh lost it, and so did a second device joining later,
+// which is exactly the state a person picking the work up on another screen
+// needs to see. Keeping it costs one map entry per waiting chat, cleared by the
+// next status the agent declares or by the chat going away.
+func (c *chatStatusCache) ClearAtTurnEnd(chatID vibekit.ChatID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.byChat[chatID].Status == vibekit.ChatStatusWaitingOnUser {
+		return
+	}
+	delete(c.byChat, chatID)
+}
+
+// Clear drops a chat's status unconditionally. For a chat going away (closed or
+// deleted), where no status can still be true of it.
 func (c *chatStatusCache) Clear(chatID vibekit.ChatID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

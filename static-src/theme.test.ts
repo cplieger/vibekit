@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { initThemeToggle } from "./theme.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
+import { _resetForTest as resetUIState } from "./ui-state.js";
 
 function setupButton(): HTMLButtonElement {
   document.body.innerHTML =
@@ -48,6 +49,10 @@ function stubMatchMedia(osDark: boolean): void {
 beforeEach(() => {
   originalMatchMedia = window.matchMedia;
   localStorage.clear();
+  // The arrangement is server-owned now, so ui-state.ts holds an in-memory
+  // document that outlives a localStorage.clear(). Reset it too, or one case's
+  // chosen theme is still the answer in the next.
+  resetUIState();
   document.documentElement.removeAttribute("data-theme");
 });
 

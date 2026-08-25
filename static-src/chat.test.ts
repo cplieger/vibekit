@@ -248,9 +248,11 @@ describe("the draft of a chat with no messages", () => {
 
 describe("openChatTab onClose retention gate", () => {
   // Capture the onClose callback openChatTab hands to the tab store.
-  function captureOnClose(id: string): () => void {
+  function captureOnClose(id: string): (o?: { remote: boolean }) => void {
     openChatTab(id, "chat");
-    const spec = vi.mocked(openTab).mock.calls.at(-1)?.[0] as { onClose?: () => void };
+    const spec = vi.mocked(openTab).mock.calls.at(-1)?.[0] as {
+      onClose?: (o?: { remote: boolean }) => void;
+    };
     return spec.onClose ?? ((): void => undefined);
   }
 
@@ -265,6 +267,31 @@ describe("openChatTab onClose retention gate", () => {
     expect(closeChat.dispatch).toHaveBeenCalledWith("c-closed");
     expect(removeChat).toHaveBeenCalledWith("c-closed");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
+  });
+
+  // A close that came from ANOTHER DEVICE has already had its server teardown:
+  // the arrangement is server-owned, so the device that closed the tab dispatched
+  // close_chat and the bridge is already down. This device does every LOCAL
+  // cleanup and skips only the duplicate dispatch — which also closes a race,
+  // since a second close_chat would kill a bridge the reader may have just
+  // restarted here by reopening the chat.
+  it("skips the duplicate dispatch on a REMOTE close but still cleans up locally", () => {
+    vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
+    vi.mocked(isRetentionEnabled).mockReturnValue(true);
+    captureOnClose("c-remote")({ remote: true });
+    expect(closeChat.dispatch).not.toHaveBeenCalled();
+    // The local half is NOT skipped: a store row left behind is a tab that is
+    // gone from the strip but still in the sidebar's state.
+    expect(removeChat).toHaveBeenCalledWith("c-remote");
+    expect(dropDecisions).toHaveBeenCalledWith("c-remote");
+  });
+
+  it("does not delete remotely either when retention is off; the other device did", () => {
+    vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
+    vi.mocked(isRetentionEnabled).mockReturnValue(false);
+    captureOnClose("c-remote-eph")({ remote: true });
+    expect(deleteChat.dispatch).not.toHaveBeenCalled();
+    expect(removeChat).toHaveBeenCalledWith("c-remote-eph");
   });
 
   it("deletes a non-empty chat permanently on close when retention is DISABLED (0 = no retention)", () => {
@@ -324,7 +351,7 @@ function lastSpec(): {
   parentId?: string;
   owns?: boolean;
   kind: string;
-  onClose?: () => void;
+  onClose?: (o?: { remote: boolean }) => void;
 } {
   return vi.mocked(openTab).mock.calls.at(-1)?.[0] as never;
 }

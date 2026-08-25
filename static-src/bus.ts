@@ -27,6 +27,7 @@ import type {
   SteerClearedPayload,
   AgentNoticePayload,
   TurnStatePayload,
+  UIStateChangedPayload,
   PermissionNeeded,
   ErrorPayload,
   ConnectedPayload,
@@ -85,6 +86,7 @@ export interface SSEPayloads {
   // consumer has to decide whose words a steer holds.
   readonly agent_notice: AgentNoticePayload;
   readonly turn_state: TurnStatePayload;
+  readonly ui_state_changed: UIStateChangedPayload;
   readonly permission_needed: PermissionNeeded;
   readonly permissions_changed: PermissionsChangedPayload;
   readonly policy_error: PolicyErrorPayload;

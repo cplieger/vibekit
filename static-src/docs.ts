@@ -315,6 +315,22 @@ export function showDocsView(tab: DocsTab = "steering"): void {
   });
 }
 
+/** Load (or reload) the page without touching the tab, the way
+ *  `loadHistoryView` does and for the same reason: the tab-restore path cannot
+ *  call `showDocsView`, which TOGGLES, so firing it from the `onShow` of an
+ *  already-open tab would close the tab it was meant to fill.
+ *
+ *  It must run `initDocsView` too. The restore path used to call
+ *  `forceDocsTab` + `loadDocs` only, so a docs tab restored at boot loaded its
+ *  rows and never registered its find — leaving the toolbar's magnifier absent
+ *  for the whole session on the one path where the user had the page open last
+ *  time. `initDocsView` is one-shot, so calling it from both doors is free. */
+export function loadDocsView(tab: DocsTab = "steering"): void {
+  forceDocsTab(tab);
+  initDocsView();
+  loadDocs();
+}
+
 /** Set the active tab without pushing a URL — the router's entry point when
  *  back/forward lands on /docs/<tab>. */
 export function forceDocsTab(tab: DocsTab): void {

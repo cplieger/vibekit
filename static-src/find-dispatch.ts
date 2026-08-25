@@ -187,9 +187,14 @@ export function toggleFindForActiveTab(): void {
  *  filters. Read inside a `@cplieger/reactive` effect (app.ts), so the signals the
  *  answer depends on — the editor's mode, the git sub-tab — re-run it themselves. */
 export function findAffordanceForActiveTab(): { available: boolean; kind: FindKind } {
+  // Read the registry FIRST, whatever the destination. `pageFind` is what
+  // subscribes a caller's effect to registration, and reading it only inside the
+  // `page` branch left that effect with no dependency on the registry on any
+  // boot where the active tab was a chat — so a page registering a moment later
+  // could not repaint the button it had already been painted absent on.
+  const find = pageFind(getActiveTabKind() ?? "");
   const dest = destination();
   if (dest === "page") {
-    const find = pageFind(getActiveTabKind() ?? "");
     if (find === undefined) {
       return { available: false, kind: BUILTIN_KIND.page };
     }

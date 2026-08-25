@@ -518,8 +518,44 @@ type ChatStatusPayload struct {
 	Description string `json:"description,omitempty"`
 }
 
+// The ChatStatusPayload.Status vocabulary, as KAS's focus_update channel spells
+// it. Named because one member is load-bearing on the server: waiting_on_user is
+// the only status whose meaning OUTLIVES its turn, so it is the one the
+// connect-time replay retains (see agent.chatStatusCache.ClearAtTurnEnd).
+const (
+	ChatStatusInProgress    = "in_progress"
+	ChatStatusWaitingOnUser = "waiting_on_user"
+	ChatStatusCompleted     = "completed"
+	ChatStatusIdle          = "idle"
+)
+
 // MCPConfigChangedPayload is the payload for type="mcp_config_changed".
 type MCPConfigChangedPayload struct{}
+
+// UIStateChangedPayload is the payload for type="ui_state_changed": the whole
+// synced UI arrangement plus the revision that produced it, broadcast after any
+// device writes one.
+//
+// It carries the STATE rather than being a bare invalidation, unlike the run
+// events. Two reasons. The document is small and complete, so a refetch would
+// only re-fetch what the broadcast already had; and every client needs the
+// revision to write next, so an invalidation would make a GET mandatory before
+// any local change could be published — turning one device's tab drag into a
+// round trip on every other device.
+//
+// Workspace-global: the chat id is empty. `active_view` is deliberately not in
+// here (see internal/uistate.State) — a phone must not move the desktop's
+// active tab.
+type UIStateChangedPayload struct {
+	Theme            string                     `json:"theme,omitempty"`
+	FBPath           string                     `json:"fb_path,omitempty"`
+	TurnFolds        map[string]map[string]bool `json:"turn_folds,omitempty"`
+	TabOrder         []string                   `json:"tab_order,omitempty"`
+	PinnedTabs       []string                   `json:"pinned_tabs,omitempty"`
+	EditorFiles      []string                   `json:"editor_files,omitempty"`
+	DismissedBanners []string                   `json:"dismissed_banners,omitempty"`
+	Revision         uint64                     `json:"revision"`
+}
 
 // ForgesChangedPayload is the payload for type="forges_changed".
 // Sent after a forge is connected, disconnected, or re-probed.

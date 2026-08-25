@@ -43,6 +43,10 @@ import {
   restoreTabState,
   getSavedTabState,
   restorableSingletonIDs,
+  reconcileRemoteTabs,
+  closeTab,
+  editorTabID,
+  isEditorTabID,
   getActiveTabId,
   getActiveTabRoute,
   activateTab,
@@ -57,7 +61,7 @@ import { refreshPickerIfVisible, setPickerModels, initModelPicker } from "./pick
 import { setStatus, refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
-import { initEditor } from "./editor-core.js";
+import { initEditor, restoreEditorTabs } from "./editor-core.js";
 import { openFile } from "./editor-openers.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
@@ -102,6 +106,12 @@ import { initRuntimeHealth } from "./runtime-health.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
+import {
+  hydrate as hydrateUIState,
+  flush as flushUIState,
+  onRemoteChange as onUIStateRemoteChange,
+} from "./ui-state.js";
+import type { UIState } from "./ui-state.js";
 import { applyShareTarget } from "./share-target.js";
 
 import "./handlers/chat.js";
@@ -116,7 +126,7 @@ import { initPushMessages } from "./handlers/push-message.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
-import { subscribeToActions } from "./actions/index.js";
+import { subscribeToActions, registerCleanup as registerActionCleanup } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
 import { error as toastError } from "./toast.js";
 // Register the conflict SSE handler at startup so badges land
@@ -132,6 +142,59 @@ function dismissLoadingScreen(): void {
 // ============================================================
 // Init
 // ============================================================
+
+// The arrangement is server-owned, so a tab opened or closed on another device
+// has to appear or go here at once. This is the read side of that.
+//
+// It applies the SET and deliberately not the ORDER (user decision): a tab
+// showing up instantly is the point, while the strip rearranging itself under
+// the reader's cursor is visual noise. Order converges on the next load, which
+// reads the arrangement whole through `restoreTabState`.
+//
+// The id -> opener mapping is not duplicated here: singletons go back through
+// `restoreSingletonTabs`, editor tabs through `restoreEditorTabs`, chats through
+// `openChatTab`. Two exclusions, both deliberate:
+//
+//   - A RUN tab is not mirrored. An owned run tab CANCELS its run when closed,
+//     so mirroring one would put a live cancel button on a second screen and let
+//     either of them kill work the other launched.
+//   - A chat with no store row is skipped rather than guessed at. In practice
+//     the row is always there first — `chat_created` broadcasts the moment the
+//     server persists the chat, and the arrangement PUT behind it is debounced —
+//     so a missing row means the chat is genuinely unknown here, and a tab for it
+//     would be a ghost. It appears on the next load.
+function applyRemoteArrangement(ui: UIState): void {
+  const { toOpen, toClose } = reconcileRemoteTabs(ui.tab_order);
+  for (const id of toClose) {
+    // `remote: true` suppresses the DUPLICATE server teardown, never the local
+    // cleanup: the device that closed this tab already ran close_chat, and the
+    // bridge is down. See TabSpec.onClose.
+    closeTab(id, { remote: true });
+  }
+  if (toOpen.length === 0) {
+    return;
+  }
+  restoreSingletonTabs(toOpen);
+  const editorPaths = ui.editor_files.filter((p) => toOpen.includes(editorTabID(p)));
+  if (editorPaths.length > 0) {
+    restoreEditorTabs(editorPaths);
+  }
+  for (const id of toOpen) {
+    if (isEditorTabID(id) || id.startsWith("__") || id.startsWith("run:")) {
+      continue;
+    }
+    const s = get(id);
+    if (s !== undefined) {
+      openChatTab(id, s.name, { activate: false });
+    }
+  }
+}
+
+// A pending arrangement write must not die with the page: a tab close or a drag
+// commit debounces for 400ms, and a reload inside that window used to lose it.
+registerActionCleanup(() => {
+  flushUIState();
+});
 
 function init(): void {
   initActions();
@@ -358,6 +421,13 @@ async function checkAuthAndStart(): Promise<void> {
   const settings = await loadSettings();
   restoreLastModel(settings.last_model);
 
+  // The UI arrangement now lives on the server, so it has to be read before
+  // anything restores from it: restoreAll below and the tab restore further down
+  // both call uiState.load(), and an unhydrated document opens no tabs. Awaited
+  // rather than raced for that reason. It never throws — an unreachable endpoint
+  // leaves the arrangement empty, which opens nothing rather than the wrong thing.
+  await hydrateUIState();
+
   suppressPush(true);
   try {
     restoreAll(settings);
@@ -378,6 +448,10 @@ async function checkAuthAndStart(): Promise<void> {
 
   if (!authenticated) {
     setUserEmail("");
+    // Nothing will hydrate the store behind a login modal, so release the held
+    // frames rather than leaving the stream stalled until the watchdog fires.
+    // Their consumers no-op on a store with no chats, which is correct here.
+    transport.markHydrated();
     showLoginModal();
     return;
   }
@@ -412,6 +486,14 @@ async function checkAuthAndStart(): Promise<void> {
   const shareWillCreate = wantsAgent === "planner";
   try {
     const ok = await loadList();
+    // The chat store is populated (or provably unreachable), so the SSE frames
+    // held since the connection opened can be released — chief among them the
+    // one `turn_state` per busy chat, which is the ONLY channel carrying an
+    // in-flight turn to a new client and is never re-broadcast. Released here
+    // rather than after the tabs open, because the frames only need a chat ROW
+    // to land on, and holding them longer would delay the busy dot for no gain.
+    // See transport.ts holdUntilHydrated.
+    transport.markHydrated();
     skel.remove();
     if (!ok || getSessions().length === 0) {
       if (!ok) {
@@ -429,21 +511,41 @@ async function checkAuthAndStart(): Promise<void> {
         createSession();
       }
     } else {
+      // Open the tabs the SERVER's arrangement names, not one per chat.
+      //
+      // That distinction is the whole point of moving the arrangement
+      // server-side. `close_chat` deliberately keeps the chat RECORD, so a chat
+      // the user closed is still in GET /api/chats — and while the boot loop
+      // opened a tab per chat, every closed chat came back on every refresh. The
+      // reader then closed it again, which cancels its turn, so the drift cost
+      // work rather than clutter.
+      //
+      // A chat id in the arrangement that the server no longer has (purged by
+      // retention) is dropped rather than opened as a ghost row; a first-ever
+      // visit has an empty arrangement, so it falls through to the same
+      // open-every-chat behaviour it always had.
+      const known = new Map(getSessions().map((s) => [s.id, s]));
+      const arranged = getSavedTabState().tab_order.filter((id) => known.has(id));
+      const chatsToOpen =
+        arranged.length > 0
+          ? arranged.map((id) => known.get(id)!) // eslint-disable-line @typescript-eslint/no-non-null-assertion
+          : getSessions();
       // Open every chat tab WITHOUT activating (B8): activation runs
       // activateChatView (messages fetch + conflicts prefetch) per chat,
       // so activating all N at boot cost 2N requests for chats the user
       // isn't looking at. Exactly one tab is activated below.
-      for (const s of getSessions()) {
+      for (const s of chatsToOpen) {
         openChatTab(s.id, s.name, { activate: false });
       }
       await retentionReady;
       restoreSingletonTabs();
       restoreTabState();
-      if (getActiveTabId() === "" && getSessions().length > 0) {
-        activateTab(getSessions()[0]!.id); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      if (getActiveTabId() === "" && chatsToOpen.length > 0) {
+        activateTab(chatsToOpen[0]!.id); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       }
     }
   } catch {
+    transport.markHydrated();
     skel.remove();
     toastError("Couldn't load your chats.", {
       label: "Reload",
@@ -461,6 +563,14 @@ async function checkAuthAndStart(): Promise<void> {
   applyInitialRoute();
   // Boot restores are done — view swaps animate from here on (B3).
   markBootDone();
+  // Only NOW subscribe to remote arrangement changes. Wired earlier it would
+  // race the boot restore: the strip is assembled over several awaits (chats,
+  // then singletons, then the saved order), so a change arriving mid-assembly
+  // would compare a half-built strip against the server's and "reconcile" the
+  // difference by closing tabs boot was about to open.
+  onUIStateRemoteChange((ui) => {
+    applyRemoteArrangement(ui);
+  });
 }
 
 // One-time post-auth initialization: fetches gated behind a successful
@@ -495,11 +605,16 @@ function initPostAuth(): void {
  *  the tab it was meant to fill. The docs and History cases reach theirs through
  *  a lazy import, because those two modules are lazy everywhere else and a static
  *  import here would pull them into the main bundle. */
-function restoreSingletonTabs(): void {
+function restoreSingletonTabs(from?: readonly string[]): void {
   // History is gated because its own entry point is: the toolbar button hides
   // when retention is off (nothing is kept to list), so restoring the tab
   // reopened a page the user could neither reach nor get back to.
-  const ids = restorableSingletonIDs(getSavedTabState().tab_order, {
+  //
+  // `from` defaults to the boot snapshot. The remote-arrangement reconciler
+  // passes its own id list instead, so the id -> opener mapping below lives in
+  // exactly one place and a singleton opened on another device gets the same
+  // spec here that a restore would have built.
+  const ids = restorableSingletonIDs(from ?? getSavedTabState().tab_order, {
     __history__: isRetentionEnabled(),
   });
   for (const id of ids) {
@@ -542,9 +657,8 @@ function restoreSingletonTabs(): void {
             route: { kind: "docs", tab: "steering" },
             onShow: () => {
               void import("./docs.js")
-                .then(({ forceDocsTab, loadDocs }) => {
-                  forceDocsTab("steering");
-                  loadDocs();
+                .then(({ loadDocsView }) => {
+                  loadDocsView("steering");
                 })
                 .catch(() => {
                   /* noop */

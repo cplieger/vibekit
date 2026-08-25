@@ -112,6 +112,7 @@ export type {
   TerminalExitedPayload,
   TurnEndedPayload,
   TurnStatePayload,
+  UIStateChangedPayload,
 } from "./wire/types.gen.js";
 
 // PermissionNeeded is the legacy alias used at call sites that predate

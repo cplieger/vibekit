@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/uistate"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -42,7 +43,12 @@ type Server struct {
 	// kiroDocs memoizes the document-oriented .kiro inventory behind a
 	// directory-mtime signature (kiro_docs.go). A pointer so the zero Server
 	// used by the method-guard tests needs no initialisation.
-	kiroDocs  *docsCache
+	kiroDocs *docsCache
+	// uiState is the synced UI arrangement (tab strip, editor files, theme,
+	// fold overrides). Nil in a bare test server, which the handler answers as
+	// an empty document rather than 404 — a client that cannot read the
+	// arrangement must still boot.
+	uiState   *uistate.Store
 	cliRunner CLIRunner
 	tools     *toolbelt.Engine
 	// kiroReady is the kiro-cli install manager's readiness verdict plus its
@@ -196,6 +202,9 @@ func WithKiroRescan(rescan func(context.Context) (bool, error)) Option {
 // WithConfigDir sets the configuration directory path used for chat files and settings.
 func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d } }
 
+// WithUIState wires the synced UI arrangement store.
+func WithUIState(st *uistate.Store) Option { return func(s *Server) { s.uiState = st } }
+
 // WithWorkDir sets the workspace directory served by the file handler and git endpoints.
 func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
 
@@ -299,6 +308,7 @@ func (s *Server) ListenAndServe() error {
 	}
 	s.files.RegisterRoutes(mux)
 	mux.HandleFunc("/api/settings", s.handleSettings)
+	mux.HandleFunc("/api/ui-state", s.handleUIState)
 	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
 	s.mcpConfig.RegisterRoutes(mux)

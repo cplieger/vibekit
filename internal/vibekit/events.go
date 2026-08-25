@@ -93,6 +93,9 @@ const (
 	EventSafetyStatus     EventType = "safety_status"
 	EventSafetyProperties EventType = "safety_properties"
 	EventSettingsUpdated  EventType = "settings_updated"
+	// EventUIStateChanged carries the whole synced UI arrangement after any
+	// device writes one, so every other device applies it without a refetch.
+	EventUIStateChanged EventType = "ui_state_changed"
 	// EventSteerQueued and the two below mirror KAS's own three mid-turn
 	// steering signals rather than collapsing them. Each answers a different
 	// question the chip row asks: queued = it reached the buffer, injected =
