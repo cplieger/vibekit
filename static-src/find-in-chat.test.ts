@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("./scroll.js", () => ({ setUserScrolledUp: vi.fn() }));
+vi.mock("./scroll.js", () => ({ jumpTo: vi.fn() }));
 // Spy-wrapped rather than replaced: every export keeps its real implementation
 // and becomes observable. `vi.spyOn(namespace, name)` cannot do this in a real
 // browser — an ESM module namespace is not configurable, so the assignment

@@ -27,7 +27,7 @@
 
 import { el } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
-import { setUserScrolledUp } from "./scroll.js";
+import { jumpTo } from "./scroll.js";
 import { turnAnchorID, type TurnOutcome } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 
@@ -468,14 +468,12 @@ function scrollToAnchor(anchor: string): boolean {
   if (target === null) {
     return false;
   }
-  // Freeze stick-to-bottom first: jumping into history while a turn streams
-  // would otherwise yank the view straight back down. Same reason find-in-chat
-  // does it before its own scroll.
-  setUserScrolledUp(true);
-  const fn = (target as { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }).scrollIntoView;
-  if (typeof fn === "function") {
-    fn.call(target, { block: "start", behavior: "smooth" });
-  }
+  // The scroll module owns both halves: it parks the reader (so a streaming turn
+  // cannot yank the view back down) and it decides whether this jump moves them
+  // off the live edge at all. A one-turn chat that does not overflow cannot
+  // scroll, and claiming otherwise raised the `Latest` control over a transcript
+  // that had not moved. Same call as find-in-chat's.
+  jumpTo(target, { block: "start", behavior: "smooth" });
   return true;
 }
 

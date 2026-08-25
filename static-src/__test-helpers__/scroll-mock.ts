@@ -7,6 +7,7 @@ export const scrollMock = {
   scrollEl: null as HTMLElement | null,
   scrollToBottom: vi.fn(),
   setUserScrolledUp: vi.fn(),
+  jumpTo: vi.fn(),
   resetScrollState: vi.fn(),
   setLoadMore: vi.fn(),
   readingState: vi.fn(() => "following" as const),

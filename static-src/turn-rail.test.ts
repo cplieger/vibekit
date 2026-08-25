@@ -6,11 +6,11 @@
 import { describe, it, expect, vi } from "vitest";
 
 // scroll.ts self-initialises a singleton against #messages at import time, and
-// the rail imports it for the freeze-follow call on jump. Neither is under test
+// the rail imports it to park the reader on jump. Neither is under test
 // here, so stub it rather than staging the whole chat DOM.
-vi.mock("./scroll.js", () => ({ setUserScrolledUp: vi.fn() }));
+vi.mock("./scroll.js", () => ({ jumpTo: vi.fn() }));
 
-import { railRows, type TurnSummary } from "./turn-rail.js";
+import { railRows, ROW_PITCH_PX, type TurnSummary } from "./turn-rail.js";
 import type { TurnOutcome } from "./turns.js";
 
 const MINUTE = 60_000;

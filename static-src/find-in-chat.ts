@@ -43,7 +43,7 @@ import { el } from "@cplieger/reactive";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import type { PopupController } from "@cplieger/ui-primitives/popup";
 import { $, byId } from "./dom.js";
-import { setUserScrolledUp } from "./scroll.js";
+import { jumpTo } from "./scroll.js";
 import { runServerSearch, resetServerSearch } from "./chat-search.js";
 import { getActiveId } from "./store.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
@@ -351,17 +351,13 @@ function revealCurrent(): void {
     return;
   }
   // Freeze the auto-scroll controller so a streaming turn doesn't yank the
-  // view back to the bottom while the user reads a match.
-  setUserScrolledUp(true);
-  const scrollFn = (mark as { scrollIntoView?: (o?: ScrollIntoViewOptions) => void })
-    .scrollIntoView;
-  if (typeof scrollFn === "function") {
-    scrollFn.call(mark, {
-      block: "center",
-      inline: "nearest",
-      behavior: prefersReducedMotion() ? "auto" : "smooth",
-    });
-  }
+  // view back to the bottom while the user reads a match — but only when the
+  // jump actually leaves the live edge, which is `jumpTo`'s call to make.
+  jumpTo(mark, {
+    block: "center",
+    inline: "nearest",
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+  });
 }
 
 function startObserving(): void {
