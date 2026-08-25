@@ -859,13 +859,28 @@
   color: var(--c-accent);
 }
 
-/* Banner stack: persistent per-chat banners above the transcript. */
+/* Banner stack: persistent per-chat banners in their own band above the
+   transcript.
+
+   TWO THINGS DECIDE ITS PLACEMENT, and both are about staying out from under
+   something. It is a flex child of `#chat-view` rather than of
+   `#messages-wrap-outer`, because that wrapper's scroller is
+   `position: absolute; inset: 0` and therefore painted over the whole wrapper —
+   a banner inside it was visible but unclickable, which is how an
+   `agent_config_error` shipped a CTA nobody could reach. And it starts below the
+   chat toolbar rather than at the top of the view, because `.chat-toolbar` is
+   anchored to that same corner at z-index 10 and is opaque, so a full-width band
+   at the top runs its right end — the action button and the dismiss × — under
+   six navigation buttons. `--below-chat-toolbar` is the toolbar's own derivation
+   (12-chat.css), already used by `.chat-find` and the timeline rail for the same
+   reason; the margin only exists when a banner does, since the stack collapses
+   when empty. */
 .banner-stack {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
   padding: 0 var(--sp-3);
-  margin-top: 2px;
+  margin-block-start: var(--below-chat-toolbar);
 
   &:empty {
     display: none;

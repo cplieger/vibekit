@@ -131,8 +131,16 @@
 
       <!-- Chat view -->
       <div id="chat-view" data-tab-view>
+        <!-- A FLEX CHILD of the chat view, not a child of #messages-wrap-outer.
+             It sat inside that wrapper beside `#messages-wrap`, which is
+             `position: absolute; inset: 0` — so the scroller covered the whole
+             wrapper INCLUDING the banner band, and every pointer event over a
+             banner landed on the transcript instead. The measured consequence was
+             an `agent_config_error` whose "Open custom instructions" button could
+             not be clicked at all. Here the band takes real height and the
+             transcript starts below it. -->
+        <div id="banner-stack" class="banner-stack"></div>
         <div id="messages-wrap-outer">
-          <div id="banner-stack" class="banner-stack"></div>
           <div id="messages-wrap">
             <div id="messages"></div>
             <div id="model-picker" class="hidden">
