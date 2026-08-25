@@ -109,7 +109,9 @@ export function openChatTab(
       onShow: () => {
         activateChatView(id);
       },
-      onClose: () => {
+      // Defaulted, so a caller that omits the flag means LOCAL — the safe
+      // reading, since a missing flag must never suppress the server teardown.
+      onClose: ({ remote } = { remote: false }) => {
         // The draft belongs to the CHAT, not to the tab, so a pending save goes
         // out before the teardown dispatch: a close that keeps the record keeps
         // the unsent text with it, and a delete's tombstone then drops the save
@@ -135,9 +137,23 @@ export function openChatTab(
           // Closing kills the work (user decision): the turn, the chat's runs,
           // the process — server-side, before the local row goes. The record
           // survives; reopening session/loads it back.
-          void closeChatAction.dispatch(id);
+          //
+          // A close that came from ANOTHER DEVICE has already had that happen:
+          // the arrangement is server-owned, so the device that closed the tab
+          // dispatched close_chat and the bridge is already down. This device
+          // still does every LOCAL cleanup below — the store row, the dock queue,
+          // the composer state — and skips only the duplicate dispatch, which
+          // would otherwise kill a bridge the reader may have just restarted here
+          // by reopening the chat.
+          if (!remote) {
+            void closeChatAction.dispatch(id);
+          }
           removeChat(id);
         } else if (s?.message_count === 0) {
+          removeChat(id);
+        } else if (remote) {
+          // Retention off means a close DELETES, and the other device already
+          // did. Drop the local row without a second delete_chat.
           removeChat(id);
         } else {
           // delete_chat implies the same teardown server-side.

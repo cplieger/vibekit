@@ -22,7 +22,20 @@
 // The invariant that makes a null read safe: a page cannot BE the active tab
 // without its module having been imported to render it, so a null here means
 // that page is not active and the dispatcher's branch for it was unreachable.
+//
+// WHY THE MAP IS FRONTED BY A SIGNAL. Every page registers from inside its own
+// lazily-imported module, and `tabs.activateTab` announces the switch BEFORE it
+// calls `onShow` — so the toolbar paints its magnifier from this registry one
+// module-fetch before the page arrives to fill it. A plain Map cannot invalidate
+// the effect that read it, so the button stayed in whatever state the previous
+// tab left it: absent on the first `/docs` open of a page session (and for the
+// whole session on a boot-restored docs tab), and still present but inert after
+// a git Changes → Sources switch. The version counter is what makes a
+// registration re-derive the answer, and reading it inside `pageFind` is what
+// subscribes every caller without any of them knowing about it.
 // ---------------------------------------------------------------------------
+
+import { signal } from "@cplieger/reactive";
 
 /** What a find affordance MEANS on a page, which decides its glyph and its
  *  wording wherever it is offered.
@@ -64,18 +77,30 @@ export interface PageFind {
 
 const registry = new Map<string, PageFind>();
 
+/** Bumped on every registration, read by `pageFind`. See the header note. */
+const version = signal(0);
+
 /** Register a page's find entry point, keyed by its tab kind. Idempotent:
  *  re-registering replaces, so a page may call it on every mount. */
 export function registerFind(kind: string, find: PageFind): void {
+  const had = registry.get(kind);
   registry.set(kind, find);
+  if (had !== find) {
+    version.value = version.value + 1;
+  }
 }
 
-/** The registered find for a tab kind, or undefined. */
+/** The registered find for a tab kind, or undefined.
+ *
+ *  Reads the version signal, so a caller inside an effect re-runs when a page
+ *  registers. Outside an effect that read is free. */
 export function pageFind(kind: string): PageFind | undefined {
+  void version.value;
   return registry.get(kind);
 }
 
 /** @internal Test seam: drop every registration. */
 export function _resetFindRegistry(): void {
   registry.clear();
+  version.value = version.value + 1;
 }

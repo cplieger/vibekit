@@ -182,7 +182,26 @@ export async function loadMessages(
   } else {
     // Normalize replayed messages so legacy transcripts (persisted before the
     // blocks field) get synthesized blocks — the renderer is block-only.
-    session.messages = d.messages.map(normalizeMessage);
+    const fetched = d.messages.map(normalizeMessage);
+    // Then re-adopt the local TAIL. The in-flight turn lives in the server's
+    // in-memory assistant buffer and is flushed to the chat file once, at
+    // turn_ended — so it is absent from this page while `turn_state` has already
+    // put it in the store. A blind whole-array replace therefore DELETED the
+    // reply the reader was watching, every time this ran mid-turn: on the boot
+    // activation after a refresh, and on the gap handler's heal.
+    //
+    // The anchor is the newest message the page DOES carry. Everything local
+    // after it that the page does not have is the tail; everything before it is
+    // the page's own business (which is what keeps a scrolled-up window from
+    // being re-appended out of order). A page whose last id is not local at all
+    // — the refresh case, where the only local message is the streaming one —
+    // anchors at 0 and keeps whatever the page omits.
+    const fetchedIDs = new Set(fetched.map((m) => m.id));
+    const lastID = fetched.at(-1)?.id;
+    const anchor =
+      lastID === undefined ? 0 : session.messages.findIndex((m) => m.id === lastID) + 1;
+    const tail = session.messages.slice(anchor).filter((m) => !fetchedIDs.has(m.id));
+    session.messages = tail.length === 0 ? fetched : [...fetched, ...tail];
   }
   session.message_count = d.chat.message_count;
   session.has_more = d.has_more;

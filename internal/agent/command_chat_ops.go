@@ -22,6 +22,11 @@ import (
 // both went with internal/pending.
 func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
 	rt.bus.ClearPendingPermsForChat(chatID)
+	// The chat is going away, so no declared status can still be true of it —
+	// including the waiting_on_user that ClearAtTurnEnd deliberately retains past
+	// a turn's end. Without this, closing a chat that was waiting on an answer
+	// left its amber status in the cache for the next connect to replay.
+	rt.bus.chatStatus.Clear(chatID)
 	rt.coord.CloseBridge(chatID)
 	rt.agentTerms.KillForChat(chatID)
 	rt.lifecycle.mu.Lock()

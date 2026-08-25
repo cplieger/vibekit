@@ -1707,6 +1707,33 @@ export interface TurnStatePayload {
   chunk_seq?: number;
 }
 
+/**
+ * UIStateChangedPayload is the payload for type="ui_state_changed": the whole
+ * synced UI arrangement plus the revision that produced it, broadcast after any
+ * device writes one.
+ * //
+ * It carries the STATE rather than being a bare invalidation, unlike the run
+ * events. Two reasons. The document is small and complete, so a refetch would
+ * only re-fetch what the broadcast already had; and every client needs the
+ * revision to write next, so an invalidation would make a GET mandatory before
+ * any local change could be published — turning one device's tab drag into a
+ * round trip on every other device.
+ * //
+ * Workspace-global: the chat id is empty. `active_view` is deliberately not in
+ * here (see internal/uistate.State) — a phone must not move the desktop's
+ * active tab.
+ */
+export interface UIStateChangedPayload {
+  theme?: string;
+  fb_path?: string;
+  turn_folds?: Record<string, Record<string, boolean>>;
+  tab_order?: string[];
+  pinned_tabs?: string[];
+  editor_files?: string[];
+  dismissed_banners?: string[];
+  revision: number;
+}
+
 /** Usage is a chat's last-known context and billing snapshot. */
 export interface Usage {
   metering_items?: MeteringItem[];

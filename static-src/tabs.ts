@@ -89,8 +89,21 @@ export interface TabSpec {
   route: Route;
   /** Called when the tab becomes active. */
   onShow?: (() => void) | undefined;
-  /** Called when the tab is closed. */
-  onClose?: (() => void) | undefined;
+  /** Called when the tab is closed.
+   *
+   *  `remote` is true when the close came from ANOTHER DEVICE — the arrangement
+   *  is server-owned, so a close on one screen removes the tab on every screen.
+   *  The distinction is not "close less fully": the chat's server-side teardown
+   *  (cancel the turn, cancel its runs, tear the bridge down) already happened
+   *  once, when the device that closed it dispatched `close_chat`. What `remote`
+   *  suppresses is only the DUPLICATE dispatch. Every local cleanup still has to
+   *  run, or this device keeps a store row, a dock card and composer state for a
+   *  tab that is gone.
+   *
+   *  Suppressing the dispatch also closes a real race: if the reader had just
+   *  reopened that chat here, a second `close_chat` would kill the bridge they
+   *  had only now started. */
+  onClose?: ((opts?: { remote: boolean }) => void) | undefined;
   /** The tab this one hangs off, making it a SUB-TAB: it renders indented under
    *  its parent, sorts immediately after it, is not independently draggable, is
    *  not persisted in `tab_order`, and closes when its parent closes.
@@ -375,7 +388,7 @@ export function activateTab(id: string): void {
  *
  *  `skipOnClose` is a fact about `id` ALONE and never travels down the cascade —
  *  see the children loop below. */
-export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
+export function closeTab(id: string, opts?: { skipOnClose?: boolean; remote?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) {
     return;
@@ -400,7 +413,12 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   // A child that owns nothing still skips its teardown — through its own
   // ownership check below, which is where that decision belongs.
   for (const child of childrenOf(id)) {
-    closeTab(child.id);
+    // `remote` IS forwarded, unlike skipOnClose: a close that came from another
+    // device already cascaded to that chat's children over there, so a second
+    // dispatch here is the same duplicate the flag exists to suppress. The
+    // child's local cleanup still runs, which is the half skipOnClose would
+    // have wrongly skipped.
+    closeTab(child.id, { remote: opts?.remote ?? false });
   }
 
   // REMOVE, then notify. The order is the store's re-entrancy guarantee, not a
@@ -429,7 +447,7 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   // `owns: false` tears down nothing: the tab is a view, and dismissing a view
   // must not kill the work it was watching.
   if (!opts?.skipOnClose && tab.owns !== false) {
-    tab.onClose?.();
+    tab.onClose?.({ remote: opts?.remote ?? false });
   }
 
   if (state.active === id) {
@@ -678,6 +696,15 @@ export function getActiveTabRoute(): Route | null {
  *  "editor" while its route's is "file", and a binding keyed on the route would
  *  be speaking a second vocabulary for the same question. */
 export function getActiveTabKind(): TabKind | null {
+  // Subscribe: the toolbar's find affordance is derived from this inside an
+  // effect, and the tab SET is what decides the answer. Without the read, that
+  // effect had no dependency on which tab is active on any boot where the
+  // active tab was a chat (the `page` branch it needs is never taken, so
+  // nothing else it calls reads a signal), and the magnifier only repainted on
+  // the BUS_TAB_CHANGED fallback — which is deduped on the active tab id and so
+  // stays silent for a sub-tab switch. Outside an effect this read is free.
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  stateVersion.value;
   const tab = state.tabs.find((t) => t.id === state.active);
   return tab?.kind ?? null;
 }
@@ -783,6 +810,38 @@ function capturedUIState(): uiState.UIState {
 export function getSavedTabState(): { tab_order: string[]; active_view: string } {
   const s = capturedUIState();
   return { tab_order: s.tab_order, active_view: s.active_view };
+}
+
+/** What a remote arrangement change means for THIS device's tab strip: which
+ *  ids to open, which to remove.
+ *
+ *  The SET is applied live and the ORDER deliberately is not (user decision): a
+ *  tab appearing on another device should show up here at once, while the strip
+ *  rearranging itself under the reader's cursor is visual noise nobody asked
+ *  for. Order converges on the next load, which reads the arrangement whole.
+ *
+ *  SUB-TABS ARE INVISIBLE TO THIS. A sub-tab is not persisted in `tab_order`
+ *  (its position is its parent's), so it appears in no remote arrangement and
+ *  must not be read as "vanished remotely" — it follows its parent locally. The
+ *  filter is the whole correctness argument, and without it the first remote
+ *  change would close every open tangent.
+ *
+ *  Pure, and exported for its own test: the impure half is a switch over tab
+ *  kinds that only the composition root can own, and putting the comparison
+ *  there too would leave it untestable. */
+export function reconcileRemoteTabs(remoteOrder: readonly string[]): {
+  toOpen: string[];
+  toClose: string[];
+} {
+  const remote = new Set(remoteOrder);
+  const localTop = state.tabs.filter((t) => t.parentId === undefined);
+  const local = new Set(localTop.map((t) => t.id));
+  return {
+    // In the remote arrangement, not here yet.
+    toOpen: remoteOrder.filter((id) => !local.has(id)),
+    // Here, but gone from the remote arrangement.
+    toClose: localTop.filter((t) => !remote.has(t.id)).map((t) => t.id),
+  };
 }
 
 /** Drop persisted ids whose feature is no longer available, so a restore cannot

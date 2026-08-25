@@ -191,6 +191,18 @@ type ConnState =
  *  carry the previous backoff forward. */
 const BACKOFF_STABLE_RESET_MS = 30_000;
 
+/** How long the hydration gate waits for `markHydrated` before releasing what
+ *  it held anyway. Generous, because it is racing three sequential HTTP
+ *  round-trips (settings, whoami, the chat list) on a cold container, and the
+ *  cost of expiring early is only that the store's own missing-session guards
+ *  drop the frames — which is exactly the behaviour the gate replaced. */
+const HYDRATE_TIMEOUT_MS = 20_000;
+
+/** Ceiling on the held queue. A busy workspace's connect replay is tens of
+ *  frames, so reaching this means hydration is not coming and the stream should
+ *  move rather than grow a buffer without bound. */
+const MAX_PENDING_FRAMES = 2000;
+
 class TransportController {
   private onMsg: MsgHandler = () => {
     /* noop */
@@ -219,6 +231,14 @@ class TransportController {
   private lastBackoffMs = 0;
   private hiddenSince: number | null = null;
 
+  /** Whether the chat store has been populated, so a frame can find the chat
+   *  it names. See `holdUntilHydrated` for why this gate exists. */
+  private hydrated = false;
+  /** Frames that arrived before hydration, in arrival order. */
+  private pending: ServerEvent[] = [];
+  /** Watchdog that opens the gate if hydration never reports in. */
+  private hydrateTimer: ReturnType<typeof setTimeout> | null = null;
+
   private readonly inflight = new Set<AbortController>();
 
   /** Abort every in-flight HTTP request started via this transport.
@@ -231,8 +251,75 @@ class TransportController {
     this.inflight.clear();
   }
 
+  /** Hold every incoming frame until the chat store has been populated, then
+   *  release them in arrival order.
+   *
+   *  WHY. The EventSource is opened synchronously during `init`, and the server
+   *  answers immediately with its whole connect replay: the `connected`
+   *  handshake, every unanswered permission ask, and ONE `turn_state` per BUSY
+   *  chat. That `turn_state` is the only channel carrying an in-flight turn's
+   *  state to a new client — it is connect-time synthesis and is never broadcast
+   *  live, so there is no second chance at it. Meanwhile the store is empty
+   *  until `GET /api/chats` resolves several awaits later, and every consumer of
+   *  a chat-scoped frame correctly bails when it cannot find the chat it names.
+   *
+   *  So on a manual page refresh the whole replay was dropped, and four
+   *  user-visible defects followed from that one ordering fact: every tab's
+   *  activity dot read `idle` (the busy signal never landed), the streaming
+   *  transcript came back blank (the accumulated message never landed), the
+   *  composer showed Send instead of Cancel over a live turn — which turns a
+   *  stale draft into a mid-turn steer, because a Send that meets a 409 steers —
+   *  and a reader with no dot to tell a live tab from a dead one closed the
+   *  wrong ones, and closing a chat tab cancels its turn.
+   *
+   *  A refresh was therefore a WEAKER recovery than a dropped connection: an SSE
+   *  blip reconnects with a non-zero cursor, which fires `transport:gap` and
+   *  runs the full reconcile. The first connection of a page load deliberately
+   *  skips that (nothing was missed yet), so nothing healed it.
+   *
+   *  Holding rather than replaying is what keeps the frames' ORDER intact, and
+   *  order is load-bearing here: a `message_chunk` that raced the snapshot is
+   *  made idempotent by the watermark the snapshot installs, so a chunk released
+   *  before its `turn_state` would be double-appended. */
+  private holdUntilHydrated(): void {
+    this.hydrated = false;
+    this.pending = [];
+    if (this.hydrateTimer !== null) {
+      clearTimeout(this.hydrateTimer);
+    }
+    // Never wedge the stream on a hydration that failed (an auth bounce, a dead
+    // /api/chats). The gate is an ordering aid, not a correctness requirement:
+    // the store's missing-session guards still hold underneath it.
+    this.hydrateTimer = setTimeout(() => {
+      if (!this.hydrated) {
+        console.warn("sse: hydration did not report in, releasing held frames");
+        this.markHydrated();
+      }
+    }, HYDRATE_TIMEOUT_MS);
+  }
+
+  /** Open the gate and drain. Idempotent, and once open it stays open — a
+   *  reconnect does not re-hold, because by then the store is populated and the
+   *  reconnect's own gap reconcile is the recovery path. */
+  markHydrated(): void {
+    if (this.hydrateTimer !== null) {
+      clearTimeout(this.hydrateTimer);
+      this.hydrateTimer = null;
+    }
+    if (this.hydrated) {
+      return;
+    }
+    this.hydrated = true;
+    const held = this.pending;
+    this.pending = [];
+    for (const evt of held) {
+      this.onMsg(evt);
+    }
+  }
+
   init(msg: MsgHandler, status: StatusHandler): void {
     this.onMsg = msg;
+    this.holdUntilHydrated();
     this.onStatus = (s) => {
       setSSEStatus(s);
       status(s);
@@ -333,6 +420,19 @@ class TransportController {
       }
       if (evt.type === "connected") {
         this.handleConnected(evt);
+      }
+      if (!this.hydrated) {
+        // Hold it: see holdUntilHydrated. handleConnected still ran above,
+        // because that is transport bookkeeping (the cursor, the floor/head gap
+        // check) and depends on no store state.
+        this.pending.push(evt);
+        if (this.pending.length >= MAX_PENDING_FRAMES) {
+          // A queue this long means hydration is not coming. Late is better than
+          // dropped, and the store's own missing-session guards are the floor.
+          console.warn(`sse: ${String(this.pending.length)} frames held, releasing early`);
+          this.markHydrated();
+        }
+        return;
       }
       this.onMsg(evt);
     };
@@ -505,6 +605,13 @@ registerCleanup(() => {
 
 export function init(msg: MsgHandler, status: StatusHandler): void {
   instance.init(msg, status);
+}
+
+/** Tell the transport the chat store is populated, releasing every frame held
+ *  since the connection opened. Called once from the boot path as soon as
+ *  `GET /api/chats` has been folded into the store. See `holdUntilHydrated`. */
+export function markHydrated(): void {
+  instance.markHydrated();
 }
 
 export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Promise<SendResult> {

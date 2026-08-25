@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { effect } from "@cplieger/reactive";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -59,6 +60,8 @@ import {
   renameTab,
   hasTab,
   getActiveTabId,
+  getActiveTabKind,
+  reconcileRemoteTabs,
   getOpenTabIDs,
   editorTabID,
   isEditorTabID,
@@ -435,6 +438,51 @@ describe("activateTab", () => {
     }
     activateTab(target);
     expect(getActiveTabId()).toBe(expectActive);
+  });
+});
+
+// getActiveTabKind is READ INSIDE AN EFFECT (the toolbar's find affordance in
+// app.ts), so it has to subscribe to the tab set or that effect never re-runs on
+// a switch. It used to be a plain array scan, which left the affordance leaning
+// entirely on the BUS_TAB_CHANGED fallback — and that event is deduped on the
+// active tab ID, so it is silent for a sub-tab switch inside one tab. The
+// measured symptom was the /git/sources filter button staying visible and inert.
+describe("getActiveTabKind is reactive", () => {
+  /** A tab with an explicit kind; makeTab is chat-only. */
+  function kindTab(id: string, kind: TabSpec["kind"], view: string): TabSpec {
+    return { id, name: id, kind, view, route: { kind: "chat", id } };
+  }
+
+  it("re-runs an effect that reads it when the active tab changes", () => {
+    openTab(kindTab("a", "chat", "#chat-view"));
+    openTab(kindTab("b", "settings", "#settings-view"));
+
+    const seen: (string | null)[] = [];
+    const stop = effect(() => {
+      seen.push(getActiveTabKind());
+    });
+    expect(seen).toEqual(["settings"]); // "b" is active after opening
+
+    activateTab("a");
+    expect(seen.at(-1)).toBe("chat");
+
+    activateTab("b");
+    expect(seen.at(-1)).toBe("settings");
+    stop();
+  });
+
+  it("re-runs when the active tab is CLOSED and another takes over", () => {
+    openTab(kindTab("a", "chat", "#chat-view"));
+    openTab(kindTab("b", "settings", "#settings-view"));
+
+    const seen: (string | null)[] = [];
+    const stop = effect(() => {
+      seen.push(getActiveTabKind());
+    });
+
+    closeTab("b");
+    expect(seen.at(-1)).toBe("chat");
+    stop();
   });
 });
 
@@ -1126,5 +1174,115 @@ describe("showFilesView vs toggleFilesView", () => {
     showFilesView(noop, onClose);
     showFilesView(noop, onClose);
     expect(closes).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The arrangement is server-owned, so a tab opened or closed on another device
+// has to appear or go here at once. reconcileRemoteTabs is the pure half of that.
+//
+// It answers the SET and deliberately not the ORDER: a tab showing up instantly
+// is the point, while the strip rearranging itself under the reader's cursor is
+// noise. Order converges on the next load.
+// ---------------------------------------------------------------------------
+
+describe("reconcileRemoteTabs", () => {
+  function chatTab(id: string): TabSpec {
+    return { id, name: id, kind: "chat", view: "#chat-view", route: { kind: "chat", id } };
+  }
+
+  it("names what to open and what to close", () => {
+    openTab(chatTab("a"));
+    openTab(chatTab("b"));
+
+    // The server says c exists and b does not.
+    const { toOpen, toClose } = reconcileRemoteTabs(["a", "c"]);
+    expect(toOpen).toEqual(["c"]);
+    expect(toClose).toEqual(["b"]);
+  });
+
+  it("is a no-op when the strip already matches", () => {
+    openTab(chatTab("a"));
+    openTab(chatTab("b"));
+    const { toOpen, toClose } = reconcileRemoteTabs(["b", "a"]);
+    // Note the order differs and that is FINE — order is not applied live.
+    expect(toOpen).toEqual([]);
+    expect(toClose).toEqual([]);
+  });
+
+  it("closes everything when the remote arrangement is empty", () => {
+    openTab(chatTab("a"));
+    const { toClose } = reconcileRemoteTabs([]);
+    expect(toClose).toEqual(["a"]);
+  });
+
+  // A sub-tab is not persisted in tab_order (its position is its parent's), so
+  // it appears in no remote arrangement. Reading that absence as "vanished
+  // remotely" would close every open tangent on the first remote change.
+  it("never proposes closing a SUB-TAB, which no arrangement names", () => {
+    openTab(chatTab("parent"));
+    openTab({ ...chatTab("child"), parentId: "parent" });
+
+    const { toOpen, toClose } = reconcileRemoteTabs(["parent"]);
+    expect(toClose).toEqual([]);
+    expect(toOpen).toEqual([]);
+  });
+
+  it("still closes the PARENT when the arrangement drops it", () => {
+    openTab(chatTab("parent"));
+    openTab({ ...chatTab("child"), parentId: "parent" });
+    expect(reconcileRemoteTabs([]).toClose).toEqual(["parent"]);
+  });
+});
+
+// A remote close must run every LOCAL cleanup and skip only the duplicate server
+// teardown. Getting that backwards in either direction is a real defect: skipping
+// the local half leaves a store row, a dock card and composer state for a tab
+// that is gone, and running the server half twice can kill a bridge the reader
+// just restarted here by reopening the chat.
+describe("closeTab provenance", () => {
+  function watchedTab(id: string, seen: ({ remote: boolean } | undefined)[]): TabSpec {
+    return {
+      id,
+      name: id,
+      kind: "chat",
+      view: "#chat-view",
+      route: { kind: "chat", id },
+      onClose: (o) => seen.push(o),
+    };
+  }
+
+  it("tells onClose the close was local by default", () => {
+    const seen: ({ remote: boolean } | undefined)[] = [];
+    openTab(watchedTab("a", seen));
+    closeTab("a");
+    expect(seen).toEqual([{ remote: false }]);
+  });
+
+  it("tells onClose the close came from another device", () => {
+    const seen: ({ remote: boolean } | undefined)[] = [];
+    openTab(watchedTab("a", seen));
+    closeTab("a", { remote: true });
+    // onClose STILL RUNS — that is the point. Only the dispatch inside it is
+    // suppressed, which is chat.ts's decision to make, not this module's.
+    expect(seen).toEqual([{ remote: true }]);
+  });
+
+  it("forwards `remote` to a cascaded child, unlike skipOnClose", () => {
+    const seen: ({ remote: boolean } | undefined)[] = [];
+    openTab(watchedTab("parent", seen));
+    openTab({ ...watchedTab("child", seen), parentId: "parent" });
+
+    closeTab("parent", { remote: true });
+    // Child first, then parent; both marked remote, because the device that
+    // closed the parent already cascaded over there.
+    expect(seen).toEqual([{ remote: true }, { remote: true }]);
+  });
+
+  it("skipOnClose still suppresses onClose entirely", () => {
+    const seen: ({ remote: boolean } | undefined)[] = [];
+    openTab(watchedTab("a", seen));
+    closeTab("a", { skipOnClose: true });
+    expect(seen).toEqual([]);
   });
 });

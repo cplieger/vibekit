@@ -45,7 +45,7 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 			b.chatStatus.Set(evt.ChatID, p)
 		}
 	case vibekit.EventTurnEnded:
-		b.chatStatus.Clear(evt.ChatID)
+		b.chatStatus.ClearAtTurnEnd(evt.ChatID)
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
@@ -136,7 +136,47 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 	// busy signal, so a client connecting mid-turn renders the
 	// streaming transcript immediately and never has to guess at
 	// thinking state.
-	return rt.replayTurnState(writeEvent, chatFilter)
+	if err := rt.replayTurnState(writeEvent, chatFilter); err != nil {
+		return err
+	}
+	// Then the chats that are NOT busy but are waiting on a person. turn_state
+	// cannot carry those: it is emitted per PROMPTING bridge, and its client
+	// handler sets `thinking`, which is false for a chat whose turn has ended.
+	return rt.replayWaitingStatus(writeEvent, chatFilter)
+}
+
+// replayWaitingStatus emits a chat_status event for every chat the agent left
+// waiting on a person, skipping the busy ones replayTurnState already covered.
+//
+// This is the other half of "the amber dot survives turn end". The client renders
+// waiting_on_user as a dot that outlives the turn, but until this existed the
+// only carrier was the LIVE event: a reader who refreshed, or a second device
+// joining later, saw a blank dot on the one chat that actually wanted them. That
+// is the state a person picking work up on another screen most needs to see.
+//
+// It replays a real chat_status rather than stretching turn_state, because the
+// two mean different things — turn_state asserts a turn is RUNNING — and the
+// client already has a handler for this one.
+func (rt *Runtime) replayWaitingStatus(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
+	busy := make(map[vibekit.ChatID]struct{})
+	for _, id := range rt.bridge.mgr.promptingChatIDs() {
+		busy[id] = struct{}{}
+	}
+	for id, p := range rt.bus.chatStatus.Snapshot() {
+		if chatFilter != "" && id != chatFilter {
+			continue
+		}
+		if _, isBusy := busy[id]; isBusy {
+			continue
+		}
+		if p.Status != vibekit.ChatStatusWaitingOnUser {
+			continue
+		}
+		if err := writeFn(vibekit.NewEvent(vibekit.EventChatStatus, id, p)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // replayTurnState emits one synthesized turn_state event per busy chat

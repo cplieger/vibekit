@@ -71,6 +71,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.SteerClearedPayload](),
 	wiregen.TypeRef[vibekit.AgentNoticePayload](),
 	wiregen.TypeRef[vibekit.TurnStatePayload](),
+	wiregen.TypeRef[vibekit.UIStateChangedPayload](),
 	wiregen.TypeRef[vibekit.PermissionNeededPayload](),
 	wiregen.TypeRef[vibekit.ErrorPayload](),
 	wiregen.TypeRef[vibekit.MCPConnectedPayload](),
@@ -219,6 +220,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "terminal_exited", TypeName: "TerminalExitedPayload"},
 	{EventType: "turn_ended", TypeName: "TurnEndedPayload"},
 	{EventType: "turn_state", TypeName: "TurnStatePayload"},
+	{EventType: "ui_state_changed", TypeName: "UIStateChangedPayload"},
 }
 
 // Registry returns the fully-populated wiregen registry: the generator
