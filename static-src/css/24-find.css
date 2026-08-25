@@ -86,11 +86,12 @@
    is also why the feature read as "does nothing": it opened underneath the
    chrome. The offset is derived from the toolbar's own metrics (its `--sp-3`
    top inset + a `--btn-h` row + its 2×0.125rem padding) so the two cannot drift
-   apart. `--search-pop-top` is that derivation, named once here because
-   `.page-find` needs the same number against the viewport. */
+   apart. `--below-chat-toolbar` is that derivation, declared beside the toolbar
+   in 12-chat.css and shared with `.page-find` (same number, viewport-relative),
+   the timeline rail and the banner stack. */
 .chat-find {
   position: absolute;
-  inset-block-start: var(--search-pop-top);
+  inset-block-start: var(--below-chat-toolbar);
   inset-inline-end: var(--sp-3);
   display: flex;
   align-items: center;
@@ -118,12 +119,6 @@
   padding-inline: var(--sp-2) var(--sp-1);
 }
 
-:root {
-  --search-pop-top: calc(
-    var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
-  );
-}
-
 /* ==========================================================================
    The page search popup: History, the configuration browser, the git panels.
 
@@ -144,11 +139,15 @@
 
 .page-find {
   position: fixed;
-  inset-block-start: var(--search-pop-top);
+  inset-block-start: var(--below-chat-toolbar);
   inset-inline-end: var(--sp-3);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+
+  /* NO `gap`, deliberately: the note is the only thing it ever separated, and a
+     gap applies whatever that note's height is — which is what made an empty
+     box 4px taller than its own contents. The spacing is the note's own margin
+     now (see `.page-find-note`), so a third child added here would need one. */
   padding-block: var(--sp-1);
   padding-inline: var(--sp-2) var(--sp-1);
   inline-size: min(24rem, calc(100vw - 2 * var(--sp-3)));
@@ -187,6 +186,17 @@
 .page-find-input {
   flex: 1;
   min-inline-size: 0;
+
+  /* THE SAME HEIGHT AS THE × BESIDE IT. `--btn-h` is what sets this row's
+     height — `.page-find-btn` is a square of it — so a field with nothing but
+     padding to its name came out 28px against the button's 36px, and read as a
+     slimmer control inside its own bar. `min-` rather than a fixed
+     `block-size`, which is what the file browser's and the editor's fields
+     already do with `--input-h`: a larger user font then grows the box instead
+     of clipping the text. Mobile needs no second answer — 50-mobile.css raises
+     `--btn-h` to 2.75rem in the token layer, so the field follows the button to
+     the 44px touch target. */
+  min-block-size: var(--btn-h);
   font: inherit;
   padding: var(--sp-1) var(--sp-2);
   color: var(--c-text-primary);
@@ -208,11 +218,88 @@
 
 /* The note reports what was NOT read (a truncated cross-chat scan) or how much
    of a list is showing. Tertiary ink because it describes the results rather
-   than being one — the same correction `.fb-search-note` needed. */
+   than being one — the same correction `.fb-search-note` needed.
+
+   IT TAKES NO HEIGHT WHILE IT SAYS NOTHING, and it used to take 20 of the box's
+   66px. A `min-block-size: 1rem` plus the column's gap reserved a line for a
+   note that is silent by design until a query is typed: `filterNote` returns ""
+   with no filter (a count restating an unfiltered list is noise), and both
+   search boxes clear it on an empty query. So the resting box held 16px of
+   nothing with 4px of gap above it. An empty box is now its row plus its
+   padding, and it GROWS when there is something to report.
+
+   STILL RENDERED WHEN EMPTY, at zero height, rather than `display: none`. It is
+   an `aria-live` region, and a region that is absent from the accessibility
+   tree at the moment its text arrives is a region a screen reader can fail to
+   announce — the announcement is a mutation of a region that was already there.
+   Present and empty is the shape a live region wants; zero-height is free.
+
+   IT ALSO MEANS THE GROWTH ANIMATES, in CSS alone and with no rule of its own on
+   the box. `:empty` is the resting state and therefore the leave target (the
+   same shape `.search-pop` above uses for the popup's own reveal), so one pair
+   of rules covers both directions: the note wipes open from zero while its text
+   fades in, and the parent — a `position: fixed` column anchored by its TOP edge,
+   with no block-end inset — tracks that height every frame, so it grows downward
+   and nothing above it moves. Measured on the
+   real box at 1440: note 0 → 15px and box 46 → 65px over `--dur-enter`, with
+   opacity at 0.45 by 25ms on `--ease-enter`'s steep front.
+
+   `block-size: 0 → auto` interpolates because `interpolate-size:
+   allow-keywords` is set on `:root` (01-tokens.css); 26-dock.css and
+   `.subagent-body` collapse the same way. So no max-height is guessed here and
+   then found wrong for the History box's two-line sentence.
+
+   THE ENTER ANIMATES AND THE LEAVE DOES NOT, and that asymmetry is a property of
+   the wire rather than a missing declaration. `auto` resolves against the
+   CONTENT, and `setNote` removes the text in the same style change that makes
+   `:empty` match — so on the way in `auto` is the arriving text's height and the
+   wipe has somewhere to travel, while on the way out the element is already
+   empty when the transition starts, `auto` is already 0, and only the 4px margin
+   has a distance to cover (measured: box 49 → 46 over `--dur-exit`). A fixed
+   leave height would animate it and would clip History's second line, so the
+   trade goes this way. Animating the collapse needs the TEXT to survive it,
+   which is a JS change (hold the string, toggle a class) that this pair would
+   then pick up for free.
+
+   `overflow: clip` hides the text mid-wipe, and `min-block-size: 0` is what lets
+   the height reach zero at all. This is a flex item, so its `min-block-size:
+   auto` resolves to its CONTENT-based minimum, and the text lands in the same
+   style change that stops `:empty` matching — so without the explicit 0 the enter
+   would be clamped to the text's own height from its first frame and the wipe
+   would not exist. Measured on the real box: `min-height` computes to 16px there
+   with `overflow: clip` already in force, so the overflow value alone does NOT
+   release the clamp the way the flexbox rule's wording suggests.
+
+   13-messages.css records the one hazard here — a height transition on content
+   that changes faster than the animation flickers — and it does not reach this
+   note. Its text is rewritten at most once per debounce, and a rewrite that
+   lands on the same number of lines changes no transitioned value at all, so
+   only a WRAP change re-runs the animation. Reduced motion is covered by
+   40-a11y.css's global duration override, and nothing here waits on
+   transitionend. */
 .page-find-note {
-  min-block-size: 1rem;
   color: var(--c-text-tertiary);
   font-size: var(--fs-xs);
+  overflow: clip;
+  block-size: 0;
+  min-block-size: 0;
+  margin-block-start: 0;
+  opacity: 0;
+  transition:
+    block-size var(--dur-exit) var(--ease-exit),
+    margin-block-start var(--dur-exit) var(--ease-exit),
+    opacity var(--dur-exit) var(--ease-exit);
+}
+
+/* Shown: the note's own height, plus the gap the column no longer carries. */
+.page-find-note:not(:empty) {
+  block-size: auto;
+  margin-block-start: var(--sp-1);
+  opacity: 1;
+  transition:
+    block-size var(--dur-enter) var(--ease-enter),
+    margin-block-start var(--dur-enter) var(--ease-enter),
+    opacity var(--dur-enter) var(--ease-enter);
 }
 
 /* Takes the same shape as the transcript bar's buttons, for the same reasons:
