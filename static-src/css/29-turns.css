@@ -299,14 +299,21 @@
  * so the header abuts the CARD's border-bottom; once one exists it abuts the
  * FOOTER's border-top. Drop the redundant line in each case and let the header
  * round the corners the body was covering — the same adjacency `[data-folded]`
- * already resolves this way further down. */
-.turn:has(> .turn-body:empty):not(:has(> .turn-footer)) > .turn-header {
+ * already resolves this way further down.
+ *
+ * Both selectors read the ADJACENCY rather than descending from `.turn`, which
+ * is what keeps them inside the stylelint specificity and pseudo-class caps:
+ * `.turn:has(> .turn-body:empty):not(:has(> .turn-footer)) > .turn-header` says
+ * the same thing with five classes and four pseudo-classes. `:last-child` on
+ * the body IS the no-footer test, because a card holds exactly a header, a body
+ * and an optional footer, and Rewind mounts inside that footer. */
+.turn-header:has(+ .turn-body:empty:last-child) {
   border-bottom: 0;
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
 }
 
-.turn:has(> .turn-body:empty) > .turn-footer {
+.turn-body:empty + .turn-footer {
   border-top: 0;
 }
 
