@@ -291,6 +291,25 @@
   display: none;
 }
 
+/* Collapsing that body puts the header's own bottom rule straight against the
+ * next 1px line, so the reader sees a 2px rule at exactly the moment a turn is
+ * waiting on its first token. Which line it doubles depends on whether a footer
+ * exists yet: on a just-sent turn none does (`mountTurnFooter` builds one only
+ * for a turn with a ledger or a rewind target, and the last turn has neither),
+ * so the header abuts the CARD's border-bottom; once one exists it abuts the
+ * FOOTER's border-top. Drop the redundant line in each case and let the header
+ * round the corners the body was covering — the same adjacency `[data-folded]`
+ * already resolves this way further down. */
+.turn:has(> .turn-body:empty):not(:has(> .turn-footer)) > .turn-header {
+  border-bottom: 0;
+  border-end-start-radius: calc(var(--r) - 1px);
+  border-end-end-radius: calc(var(--r) - 1px);
+}
+
+.turn:has(> .turn-body:empty) > .turn-footer {
+  border-top: 0;
+}
+
 /* --------------------------------------------------------------------------
    Footer — the outcome ledger
    -------------------------------------------------------------------------- */
