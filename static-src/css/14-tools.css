@@ -989,15 +989,6 @@
   font-size: var(--fs-sm);
 }
 
-.git-file-status {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  width: 1rem;
-  text-align: center;
-  flex-shrink: 0;
-}
-
 .git-st-m {
   color: var(--c-yellow);
 }
