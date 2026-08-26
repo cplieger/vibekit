@@ -50,11 +50,13 @@ var errForkParentUnknown = errors.New("the chat this tangent came from no longer
 // RecordSession and retire the session it is still using.
 var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens into")
 
-// CmdForkChat opens a tangent off another chat.
-func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, cmd *vibekit.ClientCommand) (any, error) {
-	if err := requireChatID(cmd); err != nil {
-		return nil, err
-	}
+// CmdForkChat opens a tangent off another chat and returns the chat it created
+// plus the tab it opened for it.
+//
+// The new chat's id is MINTED here when the envelope carries none. The response
+// carries the chat because nothing else can: the caller opens a sub-tab for the
+// tangent, and before this it could only address it by having invented the id.
+func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
 	var p vibekit.ForkChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -62,8 +64,8 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > vibekit.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if p.ParentChatID == cmd.ChatID {
-		return nil, StatusError(http.StatusBadRequest, errForkParentIsSelf)
+	if !ValidIdent(p.OpID) {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
 	parent, ok := chats.Get(ctx, p.ParentChatID)
@@ -71,52 +73,129 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
 	}
 
+	// The op is READ before session/fork, not after, and that ordering is the
+	// whole reason the ledger is consulted here: a retry that already produced a
+	// chat must not ask KAS to fork again. A second fork would create a second
+	// session nothing binds, and on the primed fallback it would spend the priming
+	// budget twice for one gesture.
+	//
+	// A READ rather than the coordinator's resolve, because the fork round trip
+	// must not happen under the operation lock: a bridge Call has no client-side
+	// timeout, so one wedged agent process would block every tab mutation in the
+	// workspace. The coordinator's own resolve is still the authority for the
+	// mint — see Membership.ResolvedChat.
+	chatID, replay := mem.ResolvedChat(p.OpID)
+	if cmd.ChatID != "" {
+		chatID, replay = cmd.ChatID, false
+	}
+	if chatID != "" && chatID == p.ParentChatID {
+		return nil, StatusError(http.StatusBadRequest, errForkParentIsSelf)
+	}
+	if replay {
+		if c, exists := chats.Get(ctx, chatID); exists {
+			// Answer with the chat the first attempt made, and DERIVE its outcome
+			// from the record rather than restating this attempt's: a chat bound to
+			// a session was forked, one with no session was primed. Reporting
+			// `forked` unconditionally here would make the field a guess in exactly
+			// the case a report about a vague answer would be reading it.
+			outcome := forkOutcomeOf(c.ACPSessionID)
+			slog.Info("tangent: repeat op resolved to the chat it already opened",
+				"chat", chatID, "parent", p.ParentChatID, "outcome", outcome)
+			// Through the coordinator even on the replay, because the first attempt
+			// can have created the chat and then failed its tab write: this is where
+			// that tab is finished. Open is idempotent, so the ordinary replay costs
+			// one scan and emits nothing.
+			opened, err := mem.CreateChatAndOpen(ctx, forkCreate(p, chatID, parent, c.ACPSessionID))
+			if err != nil {
+				return nil, err
+			}
+			return openedResponse(opened, map[string]any{
+				"outcome":    outcome,
+				"session_id": c.ACPSessionID,
+			}), nil
+		}
+		// The op was recorded but its chat is not there: the first attempt
+		// reserved the id and then failed. Fall through and fork for real.
+	}
+
 	// The parent's model and mode ride along so the tangent's answers come from
 	// the same agent that produced the conversation it inherited. Read here
 	// rather than sent by the client: the record is the truth about both, and a
 	// client value could be a tab's stale projection.
-	sessionID := forkSession(ctx, bridges, ws, p, cmd.ChatID)
-	outcome := vibekit.ForkOutcomeForked
-	if sessionID == "" {
-		outcome = vibekit.ForkOutcomePrimed
-	}
+	sessionID := forkSession(ctx, bridges, ws, p)
 
-	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
-		// Refuse to reshape an existing chat, for CmdResumeSession's reason:
-		// binding a live chat to another session strands its own (the transcript
-		// stays on disk unreferenced, so the reaper sweeps it) and silently
-		// changes the history under a conversation someone is reading.
-		if exists {
-			return false
-		}
-		c.Name = vibekit.DefaultChatName
-		c.Model = parent.Model
-		c.CurrentModeID = parent.CurrentModeID
-		c.Effort = parent.Effort
-		if sessionID != "" {
-			// RecordSession rather than assignment: it is the only sanctioned
-			// writer of this field and it keeps the chain invariant the reaper's
-			// keep-list depends on.
-			c.RecordSession(sessionID)
-		}
-		return true
-	}); err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
+	opened, err := mem.CreateChatAndOpen(ctx, forkCreate(p, chatID, parent, sessionID))
+	if err != nil {
+		return nil, err
+	}
+	// The record is what the outcome is read off, including here: a genuinely
+	// CONCURRENT second attempt of one op resolves to the chat the first made, so
+	// this attempt's own session is not the one bound, and reporting `forked` from
+	// it would describe a session nothing uses. The coordinator's resolve is the
+	// authority for the mint, so this is where that race becomes visible.
+	outcome := forkOutcomeOf(opened.Chat.ACPSessionID)
+	if opened.Replay && sessionID != "" && opened.Chat.ACPSessionID != sessionID {
+		slog.Warn("tangent: a concurrent attempt of this op already opened the chat, so this attempt's forked session is bound to nothing",
+			"chat", opened.Chat.ID, "parent", p.ParentChatID, "orphaned_session", sessionID)
 	}
 
 	if outcome == vibekit.ForkOutcomePrimed {
 		// Marked AFTER the record exists, so nothing can observe a prime note for
 		// a chat that failed to create.
-		bridges.PrimeFromChat(cmd.ChatID, p.ParentChatID)
+		bridges.PrimeFromChat(vibekit.ChatID(opened.Chat.ID), p.ParentChatID)
 	}
 
 	slog.Info("tangent opened",
-		"chat", cmd.ChatID, "parent", p.ParentChatID,
-		"outcome", outcome, "acp_session", sessionID)
-	return responseWith(map[string]any{
+		"chat", opened.Chat.ID, "parent", p.ParentChatID,
+		"outcome", outcome, "acp_session", opened.Chat.ACPSessionID, "tab", opened.Subject.ID)
+	return openedResponse(opened, map[string]any{
 		"outcome":    outcome,
-		"session_id": sessionID,
+		"session_id": opened.Chat.ACPSessionID,
 	}), nil
+}
+
+// forkOutcomeOf reads a tangent's path off the record it produced: a chat bound
+// to a session was forked, one with no session was primed.
+//
+// Derived rather than remembered, because the two callers that need it are the
+// replay and the fresh path and only the record can answer for both.
+func forkOutcomeOf(sessionID string) string {
+	if sessionID == "" {
+		return vibekit.ForkOutcomePrimed
+	}
+	return vibekit.ForkOutcomeForked
+}
+
+// forkCreate is the tangent's create request: what a forked chat's record holds,
+// and where its tab hangs.
+//
+// One builder for both call sites (the replay and the real fork) so the record's
+// shape cannot drift between them — the replay path exists to FINISH what the
+// first attempt started, and a different Init there would mean finishing it
+// differently.
+//
+// The tab hangs under the PARENT's tab, which is what makes a tangent read as a
+// tangent rather than as an unrelated chat that appeared. The parent CHAT is
+// named rather than its tab so the coordinator resolves it under its own lock;
+// a parent with no open tab promotes the tangent to top level.
+func forkCreate(p vibekit.ForkChatCommand, chatID vibekit.ChatID, parent *vibekit.Chat, sessionID string) ChatCreate {
+	return ChatCreate{
+		OpID:       p.OpID,
+		ChatID:     chatID,
+		ParentChat: p.ParentChatID,
+		Init: func(c *vibekit.Chat) {
+			c.Name = vibekit.DefaultChatName
+			c.Model = parent.Model
+			c.CurrentModeID = parent.CurrentModeID
+			c.Effort = parent.Effort
+			if sessionID != "" {
+				// RecordSession rather than assignment: it is the only sanctioned
+				// writer of this field and it keeps the chain invariant the reaper's
+				// keep-list depends on.
+				c.RecordSession(sessionID)
+			}
+		},
+	}
 }
 
 // forkSession asks KAS to branch the parent's session and returns the new
@@ -127,7 +206,11 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 // reasons are still distinguished in the log, since "no bridge" (the parent was
 // never prompted, or its process is gone) and "KAS refused" want different
 // follow-ups.
-func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
+//
+// It logs the PARENT and not the new chat, because at this point the new chat has
+// no id: minting moved inside the coordinator so the capacity reservation could
+// run before it, and this round trip deliberately happens outside that lock.
+func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibekit.ForkChatCommand) string {
 	bridge := bridges.Bridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// No live session to branch. Deliberately NOT started here: spawning a
@@ -135,7 +218,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibe
 		// resume a conversation the user did not ask to resume, and the primed
 		// path reaches the same place from the record alone.
 		slog.Info("tangent: parent has no live session, priming instead",
-			"chat", newChat, "parent", p.ParentChatID)
+			"parent", p.ParentChatID)
 		return ""
 	}
 
@@ -149,7 +232,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibe
 	}))
 	if err != nil {
 		slog.Warn("tangent: session/fork failed, priming instead",
-			"chat", newChat, "parent", p.ParentChatID, keyError, err)
+			"parent", p.ParentChatID, keyError, err)
 		return ""
 	}
 	var out struct {
@@ -163,7 +246,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibe
 		// Validated rather than trusted for CmdResumeSession's reason: the value
 		// reaches a filesystem path inside KAS and vibekit's own reaper keep-list.
 		slog.Warn("tangent: session/fork returned no usable session id, priming instead",
-			"chat", newChat, "parent", p.ParentChatID)
+			"parent", p.ParentChatID)
 		return ""
 	}
 	return out.SessionID

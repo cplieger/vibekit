@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"time"
 
@@ -18,11 +19,23 @@ import (
 // rather than guessed.
 const cancelGrace = 10 * time.Second
 
-// CmdCreateChat creates a new chat with the given metadata.
-func CmdCreateChat(ctx context.Context, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
-	if err := requireChatID(cmd); err != nil {
-		return nil, err
-	}
+// CmdCreateChat creates a new chat, opens its tab, and returns both.
+//
+// It MINTS the chat id when the envelope carries none, which is the ordinary
+// path and the point of this command. A client-minted id is still accepted: the
+// prompt path auto-creates under an id it was handed, so refusing one here would
+// mean two rules for the same question, and there is nothing to gain from a
+// refusal — validChatID already gates the envelope for every command.
+//
+// The RESPONSE carries the chat AND its tab, which is what makes server minting
+// workable at all: the caller has to be able to address the thing it just created
+// (open its tab, set its mode, send its first prompt), and before this it could
+// only do that by having invented the id itself.
+//
+// The record and the tab are ONE operation, ordered by the coordinator — chat
+// first, tab second, capacity reserved before either mints. This handler owns the
+// payload's shape and nothing else.
+func CmdCreateChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
 	var p vibekit.CreateChatCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
@@ -36,25 +49,52 @@ func CmdCreateChat(ctx context.Context, chats ChatStore, cmd *vibekit.ClientComm
 	if len(name) > vibekit.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !ValidIdent(p.Model) {
+	if !ValidIdent(p.Model) || !ValidIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
-		if exists {
-			return false
-		}
-		c.Name = name
-		c.Model = p.Model
-		return true
+	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
+		OpID:   p.OpID,
+		ChatID: cmd.ChatID,
+		Init: func(c *vibekit.Chat) {
+			c.Name = name
+			c.Model = p.Model
+		},
 	})
 	if err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
+		return nil, err
 	}
-	return responseOK, nil
+	return openedResponse(opened, nil), nil
 }
 
-// CmdDeleteChat removes a chat: tear down its side effects, then delete the
-// record.
+// openedResponse is the shape every create-and-open answers with: the chat, the
+// tab that was opened for it, and the version that open produced, plus whatever
+// the command adds of its own.
+//
+// One helper so "a create returns its chat AND its subject" has one spelling
+// across the three creating commands rather than three. The chat is its header,
+// as every other chat response is — the full record carries the whole message
+// history.
+//
+// The subject is omitted when no tab store is wired (see Membership), because a
+// zero-valued subject on the wire would name a tab with an empty id.
+func openedResponse(opened ChatOpened, extra map[string]any) any {
+	body := make(map[string]any, len(extra)+3)
+	maps.Copy(body, extra)
+	body["chat"] = opened.Chat.Header()
+	body["version"] = opened.Version
+	if opened.Subject.ID != "" {
+		body["subject"] = opened.Subject
+	}
+	return responseWith(body)
+}
+
+// CmdDeleteChat removes a chat: tear down its side effects, remove the record,
+// then close its tabs.
+//
+// The ORDER is the coordinator's and it is the whole contract: the record leads,
+// so an open_tab that slips in after it finds no chat and is refused. Reversed —
+// tabs closed first — the window between the two writes is one where an open
+// succeeds and its tab outlives the chat until the next restart.
 //
 // It used to cascade through DeleteFamily, whose whole subject was rewind
 // CHILDREN — a chat could own other chats, so deletion needed an ordering
@@ -64,16 +104,21 @@ func CmdCreateChat(ctx context.Context, chats ChatStore, cmd *vibekit.ClientComm
 // nothing to order or to half-fail. The transition, its ordering guarantee and
 // the `failed_children` response are all gone rather than kept as a
 // single-element loop.
-func CmdDeleteChat(ctx context.Context, chats ChatStore, teardown ChatTeardown, cmd *vibekit.ClientCommand) (any, error) {
-	// Delete implies close semantics, and DeleteChatState owns that: it cancels
-	// the chat's runs before dropping the bridge, because a run is durable state
-	// a dead bridge only PAUSES — without it, deleting a chat mid-run left the run
-	// to revive and edit files attributed to a chat that no longer exists.
-	teardown.DeleteChatState(ctx, cmd.ChatID)
-	if err := chats.Delete(ctx, cmd.ChatID); err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
+func CmdDeleteChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
+	var p vibekit.CloseTabCommand
+	if len(cmd.Payload) > 0 {
+		// The payload is optional and carries only an op_id, so a body this cannot
+		// read is ignored rather than refused: delete_chat's subject is the
+		// envelope's chat id, and failing the delete over a correlation id would
+		// leave the chat nobody wants.
+		_ = json.Unmarshal(cmd.Payload, &p)
 	}
-	slog.Info("chat deleted", "chat_id", cmd.ChatID)
+	if !ValidIdent(p.OpID) {
+		p.OpID = ""
+	}
+	if err := mem.DeleteChatAndCloseTabs(ctx, cmd.ChatID, p.OpID); err != nil {
+		return nil, err
+	}
 	return responseOK, nil
 }
 
@@ -117,10 +162,17 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 	return responseOK, nil
 }
 
-// CmdCloseChat is the tab-close teardown: the user closed the chat's tab, and
-// the gesture means "kill all of it" (user decision) — the turn, the runs, the
-// process. The chat RECORD is untouched; under retention a closed chat is just
-// a chat without a tab, and reopening it session/loads everything back.
+// closeChatTeardown is the tab-close teardown: the user closed the chat's tab,
+// and the gesture means "kill all of it" (user decision) — the turn, the runs,
+// the process. The chat RECORD is untouched; under retention a closed chat is
+// just a chat without a tab, and reopening it session/loads everything back.
+//
+// It is INTERNAL MACHINERY now, not a command. `close_chat` left the client
+// surface when close_tab arrived: the × on a chat tab is one gesture, and two
+// commands meaning it would be two things to keep in step — a client that sent
+// only close_chat would tear the bridge down and leave the tab, and one that sent
+// only close_tab would leave the process. The coordinator calls this for every
+// chat tab it closes, so there is one door.
 //
 // Ordering is the contract. The turn is cancelled FIRST (session/cancel, the
 // graceful stop — the model stops rather than being severed mid-write), then
@@ -128,15 +180,14 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 // and a paused run later revives and edits files nobody is watching), then the
 // process teardown, which also flushes the in-flight buffer and kills the
 // chat's agent terminals.
-func CmdCloseChat(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, cmd *vibekit.ClientCommand) (any, error) {
-	perms.ClearPendingPermsForChat(cmd.ChatID)
-	if sb := bridges.Bridge(cmd.ChatID); sb != nil {
+func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID vibekit.ChatID) {
+	perms.ClearPendingPermsForChat(chatID)
+	if sb := bridges.Bridge(chatID); sb != nil {
 		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
-			slog.Warn("close: turn cancel failed", "chat_id", cmd.ChatID, keyError, err)
+			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
 		}
 	}
-	teardown.CloseChatState(ctx, cmd.ChatID)
-	return responseOK, nil
+	teardown.CloseChatState(ctx, chatID)
 }
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.

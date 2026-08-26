@@ -65,18 +65,33 @@
   scroll-behavior: smooth;
 }
 
-/* While a message is streaming, reserve viewport space below the
- * messages list so chunk-arrival doesn't cram text right against the
- * prompt bar. Replaces the older `.message.streaming { min-block-size:
- * 50dvh }` approach which made the empty live bubble appear as a
- * giant empty box on spawn — content now grows line-by-line and the
- * 50dvh of breathing room comes from container padding instead.
- * scrollPaddingBlockEnd would be cleaner but only affects scrollIntoView,
- * not the auto-scroll-to-bottom logic which sets scrollTop directly. */
-[id="messages"]:has(.message.assistant.streaming) {
-  padding-block-end: 50dvh;
-}
-
+/* NO HALF-VIEWPORT RESERVE WHILE STREAMING, and this is the third attempt at one
+ * — do not add a fourth. Where the live edge lands during a turn is
+ * `scroll.ts`'s to decide: `autoScrollIfAnchored` pins `liveTextAnchor`'s bottom
+ * to the scrollport's bottom, so the reserve moved nothing on a transcript long
+ * enough to scroll, and a CSS reserve cannot see that pin.
+ *
+ * What it did instead, measured live at a 1116px scrollport. It keyed on
+ * `.message.assistant.streaming`, which is the caret rather than the turn:
+ * `messages-blocks.ts` `sealLiveBubble` drops that class at EVERY block boundary,
+ * and a tool card or a thinking block leaves no match in the DOM at all, so the
+ * rule toggled several times per turn. On a one-turn chat the box below is
+ * `min-height: 100%` + border-box + `justify-content: flex-end`, so 50dvh of
+ * bottom padding did not add room under the card, it LIFTED the card: bottom
+ * 16px above the scrollport, then 608px, then 16px again, with
+ * `scrollHeight === clientHeight` throughout, so no scroll correction was even
+ * possible. That is the reported "the turn box jumps from the bottom to the
+ * middle of the page". On a taller transcript it hit `scrollToBottom()` instead
+ * (the Latest control, and every new user turn): scrolling to `scrollHeight`
+ * stopped on the padding, leaving the last real line 608px above the bottom
+ * against 16px with the rule gone.
+ *
+ * The two earlier attempts were `.message.streaming { min-block-size: 50dvh }`
+ * (an empty live bubble spawned as a giant empty box) and
+ * `.message.assistant:last-child { min-block-size: 50dvh }`. If the live edge
+ * ever needs more air than `padding-block` gives it, the offset belongs in
+ * `anchorTop`, which is the one place that already knows what is being followed
+ * and how far it may scroll. */
 [id="messages"] {
   padding-block: var(--sp-4);
   display: flex;
@@ -213,6 +228,32 @@
  * unit, so its header, body and footer have to enter together. `.msg-wrap`
  * survives as the per-message grouping INSIDE a card's body. */
 
+/* THE BLOCK CONTAINER, and it owns the spacing between blocks. `.msg-wrap` had
+ * no rule at all, so it was a plain block box with nothing between its
+ * children: `.assistant-blocks` is `display: contents` (14-tools.css), which
+ * dissolves into this element, and the four block kinds then had to space
+ * themselves. Only prose did — `.message` carried `padding: var(--sp-3) 0` —
+ * so measured live at a 774px body every other boundary was 0.0px: tool group
+ * to delegate card, delegate card to delegate card, delegate card to tool
+ * group. Two workflow steps in a row rendered as one double-bordered box, and
+ * the prose that DID look spaced was paying for it inside its own border box,
+ * which is why the gap appeared and vanished depending on which kind sat next
+ * to which.
+ *
+ * `flex-shrink: 0` on `.msg-row` (above), `.tool-call`, `.subagent-block` and
+ * `.plan-message` (14-tools.css) is the evidence this rule was always meant to
+ * exist — four declarations that are inert in a block box, all naming the same
+ * missing parent. `gap` is `--sp-3` to match `.turn-body`'s own gap
+ * (29-turns.css), so one value spaces blocks inside a message and messages
+ * inside a card. `min-width: 0` lets a wide diff or a long command line shrink
+ * instead of pushing the column, the same reason `.turn-body` declares it. */
+.msg-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
 @keyframes vk-slide-up-pronounced {
   from {
     opacity: 0;
@@ -237,7 +278,17 @@
    * already has a gutter (`.turn-body` padding), so a second one on the prose
    * alone was buying nothing and breaking the alignment the body was built for.
    * `&.system` and `&.inbox-message` set their own padding and are unaffected. */
-  padding: var(--sp-3) 0;
+
+  /* NO BLOCK PADDING EITHER, and that is `.msg-wrap`'s gap instead. This read
+   * `var(--sp-3) 0`, which made prose the only block kind that spaced itself
+   * and put that space INSIDE its border box — so a reply sat 24px from the
+   * card's edge while every tool card, delegate card and plan card beside it
+   * sat at 12px, and a delegate card following another had nothing at all. The
+   * container owns block spacing now (see `.msg-wrap` above), so prose lands on
+   * the same 12px inset as its neighbours. The nested case improves too: prose
+   * inside `.subagent-body` was paying that padding on top of the body's own
+   * `gap: var(--sp-2)`. */
+  padding-inline: 0;
   font-size: var(--fs-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -648,7 +699,12 @@
  * live affordance now. */
 .reasoning-block {
   max-width: var(--content-max-w);
-  margin: var(--sp-2) 0;
+
+  /* Was `var(--sp-2) 0`. `.msg-wrap` is a flex column with `gap: var(--sp-3)`
+   * now, so a block margin here would stack on top of that gap and space a
+   * reasoning trace 20px from its neighbours while every other block sits at
+   * 12px. The container owns block spacing; see `.msg-wrap`. */
+  margin: 0;
   border-inline-start: 2px solid var(--c-accent);
   font-size: var(--fs-sm);
   color: var(--c-text-aside);
@@ -730,7 +786,14 @@
  * wire carries no span to anchor it finer). */
 .code-refs {
   max-width: var(--content-max-w);
-  margin: var(--sp-1) auto 0;
+
+  /* Was `margin: var(--sp-1) auto 0`, and both halves are now wrong.
+   * `.msg-wrap` is a flex column with a gap, so the block margin would stack on
+   * top of it; and `margin-inline: auto` on a flex item beats the container's
+   * `stretch`, which would turn this into a shrink-to-fit box centred in the
+   * body. The inline half was inert anyway — `--content-max-w` is 50rem and a
+   * turn body is about 48.4rem, so the cap never bound. */
+  margin: 0;
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
 }
@@ -829,8 +892,9 @@
 
 /* Boundary divider: centered icon + label with horizontal rules on both
    sides. Used for `compressed` and `model_switched` events where a new
-   ACP session was started. Distinct from plain system messages so long
-   transcripts have obvious "new session" breakpoints on scroll-back. */
+   ACP session was started, and for `interrupted`, where the label is the
+   server's own account of why the turn stopped. Distinct from plain system
+   messages so long transcripts have obvious breakpoints on scroll-back. */
 .boundary {
   display: flex;
   align-items: center;
@@ -854,7 +918,20 @@
 
   & .boundary-label {
     font-style: italic;
-    white-space: nowrap;
+    /* NOT nowrap, and the change is load-bearing. Every label here used to be a
+       two-word constant ("Compacted", "Turn interrupted"), and nowrap on a flex
+       item that cannot shrink below its content was harmless for those. The
+       `interrupted` label now carries a failure reason from the server, up to a
+       couple of sentences, so nowrap collapsed both dashed rules to zero width
+       and ran the text past the transcript's own measure.
+
+       The 60% cap keeps a visible run of rule on each side at any width, and
+       `anywhere` covers the one thing a reason can contain that has no break
+       opportunity: a request id or a URL from the backend. */
+    max-width: 60%;
+    text-align: center;
+    text-wrap: pretty;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -1205,7 +1282,10 @@
  * quiet — informational, not an app error. */
 .refusal-callout {
   max-width: var(--content-max-w);
-  margin: var(--sp-2) auto 0;
+
+  /* Was `margin: var(--sp-2) auto 0` — see `.code-refs` for why both halves
+   * had to go once `.msg-wrap` became a flex column with a gap. */
+  margin: 0;
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid color-mix(in srgb, var(--c-red) 35%, var(--c-border));
   border-left: 3px solid var(--c-red);

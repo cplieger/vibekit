@@ -70,6 +70,24 @@ var unboundDataPayloads = []string{
 	"WorkingLabelPayload",
 }
 
+// pendingClientBindings are payload types that ARE registered — so their
+// TypeScript type and decoder are generated — and deliberately have no SSE
+// binding yet.
+//
+// EMPTY, which is the state this list is for: tabs_changed's Go half landed in
+// stage 2b, its client half in stage 2c, and the binding went in with the bus.ts
+// SSEPayloads entry that makes registry.gen.ts's registration line compile.
+//
+// This list is NOT unboundDataPayloads' twin. That one names payloads with no
+// registration at all, so the client hand-writes the shape and validates nothing.
+// A member here has a generated decoder waiting; what is missing is one line in
+// each language, landing together.
+//
+// Growing it requires exactly this argument: the type is registered, and binding
+// it would break the other language's build TODAY. Nothing weaker — the two
+// tests below hold every entry to both halves of that claim.
+var pendingClientBindings = []string{}
+
 // declaredVibekitPayloads parses internal/vibekit and returns every exported type
 // whose name ends in Payload, mapped to the field count of its struct
 // definition.
@@ -173,10 +191,35 @@ func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 	}
 
 	for _, name := range registeredVibekitPayloads(t) {
+		if slices.Contains(pendingClientBindings, name) {
+			continue
+		}
 		if !slices.Contains(bound, name) {
 			t.Errorf("vibekit.%s is registered in wireTypes but bound to no SSE event.\n"+
 				"Add its {EventType: \"…\", TypeName: %q} entry to sseEvents, or drop the registration.",
 				name, name)
+		}
+	}
+}
+
+// TestPendingClientBindings_AreRegisteredAndUnbound holds that list to its stated
+// reason from both sides. An entry that is not registered belongs in
+// unboundDataPayloads instead (a different, worse gap), and one that HAS been
+// bound has spent its exemption — leaving it would hide the next real omission.
+func TestPendingClientBindings_AreRegisteredAndUnbound(t *testing.T) {
+	registered := registeredVibekitPayloads(t)
+	bound := make([]string, 0, len(Registry().SSEEvents))
+	for _, e := range Registry().SSEEvents {
+		bound = append(bound, e.TypeName)
+	}
+	for _, name := range pendingClientBindings {
+		if !slices.Contains(registered, name) {
+			t.Errorf("pendingClientBindings names vibekit.%s, which is not registered in wireTypes.\n"+
+				"This list is for a REGISTERED payload whose SSE binding is waiting on the client; "+
+				"an unregistered one belongs in unboundDataPayloads.", name)
+		}
+		if slices.Contains(bound, name) {
+			t.Errorf("pendingClientBindings names vibekit.%s, but it IS bound now; drop the entry (the exemption is spent)", name)
 		}
 	}
 }

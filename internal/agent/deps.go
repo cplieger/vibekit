@@ -101,9 +101,11 @@ type chatRecords interface {
 	// List returns every chat's header (no messages) sorted by UpdatedAt
 	// descending. Checks ctx.Err() between per-file reads.
 	List(ctx context.Context) []vibekit.ChatHeader
-	// SetDraft persists the chat's unsent composer text. Passed on to the
-	// command dispatcher; the runtime never calls it.
-	SetDraft(ctx context.Context, id vibekit.ChatID, text string) error
+	// SetDraft and SetAttachments persist the chat's parked composer state, one
+	// half each. Passed on to the command dispatcher; the runtime never calls
+	// either.
+	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
+	SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error)
 	// Delete removes the chat file and broadcasts chat_deleted. Passed on to
 	// the command dispatcher, whose cmdDeleteChat is the build's only caller;
 	// the runtime never calls it, and the coordinator's own view cannot see it.
@@ -148,13 +150,14 @@ type pushService interface {
 // *bridge.Bridge satisfies the widest; every narrower one is a statement about
 // what a particular function is allowed to do with a bridge it was handed.
 //
-// The arithmetic, since it is the point: the utility session needs 6 of the 14
+// The arithmetic, since it is the point: the utility session needs 6 of the 15
 // methods, a new session's metadata persist needs 7, a lease needs 2, and the
 // parameter-map builders, the host-request answerer, the workflow creator and
 // the idle culler need 1 each. Only the per-chat sharedBridge — which starts a
-// subprocess, prompts on it, switches its model and stops it — needs all 14.
+// subprocess, prompts on it, switches its model and its reasoning effort and
+// stops it — needs all 15.
 
-// acpSession names the ACP session an RPC is addressed to. 1 of 14, and the only
+// acpSession names the ACP session an RPC is addressed to. 1 of 15, and the only
 // one a parameter-map builder has any use for.
 type acpSession interface {
 	// SessionID returns the ACP session id after Start completes.
@@ -162,14 +165,14 @@ type acpSession interface {
 }
 
 // acpCaller sends a JSON-RPC request and waits for its matching response. 1 of
-// 14. The provided context enables caller-driven cancellation; if it is
+// 15. The provided context enables caller-driven cancellation; if it is
 // cancelled before the response arrives, Call returns ctx.Err().
 type acpCaller interface {
 	Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error)
 }
 
 // acpResponder answers an INBOUND request from kiro-cli (fs/read_text_file, the
-// v3 auth token, the shell type). 1 of 14.
+// v3 auth token, the shell type). 1 of 15.
 //
 // The utility session's forward goroutine takes this and nothing else, and the
 // narrowness is load-bearing: an unanswered inbound request wedges the turn
@@ -180,13 +183,13 @@ type acpResponder interface {
 	Respond(ctx context.Context, id int64, result any, err error) error
 }
 
-// acpStopper kills the subprocess. 1 of 14. Its NotifCh closes; must be called
+// acpStopper kills the subprocess. 1 of 15. Its NotifCh closes; must be called
 // at most once per bridge instance.
 type acpStopper interface {
 	Stop()
 }
 
-// acpSessionCaller is one call, addressed to the bridge's own session. 2 of 14,
+// acpSessionCaller is one call, addressed to the bridge's own session. 2 of 15,
 // and what a utility-session lease hands its caller to use outside the session
 // mutex.
 type acpSessionCaller interface {
@@ -195,7 +198,7 @@ type acpSessionCaller interface {
 }
 
 // acpSessionFacts is everything a freshly started or loaded session knows about
-// itself, which is what gets written onto the chat record. 7 of 14, and no
+// itself, which is what gets written onto the chat record. 7 of 15, and no
 // mutator among them — the persist path reads.
 type acpSessionFacts interface {
 	acpSession
@@ -224,14 +227,14 @@ type acpSessionFacts interface {
 	ServedModels() []string
 }
 
-// utilityBridge is the long-lived utility session's ACP surface: 6 of the 14.
+// utilityBridge is the long-lived utility session's ACP surface: 6 of the 15.
 //
-// The 8 it excludes are the point. The utility bridge generates text for error
+// The 9 it excludes are the point. The utility bridge generates text for error
 // explanations, commit messages and the policy/account/knowledge reads; it never
 // switches model in session, never sends a bare notification, and never reads
 // the mode or model catalogue — the runtime passes it a model at spawn and asks the
-// CHAT bridges for the catalogue. A session that cannot call SetModel cannot
-// spend a user's credits at a level nobody asked for.
+// CHAT bridges for the catalogue. A session that can call neither SetModel nor
+// SetEffort cannot spend a user's credits at a level nobody asked for.
 type utilityBridge interface {
 	acpSessionCaller
 	acpResponder
@@ -247,9 +250,9 @@ type utilityBridge interface {
 	NotifCh() <-chan *vibekit.RPCResponse
 }
 
-// ACPBridge manages a single kiro-cli ACP subprocess for one chat: all 14
+// ACPBridge manages a single kiro-cli ACP subprocess for one chat: all 15
 // methods, because a per-chat bridge is started, prompted on, answered on,
-// model-switched and stopped. *bridge.Bridge satisfies it. Methods are safe for
+// model-switched, effort-switched and stopped. *bridge.Bridge satisfies it. Methods are safe for
 // concurrent use; Call and Notify serialize writes to the subprocess stdin
 // internally. The prompt-slot state is sharedBridge's; the bridge itself has no
 // "busy" concept.
@@ -268,6 +271,17 @@ type ACPBridge interface {
 	// session/set_config_option (configId "model") — v3 has no
 	// session/set_model. ctx enables caller-driven cancellation.
 	SetModel(ctx context.Context, modelID string) error
+	// EnsureEffort makes the live session run at the given reasoning-effort level
+	// via session/set_config_option (configId "effortLevel"). Its own method rather
+	// than a raw Call because a model swap can CLEAR the level KAS is running at, so
+	// the coordinator has to re-assert it in the same breath as SetModel and the two
+	// belong at the same depth.
+	//
+	// "Ensure" rather than "set": it compares against the level the session last
+	// reported and returns without a round trip on a match, which is what lets the
+	// prompt path repair a level KAS changed on its own without paying for a call
+	// per prompt. SetModel clears that cache, so a post-swap call always asserts.
+	EnsureEffort(ctx context.Context, level string) error
 }
 
 // ACPBridgeFactory creates new ACPBridge instances. The runtime calls it once per

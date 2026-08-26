@@ -14,9 +14,20 @@ vi.mock("./tool-card.js", () => ({
 }));
 vi.mock("./transport.js", () => ({
   send: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  newOpID: vi.fn(() => "op-test"),
 }));
 vi.mock("./store.js", () => ({
   state: { messages: [], chatID: "" },
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 import { EVENT_RENDER_MAP, buildEvent } from "./messages-events.js";
@@ -99,6 +110,26 @@ describe("interrupted event (turn cut short)", () => {
     // The reason travelled on the wire and used to be discarded here, so the
     // divider blamed a server restart whatever had actually happened.
     expect(node?.textContent ?? "").toContain("Session refreshed, retrying");
+  });
+
+  // The 2026-08 case, and the reason the server stopped sending an empty content
+  // on the ordinary failure path: this is what a throttled or capacity-refused
+  // turn now reads as, on reload and on a chat nobody was watching. It used to
+  // render as the generic label below with the reason living only in a hover
+  // tooltip that the next page load discarded.
+  it("renders a model-backend failure reason", () => {
+    const node = buildEvent({
+      id: "i0",
+      role: "event",
+      event_kind: "interrupted",
+      content:
+        "Too many requests, please wait before trying again. kiro-cli already " +
+        "retried; waiting a moment before resending is the only thing that helps. (request req-9)",
+      ts: 0,
+    } as Message);
+    expect(node?.textContent ?? "").toContain("Too many requests");
+    expect(node?.textContent ?? "").toContain("(request req-9)");
+    expect(node?.textContent ?? "").not.toContain("Turn interrupted");
   });
 
   it("falls back to a generic label when the event carries no content", () => {

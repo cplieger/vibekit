@@ -27,7 +27,7 @@ import type {
   SteerClearedPayload,
   AgentNoticePayload,
   TurnStatePayload,
-  UIStateChangedPayload,
+  TabsChangedPayload,
   PermissionNeeded,
   ErrorPayload,
   ConnectedPayload,
@@ -38,6 +38,7 @@ import type {
   ElicitationNeededPayload,
   UserInputNeededPayload,
   DecisionSettledPayload,
+  DraftChangedPayload,
   OpenExternalURLPayload,
   CodeReferencesPayload,
   PermissionsChangedPayload,
@@ -86,7 +87,15 @@ export interface SSEPayloads {
   // consumer has to decide whose words a steer holds.
   readonly agent_notice: AgentNoticePayload;
   readonly turn_state: TurnStatePayload;
-  readonly ui_state_changed: UIStateChangedPayload;
+  // ONE aggregate frame per COMMITTED mutation of the open-tab set. One event
+  // rather than a membership event beside an order event: two types can be
+  // applied in either order by a client, and a close of a parent with children
+  // is one mutation, so a singular event would have forced either several frames
+  // sharing one version or several bumps for one mutation. Removal is STATED per
+  // id in `removed_ids` and never inferred from absence — inferring it is what
+  // closed tabs nobody closed. `version` is the client's only watermark and only
+  // an EVENT may advance it; see tabs.ts applyTabsChanged for the three rules.
+  readonly tabs_changed: TabsChangedPayload;
   readonly permission_needed: PermissionNeeded;
   readonly permissions_changed: PermissionsChangedPayload;
   readonly policy_error: PolicyErrorPayload;
@@ -96,6 +105,7 @@ export interface SSEPayloads {
   // answer it, which is every surface but one: they are all offered the same
   // decision and only the first answer is accepted.
   readonly decision_settled: DecisionSettledPayload;
+  readonly draft_changed: DraftChangedPayload;
   readonly error: ErrorPayload;
   readonly settings_updated: undefined;
   readonly mcp_config_changed: undefined;

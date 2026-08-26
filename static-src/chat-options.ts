@@ -160,7 +160,10 @@ function tangentRow(): HTMLElement {
         return;
       }
       collapseAll();
-      openTangentChat(session.id);
+      // DETACHED: the menu has already collapsed and nothing after this reads the
+      // tangent. The fork mints the new chat's id server-side, so it opens its own
+      // sub-tab when the reply lands.
+      void openTangentChat(session.id);
     },
   });
 

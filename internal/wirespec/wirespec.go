@@ -71,7 +71,11 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.SteerClearedPayload](),
 	wiregen.TypeRef[vibekit.AgentNoticePayload](),
 	wiregen.TypeRef[vibekit.TurnStatePayload](),
-	wiregen.TypeRef[vibekit.UIStateChangedPayload](),
+	// Declared BEFORE the two types that reference it: the generator emits in
+	// slice order.
+	wiregen.TypeRef[vibekit.TabSubject](),
+	wiregen.TypeRef[vibekit.TabsChangedPayload](),
+	wiregen.TypeRef[vibekit.TabList](),
 	wiregen.TypeRef[vibekit.PermissionNeededPayload](),
 	wiregen.TypeRef[vibekit.ErrorPayload](),
 	wiregen.TypeRef[vibekit.MCPConnectedPayload](),
@@ -79,6 +83,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.MCPFailedPayload](),
 	wiregen.TypeRef[vibekit.MCPDisconnectedPayload](),
 	wiregen.TypeRef[vibekit.ChatDeletedPayload](),
+	wiregen.TypeRef[vibekit.DraftChangedPayload](),
 	wiregen.TypeRef[vibekit.ToolCallPayload](),
 	wiregen.TypeRef[vibekit.ToolCallUpdatePayload](),
 	wiregen.TypeRef[vibekit.ElicitationPropertySchema](),
@@ -94,6 +99,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.AccountUsage](),
 	wiregen.TypeRef[vibekit.PolicyRuleCore](),
 	wiregen.TypeRef[vibekit.PolicyRule](),
+	wiregen.TypeRef[vibekit.SecurityProfile](),
 	wiregen.TypeRef[vibekit.PolicyView](),
 	wiregen.TypeRef[vibekit.PolicyExplainResult](),
 	wiregen.TypeRef[vibekit.PolicyErrorItem](),
@@ -152,7 +158,18 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"DecisionKind":     {},
 	"SettledBy":        {},
 	"AlwaysAllowBlock": {},
-	"Transport":        {Values: []string{"stdio", "http", "sse"}},
+	// TabKind is registered so the eight kinds have exactly ONE definition
+	// across both languages: the const block in internal/vibekit/domain_tabs.go,
+	// discovered here and emitted as the TypeScript union. It was a hand-written
+	// union in tabs.ts derived from the TAB_VIEWS keys, which meant a ninth kind
+	// added server-side reached a client switch with no case for it and no build
+	// error anywhere — and the client's factory over a subject is TOTAL by
+	// contract, so that is precisely the failure the type has to prevent. With
+	// this row TabSubject.kind is TabKind rather than string, so a subject
+	// carrying an unknown kind fails the generated decoder at the boundary
+	// instead of reaching the factory.
+	"TabKind":   {},
+	"Transport": {Values: []string{"stdio", "http", "sse"}},
 }
 
 // enumTSNames renames an enum on the TypeScript side.
@@ -182,6 +199,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "code_references", TypeName: "CodeReferencesPayload"},
 	{EventType: "connected", TypeName: "ConnectedPayload"},
 	{EventType: "decision_settled", TypeName: "DecisionSettledPayload"},
+	{EventType: "draft_changed", TypeName: "DraftChangedPayload"},
 	{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
 	{EventType: "user_input_needed", TypeName: "UserInputNeededPayload"},
 	{EventType: "error", TypeName: "ErrorPayload"},
@@ -220,7 +238,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "terminal_exited", TypeName: "TerminalExitedPayload"},
 	{EventType: "turn_ended", TypeName: "TurnEndedPayload"},
 	{EventType: "turn_state", TypeName: "TurnStatePayload"},
-	{EventType: "ui_state_changed", TypeName: "UIStateChangedPayload"},
+	{EventType: "tabs_changed", TypeName: "TabsChangedPayload"},
 }
 
 // Registry returns the fully-populated wiregen registry: the generator

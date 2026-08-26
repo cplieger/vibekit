@@ -25,7 +25,7 @@ vi.mock("./scroll.js", () => ({
 }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn(), openFileGitDiff: vi.fn() }));
 // chat.ts transitively mounts the transcript view at import time (#messages).
-vi.mock("./chat.js", () => ({ attachPathToActiveChat: vi.fn() }));
+vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 
 import { toggleChatFilter, _repaintRowsForTest } from "./files.js";
 import { openFileGitDiff } from "./editor-openers.js";

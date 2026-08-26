@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/push"
+	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -185,6 +186,7 @@ func resolveAgentEngine() string {
 func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Fast path: bridge already exists.
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
+		bc.repairEffort(ctx, chatID, sb)
 		return sb, nil
 	}
 
@@ -286,7 +288,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	}
 
 	if chat.ACPSessionID != "" {
-		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model) {
+		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, bc.effortFor(ctx, chat)) {
 			return sb, nil
 		}
 	}
@@ -315,7 +317,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: chat.Effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: bc.effortFor(ctx, chat), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -342,7 +344,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 
 // tryLoadSession attempts session/load against the stored ACP session id.
 func (bc *BridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge, acpSessionID, model string,
+	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge, acpSessionID, model, effort string,
 ) bool {
 	// EnableHooks:true — the session/load path must opt into the hook engine
 	// too, so hooks autofire on resumed sessions after a container restart
@@ -360,7 +362,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so whatever partial replay
@@ -784,20 +786,129 @@ func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID vibekit.Cha
 }
 
 // TryFastModelSwitch attempts an in-session model swap via
-// session/set_config_option (configId "model") on the running bridge.
-func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID vibekit.ChatID, model string) bool {
+// session/set_config_option (configId "model") on the running bridge, then
+// re-applies effort so the swap does not carry the level away with it.
+func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID vibekit.ChatID, model, effort string) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
 		return false
 	}
+	return bc.applyModelSwitch(ctx, chatID, sb, model, effort)
+}
+
+// applyModelSwitch swaps the model on a bridge the caller ALREADY HOLDS, then
+// re-applies the level.
+//
+// Takes the bridge rather than the chat id because the two callers reach it
+// differently and only one of them can look it up safely: the fast path resolves
+// it from the manager, while the restart fallback has just been handed a
+// freshly-loaded bridge by OpenBridge. Re-resolving by id there could answer with a
+// DIFFERENT bridge — another goroutine closing the chat, or a spawn that raced the
+// old bridge's exit cleanup — so the pick would land on a session that is not the
+// one the caller loaded, or on nothing at all.
+func (bc *BridgeCoordinator) applyModelSwitch(
+	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge, model, effort string,
+) bool {
 	if err := sb.bridge.SetModel(ctx, model); err != nil {
 		slog.Info("model switch: fast path failed, falling back to restart",
 			"chat_id", chatID, "model", model, "error", err)
 		return false
 	}
+	// Re-assert the level after the swap, or the swap can take it away. KAS
+	// reconciles the session's effortLevel against the NEW model's tier list and
+	// replaces it with that model's default whenever the current level is absent
+	// from the list — measured on 2.19.1: a swap between two models offering the
+	// same five tiers KEEPS the level, and a swap to `auto`, which offers none,
+	// destroys it. SetModel clears the bridge's cached level for exactly this
+	// reason, so EnsureEffort asserts here rather than matching a stale value.
+	//
+	// Best-effort: the swap already landed and is the operation the user asked for,
+	// so a failure here logs and leaves the level at the service's own choice rather
+	// than reporting the switch as failed and driving the caller into a restart.
+	if effort != "" {
+		if err := sb.bridge.EnsureEffort(ctx, effort); err != nil {
+			slog.Warn("model switch: reasoning effort not re-applied after the swap",
+				"chat_id", chatID, "model", model, "effort", effort, "error", err)
+		}
+	}
 	slog.Info("model switch: fast path succeeded (session/set_config_option)",
 		"chat_id", chatID, "model", model)
 	return true
+}
+
+// repairEffort re-asserts the chat's reasoning-effort level on a bridge that is
+// ALREADY OPEN, which is the one checkpoint that catches a level KAS changed on
+// its own.
+//
+// Two ways that happens, neither of them a vibekit action, so neither is covered
+// by the session doors or by the model-switch re-assert. KAS's own
+// pinSessionModelId settles an unset model on the first prompt and runs the same
+// effort reconciliation, so a chat left on `auto` — no model picked, or one the
+// entitlement gate withheld — has its level replaced by the pinned model's
+// default. And a model switch made from the Kiro IDE or the TUI on a shared
+// session does the same thing, with vibekit's record still holding the level the
+// user chose.
+//
+// At the prompt rather than on the notification, deliberately. The reactive shape
+// looks more direct and is worse in three ways: a bridge Call issued from the
+// Forward goroutine blocks the very drain that Call is waiting on, so it needs a
+// goroutine and its own loop guard; it reacts to one enumerated trigger where this
+// reads the actual state and so covers triggers nobody listed; and it would add
+// work to the process on every catalog frame. OpenBridge is on the path of every
+// prompt, and Bridge.EnsureEffort compares before it calls, so the normal case is
+// one comparison and no round trip.
+//
+// Best-effort and log-only: a chat must not fail to answer because a preference
+// could not be re-applied. The level being unavailable on the current model is not
+// a failure at all — KAS answers success and keeps its own, and the client marks
+// what the session reports rather than what the record wants.
+func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge) {
+	chat, ok := bc.chatStore.Get(ctx, chatID)
+	if !ok {
+		return
+	}
+	level := bc.effortFor(ctx, chat)
+	if level == "" {
+		return
+	}
+	if err := sb.bridge.EnsureEffort(ctx, level); err != nil {
+		slog.Warn("reasoning effort not re-applied on the open session",
+			"chat_id", chatID, "effort", level, "error", err)
+	}
+}
+
+// effortFor resolves the reasoning-effort level a chat's next session starts at: the chat's own choice, else the last level the user picked anywhere
+// (settings.KeyLastEffort). Empty means send nothing and let the service apply
+// the model's own default.
+//
+// The seed exists because per-chat storage left new chats with no memory at all.
+// Model has one (the client's last_model rides into every new chat), effort had
+// none, so every new chat silently reopened at the current model's default tier
+// however many times the user had chosen otherwise.
+//
+// It is a FALLBACK and is never written onto the chat record. A chat that has
+// chosen nothing has to keep following the setting; stamping today's value on
+// would pin that chat there for every later session, which is the same mistake as
+// seeding a chat's choice from a service default (see
+// vibekit.SessionModel.DefaultEffortLevel).
+//
+// Validated here rather than trusted: config.json is user-editable and a level
+// this build does not know must not reach the wire. A level the current MODEL
+// does not offer is a different matter and is KAS's to reconcile — it assigns
+// only from its own tier list and then broadcasts the real currentValue, which
+// corrects the client through config_option_update.
+func (bc *BridgeCoordinator) effortFor(ctx context.Context, chat *vibekit.Chat) string {
+	if chat.Effort != "" {
+		return chat.Effort
+	}
+	var level string
+	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyLastEffort, &level) {
+		return ""
+	}
+	if !vibekit.EffortLevel(level).Valid() {
+		return ""
+	}
+	return level
 }
 
 // PersistModelSwitch records the switch event and updates the chat's
@@ -894,9 +1005,28 @@ func assistantTurnMessage(buf *buffer.Buffer, stats command.TurnStats) vibekit.M
 // vanishing-message class this codebase already paid for once. It also restores
 // the `interrupted` badge for this path, which vibekit-runtime.md records as a
 // casualty of deleting the .partial sidecar.
-func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID) {
+//
+// `reason` is the caller's account of why the turn stopped, and it is load-bearing
+// rather than decorative: it becomes the divider's label, which is the only
+// record of the cause that outlives the page. See appendInterruptedEvent.
+func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, reason string) {
+	// A stashed reason names a MORE specific cause than the caller's, so it wins.
+	// InterruptTurn sets it when kiro-cli's tool-use security filter stopped the
+	// turn; the caller's reason then describes only the RPC failure that followed,
+	// which is the consequence rather than the cause.
+	if stashed := bc.takeInterruptReason(chatID); stashed != "" {
+		reason = stashed
+	}
 	buf, ok := bc.TakeBuffer(chatID)
 	if !ok || !buf.Started {
+		// Nothing streamed, so there is no partial to persist and no turn to end --
+		// but the divider still lands, and that is the whole point of this branch.
+		// It is the COMMON failure: a throttle, a capacity refusal or a dead bridge
+		// answers before the first chunk. Until this branch existed such a turn
+		// appended nothing at all, so turns.ts deriveOutcome saw no marker, read the
+		// turn as `completed` and hasTurnSummary suppressed its footer -- a
+		// rate-limited turn rendered indistinguishably from a clean short answer.
+		bc.appendInterruptedEvent(ctx, chatID, reason)
 		return
 	}
 	// Fail the tool calls still marked in-flight BEFORE building the message.
@@ -915,24 +1045,36 @@ func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vib
 	msg := assistantTurnMessage(buf, command.TurnStats{})
 	bc.persistTurn(ctx, chatID, &msg)
 
+	bc.appendInterruptedEvent(ctx, chatID, reason)
+	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID,
+		vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonInterrupted}))
+}
+
+// appendInterruptedEvent records WHY a turn stopped, on the turn itself.
+//
+// Content is what messages-events.ts renders as the boundary divider's label (its
+// labelFn falls back to the generic "Turn interrupted" on an empty one), so this
+// is the transcript's own account of the stop, and the only one that survives a
+// reload, a chat switch, or a failure on a chat the reader was not watching.
+//
+// It used to be left EMPTY for an ordinary prompt failure, on the reasoning that
+// the error frame already carried the reason. That reasoning held only for the
+// one reader looking at the one chat at the one moment: the frame lands on an
+// ephemeral client surface, so the cause was gone by the next page load and
+// absent entirely for a background chat. A throttled turn then read as "Turn
+// interrupted" with no way to learn what happened. Both writers of this event
+// now state their cause here.
+func (bc *BridgeCoordinator) appendInterruptedEvent(ctx context.Context, chatID vibekit.ChatID, reason string) {
 	evt := vibekit.Message{
 		ID:        newMessageID(),
 		Role:      vibekit.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: vibekit.EventInterrupted,
-		// Content is what messages-events.ts renders as the divider's label, so
-		// this is the turn's user-facing account of why it stopped. Empty on the
-		// ordinary failure path ON PURPOSE — a failed prompt already sends its
-		// reason as an error frame and the divider falls back to the generic
-		// label — but a turn kiro-cli abandoned without answering sends no such
-		// frame, so its cause reaches the user here or nowhere.
-		Content: bc.takeInterruptReason(chatID),
+		Content:   reason,
 	}
 	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("persist interrupted event", "chat_id", chatID, "error", err)
 	}
-	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID,
-		vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonInterrupted}))
 }
 
 const stopReasonCancelled = vibekit.StopReasonCancelled

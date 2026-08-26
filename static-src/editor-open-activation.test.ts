@@ -16,34 +16,63 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 /** The tab store reduced to the one fact `open` reads and the one rule
- *  activateTab enforces: onShow fires only when the ACTIVE tab changes. */
+ *  activateTab enforces: the tab's activation hook fires only when the ACTIVE tab
+ *  changes.
+ *
+ *  Ids are opaque and server-minted, so this mock mints one per path and hands it
+ *  back through `tabIdFor` — the only lookup production has. A test that composed
+ *  `editor:<path>` would be reaching a row by a route the app cannot.
+ *
+ *  `openEditorView` RESOLVES rather than returning void, because every open is a
+ *  round trip through `open_tab` now, and the tab's `onShow` is the factory's:
+ *  `activateFile` is registered by the composition root, so this mock calls it
+ *  through the same registration rather than through a callback argument that no
+ *  longer exists. */
 let activeTab = "";
-// The parameter lists mirror the real signatures (tabs.ts openEditorView takes
-// onClose third; api-client.ts apiGet takes the AbortSignal second) because the
-// assertions below READ the recorded arguments — a mock declaring fewer than it
-// is handed types its own call log as having no such argument.
-const openEditorView = vi.fn((path: string, onShow: () => void, _onClose?: () => void) => {
-  const id = `editor:${path}`;
+const minted = new Map<string, string>();
+
+function idFor(path: string): string {
+  return minted.get(path) ?? "";
+}
+
+const openEditorView = vi.fn((path: string) => {
+  let id = minted.get(path);
+  if (id === undefined) {
+    id = `tb_${String(minted.size + 1).padStart(3, "0")}`;
+    minted.set(path, id);
+  }
   if (activeTab === id) {
-    return;
+    return Promise.resolve();
   }
   activeTab = id;
-  onShow();
+  editorShow(path);
+  return Promise.resolve();
 });
+
+/** The editor half of the registered openers, stubbed here and pointed at the
+ *  real `activateFile` once it is imported. */
+let editorShow: (path: string) => void = () => {
+  /* replaced below */
+};
 
 const apiGet = vi.fn((_url: string, _signal?: AbortSignal) =>
   Promise.resolve({ content: "hello", content_hash: "h" }),
 );
 
 vi.mock("./tabs.js", () => ({
-  openEditorView: (path: string, onShow: () => void, onClose?: () => void) =>
-    openEditorView(path, onShow, onClose),
+  openEditorView: (path: string) => openEditorView(path),
   getActiveTabId: () => activeTab,
-  editorTabID: (path: string) => `editor:${path}`,
+  // Replaced `editorTabID`: an id is not composed from a path any more, so the
+  // lookup runs the other way round.
+  tabIdFor: (_kind: string, ref = "") => idFor(ref),
   setTabDirty: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: (url: string, signal?: AbortSignal) => apiGet(url, signal),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
@@ -59,7 +88,6 @@ vi.mock("./editor-ui.js", () => ({
   clearAgentLineCache: vi.fn(),
   updateGutter: vi.fn(),
 }));
-vi.mock("./ui-state.js", () => ({ save: vi.fn(), load: () => ({ editor_files: [] }) }));
 vi.mock("./actions/editor.js", () => ({
   loadDiff: { dispatch: () => ({ outcome: Promise.resolve({ status: "cancelled" }) }) },
 }));
@@ -86,8 +114,13 @@ vi.mock("./dom.js", () => {
   };
 });
 
-const { openFile } = await import("./editor-openers.js");
+const { openFile, activateFile } = await import("./editor-openers.js");
 const { fileStates, setActiveFilePath } = await import("./editor-types.js");
+
+// The registration the composition root performs: the editor tab's activation
+// hook IS activateFile, so the mock above drives it through the same seam
+// production does.
+editorShow = activateFile;
 
 /** GETs against the file read route, which is what an activation costs. */
 function fileReads(): number {
@@ -100,32 +133,45 @@ describe("opening a file activates it once", () => {
     fileStates.clear();
     setActiveFilePath("");
     activeTab = "";
+    minted.clear();
   });
 
-  it("issues ONE file read on a first open", () => {
+  it("issues ONE file read on a first open", async () => {
+    expect.assertions(1);
     openFile("/workspace/a.go");
+    await Promise.resolve();
     expect(fileReads()).toBe(1);
   });
 
-  it("still activates when the tab was already active and onShow is skipped", () => {
+  it("still activates when the tab was already active and the hook is skipped", async () => {
     // Re-opening the file whose tab is already active: activateTab returns early,
-    // so without the fallback call nothing would load the file at all.
-    activeTab = "editor:/workspace/a.go";
+    // so without the fallback call nothing would load the file at all. The
+    // fallback now runs in the OPEN's continuation, because the open is a round
+    // trip.
+    expect.assertions(1);
+    minted.set("/workspace/a.go", "tb_001");
+    activeTab = "tb_001";
     openFile("/workspace/a.go");
+    await Promise.resolve();
     expect(fileReads()).toBe(1);
   });
 
-  it("does not abort the read it just issued", () => {
+  it("does not abort the read it just issued", async () => {
+    expect.assertions(1);
     openFile("/workspace/a.go");
+    await Promise.resolve();
     const signal = apiGet.mock.calls.at(-1)?.[1];
     // The second activation's controller swap aborted the first one's request,
     // which is why the wasted round trip was invisible.
     expect(signal?.aborted).toBe(false);
   });
 
-  it("reads once per open across two different files", () => {
+  it("reads once per open across two different files", async () => {
+    expect.assertions(1);
     openFile("/workspace/a.go");
+    await Promise.resolve();
     openFile("/workspace/b.go");
+    await Promise.resolve();
     expect(fileReads()).toBe(2);
   });
 });

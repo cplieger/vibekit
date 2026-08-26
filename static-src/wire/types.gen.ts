@@ -22,6 +22,8 @@ export type SettledBy = "user" | "unattended";
 
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal";
 
+export type TabKind = "chat" | "editor" | "run" | "settings" | "git" | "files" | "history" | "docs";
+
 export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
@@ -361,6 +363,26 @@ export interface DeviceFlowResponse {
   device_code: string;
   interval: number;
   expires_in: number;
+}
+
+/**
+ * DraftChangedPayload is the payload for type="draft_changed": the composer
+ * state one chat now holds, sent so an idle device converges on a draft it is
+ * not typing.
+ * //
+ * Both halves travel on every frame, and BOTH writers fill both, because the
+ * event describes the composer rather than the field that moved: a receiver
+ * applying only what changed would have to know which command fired, and a
+ * second event type for the twin would be two channels to order.
+ * //
+ * The set_draft REPLY deliberately carries only a byte count, and this payload
+ * carrying the text is not a contradiction. That reply goes back to the device
+ * that just sent the words, where echoing them is pure cost; this goes to the
+ * devices that do not have them, which is the only thing it is for.
+ */
+export interface DraftChangedPayload {
+  text: string;
+  attachments?: string[];
 }
 
 /**
@@ -941,6 +963,18 @@ export interface PolicyView {
   writable_scopes: string[];
   capabilities: string[];
   relax_capabilities: string[];
+  /**
+ * Profiles is the security-posture ladder in picker order, loosest last, and
+ * Profile is the one in force. Both travel here rather than being derived
+ * client-side for the same reason RelaxCapabilities does: the ladder decides
+ * what one click grants, so policyfile owns it and the client renders it.
+ * //
+ * Order is part of the payload. A client that sorted these would put the
+ * loosest option somewhere in the middle of a list a reader scans from
+ * cautious to permissive.
+ */
+  profiles: SecurityProfile[];
+  profile: string;
   available: boolean;
 }
 
@@ -1200,6 +1234,17 @@ export interface SearchResponse {
 }
 
 /**
+ * SecurityProfile is one entry in the picker: the persisted id and the KAS policy
+ * preset ids it sends. The presets travel so the UI can say what a profile grants
+ * without a second round trip, and so a reader can tell two profiles apart by
+ * something more than their names.
+ */
+export interface SecurityProfile {
+  id: string;
+  presets: string[];
+}
+
+/**
  * SessionEffortLevel is one reasoning-effort tier the running session offers,
  * from the `effortLevel` config option's own `options[]` (value + name).
  * //
@@ -1257,14 +1302,22 @@ export interface SessionModel {
  * HasEffort reports whether this model supports a reasoning-effort level,
  * from `_meta.kiro.hasEffort`.
  * //
- * **kiro-cli 2.18.0 does not stamp it** (the literal appears nowhere in the
- * chat sidecar; measured 2026-08). So this is false on every entry, the
- * client's gate reads that as "the catalog does not carry the capability" and
- * shows the control anyway. The capability question is answered by
- * Chat.EffortLevels instead — an empty list is exactly what kiro-cli's TUI
- * treats as "Effort is not available on the current model". Kept because a
- * catalog that DOES stamp it (another engine build) is still honoured; do not
- * build new gating on it.
+ * **kiro-cli 2.19.1 DOES stamp it**, on every model choice, alongside
+ * defaultEffortLevel (probed 2026-08-25 against KAS 0.48.0). An earlier note
+ * here said 2.18.0 stamped it nowhere and that the field was therefore false on
+ * every entry, so the client's gate fell through to showing the control always;
+ * that is now stale, and the gate is live.
+ * //
+ * The value it reports first is the one that matters: `auto` carries
+ * `hasEffort:false` and every real model in this account's catalog carries
+ * `hasEffort:true` with `defaultEffortLevel:"high"`. So a chat still on `auto`
+ * now HIDES the effort row, which is correct — KAS builds no effortLevel option
+ * for a model with no tiers and silently drops any level sent while a session
+ * sits there.
+ * //
+ * Chat.EffortLevels answers the same question from the other side (an empty
+ * list is what kiro-cli's own TUI treats as "Effort is not available on the
+ * current model"), and the two agree.
  */
   has_effort?: boolean;
 }
@@ -1333,6 +1386,146 @@ export interface SteerQueuedPayload {
 export interface SystemTool {
   name: string;
   installed: boolean;
+}
+
+/**
+ * TabList is the answer to GET /api/tabs: the open set in order, plus the
+ * version it reflects.
+ * //
+ * The two fields travel together because they are ONE fact, captured in one
+ * critical section by tabs.Store.List. A caller that read them separately could
+ * pair a stale set with a fresh version and then discard the very event the set
+ * was missing — which is the defect that killed an earlier revision's SSE-head
+ * watermark, where the snapshot and the event hub sat behind different locks.
+ * //
+ * Tabs is never omitted, even when empty: an empty arrangement is a real state
+ * (someone closed the last tab) and a missing field would read as "no answer".
+ */
+export interface TabList {
+  tabs: TabSubject[];
+  version: number;
+}
+
+/**
+ * TabSubject is the SHARED fact about one open tab: what it shows, where it
+ * sits, and whether closing it tears the thing down. It is what gets persisted
+ * and the only tab shape that crosses the wire.
+ * //
+ * What is NOT here is the point of the split. The client's TabViewSpec — the
+ * view selector, the typed route, onShow, onClose, the local activity dot — is
+ * produced from a subject by a total per-kind factory, so nothing about
+ * activation or teardown moves server-side, and a subject carries no behaviour.
+ * The editor's loaded content, dirty state and line selection stay in
+ * fileStates; a singleton's lazy import stays in its factory. A factory needs
+ * nothing from a subject beyond (Kind, Ref).
+ * //
+ * There is NO Order field: the position in tabs.Store's slice IS the order, so
+ * there is one representation of it rather than a slice and an integer that can
+ * disagree.
+ * //
+ * Field order is govet fieldalignment's (the pointer-bearing strings lead, the
+ * bools trail), not reading order.
+ */
+export interface TabSubject {
+  /**
+ * ID is opaque and server-minted (tabs.Store mints it at open). Opaque
+ * because nothing should be able to branch on it: Kind and Ref name the
+ * subject, so an id encoding its kind in a prefix would be a second
+ * representation parsed in three places. It also keeps the API path
+ * unambiguous under a reverse proxy that normalizes %2F.
+ */
+  id: string;
+  /**
+ * Kind and Ref are the subject's identity: at most one tab exists per
+ * (Kind, Ref) pair, which is what makes an open idempotent.
+ */
+  kind: TabKind;
+  /**
+ * Ref is a chat id, an absolute path, or a run id — empty for a singleton.
+ * The store treats it as opaque text: whether it is a VALID chat id or a
+ * path inside a granted root is the command boundary's question, because
+ * that is where ids.ValidChatID and the file-browser roots live.
+ */
+  ref: string;
+  /**
+ * Parent is the tab this one hangs under, empty for a top-level tab.
+ * //
+ * Set at open and NEVER reassigned, which is what makes a cycle
+ * unrepresentable: a child's parent already existed when the child was
+ * minted, so no chain can close on itself and no reparent check is needed
+ * anywhere.
+ */
+  parent: string;
+  /**
+ * Pinned sorts a tab ahead of every unpinned one. The partition is applied
+ * by the client when it renders (applyPinOrder); the stored slice keeps the
+ * order it was given.
+ */
+  pinned: boolean;
+  /**
+ * Owns means closing this tab tears down what it shows, and it exists
+ * because two tabs can otherwise be indistinguishable while differing in
+ * authority: a run REVIEW opened from History and a launcher-OWNED run share
+ * (Kind, Ref), and closing the owned one cancels the run. Set at open, like
+ * Parent, so the authority cannot change under a reader.
+ */
+  owns: boolean;
+}
+
+/**
+ * TabsChangedPayload is the payload for type="tabs_changed": ONE committed
+ * mutation of the open-tab set.
+ * //
+ * Workspace-global, so the chat id is empty. Every field except Version is
+ * optional because one mutation touches a different combination of them: an open
+ * carries Changed and Order, a close carries RemovedIDs and Order, a pin carries
+ * Changed alone, a reorder carries Order alone.
+ * //
+ * REMOVAL IS STATED, never inferred. That is the whole point of the shape: the
+ * arrangement used to travel as one whole list, so the client read "absent from
+ * the incoming list" as "closed elsewhere" and closed tabs nobody closed (live
+ * instance, 2026-08-25). Absence from Order still never means closure — a client
+ * holding a tab the order does not name keeps its position and sorts last.
+ */
+export interface TabsChangedPayload {
+  /**
+ * Changed is the one tab this mutation added or altered, absent on a close
+ * and on a reorder. A pointer because "no tab changed" and "a zero-valued
+ * tab changed" are different facts and the client branches on which.
+ */
+  changed?: TabSubject;
+  /**
+ * RemovedIDs names every tab this mutation closed, per id and explicitly. A
+ * close of a parent with children is one mutation, so this is where the
+ * children arrive.
+ */
+  removed_ids?: string[];
+  /**
+ * Order is the EXPANDED list: every open tab including children, in the order
+ * the collection now holds. Sent whenever the membership or the position
+ * moved, so a client never has to derive a position from a delta.
+ */
+  order?: string[];
+  /**
+ * Version is the collection version this mutation produced, and it is the
+ * client's only watermark. Three rules, exhaustive: at or below local is a
+ * duplicate or stale frame and is ignored, exactly one past applies, more
+ * than one past means a frame was missed so stop applying and re-list.
+ * //
+ * ONLY AN EVENT MAY ADVANCE THE LOCAL VERSION. A command response carries the
+ * version for diagnostics and a client must not adopt it: adopting a
+ * response's v+2 would make another device's in-flight v+1 read as stale, so
+ * it would be dropped and no gap would ever be detectable.
+ */
+  version: number;
+  /**
+ * OpID is the client-minted correlation id from the command that caused this
+ * mutation, echoed back so the caller can match the frame to its own
+ * dispatch. Empty for a mutation no client asked for (a retention close, a
+ * load-time prune). Distinct from Idempotency-Key, which keeps its
+ * retry-safety job: this has no TTL, no cache and no 409 branch.
+ */
+  op_id?: string;
 }
 
 /** TerminalCreatedPayload is the payload for type="terminal_created". */
@@ -1440,6 +1633,20 @@ export interface ToolCall {
  * (which carry the same id) so the client can render them nested.
  */
   agent_subtask_id?: string;
+  /**
+ * WorkflowID names the run a `run_workflow` invocation started, taken from
+ * the terminal update's `rawOutput.workflowId`. Empty on every other tool
+ * call, and empty on this one until the run is created.
+ * //
+ * It is what makes the invocation the RUN's card in the transcript rather
+ * than a generic row: the client keys a run card on this id, and a step's
+ * blocks arrive carrying the same id in their `agent_subtask_id`
+ * (`wf:<workflowId>:<nodePath>`), so the two sides join with no accumulation
+ * and no guessing. It is also the handle for the route to `/run/{id}` and
+ * for reading `GET /api/runs/{id}`, which is the only refresh-safe source of
+ * a run's plan, per-step status and outputs.
+ */
+  workflow_id?: string;
   /**
  * TerminalID links an execute tool call to the agent terminal running it,
  * taken from the ACP type:"terminal" content block KAS sends on the tool
@@ -1705,33 +1912,6 @@ export interface TurnStatePayload {
  * Message (see MessageChunkPayload.Seq).
  */
   chunk_seq?: number;
-}
-
-/**
- * UIStateChangedPayload is the payload for type="ui_state_changed": the whole
- * synced UI arrangement plus the revision that produced it, broadcast after any
- * device writes one.
- * //
- * It carries the STATE rather than being a bare invalidation, unlike the run
- * events. Two reasons. The document is small and complete, so a refetch would
- * only re-fetch what the broadcast already had; and every client needs the
- * revision to write next, so an invalidation would make a GET mandatory before
- * any local change could be published — turning one device's tab drag into a
- * round trip on every other device.
- * //
- * Workspace-global: the chat id is empty. `active_view` is deliberately not in
- * here (see internal/uistate.State) — a phone must not move the desktop's
- * active tab.
- */
-export interface UIStateChangedPayload {
-  theme?: string;
-  fb_path?: string;
-  turn_folds?: Record<string, Record<string, boolean>>;
-  tab_order?: string[];
-  pinned_tabs?: string[];
-  editor_files?: string[];
-  dismissed_banners?: string[];
-  revision: number;
 }
 
 /** Usage is a chat's last-known context and billing snapshot. */

@@ -12,6 +12,10 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
+  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
+  // modules reached through it import `apiGet`. Nothing here calls either.
+  apiGetTyped: vi.fn(),
 }));
 import { bindPRPaint, setPRGroups } from "../git-prs-state.js";
 import type { GitRepoGroup } from "../git-types.js";

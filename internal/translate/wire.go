@@ -205,11 +205,19 @@ type ACPPolicyRule struct {
 // iteration is `[wf…, loop, iter-1, step]` — which is why it, rather than
 // NodeID, is what a per-step attribution key is built from: two iterations of
 // one step share a NodeID and must not share a block.
+//
+// WorkflowName, Iteration and BranchID are decoded because the transcript's run
+// card states them: an unnamed run reads as machinery, and two passes of one loop
+// body are otherwise the same row twice. KAS's WorkflowPersistedMetaSchema is the
+// full set, and `type` is always the literal "step" today.
 type ACPWorkflowMeta struct {
-	WorkflowID string   `json:"workflowId"`
-	NodeID     string   `json:"nodeId"`
-	Type       string   `json:"type"`
-	NodePath   []string `json:"nodePath"`
+	WorkflowID   string   `json:"workflowId"`
+	WorkflowName string   `json:"workflowName"`
+	NodeID       string   `json:"nodeId"`
+	Type         string   `json:"type"`
+	BranchID     string   `json:"branchId"`
+	NodePath     []string `json:"nodePath"`
+	Iteration    int      `json:"iteration"`
 }
 
 // SubtaskID is the per-block attribution key for a step's content.
@@ -227,14 +235,23 @@ type ACPWorkflowMeta struct {
 // delegated-work block, so a step renders as delegated work with no client
 // change at all. The `wf:` prefix keeps the two id spaces from ever colliding —
 // KAS's subtask ids are uuids.
+//
+// TWO SEGMENTS, and the run id is the first. `wf:<workflowId>:<nodePath>` is what
+// lets the client render a step INSIDE the run that started it rather than as a
+// sibling of it: the run id is the key of the run card, the node path is the key
+// of the step row within it. It used to be `wf:<nodePath>` alone, which threw away
+// the one fact KAS puts on every single step frame, so the client had no way to
+// tell which run a step belonged to and every step became a top-level anonymous
+// box. A node path cannot contain a colon (KAS node ids are identifiers), so one
+// SplitN is an unambiguous parse.
 func (w *ACPWorkflowMeta) SubtaskID() string {
 	if w == nil || w.WorkflowID == "" {
 		return ""
 	}
 	if len(w.NodePath) > 0 {
-		return "wf:" + strings.Join(w.NodePath, "/")
+		return "wf:" + w.WorkflowID + ":" + strings.Join(w.NodePath, "/")
 	}
-	return "wf:" + w.WorkflowID + "/" + w.NodeID
+	return "wf:" + w.WorkflowID + ":" + w.NodeID
 }
 
 // ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed
@@ -337,17 +354,54 @@ type ACPToolCallWire struct {
 // ACPToolCallUpdateWire is the wire shape for tool_call_update session
 // updates. KAS's zToolCallUpdate also carries optional title/kind (a
 // mid-flight card refinement) and rawOutput; we decode title/kind so the
-// card can be relabelled, but leave rawOutput undecoded — the tool's
+// card can be relabelled, and take ONE narrow field out of rawOutput —
+// see ACPRawOutput — while leaving the rest undecoded, because the tool's
 // textual output already arrives through the `content` blocks below and
-// the domain ToolCall has no structured-output field.
+// the domain ToolCall has no general structured-output field.
 type ACPToolCallUpdateWire struct {
 	Meta       ACPKiroMeta               `json:"_meta"`
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
 	Kind       vibekit.ToolKind          `json:"kind"`
 	Status     vibekit.ToolStatus        `json:"status"`
+	RawOutput  json.RawMessage           `json:"rawOutput"`
 	Locations  []vibekit.ToolLocation    `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
+}
+
+// ACPRawOutput is the ONE field this client reads out of a tool call's
+// `rawOutput`, which KAS types as `unknown` and fills with whatever the tool
+// returned: an object here, a bare string or a number elsewhere.
+//
+// `run_workflow` is the reason. Its terminal update carries
+// `{message, workflowId, status}` (KAS's `handleToolAction` terminal arm sends
+// `rawOutput: event.output`, and the tool's `emitAction` output is that object),
+// and the workflow id is the ONLY structural link from the invocation to the run
+// it started. Without it the transcript cannot render a run's steps inside the
+// tool call that launched them, because a step frame names its run and the
+// invocation named nothing — the client would be left parsing the id out of the
+// English summary sentence.
+//
+// Decoding is deliberately narrow and tolerant: rawOutputWorkflowID returns ""
+// for a non-object, a missing field or malformed JSON, so a tool whose output is
+// a string costs one failed unmarshal and nothing else. Do NOT widen this into a
+// general structured-output channel; the content blocks are that channel.
+type ACPRawOutput struct {
+	WorkflowID string `json:"workflowId"`
+}
+
+// rawOutputWorkflowID extracts the workflow id a `run_workflow` invocation
+// reports, or "" when this update's rawOutput is absent, not an object, or
+// carries no id.
+func rawOutputWorkflowID(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var out ACPRawOutput
+	if json.Unmarshal(raw, &out) != nil {
+		return ""
+	}
+	return out.WorkflowID
 }
 
 // ACPPlanWire is the wire shape for plan session updates.

@@ -10,6 +10,10 @@ vi.mock("../api-client.js", () => ({
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
+  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
+  // modules reached through it import `apiGet`. Nothing here calls either.
+  apiGetTyped: vi.fn(),
 }));
 
 vi.mock("../push-util.js", () => ({

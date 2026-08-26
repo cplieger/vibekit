@@ -61,7 +61,7 @@ func TestCmdSetDraft(t *testing.T) {
 			b := &recordingBridge{sessionID: "sess-1"}
 			host := newBridgeHost(store, b)
 
-			_, err := CmdSetDraft(t.Context(), host, draftReq(t, "c1", tc.text))
+			_, err := CmdSetDraft(t.Context(), host, host, draftReq(t, "c1", tc.text))
 
 			if statusOf(err) != tc.wantStatus {
 				t.Errorf("status = %d, want %d (body %s)", statusOf(err), tc.wantStatus, errText(err))
@@ -94,7 +94,7 @@ func TestCmdSetDraft_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 
 	// Raw bytes, not json.Marshal: marshalling would sanitize them before the
 	// handler ever saw them, which is the same coercion under test.
-	_, err := CmdSetDraft(t.Context(), host, &vibekit.ClientCommand{
+	_, err := CmdSetDraft(t.Context(), host, host, &vibekit.ClientCommand{
 		Type:    vibekit.CmdSetDraft,
 		ChatID:  "c1",
 		Payload: append(append([]byte(`{"text":"`), 0xff, 0xfe), []byte(`"}`)...),
@@ -113,7 +113,7 @@ func TestCmdSetDraft_RefusesAMissingChatID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, draftReq(t, "", "text"))
+	_, err := CmdSetDraft(t.Context(), host, host, draftReq(t, "", "text"))
 
 	if statusOf(err) != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", statusOf(err))
@@ -125,7 +125,7 @@ func TestCmdSetDraft_RejectsAMalformedPayload(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, &vibekit.ClientCommand{
+	_, err := CmdSetDraft(t.Context(), host, host, &vibekit.ClientCommand{
 		Type:    vibekit.CmdSetDraft,
 		ChatID:  "c1",
 		Payload: json.RawMessage(`{"text":42}`),
@@ -145,7 +145,7 @@ func TestCmdSetDraft_DoesNotCreateAChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, draftReq(t, "c-never-prompted", "typed but nothing sent"))
+	_, err := CmdSetDraft(t.Context(), host, host, draftReq(t, "c-never-prompted", "typed but nothing sent"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Errorf("status = %d, want 200: a draft on an unsaved chat is a no-op, not an error", statusOf(err))
@@ -161,7 +161,7 @@ func TestCmdSetDraft_DoesNotCreateAChat(t *testing.T) {
 func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
-	if err := store.SetDraft(t.Context(), "c1", "the message about to be sent"); err != nil {
+	if _, err := store.SetDraft(t.Context(), "c1", "the message about to be sent"); err != nil {
 		t.Fatalf("SetDraft: %v", err)
 	}
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}

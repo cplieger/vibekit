@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/cplieger/atomicfile/v3"
@@ -72,10 +71,26 @@ func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeN
 		return p, "", http.StatusBadRequest,
 			errors.New("action_type must be askAgent or runCommand")
 	}
-	if _, known := normalizeTrigger(p.EventType); !known {
+	trigger, known := vibekit.NormalizeHookTrigger(p.EventType)
+	if !known {
 		return p, "", http.StatusBadRequest,
 			fmt.Errorf("event_type %q is not a trigger kiro-cli loads; expected one of: %s",
-				p.EventType, knownHookTriggers())
+				p.EventType, vibekit.KnownHookTriggers())
+	}
+	// A matcher on a trigger that has nothing to match on is always a typo, and
+	// upstream will not say so: KAS logs its own warning and counts
+	// hooks.ineffectiveMatcher into its telemetry, with nothing on the wire, so a
+	// hook created this way looks fine and its matcher silently governs nothing.
+	// Cheap to fix at the form, so it is refused here.
+	//
+	// The SIBLING condition — a PreToolUse or PostToolUse hook with no matcher —
+	// is deliberately NOT refused. "Run on every tool call" is a legitimate
+	// choice, so it earns a badge on the read surface instead
+	// (vibekit.HookMatcherMissingToolName, rendered by the Hooks tab).
+	if vibekit.ClassifyHookMatcher(trigger.Name, p.Patterns) == vibekit.HookMatcherIneffective {
+		return p, "", http.StatusBadRequest,
+			fmt.Errorf("trigger %s has nothing to match against, so its matcher %q would be ignored; leave patterns empty for this trigger",
+				trigger.Name, strings.TrimSpace(p.Patterns))
 	}
 	safeName = strings.ReplaceAll(strings.ToLower(p.Name), " ", "-")
 	if !validHookNameRe.MatchString(safeName) {
@@ -90,7 +105,7 @@ func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeN
 //
 //	{ "version": "v1", "hooks": [ { name, trigger, matcher?, action, timeout? } ] }
 //
-// trigger is PascalCase (see normalizeTrigger); action.type is "command"
+// trigger is PascalCase (see vibekit.NormalizeHookTrigger); action.type is "command"
 // (carries command) or "agent" (carries prompt). This replaces the old
 // embedded 2.x shape (a top-level hook object with when/then blocks).
 //
@@ -127,88 +142,12 @@ type hookDoc struct {
 	Hooks   []hookEntry `json:"hooks"`
 }
 
-// hookTriggers maps event-type payload values (vibekit's own vocabulary
-// plus v2 / Kiro-IDE camelCase aliases) to the PascalCase trigger names
-// KAS v1 hooks expect. Keys are lowercased for case-insensitive lookup.
-//
-//nolint:goconst // alias lookup table: the PascalCase trigger names are map values, not scattered magic strings.
-var hookTriggers = map[string]string{
-	// Canonical PascalCase names (self-map via their lowercase key).
-	"sessionstart":     "SessionStart",
-	"stop":             "Stop",
-	"pretooluse":       "PreToolUse",
-	"posttooluse":      "PostToolUse",
-	"pretaskexec":      "PreTaskExec",
-	"posttaskexec":     "PostTaskExec",
-	"userpromptsubmit": "UserPromptSubmit",
-	"postfilecreate":   "PostFileCreate",
-	"postfilesave":     "PostFileSave",
-	"postfiledelete":   "PostFileDelete",
-	"manual":           "Manual",
-	// v2 / Kiro-IDE camelCase aliases.
-	"agentstop":         "Stop",
-	"promptsubmit":      "UserPromptSubmit",
-	"userprompt":        "UserPromptSubmit",
-	"pretaskexecution":  "PreTaskExec",
-	"posttaskexecution": "PostTaskExec",
-	"filecreate":        "PostFileCreate",
-	"filecreated":       "PostFileCreate",
-	"filesave":          "PostFileSave",
-	"filesaved":         "PostFileSave",
-	"fileedit":          "PostFileSave",
-	"fileedited":        "PostFileSave",
-	"filedelete":        "PostFileDelete",
-	"filedeleted":       "PostFileDelete",
-	"usertriggered":     "Manual",
-	// Three more spellings KAS itself accepts. Their absence meant a payload
-	// using any of them produced a hook file KAS then discarded.
-	"agentspawn":    "SessionStart",
-	"sessionend":    "Stop",
-	"afterfileedit": "PostFileSave",
-}
-
-// normalizeTrigger maps a client event-type value to its PascalCase v1
-// trigger, reporting whether the value is one KAS will actually load.
-//
-// It used to pass an unrecognised value through trimmed, on the reasoning that
-// vibekit should not block a trigger its map does not yet know. That reasoning
-// inverts here, because the permissive branch is not lenient, it is silent:
-// KAS's parseHookDocument DROPS a hook whose trigger it does not recognise, so
-// create_hook answered 200 with a file path for a hook that loads nowhere, never
-// fires, and never appears in /api/hooks. The user is told a hook exists and
-// there is no signal anywhere that it does not.
-//
-// Refusing costs nothing by comparison: the closed set lives in this map, and a
-// trigger KAS adds later is one map entry away. Silence was the expensive
-// choice.
-func normalizeTrigger(eventType string) (trigger string, ok bool) {
-	trimmed := strings.TrimSpace(eventType)
-	t, ok := hookTriggers[strings.ToLower(trimmed)]
-	return t, ok
-}
-
-// knownHookTriggers lists the canonical trigger names for an error message, so a
-// rejection tells the caller what IS accepted rather than only what is not.
-func knownHookTriggers() string {
-	seen := make(map[string]struct{}, len(hookTriggers))
-	names := make([]string, 0, len(hookTriggers))
-	for _, v := range hookTriggers {
-		if _, dup := seen[v]; dup {
-			continue
-		}
-		seen[v] = struct{}{}
-		names = append(names, v)
-	}
-	slices.Sort(names)
-	return strings.Join(names, ", ")
-}
-
 // mustTrigger resolves an event type validateHookPayload has already accepted.
-// Separate from normalizeTrigger so the validated path reads as one expression
-// while the boundary check keeps its two-value form.
+// Separate from vibekit.NormalizeHookTrigger so the validated path reads as one
+// expression while the boundary check keeps its two-value form.
 func mustTrigger(eventType string) string {
-	t, _ := normalizeTrigger(eventType)
-	return t
+	t, _ := vibekit.NormalizeHookTrigger(eventType)
+	return t.Name
 }
 
 // buildHookAction maps vibekit's action_type payload ("askAgent" /

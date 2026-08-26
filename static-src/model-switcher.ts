@@ -19,7 +19,7 @@ import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
-import { setCurrentModel, setLastModel } from "./session-context.js";
+import { setCurrentModel, setLastModel, getLastEffort, setLastEffort } from "./session-context.js";
 import { refreshPickerIfVisible, getCachedModels } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
@@ -81,9 +81,20 @@ function effortLabel(level: SessionEffortLevel): string {
  *  canonical five (nothing has landed yet — a control with no tiers would be a
  *  worse answer than a stale one).
  *
- *  Live tier: the chat's own choice first, so a click marks instantly through the
- *  optimistic store write; then the level the session reports running at; then
- *  the current model's default, which is all that exists before a session. */
+ *  Live tier, highest first: the chat's own choice, so a click marks instantly
+ *  through the optimistic store write; then the level the session reports
+ *  running at; then the level the user last picked anywhere (`last_effort`),
+ *  which is what a NEW chat opens on and what the server independently resolves
+ *  into StartOpts.Effort, so the two agree about a session before it exists; then
+ *  the current model's own default, which is all that is left when nobody has
+ *  ever picked.
+ *
+ *  The chat's choice and the seed are both reconciled against `levels`; the model
+ *  default is not, being in its own list by construction. A tier list is per
+ *  model, so a chosen or remembered `max` on a model that stops at `high` is a
+ *  level the service rejects, and marking it would claim the session runs at a
+ *  tier it cannot reach. Falling through to what the session REPORTS is the honest
+ *  answer, and the choice stays on the record for a model that offers it again. */
 function effortVocabulary(
   session: Session | undefined,
   models: readonly ModelInfo[],
@@ -97,15 +108,25 @@ function effortVocabulary(
         : EFFORT_LEVELS.map((l) => ({ id: l.id, name: l.label }));
   const modelDefault =
     models.find((m) => m.model_id === session?.model)?.default_effort_level ?? "";
+  const chosen = ifOffered(session?.effort ?? "", levels);
+  const seeded = ifOffered(getLastEffort(), levels);
   const active =
-    session?.effort !== undefined && session.effort !== ""
-      ? session.effort
+    chosen !== ""
+      ? chosen
       : (session?.effort_active ?? "") !== ""
         ? (session?.effort_active ?? "")
-        : modelDefault !== ""
-          ? modelDefault
-          : catalogEffortActive;
+        : seeded !== ""
+          ? seeded
+          : modelDefault !== ""
+            ? modelDefault
+            : catalogEffortActive;
   return { levels, active };
+}
+
+/** `level` when the current model offers it, else "" — the reconciliation both a
+ *  chosen and a remembered level go through. */
+function ifOffered(level: string, levels: readonly SessionEffortLevel[]): string {
+  return level !== "" && levels.some((l) => l.id === level) ? level : "";
 }
 
 /** Whether two tier lists are the same sequence — the rebuild test. */
@@ -378,12 +399,30 @@ class ModelSwitchController {
    *  different key and a different scope reached by the same click. The command
    *  persists on the chat record and tolerates a bridgeless chat now (mirroring
    *  set_mode, which auto-creates), so there is nothing left to branch on and no
-   *  settings write at all. */
+   *  settings write at all.
+   *
+   *  It does record the pick as the level a NEW chat opens on (`last_effort`, the
+   *  twin of `last_model`). That is ambient memory rather than the chat's state:
+   *  the level still lives on this chat's record, so two chats keep disagreeing,
+   *  and the next new chat stops reopening at the model's default tier.
+   *
+   *  A repeat pick of the level THIS CHAT has already chosen is dropped. It is a
+   *  no-op command and the store write it drives is a no-op too, but the POST is
+   *  not free and a fast double or triple click sent one each: measured on the
+   *  live instance, one click on `max` produced three identical `set_effort`
+   *  commands 80ms apart. The guard reads the chat's own choice rather than the
+   *  MARKED tier deliberately — a chat marked at the model default has chosen
+   *  nothing, and clicking that tier to pin it explicitly has to reach the
+   *  server. */
   private setEffort(level: string): void {
     const session = getActive();
     if (session === undefined) {
       return;
     }
+    if ((session.effort ?? "") === level) {
+      return;
+    }
+    setLastEffort(level);
     void setEffortAction.dispatch({ chatID: session.id, level });
   }
 

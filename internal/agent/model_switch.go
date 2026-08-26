@@ -74,7 +74,7 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientComman
 		if err := rt.refuseUnservedModel(ctx, cmd.ChatID, chat, model); err != nil {
 			return nil, err
 		}
-		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model) {
+		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model, rt.coord.effortFor(ctx, chat)) {
 			rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
 			return responseOK2, nil
 		}
@@ -119,6 +119,31 @@ func (rt *Runtime) switchByRestart(
 	} else {
 		slog.Info("model switch: fallback, session/load succeeded",
 			"chat_id", cmd.ChatID, "model", model)
+		// A RESUMED session has never seen this pick. session/load restores KAS's
+		// own persisted model and vibekit's session/new door does not run, so
+		// without this the switch silently did not happen: PersistModelSwitch wrote
+		// the new id onto the chat while the old model kept answering, and the
+		// load's config_option_update then raced that write back to the old id, so
+		// the pill snapped back and the pick was lost.
+		//
+		// Only on this branch. `needsPrime` means a FRESH session, where the model
+		// and the level already rode _meta.kiro on session/new, so re-sending them
+		// would be two round trips that change nothing.
+		//
+		// Reusing the swap path is deliberate even though it is what just failed:
+		// it failed against the OLD subprocess and session (a context too large for
+		// the target, a stale entitlement), and this is a new one. A second failure
+		// leaves the session on its restored model, which is the same place the
+		// caller was already in, so there is nothing further to fall back to.
+		//
+		// Through the bridge this function HOLDS, never a fresh lookup by chat id:
+		// the old bridge's exit cleanup can evict the manager entry after the new
+		// one registered, so a lookup here can answer nil or answer with a bridge
+		// that is not the session just loaded.
+		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.effortFor(ctx, chat)) {
+			slog.Warn("model switch: the resumed session kept its own model",
+				"chat_id", cmd.ChatID, "model", model)
+		}
 	}
 
 	return responseOK2, nil

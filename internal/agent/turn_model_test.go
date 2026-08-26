@@ -245,7 +245,7 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 	}
 
 	h.translateACPEvent("c1", newChunkMsg(t, "the model got this far"))
-	h.AbandonInFlightTurn(t.Context(), "c1")
+	h.AbandonInFlightTurn(t.Context(), "c1", "the pipe died")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	var found bool

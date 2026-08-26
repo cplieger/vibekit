@@ -38,7 +38,7 @@ import {
 } from "./attachments.js";
 import { isThinking } from "./store.js";
 import { steerChat } from "./actions/chat.js";
-import { clearLastError } from "./send-state.js";
+import { clearAgentDown } from "./send-state.js";
 import { restorePromptText } from "./prompt-input.js";
 
 export type SubmitResult = "sent" | "steered" | "failed";
@@ -84,12 +84,17 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   if (chatID === "" || text === "") {
     return "failed";
   }
-  // A new attempt IS the retry, so the previous failure's report goes now rather
-  // than outliving the thing it described. Without this the error signal is
-  // sticky for the life of the chat (nothing on the failure path emits the
-  // turn_ended that clears it) and every later send inherits a stale tooltip.
+  // A new attempt IS the retry, so a previous "no agent behind this chat" verdict
+  // goes now rather than outliving the thing it described: the send that follows
+  // is what respawns the bridge. Without this the signal is sticky for the life of
+  // the chat (nothing on the failure path emits the turn_ended that clears it) and
+  // every later send inherits a stale alert face.
+  //
+  // Failure TOASTS are deliberately left alone: they report what happened rather
+  // than what is true now, they time out on their own, and dismissing one here
+  // would race a fresh failure arriving for this very attempt.
   // Ahead of the typed-command branch on purpose: a command is an attempt too.
-  clearLastError();
+  clearAgentDown();
   // Typed commands vibekit owns are intercepted BEFORE anything else: before the
   // attachments are taken and before a message id is minted. A command is not a
   // prompt, so it must not consume an attachment or leave a user bubble behind.

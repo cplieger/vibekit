@@ -22,28 +22,31 @@ const mockLoadMessages = vi.fn(() => Promise.resolve(true));
 
 const mockCloseTab = vi.fn();
 const mockHasTab = vi.fn(() => true);
-const mockGetOpenTabIDs = vi.fn(() => [] as string[]);
 vi.mock("../tabs.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
-  editorTabID: undefined,
+  activateTab: undefined,
   getActiveTabId: undefined,
   getActiveTabRoute: undefined,
   openEditorView: undefined,
   setGitTab: undefined,
   setSettingsTab: undefined,
   setTabDirty: undefined,
+  tabIdFor: undefined,
   toggleGitView: undefined,
   toggleSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
-  getOpenTabIDs: () => mockGetOpenTabIDs(),
-  isEditorTabID: (id: string) => id.startsWith("editor:"),
 }));
 
-vi.mock("../settings.js", () => ({ syncSettings: vi.fn(() => Promise.resolve({})) }));
+vi.mock("../settings.js", () => ({
+  syncSettings: vi.fn(() => Promise.resolve({})),
+  // The settings_updated handler adopts the payload's theme, which is what
+  // makes a theme chosen on another device land here live.
+  adoptThemeFromSettings: vi.fn(),
+}));
 vi.mock("../session-context.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
@@ -51,6 +54,11 @@ vi.mock("../session-context.js", () => ({
   // these, so no path under test changes behavior.
   setLastModel: undefined,
   restoreLastModel: vi.fn(),
+  restoreLastEffort: vi.fn(),
+  // Present-but-undefined for the same linking reason as setLastModel above: the
+  // effort picker in this graph imports both, and neither is on a path under test.
+  getLastEffort: undefined,
+  setLastEffort: undefined,
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
@@ -58,7 +66,6 @@ vi.mock("../session-context.js", () => ({
   setCurrentModel: undefined,
 }));
 vi.mock("../status.js", () => ({
-  refreshCompactionThreshold: vi.fn(),
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
@@ -179,34 +186,41 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(mockLoadList).toHaveBeenCalled();
   });
 
-  it("closes tabs whose session no longer exists after the reload", async () => {
+  // THE TAB RECONCILE IS GONE, and its absence is what this pins.
+  //
+  // This handler used to close any chat tab whose session had left
+  // `GET /api/chats` — membership by SET DIFFERENCE, over two collections fetched
+  // separately, which is the shape that closed tabs nobody closed on the live
+  // instance. Restoring it in any form would restore that: the two answers race,
+  // and a chat absent from one of them is not evidence its tab was closed.
+  //
+  // A gap is answered by re-reading the TAB collection instead (app.ts wires
+  // `transport:gap` to `listTabs`), and a chat the server deleted has already had
+  // its tabs closed by the membership coordinator, under the same lock that removed
+  // the record.
+  it("closes NO tab, whatever the chat list came back holding", async () => {
+    expect.assertions(2);
     setSessions([makeSession("s1")]);
-    mockGetOpenTabIDs.mockReturnValue(["s1", "s2", "s3"]);
     mockHasTab.mockReturnValue(true);
 
     fireGap();
-    await mockLoadList(); // flush the loadList().then(...) tab-reconcile microtask
-
-    expect(mockCloseTab).toHaveBeenCalledWith("s2");
-    expect(mockCloseTab).toHaveBeenCalledWith("s3");
-    expect(mockCloseTab).not.toHaveBeenCalledWith("s1");
-  });
-
-  it("never closes an editor or singleton tab — neither is a chat", async () => {
-    // The reconcile compares tab ids against SESSION ids, so any tab whose id is
-    // not a chat id has to be excluded by kind. Editor tabs go through
-    // isEditorTabID rather than a hand-written prefix test.
-    expect.assertions(3);
-    setSessions([makeSession("s1")]);
-    mockGetOpenTabIDs.mockReturnValue(["s1", "editor:/workspace/a.ts", "__files__"]);
-    mockHasTab.mockReturnValue(true);
-
-    fireGap();
+    // Flush the loadList continuation, which is where the reconcile used to run.
     await mockLoadList();
 
-    expect(mockCloseTab).not.toHaveBeenCalledWith("editor:/workspace/a.ts");
-    expect(mockCloseTab).not.toHaveBeenCalledWith("__files__");
-    expect(mockCloseTab).not.toHaveBeenCalledWith("s1");
+    expect(mockLoadList).toHaveBeenCalled();
+    expect(mockCloseTab).not.toHaveBeenCalled();
+  });
+
+  it("does not ask the tab store what is open either", async () => {
+    // The other half: with no set to difference against, the handler has no reason
+    // to enumerate the strip at all. `getOpenTabIDs` went with the reconcile, so
+    // there is nothing left here to reach it with.
+    expect.assertions(2);
+    setSessions([makeSession("s1")]);
+    fireGap();
+    await mockLoadList();
+    expect(mockHasTab).not.toHaveBeenCalled();
+    expect(mockCloseTab).not.toHaveBeenCalled();
   });
 
   it("refetches messages for the active chat", () => {

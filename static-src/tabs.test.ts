@@ -1,4 +1,24 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+// ---------------------------------------------------------------------------
+// The tab strip as a PROJECTION: the store, the DOM it paints, and the
+// interaction wired onto each row.
+//
+// NOTHING HERE OPENS A TAB BY CALLING A MUTATOR. The tab set is server-owned, so
+// every case dispatches a mutation against the fake collection in
+// `__test-helpers__/tabs-server.ts` and the `tabs_changed` frame that follows is
+// what paints. That is why every open and every close is awaited: the promise
+// resolves once the row is IN the projection, which is exactly the contract ~30
+// production call sites depend on.
+//
+// IDS ARE OPAQUE AND SERVER-MINTED, so no case composes one. A row is addressed
+// by `tabIdFor(kind, ref)` after it exists, which is also the only lookup
+// production has, so a test cannot reach a row by a route the app cannot.
+//
+// The interleaving is the harness's `mode`, and both are exercised: these cases
+// mostly run "event-first" because it is the cheapest seeding path, while
+// `tabs-projection.test.ts` is where the ORDERING itself is the subject.
+// ---------------------------------------------------------------------------
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { effect } from "@cplieger/reactive";
 
 // Mock dependencies that tabs.ts imports at module level.
@@ -6,7 +26,6 @@ vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./icons.js", () => ({
   ICON_CLOSE: "",
   ICON_TAB_CHAT: "",
-  ICON_TAB_PLAN: "",
   ICON_TAB_SETTINGS: "",
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
@@ -20,10 +39,18 @@ vi.mock("./icons.js", () => ({
   ICON_ALERT: "",
   ICON_PIN_FILLED: "",
 }));
-vi.mock("./ui-state.js", () => ({
-  save: vi.fn(),
-  load: vi.fn(() => ({ tab_order: [], pinned_tabs: [], active_view: "" })),
-}));
+// The active tab is this SCREEN's, so it is written per field to its own module
+// rather than folded into any shared document. Stubbed here so the cases below
+// can read it back without touching localStorage.
+vi.mock("./device-view.js", () => {
+  let active = "";
+  return {
+    activeView: vi.fn(() => active),
+    setActiveView: vi.fn((id: string) => {
+      active = id;
+    }),
+  };
+});
 vi.mock("./dom.js", () => ({
   $: new Proxy(
     {},
@@ -51,158 +78,265 @@ vi.mock("./tabs-drag.js", () => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
+// The two leaf stores the factory reads for a DISPLAY NAME. Mocked to their empty
+// answer, so every label below is either the factory's derived default or the
+// override an opener passed — and never a chat the suite had to stage.
+vi.mock("./store.js", () => ({ get: vi.fn(() => undefined) }));
+vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
+vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
+vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+// The fake collection: `send` answers the four tab commands off it, `newOpID`
+// mints the correlation id, and `apiGetTyped` is the boot read.
+vi.mock("./transport.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
+);
+vi.mock("./api-client.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((m) => ({ apiGetTyped: m.tabListRead() })),
+);
 
 import {
   openTab,
   openEditorView,
+  openRunTab,
   closeTab,
   activateTab,
   renameTab,
   hasTab,
+  tabIdFor,
   getActiveTabId,
   getActiveTabKind,
-  reconcileRemoteTabs,
-  getOpenTabIDs,
-  editorTabID,
-  isEditorTabID,
   setOnEmpty,
   setTabPinned,
-  promoteTab,
-  restoreTabState,
-  restorableSingletonIDs,
   showFilesView,
   toggleFilesView,
   _resetForTest,
 } from "./tabs.js";
 import { attachDrag, setReorderCallback } from "./tabs-drag.js";
-import { save as uiSave, load as uiLoad } from "./ui-state.js";
-import type { TabSpec } from "./tabs.js";
+import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
+import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
+import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
+import { bindTabsSync, tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
+import type { TabKind } from "./types.js";
+
+// The harness takes the sync layer's two entry points by hand: its own module
+// cannot import them, because the `api-client.js` mock factory imports the
+// harness and that module is what tabs-sync reads the collection through.
+bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
 // The store's own reorderTabs, captured HERE because tabs.ts registers it once
 // at module load and every suite below clears mocks in its beforeEach. Driving it
 // is exactly what a completed drag does.
 const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
 
-function makeTab(id: string, name = id): TabSpec {
-  return {
-    id,
-    name,
-    kind: "chat",
-    view: "#chat-view",
-    route: { kind: "chat", id },
+// --- The injected half of the factory ---
+//
+// `materializeTab` refuses to build a spec with no openers registered, so every
+// case gets these. They are also the only teardown channel left: a spec's
+// `onClose` is the FACTORY's now, not a caller's, so a test that wants to watch a
+// teardown watches the opener it delegates to.
+
+interface Openers {
+  chatShow: ReturnType<typeof vi.fn>;
+  chatClose: ReturnType<typeof vi.fn>;
+  editorShow: ReturnType<typeof vi.fn>;
+  editorClose: ReturnType<typeof vi.fn>;
+  runShow: ReturnType<typeof vi.fn>;
+  runCancel: ReturnType<typeof vi.fn>;
+}
+
+let openers: Openers;
+
+function registerOpeners(): void {
+  openers = {
+    chatShow: vi.fn(),
+    chatClose: vi.fn(),
+    editorShow: vi.fn(),
+    editorClose: vi.fn(),
+    runShow: vi.fn(),
+    runCancel: vi.fn(),
   };
+  registerTabOpeners({
+    chat: { show: openers.chatShow, close: openers.chatClose, dot: () => "" },
+    editor: { show: openers.editorShow, close: openers.editorClose },
+    run: { show: openers.runShow, cancel: openers.runCancel },
+  });
+}
+
+// --- Openers the cases below drive ---
+
+/** Open a chat tab for `ref`. Awaited, because the row lands with the frame. */
+function openChat(ref: string, opts: { activate?: boolean; parent?: string } = {}): Promise<void> {
+  return openTab({ kind: "chat", ref, ...opts });
+}
+
+/** The projection's id for a chat, read back rather than composed. */
+function chatID(ref: string): string {
+  return tabIdFor("chat", ref);
+}
+
+/** Open several chats in order, and answer with their minted ids by ref. */
+async function openChats(...refs: string[]): Promise<Record<string, string>> {
+  const ids: Record<string, string> = {};
+  for (const ref of refs) {
+    await openChat(ref);
+    ids[ref] = chatID(ref);
+  }
+  return ids;
+}
+
+/** renderDOM is RAF-deferred, so a DOM assertion has to wait for it. */
+function paint(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
+}
+
+function rows(): HTMLElement[] {
+  const list = document.getElementById("tab-list");
+  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])];
+}
+
+async function rowIDs(): Promise<string[]> {
+  await paint();
+  return rows().map((e) => e.dataset["tabId"] ?? "");
+}
+
+/** The rendered strip as REFS rather than opaque ids, which is what makes an
+ *  order assertion readable. A row whose subject the projection has dropped
+ *  answers with its raw id so a stray one is visible rather than blank. */
+async function rowRefs(): Promise<string[]> {
+  const ids = await rowIDs();
+  const byID = new Map(tabServer.subjects().map((s) => [s.id, s.ref === "" ? s.kind : s.ref]));
+  return ids.map((id) => byID.get(id) ?? id);
 }
 
 beforeEach(() => {
+  tabServer.reset();
+  _resetTabsSyncForTest();
+  _resetTabOpenersForTest();
+  registerOpeners();
+  resetActionFramework();
   _resetForTest();
   // Provide minimal DOM for renderDOM subscriber (tab-list element).
   document.body.innerHTML = '<div id="tab-list"></div>';
 });
 
+afterEach(() => {
+  _resetTabsSyncForTest();
+});
+
 describe("openTab", () => {
-  it.each([
-    { desc: "opens a new tab and activates it", tabs: ["a"], expectActive: "a", expectHas: ["a"] },
-    {
-      desc: "opening existing tab activates it",
-      tabs: ["a", "b", "a"],
-      expectActive: "a",
-      expectHas: ["a", "b"],
-    },
-    {
-      desc: "opens multiple distinct tabs",
-      tabs: ["a", "b", "c"],
-      expectActive: "c",
-      expectHas: ["a", "b", "c"],
-    },
-  ])("$desc", ({ tabs, expectActive, expectHas }) => {
-    expect.assertions(1 + expectHas.length);
-    for (const id of tabs) {
-      openTab(makeTab(id));
+  it("opens a new tab and activates it", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  it("opens one tab per distinct subject", async () => {
+    expect.assertions(4);
+    await openChats("a", "b", "c");
+    for (const ref of ["a", "b", "c"]) {
+      expect(hasTab("chat", ref)).toBe(true);
     }
-    expect(getActiveTabId()).toBe(expectActive);
-    for (const id of expectHas) {
-      expect(hasTab(id)).toBe(true);
-    }
+    expect(getActiveTabId()).toBe(chatID("c"));
+  });
+
+  // The server's `(kind, ref)` uniqueness is what makes a second open idempotent,
+  // and `created: false` is the only signal it gives: that mutation commits
+  // nothing, so NO frame follows it. A caller waiting only for the frame would
+  // wait forever, which is why openTab resolves from the response in that case.
+  it("re-activates rather than opening a second tab for one subject", async () => {
+    expect.assertions(3);
+    await openChats("a", "b");
+    await openChat("a");
+    expect(getActiveTabId()).toBe(chatID("a"));
+    expect(tabServer.sentOfType("open_tab")).toHaveLength(3);
+    expect(await rowRefs()).toEqual(["a", "b"]);
+  });
+
+  // `activate: false` is what the automatic offers pass: the strip is the
+  // reader's, so a tab a progress frame opened must not steal the screen.
+  it("leaves the active tab alone when told not to activate", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    await openChat("b", { activate: false });
+    expect(hasTab("chat", "b")).toBe(true);
+    expect(getActiveTabId()).toBe(chatID("a"));
   });
 });
 
-// Editor tabs are MULTI-INSTANCE, and nothing else makes them so: openTab dedupes
-// on spec.id alone, and openEditorView derives that id from the path. That is the
-// whole mechanism behind "N attachments open N tabs" — attachments.test.ts pins
-// the other half, that each pill asks for its own path.
+// Editor tabs are MULTI-INSTANCE, and the SUBJECT is what makes them so: the
+// server keys uniqueness on (kind, ref), and an editor tab's ref is its path. The
+// `editor:<path>` id convention is gone with it — ids are opaque, so nothing
+// composes or parses one.
 describe("openEditorView (multi-instance by path)", () => {
-  const noop = (): void => undefined;
-
-  // renderDOM is RAF-deferred, same as the keyboard suite below.
-  function renderedTabIDs(): Promise<string[]> {
-    return new Promise<string[]>((resolve) => {
-      requestAnimationFrame(() => {
-        const list = document.getElementById("tab-list");
-        resolve(
-          [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])].map(
-            (n) => n.dataset["tabId"] ?? "",
-          ),
-        );
-      });
-    });
-  }
-
   it("opens one tab per distinct path", async () => {
+    expect.assertions(5);
     for (const p of ["src/a.ts", "docs/b.md", "out/shot.png"]) {
-      openEditorView(p, noop);
+      await openEditorView(p);
     }
-    expect(hasTab("editor:src/a.ts")).toBe(true);
-    expect(hasTab("editor:docs/b.md")).toBe(true);
-    expect(hasTab("editor:out/shot.png")).toBe(true);
-    expect(getActiveTabId()).toBe("editor:out/shot.png");
-    expect(await renderedTabIDs()).toEqual([
-      "editor:src/a.ts",
-      "editor:docs/b.md",
-      "editor:out/shot.png",
-    ]);
+    for (const p of ["src/a.ts", "docs/b.md", "out/shot.png"]) {
+      expect(hasTab("editor", p)).toBe(true);
+    }
+    expect(getActiveTabId()).toBe(tabIdFor("editor", "out/shot.png"));
+    expect(await rowRefs()).toEqual(["src/a.ts", "docs/b.md", "out/shot.png"]);
   });
 
   // Two pills for one file is the same file: re-activate, never a second tab.
   it("re-activates rather than duplicating when the same path opens twice", async () => {
-    openEditorView("src/a.ts", noop);
-    openEditorView("docs/b.md", noop);
-    openEditorView("src/a.ts", noop);
-    expect(getActiveTabId()).toBe("editor:src/a.ts");
-    expect(await renderedTabIDs()).toEqual(["editor:src/a.ts", "editor:docs/b.md"]);
+    expect.assertions(2);
+    await openEditorView("src/a.ts");
+    await openEditorView("docs/b.md");
+    await openEditorView("src/a.ts");
+    expect(getActiveTabId()).toBe(tabIdFor("editor", "src/a.ts"));
+    expect(await rowRefs()).toEqual(["src/a.ts", "docs/b.md"]);
   });
 
-  // The path travels in the ROUTE, never parsed back out of the id.
-  it("names the tab by basename while the id keeps the whole path", async () => {
-    openEditorView("a/b/c.ts", noop);
-    expect(await renderedTabIDs()).toEqual(["editor:a/b/c.ts"]);
-    const tab = document.querySelector('[data-tab-id="editor:a/b/c.ts"]');
+  // The path travels in the SUBJECT's ref and in the route, never parsed back out
+  // of the id.
+  it("names the tab by basename while the subject keeps the whole path", async () => {
+    expect.assertions(3);
+    await openEditorView("a/b/c.ts");
+    await paint();
+    const id = tabIdFor("editor", "a/b/c.ts");
+    const tab = document.querySelector(`[data-tab-id="${id}"]`);
     expect(tab?.textContent).toContain("c.ts");
     expect(tab?.textContent).not.toContain("a/b");
+    expect(tabServer.idFor("editor", "a/b/c.ts")).toBe(id);
   });
 });
 
 describe("closeTab", () => {
+  // The successor is the FIRST tab, not the neighbour, and that is the rule the
+  // refactor states in one place: an active view naming no open tab falls back to
+  // the first tab, checked on the boot read and on every applied removal. One rule
+  // for two paths, rather than a neighbour walk here and a first-tab fallback
+  // there that can disagree about which tab the reader lands on.
   it.each([
     {
-      desc: "closing active tab activates neighbor (next)",
+      desc: "closing the active tab falls back to the FIRST tab",
       setup: ["a", "b", "c"],
       activate: "b",
       close: "b",
-      expectActive: "c",
+      expectActive: "a",
       expectHas: ["a", "c"],
       expectGone: ["b"],
     },
     {
-      desc: "closing active tab activates previous when last",
+      desc: "falls back to the first tab even when the closed one was last",
       setup: ["a", "b", "c"],
       activate: "c",
       close: "c",
-      expectActive: "b",
+      expectActive: "a",
       expectHas: ["a", "b"],
       expectGone: ["c"],
     },
     {
-      desc: "closing inactive tab preserves active",
+      desc: "closing an inactive tab preserves active",
       setup: ["a", "b", "c"],
       activate: "c",
       close: "a",
@@ -219,111 +353,86 @@ describe("closeTab", () => {
       expectHas: [],
       expectGone: ["a"],
     },
-    {
-      desc: "closing non-existent tab is a no-op",
-      setup: ["a", "b"],
-      activate: "b",
-      close: "z",
-      expectActive: "b",
-      expectHas: ["a", "b"],
-      expectGone: ["z"],
-    },
-  ])("$desc", ({ setup, activate, close, expectActive, expectHas, expectGone }) => {
+  ])("$desc", async ({ setup, activate, close, expectActive, expectHas, expectGone }) => {
     expect.assertions(1 + expectHas.length + expectGone.length);
-    for (const id of setup) {
-      openTab(makeTab(id));
+    await openChats(...setup);
+    activateTab(chatID(activate));
+    await closeTab(chatID(close));
+    expect(getActiveTabId()).toBe(expectActive === "" ? "" : chatID(expectActive));
+    for (const ref of expectHas) {
+      expect(hasTab("chat", ref)).toBe(true);
     }
-    activateTab(activate);
-    closeTab(close);
-    expect(getActiveTabId()).toBe(expectActive);
-    for (const id of expectHas) {
-      expect(hasTab(id)).toBe(true);
-    }
-    for (const id of expectGone) {
-      expect(hasTab(id)).toBe(false);
+    for (const ref of expectGone) {
+      expect(hasTab("chat", ref)).toBe(false);
     }
   });
 
-  // The store REMOVES a tab before notifying, and these are the properties that
-  // depend on it. onClose is a teardown callback, so a callback that closes its
-  // own tab must find it already gone; notifying first made every such callback an
-  // infinite loop. The editor's teardown did exactly that (closeEditorFile ended
-  // in closeTab), so an editor tab could not be closed by ×, middle-click or
-  // Delete — the click recursed until the stack died.
-  it("a teardown that closes its own tab does not recurse", () => {
+  // Closing an id the collection does not hold is NOT an error: two devices can
+  // close one tab, so the answer is an empty `closed` list and no frame.
+  it("closing an id nothing holds leaves the strip alone", async () => {
+    expect.assertions(3);
+    await openChats("a", "b");
+    await closeTab("tb_missing");
+    expect(getActiveTabId()).toBe(chatID("b"));
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(hasTab("chat", "b")).toBe(true);
+  });
+
+  // The projection REMOVES a tab before tearing it down, and these are the
+  // properties that depend on it. A teardown that closes its own tab must find it
+  // already gone; notifying first made every such callback an infinite loop. The
+  // editor's teardown did exactly that (closeEditorFile ended in closeTab), so an
+  // editor tab could not be closed by ×, middle-click or Delete — the click
+  // recursed until the stack died.
+  it("a teardown that closes its own tab does not recurse", async () => {
     expect.assertions(3);
     let closes = 0;
-    openTab({
-      ...makeTab("self-closing"),
-      onClose: () => {
-        closes++;
-        closeTab("self-closing");
-      },
+    openers.editorClose.mockImplementation((path: string) => {
+      closes++;
+      void closeTab(tabIdFor("editor", path));
     });
-    closeTab("self-closing");
+    await openEditorView("self.ts");
+    await closeTab(tabIdFor("editor", "self.ts"));
     expect(closes).toBe(1);
-    expect(hasTab("self-closing")).toBe(false);
+    expect(hasTab("editor", "self.ts")).toBe(false);
     expect(getActiveTabId()).toBe("");
   });
 
-  it("a teardown observes the tab as already gone", () => {
+  it("a teardown observes the tab as already gone", async () => {
     expect.assertions(1);
     let presentDuringTeardown = true;
-    openTab({
-      ...makeTab("t"),
-      onClose: () => {
-        presentDuringTeardown = hasTab("t");
-      },
+    openers.editorClose.mockImplementation(() => {
+      presentDuringTeardown = hasTab("editor", "t.ts");
     });
-    closeTab("t");
+    await openEditorView("t.ts");
+    await closeTab(tabIdFor("editor", "t.ts"));
     expect(presentDuringTeardown).toBe(false);
   });
 
-  it("a child teardown that closes the parent leaves the parent's onClose run once", () => {
-    expect.assertions(3);
-    let parentCloses = 0;
-    openTab({ ...makeTab("p"), onClose: () => void parentCloses++ });
-    openTab({
-      ...makeTab("c"),
-      parentId: "p",
-      onClose: () => {
-        closeTab("p");
-      },
-    });
-    closeTab("p");
-    expect(parentCloses).toBe(1);
-    expect(hasTab("p")).toBe(false);
-    expect(hasTab("c")).toBe(false);
-  });
-
-  // The re-find after the children cascade is what makes the splice index honest.
-  // It is only reachable while THIS invariant holds, so the invariant is pinned
-  // here rather than assumed: a child is always positioned after its parent, so
-  // closing the children cannot shift the parent leftwards.
-  it("keeps every child after its parent, whatever else moves", () => {
-    expect.assertions(2);
-    openTab(makeTab("first"));
-    openTab(makeTab("p"));
-    openTab({ ...makeTab("c1"), parentId: "p" });
-    openTab({ ...makeTab("c2"), parentId: "p" });
-    openTab(makeTab("last"));
-    setTabPinned("last", true);
-    const ids = getOpenTabIDs();
-    expect(ids.indexOf("c1")).toBeGreaterThan(ids.indexOf("p"));
-    expect(ids.indexOf("c2")).toBeGreaterThan(ids.indexOf("p"));
-  });
-
-  it("removes the named tab and only that tab when a cascade precedes the splice", () => {
+  it("removes the named tab and only that tab when a cascade precedes the splice", async () => {
     expect.assertions(4);
-    openTab(makeTab("before"));
-    openTab(makeTab("p"));
-    openTab({ ...makeTab("c"), parentId: "p" });
-    openTab(makeTab("after"));
-    closeTab("p");
-    expect(hasTab("p")).toBe(false);
-    expect(hasTab("c")).toBe(false);
-    expect(hasTab("before")).toBe(true);
-    expect(hasTab("after")).toBe(true);
+    await openChat("before");
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    await openChat("after");
+    await closeTab(chatID("p"));
+    expect(hasTab("chat", "p")).toBe(false);
+    expect(hasTab("chat", "c")).toBe(false);
+    expect(hasTab("chat", "before")).toBe(true);
+    expect(hasTab("chat", "after")).toBe(true);
+  });
+
+  // A refused close leaves the strip EXACTLY as it was, because nothing renders
+  // optimistically. That is the whole reason the projection paints from the frame
+  // rather than from the gesture.
+  it("leaves the tab in place when the mutation fails", async () => {
+    expect.assertions(3);
+    await openChats("a", "b");
+    tabServer.failNext("close_tab");
+    await closeTab(chatID("b"));
+    expect(hasTab("chat", "b")).toBe(true);
+    expect(await rowRefs()).toEqual(["a", "b"]);
+    expect(openers.chatClose).not.toHaveBeenCalled();
   });
 });
 
@@ -335,109 +444,75 @@ describe("closeTab", () => {
 // that still occupied the strip, so it appeared beside its predecessor and moved
 // when the predecessor finally collapsed.
 describe("closing the last tab", () => {
-  function flushRender(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve();
-      });
-    });
-  }
-
-  function rows(): HTMLElement[] {
-    const list = document.getElementById("tab-list");
-    return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])];
-  }
-
   it("starts the closed row's exit on close, not on the respawn", async () => {
     expect.assertions(2);
-    openTab(makeTab("only"));
-    await flushRender();
-    closeTab("only");
-    await flushRender();
+    await openChat("only");
+    await paint();
+    await closeTab(chatID("only"));
+    await paint();
     expect(rows()).toHaveLength(1);
     expect(rows()[0]?.classList.contains("exiting")).toBe(true);
   });
 
   // The whole point of rendering the empty state: the respawn must find an empty
   // strip. No app stylesheet is loaded, so no animation runs and the removal is
-  // driven by hand here —
-  // the browser's animationend does it, and the exit is 0.18s against the 500ms
-  // empty-state delay.
+  // driven by hand here — the browser's animationend does it, and the exit is
+  // 0.18s against the 500ms empty-state delay.
   it("leaves the strip empty before the empty-state callback fires", async () => {
     expect.assertions(3);
     const onEmpty = vi.fn();
     setOnEmpty(onEmpty);
-    openTab(makeTab("only"));
-    await flushRender();
-    closeTab("only");
-    await flushRender();
+    await openChat("only");
+    await paint();
+    await closeTab(chatID("only"));
+    await paint();
     rows()[0]?.dispatchEvent(new Event("animationend"));
     expect(rows()).toHaveLength(0);
     expect(onEmpty).not.toHaveBeenCalled();
     // Re-opening cancels the pending respawn, so no timer outlives the test.
-    openTab(makeTab("respawned"));
+    await openChat("respawned");
     expect(onEmpty).not.toHaveBeenCalled();
   });
-});
 
-// The `editor:` convention was composed and tested by hand in three modules,
-// which is one string literal away from a silent mismatch.
-describe("editor tab ids", () => {
-  it("round-trips a path and recognises its own ids", () => {
-    expect.assertions(3);
-    const id = editorTabID("/workspace/hello.sh");
-    expect(id).toBe("editor:/workspace/hello.sh");
-    expect(isEditorTabID(id)).toBe(true);
-    expect(isEditorTabID("__settings__")).toBe(false);
-  });
-
-  it("openEditorView keys its tab by editorTabID", () => {
-    expect.assertions(1);
-    openEditorView("/workspace/hello.sh", () => undefined);
-    expect(hasTab(editorTabID("/workspace/hello.sh"))).toBe(true);
-  });
-
-  it("an editor tab closes on the first close, running its teardown once", () => {
-    // The whole of bug 3 in one case: the editor's real onClose closes the file
-    // state and the tab store closes the tab, and the two used to call each other.
+  // A close driven by ANOTHER DEVICE must not mint a chat here. Nobody asked for
+  // one, and it would propagate back as an addition every other device has to
+  // absorb — which is the shape of the loop that minted a chat every 1.5s on the
+  // live instance. The provenance is `op_id` correlation: a frame carrying an op
+  // this device minted is local, and a frame carrying none is not.
+  it("does not respawn when the LAST tab was closed remotely", async () => {
     expect.assertions(2);
-    let teardowns = 0;
-    const path = "/workspace/hello.sh";
-    openEditorView(
-      path,
-      () => undefined,
-      () => {
-        teardowns++;
-      },
-    );
-    closeTab(editorTabID(path));
-    expect(hasTab(editorTabID(path))).toBe(false);
-    expect(teardowns).toBe(1);
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    await openChat("only");
+    tabServer.closeRemotely(chatID("only"));
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).not.toHaveBeenCalled();
+
+    // The local close still respawns: an empty strip is a dead end the reader did
+    // not ask for when they closed the tab themselves.
+    await openChat("mine");
+    await closeTab(chatID("mine"));
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("activateTab", () => {
   it.each([
-    { desc: "activates existing tab", setup: ["a", "b"], target: "a", expectActive: "a" },
-    {
-      desc: "activating non-existent tab is a no-op",
-      setup: ["a", "b"],
-      target: "z",
-      expectActive: "b",
-    },
-    {
-      desc: "activating already-active tab is a no-op",
-      setup: ["a", "b"],
-      target: "b",
-      expectActive: "b",
-    },
-  ])("$desc", ({ setup, target, expectActive }) => {
+    { desc: "activates existing tab", target: "a", expectActive: "a" },
+    { desc: "activating already-active tab is a no-op", target: "b", expectActive: "b" },
+  ])("$desc", async ({ target, expectActive }) => {
     expect.assertions(1);
-    for (const id of setup) {
-      openTab(makeTab(id));
-    }
-    activateTab(target);
-    expect(getActiveTabId()).toBe(expectActive);
+    await openChats("a", "b");
+    activateTab(chatID(target));
+    expect(getActiveTabId()).toBe(chatID(expectActive));
+  });
+
+  it("activating a tab nothing holds is a no-op", async () => {
+    expect.assertions(1);
+    await openChats("a", "b");
+    activateTab("tb_missing");
+    expect(getActiveTabId()).toBe(chatID("b"));
   });
 });
 
@@ -448,92 +523,117 @@ describe("activateTab", () => {
 // active tab ID, so it is silent for a sub-tab switch inside one tab. The
 // measured symptom was the /git/sources filter button staying visible and inert.
 describe("getActiveTabKind is reactive", () => {
-  /** A tab with an explicit kind; makeTab is chat-only. */
-  function kindTab(id: string, kind: TabSpec["kind"], view: string): TabSpec {
-    return { id, name: id, kind, view, route: { kind: "chat", id } };
-  }
+  it("re-runs an effect that reads it when the active tab changes", async () => {
+    expect.assertions(3);
+    await openChat("a");
+    await openTab({ kind: "settings" });
 
-  it("re-runs an effect that reads it when the active tab changes", () => {
-    openTab(kindTab("a", "chat", "#chat-view"));
-    openTab(kindTab("b", "settings", "#settings-view"));
-
-    const seen: (string | null)[] = [];
+    const seen: (TabKind | null)[] = [];
     const stop = effect(() => {
       seen.push(getActiveTabKind());
     });
-    expect(seen).toEqual(["settings"]); // "b" is active after opening
+    expect(seen).toEqual(["settings"]); // the settings tab is active after opening
 
-    activateTab("a");
+    activateTab(chatID("a"));
     expect(seen.at(-1)).toBe("chat");
 
-    activateTab("b");
+    activateTab(tabIdFor("settings"));
     expect(seen.at(-1)).toBe("settings");
     stop();
   });
 
-  it("re-runs when the active tab is CLOSED and another takes over", () => {
-    openTab(kindTab("a", "chat", "#chat-view"));
-    openTab(kindTab("b", "settings", "#settings-view"));
+  it("re-runs when the active tab is CLOSED and another takes over", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    await openTab({ kind: "settings" });
 
-    const seen: (string | null)[] = [];
+    const seen: (TabKind | null)[] = [];
     const stop = effect(() => {
       seen.push(getActiveTabKind());
     });
 
-    closeTab("b");
+    await closeTab(tabIdFor("settings"));
     expect(seen.at(-1)).toBe("chat");
     stop();
   });
 });
 
-describe("renameTab", () => {
-  it("renames an existing tab", () => {
-    expect.assertions(1);
-    openTab(makeTab("a", "Original"));
-    renameTab("a", "Renamed");
-    // Verify via hasTab (name doesn't affect identity).
-    expect(hasTab("a")).toBe(true);
+// A name is the one field of a spec a caller can override, and it is recorded
+// against the SUBJECT rather than the row: it arrives at the DISPATCH site, before
+// the server has minted an id, so keying it on (kind, ref) is what lets the row be
+// BUILT with the right label instead of snapping to it a frame later.
+describe("renameTab and the name a row renders", () => {
+  it("renames an existing tab", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    renameTab(chatID("a"), "Renamed");
+    await paint();
+    expect(rows()[0]?.querySelector(".tab-name")?.textContent).toBe("Renamed");
+    expect(hasTab("chat", "a")).toBe(true);
   });
 
-  it("renaming non-existent tab is a no-op", () => {
+  it("renaming a tab nothing holds is a no-op", async () => {
     expect.assertions(1);
-    openTab(makeTab("a"));
-    renameTab("z", "Whatever");
-    expect(hasTab("z")).toBe(false);
+    await openChat("a");
+    expect(() => {
+      renameTab("tb_missing", "Whatever");
+    }).not.toThrow();
+  });
+
+  // The override is applied when the row is BUILT, not after: a caller's name
+  // reaches `nameOverrides` before the dispatch, so the first paint carries it.
+  it("renders a caller's name from the first frame, never the factory placeholder", async () => {
+    expect.assertions(1);
+    await openRunTab("wf-1", "Nightly sweep");
+    await paint();
+    expect(rows()[0]?.querySelector(".tab-name")?.textContent).toBe("Nightly sweep");
+  });
+
+  // A re-list rebuilds every row from the factory, so an override that lived only
+  // on the row would be lost by any gap or 409.
+  it("survives a re-list, which rebuilds every row", async () => {
+    expect.assertions(1);
+    await openRunTab("wf-1", "Nightly sweep");
+    // A version two past local: the sync layer stops applying and re-lists.
+    tabServer.emitRaw({ version: tabServer.version() + 2 });
+    await settleTabs();
+    await paint();
+    expect(rows()[0]?.querySelector(".tab-name")?.textContent).toBe("Nightly sweep");
   });
 });
 
+// hasTab is keyed by `(kind, ref)` rather than by id, and that re-key is the
+// point: ids are opaque, so a consumer holding a chat id or a path can no longer
+// construct one.
 describe("hasTab", () => {
-  it("returns false for empty state", () => {
+  it("returns false for an empty projection", () => {
     expect.assertions(1);
-    expect(hasTab("a")).toBe(false);
+    expect(hasTab("chat", "a")).toBe(false);
   });
 
-  it("returns true after open, false after close", () => {
+  it("returns true after open, false after close", async () => {
     expect.assertions(2);
-    openTab(makeTab("a"));
-    expect(hasTab("a")).toBe(true);
-    closeTab("a");
-    expect(hasTab("a")).toBe(false);
+    await openChat("a");
+    expect(hasTab("chat", "a")).toBe(true);
+    await closeTab(chatID("a"));
+    expect(hasTab("chat", "a")).toBe(false);
+  });
+
+  it("answers per SUBJECT, so one kind's ref does not satisfy another's", async () => {
+    expect.assertions(3);
+    await openEditorView("src/a.ts");
+    expect(hasTab("editor", "src/a.ts")).toBe(true);
+    expect(hasTab("chat", "src/a.ts")).toBe(false);
+    // A singleton's ref is empty, which is the one kind whose identity is its
+    // kind.
+    expect(hasTab("settings")).toBe(false);
   });
 });
 
 describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", () => {
-  // renderDOM is RAF-deferred; resolve after it has run so the real
-  // role=tab nodes (with attachTabInteraction's keydown handler) exist.
-  function flushRender(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve();
-      });
-    });
-  }
-
-  async function renderTabs(...ids: string[]): Promise<HTMLElement[]> {
-    for (const id of ids) {
-      openTab(makeTab(id));
-    }
-    await flushRender();
+  async function renderTabs(...refs: string[]): Promise<HTMLElement[]> {
+    await openChats(...refs);
+    await paint();
     const list = document.getElementById("tab-list");
     if (list === null) {
       throw new Error("tab-list missing");
@@ -542,75 +642,92 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
   }
 
   it("ArrowRight moves focus to the next tab and wraps past the last", async () => {
+    expect.assertions(3);
     const nodes = await renderTabs("a", "b", "c");
     expect(nodes).toHaveLength(3);
 
-    nodes[0]!.focus();
-    nodes[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    nodes[0]?.focus();
+    nodes[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     expect(document.activeElement).toBe(nodes[1]);
 
-    nodes[2]!.focus();
-    nodes[2]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    nodes[2]?.focus();
+    nodes[2]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     expect(document.activeElement).toBe(nodes[0]);
   });
 
   it("ArrowLeft moves focus to the previous tab and wraps before the first", async () => {
+    expect.assertions(2);
     const nodes = await renderTabs("a", "b", "c");
 
-    nodes[2]!.focus();
-    nodes[2]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    nodes[2]?.focus();
+    nodes[2]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
     expect(document.activeElement).toBe(nodes[1]);
 
-    nodes[0]!.focus();
-    nodes[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    nodes[0]?.focus();
+    nodes[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
     expect(document.activeElement).toBe(nodes[2]);
   });
 
   it("Home and End jump to the first and last tab", async () => {
+    expect.assertions(2);
     const nodes = await renderTabs("a", "b", "c");
 
-    nodes[1]!.focus();
-    nodes[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    nodes[1]?.focus();
+    nodes[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
     expect(document.activeElement).toBe(nodes[0]);
 
-    nodes[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    nodes[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
     expect(document.activeElement).toBe(nodes[2]);
   });
 
   it("Enter activates the focused tab", async () => {
+    expect.assertions(1);
     const nodes = await renderTabs("a", "b", "c");
     // c is active (last opened); Enter on the first tab's node activates it.
-    nodes[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(getActiveTabId()).toBe("a");
+    nodes[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  // A close is a ROUND TRIP now, so focus has to move before the dispatch: waiting
+  // for the removal to land would leave focus on <body> for the whole flight, and
+  // the row the keyboard user is standing on is the element being removed.
+  it("Delete moves focus to a surviving sibling before the close lands", async () => {
+    expect.assertions(2);
+    const nodes = await renderTabs("a", "b", "c");
+    nodes[1]?.focus();
+    tabServer.setMode("manual");
+    nodes[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    expect(document.activeElement).toBe(nodes[2]);
+    // The strip is untouched until the frame arrives, which is the honest surface
+    // for a close that might be refused.
+    expect(await rowIDs()).toHaveLength(3);
+    tabServer.setMode("event-first");
+    tabServer.flushFrames();
+    await settleTabs();
   });
 });
 
 describe("setTabDirty (editor unsaved indicator)", () => {
-  beforeEach(() => {
-    document.body.innerHTML = "";
-  });
-
   it("shows a steady dirty dot when dirty and clears it when clean", async () => {
+    expect.assertions(4);
     const { setTabDirty } = await import("./tabs.js");
-    document.body.innerHTML =
-      '<div data-tab-id="editor:/a.ts">' +
-      '<span class="tab-name">a.ts</span>' +
-      '<span class="tab-status-sr sr-only"></span>' +
-      '<span class="tab-status-dot" aria-hidden="true"></span>' +
-      "</div>";
-    const dot = document.querySelector<HTMLElement>(".tab-status-dot");
-    const sr = document.querySelector<HTMLElement>(".tab-status-sr");
-    if (dot === null || sr === null) {
+    await openEditorView("/a.ts");
+    await paint();
+    const id = tabIdFor("editor", "/a.ts");
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    const dot = row?.querySelector<HTMLElement>(".tab-status-dot");
+    const sr = row?.querySelector<HTMLElement>(".tab-status-sr");
+    if (dot === null || dot === undefined || sr === null || sr === undefined) {
       throw new Error("dot missing");
     }
 
-    setTabDirty("editor:/a.ts", true);
+    setTabDirty(id, true);
     expect(dot.dataset["status"]).toBe("dirty");
     // The announced word rides the same write, so an editor tab is not the one
     // surface where the dot is colour-only.
     expect(sr.textContent).toBe(", unsaved changes");
 
-    setTabDirty("editor:/a.ts", false);
+    setTabDirty(id, false);
     // The attribute is REMOVED rather than emptied: `[data-status]` alone is the
     // CSS reveal condition, so an empty value would leave a clean file's tab
     // showing an idle-styled dot.
@@ -619,9 +736,10 @@ describe("setTabDirty (editor unsaved indicator)", () => {
   });
 
   it("no-ops when the tab is not mounted", async () => {
+    expect.assertions(1);
     const { setTabDirty } = await import("./tabs.js");
     expect(() => {
-      setTabDirty("editor:/missing.ts", true);
+      setTabDirty("tb_missing", true);
     }).not.toThrow();
   });
 });
@@ -629,199 +747,158 @@ describe("setTabDirty (editor unsaved indicator)", () => {
 // ---------------------------------------------------------------------------
 // Sub-tabs.
 //
-// A sub-tab is a generic property of the tab system (`TabSpec.parentId`), not a
-// chat feature: the indent used to key off the chat store's `parent_chat_id`,
-// which meant only chats could ever have children and coupled the tab module to
-// one data model. Nothing below mentions a chat, a run or a rewind.
+// A sub-tab is a SUBJECT fact (`TabSubject.Parent`), set at open and never
+// reassigned — which is what makes a parent cycle unrepresentable and why there
+// is no reparent command. The strip reads it to lay itself out, so nothing here
+// mentions a chat, a run or a tangent.
 // ---------------------------------------------------------------------------
 
-function childTab(id: string, parentId: string, over: Partial<TabSpec> = {}): TabSpec {
-  return { ...makeTab(id), parentId, ...over };
-}
-
 describe("sub-tabs", () => {
-  // renderDOM is RAF-deferred, so a DOM assertion has to wait for it.
-  function paint(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve();
-      });
-    });
+  /** Open a chat nested under the tab already open for `parentRef`. */
+  function openChild(ref: string, parentRef: string): Promise<void> {
+    return openTab({ kind: "chat", ref, parent: chatID(parentRef) });
   }
-
-  async function rowIDs(): Promise<string[]> {
-    await paint();
-    return [...document.querySelectorAll<HTMLElement>("#tab-list .tab")].map(
-      (e) => e.dataset["tabId"] ?? "",
-    );
-  }
-
-  beforeEach(() => {
-    document.body.innerHTML = '<div id="tab-list"></div>';
-    vi.clearAllMocks();
-  });
 
   it("sorts a child immediately after its parent, not at the end", async () => {
-    openTab(makeTab("p"));
-    openTab(makeTab("other"));
-    openTab(childTab("c", "p"));
-    await expect(rowIDs()).resolves.toEqual(["p", "c", "other"]);
+    expect.assertions(1);
+    await openChats("p", "other");
+    await openChild("c", "p");
+    expect(await rowRefs()).toEqual(["p", "c", "other"]);
   });
 
   it("keeps several children in creation order under one parent", async () => {
-    openTab(makeTab("p"));
-    openTab(makeTab("other"));
-    openTab(childTab("c1", "p"));
-    openTab(childTab("c2", "p"));
-    await expect(rowIDs()).resolves.toEqual(["p", "c1", "c2", "other"]);
+    expect.assertions(1);
+    await openChats("p", "other");
+    await openChild("c1", "p");
+    await openChild("c2", "p");
+    expect(await rowRefs()).toEqual(["p", "c1", "c2", "other"]);
   });
 
   it("indents a child and leaves a top-level tab flat", async () => {
-    openTab(makeTab("p"));
-    openTab(childTab("c", "p"));
+    expect.assertions(2);
+    await openChat("p");
+    await openChild("c", "p");
     await paint();
-    const rows = [...document.querySelectorAll<HTMLElement>("#tab-list .tab")];
-    const child = rows.find((r) => r.dataset["tabId"] === "c");
-    const parent = rows.find((r) => r.dataset["tabId"] === "p");
+    const child = rows().find((r) => r.dataset["tabId"] === chatID("c"));
+    const parent = rows().find((r) => r.dataset["tabId"] === chatID("p"));
     expect(child?.classList.contains("tab-child")).toBe(true);
     expect(parent?.classList.contains("tab-child")).toBe(false);
   });
 
-  // A tab nobody can see is worse than a tab in the wrong place.
+  // A tab nobody can see is worse than a tab in the wrong place, which is the
+  // server's rule for an unknown parent and the strip's for a parent it does not
+  // hold.
   it("falls back to top-level when the parent is not open", async () => {
-    openTab(childTab("orphan", "missing"));
-    expect(hasTab("orphan")).toBe(true);
-    await expect(rowIDs()).resolves.toEqual(["orphan"]);
+    expect.assertions(2);
+    await openTab({ kind: "chat", ref: "orphan", parent: "tb_missing" });
+    expect(hasTab("chat", "orphan")).toBe(true);
+    expect(await rowRefs()).toEqual(["orphan"]);
   });
 
-  it("closes children with their parent", () => {
-    openTab(makeTab("p"));
-    openTab(childTab("c1", "p"));
-    openTab(childTab("c2", "p"));
-    closeTab("p");
-    expect(hasTab("p")).toBe(false);
-    expect(hasTab("c1")).toBe(false);
-    expect(hasTab("c2")).toBe(false);
+  // A parent and its children go as ONE mutation, so the removal arrives as one
+  // frame naming every id.
+  it("closes children with their parent, in one frame", async () => {
+    expect.assertions(4);
+    await openChat("p");
+    await openChild("c1", "p");
+    await openChild("c2", "p");
+    const before = tabServer.version();
+    await closeTab(chatID("p"));
+    expect(hasTab("chat", "p")).toBe(false);
+    expect(hasTab("chat", "c1")).toBe(false);
+    expect(hasTab("chat", "c2")).toBe(false);
+    expect(tabServer.version()).toBe(before + 1);
   });
 
   // Children first, so a child's teardown never runs against a parent that has
   // already gone.
-  it("tears down children before the parent", () => {
+  it("tears down children before the parent", async () => {
+    expect.assertions(1);
     const order: string[] = [];
-    openTab({
-      ...makeTab("p"),
-      onClose: () => {
-        order.push("p");
-      },
+    openers.chatClose.mockImplementation((ref: string) => {
+      order.push(ref);
     });
-    openTab({
-      ...childTab("c", "p"),
-      onClose: () => {
-        order.push("c");
-      },
-    });
-    closeTab("p");
+    await openChat("p");
+    await openChild("c", "p");
+    await closeTab(chatID("p"));
     expect(order).toEqual(["c", "p"]);
   });
 
-  it("closing a child leaves the parent alone", () => {
-    openTab(makeTab("p"));
-    openTab(childTab("c", "p"));
-    closeTab("c");
-    expect(hasTab("p")).toBe(true);
-    expect(hasTab("c")).toBe(false);
+  it("closing a child leaves the parent alone", async () => {
+    expect.assertions(2);
+    await openChat("p");
+    await openChild("c", "p");
+    await closeTab(chatID("c"));
+    expect(hasTab("chat", "p")).toBe(true);
+    expect(hasTab("chat", "c")).toBe(false);
   });
 
-  // `owns: false` is the view case: dismissing a view must not kill the work it
-  // was watching.
-  it("does not tear down a tab that owns nothing", () => {
-    const onClose = vi.fn();
-    openTab({ ...makeTab("view"), owns: false, onClose });
-    closeTab("view");
-    expect(hasTab("view")).toBe(false);
-    expect(onClose).not.toHaveBeenCalled();
+  // `owns: false` is the VIEW case: dismissing a view must not kill the work it
+  // was watching. It is a subject fact rather than a property of the kind — a
+  // launcher-owned run and a run REVIEW share (kind, ref) and differ only here.
+  it("does not tear down a tab that owns nothing", async () => {
+    expect.assertions(2);
+    await openRunTab("wf-1", "A run", { owns: false });
+    await closeTab(tabIdFor("run", "wf-1"));
+    expect(hasTab("run", "wf-1")).toBe(false);
+    expect(openers.runCancel).not.toHaveBeenCalled();
   });
 
-  // `skipOnClose` says the ROOT id was already deleted remotely (handlers/chat.ts
-  // passes it on a chat_deleted event). It says nothing about a child, which is
-  // its own persisted chat with its own bridge — so forwarding it left the child
-  // tab gone while its turn and its agent process kept running unreachable.
-  it("skips only the closed tab's teardown, not an owning child's", () => {
-    const parentClose = vi.fn();
-    const childClose = vi.fn();
-    openTab({ ...makeTab("p"), onClose: parentClose });
-    openTab({ ...childTab("c", "p"), onClose: childClose });
-    closeTab("p", { skipOnClose: true });
-    expect(hasTab("p")).toBe(false);
-    expect(hasTab("c")).toBe(false);
-    expect(parentClose).not.toHaveBeenCalled();
-    expect(childClose).toHaveBeenCalledTimes(1);
+  it("tears down an owning tab", async () => {
+    expect.assertions(2);
+    await openRunTab("wf-1", "A run", { owns: true });
+    await closeTab(tabIdFor("run", "wf-1"));
+    expect(hasTab("run", "wf-1")).toBe(false);
+    expect(openers.runCancel).toHaveBeenCalledTimes(1);
   });
 
-  // The flag must not reach a grandchild either, and an owns:false child still
-  // skips its own teardown — through its ownership check, not through the flag.
-  it("tears down every owning descendant of a remotely deleted parent", () => {
+  it("still removes an owns:false child when its parent closes", async () => {
+    expect.assertions(2);
+    await openChat("p");
+    await openRunTab("wf-1", "A view", { parent: chatID("p"), owns: false });
+    await closeTab(chatID("p"));
+    expect(hasTab("run", "wf-1")).toBe(false);
+    expect(openers.runCancel).not.toHaveBeenCalled();
+  });
+
+  // A cascade reaches every DESCENDANT, not just the direct children, and an
+  // owns:false one among them still skips its teardown through its ownership
+  // check.
+  it("tears down every owning descendant of a closed parent", async () => {
+    expect.assertions(5);
     const order: string[] = [];
-    const viewClose = vi.fn();
-    openTab({
-      ...makeTab("p"),
-      onClose: () => {
-        order.push("p");
-      },
+    openers.chatClose.mockImplementation((ref: string) => {
+      order.push(ref);
     });
-    openTab({
-      ...childTab("c", "p"),
-      onClose: () => {
-        order.push("c");
-      },
-    });
-    openTab({
-      ...childTab("gc", "c"),
-      onClose: () => {
-        order.push("gc");
-      },
-    });
-    openTab({ ...childTab("view", "p"), owns: false, onClose: viewClose });
-    closeTab("p", { skipOnClose: true });
-    expect(order).toEqual(["gc", "c"]);
-    expect(viewClose).not.toHaveBeenCalled();
-    for (const id of ["p", "c", "gc", "view"]) {
-      expect(hasTab(id)).toBe(false);
+    await openChat("p");
+    await openChild("c", "p");
+    await openChild("gc", "c");
+    await openRunTab("wf-view", "A view", { parent: chatID("p"), owns: false });
+    await closeTab(chatID("p"));
+    expect(order).toEqual(["gc", "c", "p"]);
+    expect(openers.runCancel).not.toHaveBeenCalled();
+    for (const ref of ["p", "c", "gc"]) {
+      expect(hasTab("chat", ref)).toBe(false);
     }
   });
 
-  it("still removes an owns:false child when its parent closes", () => {
-    const onClose = vi.fn();
-    openTab(makeTab("p"));
-    openTab({ ...childTab("c", "p"), owns: false, onClose });
-    closeTab("p");
-    expect(hasTab("c")).toBe(false);
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("tears down an owning tab as before", () => {
-    const onClose = vi.fn();
-    openTab({ ...makeTab("t"), onClose });
-    closeTab("t");
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  // A child's position is derived from its parent, so persisting it would let a
-  // restore place a child away from its parent. Asserted against what the
-  // persistence subscriber WRITES, not against getSavedTabState — that reads the
-  // boot snapshot, which is deliberately frozen before the first save.
-  it("persists top-level ids only", () => {
-    openTab(makeTab("p"));
-    openTab(childTab("c", "p"));
-    openTab(makeTab("other"));
-    const calls = vi.mocked(uiSave).mock.calls;
-    const last = calls[calls.length - 1]?.[0] as { tab_order?: string[] } | undefined;
-    expect(last?.tab_order).toEqual(["p", "other"]);
+  // A reorder names TOP-LEVEL ids and the projection expands them, so a drop on a
+  // strip holding a sub-tab is a valid exact set rather than a 409.
+  it("expands a drop's top-level order to the exact set the server demands", async () => {
+    expect.assertions(2);
+    await openChat("p");
+    await openChild("c", "p");
+    await openChat("other");
+    commitDrop?.([chatID("other"), chatID("p")]);
+    await settleTabs();
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(1);
+    expect(await rowRefs()).toEqual(["other", "p", "c"]);
   });
 
   it("is not independently draggable", async () => {
-    openTab(makeTab("p"));
-    openTab(childTab("c", "p"));
+    expect.assertions(1);
+    await openChat("p");
+    await openChild("c", "p");
     await paint();
     // attachDrag runs once per DRAGGABLE row; the child must not get a handle,
     // because its position is its parent's rather than its own.
@@ -832,299 +909,191 @@ describe("sub-tabs", () => {
 // ---------------------------------------------------------------------------
 // Pinned tabs.
 //
-// A pin is a sort key plus a marker, and the sort lives in the ARRAY: the drag
-// subsystem reads the dropped order back out of the DOM and the keyboard arrows
-// walk the rendered children, so a render-time sort would make both disagree
-// with what is stored.
+// `TabSubject.Pinned` is stored server-side; the pinned-ahead-of-unpinned
+// PARTITION is the client's RENDERING rule over the order the collection was
+// given, which is what makes an unpin leave the tab exactly where it was.
+//
+// The partition lives in the ARRAY rather than in the render, because two
+// mechanisms read DOM order back as the truth: a drop reads the new order out of
+// the strip and the keyboard arrows walk the rendered children.
 // ---------------------------------------------------------------------------
 
 describe("pinned tabs", () => {
-  function paint(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve();
-      });
-    });
-  }
-
-  async function rowIDs(): Promise<string[]> {
-    await paint();
-    return [...document.querySelectorAll<HTMLElement>("#tab-list .tab")].map(
-      (e) => e.dataset["tabId"] ?? "",
-    );
-  }
-
-  function lastSaved(): { tab_order?: string[]; pinned_tabs?: string[] } | undefined {
-    const calls = vi.mocked(uiSave).mock.calls;
-    return calls[calls.length - 1]?.[0] as
-      { tab_order?: string[]; pinned_tabs?: string[] } | undefined;
-  }
-
-  beforeEach(() => {
-    document.body.innerHTML = '<div id="tab-list"></div>';
-    vi.clearAllMocks();
-  });
-
   it("moves a pinned tab ahead of every unpinned one", async () => {
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    openTab(makeTab("c"));
-    setTabPinned("c", true);
-    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
+    expect.assertions(1);
+    await openChats("a", "b", "c");
+    await setTabPinned(chatID("c"), true);
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
   });
 
   it("does not reshuffle the pinned run when another tab joins it", async () => {
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    openTab(makeTab("c"));
-    setTabPinned("c", true);
-    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
-    setTabPinned("a", true);
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    await setTabPinned(chatID("c"), true);
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
+    await setTabPinned(chatID("a"), true);
     // The partition is stable, so pinning `a` only guarantees it sits above the
     // unpinned tabs — it does not overtake a pin that was already ahead of it.
     // Reordering WITHIN the run is what drag is for.
-    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
   });
 
   it("leaves a tab where it is when the pin is removed", async () => {
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    setTabPinned("b", true);
-    await expect(rowIDs()).resolves.toEqual(["b", "a"]);
-    setTabPinned("b", false);
-    await expect(rowIDs()).resolves.toEqual(["b", "a"]);
+    expect.assertions(2);
+    await openChats("a", "b");
+    await setTabPinned(chatID("b"), true);
+    expect(await rowRefs()).toEqual(["b", "a"]);
+    await setTabPinned(chatID("b"), false);
+    expect(await rowRefs()).toEqual(["b", "a"]);
   });
 
   it("opens a new unpinned tab after the pinned run", async () => {
-    openTab(makeTab("a"));
-    setTabPinned("a", true);
-    openTab(makeTab("b"));
-    await expect(rowIDs()).resolves.toEqual(["a", "b"]);
+    expect.assertions(1);
+    await openChat("a");
+    await setTabPinned(chatID("a"), true);
+    await openChat("b");
+    expect(await rowRefs()).toEqual(["a", "b"]);
   });
 
-  // The partition is what enforces this: a drop commits through reorderTabs,
-  // which re-partitions, so the illegal position snaps back rather than being
-  // refused mid-drag inside the drag subsystem's index arithmetic.
+  // The partition is what enforces this: a drop commits through `reorder_tabs`,
+  // whose frame re-partitions, so the illegal position snaps back rather than
+  // being refused mid-drag inside the drag subsystem's index arithmetic.
   it("cannot be dragged below an unpinned tab", async () => {
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    openTab(makeTab("c"));
-    setTabPinned("a", true);
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    await setTabPinned(chatID("a"), true);
     expect(commitDrop).toBeTypeOf("function");
-    commitDrop?.(["b", "c", "a"]);
-    await expect(rowIDs()).resolves.toEqual(["a", "b", "c"]);
+    commitDrop?.([chatID("b"), chatID("c"), chatID("a")]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["a", "b", "c"]);
   });
 
   it("still honours a drag that reorders within the pinned run", async () => {
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    openTab(makeTab("c"));
-    setTabPinned("a", true);
-    setTabPinned("b", true);
-    commitDrop?.(["b", "a", "c"]);
-    await expect(rowIDs()).resolves.toEqual(["b", "a", "c"]);
+    expect.assertions(1);
+    await openChats("a", "b", "c");
+    await setTabPinned(chatID("a"), true);
+    await setTabPinned(chatID("b"), true);
+    commitDrop?.([chatID("b"), chatID("a"), chatID("c")]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["b", "a", "c"]);
   });
 
   it("carries a parent's children with it", async () => {
-    openTab(makeTab("p"));
-    openTab(childTab("kid", "p"));
-    openTab(makeTab("other"));
-    setTabPinned("p", true);
-    await expect(rowIDs()).resolves.toEqual(["p", "kid", "other"]);
-    setTabPinned("other", true);
-    // `other` is pinned second, so it lands after the whole `p` group rather
-    // than between a parent and its child.
-    await expect(rowIDs()).resolves.toEqual(["p", "kid", "other"]);
+    expect.assertions(2);
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+    await openChat("other");
+    await setTabPinned(chatID("p"), true);
+    expect(await rowRefs()).toEqual(["p", "kid", "other"]);
+    await setTabPinned(chatID("other"), true);
+    // `other` is pinned second, so it lands after the whole `p` group rather than
+    // between a parent and its child.
+    expect(await rowRefs()).toEqual(["p", "kid", "other"]);
   });
 
-  // Nested side chats are reachable: the transcript context menu parents a new
-  // side conversation on the ACTIVE chat, which may itself be one. A grouping
-  // that only recognised a DIRECT child made the grandchild an orphan top-level
-  // group, so pinning any other tab could sort it away from the tab its own
-  // parentId names.
+  // Nested side chats are reachable: a tangent parents a new conversation on the
+  // ACTIVE chat, which may itself be one. A grouping that only recognised a DIRECT
+  // child made the grandchild an orphan top-level group, so pinning any other tab
+  // could sort it away from the tab its own parent names.
   it("carries a whole descendant tree, not just direct children", async () => {
-    openTab(makeTab("p"));
-    openTab(childTab("kid", "p"));
-    openTab(childTab("grandkid", "kid"));
-    openTab(makeTab("other"));
-    setTabPinned("p", true);
-    await expect(rowIDs()).resolves.toEqual(["p", "kid", "grandkid", "other"]);
-    // The second pin is what exposed it: an orphaned grandchild group sat
-    // BETWEEN two pinned groups, so the partition hoisted `other` over it and
-    // the grandchild ended up behind a stranger, away from the tab it names.
-    setTabPinned("other", true);
-    await expect(rowIDs()).resolves.toEqual(["p", "kid", "grandkid", "other"]);
+    expect.assertions(2);
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+    await openTab({ kind: "chat", ref: "grandkid", parent: chatID("kid") });
+    await openChat("other");
+    await setTabPinned(chatID("p"), true);
+    expect(await rowRefs()).toEqual(["p", "kid", "grandkid", "other"]);
+    // The second pin is what exposed it: an orphaned grandchild group sat BETWEEN
+    // two pinned groups, so the partition hoisted `other` over it and the
+    // grandchild ended up behind a stranger.
+    await setTabPinned(chatID("other"), true);
+    expect(await rowRefs()).toEqual(["p", "kid", "grandkid", "other"]);
   });
 
-  // Same assumption, second site: a drop (and the boot restore) names top-level
-  // ids only, so the walk that reproduces the strip has to descend.
+  // Same assumption, second site: a drop names top-level ids only, so the walk
+  // that reproduces the strip has to descend.
   it("keeps a nested descendant behind its parent through a reorder", async () => {
-    openTab(makeTab("p"));
-    openTab(childTab("kid", "p"));
-    openTab(childTab("grandkid", "kid"));
-    openTab(makeTab("other"));
-    commitDrop?.(["p", "other"]);
-    await expect(rowIDs()).resolves.toEqual(["p", "kid", "grandkid", "other"]);
+    expect.assertions(1);
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+    await openTab({ kind: "chat", ref: "grandkid", parent: chatID("kid") });
+    await openChat("other");
+    commitDrop?.([chatID("p"), chatID("other")]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["p", "kid", "grandkid", "other"]);
   });
 
   // A sub-tab's position is its parent's, the same rule that denies it a drag
-  // handle.
-  it("refuses to pin a sub-tab", async () => {
-    openTab(makeTab("p"));
-    openTab(childTab("kid", "p"));
-    openTab(makeTab("other"));
-    setTabPinned("kid", true);
-    await expect(rowIDs()).resolves.toEqual(["p", "kid", "other"]);
-    expect(lastSaved()?.pinned_tabs).toEqual([]);
+  // handle — and the refusal is LOCAL, before it costs a round trip.
+  it("refuses to pin a sub-tab without asking the server", async () => {
+    expect.assertions(2);
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+    await openChat("other");
+    await setTabPinned(chatID("kid"), true);
+    expect(await rowRefs()).toEqual(["p", "kid", "other"]);
+    expect(tabServer.sentOfType("pin_tab")).toHaveLength(0);
+  });
+
+  // A repeat of the pin already in force sends nothing either: the subject already
+  // says so, and the server would commit nothing and emit nothing.
+  it("sends nothing when the pin is already what was asked for", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    await setTabPinned(chatID("a"), true);
+    expect(tabServer.sentOfType("pin_tab")).toHaveLength(1);
+    await setTabPinned(chatID("a"), true);
+    expect(tabServer.sentOfType("pin_tab")).toHaveLength(1);
   });
 
   it("marks the pinned row for the pin glyph", async () => {
-    openTab(makeTab("a"));
-    setTabPinned("a", true);
+    expect.assertions(3);
+    await openChat("a");
+    await setTabPinned(chatID("a"), true);
     await paint();
-    const row = document.querySelector<HTMLElement>('[data-tab-id="a"]');
+    const id = chatID("a");
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
     expect(row?.classList.contains("tab-pinned")).toBe(true);
     // The glyph itself is decorative; the announced state is the .sr-only word.
     expect(row?.querySelector(".tab-pin .sr-only")?.textContent).toBe("Pinned");
-    setTabPinned("a", false);
+    await setTabPinned(id, false);
     await paint();
     expect(
-      document.querySelector<HTMLElement>('[data-tab-id="a"]')?.classList.contains("tab-pinned"),
+      document
+        .querySelector<HTMLElement>(`[data-tab-id="${id}"]`)
+        ?.classList.contains("tab-pinned"),
     ).toBe(false);
   });
 
-  it("persists pins as their own list beside tab_order", () => {
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    setTabPinned("b", true);
-    expect(lastSaved()?.pinned_tabs).toEqual(["b"]);
-    expect(lastSaved()?.tab_order).toEqual(["b", "a"]);
+  // A pin arrives as a `changed` upsert, so the row is REUSED: the subject is
+  // replaced wholesale while the spec, the name override and the dot stay. Nothing
+  // may re-materialize, or a pin would re-run a tab's activation wiring.
+  it("keeps the row's local half across a pin", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    renameTab(chatID("a"), "Renamed");
+    await setTabPinned(chatID("a"), true);
+    await paint();
+    expect(rows()[0]?.querySelector(".tab-name")?.textContent).toBe("Renamed");
+    expect(openers.chatShow).toHaveBeenCalledTimes(1);
   });
 
-  // The reload path: pins are stamped from the snapshot BEFORE the reorder, or
-  // they would be recorded without moving their tabs.
-  it("survives a reload", async () => {
-    vi.mocked(uiLoad).mockReturnValueOnce({
-      tab_order: ["a", "b", "c"],
-      pinned_tabs: ["c"],
-      active_view: "",
-    } as never);
-    _resetForTest();
-    document.body.innerHTML = '<div id="tab-list"></div>';
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    openTab(makeTab("c"));
-    restoreTabState();
-    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
-    expect(lastSaved()?.pinned_tabs).toEqual(["c"]);
-  });
-
-  it("restores a pin even when no order was saved", async () => {
-    vi.mocked(uiLoad).mockReturnValueOnce({
-      tab_order: [],
-      pinned_tabs: ["b"],
-      active_view: "",
-    } as never);
-    _resetForTest();
-    document.body.innerHTML = '<div id="tab-list"></div>';
-    openTab(makeTab("a"));
-    openTab(makeTab("b"));
-    restoreTabState();
-    await expect(rowIDs()).resolves.toEqual(["b", "a"]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Promote: a sub-tab becomes a top-level tab.
-// ---------------------------------------------------------------------------
-
-describe("promoteTab", () => {
-  function paint(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve();
-      });
+  // A pin applied on ANOTHER device arrives as the same `changed` frame, so the
+  // partition has to move the row with no local gesture behind it.
+  it("re-partitions on a pin this device did not make", async () => {
+    expect.assertions(1);
+    await openChats("a", "b");
+    const bID = chatID("b");
+    const subject = tabServer.subjects().find((s) => s.id === bID);
+    if (subject === undefined) {
+      throw new Error("b not in the collection");
+    }
+    tabServer.emitRaw({
+      changed: { ...subject, pinned: true },
+      version: tabServer.version() + 1,
     });
-  }
-
-  beforeEach(() => {
-    document.body.innerHTML = '<div id="tab-list"></div>';
-    vi.clearAllMocks();
-  });
-
-  it("clears the parent and joins tab_order", () => {
-    openTab(makeTab("p"));
-    openTab(childTab("kid", "p"));
-    const before = vi.mocked(uiSave).mock.calls.at(-1)?.[0] as { tab_order?: string[] };
-    expect(before.tab_order).toEqual(["p"]);
-    promoteTab("kid");
-    const after = vi.mocked(uiSave).mock.calls.at(-1)?.[0] as { tab_order?: string[] };
-    expect(after.tab_order).toEqual(["p", "kid"]);
-  });
-
-  it("survives its former parent's close", () => {
-    openTab(makeTab("p"));
-    openTab(childTab("kid", "p"));
-    promoteTab("kid");
-    closeTab("p");
-    expect(hasTab("kid")).toBe(true);
-  });
-
-  it("drops the indent and gains a drag handle", async () => {
-    openTab(makeTab("p"));
-    openTab(childTab("kid", "p"));
-    await paint();
-    // One handle so far: the parent's. The child had none.
-    expect(vi.mocked(attachDrag)).toHaveBeenCalledTimes(1);
-    promoteTab("kid");
-    await paint();
-    const row = document.querySelector<HTMLElement>('[data-tab-id="kid"]');
-    expect(row).not.toBeNull();
-    expect(row?.classList.contains("tab-child")).toBe(false);
-    // The node is rebuilt on promote precisely because attachTabInteraction
-    // decides draggability once, at element creation.
-    expect(vi.mocked(attachDrag)).toHaveBeenCalledTimes(2);
-  });
-
-  it("is a no-op on a top-level tab", () => {
-    openTab(makeTab("a"));
-    const before = vi.mocked(uiSave).mock.calls.length;
-    promoteTab("a");
-    expect(vi.mocked(uiSave).mock.calls.length).toBe(before);
-  });
-});
-
-// The restore-side half of the History retention gate. The toolbar button was
-// already hidden when retention is off; the boot restore checked nothing, so a
-// workspace that turned retention off between sessions reopened a page with no
-// way to reach it and no way to reopen it.
-describe("restorableSingletonIDs", () => {
-  it("restores History when retention is on", () => {
-    expect(restorableSingletonIDs(["__history__"], { __history__: true })).toEqual(["__history__"]);
-  });
-
-  it("drops History when retention is off", () => {
-    expect(restorableSingletonIDs(["__history__"], { __history__: false })).toEqual([]);
-  });
-
-  it("leaves every other persisted id alone in both directions", () => {
-    const ids = ["__settings__", "chat-1", "__history__", "__files__", "editor:/a/b.go"];
-    expect(restorableSingletonIDs(ids, { __history__: true })).toEqual(ids);
-    expect(restorableSingletonIDs(ids, { __history__: false })).toEqual([
-      "__settings__",
-      "chat-1",
-      "__files__",
-      "editor:/a/b.go",
-    ]);
-  });
-
-  it("preserves persisted order", () => {
-    const ids = ["__files__", "__history__", "__settings__"];
-    expect(restorableSingletonIDs(ids, { __history__: true })).toEqual(ids);
-  });
-
-  it("treats an id with no availability entry as unconditional", () => {
-    expect(restorableSingletonIDs(["__git__"], {})).toEqual(["__git__"]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["b", "a"]);
   });
 });
 
@@ -1135,154 +1104,93 @@ describe("showFilesView vs toggleFilesView", () => {
   // find-in-files did from the browser's own search button. The search bar then
   // opened over a departed view and the browser came back in search mode on its
   // next open, read by the user as a search state leaking between tabs.
-  const noop = (): void => undefined;
 
-  it("shows the browser when it is not open", () => {
-    openTab(makeTab("c-1"));
-    showFilesView(noop);
-    expect(hasTab("__files__")).toBe(true);
-    expect(getActiveTabId()).toBe("__files__");
+  it("shows the browser when it is not open", async () => {
+    expect.assertions(2);
+    await openChat("c-1");
+    await showFilesView();
+    expect(hasTab("files")).toBe(true);
+    expect(getActiveTabId()).toBe(tabIdFor("files"));
   });
 
-  it("activates the browser when it is open but not active", () => {
-    showFilesView(noop);
-    openTab(makeTab("c-1"));
-    expect(getActiveTabId()).toBe("c-1");
-    showFilesView(noop);
-    expect(getActiveTabId()).toBe("__files__");
+  it("activates the browser when it is open but not active", async () => {
+    expect.assertions(2);
+    await showFilesView();
+    await openChat("c-1");
+    expect(getActiveTabId()).toBe(chatID("c-1"));
+    await showFilesView();
+    expect(getActiveTabId()).toBe(tabIdFor("files"));
   });
 
-  it("is a NO-OP when the browser is already active, where the toggle closes", () => {
-    showFilesView(noop);
-    expect(getActiveTabId()).toBe("__files__");
+  it("is a NO-OP when the browser is already active, where the toggle closes", async () => {
+    expect.assertions(4);
+    await showFilesView();
+    expect(getActiveTabId()).toBe(tabIdFor("files"));
 
-    showFilesView(noop);
-    expect(hasTab("__files__"), "show must never close the tab it is asked to show").toBe(true);
-    expect(getActiveTabId()).toBe("__files__");
+    await showFilesView();
+    expect(hasTab("files"), "show must never close the tab it is asked to show").toBe(true);
+    expect(getActiveTabId()).toBe(tabIdFor("files"));
 
     // The contrast is the point: the toolbar button still wants a toggle.
-    toggleFilesView(noop);
-    expect(hasTab("__files__")).toBe(false);
+    await toggleFilesView();
+    expect(hasTab("files")).toBe(false);
   });
 
-  it("does not fire onClose, so the browser's reset does not run behind a show", () => {
-    // resetFileBrowser is the files view's onClose, and it drops the search bar
-    // with the listing. A show that closed the tab ran that teardown against a
-    // search the caller was in the middle of opening.
-    let closes = 0;
-    const onClose = (): void => void closes++;
-    showFilesView(noop, onClose);
-    showFilesView(noop, onClose);
-    expect(closes).toBe(0);
+  // A show that closed the tab ran the files view's teardown (the factory's
+  // `onClose`, which drops the listing and the search bar) against a search the
+  // caller was in the middle of opening.
+  it("dispatches nothing at all on a second show", async () => {
+    expect.assertions(2);
+    await showFilesView();
+    const before = tabServer.sent().length;
+    await showFilesView();
+    expect(tabServer.sent()).toHaveLength(before);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The arrangement is server-owned, so a tab opened or closed on another device
-// has to appear or go here at once. reconcileRemoteTabs is the pure half of that.
+// A tab this device did not close.
 //
-// It answers the SET and deliberately not the ORDER: a tab showing up instantly
-// is the point, while the strip rearranging itself under the reader's cursor is
-// noise. Order converges on the next load.
+// The provenance question has exactly one mechanism, and it is `op_id`: a frame
+// carrying an op this device minted is its own echo, and a frame carrying none is
+// another device's. What that decides is ONE thing — whether a removal's teardown
+// re-dispatches. Every LOCAL cleanup runs in both cases, or this device keeps a
+// store row, a dock card and composer state for a tab that is gone.
 // ---------------------------------------------------------------------------
 
-describe("reconcileRemoteTabs", () => {
-  function chatTab(id: string): TabSpec {
-    return { id, name: id, kind: "chat", view: "#chat-view", route: { kind: "chat", id } };
-  }
-
-  it("names what to open and what to close", () => {
-    openTab(chatTab("a"));
-    openTab(chatTab("b"));
-
-    // The server says c exists and b does not.
-    const { toOpen, toClose } = reconcileRemoteTabs(["a", "c"]);
-    expect(toOpen).toEqual(["c"]);
-    expect(toClose).toEqual(["b"]);
+describe("close provenance", () => {
+  it("tells the teardown the close was local when this device dispatched it", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    await closeTab(chatID("a"));
+    expect(openers.chatClose).toHaveBeenCalledWith("a", { remote: false });
   });
 
-  it("is a no-op when the strip already matches", () => {
-    openTab(chatTab("a"));
-    openTab(chatTab("b"));
-    const { toOpen, toClose } = reconcileRemoteTabs(["b", "a"]);
-    // Note the order differs and that is FINE — order is not applied live.
-    expect(toOpen).toEqual([]);
-    expect(toClose).toEqual([]);
+  it("tells the teardown the close came from another device", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    tabServer.closeRemotely(chatID("a"));
+    await settleTabs();
+    // The teardown STILL RUNS — that is the point. Only the dispatch inside it is
+    // suppressed, which is chat.ts's decision to make rather than this module's.
+    expect(openers.chatClose).toHaveBeenCalledWith("a", { remote: true });
+    expect(hasTab("chat", "a")).toBe(false);
   });
 
-  it("closes everything when the remote arrangement is empty", () => {
-    openTab(chatTab("a"));
-    const { toClose } = reconcileRemoteTabs([]);
-    expect(toClose).toEqual(["a"]);
-  });
-
-  // A sub-tab is not persisted in tab_order (its position is its parent's), so
-  // it appears in no remote arrangement. Reading that absence as "vanished
-  // remotely" would close every open tangent on the first remote change.
-  it("never proposes closing a SUB-TAB, which no arrangement names", () => {
-    openTab(chatTab("parent"));
-    openTab({ ...chatTab("child"), parentId: "parent" });
-
-    const { toOpen, toClose } = reconcileRemoteTabs(["parent"]);
-    expect(toClose).toEqual([]);
-    expect(toOpen).toEqual([]);
-  });
-
-  it("still closes the PARENT when the arrangement drops it", () => {
-    openTab(chatTab("parent"));
-    openTab({ ...chatTab("child"), parentId: "parent" });
-    expect(reconcileRemoteTabs([]).toClose).toEqual(["parent"]);
-  });
-});
-
-// A remote close must run every LOCAL cleanup and skip only the duplicate server
-// teardown. Getting that backwards in either direction is a real defect: skipping
-// the local half leaves a store row, a dock card and composer state for a tab
-// that is gone, and running the server half twice can kill a bridge the reader
-// just restarted here by reopening the chat.
-describe("closeTab provenance", () => {
-  function watchedTab(id: string, seen: ({ remote: boolean } | undefined)[]): TabSpec {
-    return {
-      id,
-      name: id,
-      kind: "chat",
-      view: "#chat-view",
-      route: { kind: "chat", id },
-      onClose: (o) => seen.push(o),
-    };
-  }
-
-  it("tells onClose the close was local by default", () => {
-    const seen: ({ remote: boolean } | undefined)[] = [];
-    openTab(watchedTab("a", seen));
-    closeTab("a");
-    expect(seen).toEqual([{ remote: false }]);
-  });
-
-  it("tells onClose the close came from another device", () => {
-    const seen: ({ remote: boolean } | undefined)[] = [];
-    openTab(watchedTab("a", seen));
-    closeTab("a", { remote: true });
-    // onClose STILL RUNS — that is the point. Only the dispatch inside it is
-    // suppressed, which is chat.ts's decision to make, not this module's.
-    expect(seen).toEqual([{ remote: true }]);
-  });
-
-  it("forwards `remote` to a cascaded child, unlike skipOnClose", () => {
-    const seen: ({ remote: boolean } | undefined)[] = [];
-    openTab(watchedTab("parent", seen));
-    openTab({ ...watchedTab("child", seen), parentId: "parent" });
-
-    closeTab("parent", { remote: true });
-    // Child first, then parent; both marked remote, because the device that
-    // closed the parent already cascaded over there.
-    expect(seen).toEqual([{ remote: true }, { remote: true }]);
-  });
-
-  it("skipOnClose still suppresses onClose entirely", () => {
-    const seen: ({ remote: boolean } | undefined)[] = [];
-    openTab(watchedTab("a", seen));
-    closeTab("a", { skipOnClose: true });
-    expect(seen).toEqual([]);
+  it("marks a cascaded child remote too, because the other device already cascaded", async () => {
+    expect.assertions(1);
+    const seen: { ref: string; remote: boolean }[] = [];
+    openers.chatClose.mockImplementation((ref: string, opts: { remote: boolean }) => {
+      seen.push({ ref, remote: opts.remote });
+    });
+    await openChat("parent");
+    await openTab({ kind: "chat", ref: "child", parent: chatID("parent") });
+    tabServer.closeRemotely(chatID("parent"));
+    await settleTabs();
+    expect(seen).toEqual([
+      { ref: "child", remote: true },
+      { ref: "parent", remote: true },
+    ]);
   });
 });

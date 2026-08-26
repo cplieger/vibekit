@@ -6,8 +6,12 @@
 // here. Each banner is keyed on (chat_id, code) so the same error replaces
 // rather than duplicates.
 //
-// Banners are per-device (dismissal state in localStorage) and auto-clear
-// when the underlying condition resolves.
+// Banners are per-device and auto-clear when the underlying condition resolves.
+// The DISMISSALS are per-device too, keyed per chat in localStorage — a phone
+// dismissing a banner must not silence the desktop, which is web-terminal's rule
+// verbatim: an acknowledgement is the viewer's. They briefly lived in the
+// server-owned arrangement as a flat `dismissed_banners` list, and that shared
+// them.
 //
 // State is a createCollection<BannerEntry>; the stack is rendered by a single
 // bindList over a computed active-chat view, so add / remove / chat-switch all
@@ -17,7 +21,8 @@
 
 import { $ } from "./dom.js";
 import { activeSession } from "./store.js";
-import { load, save } from "./ui-state.js";
+import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
+import { readPerChat, writePerChat } from "./per-chat-store.js";
 import { isSafeURL } from "./url-safety.js";
 import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
@@ -103,36 +108,62 @@ export function ensureBound(): void {
   );
 }
 
-/** Collection + localStorage key for one banner.
+/** The COLLECTION key for one banner. No longer a localStorage key: the
+ *  dismissals moved to a per-chat map, so the only composite left is the in-memory
+ *  one the reactive collection is keyed by.
  *
- *  Built with keyenc `join` so neither field can forge a boundary. This is
- *  byte-identical to the old `${chatID}:${code}` template for every key this
- *  app produces — a chat id is `[A-Za-z0-9_-]` (ids.ValidChatID, so no ":" and
- *  no "\\") and a code is a call-site literal from the same class — so NO
- *  persisted dismissal under `dismissed_banners` is invalidated by the
- *  adoption. The join is what keeps that true if either field ever loosens. */
+ *  Still built with keyenc `join` rather than a template literal, and that is not
+ *  vestigial: `clearBannersForChat` scans these keys by chat prefix, so a code
+ *  containing the separator could otherwise let one chat's entry read as another's.
+ *  It is byte-identical to `${chatID}:${code}` for every key this app produces — a
+ *  chat id is `[A-Za-z0-9_-]` (ids.ValidChatID, so no ":" and no "\\") and a code
+ *  is a call-site literal from the same class — which is what makes that scan
+ *  correct today; the join is what keeps it correct if either field ever loosens. */
 function bannerKey(chatID: string, code: string): string {
   return join(chatID, code);
 }
 
+/** Read the dismissals, per chat. Codes only: the CHAT is the map key now, so a
+ *  composite key has nothing to compose and no boundary anything could forge. */
+function dismissals(): Record<string, string[]> {
+  return readPerChat(LS_DISMISSED_BANNERS_KEY, validCodes);
+}
+
+/** Validate one chat's dismissed codes, dropping anything that is not a
+ *  non-empty string. */
+function validCodes(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) {
+    return undefined;
+  }
+  const out = v.filter((c): c is string => typeof c === "string" && c !== "");
+  return out.length > 0 ? out : undefined;
+}
+
+/** Write ONE chat's codes, which is what lets the store evict by chat. An empty
+ *  list is a delete, so a chat with nothing dismissed keeps no slot. */
+function writeCodes(map: Record<string, string[]>, chatID: string, codes: string[]): void {
+  writePerChat(LS_DISMISSED_BANNERS_KEY, map, chatID, codes.length > 0 ? codes : undefined);
+}
+
 function isDismissed(chatID: string, code: string): boolean {
-  return load().dismissed_banners.includes(bannerKey(chatID, code));
+  return (dismissals()[chatID] ?? []).includes(code);
 }
 
 function persistDismiss(chatID: string, code: string): void {
-  const state = load();
-  const key = bannerKey(chatID, code);
-  if (!state.dismissed_banners.includes(key)) {
-    save({ dismissed_banners: [...state.dismissed_banners, key] });
+  const map = dismissals();
+  const codes = map[chatID] ?? [];
+  if (codes.includes(code)) {
+    return;
   }
+  writeCodes(map, chatID, [...codes, code]);
 }
 
 function clearDismiss(chatID: string, code: string): void {
-  const state = load();
-  const key = bannerKey(chatID, code);
-  const filtered = state.dismissed_banners.filter((k) => k !== key);
-  if (filtered.length !== state.dismissed_banners.length) {
-    save({ dismissed_banners: filtered });
+  const map = dismissals();
+  const codes = map[chatID] ?? [];
+  const filtered = codes.filter((c) => c !== code);
+  if (filtered.length !== codes.length) {
+    writeCodes(map, chatID, filtered);
   }
 }
 
@@ -235,7 +266,6 @@ export function showBanner(
   const entry: BannerEntry = { code, chatID, message, level, dismissible, el: node };
   ensureBound();
   banners.upsert(entry);
-  pruneStaleDismissals();
 }
 
 function removeBanner(chatID: string, code: string): void {
@@ -253,9 +283,16 @@ export function clearBannerCodes(chatID: string, codes: string[]): void {
   }
 }
 
-/** Drop every banner (and its dismissed-state persistence) for a chat that no
- *  longer exists. Called from the chat_deleted bus handler so orphan entries +
- *  localStorage entries don't accumulate over a long session. */
+/** Drop every in-memory banner for a chat that no longer exists. Called from the
+ *  chat_deleted bus handler so orphan BannerEntry objects (and the DOM nodes they
+ *  own) don't accumulate over a long session.
+ *
+ *  It no longer prunes the persisted DISMISSALS, and that half is gone rather than
+ *  relocated: it existed only because the state was one global list where an entry
+ *  per deleted chat accumulated forever. The dismissals are keyed per chat now,
+ *  bounded by chat count with oldest-first eviction (per-chat-store.ts), so nothing
+ *  has to be told a chat is gone — and a chat CAN go without this being called at
+ *  all, since retention purges one with no client involved. */
 export function clearBannersForChat(chatID: string): void {
   // Prefix scan rather than a keyenc call: the library has no "prefix of a
   // key" primitive (it does not export its escaper), so the separator is
@@ -267,31 +304,17 @@ export function clearBannersForChat(chatID: string): void {
   // banner-stack.test.ts). If chat ids ever admit ":" or "\\", this scan is
   // the site that breaks and must switch to splitting each key instead.
   const prefix = `${chatID}:`;
-  // 1. Drop in-memory entries (bindList detaches their elements reactively).
+  // bindList detaches the removed entries' elements reactively.
   for (const key of banners.ids.peek()) {
     if (key.startsWith(prefix)) {
       banners.remove(key);
     }
   }
-  // 2. Prune persisted dismissals so localStorage doesn't grow forever.
-  const state = load();
-  const filtered = state.dismissed_banners.filter((k) => !k.startsWith(prefix));
-  if (filtered.length !== state.dismissed_banners.length) {
-    save({ dismissed_banners: filtered });
-  }
 }
 
-const PRUNE_THRESHOLD = 200;
-
-/** Prune dismissed_banners entries that exceed the threshold. Keeps only the
- *  most recent entries (tail of the array). */
-function pruneStaleDismissals(): void {
-  const state = load();
-  if (state.dismissed_banners.length <= PRUNE_THRESHOLD) {
-    return;
-  }
-  save({ dismissed_banners: state.dismissed_banners.slice(-PRUNE_THRESHOLD) });
-}
+// There is no pruneStaleDismissals. It capped ONE flat array of `chat:code` keys
+// at 200 entries, which is the bound a global list needs; the per-chat store owns
+// the bound now and applies it per chat with oldest-first eviction.
 
 /** Auto-clear transient banners (rate_limit) on successful turn end. */
 export function onTurnEnded(chatID: string): void {

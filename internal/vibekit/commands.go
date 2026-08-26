@@ -20,7 +20,6 @@ const (
 	CmdPrompt              CommandType = "prompt"
 	CmdCancel              CommandType = "cancel"
 	CmdDeleteChat          CommandType = "delete_chat"
-	CmdCloseChat           CommandType = "close_chat"
 	CmdSwitchModel         CommandType = "switch_model"
 	CmdPermissionResponse  CommandType = "permission_response"
 	CmdElicitationResponse CommandType = "elicitation_response"
@@ -29,11 +28,24 @@ const (
 	CmdCompact             CommandType = "compact"
 	CmdSetEffort           CommandType = "set_effort"
 	CmdSetDraft            CommandType = "set_draft"
+	CmdSetAttachments      CommandType = "set_attachments"
 	CmdSetMode             CommandType = "set_mode"
 	CmdCreateHook          CommandType = "create_hook"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
 	CmdSteer               CommandType = "steer"
 	CmdSteerClear          CommandType = "steer_clear"
+	// The four tab commands. Membership is a MUTATION, so it rides this envelope
+	// like every other one (invariant 1) rather than a second REST surface with
+	// its own failure semantics — which would also have needed two client verbs
+	// api-client.ts does not have.
+	//
+	// There is no close_chat any more. The × on a chat tab is close_tab, which
+	// runs the same teardown; keeping both would have left two commands that mean
+	// the same gesture and disagree about the tab.
+	CmdOpenTab     CommandType = "open_tab"
+	CmdCloseTab    CommandType = "close_tab"
+	CmdReorderTabs CommandType = "reorder_tabs"
+	CmdPinTab      CommandType = "pin_tab"
 )
 
 // ClientCommand is the envelope for every command the browser posts.
@@ -84,6 +96,15 @@ type Attachment struct {
 type CreateChatCommand struct {
 	Name  string `json:"name,omitempty"`
 	Model string `json:"model,omitempty"`
+	// OpID correlates every attempt of ONE create gesture, so a repeat resolves
+	// to the chat the first attempt made instead of minting a second one. It is
+	// NOT the Idempotency-Key: that is a header covering a retry inside the
+	// idempotency cache's TTL, and this covers the fall-through past it (see
+	// command/create_ledger.go). Optional — a caller that sends none gets a fresh
+	// chat per attempt, because there is no key to record one under. Validated
+	// with ValidIdent: it reaches an in-memory map key, so the bound is what
+	// matters.
+	OpID string `json:"op_id,omitempty"`
 }
 
 // ResumeSessionCommand is the payload for type="resume_session": adopt a KAS
@@ -96,17 +117,21 @@ type ResumeSessionCommand struct {
 	SessionID string `json:"session_id"`
 	// Name seeds the chat title, normally the session title KAS reported.
 	Name string `json:"name,omitempty"`
+	// OpID correlates every attempt of one resume, so a retry answers with the
+	// chat already bound to this session rather than binding a second chat to it.
+	// See CreateChatCommand.OpID.
+	OpID string `json:"op_id,omitempty"`
 }
 
 // ForkChatCommand is the payload for type="fork_chat": start a TANGENT off
 // another chat — a new chat that begins with the parent's real conversation
 // behind it and then diverges, with nothing syncing the two afterwards.
 //
-// ChatID on the envelope is the NEW chat (client-generated, like every chat id);
-// ParentChatID names the one being forked. The server calls KAS's own
-// `session/fork` on the parent's live session and binds the reply's session id
-// to the new chat, so the context is the parent's actual context rather than a
-// re-narration of it.
+// The new chat's id is MINTED SERVER-SIDE and returned in the response, so the
+// envelope's ChatID is normally empty; ParentChatID names the one being forked.
+// The server calls KAS's own `session/fork` on the parent's live session and
+// binds the reply's session id to the new chat, so the context is the parent's
+// actual context rather than a re-narration of it.
 //
 // Title is optional and rides `_meta.kiro.title` into KAS's session metadata,
 // which is where its own /tangent puts a tangent's name. Vibekit does not use it
@@ -115,6 +140,11 @@ type ResumeSessionCommand struct {
 type ForkChatCommand struct {
 	ParentChatID ChatID `json:"parent_chat_id"`
 	Title        string `json:"title,omitempty"`
+	// OpID correlates every attempt of one fork. Without it a retry would ask KAS
+	// to fork again, producing a second session and a second chat — and on the
+	// primed fallback, spending the priming budget twice. See
+	// CreateChatCommand.OpID.
+	OpID string `json:"op_id,omitempty"`
 }
 
 // ForkOutcomePrimed and ForkOutcomeForked are the two paths fork_chat can take,
@@ -224,6 +254,26 @@ type SetDraftCommand struct {
 	Text string `json:"text"`
 }
 
+// SetAttachmentsCommand is the payload for type="set_attachments": the files the
+// user has staged beside this chat's draft and not yet sent.
+//
+// Paths only, and the whole list every time rather than an add or a remove: the
+// client holds the authoritative pill row and saves it on the draft's own
+// debounce, so a per-file delta would need an ordering the wire does not carry.
+// An empty list is a VALUE, not a missing field — it is how a sent or emptied row
+// is cleared — and like set_draft this is a NO-OP on a chat that is not a server
+// record yet, because auto-creating one would put a sidebar row on every client
+// for a chat nobody has sent anything to.
+//
+// Capped at MaxAttachments entries of MaxAttachmentPathBytes each. The paths are
+// NOT confined to the workspace here: BuildPromptBlocks resolves each one at
+// send time and falls back to a bare path reference on escape, so confinement
+// lives at the read rather than at the parking spot, and a command that only
+// hands the list back to the client that sent it has nothing to confine it for.
+type SetAttachmentsCommand struct {
+	Paths []string `json:"paths"`
+}
+
 // SetModeCommand is the payload for type="set_mode". ModeID is the id of
 // an entry in the chat's AvailableModes — on v3 that spans the bundled
 // workflow modes (vibe/spec/plan/…) AND workspace custom agents, all
@@ -286,4 +336,72 @@ type SetSupervisedModeCommand struct {
 type SteerCommand struct {
 	Text      string `json:"text"`
 	MessageID string `json:"message_id"`
+}
+
+// OpenTabCommand is the payload for type="open_tab": open a tab for something
+// that ALREADY EXISTS.
+//
+// It never mints. A chat is created by create_chat, which opens its tab through
+// the same coordinator, so (Kind, Ref) here is a key and never a create
+// directive — the two were one operation before this split, which is how a
+// client ended up minting chat ids so it would have something to open.
+//
+// An open for a (Kind, Ref) that is already open mutates nothing, bumps no
+// version and emits no event, and the response's `created:false` is what makes
+// that observable. Without it, a client that resolves on the event would wait
+// forever for a frame the server correctly never sends.
+type OpenTabCommand struct {
+	// Kind must be one of the eight (TabKind.Valid).
+	Kind TabKind `json:"kind"`
+	// Ref is required for every kind but a singleton, where it must be empty. A
+	// chat ref is validated as a chat id AND checked against the chat store,
+	// which is what makes an open racing a delete a refusal rather than a tab
+	// pointing at nothing.
+	Ref string `json:"ref,omitempty"`
+	// Parent names an already-open tab to hang this one under. A parent that is
+	// not open promotes the new tab to top level rather than refusing it.
+	Parent string `json:"parent,omitempty"`
+	// Owns means closing this tab tears down what it shows. The client decides
+	// it because only the caller knows whether it launched the thing.
+	Owns bool `json:"owns,omitempty"`
+	// OpID correlates the frame this open produces with the dispatch that asked
+	// for it. See CreateChatCommand.OpID for how it differs from
+	// Idempotency-Key.
+	OpID string `json:"op_id,omitempty"`
+}
+
+// CloseTabCommand is the payload for type="close_tab".
+//
+// Closing an id that is not open is NOT an error: two devices can close the same
+// tab, and the response's empty `closed` list already says nothing happened.
+//
+// For a CHAT tab this also runs the chat teardown that close_chat used to be a
+// client command for — cancel the turn, cancel the chat's runs, tear the bridge
+// down — and KEEPS the record. Under retention a closed chat is a chat without a
+// tab, and reopening it session/loads everything back.
+type CloseTabCommand struct {
+	ID   string `json:"id"`
+	OpID string `json:"op_id,omitempty"`
+}
+
+// ReorderTabsCommand is the payload for type="reorder_tabs": the whole expanded
+// order, every open tab exactly once.
+//
+// There is deliberately NO base-version precondition. The exact-set check IS the
+// precondition and it is sufficient — an order naming the set the server holds
+// cannot have been derived from a set it does not hold — while a version
+// precondition would discard a perfectly valid drag whenever any unrelated
+// mutation landed first, and a pin elsewhere bumps the version without changing
+// the order. A set mismatch is a 409.
+type ReorderTabsCommand struct {
+	Order []string `json:"order"`
+	OpID  string   `json:"op_id,omitempty"`
+}
+
+// PinTabCommand is the payload for type="pin_tab". Idempotent in both
+// directions: a tab already in that state bumps no version and emits nothing.
+type PinTabCommand struct {
+	ID     string `json:"id"`
+	Pinned bool   `json:"pinned"`
+	OpID   string `json:"op_id,omitempty"`
 }

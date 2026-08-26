@@ -1,10 +1,16 @@
 //
 // Behavior of the theme controller wiring (theme.ts). The controller itself is
 // @cplieger/ui-primitives' createTheme; these tests cover vibekit's contract on
-// top of it: the theme lives in the `theme` field of the vibekit.ui-state blob
-// (read-modify-write, siblings preserved — the no-migration invariant), the
-// toggle CYCLES three states (light -> dark -> system), and an unset field
-// resolves the OS preference without persisting anything.
+// top of it: the toggle CYCLES three states (light -> dark -> system), an unset
+// value resolves the OS preference without persisting anything, and the label
+// names what "system" resolved to.
+//
+// The storage adapter is a PARAMETER now (settings.ts supplies the real one, and
+// the authority is a config.json key), so these cases hand it the paint-cache
+// adapter — device-view.ts's own read-modify-write of the `theme` field. That is
+// deliberate rather than convenient: the cache is what the pre-paint snippet
+// reads, so the blob assertions below still pin the one storage behaviour a
+// reader would notice breaking, siblings preserved and all.
 //
 // The third state is the point: with a 2-state toggle, "follow the OS" was only
 // ever the value of an unset field, so one click made it unreachable without
@@ -13,7 +19,17 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { initThemeToggle } from "./theme.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
-import { _resetForTest as resetUIState } from "./ui-state.js";
+import { cacheTheme, cachedTheme } from "./device-view.js";
+import type { ThemeChoice } from "./device-view.js";
+
+/** The paint-cache adapter, which is the half of settings.ts's real adapter that
+ *  touches storage. */
+const cacheStorage = {
+  get: (): string | null => cachedTheme(),
+  set: (value: string): void => {
+    cacheTheme(value === "light" || value === "system" ? (value as ThemeChoice) : "dark");
+  },
+};
 
 function setupButton(): HTMLButtonElement {
   document.body.innerHTML =
@@ -49,10 +65,6 @@ function stubMatchMedia(osDark: boolean): void {
 beforeEach(() => {
   originalMatchMedia = window.matchMedia;
   localStorage.clear();
-  // The arrangement is server-owned now, so ui-state.ts holds an in-memory
-  // document that outlives a localStorage.clear(). Reset it too, or one case's
-  // chosen theme is still the answer in the next.
-  resetUIState();
   document.documentElement.removeAttribute("data-theme");
 });
 
@@ -64,7 +76,7 @@ describe("initThemeToggle", () => {
   it("applies the stored theme field to <html data-theme> on init", () => {
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ theme: "light", shell_open: true }));
     setupButton();
-    initThemeToggle();
+    initThemeToggle(cacheStorage);
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
@@ -75,7 +87,7 @@ describe("initThemeToggle", () => {
       JSON.stringify({ theme: "dark", shell_open: true, fb_path: "/x", tab_order: ["a", "b"] }),
     );
     const btn = setupButton();
-    initThemeToggle();
+    initThemeToggle(cacheStorage);
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
 
     btn.click(); // dark -> system
@@ -100,7 +112,7 @@ describe("initThemeToggle", () => {
     stubMatchMedia(true); // OS = dark
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ theme: "system" }));
     setupButton();
-    initThemeToggle();
+    initThemeToggle(cacheStorage);
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     // Still stored as the choice, not flattened to the theme it resolved to.
@@ -113,7 +125,7 @@ describe("initThemeToggle", () => {
     stubMatchMedia(false); // OS = light
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ theme: "system" }));
     const btn = setupButton();
-    initThemeToggle();
+    initThemeToggle(cacheStorage);
 
     expect(btn.getAttribute("aria-label")).toContain("now light");
   });
@@ -122,7 +134,7 @@ describe("initThemeToggle", () => {
     stubMatchMedia(true); // OS = dark
     localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ shell_open: true }));
     setupButton();
-    initThemeToggle();
+    initThemeToggle(cacheStorage);
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     // Unset preference stays "system" internally — nothing is written to the blob.
     const blob = readBlob();
@@ -134,7 +146,7 @@ describe("initThemeToggle", () => {
     stubMatchMedia(false); // OS = light
     // No blob at all, so the choice reads as "system".
     const btn = setupButton();
-    initThemeToggle();
+    initThemeToggle(cacheStorage);
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(readBlob()["theme"]).toBeUndefined();
 

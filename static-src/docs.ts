@@ -141,6 +141,17 @@ interface HookState {
   trigger?: string;
   command?: string;
   prompt?: string;
+  /** The regex KAS tests this hook's trigger subject against. Display-only. */
+  matcher?: string;
+  /** What is wrong with the trigger-and-matcher pairing, computed SERVER-side
+   *  (internal/vibekit's ClassifyHookMatcher) so the trigger-to-subject table
+   *  exists once. `missing_tool_matcher` = a tool trigger with no matcher, so the
+   *  hook runs on every tool call; `ineffective` = a matcher on a trigger with
+   *  nothing to match on, so it governs nothing. Absent = nothing to say.
+   *
+   *  Never derived here. A TypeScript copy of that table could disagree with the
+   *  Go one about a trigger's subject, and the subject is the whole judgement. */
+  matcher_warning?: string;
 }
 
 const HP = "$.hook";
@@ -159,6 +170,8 @@ const decodeHook: Decoder<HookState> = (v) => {
     "trigger",
     "command",
     "prompt",
+    "matcher",
+    "matcher_warning",
   ] as const) {
     const val = optStr(o, key, HP);
     if (val !== undefined) {
@@ -306,13 +319,13 @@ const loadDocsAction = defineAction<undefined, { docs: KiroDoc[] }>({
 // --- Public API ---
 
 /** Open (or toggle) the docs page, landing on `tab`. The toolbar's book button
- *  and the router both come through here. */
+ *  and the router both come through here.
+ *
+ *  No onShow callback: the tab factory reaches this module's own `loadDocsView`
+ *  through a lazy import, so every door into the page gets the same behaviour and
+ *  the sub-tab is applied by `toggleDocsView`'s own `setDocsTab` afterwards. */
 export function showDocsView(tab: DocsTab = "steering"): void {
-  toggleDocsView(tab, () => {
-    forceDocsTab(tab);
-    initDocsView();
-    loadDocs();
-  });
+  void toggleDocsView(tab);
 }
 
 /** Load (or reload) the page without touching the tab, the way
@@ -694,7 +707,17 @@ function rowSig(doc: KiroDoc): string {
     repo === "" ? "" : statusFor(repo, rel),
     hook === undefined
       ? ""
-      : joinKey(hook.id, hook.enabled ? "1" : "0", hook.scope ?? "", hook.disabled_reason ?? ""),
+      : joinKey(
+          hook.id,
+          hook.enabled ? "1" : "0",
+          hook.scope ?? "",
+          hook.disabled_reason ?? "",
+          // Both, because both are RENDERED. Without them a hook whose matcher
+          // was edited on disk keeps the badge it mounted with, which is the
+          // exact class of staleness this signature exists to prevent.
+          hook.matcher ?? "",
+          hook.matcher_warning ?? "",
+        ),
   );
 }
 
@@ -842,6 +865,16 @@ function metaFor(doc: KiroDoc): HTMLElement[] {
     case "hook": {
       if (doc.trigger !== undefined && doc.trigger !== "") {
         out.push(el("span", { className: "docs-badge docs-badge-trigger" }, doc.trigger));
+      }
+      // The matcher beside its trigger, because the pair is one fact: a trigger
+      // says WHEN and its matcher says WHICH, and the row was showing only half.
+      // Rendered as code, since it is a regex the reader may need to compare
+      // against a tool name or a path character for character.
+      const matcher = hookFor(doc)?.matcher ?? "";
+      if (matcher !== "") {
+        const badge = el("code", { className: "docs-badge docs-badge-matcher" }, matcher);
+        badge.setAttribute("data-tooltip", `Matcher: ${matcher}`);
+        out.push(badge);
       }
       break;
     }
@@ -1133,8 +1166,40 @@ function hookBadges(h: HookState): HTMLElement[] {
     badge.setAttribute("data-tooltip", reason);
     out.push(badge);
   }
+  const warn = MATCHER_WARNINGS[h.matcher_warning ?? ""];
+  if (warn !== undefined) {
+    const badge = el("span", { className: "docs-badge docs-badge-warn" }, warn.label);
+    badge.setAttribute("data-tooltip", warn.detail);
+    out.push(badge);
+  }
   return out;
 }
+
+/** The two matcher defects the server reports, and the copy for each.
+ *
+ *  A LOOKUP rather than a branch on the string, so an unrecognised value renders
+ *  NOTHING instead of an empty badge: the field is a server-side enum, and a
+ *  vibekit build older than the server that added a third value should stay quiet
+ *  rather than paint a blank chip.
+ *
+ *  Both are warnings and neither is an error, which is why one badge style covers
+ *  them. `every tool` is a legitimate choice the reader may have made on purpose —
+ *  the badge exists because upstream keeps that finding in its own log, so without
+ *  it a hook that fires on every tool call looks identical to one that is scoped.
+ *  `no effect` cannot be created through vibekit at all (the create form refuses
+ *  it), so a row carrying it is a hand-written or copied-in file. */
+const MATCHER_WARNINGS: Record<string, { label: string; detail: string }> = {
+  missing_tool_matcher: {
+    label: "every tool",
+    detail:
+      "This hook has no matcher, so it runs on EVERY tool call. Add a matcher to scope it to the tools you meant.",
+  },
+  ineffective: {
+    label: "no effect",
+    detail:
+      "This trigger has nothing to match against, so its matcher is ignored and the hook fires every time. Remove the matcher, or pick a trigger whose matcher is tested against a tool name or a file path.",
+  },
+};
 
 /** A skeleton matching the real row shape. Skipped when the panel already holds
  *  rows, so a live refetch never flashes placeholders. */

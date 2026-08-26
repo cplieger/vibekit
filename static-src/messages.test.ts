@@ -22,9 +22,21 @@ vi.mock("./tool-card.js", () => ({
 vi.mock("./api-client.js", () => ({ apiPost: vi.fn() }));
 vi.mock("./messages-actions.js", () => ({
   initMessageActions: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./store.js", () => ({
   getActiveId: () => "test-chat",
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./linkify.js", () => ({ linkifyPaths: vi.fn() }));
 vi.mock("./code-blocks.js", () => ({ setShellRunCallback: vi.fn() }));

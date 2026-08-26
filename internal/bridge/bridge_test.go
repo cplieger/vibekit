@@ -1329,6 +1329,48 @@ func waitPending(t *testing.T, b *Bridge, n int) {
 // resp on the matching pending channel, and returns loadSession's error.
 func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *vibekit.RPCResponse) error {
 	t.Helper()
+	_, err := runLoadSessionOpts(t, b,
+		&vibekit.StartOpts{SessionID: "acp-session-xyz", Model: fallback}, resp)
+	return err
+}
+
+// runNewSession drives newSession the way runLoadSessionOpts drives loadSession:
+// answers the session/new with resp, answers every follow-up repair with a bare
+// success, and returns every frame the bridge wrote so a test can assert what the
+// session door carried and what it did NOT have to send afterwards.
+func runNewSession(
+	t *testing.T, b *Bridge, opts *vibekit.StartOpts, resp *vibekit.RPCResponse,
+) ([]byte, error) {
+	t.Helper()
+	return driveSessionCall(t, b, resp, func(ctx context.Context) error {
+		return b.newSession(ctx, opts)
+	})
+}
+
+// runLoadSessionOpts is runLoadSession with the whole StartOpts in the test's
+// hands, returning every frame the bridge wrote so a test can assert WHICH
+// config options the post-load re-assert sent.
+func runLoadSessionOpts(
+	t *testing.T, b *Bridge, opts *vibekit.StartOpts, resp *vibekit.RPCResponse,
+) ([]byte, error) {
+	t.Helper()
+	return driveSessionCall(t, b, resp, func(ctx context.Context) error {
+		return b.loadSession(ctx, opts)
+	})
+}
+
+// driveSessionCall runs one session-creating call against an injected first
+// response, answering every LATER request with a bare success and returning
+// everything the bridge wrote to stdin.
+//
+// The answer-everything half is load-bearing: neither verb makes exactly one call
+// any more (the chat's model and level are repaired against what the result
+// reported), and a helper that answers only the first one hangs the test with
+// "did not return" while naming nothing about the cause.
+func driveSessionCall(
+	t *testing.T, b *Bridge, resp *vibekit.RPCResponse, run func(context.Context) error,
+) ([]byte, error) {
+	t.Helper()
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -1338,33 +1380,36 @@ func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *vibekit.RPCR
 
 	done := make(chan error, 1)
 	go func() {
-		done <- b.loadSession(t.Context(), "acp-session-xyz", fallback)
+		done <- run(t.Context())
 	}()
 
-	var ch chan *vibekit.RPCResponse
-	deadline := time.Now().Add(time.Second)
-	for ch == nil {
+	answer := resp
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case callErr := <-done:
+			_ = pw.Close()
+			sent, _ := io.ReadAll(pr)
+			return sent, callErr
+		default:
+		}
+		var ch chan *vibekit.RPCResponse
 		b.pendingMu.Lock()
 		for id, v := range b.pending {
 			ch = v
 			delete(b.pending, id)
+			break
 		}
 		b.pendingMu.Unlock()
-		if ch == nil {
-			if time.Now().After(deadline) {
-				t.Fatal("loadSession never registered a pending request")
-			}
-			time.Sleep(2 * time.Millisecond)
+		if ch != nil {
+			ch <- answer
+			answer = &vibekit.RPCResponse{Result: json.RawMessage(`{}`)}
+			continue
 		}
-	}
-	ch <- resp
-
-	select {
-	case e := <-done:
-		return e
-	case <-time.After(time.Second):
-		t.Fatal("loadSession did not return")
-		return nil
+		if time.Now().After(deadline) {
+			t.Fatal("the session call did not return, and no pending request was waiting for an answer")
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
@@ -1651,6 +1696,75 @@ func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 	}
 }
 
+// --- bridge_session.go: the session/new door ---
+
+// session/new carries the chat's model and reasoning-effort level inside
+// _meta.kiro, so the session is created already correct.
+//
+// This is not only two saved round trips. The `auto` model KAS starts a session on
+// has NO effort tiers, so a level sent afterwards was silently dropped (probed on
+// 2.19.1: success, no effortLevel option, `effortLevel: null` persisted), and
+// KAS's own first-prompt model pin then applied that model's DEFAULT tier. Choosing
+// the model before the session exists closes that window.
+func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	sent, err := runNewSession(t, b,
+		&vibekit.StartOpts{Model: "claude-opus-5", Effort: "max"},
+		&vibekit.RPCResponse{Result: json.RawMessage(
+			`{"sessionId":"acp-session-xyz","configOptions":[` +
+				`{"id":"model","currentValue":"claude-opus-5","options":[{"value":"claude-opus-5","name":"O5","_meta":{"kiro":{"rateMultiplier":1}}}]},` +
+				`{"id":"effortLevel","currentValue":"max","options":[{"value":"max","name":"max"}]}]}`)})
+	if err != nil {
+		t.Fatalf("newSession returned error: %v", err)
+	}
+
+	first, _, _ := bytes.Cut(sent, []byte("\n"))
+	for _, want := range []string{`"modelId":"claude-opus-5"`, `"effortLevel":"max"`} {
+		if !bytes.Contains(first, []byte(want)) {
+			t.Errorf("session/new params carry no %s; the frame was:\n%s", want, first)
+		}
+	}
+	// And nothing follows: the result reported both back, so each repair sees a
+	// match. A second frame here would be a round trip the door already paid for.
+	if _, rest, found := bytes.Cut(sent, []byte("\n")); found && len(bytes.TrimSpace(rest)) != 0 {
+		t.Errorf("session/new made follow-up calls after the door reported a match:\n%s", rest)
+	}
+}
+
+// A build that ignores the meta keys still converges: the repair sees the result
+// reporting a different level and sends it.
+func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	sent, err := runNewSession(t, b,
+		&vibekit.StartOpts{Effort: "max"},
+		// The session came back at the model's default rather than at max.
+		&vibekit.RPCResponse{Result: json.RawMessage(
+			`{"sessionId":"acp-session-xyz","configOptions":[{"id":"effortLevel","currentValue":"high","options":[{"value":"high"},{"value":"max"}]}]}`)})
+	if err != nil {
+		t.Fatalf("newSession returned error: %v", err)
+	}
+
+	_, rest, _ := bytes.Cut(sent, []byte("\n"))
+	if !bytes.Contains(rest, []byte(`"configId":"effortLevel"`)) || !bytes.Contains(rest, []byte(`"value":"max"`)) {
+		t.Errorf("newSession did not repair the level the result reported; later frames were:\n%s", rest)
+	}
+}
+
+// An unknown level never reaches the session door, for the same reason SetEffort
+// drops one: config.json is user-editable.
+func TestNewSession_OmitsAnUnknownLevelFromTheDoor(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	sent, err := runNewSession(t, b,
+		&vibekit.StartOpts{Effort: "turbo"},
+		&vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
+	if err != nil {
+		t.Fatalf("newSession returned error: %v", err)
+	}
+	if bytes.Contains(sent, []byte("effortLevel")) {
+		t.Errorf("an unknown level reached the wire; frames were:\n%s", sent)
+	}
+}
+
 // --- bridge_session.go: loadSession ---
 
 // loadSession applies a well-formed result (the parsed model, not the
@@ -1697,6 +1811,112 @@ func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	}
 }
 
+// A resumed session gets the chat's reasoning-effort level re-applied.
+//
+// Nothing reconciles Chat.Effort against what a loaded session reports (unlike
+// the mode and the model, which tryLoadSession copies back onto the record), so
+// without this a chat at max resumed at whatever level KAS had while the record
+// and the pill both still read max.
+func TestLoadSession_ReAppliesTheChatsEffort(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
+
+	sent, err := runLoadSessionOpts(t, b,
+		&vibekit.StartOpts{SessionID: "acp-session-xyz", Effort: "max"}, resp)
+	if err != nil {
+		t.Fatalf("loadSession returned error: %v", err)
+	}
+
+	if !bytes.Contains(sent, []byte(`"configId":"effortLevel"`)) {
+		t.Errorf("session/load sent no effortLevel option; frames were:\n%s", sent)
+	}
+	if !bytes.Contains(sent, []byte(`"value":"max"`)) {
+		t.Errorf("session/load sent no max level; frames were:\n%s", sent)
+	}
+}
+
+// A chat that has chosen no level costs a resume nothing: no effort option is
+// sent, so an ordinary reopen is one round trip as before.
+func TestLoadSession_SendsNoEffortWhenTheChatChoseNone(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
+
+	sent, err := runLoadSessionOpts(t, b,
+		&vibekit.StartOpts{SessionID: "acp-session-xyz"}, resp)
+	if err != nil {
+		t.Fatalf("loadSession returned error: %v", err)
+	}
+
+	if bytes.Contains(sent, []byte("effortLevel")) {
+		t.Errorf("session/load sent an effortLevel option for a chat that chose no level; frames were:\n%s", sent)
+	}
+}
+
+// --- bridge.go: EnsureEffort ---
+
+// A level this build does not know never reaches the wire: config.json is
+// user-editable, so the guard is at the one door every effort call goes through.
+func TestEnsureEffort_DropsAnUnknownLevel(t *testing.T) {
+	for _, level := range []string{"", "turbo", "HIGH", "max "} {
+		t.Run(level, func(t *testing.T) {
+			b := New("/nonexistent", "/work")
+			sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+				func(ctx context.Context) error { return b.EnsureEffort(ctx, level) })
+			if err != nil {
+				t.Errorf("EnsureEffort(%q) = %v, want nil", level, err)
+			}
+			if len(sent) != 0 {
+				t.Errorf("EnsureEffort(%q) reached the wire; frames were:\n%s", level, sent)
+			}
+		})
+	}
+}
+
+// A level the session already reports costs no round trip, which is what lets the
+// prompt path call this per prompt.
+func TestEnsureEffort_SkipsTheLevelTheSessionReports(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	b.mu.Lock()
+	b.effortLevel = "max"
+	b.mu.Unlock()
+
+	sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+		func(ctx context.Context) error { return b.EnsureEffort(ctx, "max") })
+	if err != nil {
+		t.Fatalf("EnsureEffort(the reported level) = %v, want nil", err)
+	}
+	if len(sent) != 0 {
+		t.Errorf("EnsureEffort sent a call for the level already reported; frames were:\n%s", sent)
+	}
+}
+
+// A model swap invalidates the cached level, so the next EnsureEffort asserts
+// instead of matching a level KAS may have replaced. Measured on 2.19.1: a swap to
+// a model offering the same tiers keeps the level, a swap to `auto` destroys it,
+// and the bridge sees neither outcome.
+func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	b.mu.Lock()
+	b.effortLevel = "max"
+	b.mu.Unlock()
+
+	sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+		func(ctx context.Context) error { return b.SetModel(ctx, "claude-sonnet-5") })
+	if err != nil {
+		t.Fatalf("SetModel returned error: %v", err)
+	}
+	if !bytes.Contains(sent, []byte(`"configId":"model"`)) {
+		t.Fatalf("SetModel sent no model option; frames were:\n%s", sent)
+	}
+
+	b.mu.Lock()
+	got := b.effortLevel
+	b.mu.Unlock()
+	if got != "" {
+		t.Errorf("cached effort level after a swap = %q, want it cleared", got)
+	}
+}
+
 // TestInitialize_HooksCapabilityOptIn verifies that StartOpts.EnableHooks
 // controls the _meta.kiro.hooks opt-in in the initialize handshake. When true
 // the bridge declares {enabled:true,v2:true} so KAS's v2 hook engine autofires
@@ -1739,7 +1959,11 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks}); err != nil {
+		// Knowledge on, because this test asserts the base capabilities survive the
+		// hooks gate and both knowledge keys are gated on their own field now. The
+		// key still has to appear with a true for the per-key loop below to be
+		// checking anything.
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks, Knowledge: true}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -1975,10 +2199,11 @@ lose a capability a fresh one has. Captured:
 // subject was the `len(meta) > 0` guard in withSessionMeta — an empty projection
 // must add no `_meta` at all — and the env switch was then the only way to empty
 // the projection, because workflows was the only session-door row. policyPreset
-// is now also on that door and is unconditional (no env column, deliberately:
-// see its because in kascap's table — withholding it silently costs a
-// custom-agent chat every search result), so the projection can no longer be
-// emptied at runtime and that guard has no runtime path to it.
+// is now also on that door, and since 2026-08-25 it is GATED on the active
+// security profile's preset set rather than unconditional, so this test supplies
+// one below to keep a second row present. That is what makes the assertions a
+// statement about the OVERRIDE's blast radius rather than about a door that
+// happens to be empty.
 //
 // The guard STAYS, and the cost of not testing it is recorded here rather than
 // papered over: it is now reachable only by a table with no session-door rows,
@@ -1999,7 +2224,13 @@ func TestSessionDoorOmitsSettingsWhenDisabled(t *testing.T) {
 	t.Setenv("RPC_CAPTURE", capturePath)
 
 	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &vibekit.StartOpts{
+		Lifetime: t.Context(), Model: "m",
+		// A non-empty set so the policyPreset row rides. Without it the door
+		// carries only workflows, the env override empties the whole projection,
+		// and the assertion below would pass for the wrong reason.
+		Presets: []string{"read-workspace"},
+	}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -2027,13 +2258,14 @@ it, so this is bytes on every session start that read as a door carrying
 something:
 %s`, line)
 		}
-		// The unconditional row still rides, which is what makes the two
+		// The preset row still rides, which is what makes the two
 		// assertions above a statement about the OVERRIDE rather than about the
 		// door being empty.
 		if !strings.Contains(line, `"policyPreset"`) {
 			t.Errorf(`session/new lost policyPreset when the workflows override was set to
 false. The override is per-row; if it can empty the whole door, a custom-agent
-chat silently loses every search result on a deployment that set it:
+chat silently loses every search result on a deployment that set it, and every
+security profile stops reaching the session:
 %s`, line)
 		}
 		return
@@ -2407,12 +2639,22 @@ const initializeGoldenPath = "testdata/initialize.golden"
 const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
 
 // initGateCases is the COMPLETE matrix of runtime gates on the _meta.kiro
-// block, and there are two: StartOpts.SecretStorage decides secretStorage's
-// VALUE (the key is present either way) and StartOpts.EnableHooks decides
-// whether the hooks key is present AT ALL. Two different mechanisms, which is
-// why each needs its own axis rather than one shared "capabilities on/off"
-// case. Nothing else in the initialize payload varies at runtime, so these four
-// rows are exhaustive.
+// block, and there are four: StartOpts.SecretStorage decides secretStorage's
+// VALUE (the key is present either way), StartOpts.EnableHooks decides whether
+// the hooks key is present AT ALL, StartOpts.ToolSearch decides presence for
+// settings.toolSearch, and StartOpts.Knowledge decides the VALUE of two keys at
+// once (the knowledge capability and settings.knowledge). Four different
+// mechanisms, which is why each needs its own axis rather than one shared
+// "capabilities on/off" case.
+//
+// Exhaustive over the two original booleans, representative over the two added
+// ones — the same argument internal/kascap's spawnMatrix makes for the same
+// reason: the added gates key on their own fields and write their own keys, so a
+// full 16-row product would add twelve rows differing from a row already here by
+// one key. What each added gate needs is both of its states plus a line where it
+// coexists with the originals, and Presets is deliberately absent from this door
+// (it rides the session door, pinned by its own session/new and session/load
+// fixtures).
 //
 // The slice order IS the golden's line order. Reordering it rewrites the
 // fixture without changing the wire, which would destroy the fixture's value.
@@ -2420,11 +2662,16 @@ var initGateCases = []struct {
 	name          string
 	secretStorage bool
 	enableHooks   bool
+	toolSearch    bool
+	knowledge     bool
 }{
-	{"gates off", false, false},
-	{"secret storage only", true, false},
-	{"hooks only", false, true},
-	{"both gates on", true, true},
+	{"gates off", false, false, false, false},
+	{"secret storage only", true, false, false, false},
+	{"hooks only", false, true, false, false},
+	{"both gates on", true, true, false, false},
+	{"tool search on", false, false, true, false},
+	{"knowledge on", false, false, false, true},
+	{"every gate on", true, true, true, true},
 }
 
 // TestInitializeDeclaresExactly pins the exact bytes of every initialize
@@ -2499,6 +2746,8 @@ done
 			Model:         "m",
 			SecretStorage: tc.secretStorage,
 			EnableHooks:   tc.enableHooks,
+			ToolSearch:    tc.toolSearch,
+			Knowledge:     tc.knowledge,
 		})
 		if err != nil {
 			t.Fatalf("%s: Start: %v", tc.name, err)

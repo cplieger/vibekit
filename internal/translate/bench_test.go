@@ -144,7 +144,7 @@ func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 	chatID := vibekit.ChatID("bench-chat")
 
 	for b.Loop() {
-		tr.HandleToolCall(ctx, chatID, toolCallPayload, "")
+		tr.HandleToolCall(ctx, chatID, toolCallPayload, FrameAttribution{})
 	}
 }
 
@@ -187,8 +187,8 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
 		}
 		// Phase 2: tool call
-		tr.HandleToolCall(ctx, chatID, toolCallPL, "")
-		tr.HandleToolCallUpdate(ctx, chatID, toolUpdatePL, "")
+		tr.HandleToolCall(ctx, chatID, toolCallPL, FrameAttribution{})
+		tr.HandleToolCallUpdate(ctx, chatID, toolUpdatePL, FrameAttribution{})
 		// Phase 3: more streaming
 		for range 50 {
 			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)

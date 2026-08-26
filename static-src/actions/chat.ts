@@ -18,7 +18,8 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
 } from "./index.js";
 
-import type { ResumableSessionRow, Session, WorkflowRunRow } from "../types.js";
+import type { ChatHeader, ResumableSessionRow, Session, WorkflowRunRow } from "../types.js";
+import { decodeChatHeader } from "../wire/decoders.gen.js";
 import {
   get,
   setThinking,
@@ -31,22 +32,102 @@ import {
   setTurnFailed,
   setTurnDone,
 } from "../store.js";
-import { send as transportSend } from "../transport.js";
-import { clearLastError } from "../send-state.js";
+import { send as transportSend, type SendResult } from "../transport.js";
+import { clearFailure } from "../failure-notice.js";
 
-// --- chat.close ---
-// The tab-close teardown: the x means "kill all of it" (user decision) — the
-// in-flight turn, the chat's runs, the process. The chat RECORD survives;
-// reopening session/loads it back. Fire-and-forget with no error toast: the
-// tab is already gone, and there is nothing for the user to redo.
+// --- chat.create ---
+// Ask the server for a NEW chat and get its id back.
+//
+// The id used to be minted here — `c-${Date.now()}-${Math.random()}` in chat.ts
+// — so between clicking New chat and the first prompt the chat existed only in
+// one browser's memory. That window is what `Session.ghost` marked and what four
+// exemptions guarded, and it is what let a two-device arrangement loop close
+// tabs and respawn chats every ~1.5s. The server mints and RETURNS instead, so
+// there is no window and nothing to exempt.
+//
+// `opID` is a dispatch ARGUMENT, never minted inside `run()`. The framework
+// re-invokes `run()` per retry attempt (`runWithRetry` in define.ts) and hoists
+// only the idempotency key out of the loop, so an id minted inside would be
+// fresh on every attempt and defeat the create-idempotency it exists for. The
+// server's ledger keys on it to answer a repeat with the chat the first attempt
+// made (command/create_ledger.go), which is what covers a retry past the
+// Idempotency-Key cache's 5-minute TTL.
+//
+// `idempotencyKey: true` is the other half and covers the ordinary case: the
+// framework generates one key per dispatch and threads it through every attempt,
+// so a retry inside the TTL is answered from the middleware's cache and never
+// reaches this handler at all.
+//
+// No `dedupe`: two deliberate clicks on New chat are two chats, which is the
+// literal reading of two clicks. Collapsing them belongs with the tab
+// collection, where an open tab has a `(kind, ref)` to key on.
 
-export const closeChat = transportAction<string, { ok: boolean }>({
-  name: "chat.close",
+export const createChat = defineAction<
+  { opID: string; name?: string; model?: string },
+  ChatHeader | null
+>({
+  name: "chat.create",
   networkMode: "always",
-  command: (chatID) => ({ type: "close_chat", chat_id: chatID }),
-  error: false,
-  success: false,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  run: async ({ opID, name, model }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "create_chat",
+        payload: {
+          op_id: opID,
+          ...(name === undefined || name === "" ? {} : { name }),
+          ...(model === undefined || model === "" ? {} : { model }),
+        },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    return chatFromReply(r, signal, "create a chat");
+  },
+  error: "Couldn't create a chat",
 });
+
+/** Read the chat a creating command returned, or throw the way the framework
+ *  expects.
+ *
+ *  Shared by all three creating actions because they share the contract: the
+ *  response carries the chat, and a reply the client cannot read a chat out of is
+ *  a failure even at HTTP 200 — the caller has nothing to open. Returning null
+ *  instead would make every caller re-derive that judgement, and `chat.ts` would
+ *  then open a tab for an empty id. */
+function chatFromReply(r: SendResult, signal: AbortSignal, what: string): ChatHeader {
+  if (!r.ok) {
+    if (signal.aborted || r.code === "cancelled") {
+      throw new ActionError("cancelled", { code: "cancelled" });
+    }
+    const errOpts: { status: number; code?: string } = { status: r.status };
+    if (r.code !== undefined) {
+      errOpts.code = r.code;
+    }
+    throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
+  }
+  const body = r.body;
+  if (typeof body !== "object" || body === null || !("chat" in body)) {
+    throw new ActionError(`the server did not say which chat it created (${what})`, {
+      status: r.status,
+      code: "missing_chat",
+    });
+  }
+  return decodeChatHeader(body.chat);
+}
+
+// There is no `chat.close` action, and there must not be one: `close_chat` was
+// retired as a command when the tab collection went server-side. `close_tab` is
+// the one gesture now, and it runs the same teardown server-side through the
+// membership coordinator (`closeChatTeardown`). Two commands meaning one gesture
+// were two things to keep in step: a client sending only `close_chat` tore the
+// bridge down and left the tab, one sending only `close_tab` left the process.
+// The action survived the command's removal for a while with zero callers, which
+// would have answered 400 had anything dispatched it.
 
 // --- chat.delete ---
 // The tab-close path in the "no retention" mode (retention = 0): closing a
@@ -145,6 +226,35 @@ export const setDraft = transportAction<{ chatID: string; text: string }>({
     type: "set_draft",
     chat_id: chatID,
     payload: { text },
+  }),
+  success: false,
+  error: false,
+});
+
+// --- chat.set_attachments ---
+
+/** Persist the workspace paths staged beside a chat's draft and not yet sent.
+ *
+ *  The DRAFT'S TWIN, so every property above holds here for the same reason and
+ *  the two are deliberately configured identically: same 600ms cadence, same
+ *  per-chat scope so dispatches serialize, same silence in both directions, and
+ *  no retry because the next debounce supersedes whatever this one carried.
+ *
+ *  Until this existed the pill row was memory-only, so attaching three files and
+ *  reloading lost them while the half-written sentence describing them came back.
+ *
+ *  Paths, never contents: the server reads each file at send time. It sends the
+ *  WHOLE list rather than an add or a remove, because the row on screen is the
+ *  authoritative copy and a per-file delta would need an ordering the wire does
+ *  not carry. */
+export const setAttachments = transportAction<{ chatID: string; paths: string[] }>({
+  name: "chat.set_attachments",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, paths }) => ({
+    type: "set_attachments",
+    chat_id: chatID,
+    payload: { paths },
   }),
   success: false,
   error: false,
@@ -268,19 +378,35 @@ export const loadSessions = apiAction<
 // Adopts a KAS session the picker listed as a NEW chat. The server creates the
 // chat already bound to the session id; the transcript arrives from the
 // session/load replay, so nothing is copied client-side.
+//
+// The chat id is the SERVER's now and comes back in the response, so this action
+// returns the header rather than `{ok}` — without it the caller has adopted a
+// session into a chat it cannot open. `opID` is the retry key, and it matters
+// more here than for a bare create: minting per attempt would leave two chats
+// bound to one KAS session.
 
-export const resumeSession = transportAction<
-  { chatID: string; sessionID: string; name: string },
-  { ok: boolean }
+export const resumeSession = defineAction<
+  { opID: string; sessionID: string; name: string },
+  ChatHeader | null
 >({
   name: "chat.resume_session",
-  command: ({ chatID, sessionID, name }) => ({
-    type: "resume_session",
-    chat_id: chatID,
-    payload: { session_id: sessionID, name },
-  }),
+  networkMode: "always",
+  idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
+  run: async ({ opID, sessionID, name }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "resume_session",
+        payload: { session_id: sessionID, name, op_id: opID },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    return chatFromReply(r, signal, "resume a session");
+  },
   error: "Couldn't resume that session",
 });
 
@@ -295,20 +421,38 @@ export const resumeSession = transportAction<
 // `primed` (the fork was refused, so the parent's transcript is injected into a
 // fresh session instead). The tangent opens either way, so the client does not
 // branch on it; it is there so a report about a vague answer can say which.
+//
+// The new chat's id is the SERVER's and comes back with it, so this returns the
+// header. `opID` is what stops a retry forking twice — a second fork would create
+// a second session nothing binds, and on the primed path spend the priming budget
+// again for one gesture.
 
-export const forkChat = transportAction<
-  { chatID: string; parentChatID: string; title?: string },
-  { ok: boolean }
+export const forkChat = defineAction<
+  { opID: string; parentChatID: string; title?: string },
+  ChatHeader | null
 >({
   name: "chat.fork",
   networkMode: "always",
-  command: ({ chatID, parentChatID, title }) => ({
-    type: "fork_chat",
-    chat_id: chatID,
-    payload: { parent_chat_id: parentChatID, ...(title === undefined ? {} : { title }) },
-  }),
+  idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
+  run: async ({ opID, parentChatID, title }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "fork_chat",
+        payload: {
+          parent_chat_id: parentChatID,
+          op_id: opID,
+          ...(title === undefined ? {} : { title }),
+        },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    return chatFromReply(r, signal, "start a tangent");
+  },
   error: "Couldn't start a tangent",
 });
 
@@ -400,10 +544,9 @@ export const switchModel = defineAction<
 // 2xx, "queued" on 409 (the prompt drains when the in-flight turn
 // ends), or null (= caller's "failed") on any other error.
 //
-// `error: false`: the send-state.ts error-button is the canonical
-// error surface for prompt sends specifically. transport.send
-// reportSendState defaults to true here so setLastError fires; we
-// don't want a toast on top.
+// `error: false`: transport.send's reportSendState defaults to true here, so
+// failure-notice.ts already raised the toast naming the reason. A second one
+// from the action framework would report one failure twice.
 
 interface SendPromptArgs {
   chatID: string;
@@ -495,7 +638,7 @@ export const sendPrompt = defineAction<
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
         },
       },
-      { signal, reportSendState: true }, // send-state IS the error surface
+      { signal, reportSendState: true }, // the failure toast is the surface
     );
     if (r.ok) {
       return "sent";
@@ -516,7 +659,11 @@ export const sendPrompt = defineAction<
     // grace window for the race where the POST died right at accept),
     // the send succeeded: report "sent" instead of a false failure.
     if (r.status === 0 && r.code !== "cancelled" && (await promptEchoed(chatID, messageID))) {
-      clearLastError(); // transport already painted the error state
+      // Retract the toast transport already raised. Up to two seconds have passed
+      // (promptEchoed grants a grace window), so the notice is on screen by now,
+      // and a "send failed" sitting over a turn that is visibly streaming is worse
+      // than no notice at all.
+      clearFailure(chatID);
       return "sent";
     }
     throw new ActionError(r.error ?? "send failed", {

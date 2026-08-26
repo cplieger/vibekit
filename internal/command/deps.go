@@ -159,7 +159,15 @@ type ChatStore interface {
 	// from exactly that field, and a debounced autosave would push the cutoff
 	// out by a whole window each keystroke. A no-op for a chat that does not
 	// exist — typing must not create one.
-	SetDraft(ctx context.Context, id vibekit.ChatID, text string) error
+	//
+	// The returned state is what landed, and nil when nothing did (no record, or
+	// the same text already stored), which is what the draft_changed broadcast
+	// keys on.
+	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
+	// SetAttachments persists the paths staged beside the draft, replacing the
+	// list. The draft's twin, with the same two contracts for the same two
+	// reasons: no UpdatedAt stamp, and no record means no-op.
+	SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error)
 	// Delete removes the chat file and broadcasts chat_deleted. cmdDeleteChat
 	// is the ONLY caller in the build, and that is an invariant: bridge exits,
 	// model switches and restarts never delete.
@@ -297,7 +305,11 @@ type TurnStats struct {
 type TurnOutcomeAccess interface {
 	IsEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool
 	EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, stats TurnStats)
-	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID)
+	// AbandonInFlightTurn finalizes a turn the prompt call could not finish.
+	// `reason` is the user-facing account of the failure, and it becomes the
+	// transcript's interrupted divider, so the caller renders its prose FIRST and
+	// hands the same string here that it broadcasts and returns.
+	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, reason string)
 	// LatchTurnModel records which model this turn was DISPATCHED under, before
 	// the prompt call can race a concurrent switch_model. First write wins, so
 	// the value is immutable for the turn's lifetime.
@@ -333,6 +345,12 @@ type Roles struct {
 	Teardown  ChatTeardown
 	Perms     PendingPermAccess
 	Terminals TerminalAccess
+	// Tabs is the open-tab set, and it is the one role that may be NIL: a build
+	// with no config dir has no store to persist an arrangement to. The
+	// coordinator answers the tab half of every operation with a 503 in that
+	// state rather than pretending it happened — the same shape internal/server
+	// uses for an unwired ui-state store.
+	Tabs TabSet
 	// Lifecycle is the process lifetime: the turn context and the in-flight
 	// counter a shutdown waits on.
 	Lifecycle   LifecycleAccess

@@ -19,9 +19,47 @@ const (
 	KeyDebugLogs            = "debug_logs"
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
-	KeyNotifyAgentFinished  = "notify_agent_finished"
-	KeyNotifyPRStatus       = "notify_pr_status"
-	KeySupervisedDefault    = "supervised_default"
+
+	// KeyLastEffort is the reasoning-effort level the user picked last, anywhere.
+	// The twin of KeyLastModel and used the same way: a NEW chat opens on it
+	// instead of on the current model's default tier.
+	//
+	// A seed, never a store. The chat record still owns the level (Chat.Effort),
+	// this value is only consulted when a chat has chosen nothing, and it is never
+	// written onto the record — a chat that follows the seed has to keep following
+	// it, and stamping today's value on would freeze that chat there forever. Two
+	// readers, and they have to agree or the pill lies about what the session
+	// runs: BridgeCoordinator.effortFor resolves StartOpts.Effort, and the client's
+	// effortVocabulary marks the tier.
+	//
+	// Not the old model_effort key returning. That one was a single global
+	// `{last_model, effort}` pair keyed by the LAST model, so two chats could not
+	// disagree and switching models discarded the previous model's choice. This is
+	// a bare level with per-chat storage intact, reconciled against the current
+	// model's own tier list at both readers, so a level the new model does not
+	// offer falls through to that model's default rather than being sent.
+	KeyLastEffort          = "last_effort"
+	KeyNotifyAgentFinished = "notify_agent_finished"
+	KeyNotifyPRStatus      = "notify_pr_status"
+	KeySupervisedDefault   = "supervised_default"
+
+	// KeySecurityProfile is the named security posture every session vibekit
+	// starts opens with: one of policyfile's profile ids, resolved into KAS policy
+	// preset ids and sent as _meta.kiro.policyPreset.
+	//
+	// GLOBAL rather than per chat, and that is a measured limit rather than a
+	// simplification. KAS offers no way to change a live session's policy — no
+	// set_config_option id and no client-callable setter — so a per-chat level
+	// could only take effect on the next session start, and the per-chat control
+	// was dropped for that reason (vibekit-acp.md has the enumeration). One
+	// instance is also one HOME, one user and one workspace root, so a global
+	// setting and a per-workspace one would address the same population anyway.
+	//
+	// An unset or unrecognised value resolves to policyfile.DefaultProfile with a
+	// logged reason rather than to Custom: Custom sends no presets, so a typo
+	// would silently remove the fs_read floor from an instance that never chose to
+	// and leave the agent asking permission to read a file.
+	KeySecurityProfile = "security_profile"
 
 	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved
 	// automatically instead of refused after the unattended budget.
@@ -32,6 +70,54 @@ const (
 	// has to be chosen explicitly. Turning it on is informed; inheriting it
 	// would not be.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
+
+	// KeyToolSearchEnabled and KeyKnowledgeEnabled are the two settings whose
+	// value has to reach the AGENT rather than only kiro-cli, and they are the
+	// reason a vibekit setting can now drive a kascap gate at all.
+	//
+	// Both used to be written through /api/kiro-settings as `toolSearch.enabled`
+	// and `chat.enableKnowledge`. Measured on the stock 2.19.2 KAS bundle, that
+	// endpoint cannot change a running chat: KAS's ACP path reads no kiro-cli
+	// setting anywhere (zero occurrences of cli.json, kiro-cli/settings,
+	// readSettingsFile and loadCliSettings; each chat.* literal appears exactly
+	// once, as a @see cross-reference in the settings schema). The keys that DO
+	// reach it are `toolSearch` and `knowledge` under _meta.kiro.settings, so the
+	// controls now write here and internal/agent resolves each at spawn time into
+	// StartOpts, kascap.Spawn and the wire.
+	//
+	// Resolved PER SPAWN rather than captured at construction, because a bridge
+	// factory runs per chat: reading the value once would pin every later chat to
+	// whatever was set when the server booted.
+	//
+	// KeyKnowledgeEnabled defaults TRUE and is therefore in Default(), unlike its
+	// sibling. An absent key must not read as off — the knowledge index, its REST
+	// surface and its UI all predate this switch, so a zero-value false would
+	// silently take the knowledge tool away from every existing install on the
+	// first boot after the upgrade.
+	KeyToolSearchEnabled = "tool_search_enabled"
+	KeyKnowledgeEnabled  = "knowledge_enabled"
+
+	// KeyTheme and KeyFBPath are the two fields that came here when
+	// internal/uistate was deleted: the whole-document arrangement it held is a
+	// modelled tab collection now (internal/tabs), and these two are the members
+	// that were never about tabs at all — a workspace preference and a workspace
+	// path, which is exactly what this file is.
+	//
+	// KeyTheme is "dark" | "light" | "system", and "system" is a real stored
+	// CHOICE rather than the absence of one: it means the user asked to follow the
+	// OS. An absent key is the absence, and it resolves to system at the client.
+	//
+	// The theme is ALSO cached in the browser's localStorage, and that is not a
+	// second source of truth: the inline pre-paint snippet in static/index.html
+	// has to pick a theme before any fetch can resolve, so the cache is a
+	// paint-time hint this value overwrites on every load. It is also the one
+	// value the uistate deletion carries across — see settings.ts.
+	//
+	// KeyFBPath is the file browser's last directory. Server-owned for the reason
+	// the arrangement is: it is where this WORKSPACE was being browsed, so a
+	// second device should open there too.
+	KeyTheme  = "theme"
+	KeyFBPath = "fb_path"
 )
 
 // There is deliberately no notify_permission key.
@@ -101,13 +187,26 @@ func DefaultAgentIgnoreFiles() []string {
 //
 // agent_ignore_files carries a real default (DefaultAgentIgnoreFiles) so the
 // agent read filter is ON out of the box and the GET-when-missing wire shape
-// advertises it. Preferences NOT listed here apply their default in-process
-// near their consumer (e.g. logctl.go's false for debug_logs) because the
+// advertises it. knowledge_enabled is here for the inverse reason: it defaults
+// TRUE, so a client that read an absent key as the zero value would render the
+// knowledge switch off while the feature was on. Preferences NOT listed here
+// apply their default in-process near their consumer (e.g. logctl.go's false for
+// debug_logs, and tool_search_enabled's false in internal/agent) because the
 // consumer owns the fail-mode policy; those need not ride this wire shape.
 func Default() map[string]any {
 	return map[string]any{
 		KeyAgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
 		KeyChatRetentionDays: DefaultChatRetentionDays,
+		KeyKnowledgeEnabled:  true,
+		// Both empty, and the empty string is a REAL value here rather than a
+		// placeholder: it is "nothing has been chosen". An empty theme resolves at
+		// the client to the OS preference, and an empty browser path lists the
+		// granted mounts. They are in this shape so a client reading the
+		// GET-when-missing response finds the keys it is about to write rather
+		// than inferring them, which is what the two localStorage fields they
+		// replaced never had to do.
+		KeyTheme:  "",
+		KeyFBPath: "",
 	}
 }
 
@@ -119,7 +218,7 @@ func Default() map[string]any {
 // `AppSettings` interface grows.
 //
 // Note: kiro-cli's own settings (cleanup.periodDays, chat.enable*,
-// etc.) live in a separate file ($KIRO_HOME/settings/settings.json) and
+// etc.) live in a separate file ($KIRO_HOME/settings/cli.json) and
 // are not part of this set.
 //
 // There is deliberately no model_effort key. Reasoning effort was one global
@@ -131,16 +230,29 @@ func Default() map[string]any {
 // settings already lived. Nothing reads or writes the old key; a config.json that
 // still carries it warns as an unknown key on the next write and is otherwise
 // inert.
+//
+// KeyLastEffort is not that key coming back. Per-chat storage is what a new chat
+// had no memory to open with, so the level was per-chat and NOTHING remembered
+// the last pick — the model had getLastModel and effort had no equivalent, so
+// every new chat silently reopened on the model default. KeyLastEffort restores
+// only the memory, as a bare level with a fallback rung at each reader; see its
+// own comment for why that avoids each of the three defects above.
 var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:     {},
 	KeyChatRetentionDays:    {},
 	KeyDebugLogs:            {},
+	KeyFBPath:               {},
+	KeyKnowledgeEnabled:     {},
+	KeyLastEffort:           {},
 	KeyLastModel:            {},
 	KeyNotificationsEnabled: {},
 	KeyNotifyAgentFinished:  {},
 	KeyNotifyPRStatus:       {},
 	KeySupervisedDefault:    {},
 	KeyScheduledAutoApprove: {},
+	KeySecurityProfile:      {},
+	KeyTheme:                {},
+	KeyToolSearchEnabled:    {},
 }
 
 // WarnUnknownKeys logs a warning for each top-level key in keys that
@@ -166,14 +278,20 @@ func WarnUnknownKeys(keys []string, source string) []string {
 
 // ServerManagedKeys are settings keys owned by flows other than a full-file
 // PUT of the settings object: agent_ignore_files, written by the
-// Settings→Permissions UI via PATCH. A PUT whose body omits it must not
-// silently wipe it, so handleSettingsWrite carries any omitted managed key over
-// from the existing file. Kept beside KnownKeys so the managed-key set stays in
-// the settings domain and references the same key constants (no drift).
+// Settings→Permissions UI via PATCH, plus theme and fb_path, which arrived here
+// when internal/uistate's whole-document arrangement was retired and are
+// likewise PATCH-only (the theme toggle and the file browser's navigation). A
+// PUT whose body omits one must not silently wipe it, so handleSettingsWrite
+// carries any omitted managed key over from the existing file. Kept beside
+// KnownKeys so the managed-key set stays in the settings domain and references
+// the same key constants (no drift).
 //
-// model_effort used to be the second member; effort is per-chat now (see the
-// note above KnownKeys), so no PATCH-only writer is left besides the ignore
-// list.
+// The theme is the member where a wipe would be VISIBLE — a reader would see the
+// wrong colour on the next load — which is the same reason it is the one value
+// the uistate deletion carries across at all.
+//
+// model_effort used to be a member; effort is per-chat now (see the note above
+// KnownKeys).
 func ServerManagedKeys() []string {
-	return []string{KeyAgentIgnoreFiles}
+	return []string{KeyAgentIgnoreFiles, KeyTheme, KeyFBPath}
 }

@@ -23,6 +23,11 @@ vi.mock("../store.js", () => ({
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
   setFrozen: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 vi.mock("../api-client.js", () => ({
@@ -31,6 +36,10 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
+  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
+  // modules reached through it import `apiGet`. Nothing here calls either.
+  apiGetTyped: vi.fn(),
 }));
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { checkoutBranch } from "./git-branch.js";

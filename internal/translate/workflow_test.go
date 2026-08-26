@@ -401,19 +401,19 @@ func TestWorkflowMeta_SubtaskID(t *testing.T) {
 		{
 			"nodePath is the key, because it is instance-unique",
 			&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "wait", NodePath: []string{"wf_1", "loop", "iter-0", "wait"}},
-			"wf:wf_1/loop/iter-0/wait",
+			"wf:wf_1:wf_1/loop/iter-0/wait",
 		},
 		{
 			// Two iterations of ONE step share a nodeId and must not share a
 			// block; nodePath is what separates them.
 			"a second iteration is a different key",
 			&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "wait", NodePath: []string{"wf_1", "loop", "iter-1", "wait"}},
-			"wf:wf_1/loop/iter-1/wait",
+			"wf:wf_1:wf_1/loop/iter-1/wait",
 		},
 		{
 			"falls back to workflow + node when nodePath is absent",
 			&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "build"},
-			"wf:wf_1/build",
+			"wf:wf_1:build",
 		},
 	}
 	for _, c := range cases {
@@ -471,8 +471,8 @@ func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 	if buf.Blocks[1].Text != "step says more" {
 		t.Errorf("block 1 text = %q, want the step's two chunks joined", buf.Blocks[1].Text)
 	}
-	if buf.Blocks[1].AgentSubtaskID != "wf:wf_1/build" {
-		t.Errorf("block 1 subtask = %q, want %q", buf.Blocks[1].AgentSubtaskID, "wf:wf_1/build")
+	if buf.Blocks[1].AgentSubtaskID != "wf:wf_1:wf_1/build" {
+		t.Errorf("block 1 subtask = %q, want %q", buf.Blocks[1].AgentSubtaskID, "wf:wf_1:wf_1/build")
 	}
 	// The attribution also travels on the wire, so a live renderer groups the
 	// step's deltas without waiting for the turn to persist.
@@ -481,7 +481,7 @@ func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 	if !ok {
 		t.Fatalf("last event payload %T, want MessageChunkPayload", last.Payload)
 	}
-	if p.AgentSubtaskID != "wf:wf_1/build" {
+	if p.AgentSubtaskID != "wf:wf_1:wf_1/build" {
 		t.Errorf("chunk payload subtask = %q, want the step's key", p.AgentSubtaskID)
 	}
 }
@@ -533,14 +533,15 @@ func (s *usageStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibeki
 // turns.
 func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 	t.Parallel()
-	infoFrame := func(wf bool) json.RawMessage {
+	// NO `workflow` block, deliberately: KAS's buildSessionInfoUpdate merges no
+	// promptMeta, so a step's turn_completion is byte-identical to the chat's own
+	// and the step fact can only arrive as ATTRIBUTION. The earlier version of
+	// this test set the block and so proved a mechanism the wire never triggers.
+	infoFrame := func() json.RawMessage {
 		kiro := map[string]any{
 			"kind":                "turn_completion",
 			"promptTurnSummaries": []map[string]any{{"unit": "credit", "usage": 0.25}},
 			"elapsedTime":         1234.0,
-		}
-		if wf {
-			kiro["workflow"] = map[string]any{"workflowId": "wf_1", "nodeId": "build"}
 		}
 		raw, err := json.Marshal(map[string]any{"_meta": map[string]any{"kiro": kiro}})
 		if err != nil {
@@ -564,7 +565,7 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 			deps := newBaseDeps()
 			deps.store = store
 			tr := New(rolesOf(deps))
-			tr.HandleSessionInfoUpdate(t.Context(), testChat, infoFrame(c.step), "")
+			tr.HandleSessionInfoUpdate(t.Context(), testChat, infoFrame(), FrameAttribution{Step: c.step})
 
 			if store.chat.Usage.Credits != 0.25 {
 				t.Errorf("credits = %v, want 0.25 (real spend is the user's either way)", store.chat.Usage.Credits)
@@ -590,7 +591,6 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 	raw, err := json.Marshal(map[string]any{"_meta": map[string]any{"kiro": map[string]any{
 		"kind":            "context_usage",
 		"usagePercentage": 42.0,
-		"workflow":        map[string]any{"workflowId": "wf_1", "nodeId": "build"},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -598,7 +598,7 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 	store := &usageStore{}
 	deps := newBaseDeps()
 	deps.store = store
-	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), testChat, raw, "")
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), testChat, raw, FrameAttribution{Step: true})
 	if store.mutateCalls != 0 {
 		t.Errorf("a step's context_usage reached the chat (%d mutations), want 0", store.mutateCalls)
 	}
@@ -686,12 +686,12 @@ func TestStepToolCall_SharesTheStepsBlockKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr.HandleToolCall(ctx, testChat, tool, "")
+	tr.HandleToolCall(ctx, testChat, tool, FrameAttribution{})
 
 	if len(buf.Blocks) != 2 {
 		t.Fatalf("got %d blocks, want 2 (text + tool_use): %+v", len(buf.Blocks), buf.Blocks)
 	}
-	want := "wf:wf_1/build"
+	want := "wf:wf_1:wf_1/build"
 	if buf.Blocks[0].AgentSubtaskID != want || buf.Blocks[1].AgentSubtaskID != want {
 		t.Errorf("block keys = %q / %q, want both %q (one step, one box)",
 			buf.Blocks[0].AgentSubtaskID, buf.Blocks[1].AgentSubtaskID, want)

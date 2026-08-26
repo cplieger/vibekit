@@ -13,6 +13,10 @@ vi.mock("../api-client.js", () => ({
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   apiGet: undefined,
+  // Reached through tabs.ts -> tabs-sync.ts, whose `GET /api/tabs` is the only
+  // read in the projection. Nothing under test lists tabs, so the name only has
+  // to exist for real-ESM linking.
+  apiGetTyped: undefined,
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
 }));

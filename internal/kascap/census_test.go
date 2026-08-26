@@ -66,9 +66,40 @@ var (
 	// unclaimed.txt.
 	settingEnabledRe = regexp.MustCompile(`isSettingEnabled\([^,()]*,\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\)`)
 
+	// featureEnabledRe is the FEATURE-FLAG gate, and it is the reader shape this
+	// census was blind to for its whole life.
+	//
+	// isFeatureEnabled(key) resolves through the model-config provider rather than
+	// straight off _meta.kiro.settings, which is why it does not look like a
+	// settings read. It is one: the bundle bridges the two with
+	// `isSettingEnabled(initSettings, feature)` and `isSettingEnabled(clientSettings,
+	// feature)` — a VARIABLE key, so those two sites are invisible to
+	// settingEnabledRe above — so a key consulted here can be supplied by the
+	// client exactly like a direct gate.
+	//
+	// Measured cost of the blindness on 2.19.2: 15 keys read only through this
+	// shape, of which 12 had never appeared in unclaimed.txt. One of them,
+	// memoryEnable, is a key the table WITHHOLDS on the strength of this very
+	// site, so the census was failing to see the evidence for a decision it
+	// already recorded.
+	featureEnabledRe = regexp.MustCompile(`isFeatureEnabled\(["']([A-Za-z_$][A-Za-z0-9_$]*)["']\)`)
+
 	// settingResolverRe is the resolver family, which reads the same block but
 	// applies a per-key default instead.
-	settingResolverRe = regexp.MustCompile(`parsed2\.data\.([A-Za-z_$][A-Za-z0-9_$]*)\?\.enabled`)
+	//
+	// The RECEIVER is a wildcard, and that is the second blind spot this census
+	// had. It was anchored on the literal local name `parsed2`, which covers the
+	// resolvers that take a parsed settings block as a parameter and misses every
+	// one that names its own — `sessionSettings.data.disableAutoCompaction?.enabled`
+	// and `initializeSettings.data.disableAutoCompaction?.enabled` are the measured
+	// case, a LIVE key with two readers that never once appeared in unclaimed.txt.
+	//
+	// The `?.enabled` suffix is what keeps the wildcard honest. A bare
+	// `<anything>.data.<key>` also matches an unrelated persisted-state parse (see
+	// settingDestructureRe below, which is why THAT one stays anchored), while
+	// requiring the member access after it leaves exactly the settings resolvers:
+	// measured on 2.19.2, 7 matches over 6 distinct keys and no noise.
+	settingResolverRe = regexp.MustCompile(`[A-Za-z_$][A-Za-z0-9_$]*\.data\.([A-Za-z_$][A-Za-z0-9_$]*)\?\.enabled`)
 
 	// settingDestructureRe is the resolver family's SECOND spelling. A resolver
 	// with a compound value (resolveSpecPlan, resolveSessionEviction) binds the
@@ -111,6 +142,26 @@ point this test at its new home rather than guessing from the local cache.`, ent
 // fixture. The two outcomes are deliberately different: an absent bundle is a
 // machine without the runtime (CI, a fresh clone), while a moved pin is a real
 // change to what vibekit talks to.
+//
+// A Renovate bump arrives BEFORE the version is deployed anywhere, so the pin
+// failure normally has to be answered against a bundle that is not on the volume
+// yet. Fetch and unpack one without touching the running install:
+//
+//	curl -fsSLO https://desktop-release.q.us-east-1.amazonaws.com/<version>/kirocli-x86_64-linux.zip
+//	unzip -q kirocli-x86_64-linux.zip
+//	env -u KIRO_KAS_SERVER_PATH -u KIRO_KAS_NODE_PATH HOME=<scratch> \
+//	  ./kirocli/bin/kiro-cli-chat acp --agent-engine v3 </dev/null
+//	HOME=<scratch> go test ./internal/kascap/ -run 'TestCapabilityCensus|TestAbsentTrueMatchesTheBundle' -update
+//
+// The `env -u` is the load-bearing part and the reason for this paragraph.
+// Inside vibekit and web-terminal-kiro the agent's OWN environment exports
+// KIRO_KAS_SERVER_PATH and KIRO_KAS_NODE_PATH, a spawned kiro-cli honours them
+// over its own embedded bundle, and every redirect this glob relies on (HOME,
+// XDG_DATA_HOME, even the uid) is then irrelevant. Measured on the 2.19.1 →
+// 2.19.2 bump: the new binary reported `kiro-cli 2.19.2`, served KAS 0.48.0 out
+// of 2.19.1's tree, unpacked nothing, and left this test skipping — which reads
+// as an unchanged capability surface rather than as a bundle that was never
+// read. With the two variables cleared the same binary unpacked KAS 0.52.1.
 func loadBundle(t *testing.T) string {
 	t.Helper()
 	active := activeKASVersion(t)
@@ -218,21 +269,25 @@ The bounded window below is only trustworthy while that binding is unique.`, ini
 }
 
 // readSettingKeys returns the _meta.kiro.settings keys the agent server reads
-// through the three STATIC shapes: the direct isSettingEnabled gate, a resolver
-// reading `?.enabled` inline, and a resolver that destructures first.
+// through the four STATIC shapes: the direct isSettingEnabled gate, the
+// isFeatureEnabled flag gate, a resolver reading `?.enabled` inline, and a
+// resolver that destructures first.
 //
-// It cannot see a DYNAMICALLY keyed read, and that limit is inherent rather than
-// a pattern to fix: `isSettingEnabled(initSettings, feature)` bridges the
-// initialize settings block onto the feature-flag provider with a variable key,
-// so which keys flow through it is decided by the caller, not by this file. Such
-// a key is only visible where it is finally consulted as a literal, which for
-// every current case is one of the three shapes below.
+// It cannot see a read whose key is a VARIABLE, and that limit is inherent
+// rather than a pattern to fix: `isSettingEnabled(initSettings, feature)` and
+// `isSettingEnabled(clientSettings, feature)` bridge the initialize settings
+// block onto the feature-flag provider with a variable key, so which keys flow
+// through them is decided by the caller. That bridge is exactly why
+// featureEnabledRe belongs here — a key consulted as a literal at the
+// isFeatureEnabled end is client-supplyable at the isSettingEnabled end, so
+// omitting the shape hid twelve reachable keys.
 func readSettingKeys(t *testing.T, src string) []string {
 	t.Helper()
 	direct := requireNonEmpty(t, "isSettingEnabled calls", keysIn(settingEnabledRe, src))
+	features := requireNonEmpty(t, "isFeatureEnabled calls", keysIn(featureEnabledRe, src))
 	resolved := requireNonEmpty(t, "settings resolvers", keysIn(settingResolverRe, src))
 	destructured := requireNonEmpty(t, "destructuring resolvers", keysIn(settingDestructureRe, src))
-	all := slices.Concat(direct, resolved, destructured)
+	all := slices.Concat(direct, features, resolved, destructured)
 	slices.Sort(all)
 	return slices.Compact(all)
 }

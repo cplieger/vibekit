@@ -28,32 +28,33 @@ import {
 } from "./store.js";
 import { loadList } from "./store-load.js";
 import { computed, effect } from "@cplieger/reactive";
-import { dispatch, onBus, BUS_TAB_CHANGED } from "./bus.js";
+import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { $, byId } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
-import { loadSettings, restoreAll, initUI, initPostAuthUI, setUserEmail } from "./settings.js";
+import {
+  adoptThemeFromSettings,
+  loadSettings,
+  restoreAll,
+  initUI,
+  initPostAuthUI,
+  setUserEmail,
+} from "./settings.js";
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
 import {
   setOnEmpty,
-  restoreTabState,
-  getSavedTabState,
-  restorableSingletonIDs,
-  reconcileRemoteTabs,
-  closeTab,
-  editorTabID,
-  isEditorTabID,
-  getActiveTabId,
+  activateRestoredTab,
   getActiveTabRoute,
-  activateTab,
   openTab,
+  setSettingsTab,
+  setGitTab,
   markBootDone,
-  TAB_VIEWS,
 } from "./tabs.js";
+import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import { chatSkeleton } from "./skeleton.js";
 import type { Route } from "./router.js";
@@ -61,11 +62,15 @@ import { refreshPickerIfVisible, setPickerModels, initModelPicker } from "./pick
 import { setStatus, refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
-import { initEditor, restoreEditorTabs } from "./editor-core.js";
-import { openFile } from "./editor-openers.js";
+import { initEditor } from "./editor-core.js";
+import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
+import { registerTabOpeners } from "./tab-materialize.js";
+import { showRun } from "./run-view.js";
+import { runChatID } from "./run-store.js";
+import { cancelRun } from "./actions/runs.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
-import { initFileBrowser, loadFileBrowser, restoreFileBrowser } from "./files.js";
+import { initFileBrowser, restoreFileBrowser } from "./files.js";
 import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
@@ -81,17 +86,18 @@ import {
   toggleFindForActiveTab,
   findAffordanceForActiveTab,
 } from "./find-dispatch.js";
-import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
+import { forceSettingsTab } from "./settings-tabs.js";
 import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
-import { loadGitRepos } from "./git.js";
-import { restoreLastModel } from "./session-context.js";
+import { restoreLastModel, restoreLastEffort } from "./session-context.js";
 import {
-  openChatTab,
   createSession,
   switchSession,
   sendPrompt,
   installStoreSubscribers,
+  activateChatView,
+  closeChatTab,
+  chatTabDot,
 } from "./chat.js";
 import { initModelSwitcher, applyLocalModel, setCatalogEfforts } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
@@ -106,12 +112,6 @@ import { initRuntimeHealth } from "./runtime-health.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
-import {
-  hydrate as hydrateUIState,
-  flush as flushUIState,
-  onRemoteChange as onUIStateRemoteChange,
-} from "./ui-state.js";
-import type { UIState } from "./ui-state.js";
 import { applyShareTarget } from "./share-target.js";
 
 import "./handlers/chat.js";
@@ -121,12 +121,13 @@ import "./handlers/system.js";
 import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
 import "./handlers/run.js";
+import { installRunDotSubscriber } from "./run-dots.js";
 import "./handlers/steer.js";
 import { initPushMessages } from "./handlers/push-message.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
-import { subscribeToActions, registerCleanup as registerActionCleanup } from "./actions/index.js";
+import { subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
 import { error as toastError } from "./toast.js";
 // Register the conflict SSE handler at startup so badges land
@@ -143,64 +144,58 @@ function dismissLoadingScreen(): void {
 // Init
 // ============================================================
 
-// The arrangement is server-owned, so a tab opened or closed on another device
-// has to appear or go here at once. This is the read side of that.
-//
-// It applies the SET and deliberately not the ORDER (user decision): a tab
-// showing up instantly is the point, while the strip rearranging itself under
-// the reader's cursor is visual noise. Order converges on the next load, which
-// reads the arrangement whole through `restoreTabState`.
-//
-// The id -> opener mapping is not duplicated here: singletons go back through
-// `restoreSingletonTabs`, editor tabs through `restoreEditorTabs`, chats through
-// `openChatTab`. Two exclusions, both deliberate:
-//
-//   - A RUN tab is not mirrored. An owned run tab CANCELS its run when closed,
-//     so mirroring one would put a live cancel button on a second screen and let
-//     either of them kill work the other launched.
-//   - A chat with no store row is skipped rather than guessed at. In practice
-//     the row is always there first — `chat_created` broadcasts the moment the
-//     server persists the chat, and the arrangement PUT behind it is debounced —
-//     so a missing row means the chat is genuinely unknown here, and a tab for it
-//     would be a ghost. It appears on the next load.
-function applyRemoteArrangement(ui: UIState): void {
-  const { toOpen, toClose } = reconcileRemoteTabs(ui.tab_order);
-  for (const id of toClose) {
-    // `remote: true` suppresses the DUPLICATE server teardown, never the local
-    // cleanup: the device that closed this tab already ran close_chat, and the
-    // bridge is down. See TabSpec.onClose.
-    closeTab(id, { remote: true });
-  }
-  if (toOpen.length === 0) {
-    return;
-  }
-  restoreSingletonTabs(toOpen);
-  const editorPaths = ui.editor_files.filter((p) => toOpen.includes(editorTabID(p)));
-  if (editorPaths.length > 0) {
-    restoreEditorTabs(editorPaths);
-  }
-  for (const id of toOpen) {
-    if (isEditorTabID(id) || id.startsWith("__") || id.startsWith("run:")) {
-      continue;
-    }
-    const s = get(id);
-    if (s !== undefined) {
-      openChatTab(id, s.name, { activate: false });
-    }
-  }
-}
-
-// A pending arrangement write must not die with the page: a tab close or a drag
-// commit debounces for 400ms, and a reload inside that window used to lose it.
-registerActionCleanup(() => {
-  flushUIState();
-});
-
 function init(): void {
   initActions();
 
+  // The tab factory's injected half. `materializeTab` turns a server-owned
+  // TabSubject into the local spec a row needs, and the three behaviours below
+  // live in modules that will themselves call it — so they are registered here
+  // rather than imported there, which is what keeps the factory out of a cycle.
+  // The five singleton kinds need nothing: the factory reaches their loaders
+  // through a lazy import.
+  registerTabOpeners({
+    chat: { show: activateChatView, close: closeChatTab, dot: chatTabDot },
+    editor: { show: activateFile, close: closeEditorFile },
+    run: {
+      // `parentless` is the run's own fact, not the tab strip's, so it comes from
+      // the run store's record of which chat launched this run — the same
+      // fallback openRunView already uses to find a parent. A subject cannot
+      // answer it: see tab-materialize.ts's header.
+      show: (workflowID, owns) => {
+        showRun(workflowID, owns, runChatID(workflowID) === "");
+      },
+      cancel: (workflowID) => {
+        void cancelRun.dispatch(workflowID, { silent: true });
+      },
+    },
+  });
+
   setOnEmpty(() => {
-    createSession();
+    // DETACHED deliberately: this is the empty-strip respawn, a notification slot
+    // that must not mutate the store it was called from, and nothing here reads
+    // the new chat's id — the create seeds its own row and opens its own tab.
+    void createSession();
+  });
+
+  // The tab projection's SYNC half, fed here rather than binding itself, so its
+  // three version rules can be exercised against a Set with no transport. Two
+  // inputs and that is all of them:
+  //
+  //   - every `tabs_changed` frame, queued and applied in ARRIVAL order. The
+  //     handler must not fan out: the version rules are only well-defined against
+  //     a sequential applier, so `ingestTabsChanged` takes the frame and returns.
+  //   - a transport GAP, which means frames were dropped, so the delta stream
+  //     cannot be trusted and the answer is the whole set. This is beside the
+  //     store reconcile in handlers/system.ts rather than inside it, because the
+  //     tab set is its own collection with its own recovery.
+  //
+  // The 409 on a refused reorder re-lists through the same call, from inside
+  // tabs.ts. Nothing else may read the collection.
+  onSSE("tabs_changed", (_chatID, p) => {
+    ingestTabsChanged(p);
+  });
+  onBus(BUS_TRANSPORT_GAP, () => {
+    void listTabs();
   });
 
   // Register SSE payload decoders before opening the transport.
@@ -224,6 +219,13 @@ function init(): void {
   );
 
   installStoreSubscribers();
+
+  // The activity dot for parentless workflow runs. After installStoreSubscribers
+  // for the same reason it is after it in the file: both write tab state, and this
+  // one paints a run tab that the boot restore may not have opened yet — an
+  // unopened tab has no spec to park a dot state on, so the effect's own sweep is
+  // what picks it up once it exists.
+  installRunDotSubscriber();
 
   // The out-of-page attention surfaces: the tab-title count, the installed app's
   // icon badge and the tab icon, all folded from the chat tabs' dots. Wired here,
@@ -344,7 +346,10 @@ function init(): void {
   initSidebarSwipe($.chatArea, $.sidebar);
   initKeyboardShortcuts({
     newChat: () => {
-      createSession();
+      // DETACHED: the keyboard shortcut is fire-and-forget, and closing the
+      // sidebar is independent of whether the chat lands. Awaiting would delay the
+      // sidebar close behind a round trip for no gain.
+      void createSession();
       $.sidebar.classList.remove("open");
     },
     toggleShell: () => {
@@ -420,13 +425,13 @@ function init(): void {
 async function checkAuthAndStart(): Promise<void> {
   const settings = await loadSettings();
   restoreLastModel(settings.last_model);
-
-  // The UI arrangement now lives on the server, so it has to be read before
-  // anything restores from it: restoreAll below and the tab restore further down
-  // both call uiState.load(), and an unhydrated document opens no tabs. Awaited
-  // rather than raced for that reason. It never throws — an unreachable endpoint
-  // leaves the arrangement empty, which opens nothing rather than the wrong thing.
-  await hydrateUIState();
+  restoreLastEffort(settings.last_effort);
+  // The theme, from the payload already in hand. The toggle was constructed
+  // during initUI against the pre-paint cache, so this is where the server's
+  // choice replaces that hint — and where the cache is carried across once if
+  // the server has none, which is the only value the retired arrangement
+  // document hands over (see settings.ts).
+  adoptThemeFromSettings(settings);
 
   suppressPush(true);
   try {
@@ -467,12 +472,11 @@ async function checkAuthAndStart(): Promise<void> {
   // first chat's session/new lands. Fire-and-forget; session-sourced
   // updates overwrite this the moment a bridge spawns.
   void fetchModelsFromREST();
-  // Read retention setting so tab-close knows whether to keep or delete, and so
-  // restoreSingletonTabs can tell whether History is reachable at all. Kept
-  // concurrent with loadList below and awaited at the restore instead of here:
-  // serialising it would add a round trip to every boot, while not awaiting it at
-  // all leaves the restore reading the default (enabled) whenever /api/settings
-  // is the slower of the two.
+  // Read the retention setting so a tab close knows whether the chat record is
+  // kept or deleted. Kept concurrent with the two boot reads below and awaited
+  // before the tab list is adopted: serialising it would add a round trip to
+  // every boot, while not awaiting it at all leaves a close reading the default
+  // (enabled) whenever /api/settings is the slower of them.
   const retentionReady = refreshRetention();
 
   const skel = chatSkeleton();
@@ -497,9 +501,9 @@ async function checkAuthAndStart(): Promise<void> {
     skel.remove();
     if (!ok || getSessions().length === 0) {
       if (!ok) {
-        // Surface the boot failure BEFORE falling back to the empty state,
-        // so the fresh "New conversation" reads as a fallback rather than
-        // silently impersonating the user's (unreachable) chats (B2).
+        // Surface the boot failure BEFORE falling back to the empty state, so the
+        // fresh "New conversation" reads as a fallback rather than silently
+        // impersonating the user's (unreachable) chats.
         toastError("Couldn't load your chats.", {
           label: "Reload",
           onClick: () => {
@@ -508,42 +512,30 @@ async function checkAuthAndStart(): Promise<void> {
         });
       }
       if (!shareWillCreate) {
-        createSession();
-      }
-    } else {
-      // Open the tabs the SERVER's arrangement names, not one per chat.
-      //
-      // That distinction is the whole point of moving the arrangement
-      // server-side. `close_chat` deliberately keeps the chat RECORD, so a chat
-      // the user closed is still in GET /api/chats — and while the boot loop
-      // opened a tab per chat, every closed chat came back on every refresh. The
-      // reader then closed it again, which cancels its turn, so the drift cost
-      // work rather than clutter.
-      //
-      // A chat id in the arrangement that the server no longer has (purged by
-      // retention) is dropped rather than opened as a ghost row; a first-ever
-      // visit has an empty arrangement, so it falls through to the same
-      // open-every-chat behaviour it always had.
-      const known = new Map(getSessions().map((s) => [s.id, s]));
-      const arranged = getSavedTabState().tab_order.filter((id) => known.has(id));
-      const chatsToOpen =
-        arranged.length > 0
-          ? arranged.map((id) => known.get(id)!) // eslint-disable-line @typescript-eslint/no-non-null-assertion
-          : getSessions();
-      // Open every chat tab WITHOUT activating (B8): activation runs
-      // activateChatView (messages fetch + conflicts prefetch) per chat,
-      // so activating all N at boot cost 2N requests for chats the user
-      // isn't looking at. Exactly one tab is activated below.
-      for (const s of chatsToOpen) {
-        openChatTab(s.id, s.name, { activate: false });
-      }
-      await retentionReady;
-      restoreSingletonTabs();
-      restoreTabState();
-      if (getActiveTabId() === "" && chatsToOpen.length > 0) {
-        activateTab(chatsToOpen[0]!.id); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+        // AWAITED: boot continues into applyInitialRoute() below, which resolves
+        // the URL against the strip. Detaching would let the route apply against
+        // an empty strip and then have a tab appear underneath it.
+        await createSession();
       }
     }
+    // THE TAB SET, read whole from the server. This is the entire boot restore:
+    // no per-kind reopen switch, no editor-file list, no singleton availability
+    // filter and no saved order to re-apply, because a tab the collection holds is
+    // open and the slice position IS the order. `listTabs` adopts the snapshot
+    // through the projection's `reset`, which materializes every row from its
+    // subject and points the strip at the tab this SCREEN was last on.
+    //
+    // It runs on EVERY path, chats or no chats: a chat list and a tab set are
+    // different collections, and only the first of them can be empty here without
+    // the second being meaningless.
+    //
+    // The FIRST boot after the cutover opens nothing, because tabs.json starts
+    // empty and nothing is migrated from the retired arrangement document. That is
+    // accepted rather than papered over — the app is alpha, and an arrangement is
+    // re-derivable by opening the tabs again.
+    await retentionReady;
+    await listTabs();
+    activateRestoredTab();
   } catch {
     transport.markHydrated();
     skel.remove();
@@ -554,23 +546,17 @@ async function checkAuthAndStart(): Promise<void> {
       },
     });
     if (!shareWillCreate) {
-      createSession();
+      // AWAITED for the same reason as the branch above: applyInitialRoute() runs
+      // after this block and reads the strip.
+      await createSession();
     }
   }
   suppressPush(false);
 
-  applyShareTarget();
+  await applyShareTarget();
   applyInitialRoute();
   // Boot restores are done — view swaps animate from here on (B3).
   markBootDone();
-  // Only NOW subscribe to remote arrangement changes. Wired earlier it would
-  // race the boot restore: the strip is assembled over several awaits (chats,
-  // then singletons, then the saved order), so a change arriving mid-assembly
-  // would compare a half-built strip against the server's and "reconcile" the
-  // difference by closing tabs boot was about to open.
-  onUIStateRemoteChange((ui) => {
-    applyRemoteArrangement(ui);
-  });
 }
 
 // One-time post-auth initialization: fetches gated behind a successful
@@ -592,135 +578,6 @@ function initPostAuth(): void {
   initPostAuthUI();
 }
 
-/** Reopen the singleton tabs (Settings / Source Control / Kiro docs / History /
- *  Files) that were open last session, without activating them, so
- *  restoreTabState() can restore their saved order and active state (B7). Chat
- *  tabs are reopened by the boot loop and editor tabs by restoreAll();
- *  singletons were previously never reopened, so `hasTab(saved.active_view)` was
- *  always false for them and their position in the saved order was silently
- *  dropped.
- *
- *  Each `onShow` must be a plain LOADER, never the module's toggle-style opener:
- *  a toggle fired from the onShow of an already-open, already-active tab closes
- *  the tab it was meant to fill. The docs and History cases reach theirs through
- *  a lazy import, because those two modules are lazy everywhere else and a static
- *  import here would pull them into the main bundle. */
-function restoreSingletonTabs(from?: readonly string[]): void {
-  // History is gated because its own entry point is: the toolbar button hides
-  // when retention is off (nothing is kept to list), so restoring the tab
-  // reopened a page the user could neither reach nor get back to.
-  //
-  // `from` defaults to the boot snapshot. The remote-arrangement reconciler
-  // passes its own id list instead, so the id -> opener mapping below lives in
-  // exactly one place and a singleton opened on another device gets the same
-  // spec here that a restore would have built.
-  const ids = restorableSingletonIDs(from ?? getSavedTabState().tab_order, {
-    __history__: isRetentionEnabled(),
-  });
-  for (const id of ids) {
-    switch (id) {
-      case "__settings__":
-        openTab(
-          {
-            id,
-            name: "Settings",
-            kind: "settings",
-            view: TAB_VIEWS.settings,
-            route: { kind: "settings", tab: "general" },
-            onShow: () => {
-              loadSettingsTabData("general");
-            },
-          },
-          { activate: false },
-        );
-        break;
-      case "__git__":
-        openTab(
-          {
-            id,
-            name: "Source Control",
-            kind: "git",
-            view: TAB_VIEWS.git,
-            route: { kind: "git", tab: "changes" },
-            onShow: loadGitRepos,
-          },
-          { activate: false },
-        );
-        break;
-      case "__docs__":
-        openTab(
-          {
-            id,
-            name: "Kiro docs",
-            kind: "docs",
-            view: TAB_VIEWS.docs,
-            route: { kind: "docs", tab: "steering" },
-            onShow: () => {
-              void import("./docs.js")
-                .then(({ loadDocsView }) => {
-                  loadDocsView("steering");
-                })
-                .catch(() => {
-                  /* noop */
-                });
-            },
-          },
-          { activate: false },
-        );
-        break;
-      case "__history__":
-        openTab(
-          {
-            id,
-            name: "History",
-            kind: "history",
-            view: TAB_VIEWS.history,
-            route: { kind: "history" },
-            onShow: () => {
-              void import("./history.js")
-                .then(({ loadHistoryView }) => {
-                  loadHistoryView();
-                })
-                .catch(() => {
-                  /* noop */
-                });
-            },
-            // Unlike the docs case, this one needs a close hook: the page holds a
-            // dispatch, an AbortController and a debounce timer, and the toggle
-            // path tears them down through its own onClose.
-            onClose: () => {
-              void import("./history.js")
-                .then(({ teardownHistoryView }) => {
-                  teardownHistoryView();
-                })
-                .catch(() => {
-                  /* noop */
-                });
-            },
-          },
-          { activate: false },
-        );
-        break;
-      case "__files__":
-        // restoreAll() already restored the browser path from ui-state.
-        openTab(
-          {
-            id,
-            name: "Files",
-            kind: "files",
-            view: TAB_VIEWS.files,
-            route: { kind: "files", path: "." },
-            onShow: loadFileBrowser,
-          },
-          { activate: false },
-        );
-        break;
-      default:
-        break;
-    }
-  }
-}
-
 function onLoginSuccess(): void {
   hideLoginModal();
   dismissLoadingScreen();
@@ -735,7 +592,11 @@ function onLoginSuccess(): void {
   // updates overwrite this the moment a bridge spawns.
   void fetchModelsFromREST();
   if (getSessions().length === 0) {
-    createSession();
+    // DETACHED: this is the post-login starter chat, and nothing below reads it.
+    // `markBootDone()` must not wait on a round trip — it only flips the flag that
+    // lets view swaps animate, and delaying it would make the first post-login
+    // paint depend on the create's latency.
+    void createSession();
   }
   // The unauthenticated boot path returns before applyInitialRoute(), so
   // flip the boot flag here too — view swaps animate from first login on.
@@ -845,7 +706,10 @@ function setupInput(): void {
   initPromptInput(
     (text: string) => {
       if (getActiveId() === "") {
-        createSession(text);
+        // DETACHED, and the prompt rides INSIDE the create rather than after it:
+        // `createSession(text)` sends once the chat exists, so nothing here needs
+        // the id. Awaiting would only delay this callback's return.
+        void createSession(text);
       } else {
         sendPrompt(text);
       }
@@ -863,7 +727,11 @@ function setupInput(): void {
   );
 
   const doCreate = guardAction(() => {
-    createSession();
+    // DETACHED: the New chat button's only follow-up is closing the sidebar, which
+    // does not depend on the chat. `guardAction` already suppresses a double click
+    // while the handler runs; the create's own retry idempotency (its op id) is what
+    // covers a repeat past that.
+    void createSession();
     $.sidebar.classList.remove("open");
   });
   $.newChatBtn.addEventListener("click", doCreate);
@@ -917,47 +785,36 @@ function applyRoute(route: Route): void {
         replaceRoute({ kind: "chat", id: getActiveId() });
       }
       break;
+    // The three singleton routes each open their tab and then CORRECT its
+    // sub-tab, and the correction is not a convenience: a singleton's `ref` is
+    // empty, so a subject cannot carry a sub-tab and the factory has to build the
+    // canonical one. `setSettingsTab` / `setGitTab` are that channel and they stay
+    // synchronous, because the panel swap is local state the router owns.
+    //
+    // None of them passes an onShow any more. The factory reaches each page's own
+    // loader through a lazy import, so /settings reached from a deep link, from
+    // the gear and from another device's open all load the same way — a
+    // divergence that was real: three of the Settings doors passed no loader at
+    // all.
     case "settings":
       forceSettingsTab(route.tab);
-      openTab({
-        id: "__settings__",
-        name: "Settings",
-        kind: "settings",
-        view: TAB_VIEWS.settings,
-        route: { kind: "settings", tab: route.tab },
-        // First-activation panel data (tools list, instructions lists,
-        // native policy) — idempotent, shared with the pill-click path
-        // in settings-tabs.ts (B9).
-        onShow: () => {
-          loadSettingsTabData(route.tab);
-          // A `?highlight=` on this URL fires after the panel's loader, so the
-          // control it names exists by the time we look for it. One-shot, so a
-          // later popstate back here does not re-flash it.
-          flushURLHighlight();
-        },
+      void openTab({ kind: "settings" }).then(() => {
+        setSettingsTab(route.tab);
+        // A `?highlight=` on this URL fires after the panel's loader, so the
+        // control it names exists by the time we look for it. One-shot, so a
+        // later popstate back here does not re-flash it.
+        flushURLHighlight();
       });
       break;
     case "git":
       forceGitTab(route.tab);
-      openTab({
-        id: "__git__",
-        name: "Source Control",
-        kind: "git",
-        view: TAB_VIEWS.git,
-        route: { kind: "git", tab: route.tab },
-        onShow: loadGitRepos,
+      void openTab({ kind: "git" }).then(() => {
+        setGitTab(route.tab);
       });
       break;
     case "files":
       restoreFileBrowser(route.path);
-      openTab({
-        id: "__files__",
-        name: "Files",
-        kind: "files",
-        view: TAB_VIEWS.files,
-        route: { kind: "files", path: route.path },
-        onShow: loadFileBrowser,
-      });
+      void openTab({ kind: "files" });
       break;
     case "file":
       openFile(route.path, route.line);
@@ -984,7 +841,10 @@ function applyRoute(route: Route): void {
       void import("./run-view.js")
         .then(({ openRunView }) => {
           // Deep link: the run's name is not in the URL, so the tab is titled
-          // by id until the fetch supplies the real name.
+          // by id until the fetch supplies the real name. It still nests under the
+          // launching chat when this client knows which one it was — openRunView
+          // consults the run store for that, so a shared link lands beside the
+          // conversation rather than at the end of the strip.
           openRunView(route.id, route.id);
         })
         .catch(() => {
@@ -1006,17 +866,20 @@ function applyInitialRoute(): void {
     return;
   }
   // Default "/" route. Canonicalize the URL to what's actually visible:
-  //   - active chat WITH server-persisted messages → /chat/{id};
-  //   - active chat with zero messages → stay on "/" (B4): the id is a
-  //     client-side ghost the server doesn't know about — reloading
-  //     /chat/{ghost} can't resolve it and would mint a fresh ghost id on
-  //     every load. handlers/chat.ts flips the URL to the real id once the
-  //     server echoes chat_created for it.
+  //   - active chat → /chat/{id}, whether or not it has messages yet;
   //   - restored non-chat tab (Settings, git, …) → its route, so the
   //     restored view and the URL agree (their boot-time pushRoute was
   //     suppressed).
+  //
+  // The `message_count > 0` condition this used to carry was the ghost window in
+  // all but name: a zero-message chat's id was minted in this tab's memory, so
+  // /chat/{id} could not be resolved on reload and would mint a fresh id every
+  // load — hence staying on "/" and letting handlers/chat.ts flip the URL once
+  // the server acknowledged the chat. The id is the server's from the moment the
+  // chat exists now, so a brand-new chat's URL resolves like any other and there
+  // is nothing to withhold.
   const active = getActive();
-  if (getActiveId() !== "" && active !== undefined && active.message_count > 0) {
+  if (getActiveId() !== "" && active !== undefined) {
     replaceRoute({ kind: "chat", id: getActiveId() });
     return;
   }

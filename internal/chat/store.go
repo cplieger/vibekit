@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -30,6 +31,14 @@ var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 
 // errDraftTooLarge is returned when a composer draft exceeds vibekit.MaxDraftBytes.
 var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
+
+// errTooManyAttachments and errBadAttachmentPath are the two ways a staged
+// attachment list is refused at the store: more entries than vibekit.MaxAttachments,
+// and a path that is empty, over vibekit.MaxAttachmentPathBytes or not UTF-8.
+var (
+	errTooManyAttachments = errors.New("chat: too many attachments")
+	errBadAttachmentPath  = errors.New("chat: attachment path is empty or too long")
+)
 
 // broadcaster is the SSE fan-out this store emits chat lifecycle and message
 // events through. *agent.Runtime satisfies it.
@@ -73,6 +82,7 @@ type Store struct {
 	listSF      singleflight.Group
 	onPurge     func(chatID vibekit.ChatID, sessionChain []string)
 	isLive      func(chatID vibekit.ChatID) bool
+	hasOpenTab  func(chatID vibekit.ChatID) bool
 	tombstone   map[vibekit.ChatID]time.Time
 	archive     *archive.Service
 	locks       sync.Map
@@ -157,6 +167,13 @@ func WithBroadcaster(b broadcaster) StoreOption {
 // archive.WithLiveChats.
 func WithLive(fn func(chatID vibekit.ChatID) bool) StoreOption {
 	return func(s *Store) { s.isLive = fn }
+}
+
+// WithOpenTab registers retention's second exemption: a chat with an open TAB is
+// never purged, however old. See archive.WithOpenTabs for what that costs (it
+// makes retention opt-out for a chat left open forever, which is accepted).
+func WithOpenTab(fn func(chatID vibekit.ChatID) bool) StoreOption {
+	return func(s *Store) { s.hasOpenTab = fn }
 }
 
 // WithOnPurge registers a callback fired after a retention purge removes a chat.
@@ -315,30 +332,93 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID vibekit.ChatID, c 
 // yet, and creating the file here would put a row in every client's sidebar for
 // a conversation nobody has started. The client keeps that draft locally until
 // the first prompt creates the record.
-func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string) error {
+//
+// The returned state is nil when nothing was written — no such chat, or the
+// stored draft already equalled text — and is the chat's WHOLE composer state
+// otherwise, so the caller can broadcast draft_changed without reading the file
+// a second time. Unspecified when err is non-nil.
+func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	// Defensive: the command boundary already answers 413 above this cap and 400
 	// on invalid UTF-8, but the store owns what reaches the file, and a draft
 	// that cannot round-trip through JSON would make the chat unloadable.
 	if len(text) > vibekit.MaxDraftBytes {
-		return errDraftTooLarge
+		return nil, errDraftTooLarge
 	}
 	if !utf8.ValidString(text) {
-		return errInvalidUTF8
+		return nil, errInvalidUTF8
 	}
+	return s.setComposer(chatID, "chat draft", func(c *vibekit.Chat) bool {
+		if c.Draft == text {
+			return false
+		}
+		c.Draft = text
+		return true
+	})
+}
+
+// SetAttachments persists the paths staged beside the chat's draft, replacing
+// whatever was there. The draft's twin in every respect that matters here: no
+// Mutate, so UpdatedAt is untouched, and no record means no-op rather than a
+// created chat. See SetDraft for both reasons.
+//
+// An empty or nil slice clears the row, which is what a send and an emptied pill
+// row both mean, so it is stored as nil rather than refused.
+func (s *Store) SetAttachments(ctx context.Context, chatID vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Defensive, for the reason SetDraft's caps are: the command boundary answers
+	// 413 above these bounds, and the store owns what reaches the file.
+	if len(paths) > vibekit.MaxAttachments {
+		return nil, errTooManyAttachments
+	}
+	for _, p := range paths {
+		if p == "" || len(p) > vibekit.MaxAttachmentPathBytes {
+			return nil, errBadAttachmentPath
+		}
+		if !utf8.ValidString(p) {
+			return nil, errInvalidUTF8
+		}
+	}
+	next := slices.Clone(paths)
+	if len(next) == 0 {
+		// nil rather than an empty slice: `omitempty` then keeps the field out of
+		// the chat file entirely, so a chat with nothing staged reads the way it
+		// did before this field existed.
+		next = nil
+	}
+	return s.setComposer(chatID, "chat attachments", func(c *vibekit.Chat) bool {
+		if slices.Equal(c.Attachments, next) {
+			return false
+		}
+		c.Attachments = next
+		return true
+	})
+}
+
+// setComposer is the shared body of the two composer writers: load under the
+// chat's own lock, apply, write only when something moved, and report the state
+// that landed.
+//
+// One body rather than two because the part that is easy to get wrong is
+// identical and is not the assignment — it is the id check, the no-change
+// shortcut and the deliberate absence of a Mutate. `what` names the caller in the
+// mismatch log, which is the one line where the two differ.
+func (s *Store) setComposer(chatID vibekit.ChatID, what string, apply func(*vibekit.Chat) bool) (*vibekit.ComposerState, error) {
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
 	c, err := s.load(chatID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
-	// Before the draft is touched, and before the no-change shortcut below: this
+	// Before the field is touched, and before the no-change shortcut below: this
 	// chat file claims to be a different chat, so nothing about it can be
 	// persisted under this id's lock. Mutate refuses the same disagreement when a
 	// mutator causes it; the file is the other way to reach it, and the loud
@@ -347,15 +427,18 @@ func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string
 	// happens to equal what is already stored is reported instead of returning
 	// nil through the shortcut, so the corruption surfaces on the first keystroke.
 	if c.ID != string(chatID) {
-		slog.Error("chat draft: chat file holds another chat's id",
+		slog.Error(what+": chat file holds another chat's id",
 			"chat_id", chatID, "stored_id", c.ID)
-		return errChatIDMismatch(chatID, c.ID)
+		return nil, errChatIDMismatch(chatID, c.ID)
 	}
-	if c.Draft == text {
-		return nil
+	if !apply(c) {
+		return nil, nil
 	}
-	c.Draft = text
-	return s.writeChat(chatID, c)
+	if err := s.writeChat(chatID, c); err != nil {
+		return nil, err
+	}
+	state := c.Composer()
+	return &state, nil
 }
 
 // DeleteFamily and PromoteRewind are GONE with the rewind-branch family. Both

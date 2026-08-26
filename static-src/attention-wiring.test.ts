@@ -25,27 +25,97 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
+// EVERY glyph, generated from the module rather than hand-listed: the projection's
+// graph reaches several more icon consumers now, and real-ESM linking needs each
+// name to be a real property — a Proxy answers a property read and still fails to
+// link. No case here asserts on a glyph.
 vi.mock("./icons.js", () => ({
+  ICON_EDIT: "",
+  ICON_EDIT_14: "",
   ICON_CLOSE: "",
-  ICON_TAB_CHAT: "",
-  ICON_TAB_PLAN: "",
-  ICON_TAB_SETTINGS: "",
-  ICON_TAB_GIT: "",
-  ICON_TAB_FILES: "",
-  ICON_TAB_RUN: "",
-  ICON_TAB_EDITOR: "",
-  ICON_TAB_HISTORY: "",
-  ICON_TAB_DOCS: "",
+  ICON_TRASH: "",
+  ICON_TRASH_14: "",
+  ICON_PLUS: "",
+  ICON_PLUS_16: "",
+  ICON_MINUS: "",
+  ICON_PIN: "",
+  ICON_PIN_FILLED: "",
+  ICON_COPY: "",
+  ICON_COPY_MD: "",
+  ICON_SOURCE: "",
+  ICON_LINK: "",
+  ICON_EXTERNAL: "",
+  ICON_DOWNLOAD: "",
+  ICON_REPO: "",
+  ICON_EXPORT: "",
+  ICON_DIFF: "",
+  ICON_CHECK: "",
+  ICON_X: "",
+  ICON_PLAY: "",
+  ICON_CHEVRON_DOWN: "",
+  ICON_CHEVRON_UP: "",
   ICON_SEND: "",
   ICON_SPINNER: "",
   ICON_HOURGLASS: "",
+  ICON_CANCEL: "",
+  ICON_MODEL: "",
+  ICON_MODEL_20: "",
   ICON_ALERT: "",
-  ICON_PIN_FILLED: "",
+  ICON_GIT_UP_ARROW: "",
+  ICON_GIT_DOWN_ARROW: "",
+  ICON_REFRESH: "",
+  ICON_FILTER: "",
+  ICON_REPO_EMPTY: "",
+  ICON_CLEAN: "",
+  ICON_PR_EMPTY: "",
+  ICON_GLOBE: "",
+  ICON_WARN_12: "",
+  ICON_SCALE_12: "",
+  ICON_SAVE_OK: "",
+  ICON_SAVE_FAIL: "",
+  ICON_TAB_CHAT: "",
+  ICON_TAB_PLAN: "",
+  ICON_TAB_SPEC: "",
+  ICON_TAB_AGENT: "",
+  ICON_SUBAGENT_INTROSPECT: "",
+  ICON_SUBAGENT_GATHERER: "",
+  ICON_SUBAGENT_TASK: "",
+  ICON_SUBAGENT_CREATOR: "",
+  ICON_REFUSAL: "",
+  ICON_TAB_QUICK_SPEC: "",
+  ICON_TAB_BUG: "",
+  ICON_TAB_AUTONOMOUS: "",
+  ICON_TAB_SETTINGS: "",
+  ICON_TAB_GIT: "",
+  ICON_TAB_EDITOR: "",
+  ICON_TAB_FILES: "",
+  ICON_TAB_HISTORY: "",
+  ICON_TAB_DOCS: "",
+  ICON_TAB_RUN: "",
 }));
-vi.mock("./ui-state.js", () => ({
-  save: vi.fn(),
-  load: vi.fn(() => ({ tab_order: [], pinned_tabs: [], active_view: "" })),
-}));
+// The tab set is SERVER-owned, so a row lands on the strip through a real round
+// trip against the fake collection rather than through a store mutator.
+vi.mock("./transport.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
+);
+vi.mock("./api-client.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((m) => ({ apiGetTyped: m.tabListRead() })),
+);
+vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
+vi.mock("./device-view.js", () => {
+  let active = "";
+  return {
+    activeView: vi.fn(() => active),
+    setActiveView: vi.fn((id: string) => {
+      active = id;
+    }),
+  };
+});
+// The two leaf stores the tab factory reads for a display NAME. Neither matters
+// here: what this suite reads off a row is its DOT.
+vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
+vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./tabs-drag.js", () => ({
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
@@ -86,13 +156,21 @@ import {
 import { setActive } from "./store.js";
 import {
   openTab,
+  openEditorView,
   closeTab,
   activateTab,
   setTabStatus,
   setTabDirty,
+  tabIdFor,
   _resetForTest,
 } from "./tabs.js";
-import type { TabSpec } from "./tabs.js";
+import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
+import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
+import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
+import { bindTabsSync, tabServer } from "./__test-helpers__/tabs-server.js";
+import type { TabDotStatus } from "./tab-view.js";
+
+bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -147,15 +225,40 @@ function hidePage(hidden: boolean): void {
   });
 }
 
-function chatTab(id: string, over: Partial<TabSpec> = {}): TabSpec {
-  return {
-    id,
-    name: id,
+/** The dot the tab FACTORY seeds a chat row with, per chat ref.
+ *
+ *  This is the boot-restore path's channel: a spec's `dotStatus` is derived from
+ *  current session state at materialization, so a restored chat holding a latch
+ *  never calls `setTabStatus`. Registered rather than passed at a door, because a
+ *  tab's behaviour cannot depend on who opened it. */
+const seededDots = new Map<string, TabDotStatus>();
+
+function registerOpeners(): void {
+  registerTabOpeners({
+    chat: {
+      show: vi.fn(),
+      close: vi.fn(),
+      dot: (chatID: string) => seededDots.get(chatID) ?? "",
+    },
+    editor: { show: vi.fn(), close: vi.fn() },
+    run: { show: vi.fn(), cancel: vi.fn() },
+  });
+}
+
+/** Open a chat tab and answer with its OPAQUE id: ids are server-minted, so a
+ *  case addresses a row through the projection's own lookup. */
+async function openChat(
+  ref: string,
+  opts: { activate?: boolean; parentRef?: string; owns?: boolean } = {},
+): Promise<string> {
+  await openTab({
     kind: "chat",
-    view: "#chat-view",
-    route: { kind: "chat", id },
-    ...over,
-  };
+    ref,
+    ...(opts.activate === undefined ? {} : { activate: opts.activate }),
+    ...(opts.parentRef === undefined ? {} : { parent: tabIdFor("chat", opts.parentRef) }),
+    ...(opts.owns === undefined ? {} : { owns: opts.owns }),
+  });
+  return tabIdFor("chat", ref);
 }
 
 /** MutationObserver delivers on a microtask; a transitionend is synchronous. */
@@ -474,6 +577,8 @@ describe("pageVisible", () => {
 describe("initAttention", () => {
   let dispose: (() => void) | null = null;
 
+  /** Place one row per TAB id. Opaque ids, so every case reads them back from the
+   *  projection rather than composing one. */
   function rows(entries: readonly { id: string; top: number; height: number }[]): void {
     const tabList = document.getElementById("tab-list");
     if (tabList === null) {
@@ -497,7 +602,18 @@ describe("initAttention", () => {
     return document.querySelector("link")?.getAttribute("href") ?? "";
   }
 
+  /** The acknowledgement map as an object, keyed by TAB id. */
+  function seen(): Record<string, string> {
+    return JSON.parse(localStorage.getItem(CUE_SEEN_KEY) ?? "{}") as Record<string, string>;
+  }
+
   beforeEach(() => {
+    tabServer.reset();
+    _resetTabsSyncForTest();
+    _resetTabOpenersForTest();
+    seededDots.clear();
+    registerOpeners();
+    resetActionFramework();
     _resetForTest();
     setActive("");
     hidePage(false);
@@ -523,6 +639,7 @@ describe("initAttention", () => {
   afterEach(() => {
     dispose?.();
     dispose = null;
+    _resetTabsSyncForTest();
   });
 
   it("starts silent, leaving the served title alone", () => {
@@ -530,106 +647,100 @@ describe("initAttention", () => {
     expect(iconVariant()).toBe("/favicon.svg");
   });
 
-  it("raises a cue on a background chat", () => {
-    openTab(chatTab("a"));
-    openTab(chatTab("b"), { activate: false });
-    setActive("a");
-    setTabStatus("b", "done");
+  it("raises a cue on a background chat", async () => {
+    await openChat("a");
+    const b = await openChat("b", { activate: false });
+    setTabStatus(b, "done");
     expect(count()).toBe(1);
     expect(iconVariant()).toBe("/favicon-done.svg");
   });
 
-  it("raises nothing for the chat the reader is watching", () => {
-    openTab(chatTab("a"));
-    setActive("a");
-    setTabStatus("a", "done");
+  // "Watching" is a fact about the TAB, not about the chat store's active id: every
+  // key in this wiring is a tab id, and a chat id is no longer one.
+  it("raises nothing for the tab the reader is watching", async () => {
+    const a = await openChat("a");
+    setTabStatus(a, "done");
     expect(count()).toBe(0);
   });
 
-  it("raises the active chat's cue while the page is hidden", () => {
-    openTab(chatTab("a"));
-    setActive("a");
+  it("raises the active tab's cue while the page is hidden", async () => {
+    const a = await openChat("a");
     hidePage(true);
-    setTabStatus("a", "failed");
+    setTabStatus(a, "failed");
     expect(count()).toBe(1);
     expect(iconVariant()).toBe("/favicon-alert.svg");
   });
 
-  it("counts each latched chat once and paints the most severe", () => {
-    for (const id of ["a", "b", "c"]) {
-      openTab(chatTab(id), { activate: false });
+  it("counts each latched chat once and paints the most severe", async () => {
+    const ids: string[] = [];
+    for (const ref of ["a", "b", "c"]) {
+      ids.push(await openChat(ref, { activate: false }));
     }
-    setTabStatus("a", "done");
-    setTabStatus("b", "failed");
-    setTabStatus("c", "input");
+    setTabStatus(ids[0] ?? "", "done");
+    setTabStatus(ids[1] ?? "", "failed");
+    setTabStatus(ids[2] ?? "", "input");
     expect(count()).toBe(3);
     expect(iconVariant()).toBe("/favicon-input.svg");
   });
 
-  it("raises a cue carried in on the SPEC, with no dot write at all", () => {
-    // The boot-restore path. `openChatTab` seeds `TabSpec.dotStatus` from current
-    // session state at insert time, so a restored chat holding a latch never calls
-    // `setTabStatus` — the tab-set signal is the only thing that can wake the fold
-    // for it. This is the leg a funnel hung off the dot alone would miss.
-    openTab(chatTab("a", { dotStatus: "failed" }), { activate: false });
+  it("raises a cue the SPEC carried in, with no dot write at all", async () => {
+    // The boot-restore path. The factory seeds a chat row's dot from current
+    // session state at materialization, so a restored chat holding a latch never
+    // calls `setTabStatus` — the tab-set signal is the only thing that can wake the
+    // fold for it. This is the leg a funnel hung off the dot alone would miss.
+    seededDots.set("a", "failed");
+    await openChat("a", { activate: false });
     expect(count()).toBe(1);
     expect(iconVariant()).toBe("/favicon-alert.svg");
   });
 
-  it("counts a sub-tab chat, which owns its own bridge and its own cue", () => {
-    // A tangent carries `parentId` and the default `owns`, so it is its own chat
+  it("counts a sub-tab chat, which owns its own bridge and its own cue", async () => {
+    // A tangent carries a parent and the default `owns`, so it is its own chat
     // rather than a view over its parent's. Excluding sub-tabs would silence it.
-    openTab(chatTab("parent"), { activate: false });
-    openTab(chatTab("tangent", { parentId: "parent" }), { activate: false });
-    setTabStatus("tangent", "done");
+    await openChat("parent", { activate: false });
+    const tangent = await openChat("tangent", { activate: false, parentRef: "parent" });
+    setTabStatus(tangent, "done");
     expect(count()).toBe(1);
   });
 
-  it("does NOT count a view tab watching work another chat owns", () => {
+  it("does NOT count a view tab watching work another chat owns", async () => {
     // `owns: false` makes a tab a window onto a chat rather than the chat, so
     // counting it would count one chat twice whenever its own tab is open too.
-    openTab(chatTab("a"), { activate: false });
-    openTab(chatTab("a-view", { owns: false, parentId: "a" }), { activate: false });
-    setTabStatus("a", "done");
-    setTabStatus("a-view", "done");
+    const a = await openChat("a", { activate: false });
+    const view = await openChat("a-view", { activate: false, parentRef: "a", owns: false });
+    setTabStatus(a, "done");
+    setTabStatus(view, "done");
     expect(count()).toBe(1);
   });
 
-  it("never counts an editor tab's unsaved mark", () => {
-    openTab({
-      id: "editor:/main.go",
-      name: "main.go",
-      kind: "editor",
-      view: "#editor-view",
-      route: { kind: "file", path: "/main.go" },
-    });
-    setTabDirty("editor:/main.go", true);
+  it("never counts an editor tab's unsaved mark", async () => {
+    await openEditorView("/main.go");
+    setTabDirty(tabIdFor("editor", "/main.go"), true);
     expect(count()).toBe(0);
   });
 
-  it("clears a chat's cue when the reader switches to it", () => {
-    openTab(chatTab("a"));
-    openTab(chatTab("b"), { activate: false });
-    setActive("a");
-    setTabStatus("b", "done");
+  it("clears a chat's cue when the reader switches to it", async () => {
+    await openChat("a");
+    const b = await openChat("b", { activate: false });
+    setTabStatus(b, "done");
     expect(count()).toBe(1);
 
-    activateTab("b");
+    activateTab(b);
     expect(count()).toBe(0);
   });
 
-  it("acknowledges only the IN-VIEW rows on becoming visible", () => {
-    openTab(chatTab("a"), { activate: false });
-    openTab(chatTab("b"), { activate: false });
-    setTabStatus("a", "done");
-    setTabStatus("b", "input");
+  it("acknowledges only the IN-VIEW rows on becoming visible", async () => {
+    const a = await openChat("a", { activate: false });
+    const b = await openChat("b", { activate: false });
+    setTabStatus(a, "done");
+    setTabStatus(b, "input");
     hidePage(true);
     expect(count()).toBe(2);
 
     // `b` is scrolled below the list's fold: it was never on screen.
     rows([
-      { id: "a", top: 110, height: 40 },
-      { id: "b", top: 900, height: 40 },
+      { id: a, top: 110, height: 40 },
+      { id: b, top: 900, height: 40 },
     ]);
     hidePage(false);
     document.dispatchEvent(new Event("visibilitychange"));
@@ -637,30 +748,30 @@ describe("initAttention", () => {
     expect(iconVariant()).toBe("/favicon-input.svg");
   });
 
-  it("acknowledges the rest once the reader scrolls to them", () => {
-    openTab(chatTab("a"), { activate: false });
-    openTab(chatTab("b"), { activate: false });
-    setTabStatus("a", "done");
-    setTabStatus("b", "input");
+  it("acknowledges the rest once the reader scrolls to them", async () => {
+    const a = await openChat("a", { activate: false });
+    const b = await openChat("b", { activate: false });
+    setTabStatus(a, "done");
+    setTabStatus(b, "input");
     rows([
-      { id: "a", top: 110, height: 40 },
-      { id: "b", top: 900, height: 40 },
+      { id: a, top: 110, height: 40 },
+      { id: b, top: 900, height: 40 },
     ]);
     document.dispatchEvent(new Event("visibilitychange"));
     expect(count()).toBe(1);
 
     rows([
-      { id: "a", top: -400, height: 40 },
-      { id: "b", top: 200, height: 40 },
+      { id: a, top: -400, height: 40 },
+      { id: b, top: 200, height: 40 },
     ]);
     document.dispatchEvent(new Event("visibilitychange"));
     expect(count()).toBe(0);
   });
 
-  it("acknowledges nothing while the page is hidden", () => {
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
-    rows([{ id: "a", top: 110, height: 40 }]);
+  it("acknowledges nothing while the page is hidden", async () => {
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
+    rows([{ id: a, top: 110, height: 40 }]);
     hidePage(true);
     document.dispatchEvent(new Event("visibilitychange"));
     expect(count()).toBe(1);
@@ -670,9 +781,9 @@ describe("initAttention", () => {
     // The drawer opening is a class toggle, which is not an event, so it is
     // OBSERVED — that covers the menu button and the edge-swipe path in
     // platform.ts by construction rather than by a call at each site.
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
-    rows([{ id: "a", top: 110, height: 40 }]);
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
+    rows([{ id: a, top: 110, height: 40 }]);
     expect(count()).toBe(1);
 
     const sidebar = document.getElementById("sidebar");
@@ -681,13 +792,13 @@ describe("initAttention", () => {
     expect(count()).toBe(0);
   });
 
-  it("acknowledges the in-view rows once the drawer has settled", () => {
+  it("acknowledges the in-view rows once the drawer has settled", async () => {
     // The mutation lands BEFORE the transform animates, so on a real phone the
     // drawer's box is still off-viewport at that instant and the geometric test
     // correctly declines. The settled event is what acknowledges then.
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
-    rows([{ id: "a", top: 110, height: 40 }]);
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
+    rows([{ id: a, top: 110, height: 40 }]);
     const sidebar = document.getElementById("sidebar");
     if (sidebar === null) {
       throw new Error("no sidebar");
@@ -701,91 +812,95 @@ describe("initAttention", () => {
     expect(count()).toBe(0);
   });
 
-  it("ignores a transition finishing on a tab row rather than the sidebar", () => {
+  it("ignores a transition finishing on a tab row rather than the sidebar", async () => {
     // transitionend bubbles, and every row animates its own background on hover.
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
-    rows([{ id: "a", top: 110, height: 40 }]);
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
+    rows([{ id: a, top: 110, height: 40 }]);
     const row = document.querySelector("[data-tab-id]");
     row?.dispatchEvent(new Event("transitionend", { bubbles: true }));
     expect(count()).toBe(1);
   });
 
   it("keeps a scrolled-out row's cue when the drawer opens", async () => {
-    openTab(chatTab("a"), { activate: false });
-    openTab(chatTab("b"), { activate: false });
-    setTabStatus("a", "done");
-    setTabStatus("b", "input");
+    const a = await openChat("a", { activate: false });
+    const b = await openChat("b", { activate: false });
+    setTabStatus(a, "done");
+    setTabStatus(b, "input");
     rows([
-      { id: "a", top: 110, height: 40 },
-      { id: "b", top: 900, height: 40 },
+      { id: a, top: 110, height: 40 },
+      { id: b, top: 900, height: 40 },
     ]);
     document.getElementById("sidebar")?.classList.add("open");
     await settle();
     expect(count()).toBe(1);
   });
 
-  it("un-acknowledges a chat whose status moves off the cue", () => {
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
-    rows([{ id: "a", top: 110, height: 40 }]);
+  it("un-acknowledges a chat whose status moves off the cue", async () => {
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
+    rows([{ id: a, top: 110, height: 40 }]);
     document.dispatchEvent(new Event("visibilitychange"));
     expect(count()).toBe(0);
 
     // A new turn starts, then finishes: the next cue is fresh news.
-    setTabStatus("a", "working");
+    setTabStatus(a, "working");
     expect(count()).toBe(0);
-    setTabStatus("a", "done");
+    setTabStatus(a, "done");
     expect(count()).toBe(1);
   });
 
-  it("re-raises immediately when the cue changes to a different cue", () => {
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
-    rows([{ id: "a", top: 110, height: 40 }]);
+  it("re-raises immediately when the cue changes to a different cue", async () => {
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
+    rows([{ id: a, top: 110, height: 40 }]);
     document.dispatchEvent(new Event("visibilitychange"));
     expect(count()).toBe(0);
 
-    setTabStatus("a", "failed");
+    setTabStatus(a, "failed");
     expect(count()).toBe(1);
     expect(iconVariant()).toBe("/favicon-alert.svg");
   });
 
-  it("reaches zero when the last latched chat closes", () => {
+  it("reaches zero when the last latched chat closes", async () => {
     // The funnel's other leg. `setTabStatus` does not `emit()`, so a recompute
     // hung off the dot alone would leave this count claiming a chat that is gone.
-    openTab(chatTab("a"), { activate: false });
-    openTab(chatTab("b"), { activate: false });
-    setTabStatus("a", "done");
-    setTabStatus("b", "input");
+    const a = await openChat("a", { activate: false });
+    const b = await openChat("b", { activate: false });
+    setTabStatus(a, "done");
+    setTabStatus(b, "input");
     expect(count()).toBe(2);
 
-    closeTab("a");
+    await closeTab(a);
     expect(count()).toBe(1);
-    closeTab("b");
+    await closeTab(b);
     expect(count()).toBe(0);
     expect(iconVariant()).toBe("/favicon.svg");
   });
 
-  it("drops a closed chat's acknowledgement from storage", () => {
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
-    rows([{ id: "a", top: 110, height: 40 }]);
+  it("drops a closed chat's acknowledgement from storage", async () => {
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
+    rows([{ id: a, top: 110, height: 40 }]);
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(localStorage.getItem(CUE_SEEN_KEY)).toBe('{"a":"done"}');
+    expect(seen()).toEqual({ [a]: "done" });
 
-    closeTab("a");
-    expect(localStorage.getItem(CUE_SEEN_KEY)).toBe("{}");
+    await closeTab(a);
+    expect(seen()).toEqual({});
   });
 
-  it("persists an acknowledgement so a reconnect cannot re-raise it", () => {
+  it("persists an acknowledgement so a reconnect cannot re-raise it", async () => {
     // The latches behind every cue are rebuilt from server state — the connect
     // replay re-delivers turn_state per busy chat and re-pushes every unanswered
     // decision — so without persistence a dismissed count came back on a phone
     // simply returning to a backgrounded page.
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "input");
-    rows([{ id: "a", top: 110, height: 40 }]);
+    //
+    // The KEY is the tab id, which survives a reload because ids are server-minted
+    // and persisted with the collection: the same subject comes back under the same
+    // id, which is what makes the acknowledgement addressable at all.
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "input");
+    rows([{ id: a, top: 110, height: 40 }]);
     document.dispatchEvent(new Event("visibilitychange"));
     expect(count()).toBe(0);
 
@@ -793,27 +908,29 @@ describe("initAttention", () => {
     _resetForTest();
     document.title = "Vibekit for Kiro";
     dispose = initAttention();
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "input");
+    // The collection is re-adopted through a real `GET /api/tabs`, which is what a
+    // reload does — so the row comes back under the id the acknowledgement names.
+    await tabServer.seed();
+    setTabStatus(a, "input");
     expect(count()).toBe(0);
   });
 
-  it("stops touching the surfaces once disposed", () => {
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
+  it("stops touching the surfaces once disposed", async () => {
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
     expect(count()).toBe(1);
     dispose?.();
     dispose = null;
-    setTabStatus("a", "failed");
+    setTabStatus(a, "failed");
     expect(iconVariant()).toBe("/favicon-done.svg");
   });
 
-  it("hands the page's own icon back when the page goes away with a cue lit", () => {
+  it("hands the page's own icon back when the page goes away with a cue lit", async () => {
     // A browser remembers one icon per URL and shows it for the bookmark, the
     // history row and the new-tab tile. A tab closed on a lit cue would leave a
     // status variant standing in for this app until the next page load.
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
     expect(iconVariant()).toBe("/favicon-done.svg");
 
     window.dispatchEvent(new Event("pagehide"));
@@ -822,12 +939,12 @@ describe("initAttention", () => {
     expect(document.title).toBe("Vibekit for Kiro");
   });
 
-  it("KEEPS the cue when the browser merely freezes a background tab", () => {
+  it("KEEPS the cue when the browser merely freezes a background tab", async () => {
     // The case the restore must not reach. A frozen tab is still in the strip
     // rendering its icon, so `freeze` is not a proxy for the page going away and
     // restoring there would blank the cue in exactly the case it exists for.
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "input");
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "input");
 
     document.dispatchEvent(new Event("freeze"));
 
@@ -835,11 +952,11 @@ describe("initAttention", () => {
     expect(count()).toBe(1);
   });
 
-  it("repaints the cue when the page comes back from the bfcache", () => {
+  it("repaints the cue when the page comes back from the bfcache", async () => {
     // pagehide fires on bfcache entry too, and that page can return. The sinks
     // are change-gated, so the fold has to be re-run rather than trusted.
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "failed");
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "failed");
     window.dispatchEvent(new Event("pagehide"));
     expect(iconVariant()).toBe("/favicon.svg");
 
@@ -851,9 +968,9 @@ describe("initAttention", () => {
     expect(count()).toBe(1);
   });
 
-  it("stops restoring once disposed", () => {
-    openTab(chatTab("a"), { activate: false });
-    setTabStatus("a", "done");
+  it("stops restoring once disposed", async () => {
+    const a = await openChat("a", { activate: false });
+    setTabStatus(a, "done");
     dispose?.();
     dispose = null;
     window.dispatchEvent(new Event("pagehide"));

@@ -26,6 +26,12 @@ let active: { id: string; name: string; messages: Message[] } = {
 vi.mock("./store.js", () => ({
   getActive: () => active,
   getActiveId: () => active.id,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./actions/messages.js", () => ({
   copyClipboard: {

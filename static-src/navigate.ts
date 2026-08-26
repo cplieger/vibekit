@@ -34,7 +34,6 @@
 
 import { openFile, openFileGitDiff } from "./editor-openers.js";
 import { toggleGitView } from "./tabs.js";
-import { setGitTab } from "./git-tabs.js";
 import { isSafeURL } from "./url-safety.js";
 import { absPath } from "./workspace.js";
 
@@ -74,8 +73,7 @@ export function openChange(path: string, ref = "HEAD"): void {
  *  made them — and where they differ the turn's own ledger is the scoped list.
  *  Scoping the git view to a path set is a filter it does not have. */
 export function openChangeSet(): void {
-  setGitTab("changes");
-  toggleGitView("changes");
+  void toggleGitView("changes");
 }
 
 /** Open the editor at a line — a search hit, or a `path:line` reference.

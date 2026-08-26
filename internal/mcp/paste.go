@@ -89,6 +89,29 @@ var pasteServerIgnored = map[string]string{
 // boundary where the input is copied out of somebody else's README.
 var pasteOAuthKeys = []string{"clientId", "clientSecret"}
 
+// pasteOAuthIgnored is the nested oauth object's ignored set: a key KAS's schema
+// carries that vibekit recognises and cannot honour. Accepted with a note, like
+// pasteServerIgnored, rather than refused.
+//
+// clientMetadataUrl is kiro-cli 2.19.2's addition, and refusing it was the worse
+// half of not supporting it. The field points at a hosted client-metadata
+// document the authorization server reads, and one of the things that document
+// declares is the redirect URI — which vibekit cannot pin, because KAS owns the
+// loopback listener and binds it on the CONTAINER's localhost with no way to tell
+// the client which port it took. That is the same gap the OAuth paste-back relay
+// exists for. So the authorization server would reject the request whatever
+// document was published, and vibekit has no field to store the URL in.
+//
+// Being unsupported is not what made it worth fixing. Being REFUSED was: the
+// key reaches the raw-paste box straight out of a publisher's README, and
+// classifyKeys answered a hard 400 with a Levenshtein suggestion that could
+// never find a match, so a block a user copied correctly failed to install and
+// the message blamed a typo. Now it installs and the note says why the field is
+// dropped.
+var pasteOAuthIgnored = map[string]string{
+	"clientMetadataUrl": "vibekit cannot pin the loopback redirect port KAS binds, so the authorization server would reject the request",
+}
+
 // pasteTopKeys are the top-level keys of a pasted block. Only the wrapper is
 // consumed; a single-server object is detected by the wrapper's absence.
 var pasteTopKeys = []string{kasServerKey}
@@ -353,8 +376,10 @@ func sanitizeName(raw string) string {
 // classify; a non-object is named here rather than surfacing later as a decode
 // error about the whole server.
 //
-// There is no ignored set: both of KAS's oauth members are consumed, so any
-// other key really is a typo.
+// It has an ignored set, and it did not always: the comment here used to say
+// "both of KAS's oauth members are consumed, so any other key really is a typo",
+// which kiro-cli 2.19.2 made false by adding clientMetadataUrl. See
+// pasteOAuthIgnored for why that key is accepted rather than honoured.
 func classifyOAuthKeys(where string, raw json.RawMessage, req *importRequest) error {
 	if len(raw) == 0 {
 		return nil
@@ -363,7 +388,7 @@ func classifyOAuthKeys(where string, raw json.RawMessage, req *importRequest) er
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return fmt.Errorf(`%s"oauth" must be a JSON object: %w`, where, err)
 	}
-	return classifyKeys(where+"oauth: ", obj, pasteOAuthKeys, nil, req)
+	return classifyKeys(where+"oauth: ", obj, pasteOAuthKeys, pasteOAuthIgnored, req)
 }
 
 // classifyKeys splits an object's keys into the ones the translator consumes,

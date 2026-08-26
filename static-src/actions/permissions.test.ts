@@ -15,6 +15,11 @@ vi.mock("../toast.js", () =>
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
+  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
+  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
+  // modules reached through it import `apiGet`. Nothing here calls either.
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
 }));
 
 import { editNativeRule, explainPolicy } from "./permissions.js";

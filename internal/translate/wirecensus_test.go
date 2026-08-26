@@ -354,7 +354,7 @@ func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 		"_meta": map[string]any{"kiro": map[string]any{
 			"kind": "turn_end", "brandNewBlock": map[string]any{"x": 1},
 		}},
-	}), "")
+	}), FrameAttribution{})
 
 	out := logbuf.String()
 	if !strings.Contains(out, "UNKNOWN _meta.kiro field") {

@@ -31,7 +31,7 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 		steerFrame(t, "steering_queued", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
-		}), "")
+		}), FrameAttribution{})
 
 	if len(*events) != 1 {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
@@ -60,7 +60,7 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 			"messageId":            "notify-1",
 			"content":              "[notification/error] a step failed",
 			"notificationSeverity": "error",
-		}), "")
+		}), FrameAttribution{})
 
 	if len(*events) != 1 {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
@@ -87,7 +87,7 @@ func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 		steerFrame(t, "steering_injected", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
-		}), "")
+		}), FrameAttribution{})
 
 	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
 		t.Fatalf("events = %+v, want one steer_injected", *events)
@@ -106,7 +106,7 @@ func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
 			"messageIds": []string{"steer-1", "steer-2"},
-		}), "")
+		}), FrameAttribution{})
 
 	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerCleared {
 		t.Fatalf("events = %+v, want one steer_cleared", *events)
@@ -126,7 +126,7 @@ func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 func TestSteeringCleared_EmptyListIsNotBroadcast(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
-		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{}}), "")
+		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{}}), FrameAttribution{})
 
 	if len(*events) != 0 {
 		t.Errorf("broadcast %d events for an empty clear, want 0", len(*events))
@@ -142,7 +142,7 @@ func TestSteering_IDlessFramesAreDroppedNotForwarded(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			deps, events, _ := depsWithStore(t, "c1")
 			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
-				steerFrame(t, kind, map[string]any{"content": "orphan"}), "")
+				steerFrame(t, kind, map[string]any{"content": "orphan"}), FrameAttribution{})
 
 			if len(*events) != 0 {
 				t.Errorf("broadcast %d events for an id-less %s, want 0", len(*events), kind)
@@ -162,7 +162,7 @@ func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 		steerFrame(t, "steering_injected", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
-		}), "sub-session-7")
+		}), FrameAttribution{SubSessionID: "sub-session-7"})
 
 	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
 		t.Fatalf("events = %+v — a steer consumed inside a subagent must still be reported", *events)

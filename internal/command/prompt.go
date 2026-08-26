@@ -233,6 +233,11 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 		// Cleared HERE rather than only by the client's own set_draft: if that
 		// POST is lost, a reload would put the sent message back in the box.
 		c.Draft = ""
+		// Same argument for the files that went with it: the pill row emptied on
+		// send, so a lost set_attachments would otherwise bring three already-sent
+		// attachments back on the next open. They are recorded on the MESSAGE just
+		// above, which is where a sent turn reads them from.
+		c.Attachments = nil
 		if c.Name == vibekit.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(p.Text, 80)
 			if name != p.Text {
@@ -333,21 +338,25 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 	elapsed := time.Since(start)
 	if err != nil {
 		slog.Error("prompt failed", "chat_id", cmd.ChatID, keyError, err, "elapsed", elapsed)
+		// ONE rendering of the cause, on every surface that carries it. Handing the
+		// raw error to RespondErr instead meant RPCErrorText's fallback -- the
+		// machine triplet {"errorType":...,"retryErrorType":"THROTTLING",...} --
+		// overwrote the prose promptFailureReason exists to produce. The chain is
+		// already in the log line above; what travels to the user is the reason.
+		//
+		// Three surfaces take it, and they have three different lifetimes: this
+		// POST's error body and the SSE frame below both reach the toast (whichever
+		// arrives first wins, the other dedupes), and the transcript's interrupted
+		// divider keeps it for good. The divider is why the reason is computed HERE
+		// rather than after the finalize call -- AbandonInFlightTurn writes it.
+		reason := promptFailureReason(err)
 		// Finalize the turn before returning. Without this the assistant buffer
 		// survives with Started == true, so the NEXT prompt's ensureTurnStarted
 		// no-ops, emits no message_created, and extends this dead turn's blocks
 		// under this dead turn's message id: one persisted assistant message
 		// holding two turns' replies. The partial is persisted rather than
 		// dropped -- see AbandonInFlightTurn for why that direction.
-		roles.turnOutcome.AbandonInFlightTurn(ctx, cmd.ChatID)
-		// ONE rendering of the cause on both channels. The SSE frame and this
-		// POST's error body land on the same send-button tooltip and the client
-		// paints whichever arrives last, so handing the raw error to RespondErr
-		// meant RPCErrorText's fallback -- the machine triplet
-		// {"errorType":...,"retryErrorType":"THROTTLING",...} -- overwrote the
-		// prose promptFailureReason exists to produce. The chain is already in the
-		// log line above; what travels to the user is the reason.
-		reason := promptFailureReason(err)
+		roles.turnOutcome.AbandonInFlightTurn(ctx, cmd.ChatID, reason)
 		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
 			vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
 		return nil, StatusError(http.StatusInternalServerError, errors.New(reason))
@@ -611,6 +620,15 @@ func isValidationShaped(re *vibekit.RPCError) bool {
 // that. And a request id earns inclusion because it is the handle for an
 // upstream report, and it is in `data` where nothing surfaces it.
 func promptFailureReason(err error) string {
+	// A cancelled prompt context is not a backend failure and must not read like
+	// one. Two things reach here: the user pressed Cancel and KAS never answered
+	// the pending call, so cancelGrace killed the context; or the HTTP request
+	// went away. `rpcerr.Text` would render both as the literal "context
+	// canceled", which was tolerable while this string only reached a tooltip and
+	// is not now that it is persisted as the turn's own account of the stop.
+	if errors.Is(err, context.Canceled) {
+		return "The turn was cancelled before the agent answered."
+	}
 	re, ok := errors.AsType[*vibekit.RPCError](err)
 	if !ok {
 		return rpcerr.Text(err)

@@ -3,6 +3,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -63,6 +64,14 @@ const (
 // spelling is worth having in one place.
 const metaKeyKiro = "kiro"
 
+// The two per-session composer choices vibekit sends inside _meta.kiro on
+// session/new. KAS's own newSession reads them as `kiroMeta.modelId` and
+// `kiroMeta.effortLevel`; see Bridge.withSessionChoices for the probe.
+const (
+	metaKeyModelID     = "modelId"
+	metaKeyEffortLevel = "effortLevel"
+)
+
 // session/set_config_option param keys. Named because three call sites spell
 // them: the model, the reasoning effort and the supervised-mode autopilot.
 const (
@@ -93,6 +102,13 @@ type Bridge struct {
 	cmd          *exec.Cmd
 	modelID      vibekit.ModelID
 	sessionID    vibekit.SessionID
+	// effortLevel is the reasoning-effort tier the session last REPORTED running
+	// at, read off the `effortLevel` config option's currentValue. Observed rather
+	// than requested, which is what makes applyInitialEffort a repair instead of an
+	// unconditional round trip. Empty means unknown: KAS omits the option for a
+	// model with no tiers and omits it from every session/load result, and an
+	// unknown level must assert rather than assume a match.
+	effortLevel  string
 	workDir      string
 	cliPath      string
 	currentMode  string
@@ -117,10 +133,25 @@ type Bridge struct {
 	// initialize (StartOpts.SecretStorage). Immutable after Start, like
 	// enableHooks.
 	secretStorage bool
-	stopOnce      sync.Once
-	mu            sync.Mutex
-	writeMu       sync.Mutex
-	pendingMu     sync.Mutex
+	// presets are the KAS policy-preset ids this session opens with
+	// (StartOpts.Presets), from the active security profile. Immutable after
+	// Start, like the two above, and for a stronger reason than symmetry: KAS
+	// does not persist the ids, so session/new and session/load must send the
+	// SAME set or a resumed chat silently changes posture. Holding them on the
+	// bridge rather than reading a setting per call is what guarantees that.
+	presets []string
+	// toolSearch and knowledge gate the `_meta.kiro.settings.toolSearch` row and
+	// the two `knowledge` rows (StartOpts.ToolSearch / .Knowledge). Immutable
+	// after Start, for the same reason as presets: KAS resolves both at session
+	// creation and freezes them, so the connection door and the session door have
+	// to describe one spawn rather than each re-reading a setting that may have
+	// changed in between.
+	toolSearch bool
+	knowledge  bool
+	stopOnce   sync.Once
+	mu         sync.Mutex
+	writeMu    sync.Mutex
+	pendingMu  sync.Mutex
 }
 
 // Option configures a Bridge at construction time.
@@ -252,18 +283,77 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	}
 	b.mu.Lock()
 	b.modelID = vibekit.ModelID(modelID)
+	// A swap can reset the session's reasoning-effort level and the bridge cannot
+	// see that it did: KAS reconciles the level against the NEW model's tier list
+	// and replaces it with that model's default when the current one is absent
+	// (measured on 2.19.1 — a swap between two models offering the same five tiers
+	// KEEPS the level, and a swap to `auto`, which offers none, destroys it). So the
+	// cached level is no longer evidence, and clearing it is what makes the next
+	// EnsureEffort assert rather than skip on a stale match.
+	b.effortLevel = ""
 	b.mu.Unlock()
 	return nil
 }
 
-// spawn packages this bridge's per-spawn facts for the kascap table's gated
-// rows. SecretStorage decides the secretStorage key's VALUE (the key is present
-// either way), Hooks decides whether the hooks key is present AT ALL, and
-// UserMemoryOptIn decides BOTH for its own key — three mechanisms across three
-// fields, which is why one boolean would not do.
+// EnsureEffort makes the live session run at `level`, via
+// session/set_config_option (configId "effortLevel"). The twin of SetModel and
+// the one spelling of that call: the session doors, the model-switch re-assert and
+// the prompt-time repair all go through it.
 //
-// All three are immutable after Start, so this reads them without the mutex,
-// and it is one method rather than a literal at each call site because the
+// Differs-only against what the session last REPORTED, so a call that changes
+// nothing costs nothing. That is safe rather than optimistic because SetModel
+// CLEARS the cached level: a swap can reset it inside KAS and the bridge cannot
+// see that, so a post-swap call always asserts.
+//
+// An invalid level is dropped rather than sent, so a bad settings value cannot
+// turn into a failed config-option call on the session-creation path. KAS silently
+// ignores a level the CURRENT MODEL does not offer (it assigns only when its own
+// tier list contains the value, and answers success either way), which is why the
+// cache is written from the REPLY and never from the request.
+func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
+	if level == "" || !vibekit.EffortLevel(level).Valid() {
+		return nil
+	}
+	b.mu.Lock()
+	sessionID := b.sessionID
+	current := b.effortLevel
+	b.mu.Unlock()
+	if level == current {
+		return nil
+	}
+	resp, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
+		vibekit.KeySessionID: sessionID,
+		keyConfigID:          vibekit.ConfigOptionEffort,
+		keyConfigValue:       level,
+	})
+	if err != nil {
+		return err
+	}
+	// Record what the session now REPORTS, never what was asked for. Probed on
+	// 2.19.1: setting a level on a session sitting at the `auto` model returns ok
+	// with no effortLevel option in the reply at all, so storing the request would
+	// leave the bridge believing a tier it does not have and the next repair would
+	// skip.
+	var out struct {
+		ConfigOptions []sessionConfigOption `json:"configOptions"`
+	}
+	if resp != nil && len(resp.Result) > 0 && json.Unmarshal(resp.Result, &out) == nil {
+		b.mu.Lock()
+		b.applyEffortConfigOptionLocked(out.ConfigOptions)
+		b.mu.Unlock()
+	}
+	return nil
+}
+
+// spawn packages this bridge's per-spawn facts for the kascap table's gated
+// rows, and the FIVE fields exist because the table gates five different ways.
+// SecretStorage decides the secretStorage key's VALUE (the key is present either
+// way), Hooks decides whether the hooks key is present AT ALL, Presets decides
+// presence from emptiness, ToolSearch decides presence from a bool, and
+// Knowledge decides the value of TWO rows at once. One boolean would not do.
+//
+// All five are immutable after Start, so this reads them without the mutex, and
+// it is one method rather than a literal at each call site because the
 // connection door and the session door must describe the SAME spawn: a bridge
 // that declared a capability at initialize and then contradicted itself at
 // session/new would be a defect no test looks for.
@@ -271,6 +361,9 @@ func (b *Bridge) spawn() kascap.Spawn {
 	return kascap.Spawn{
 		SecretStorage: b.secretStorage,
 		Hooks:         b.enableHooks,
+		Presets:       b.presets,
+		ToolSearch:    b.toolSearch,
+		Knowledge:     b.knowledge,
 	}
 }
 
@@ -316,8 +409,18 @@ func (b *Bridge) initialize(ctx context.Context) error {
 				//
 				// readFile / writeFile are deliberately ABSENT. They are the
 				// same ladder one rung up, and claiming them would move reads
-				// and writes off fs/{read,write}_text_file — the rung that
-				// carries the supervised staging path.
+				// and writes off fs/{read,write}_text_file — the rung whose
+				// handlers vibekit implements, and whose guardrails are the
+				// only containment a KAS-side write meets: confineInWorkDir's
+				// ../symlink rejection, the fsWriteCap ceiling, permission-bit
+				// preservation, temp-then-rename atomicity, FIFO and
+				// device-node refusal, and internal/ignore on the read side.
+				//
+				// It is NOT the supervised staging path, which is what this
+				// comment used to say. Staging is gone: KAS gates a whole turn
+				// (autopilot: false) and restores a rejected action through an
+				// ordinary fs/write_text_file, which is exactly why
+				// respondFSWrite applies unconditionally.
 				"_meta": map[string]any{metaKeyKiro: map[string]any{
 					"stat":          true,
 					"readDirectory": true,

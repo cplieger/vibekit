@@ -30,8 +30,7 @@
 // no navigator and no icon assets. Everything below "The browser binding" is the
 // one place that touches globals.
 
-import { getActiveId } from "./store.js";
-import { cueCandidates, subscribeTabCues, setOnTabClosed } from "./tabs.js";
+import { cueCandidates, getActiveTabId, subscribeTabCues, setOnTabClosed } from "./tabs.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { $ } from "./dom.js";
 
@@ -398,8 +397,15 @@ export function createCueSeen(storage: CueSeenStorage): CueSeen {
 export interface AttentionWiring {
   /** The chat tabs and their current dot states. */
   candidates: () => readonly CueCandidate[];
-  /** The chat the reader is looking at, "" for none. */
-  activeChatID: () => string;
+  /** The TAB the reader is looking at, "" for none.
+   *
+   *  A tab id, like every other key here: `candidates` reports tab ids, the
+   *  rows-in-view scan reads `data-tab-id`, the switch acknowledgement reads the
+   *  bus event's `to`, and the forget hook reads a closed tab's id. It was wired
+   *  to the chat STORE's active id, which is a different string now that ids are
+   *  opaque and server-minted — so the watched-chat rule below could never match
+   *  and the chat on screen kept its cue. */
+  activeTabID: () => string;
   /** Whether the page is in front of the reader at all. */
   pageVisible: () => boolean;
   /** The chat ids whose sidebar row the reader can actually SEE right now. */
@@ -449,7 +455,7 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
    *  chat; it no longer does (the dot has to be able to turn green while you
    *  watch), so this pass carries all four. */
   function refresh(): void {
-    const watched = wiring.pageVisible() ? wiring.activeChatID() : "";
+    const watchedTab = wiring.pageVisible() ? wiring.activeTabID() : "";
     for (const candidate of wiring.candidates()) {
       if (candidate.status === "") {
         // NO INFORMATION, not a state. `TabSpec.dotStatus` is absent on a tab
@@ -467,7 +473,7 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
         // and the NEXT cue must be fresh. Also what keeps the map from holding an
         // entry per chat forever.
         seen.forget(candidate.id);
-      } else if (candidate.id === watched) {
+      } else if (candidate.id === watchedTab) {
         seen.mark(candidate.id, candidate.status);
       }
     }
@@ -496,16 +502,16 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
       refresh();
     },
 
-    ackSwitch(chatID: string): void {
+    ackSwitch(tabID: string): void {
       // Switching to a chat means looking at it. Gated on page visibility
       // because the boot restore activates a tab too, and a page restored into a
       // background browser tab must not have its cue swallowed by that.
       //
-      // Not covered by refresh's watched-chat rule: the tab store announces the
-      // switch from inside its own emit, BEFORE `store.setActive` runs, so
-      // `activeChatID()` still names the outgoing chat at this moment.
+      // Not covered by refresh's watched-tab rule: the tab store announces the
+      // switch from inside its own emit, so `activeTabID()` can still name the
+      // outgoing tab at this moment.
       if (wiring.pageVisible()) {
-        const candidate = wiring.candidates().find((c) => c.id === chatID);
+        const candidate = wiring.candidates().find((c) => c.id === tabID);
         if (candidate !== undefined) {
           seen.mark(candidate.id, candidate.status);
         }
@@ -513,8 +519,8 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
       refresh();
     },
 
-    forget(chatID: string): void {
-      seen.forget(chatID);
+    forget(tabID: string): void {
+      seen.forget(tabID);
       refresh();
     },
   };
@@ -610,7 +616,7 @@ function browserCueSeenStorage(): CueSeenStorage {
       try {
         localStorage.setItem(CUE_SEEN_KEY, raw);
       } catch {
-        // ignore quota / disabled storage, like ui-state.save
+        // ignore quota / disabled storage
       }
     },
   };
@@ -720,7 +726,7 @@ export function initAttention(): () => void {
   const surfaces = createAttention(browserAttentionEnv());
   const controller = createAttentionController({
     candidates: cueCandidates,
-    activeChatID: getActiveId,
+    activeTabID: getActiveTabId,
     pageVisible,
     rowsInView: () => rowsInView($.sidebar, $.tabList),
     storage: browserCueSeenStorage(),

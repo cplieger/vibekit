@@ -7,7 +7,7 @@ import {
   setTurnOpen,
   openForSearch,
   clearSearchOpened,
-  forgetChatFolds,
+  _resetFoldStateForTest,
 } from "./fold-state.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
@@ -22,7 +22,7 @@ function turns(n: number): Turn[] {
 
 beforeEach(() => {
   localStorage.clear();
-  forgetChatFolds("c1");
+  _resetFoldStateForTest();
 });
 
 describe("the automatic rule", () => {
@@ -72,6 +72,36 @@ describe("sticky failure", () => {
   });
 });
 
+// A workflow run is initiated in a turn and then outlives it: `run_workflow`
+// returns as soon as the run is CREATED, so the turn completes while the run
+// carries on for minutes. Its own outcome therefore says nothing about whether
+// there is still something to watch, and the tail rule would fold away the only
+// surface showing it.
+describe("a live workflow run keeps its turn open", () => {
+  it("holds an old completed turn open while its run is still going", () => {
+    const list = [turn("launched"), ...turns(10)];
+    expect(isTurnOpen("c1", list[0]!, 0, list.length, true)).toBe(true);
+  });
+
+  it("lets that same turn fold once the run is over", () => {
+    const list = [turn("launched"), ...turns(10)];
+    expect(isTurnOpen("c1", list[0]!, 0, list.length, false)).toBe(false);
+  });
+
+  it("defaults to false, so no caller is silently opted in", () => {
+    const list = [turn("launched"), ...turns(10)];
+    expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(false);
+  });
+
+  // Same precedence as the sticky failure above: the reader wins. A run they
+  // folded away stays folded rather than springing back open on the next paint.
+  it("lets the reader fold it anyway", () => {
+    const t = turn("launched");
+    setTurnOpen("c1", t.id, false);
+    expect(isTurnOpen("c1", t, 0, 10, true)).toBe(false);
+  });
+});
+
 describe("the reader's own choice", () => {
   it("opens an old turn and keeps it open", () => {
     const list = turns(6);
@@ -93,11 +123,25 @@ describe("the reader's own choice", () => {
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
   });
 
-  it("is dropped with the chat", () => {
+  // The overrides survive a fresh module read, which is what "persists" means
+  // for a reader who reloads. There is no per-chat forget any more: the store is
+  // bounded by chat count with oldest-first eviction, so nothing has to be told a
+  // chat is gone — a retention purge takes one with no client involved at all.
+  it("comes back from localStorage after the module is reset", () => {
     const list = turns(6);
     setTurnOpen("c1", list[0]!.id, true);
-    forgetChatFolds("c1");
-    expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(false);
+    _resetFoldStateForTest();
+    expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
+  });
+
+  it("keeps a chat's overrides out of another chat's storage", () => {
+    const list = turns(6);
+    setTurnOpen("c1", list[0]!.id, true);
+    setTurnOpen("c2", list[1]!.id, true);
+    _resetFoldStateForTest();
+    expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
+    expect(isTurnOpen("c2", list[1]!, 1, list.length)).toBe(true);
+    expect(isTurnOpen("c1", list[1]!, 1, list.length)).toBe(false);
   });
 });
 

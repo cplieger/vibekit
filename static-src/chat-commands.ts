@@ -7,9 +7,9 @@
 //   1. `store.setThinking(chatID, true)` before posting.
 //   2. 409 busy on prompts is reported as "queued"; deciding what to do with
 //      it (buffer, drain, restore) is prompt-queue.ts's job, not this leaf's.
-//   3. Other failures clear thinking so send-state settles on "error"
-//      (transport.ts already called setLastError). That state does NOT lock the
-//      composer — pressing Send again is the retry.
+//   3. Other failures clear thinking so send-state settles back to "idle"
+//      (transport.ts reports the failure through failure-notice.ts). Nothing
+//      locks the composer — pressing Send again is the retry.
 //   4. Success leaves thinking=true; SSE turn_ended / error will clear it.
 //
 // This module is a *leaf* from the dependency-graph standpoint: it imports

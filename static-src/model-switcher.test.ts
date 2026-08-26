@@ -19,10 +19,16 @@ import type { ModelInfo } from "./types.js";
 /** Catalog the module reads through picker.getCachedModels. */
 let cachedModels: ModelInfo[] = [];
 
-const { onExpand, effortDispatch } = vi.hoisted(() => ({
+const { onExpand, effortDispatch, setLastEffortSpy } = vi.hoisted(() => ({
   onExpand: { fn: null as null | (() => void) },
   effortDispatch: vi.fn(),
+  setLastEffortSpy: vi.fn(),
 }));
+
+/** The remembered last pick (`last_effort`) the module reads through
+ *  session-context. The mocked setter writes it, so one holder both drives the
+ *  seed and records that a click remembered the level. */
+let lastEffort = "";
 
 vi.mock("./pill-expand.js", () => ({
   makeExpandable: (_pill: HTMLElement, _content: HTMLElement, opts?: { onExpand?: () => void }) => {
@@ -75,7 +81,15 @@ vi.mock("./actions/index.js", () => ({
 vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
 vi.mock("./reconcile.js", () => ({ reconcile: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), setLastModel: vi.fn() }));
+vi.mock("./session-context.js", () => ({
+  setCurrentModel: vi.fn(),
+  setLastModel: vi.fn(),
+  getLastEffort: () => lastEffort,
+  setLastEffort: (level: string) => {
+    lastEffort = level;
+    setLastEffortSpy(level);
+  },
+}));
 vi.mock("./strings.js", () => ({ humanName: (s: string) => s }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 vi.mock("./icons.js", () => ({ ICON_MODEL: "" }));
@@ -133,6 +147,8 @@ describe("the effort section", () => {
     document.body.append(pill, card);
     cachedModels = [];
     onExpand.fn = null;
+    lastEffort = "";
+    setLastEffortSpy.mockClear();
     setCatalogEfforts([], "");
     initModelSwitcher();
   });
@@ -261,5 +277,134 @@ describe("the effort section", () => {
     openCard()[0]?.click();
 
     expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "low" });
+  });
+
+  it("does not mark a chosen level the current model does not offer", () => {
+    cachedModels = [model("sonnet-5", "medium")];
+    setSession({
+      id: "c1",
+      // Chosen on a model that had max; this one stops at high.
+      effort: "max",
+      model: "sonnet-5",
+      effort_active: "high",
+      effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+    });
+
+    // Marking max would claim the session runs at a tier it cannot reach. What it
+    // REPORTS is the honest answer, and the choice stays on the record for a model
+    // that offers it again.
+    expect(markedTier()).toBe("high");
+  });
+
+  it("still marks a chosen level the model does offer", () => {
+    cachedModels = [model("opus-5", "high")];
+    setSession({
+      id: "c1",
+      effort: "max",
+      model: "opus-5",
+      effort_active: "high",
+      effort_levels: fiveTiers(),
+    });
+
+    expect(markedTier()).toBe("max");
+  });
+
+  // --- The remembered last pick (`last_effort`) ---
+  //
+  // The level was per-chat with nothing remembering the last pick, so every NEW
+  // chat silently reopened at the current model's default tier however many times
+  // the user had chosen otherwise. Model had this memory (`last_model` rides into
+  // every new chat) and effort had no equivalent.
+
+  it("opens a new chat on the level the user last picked", () => {
+    lastEffort = "max";
+    setCatalogEfforts(fiveTiers(), "high");
+    cachedModels = [model("opus-5", "high")];
+    // A brand-new chat: no choice of its own and no session to report a level.
+    setSession({ id: "c1", model: "opus-5", effort: "" });
+
+    // Not "high". The model's default is the answer only when nobody has ever
+    // picked, and this user picked max.
+    expect(markedTier()).toBe("max");
+  });
+
+  it("ignores a remembered level the current model does not offer", () => {
+    lastEffort = "max";
+    cachedModels = [model("sonnet-5", "medium")];
+    setSession({
+      id: "c1",
+      model: "sonnet-5",
+      effort: "",
+      effort_levels: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+    });
+
+    // A tier list is per model, so a remembered max here is a level the service
+    // rejects; the model's own default is in its own list by construction.
+    expect(markedTier()).toBe("medium");
+  });
+
+  it("marks the level the session reports over the remembered pick", () => {
+    lastEffort = "low";
+    cachedModels = [model("opus-5", "high")];
+    setSession({
+      id: "c1",
+      model: "opus-5",
+      effort: "",
+      effort_active: "xhigh",
+      effort_levels: fiveTiers(),
+    });
+
+    // A live session reports what it is RUNNING at; the seed only answers for a
+    // chat that has no session yet.
+    expect(markedTier()).toBe("xhigh");
+  });
+
+  it("remembers a pick as the level the next new chat opens on", () => {
+    cachedModels = [model("opus-5", "high")];
+    setSession({ id: "c1", model: "opus-5", effort: "", effort_levels: fiveTiers() });
+
+    openCard()
+      .find((b) => b.dataset["level"] === "max")
+      ?.click();
+
+    expect(setLastEffortSpy).toHaveBeenCalledWith("max");
+  });
+
+  it("sends nothing when the pick is the level this chat already chose", () => {
+    cachedModels = [model("opus-5")];
+    setSession({
+      id: "c1",
+      model: "opus-5",
+      effort: "low",
+      effort_active: "low",
+      effort_levels: fiveTiers(),
+    });
+    effortDispatch.mockClear();
+
+    const low = openCard().find((b) => b.dataset["level"] === "low");
+    low?.click();
+    low?.click();
+    low?.click();
+
+    // A fast double or triple click sent one command each: measured on the live
+    // instance, one pick of max produced three identical set_effort commands 80ms
+    // apart.
+    expect(effortDispatch).not.toHaveBeenCalled();
+  });
+
+  it("still sends when the pick is the marked tier but not this chat's choice", () => {
+    cachedModels = [model("opus-5", "high")];
+    // Marked at the model's default, which means this chat has chosen NOTHING.
+    setSession({ id: "c1", model: "opus-5", effort: "", effort_levels: fiveTiers() });
+    effortDispatch.mockClear();
+    expect(markedTier()).toBe("high");
+
+    openCard()
+      .find((b) => b.dataset["level"] === "high")
+      ?.click();
+
+    // Clicking the marked tier to PIN it explicitly has to reach the server, or
+    // the chat keeps following the model default and a later model switch moves it.
+    expect(effortDispatch).toHaveBeenCalledWith({ chatID: "c1", level: "high" });
   });
 });

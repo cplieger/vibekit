@@ -73,9 +73,32 @@ type utilitySessionHooks struct {
 	// session receives on session/new (its notifications bypass the main
 	// dispatcher), so GET /api/governance is warm with no chat open.
 	onGovernanceState func(json.RawMessage)
+	// onPolicyNotification routes _kiro/policy/{changed,error} into the same
+	// translator the chat dispatch uses, so a permissions.yaml change reaches
+	// the client with NO chat open.
+	//
+	// Every ACP session gets its own PolicySession with its own file watcher and
+	// its own notificationSink (read off the KAS 2.19.1 bundle), so this session
+	// is told about a policy reload exactly like a chat bridge is — and because
+	// the utility session's notifications bypass the main dispatcher, dropping it
+	// here meant the ONE reader of that event, Settings -> Permissions, never
+	// heard about a write it had just made itself. Measured on the live instance:
+	// vibekit's write returns when the FILE is written, KAS's watcher rebuilds
+	// ~0.5s later, and with no chat bridge alive no permissions_changed frame
+	// ever followed — so the panel showed the pre-write policy until a reload.
+	onPolicyNotification func(*vibekit.RPCResponse)
 	// tokenSource answers the _kiro/auth/getAccessToken callback (the runtime's
 	// kiroAccessTokenResult). nil = not wired (older tests) → RPC error.
 	tokenSource func(context.Context) (map[string]any, error)
+	// presets resolves the active security profile into KAS policy preset ids for
+	// this session's StartOpts. A hook rather than a configDir field so the session
+	// stays ignorant of settings and policyfile, like the two callbacks above.
+	//
+	// It matters here and not only on chat bridges: this is the session answering
+	// GET /api/permissions, so a profile absent from it would leave the policy view
+	// unable to report the rules the profile actually grants. nil is a legitimate
+	// wiring (older tests) and means send none.
+	presets func(context.Context) []string
 }
 
 // utilitySession owns the dedicated kiro-cli subprocess + ACP session.
@@ -197,7 +220,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	// governance, knowledge, hooks — hung behind it with no error and no log
 	// line. Do not "tidy" this to a per-request ctx: the subprocess would then
 	// die with the request that happened to start it.
-	if err := bridge.Start(us.shutdownCtx, &vibekit.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &vibekit.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx)}); err != nil {
 		return err
 	}
 	us.bridge = bridge
@@ -334,7 +357,8 @@ type utilityChunkPayload struct {
 // runs v3 (KAS) like every chat bridge, so it must vend the host-mediated
 // auth token + shell type or session/new stalls. `executeHook` is NOT among
 // them (see answerHostRequest). A _kiro/hooks/didChange notification
-// fans out an hooks_changed SSE. All other notifications (usage stats, stale
+// fans out an hooks_changed SSE, and _kiro/policy/{changed,error} go to the
+// translator that owns them. All other notifications (usage stats, stale
 // chunks) are discarded. This prevents NotifCh from filling up between calls,
 // which would block readLoop and deadlock all pending Call waiters.
 //
@@ -357,10 +381,23 @@ func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan *vibekit.R
 			if us.hooks.onGovernanceState != nil {
 				us.hooks.onGovernanceState(msg.Params)
 			}
+		case msg.Method == methodV3PolicyChanged, msg.Method == methodV3PolicyError:
+			if us.hooks.onPolicyNotification != nil {
+				us.hooks.onPolicyNotification(msg)
+			}
 		default:
 			forwardChunk(msg, responseCh)
 		}
 	}
+}
+
+// sessionPresets resolves this session's policy presets, tolerating an unwired
+// hook. Nil returns none, which is the Custom profile's wire: no key at all.
+func (us *utilitySession) sessionPresets(ctx context.Context) []string {
+	if us.hooks.presets == nil {
+		return nil
+	}
+	return us.hooks.presets(ctx)
 }
 
 // forwardChunk forwards an agent_message_chunk's text to responseCh, ignoring

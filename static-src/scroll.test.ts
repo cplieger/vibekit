@@ -196,6 +196,49 @@ describe("deferWhileReading", () => {
   });
 });
 
+// The reset is what a chat switch runs, so anything it leaves behind belongs to
+// the previous chat. Both cases below shipped: it assigned the state field
+// directly rather than going through the only writer of the control's class, and
+// it nulled the pagination fields without removing the button they render.
+describe("resetScrollState", () => {
+  beforeEach(resetBetween);
+
+  it("hides the resume control the reader left behind", () => {
+    fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    expect(scrollBtn.classList.contains("hidden")).toBe(false);
+
+    scroll.resetScrollState();
+    expect(scroll.readingState()).toBe("following");
+    expect(scrollBtn.classList.contains("hidden")).toBe(true);
+  });
+
+  it("leaves no control that a return to the live edge cannot clear", () => {
+    // The field-assignment version wrote Following into the field and left the
+    // control on screen, which setState's unchanged-state guard then made
+    // permanent: scrolling back to the bottom is a Following-to-Following
+    // no-op, so the reader could not dismiss it by any gesture.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    scroll.resetScrollState();
+
+    s.scrollTop = 1500;
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    expect(scrollBtn.classList.contains("hidden")).toBe(true);
+  });
+
+  it("removes the previous chat's Load-older-messages button", () => {
+    // An unkeyed child of #messages, so the transcript's keyed reconcile never
+    // touches it. Left in place it sat over the next chat still holding the
+    // previous chat's callback, so pressing it fetched the wrong conversation.
+    scroll.setLoadMore(() => undefined, true);
+    expect(document.getElementById("load-more-indicator")).not.toBeNull();
+
+    scroll.resetScrollState();
+    expect(document.getElementById("load-more-indicator")).toBeNull();
+  });
+});
+
 // A jump is the one way into Reading that can have nowhere to go. Pinned
 // because the failure was silent and sticky: the resume control appeared over a
 // transcript that had not moved, and since nothing scrolled, no scroll event
@@ -682,6 +725,47 @@ describe("pagination", () => {
     scroll.setLoadMore(() => undefined, true);
     scroll.setLoadMore(() => undefined, true);
     expect(document.querySelectorAll("#load-more-indicator")).toHaveLength(1);
+  });
+
+  // A pagination pass belongs to the chat that started it. Its completion signal
+  // does not: the skeleton is a global element id, and the caller drops it the
+  // moment ITS fetch resolves, whichever chat the reader has moved to by then.
+  // So the pass has to be disarmed when the scroller changes hands, or the
+  // compensation lands on a transcript whose height it was never measured
+  // against.
+  it("takes the previous chat's loading skeleton down with it", () => {
+    fakeScroller({ scrollHeight: 5000, clientHeight: 500, scrollTop: 50 });
+    scroll.setLoadMore(() => undefined, true);
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    expect(document.getElementById("load-more-skeleton")).not.toBeNull();
+
+    scroll.resetScrollState();
+    expect(document.getElementById("load-more-skeleton")).toBeNull();
+  });
+
+  it("does not compensate the next chat for the previous chat's page", async () => {
+    const s = fakeScroller({ scrollHeight: 5000, clientHeight: 500, scrollTop: 50 });
+    scroll.setLoadMore(() => undefined, true);
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+
+    // The reader switches chats with the fetch still in flight.
+    scroll.resetScrollState();
+
+    // The incoming chat is shorter, and the reader scrolls up into it. Reading is
+    // the state that makes the damage stick: the streaming auto-scroll re-pins a
+    // Following reader on the very next mutation, and returns early for this one.
+    s.scrollHeight = 1000;
+    s.scrollTop = 300;
+    scroll.getScrollEl().dispatchEvent(new Event("scroll"));
+    expect(scroll.readingState()).toBe("reading");
+
+    // Now the OUTGOING chat's fetch resolves and drops the skeleton without
+    // asking which chat is on screen. Read as this pass completing, it charged
+    // the reader 300 + (1000 - 5000) and threw them to the top of a conversation
+    // they had deliberately parked in.
+    document.getElementById("load-more-skeleton")?.remove();
+    await settle();
+    expect(s.scrollTop).toBe(300);
   });
 });
 

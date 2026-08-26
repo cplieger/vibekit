@@ -302,8 +302,9 @@ export function toolIcon(kind: ToolKind, title: string): string {
 // --- Tab icons ---
 //
 // Two groups that share a prefix and no longer share a consumer. The per-KIND
-// glyphs (settings, git, editor, files, history, docs, run) are tabs.ts's
-// `ICONS` map. The per-MODE ones (chat, plan, spec, quick-spec, bug, autonomous,
+// glyphs (settings, git, editor, files, history, docs, run) are `tab-view.ts`'s
+// `TAB_ICONS` map, keyed by the generated `TabKind` so a ninth kind fails the
+// type gate. The per-MODE ones (chat, plan, spec, quick-spec, bug, autonomous,
 // agent) are `roles.ts` `iconForMode`, which now feeds the prompt bar's mode
 // pill and its picker ONLY: a chat tab's leading element is its activity dot,
 // so the role glyph left the strip. `ICONS.chat` and `ICONS.plan` survive

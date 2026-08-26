@@ -48,21 +48,16 @@ export const logout = apiAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement },
   error: "Couldn't log out",
 });
 
-// --- Kiro settings toggle (experimental flags + compaction) ---
+// --- Kiro settings toggle (the experimental flags) ---
 
 interface KiroSettingArgs {
   key: string;
   value: string;
   input: HTMLInputElement;
-  /** For non-checkbox inputs, the value captured BEFORE the change event
-   *  fired (via a focus-time snapshot). This ensures rollback restores
-   *  the true previous value, not the rejected one. */
-  previousValue?: string;
 }
 
 interface KiroSettingOp {
-  prevChecked?: boolean;
-  prevValue?: string;
+  prevChecked: boolean;
 }
 
 export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>({
@@ -75,24 +70,22 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
     path: "/api/kiro-settings",
     body: { key, value },
   }),
-  optimistic: ({ input, previousValue }) => {
-    if (input.type === "checkbox") {
-      return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
-    }
-    // Use the focus-time snapshot if available; otherwise fall back to
-    // defaultValue (the original HTML attribute value) — input.value would
-    // be the NEW value since the change event already updated it.
-    return { prevValue: previousValue ?? input.defaultValue };
+  // Checkbox-only, because every kiro-cli setting vibekit still exposes is one.
+  // The non-checkbox arm this used to carry took a focus-time snapshot so a
+  // rollback restored the true previous value rather than the rejected one, and
+  // its only two inputs were the compaction number fields — removed once their
+  // ACP counterparts measured as having no reader upstream. Bring the snapshot
+  // back WITH the next number-valued setting, not before: `input.value` is
+  // already the new value by the time a change event fires, so a number field
+  // rolled back without one keeps the value the server refused.
+  optimistic: ({ input }) => {
+    return { prevChecked: !input.checked }; // user just toggled, so prev is opposite
   },
   rollback: ({ input }, op) => {
     if (op === undefined) {
       return;
     }
-    if (op.prevChecked !== undefined) {
-      input.checked = op.prevChecked;
-    } else if (op.prevValue !== undefined) {
-      input.value = op.prevValue;
-    }
+    input.checked = op.prevChecked;
   },
   error: "Couldn't save setting",
 });

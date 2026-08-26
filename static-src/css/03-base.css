@@ -250,12 +250,6 @@
   }
 }
 
-/* Last-message padding during streaming removed — the MutationObserver
- * auto-scroll in scroll.ts keeps the latest content visible without
- * forcing a minimum height on the message element itself. The 50dvh
- * rule was causing one-sentence replies to render as half-viewport
- * tall boxes. */
-
 /* ==========================================================================
    Sidebar
    ========================================================================== */

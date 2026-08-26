@@ -20,19 +20,36 @@
 // the steering textarea already uses (`debouncedDispatch` plus `isPending()` /
 // `flush()` on teardown). Retention rides `chat_retention_days` with no second
 // TTL, because a draft is a field in the one chat file the purge deletes; the
-// server's SetDraft is what keeps that honest by not stamping UpdatedAt.
+// server's SetDraft is what keeps that honest by not stamping UpdatedAt — and the
+// retention reaper now SKIPS a chat holding a draft for exactly that reason, or
+// the field the purge ages from could never see the work.
+//
+// The ATTACHMENTS are the draft's twin and persist the same way, through
+// `set_attachments` on the same cadence; `attachments.ts` owns that half. They
+// travel together on one event in the other direction too (`draft_changed`),
+// because a receiver cannot know which of the two commands fired.
 //
 // This module holds the LOCAL working copy. It is authoritative for the UI, and
-// the server's value only ever SEEDS it (see seedComposerDraft), for two
+// the server's value only ever SEEDS it (see seedComposerState), for two
 // reasons: a chat switch must restore instantly rather than wait for a fetch,
-// and a draft the user is still typing outranks the copy they last flushed.
+// and a draft the user is still typing outranks the copy they last flushed. The
+// one exception is a chat this device is NOT typing in — see
+// adoptRemoteComposerState.
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
 import { get } from "./store.js";
 import { setDraft } from "./actions/chat.js";
 import { debouncedDispatch, registerCleanup, type DebouncedDispatch } from "./actions/index.js";
-import { stashAttachments, restoreAttachments, dropAttachments } from "./attachments.js";
+import {
+  stashAttachments,
+  restoreAttachments,
+  dropAttachments,
+  seedAttachments,
+  adoptRemoteAttachments,
+  flushAttachments,
+  _resetAttachmentsForTest,
+} from "./attachments.js";
 
 /** Quiet window before an edit is persisted. Same 600ms as the steering
  *  textarea, so the app has one autosave cadence rather than two. */
@@ -71,6 +88,7 @@ export function initComposerState(): void {
   };
   const onBlur = (): void => {
     flushComposerDraft();
+    flushAttachments();
   };
   // pagehide rather than beforeunload: beforeunload does not fire when iOS
   // discards a backgrounded tab, which is the case this app meets most often.
@@ -79,6 +97,7 @@ export function initComposerState(): void {
   // fires.
   const onPageHide = (): void => {
     flushComposerDraft();
+    flushAttachments();
   };
   el.addEventListener("input", onInput);
   el.addEventListener("blur", onBlur);
@@ -88,6 +107,7 @@ export function initComposerState(): void {
     el.removeEventListener("blur", onBlur);
     window.removeEventListener("pagehide", onPageHide);
     flushComposerDraft();
+    flushAttachments();
     debouncedSave?.cancel();
   });
 }
@@ -158,15 +178,19 @@ export function restoreComposerState(chatID: string): void {
   restoreAttachments(chatID);
 }
 
-/** Adopt the server's stored draft for `chatID`, once its record has loaded.
+/** Adopt the server's stored composer state for `chatID`, once its record has
+ *  loaded: the draft AND the attachments staged beside it, because they are one
+ *  composer and a reload that restored the sentence without the files it describes
+ *  is worse than restoring neither.
  *
  *  The seed loses to anything local, in both directions. A chat this device has
  *  already typed into keeps its own copy, because the fetch can land after the
  *  user has started the next message; and the box is only written when it is
  *  EMPTY, which is the same rule the failed-send restore follows for the same
- *  reason. What this buys is the reload case: the map starts empty, so the
+ *  reason. What this buys is the reload case: the maps start empty, so the
  *  server's draft is what comes back. */
-export function seedComposerDraft(chatID: string): void {
+export function seedComposerState(chatID: string): void {
+  seedAttachments(chatID, get(chatID)?.attachments ?? []);
   if (drafts.has(chatID)) {
     return;
   }
@@ -180,15 +204,44 @@ export function seedComposerDraft(chatID: string): void {
   }
 }
 
+/** Adopt a `draft_changed` frame for a chat this device is NOT typing in.
+ *
+ *  The LOCAL map is authoritative for the live chat — see this module's header —
+ *  so the frame updates the map for any other chat and is ignored for the one on
+ *  screen. Adopting it there would overwrite the box under the caret with a value
+ *  that was current 600ms ago on another device, which is the drift the local copy
+ *  exists to prevent; the live chat converges on its next activation instead.
+ *
+ *  Unlike the seed this does NOT lose to a local copy: a frame is newer by
+ *  construction, having been produced by a write the server accepted, and the map
+ *  entry it replaces is what this device flushed before it stopped typing. */
+export function adoptRemoteComposerState(chatID: string, text: string, paths: string[]): void {
+  adoptRemoteAttachments(chatID, paths);
+  if (chatID === "" || chatID === liveChatID) {
+    return;
+  }
+  drafts.set(chatID, text);
+}
+
 /** Forget a closed or deleted chat's composer state.
  *
  *  Local only — a close that keeps the record keeps its draft server-side, and
- *  reopening the chat seeds it back. */
+ *  reopening the chat seeds it back.
+ *
+ *  Clearing the BOX is part of dropping the live chat's state, and it is not
+ *  cosmetic. On the ordinary close the tab store activates a neighbour straight
+ *  after this, and `restoreComposerState` overwrites the box anyway; on the close
+ *  that empties the strip there is no neighbour and nothing followed, so the text
+ *  stayed on screen in a composer that was still live while `removeChat` had
+ *  already moved the store's active chat to an unrelated row. Send then posted it
+ *  there. Anything typed in that window was parked nowhere either, because
+ *  `liveChatID` is "" and `noteComposerText` no-ops on "". */
 export function dropComposerState(chatID: string): void {
   drafts.delete(chatID);
   dropAttachments(chatID);
   if (chatID === liveChatID) {
     liveChatID = "";
+    $.promptInput.value = "";
   }
 }
 
@@ -198,4 +251,5 @@ export function _resetComposerStateForTest(): void {
   debouncedSave = null;
   drafts.clear();
   liveChatID = "";
+  _resetAttachmentsForTest();
 }

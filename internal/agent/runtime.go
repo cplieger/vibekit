@@ -34,6 +34,7 @@ import (
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/secretstore"
+	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2"
@@ -234,6 +235,16 @@ type Runtime struct {
 	// to the pre-capability behaviour rather than failing an MCP connect.
 	secrets *secretstore.Store
 
+	// tabs is the open-tab set, and membership is the coordinator over it and the
+	// chat store. Both are nil when no store is wired (no config dir), which the
+	// coordinator answers as unavailable rather than pretending an arrangement was
+	// saved.
+	//
+	// The runtime holds the coordinator only to hand it to retention's two hooks;
+	// every other caller is a command handler, which receives it at registration.
+	tabs       *tabs.Store
+	membership *command.Membership
+
 	// Embedded ahead of the scalars below to keep govet fieldalignment happy:
 	// it carries pointers, so it must not sit after ciBusy.
 
@@ -280,6 +291,19 @@ func WithSchedules(st *schedule.Store) Option {
 // which is the whole point of the record, so production always wires it.
 func WithRunLeases(st *runlease.Store) Option {
 	return func(h *Runtime) { h.runs.leases = st }
+}
+
+// WithTabs wires the open-tab set, which is what makes the tab commands, the
+// tabs_changed event and retention's open-tab predicate live.
+//
+// Absent means no tab store: every tab command answers unavailable and a create
+// writes its chat record with no tab. That is the shape a build with no config
+// dir has, and it is deliberately not a construction failure — the store's own
+// constructor already warns and returns a usable empty store for a file it cannot
+// read, because an arrangement is re-derivable by opening the tabs again
+// (invariant 6).
+func WithTabs(st *tabs.Store) Option {
+	return func(h *Runtime) { h.tabs = st }
 }
 
 // WithPush wires the push notification service at construction time.
@@ -807,6 +831,21 @@ func (rt *Runtime) stopUtilityBridge() {
 		u.session.Stop()
 	}
 }
+
+// RestartUtilitySession drops the utility session so the next use rebuilds it.
+//
+// Its caller is a security-profile change: the presets ride the session door, so a
+// session already running still carries the previous profile and the policy view it
+// answers would keep describing it. Recycling is the only way to re-send them,
+// because KAS exposes no method to change a live session's policy.
+//
+// Safe as a user-triggered action for the same reason the idle cull is safe on a
+// 60-second timer: take() clears the slot before stopping, so nothing can be
+// holding the runtime by then, and an in-flight lease degrades exactly as it does
+// on the cull path — its chunk channel closes and its turn reports a failure the
+// caller already handles. A profile change is rarer than that timer by orders of
+// magnitude.
+func (rt *Runtime) RestartUtilitySession() { rt.stopUtilityBridge() }
 
 // cullIdleUtilityBridge stops the utility session once it has been idle
 // for longer than bridgeIdleTimeout. Runs every 60 seconds. Exits on

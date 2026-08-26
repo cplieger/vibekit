@@ -25,6 +25,7 @@ export type {
   SafetyStatus,
   SettledBy,
   StopReason,
+  TabKind,
   ToolKind,
   ToolStatus,
   Transport,
@@ -48,9 +49,12 @@ export type {
   PolicyRule,
   PolicyView,
   PolicyExplainResult,
+  SecurityProfile,
   SessionEffortLevel,
   SessionMode,
   SessionModel,
+  TabList,
+  TabSubject,
   ToolCall,
   ToolDiff,
   ToolLocation,
@@ -60,6 +64,7 @@ export type {
   CodeReferencesPayload,
   ConnectedPayload,
   DecisionSettledPayload,
+  DraftChangedPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
   UserInputOption,
@@ -106,13 +111,13 @@ export type {
   SteerInjectedPayload,
   SteerClearedPayload,
   AgentNoticePayload,
+  TabsChangedPayload,
   TextSpan,
   TerminalCreatedPayload,
   TerminalOutputPayload,
   TerminalExitedPayload,
   TurnEndedPayload,
   TurnStatePayload,
-  UIStateChangedPayload,
 } from "./wire/types.gen.js";
 
 // PermissionNeeded is the legacy alias used at call sites that predate
@@ -280,13 +285,11 @@ export interface Session {
    *  auto-create the record before the first prompt, so a persisted empty chat
    *  can genuinely hold a draft). */
   draft?: string;
-  /** This chat exists nowhere but this tab's memory: a client-minted id whose
-   *  record the server has not acknowledged. Cleared the moment a server frame
-   *  names it (upsertHeader's re-sync branch), and gone with the row when the tab
-   *  closes. What it buys is not asking the server about a chat it has never
-   *  heard of — a GET on a ghost id 404s, and the empty-chat draft fetch would
-   *  fire one on every New chat click. */
-  ghost?: boolean;
+  /** The SERVER's copy of the paths staged beside that draft, from the same GET
+   *  and for the same reasons. A SEED only, and off the header for the reason the
+   *  draft is: both save on one 600ms debounce, so a header field would put them
+   *  in a chat_updated frame every keystroke's worth of typing. */
+  attachments?: string[];
   compaction_watermark?: string;
 }
 

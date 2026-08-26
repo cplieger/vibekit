@@ -23,7 +23,7 @@ const {
   mockAddAttachmentTo,
   mockAttachmentGeneration,
   mockTypedCommand,
-  mockClearLastError,
+  mockClearAgentDown,
   mockRestorePromptText,
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
@@ -32,7 +32,7 @@ const {
   mockAddAttachmentTo: vi.fn(),
   mockAttachmentGeneration: vi.fn(() => 0),
   mockTypedCommand: vi.fn(() => false),
-  mockClearLastError: vi.fn(),
+  mockClearAgentDown: vi.fn(),
   mockRestorePromptText: vi.fn(),
 }));
 
@@ -51,9 +51,9 @@ vi.mock("./send-state.js", () => ({
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
-  setLastError: undefined,
+  setAgentDown: undefined,
   setSSEStatus: undefined,
-  clearLastError: mockClearLastError,
+  clearAgentDown: mockClearAgentDown,
 }));
 vi.mock("./prompt-input.js", () => ({ restorePromptText: mockRestorePromptText }));
 
@@ -227,11 +227,11 @@ describe("retrying in the same thread", () => {
     resetStore("c1");
     mockSendPromptTo.mockResolvedValue("failed");
     await submitPrompt("c1", "first try");
-    expect(mockClearLastError).toHaveBeenCalledTimes(1);
+    expect(mockClearAgentDown).toHaveBeenCalledTimes(1);
 
     mockSendPromptTo.mockResolvedValue("sent");
     expect(await submitPrompt("c1", "second try")).toBe("sent");
-    expect(mockClearLastError).toHaveBeenCalledTimes(2);
+    expect(mockClearAgentDown).toHaveBeenCalledTimes(2);
     // The retry is an ordinary send: no special path, no cancel, no new chat.
     expect(mockSendPromptTo).toHaveBeenCalledTimes(2);
   });
@@ -241,14 +241,14 @@ describe("retrying in the same thread", () => {
     mockTypedCommand.mockReturnValue(true);
 
     await submitPrompt("c1", "/compact");
-    expect(mockClearLastError).toHaveBeenCalledTimes(1);
+    expect(mockClearAgentDown).toHaveBeenCalledTimes(1);
   });
 
   it("does not clear it when the guards refuse the submit outright", async () => {
     resetStore("c1");
     await submitPrompt("", "hello");
     await submitPrompt("c1", "");
-    expect(mockClearLastError).not.toHaveBeenCalled();
+    expect(mockClearAgentDown).not.toHaveBeenCalled();
   });
 
   // The server persists the user row BEFORE the ACP call and never rolls it

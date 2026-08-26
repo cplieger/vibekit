@@ -17,7 +17,7 @@
 // the editor cannot reach them: docs.ts keeps its rows in a module-local array
 // and opens a document with `openFile(path)`, which carries a path and nothing
 // else. Three of the editor's four entry points never touch docs.ts at all — a
-// `/file/{path}` deep link, the boot restore from `ui-state.editor_files`, and a
+// `/file/{path}` deep link, the boot restore from the server's tab set, and a
 // file-browser click — so threading metadata through one of them would leave the
 // other three showing a document with no header. Parsing the text the editor has
 // already loaded covers every entry point, and covers a `.md` file OUTSIDE

@@ -132,8 +132,22 @@ export function highlightControl(id: string): void {
  *  Settings would dismiss the panel it was pointing at. */
 export function openSetting(tab: SettingsTab, controlID: string): void {
   if (getActiveTabRoute()?.kind !== "settings") {
-    toggleSettingsView(tab);
+    // A round trip when the tab is not open. Awaited through the promise rather
+    // than detached, because everything below addresses the panel the open
+    // produces — and the highlight is a DOM write against a view that has to
+    // exist first.
+    void toggleSettingsView(tab).then(() => {
+      applySetting(tab, controlID);
+    });
+    return;
   }
+  applySetting(tab, controlID);
+}
+
+/** Swap the panel, push the URL and highlight. Split out of openSetting so the
+ *  already-open path stays synchronous: reaching the panel is a round trip only
+ *  when the tab has to be opened. */
+function applySetting(tab: SettingsTab, controlID: string): void {
   // Swaps the panel and fires the tab's lazy loader; the URL is pushed here
   // rather than by forceSettingsTab, which is the router's own callee.
   forceSettingsTab(tab);

@@ -30,8 +30,13 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-const { buildAssistantBody, updateAssistantBody, finalizeAssistantBody, liveTextAnchor } =
-  await import("./messages-blocks.js");
+const {
+  buildAssistantBody,
+  updateAssistantBody,
+  finalizeAssistantBody,
+  liveTextAnchor,
+  disposeAssistantBody,
+} = await import("./messages-blocks.js");
 
 function text(t: string, subtask = ""): Record<string, unknown> {
   return { type: "text", text: t, agent_subtask_id: subtask };
@@ -45,12 +50,16 @@ function call(id: string, title: string): ToolCall {
   return { id, title, kind: "execute", status: "completed" } as unknown as ToolCall;
 }
 
+/** The id `render` last used, for a test that needs to drive a dispose path. */
+let lastMsgID = "";
+
 function render(blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): HTMLElement {
   const wrap = document.createElement("div");
+  lastMsgID = `m-${String(Math.random())}`;
   buildAssistantBody(
     wrap,
     {
-      id: `m-${String(Math.random())}`,
+      id: lastMsgID,
       role: "assistant",
       content: "",
       blocks,
@@ -104,6 +113,154 @@ describe("subagent grouping is keyed by subtask id, NOT by contiguity", () => {
       text("delegate second", "sub-A"),
     ]);
     expect(shape(wrap)).toEqual(["card(sub-A)", "text(parent interleav)"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A WORKFLOW STEP is the other delegate kind, and it is the one with no
+// invocation tool call: KAS announces a step with a
+// `_kiro/workflow/node_start` notification, so `bindSubagent` never runs and
+// whatever the card is named at creation is what the reader sees for the whole
+// run. It was "Subagent" for every step, on the shared agent hexagon, so a
+// three-step run rendered as three identical anonymous boxes.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// A WORKFLOW RUN is the third destination the dispatcher resolves, and the only
+// one that is TWO containers deep: a step's subtask id names its run and its node
+// path, so its blocks land in a step row inside the run's card.
+//
+// The property that matters is ORDER INDEPENDENCE. The launch tool call and the
+// first step's frame race on the wire, and after a refresh the launch is persisted
+// while the step blocks are not — so whichever arrives first must build the card
+// and the other must find it. Getting that wrong produces two cards for one run,
+// or a step's transcript rendered as a sibling of the run that produced it.
+// ---------------------------------------------------------------------------
+
+describe("a workflow run's steps render inside the launch that started them", () => {
+  const launch = (id: string, wf: string): ToolCall =>
+    ({
+      id,
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: wf,
+    }) as unknown as ToolCall;
+
+  const cards = (wrap: HTMLElement): HTMLElement[] => [
+    ...wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .run-card"),
+  ];
+  const stepNodes = (wrap: HTMLElement): string[] =>
+    [...wrap.querySelectorAll<HTMLElement>(".run-card .run-step")].map(
+      (e) => e.dataset["node"] ?? "",
+    );
+
+  it("makes the launch tool call the card, not a tool row", () => {
+    const wrap = render([toolUse("t1")], [launch("t1", "wf_1")]);
+    expect(cards(wrap)).toHaveLength(1);
+    expect(cards(wrap)[0]?.dataset["run"]).toBe("wf_1");
+    // The point of the change: it is NOT also a tool card.
+    expect(wrap.querySelectorAll(".assistant-blocks > .tool-group")).toHaveLength(0);
+  });
+
+  it("puts a step's blocks in a row inside that card", () => {
+    const wrap = render(
+      [toolUse("t1"), text("checking the build", "wf:wf_1:wf_1/build")],
+      [launch("t1", "wf_1")],
+    );
+    expect(cards(wrap)).toHaveLength(1);
+    expect(stepNodes(wrap)).toEqual(["wf_1/build"]);
+    const body = wrap.querySelector(".run-card .run-step .run-step-body");
+    expect(body?.textContent).toContain("checking the build");
+  });
+
+  it("is order-independent: a step arriving BEFORE its launch builds the same one card", () => {
+    const stepFirst = render(
+      [text("checking the build", "wf:wf_1:wf_1/build"), toolUse("t1")],
+      [launch("t1", "wf_1")],
+    );
+    expect(cards(stepFirst)).toHaveLength(1);
+    expect(stepNodes(stepFirst)).toEqual(["wf_1/build"]);
+    expect(cards(stepFirst)[0]?.dataset["run"]).toBe("wf_1");
+  });
+
+  it("gives each step of a run its own row, and two runs their own cards", () => {
+    const wrap = render(
+      [
+        toolUse("t1"),
+        text("a", "wf:wf_1:wf_1/lint"),
+        text("b", "wf:wf_1:wf_1/build"),
+        toolUse("t2"),
+        text("c", "wf:wf_2:wf_2/deploy"),
+      ],
+      [launch("t1", "wf_1"), launch("t2", "wf_2")],
+    );
+    expect(cards(wrap).map((c) => c.dataset["run"])).toEqual(["wf_1", "wf_2"]);
+    expect(stepNodes(wrap)).toEqual(["wf_1/lint", "wf_1/build", "wf_2/deploy"]);
+  });
+
+  it("keeps two iterations of one loop body in two rows", () => {
+    // They share a nodeId, so the node PATH is what separates them — the same
+    // reason the server keys the subtask id on the path.
+    const wrap = render(
+      [
+        toolUse("t1"),
+        text("pass one", "wf:wf_1:wf/loop/iter-0/work"),
+        text("pass two", "wf:wf_1:wf/loop/iter-1/work"),
+      ],
+      [launch("t1", "wf_1")],
+    );
+    expect(stepNodes(wrap)).toEqual(["wf/loop/iter-0/work", "wf/loop/iter-1/work"]);
+  });
+
+  it("names a step row after the last path segment, keeping the loop above it", () => {
+    const wrap = render([text("x", "wf:wf_1:wf/loop/iter-1/work")], []);
+    const name = wrap.querySelector(".run-card .run-step-name")?.textContent;
+    expect(name).toBe("work");
+  });
+
+  it("falls back to a delegate box for a malformed step id rather than losing the block", () => {
+    // No second colon: not a step id this client can split, and dropping the
+    // block would lose a delegate's whole transcript.
+    const wrap = render([text("orphan text", "wf:no-node-path")], []);
+    expect(cards(wrap)).toHaveLength(0);
+    const box = wrap.querySelector(".subagent-block");
+    expect(box?.getAttribute("data-subtask")).toBe("wf:no-node-path");
+    expect(box?.textContent).toContain("orphan text");
+  });
+
+  it("leaves an ordinary tool call alone: no workflow id means no card", () => {
+    const wrap = render([toolUse("t1")], [call("t1", "Run Command")]);
+    expect(cards(wrap)).toHaveLength(0);
+    expect(wrap.querySelectorAll(".tool-call")).toHaveLength(1);
+  });
+
+  // A run OUTLIVES the turn that started it: `run_workflow` returns as soon as the
+  // run is created, so the launching turn ends while the run carries on for
+  // minutes. The card's store subscription and its clock therefore hang off the
+  // MESSAGE's lifetime, not the turn's — `pushStreamingEffect` is disposed at turn
+  // end too, and registering there froze the card at exactly the moment it
+  // mattered most. Invisible to the type checker and to the eye in a short test,
+  // so it is pinned by which dispose path clears it.
+  it("keeps the card alive through turn end and drops it only on unmount", () => {
+    const wrap = render([toolUse("t1")], [launch("t1", "wf_live")]);
+    expect(cards(wrap)).toHaveLength(1);
+
+    // Turn end: the caret is sealed and the streaming effects go, but the card is
+    // still the run's surface and must still be in the transcript.
+    finalizeAssistantBody(lastMsgID);
+    expect(cards(wrap)).toHaveLength(1);
+    // Its parent, not `isConnected`: `wrap` is a detached node in this suite, so
+    // nothing here is connected to a document and that check would only ever
+    // measure the fixture.
+    expect(cards(wrap)[0]?.parentElement?.className).toBe("assistant-blocks");
+
+    // Unmount is what releases it. Nothing observable is asserted beyond "this
+    // does not throw and clears the render state": the disposers are internal, and
+    // a second dispose must be a no-op because a chat switch resets every render
+    // AND the reconcile removes each row.
+    disposeAssistantBody(lastMsgID);
+    disposeAssistantBody(lastMsgID);
   });
 });
 
@@ -231,8 +388,7 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
 // shaped "prose → tool call → prose → tool call → prose" opened three text
 // blocks, each of which was the tail when it mounted, and nothing ever sealed
 // the one that stopped being the tail. The reader saw a caret per block for the
-// whole turn (3, 4, 5 of them), and a leaked class also pins the transcript's
-// `:has(.message.assistant.streaming)` 50dvh viewport reserve on permanently.
+// whole turn (3, 4, 5 of them), and the accent wash stayed on every one of them.
 // ---------------------------------------------------------------------------
 
 describe("exactly one streaming caret, and it ends", () => {

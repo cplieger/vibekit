@@ -103,7 +103,7 @@ func (rt *Runtime) EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.Ch
 // closes its terminal-attribution turn on the way out. It mirrors
 // EmitTurnEndedWithStats' AdvanceTurn call for the same reason: the terminals
 // this turn created must not be attributed to the next one.
-func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID) {
-	rt.coord.AbandonInFlightTurn(ctx, chatID)
+func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, reason string) {
+	rt.coord.AbandonInFlightTurn(ctx, chatID, reason)
 	rt.agentTerms.AdvanceTurn(chatID)
 }

@@ -16,7 +16,7 @@ import (
 // value rather than return the stale cached one.
 func TestHookStatusCache_SizeTermInvalidates(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.json")
+	path := filepath.Join(dir, "cli.json")
 	if err := os.WriteFile(path, []byte(`{"k":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

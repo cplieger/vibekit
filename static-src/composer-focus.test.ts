@@ -45,6 +45,13 @@ vi.mock("./store.js", () => ({
   // The tangent row is disabled on an empty chat, and this file drives the menu
   // for a chat that has one, so every row it presses is a live one.
   isEmptyChat: () => false,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker: vi.fn() }));

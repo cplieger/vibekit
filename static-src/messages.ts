@@ -52,10 +52,24 @@ import {
   hasTurnSummary,
   type TurnSummaryData,
 } from "./fundamentals/turn-footer.js";
-import { projectTurns, turnLedger, turnAnchorID, turnFoldSummary, type Turn } from "./turns.js";
+import {
+  projectTurns,
+  turnLedger,
+  turnAnchorID,
+  turnFoldSummary,
+  turnRunIDs,
+  type Turn,
+} from "./turns.js";
+import { peekRunState, runIsLive } from "./run-store.js";
 import { isTurnOpen, setTurnOpen } from "./fold-state.js";
 import { searchHitCount } from "./chat-search.js";
-import { mountTurnRail, observeTurns, resetTurnRail, loadTurnRail } from "./turn-rail.js";
+import {
+  mountTurnRail,
+  observeTurns,
+  resetTurnRail,
+  loadTurnRail,
+  pointTurnRail,
+} from "./turn-rail.js";
 import {
   buildAssistantBody,
   updateAssistantBody,
@@ -83,12 +97,12 @@ import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-export { getScrollEl, scrollToBottom, setLoadMore };
+export { getScrollEl, scrollToBottom, setLoadMore, resetScrollState };
 // Re-exported for the same reason the scroll helpers are: this module owns the
 // rail (it mounts it and feeds it the painted cards), so chat.ts reaching the
 // rail THROUGH here keeps ownership in one place instead of two modules driving
 // the same surface.
-export { loadTurnRail };
+export { loadTurnRail, pointTurnRail };
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -592,7 +606,12 @@ function applyFoldPass(chatID: string, turns: readonly Turn[]): void {
   const wanted = new Map<string, boolean>();
   const hits = new Map<string, number>();
   for (const [i, t] of turns.entries()) {
-    wanted.set(t.id, isTurnOpen(chatID, t, i, turns.length));
+    // A turn holding a live workflow run stays open however far back it is; see
+    // isTurnOpen. `peekRunState` rather than `runState`, because this pass runs
+    // inside no effect and a tracked read here would subscribe the whole fold pass
+    // to every run on screen.
+    const liveRun = turnRunIDs(t).some((id) => runIsLive(peekRunState(id)));
+    wanted.set(t.id, isTurnOpen(chatID, t, i, turns.length, liveRun));
     hits.set(t.id, searchHitCount(t.n));
   }
   const changes: (() => void)[] = [];

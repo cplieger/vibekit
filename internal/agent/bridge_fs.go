@@ -18,7 +18,7 @@
 //
 // Layout:
 //   - bridge_fs_read.go:  handleFSRequest dispatch, respondFSRead, sliceByLines
-//   - bridge_fs_write.go: respondFSWrite, currentMessageCount
+//   - bridge_fs_write.go: respondFSWrite
 //   - bridge_fs_path.go:  resolveInsideWorkDir, respondFSError, fsErrorIsRoutine, respondBridge, constants
 //
 // There is no staging file. KAS gates a whole turn (autopilot: false), so a

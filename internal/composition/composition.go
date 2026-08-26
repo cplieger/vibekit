@@ -34,7 +34,7 @@ import (
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
-	"github.com/cplieger/vibekit/internal/uistate"
+	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
@@ -151,14 +151,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// pinned to 0/never): reap a chat's session state on delete, and orphans
 	// via a periodic sweep that spares every active/archived chat's session.
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"))
+	tabStore := openTabStore(cfg.ConfigDir)
 	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
 		agent.WithACPArgs(cfg.ACPArgs),
 		agent.WithKiroCLIPath(kiro.cliPath, kiro.env),
 		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
 		agent.WithSchedules(scheduleStore),
-		agent.WithRunLeases(leaseStore))
+		agent.WithRunLeases(leaseStore),
+		agent.WithTabs(tabStore))
 	chat.WithBroadcaster(h)(chatStore)
+	pruneTabs(ctx, tabStore, chatStore)
 
 	// Clear the runs a previous process left paused, BEFORE anything can launch.
 	// The scheduler below is the only thing at build time that can, and its own
@@ -265,10 +268,21 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// chats live in — this predicate is what keeps an old-but-open conversation
 	// out of it.
 	chat.WithLive(h.HasLiveBridge)(chatStore)
-	chat.WithOnPurge(func(_ vibekit.ChatID, sessionChain []string) {
-		for _, id := range sessionChain {
-			sessionReaper.Reap(id)
+	// The second exemption, and the one this refactor's tab collection made
+	// possible: a chat someone has OPEN is not abandoned work, even with no bridge
+	// running and no draft typed. It makes retention opt-out for a chat left open
+	// forever, which is accepted — see archive.WithOpenTabs.
+	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
+	chat.WithOnPurge(func(id vibekit.ChatID, sessionChain []string) {
+		for _, sid := range sessionChain {
+			sessionReaper.Reap(sid)
 		}
+		// Close whatever tabs the purged chat still has. Normally none, because the
+		// predicate above skips a chat with one — this covers the tab opened between
+		// that check and the remove, so the race resolves in the same pass instead
+		// of at the next restart. It runs after the per-chat record lock is
+		// released, which is what keeps the coordinator's lock order acyclic.
+		h.Membership().RetentionClose(appCtx, id)
 	})(chatStore)
 	purgeScheduler.Start(appCtx)
 
@@ -289,13 +303,16 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
 		server.WithPolicy(h.Config()),
+		// The recycle a security-profile change needs, so the policy view stops
+		// describing the profile that was in force before the change.
+		server.WithPolicyReload(h),
 		server.WithStaticFS(static),
 		server.WithCLIPath(kiro.cliPath),
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
 		server.WithAuthUnavailable(h.AuthTokenUnavailable),
 		server.WithConfigDir(cfg.ConfigDir),
-		server.WithUIState(openUIStateStore(cfg.ConfigDir)),
+		server.WithTabs(tabStore),
 		server.WithWorkDir(cfg.WorkDir),
 		server.WithTrustedProxies(cfg.TrustedProxies),
 		server.WithHostPolicy(cfg.HostPolicy),
@@ -815,22 +832,64 @@ func openScheduleStore(dir string) *schedule.Store {
 	return st
 }
 
-// openUIStateStore opens the synced UI-arrangement store.
+// openTabStore opens the open-tab set.
 //
-// It ALWAYS returns a store: uistate.NewStore hands back a usable empty one
-// alongside a parse error, and the arrangement is re-derivable by opening the
-// tabs again. Disabling the sync instead would put the client back on a local
-// copy, which is the exact shape whose per-device drift this store replaced.
-func openUIStateStore(dir string) *uistate.Store {
-	st, err := uistate.NewStore(dir)
+// It ALWAYS returns a store, and for two reasons: tabs.NewStore hands back a
+// usable empty one alongside a parse error because an arrangement is re-derivable
+// by opening the tabs again (invariant 6), and running with no store would take
+// the four tab commands down with it, so nothing could reopen anything.
+func openTabStore(dir string) *tabs.Store {
+	st, err := tabs.NewStore(dir)
 	if err != nil {
-		slog.Warn("ui arrangement starting empty", "error", err)
+		slog.Warn("tab arrangement starting empty", "error", err)
 	}
 	return st
 }
 
-// openRunLeaseStore opens the durable run-lease store.
+// pruneTabs is the tab set's LOAD-TIME crash recovery, and it runs exactly ONCE.
 //
+// The live integrity mechanism is the membership coordinator: it writes the chat
+// record before its tab and removes it before closing its tabs, and it retries a
+// tab close that fails rather than waiting for a restart. This exists for the
+// crash that landed between those two writes. Calling it periodically would be
+// treating recovery as a substitute for ordering — and it would also race the
+// coordinator, which is the only other writer of this store.
+//
+// The resolver answers per KIND, and each answer is a decision:
+//
+//   - A CHAT tab resolves against the chat store. A chat that is gone cannot be
+//     opened, so its tab is a row that can only fail.
+//   - An EDITOR tab is left alone, deliberately. A missing file is not a reason to
+//     close a tab the reader opened: the path is still what they were looking at,
+//     the editor already renders a missing file honestly, and a file that a branch
+//     switch or a build step removed for a minute would otherwise cost the reader
+//     their tab.
+//   - A RUN tab is left alone for the same shape of reason — a finished run is
+//     still reviewable from History, so its id resolving to no live run says
+//     nothing about whether the tab should exist.
+//   - A SINGLETON always resolves: settings, git, files, history and docs are
+//     always there.
+func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
+	if st == nil {
+		return
+	}
+	dropped, _, err := st.Prune(ctx, func(t vibekit.TabSubject) bool {
+		if t.Kind != vibekit.TabKindChat {
+			return true
+		}
+		_, ok := chats.Get(ctx, vibekit.ChatID(t.Ref))
+		return ok
+	})
+	if err != nil {
+		slog.Warn("tab prune failed; the arrangement may name a chat that is gone", "error", err)
+		return
+	}
+	if len(dropped) > 0 {
+		slog.Info("tab prune dropped tabs whose subject is gone", "count", len(dropped))
+	}
+}
+
+// openRunLeaseStore opens the durable run-lease store.
 // It ALWAYS returns a store: runlease.NewStore hands back a usable empty one
 // alongside the error, because a lease carries a run's wall clock and its
 // unattended mark. Refusing to open it would leave every run unbounded, which is

@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/uistate"
+	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -36,6 +36,7 @@ type Server struct {
 	utilityPrompt utilityPrompter
 	accountUsage  AccountUsageProvider
 	policy        policyProvider
+	policyReload  policyReloader
 	agent         chatEngine
 	steering      SteeringGenerator
 	mcpRegistry   routeHandler
@@ -44,11 +45,18 @@ type Server struct {
 	// directory-mtime signature (kiro_docs.go). A pointer so the zero Server
 	// used by the method-guard tests needs no initialisation.
 	kiroDocs *docsCache
-	// uiState is the synced UI arrangement (tab strip, editor files, theme,
-	// fold overrides). Nil in a bare test server, which the handler answers as
-	// an empty document rather than 404 — a client that cannot read the
-	// arrangement must still boot.
-	uiState   *uistate.Store
+	// tabs is the open-tab SET, the modelled replacement for the ui-state
+	// arrangement's tab_order. Nil in a bare test server and in a build with no
+	// config dir; the handler answers an empty collection at version 0 rather
+	// than 404, for uiState's reason.
+	//
+	// A one-method ROLE rather than *tabs.Store, unlike uiState above, and the
+	// reason is a property no concrete store can express: this endpoint's whole
+	// contract is that the set and its version come from ONE call, and only a
+	// double that MOVES between two calls holds a handler to that
+	// deterministically. internal/tabs exports no interface of its own, so the
+	// declaration belongs here, at the consumer.
+	tabs      tabReader
 	cliRunner CLIRunner
 	tools     *toolbelt.Engine
 	// kiroReady is the kiro-cli install manager's readiness verdict plus its
@@ -161,6 +169,14 @@ func WithPolicy(p policyProvider) Option {
 	return func(s *Server) { s.policy = p }
 }
 
+// WithPolicyReload wires the recycle a security-profile change needs. Optional:
+// unwired, a profile still persists and still reaches every session started
+// afterwards, and only the policy VIEW keeps describing the previous profile until
+// the utility session is next recycled on its own.
+func WithPolicyReload(p policyReloader) Option {
+	return func(s *Server) { s.policyReload = p }
+}
+
 // WithStaticFS sets the embedded filesystem serving the compiled web UI.
 func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
@@ -202,8 +218,19 @@ func WithKiroRescan(rescan func(context.Context) (bool, error)) Option {
 // WithConfigDir sets the configuration directory path used for chat files and settings.
 func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d } }
 
-// WithUIState wires the synced UI arrangement store.
-func WithUIState(st *uistate.Store) Option { return func(s *Server) { s.uiState = st } }
+// WithTabs wires the open-tab set that GET /api/tabs reads.
+//
+// A nil store stays a nil INTERFACE rather than becoming a non-nil interface
+// holding a nil pointer, or the handler's unwired branch would never be taken and
+// the endpoint would nil-deref instead of answering the empty collection.
+func WithTabs(st *tabs.Store) Option {
+	return func(s *Server) {
+		if st == nil {
+			return
+		}
+		s.tabs = st
+	}
+}
 
 // WithWorkDir sets the workspace directory served by the file handler and git endpoints.
 func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
@@ -308,7 +335,7 @@ func (s *Server) ListenAndServe() error {
 	}
 	s.files.RegisterRoutes(mux)
 	mux.HandleFunc("/api/settings", s.handleSettings)
-	mux.HandleFunc("/api/ui-state", s.handleUIState)
+	mux.HandleFunc("/api/tabs", s.handleTabs)
 	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
 	s.mcpConfig.RegisterRoutes(mux)
@@ -320,6 +347,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/permissions", s.handlePolicyView)
 	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
 	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
+	mux.HandleFunc("/api/permissions/profile", s.handlePolicyProfile)
 	mux.HandleFunc("/api/utility/explain-error", s.handleUtilityExplainError)
 	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
 	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)

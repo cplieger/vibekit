@@ -8,11 +8,9 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { formatTokens, formatMetering, contextReserve } from "./status-format.js";
+import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
-import { fetchKiroSetting, CancellableSlot } from "./api-client.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
-import { registerCleanup } from "./actions/index.js";
 import { el } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
@@ -34,55 +32,10 @@ interface ContextBarUpdate {
 }
 
 class ContextBarController {
-  private compactionBufferPct = 10;
-  private compactionSlot = new CancellableSlot();
-  private contextReserveInitialised = false;
   private contextBarQueued = false;
   private contextBarArgs: ContextBarUpdate | null = null;
 
-  private async fetchCompactionBuffer(): Promise<void> {
-    const signal = this.compactionSlot.start();
-    this.compactionBufferPct = await fetchKiroSetting(
-      "compaction.excludeContextWindowPercent",
-      (v) => {
-        const n = Number.parseInt(v, 10);
-        return !Number.isNaN(n) && n >= 0 && n <= 100 ? n : null;
-      },
-      10,
-      signal,
-    );
-    if (signal.aborted) {
-      return;
-    }
-    this.positionContextReserve();
-  }
-
-  /** Size and place the compaction reserve. Two writes, one derivation: the
-   *  dash LENGTH is the reserve's extent (percent-for-percent, because the
-   *  element carries pathLength="100") and the ROTATION is where it starts. */
-  private positionContextReserve(): void {
-    const wedge = document.getElementById("context-ring-wedge");
-    if (wedge === null) {
-      return;
-    }
-    const { lengthPct, rotateDeg } = contextReserve(this.compactionBufferPct);
-    wedge.style.strokeDasharray = `${String(lengthPct)} 100`;
-    wedge.setAttribute("transform", `rotate(${String(rotateDeg)} 10 10)`);
-  }
-
-  refreshCompactionThreshold(): void {
-    void this.fetchCompactionBuffer();
-  }
-
-  cancelCompactionLoad(): void {
-    this.compactionSlot.abort();
-  }
-
   update(opts: ContextBarUpdate): void {
-    if (!this.contextReserveInitialised) {
-      this.contextReserveInitialised = true;
-      void this.fetchCompactionBuffer();
-    }
     this.contextBarArgs = opts;
     if (!this.contextBarQueued) {
       this.contextBarQueued = true;
@@ -134,9 +87,6 @@ class ContextBarController {
 }
 
 const contextBar = new ContextBarController();
-registerCleanup(() => {
-  contextBar.cancelCompactionLoad();
-});
 
 function renderMetering(items: MeteringItem[]): void {
   const box = $.ctxMetering;
@@ -162,13 +112,6 @@ function renderMetering(items: MeteringItem[]): void {
 }
 
 // --- Public API (delegate functions) ---
-
-/** Re-read the compaction threshold from kiro-cli. Called by the
- *  settings_updated SSE handler so changes to context-buffer in
- *  Settings → General update the tick mark without a page reload. */
-export function refreshCompactionThreshold(): void {
-  contextBar.refreshCompactionThreshold();
-}
 
 // --- Connection status announcement debounce ---
 // Prevents rapid connecting→disconnected→connecting cycles from spamming

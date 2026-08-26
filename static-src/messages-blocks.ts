@@ -55,6 +55,9 @@ import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group
 export { refreshGroupHeader };
 import { humanName } from "./strings.js";
 import { iconForSubagent } from "./roles.js";
+import { buildRunCard, type RunCardView } from "./fundamentals/run-card.js";
+import { invalidateRun, runState, forgetRun } from "./run-store.js";
+import { hasTab } from "./tabs.js";
 
 // ---------------------------------------------------------------------------
 // Callbacks injected by messages.ts (kept there so avatar markup + the
@@ -128,6 +131,21 @@ interface MsgRender {
   blockText: Map<number, (full: string) => void>;
   /** subtask id → its SubagentBlock view. */
   subagents: Map<string, SubagentView>;
+  /** workflow id → the run card that invocation opened. Keyed by RUN, not by
+   *  subtask, because one card holds every step of one run — the step rows inside
+   *  it are keyed by node path (see `runContainerFor`). */
+  runs: Map<string, RunCardView>;
+  /** Cleanups that live as long as the MESSAGE, not as long as the turn.
+   *
+   *  Separate from `pushStreamingEffect` and that separation is load-bearing: that
+   *  one is disposed at TURN END as well as on unmount (its own comment says so),
+   *  which is correct for a caret or a tool-card status effect and exactly wrong
+   *  for a run card. `run_workflow` returns as soon as the run STARTS, so the
+   *  launching turn ends while the run carries on for minutes — releasing the
+   *  card's store subscription and its clock there would freeze it at the moment
+   *  it matters most. Disposed by `disposeAssistantBody` / `resetBlockRenders`,
+   *  the real unmount paths. */
+  disposers: (() => void)[];
   /** subtask id → the tool-call ids routed into that box, for the footer's
    *  ledger (commands, reads, changed files). The INVOCATION call is not a
    *  member — it is the box itself. */
@@ -163,6 +181,8 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
     rendered: 0,
     blockText: new Map(),
     subagents: new Map(),
+    runs: new Map(),
+    disposers: [],
     subagentMembers: new Map(),
     bubbles: [],
     liveBubble: null,
@@ -246,6 +266,7 @@ export function disposeAssistantBody(msgId: string): void {
     for (const b of st.bubbles) {
       b.finishNow();
     }
+    disposeAll(st);
   }
   renders.delete(msgId);
 }
@@ -255,8 +276,19 @@ export function resetBlockRenders(): void {
     for (const b of st.bubbles) {
       b.finishNow();
     }
+    disposeAll(st);
   }
   renders.clear();
+}
+
+/** Run and clear a render's message-lifetime cleanups. Idempotent: both dispose
+ *  paths can reach one render (a chat switch resets every render AND the
+ *  reconcile removes each row), and a store subscription disposed twice must not
+ *  throw. */
+function disposeAll(st: MsgRender): void {
+  for (const fn of st.disposers.splice(0)) {
+    fn();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -300,11 +332,21 @@ function sealLiveBubble(st: MsgRender): void {
 }
 
 /** Resolve the container a block renders into: the top-level `.assistant-blocks`
- *  for parent-agent blocks, or a SubagentBlock's body for a subagent's blocks. */
+ *  for parent-agent blocks, a run card's step row for a WORKFLOW STEP, or a
+ *  SubagentBlock's body for a subagent's blocks.
+ *
+ *  Three destinations, and the middle one is the reason this is not a two-line
+ *  function. A step's subtask id is `wf:<workflowId>:<nodePath>`, so it names TWO
+ *  containers: the run, and the step within it. Resolving both is what puts a
+ *  step's work inside the invocation that launched it rather than beside it. */
 function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
   const subtask = block.agent_subtask_id ?? "";
   if (subtask === "") {
     return st.blocksEl;
+  }
+  const step = parseStepSubtask(subtask);
+  if (step !== null) {
+    return runContainerFor(st, step);
   }
   let sa = st.subagents.get(subtask);
   if (sa === undefined) {
@@ -314,6 +356,124 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
     st.blocksEl.appendChild(sa.root);
   }
   return sa.body;
+}
+
+/** The step row inside the run card, creating the card when the invocation has
+ *  not been rendered yet.
+ *
+ *  A step's frame can arrive before the tool call that started it is in the store
+ *  (out-of-order SSE), and after a refresh the invocation is persisted while the
+ *  step blocks are not — so the card must be creatable from either side. Whichever
+ *  arrives first builds it; the other finds it. */
+function runContainerFor(st: MsgRender, step: StepSubtask): HTMLElement {
+  return runCardFor(st, step.workflowID, "Workflow run").stepBody(step.nodePath);
+}
+
+/** Get or build the run card for one workflow id, and subscribe it to the store.
+ *
+ *  The subscription is the whole reason the card needs no event handling of its
+ *  own: `run-store.ts` owns the fetch and holds a signal per run, so one effect
+ *  per card re-renders it whenever that run changes and nothing else does. */
+function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardView {
+  const existing = st.runs.get(workflowID);
+  if (existing !== undefined) {
+    return existing;
+  }
+  // The footer link re-opens the run's tab. Injected here rather than imported by
+  // the card, so `fundamentals/` keeps pointing only downward — and lazily, because
+  // `run-view.ts` reaches the whole run page and the transcript must not carry it.
+  const card = buildRunCard(workflowID, name, (id, label) => {
+    void import("./run-view.js")
+      .then(({ openRunView }) => {
+        openRunView(id, label);
+      })
+      .catch(() => {
+        /* noop: the link degrades to its href on the next click */
+      });
+  });
+  st.runs.set(workflowID, card);
+  st.blocksEl.appendChild(card.root);
+  const stop = effect(() => {
+    card.render(runState(workflowID));
+  });
+  st.disposers.push(() => {
+    stop();
+    releaseRunClock(workflowID);
+    // The store's only bound, and this is the one place that can apply it: three
+    // surfaces read a run's cell and none of them is last on its own. A card
+    // unmounting (chat switch, or the reconcile dropping its row) with no run tab
+    // open IS last, and a later invalidate re-creates the cell, so forgetting early
+    // costs one fetch rather than a wrong answer. A tab still open keeps it.
+    if (!hasTab("run", workflowID)) {
+      forgetRun(workflowID);
+    }
+  });
+  // The first read the card ever gets. Every later one arrives through the
+  // effect above, driven by the run SSE events.
+  invalidateRun(workflowID);
+  holdRunClock(workflowID, card);
+  return card;
+}
+
+/** Adopt the launch tool call into its run's card: the recipe name from the
+ *  call's input as a placeholder label, and a failed launch reported on the card
+ *  rather than lost.
+ *
+ *  A launch that FAILED never created a run, so `GET /api/runs/{id}` has nothing
+ *  and the card would sit at "starting" forever. The tool call is the only witness
+ *  in that case, which is why its status is folded in here. */
+function bindRunCard(st: MsgRender, workflowID: string, tc: ToolCall): void {
+  const card = runCardFor(st, workflowID, recipeNameOf(tc));
+  card.setLaunch(tc.status, tc.output);
+}
+
+/** The recipe a launch names, from the tool call's own input. A placeholder only:
+ *  every render prefers the run's `runLabel`, which is what the launcher actually
+ *  called this execution. */
+function recipeNameOf(tc: ToolCall): string {
+  const input = tc.input;
+  if (input !== undefined && input !== null && typeof input === "object") {
+    const rec = input as Record<string, unknown>;
+    for (const key of ["workflowPath", "recipe", "name"]) {
+      const v = rec[key];
+      if (typeof v === "string" && v !== "") {
+        // A path's last segment without its extension reads as the recipe name.
+        const base = v.split("/").pop() ?? v;
+        return base.replace(/\.(ya?ml|json)$/i, "");
+      }
+    }
+  }
+  return "Workflow run";
+}
+
+// ---------------------------------------------------------------------------
+// The shared run clock.
+//
+// A run takes minutes, so a duration that only moves when a server frame arrives
+// reads as frozen — and a paused run emits no frames at all. ONE interval for every
+// card on screen rather than one per card: N timers ticking the same second is N
+// wakeups for one repaint, and the interval stops entirely when no card is holding
+// it, so an idle transcript costs nothing.
+// ---------------------------------------------------------------------------
+
+const clockHolders = new Map<string, RunCardView>();
+let clockTimer: ReturnType<typeof setInterval> | undefined;
+
+function holdRunClock(workflowID: string, card: RunCardView): void {
+  clockHolders.set(workflowID, card);
+  clockTimer ??= setInterval(() => {
+    for (const c of clockHolders.values()) {
+      c.tick();
+    }
+  }, 1000);
+}
+
+function releaseRunClock(workflowID: string): void {
+  clockHolders.delete(workflowID);
+  if (clockHolders.size === 0 && clockTimer !== undefined) {
+    clearInterval(clockTimer);
+    clockTimer = undefined;
+  }
 }
 
 function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: boolean): void {
@@ -335,6 +495,19 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
       const tc = m.tool_calls?.find((c) => c.id === block.tool_call_id);
       if (tc === undefined) {
         return; // referenced tool call not in the store yet (out-of-order SSE)
+      }
+      // A WORKFLOW LAUNCH becomes the run's card, not a tool row. The call sits
+      // in the parent agent's own block stream (it has no subtask of its own), so
+      // this branch is ahead of the subtask checks below rather than inside them.
+      //
+      // A card already built by a step whose frame arrived first is FOUND here
+      // rather than replaced, which is what keeps the two orders equivalent.
+      const runID = workflowInvocation(tc);
+      if (subtask === "" && runID !== "") {
+        sealReasoning(st, container);
+        closeToolGroup(st, container);
+        bindRunCard(st, runID, tc);
+        return;
       }
       // The subagent invocation becomes the SubagentBlock's header, not a card.
       if (subtask !== "" && isSubagentInvocation(tc)) {
@@ -599,6 +772,47 @@ function mountPlan(wrap: HTMLElement, m: Message): void {
 // ---------------------------------------------------------------------------
 // Subagent + todo classification / parsing
 // ---------------------------------------------------------------------------
+
+/** The prefix the server stamps on a WORKFLOW STEP's subtask id
+ *  (`internal/translate/wire.go` ACPWorkflowMeta.SubtaskID:
+ *  `"wf:" + workflowId + ":" + nodePath`). */
+const STEP_PREFIX = "wf:";
+
+/** A step subtask id, split into the two containers it names. */
+interface StepSubtask {
+  workflowID: string;
+  nodePath: string;
+}
+
+/** Parse `wf:<workflowId>:<a/b/c>`, or null for a subagent's uuid.
+ *
+ *  One `indexOf` rather than a `split`, because a node path may not contain a
+ *  colon but nothing here should depend on that: taking the FIRST colon after the
+ *  prefix makes the workflow id unambiguous and hands everything after it to the
+ *  path, whatever it contains. A malformed id (no second colon, or an empty half)
+ *  returns null and falls through to the subagent branch, which renders it as a
+ *  delegate box rather than losing the block. */
+function parseStepSubtask(subtask: string): StepSubtask | null {
+  if (!subtask.startsWith(STEP_PREFIX)) {
+    return null;
+  }
+  const rest = subtask.slice(STEP_PREFIX.length);
+  const sep = rest.indexOf(":");
+  if (sep <= 0 || sep === rest.length - 1) {
+    return null;
+  }
+  return { workflowID: rest.slice(0, sep), nodePath: rest.slice(sep + 1) };
+}
+
+/** The tool call that STARTS a workflow run. Matched on the workflow id the
+ *  server decoded off its `rawOutput`, never on the title: KAS titles it "Run
+ *  Workflow" today and a title is display text that may be localized or
+ *  reworded, while the id is the structural fact and the thing the card is keyed
+ *  on. A call with no id is not a launch (or has not created its run yet) and
+ *  renders as an ordinary tool card. */
+function workflowInvocation(tc: ToolCall): string {
+  return tc.workflow_id ?? "";
+}
 
 /** The tool call that OPENS a subagent (vs. one of its nested tool calls).
  *  Matched by title only — the nested calls share the same agent_subtask_id

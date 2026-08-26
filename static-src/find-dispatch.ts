@@ -87,7 +87,6 @@ type FindDestination =
  */
 const DESTINATION: Readonly<Record<TabKind, FindDestination>> = {
   chat: "transcript",
-  plan: "transcript",
   editor: "editor",
   files: "files",
   docs: "page",

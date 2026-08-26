@@ -10,6 +10,10 @@ import type { AccountUsage } from "./types.js";
 const mockApiGetTyped = vi.fn();
 vi.mock("./api-client.js", () => ({
   apiGetTyped: (...args: unknown[]) => mockApiGetTyped(...args),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGet: vi.fn(),
 }));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeAccountUsage: vi.fn() }));
 

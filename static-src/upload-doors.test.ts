@@ -21,7 +21,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_UPLOAD_FILES, MAX_UPLOAD_TOTAL_BYTES } from "./upload-policy.js";
 
 const dispatch = vi.fn();
-const attachPathToActiveChat = vi.fn();
+const attachPathsToActiveChat = vi.fn();
 const toastError = vi.fn();
 
 vi.mock("./actions/files.js", () => ({
@@ -32,7 +32,7 @@ vi.mock("./actions/files.js", () => ({
   },
   partialUploadOf: (): string[] => [],
 }));
-vi.mock("./chat.js", () => ({ attachPathToActiveChat }));
+vi.mock("./chat.js", () => ({ attachPathsToActiveChat }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
 
 /** A File of a given size without allocating the bytes. */

@@ -458,11 +458,10 @@ describe("a11y: History row accessible names", () => {
     vi.doMock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
     vi.doMock("./run-view.js", () => ({ openRunView: noop }));
     vi.doMock("./tabs.js", () => ({
-      toggleHistoryView: (onShow: () => void) => {
-        onShow();
-      },
+      // The toggle takes no callback now: the tab factory owns the page's loader.
+      // The suite mounts the page itself, so this only has to resolve.
+      toggleHistoryView: () => Promise.resolve(),
       hasTab: () => false,
-      closeTab: noop,
     }));
     vi.doMock("@cplieger/ui-primitives/skeleton", () => ({
       skeletonTiming: () => ({ cancel: noop }),
@@ -493,8 +492,11 @@ describe("a11y: History row accessible names", () => {
     tabList.id = "tab-list";
     document.body.appendChild(tabList);
 
-    const { showHistoryView } = await import("./history.js");
-    showHistoryView();
+    // The page's own loader, not `showHistoryView`: that one TOGGLES the tab, which
+    // is a round trip and paints nothing. `loadHistoryView` is what every door
+    // reaches through the tab factory's lazy import.
+    const { loadHistoryView } = await import("./history.js");
+    loadHistoryView();
     await vi.waitFor(() => {
       if (host.querySelector("[data-key]") === null) {
         throw new Error("not rendered");

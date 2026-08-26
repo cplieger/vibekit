@@ -117,17 +117,158 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 
 // --- TryFastModelSwitch ---
 
-// A successful in-session SetModel returns true.
-func TestTryFastModelSwitch_SucceedsReturnsTrue(t *testing.T) {
-	h, cs, _ := newTestHub()
+// A successful in-session SetModel returns true, and the chat's reasoning-effort
+// level is re-applied after the swap.
+//
+// The re-apply is the load-bearing half. KAS reconciles the session's
+// effortLevel against the NEW model's tier list inside its own model handler and
+// replaces it with that model's default when the current level is not in the
+// list, so a chat sitting at max dropped to the new model's default while the
+// chat record and the pill both still read max.
+func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
+	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new"); got != true {
+	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", "max"); got != true {
 		t.Errorf("TryFastModelSwitch(success) = %v, want true", got)
+	}
+	if got := br.lastEffort(); got != "max" {
+		t.Errorf("effort re-applied after the swap = %q, want %q; KAS resets the level inside the model swap", got, "max")
+	}
+}
+
+// A chat that has chosen no level sends no effort call: there is nothing to
+// re-assert, and the service's own reconciliation is the right answer.
+func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
+	h, cs, br := newTestHub()
+	ctx := t.Context()
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+
+	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); got != true {
+		t.Errorf("TryFastModelSwitch(success) = %v, want true", got)
+	}
+	if got := br.lastEffort(); got != "" {
+		t.Errorf("effort applied = %q, want none for a chat that chose no level", got)
+	}
+}
+
+// --- repairEffort: the level KAS changed on its own ---
+
+// A prompt on an ALREADY-OPEN bridge re-asserts the chat's level, which is the
+// only checkpoint that catches a level KAS moved without vibekit asking.
+//
+// Two ways that happens: KAS's own pinSessionModelId settles an unset model on the
+// first prompt and reconciles the effort against it, and a model switch made from
+// the Kiro IDE or the TUI on a shared session does the same. Neither is a vibekit
+// action, so neither the session doors nor the model-switch re-assert sees it.
+func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
+	h, cs, br := newTestHub()
+	ctx := t.Context()
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Effort = "max"
+		return true
+	})
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	// Stand in for KAS moving the level underneath vibekit.
+	br.mu.Lock()
+	br.effort = "high"
+	br.mu.Unlock()
+
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge (reopen): %v", err)
+	}
+
+	if got := br.lastEffort(); got != "max" {
+		t.Errorf("effort after a prompt on the open bridge = %q, want %q", got, "max")
+	}
+}
+
+// A chat that has chosen no level, and has no seed to follow, asks for nothing:
+// the service's own reconciliation is the right answer and a call would only
+// re-impose a level nobody picked.
+func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
+	h, cs, br := newTestHub()
+	ctx := t.Context()
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	br.mu.Lock()
+	br.effort = ""
+	br.mu.Unlock()
+
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge (reopen): %v", err)
+	}
+
+	if got := br.lastEffort(); got != "" {
+		t.Errorf("effort applied = %q, want none for a chat with no choice and no seed", got)
+	}
+}
+
+// --- effortFor ---
+
+// effortFor prefers the chat's own choice, falls back to the last level the user
+// picked anywhere, and refuses a level this build does not know.
+func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
+	tests := map[string]struct {
+		chatEffort string
+		setting    string
+		want       string
+	}{
+		"chat choice wins over the seed":   {chatEffort: "max", setting: "low", want: "max"},
+		"seed answers for an unset chat":   {chatEffort: "", setting: "xhigh", want: "xhigh"},
+		"no choice and no seed sends none": {chatEffort: "", setting: "", want: ""},
+		"an unknown seed level is refused": {chatEffort: "", setting: "turbo", want: ""},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if test.setting != "" {
+				body := `{"last_effort":"` + test.setting + `"}`
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+					t.Fatalf("write config.json: %v", err)
+				}
+			}
+			h, _, _ := newTestHub()
+			h.coord.lifecycle.configDir = dir
+
+			got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c1", Effort: test.chatEffort})
+
+			if got != test.want {
+				t.Errorf("effortFor(chat=%q, last_effort=%q) = %q, want %q",
+					test.chatEffort, test.setting, got, test.want)
+			}
+		})
+	}
+}
+
+// The seed is a fallback, never a write: resolving it must not stamp the level
+// onto the chat record, or that chat stops following the setting forever.
+func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"last_effort":"max"}`), 0o600); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	h, _, _ := newTestHub()
+	h.coord.lifecycle.configDir = dir
+	chat := &vibekit.Chat{ID: "c1"}
+
+	if got := h.coord.effortFor(t.Context(), chat); got != "max" {
+		t.Fatalf("effortFor = %q, want max", got)
+	}
+	if chat.Effort != "" {
+		t.Errorf("chat.Effort = %q, want it left empty; the seed is resolved per spawn, not persisted", chat.Effort)
 	}
 }
 

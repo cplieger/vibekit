@@ -164,13 +164,6 @@ describe("handleFindKey", () => {
     expect(find.open).not.toHaveBeenCalled();
   });
 
-  it("routes a plan tab to the transcript, which is the view it shares", () => {
-    activeKind = "plan";
-    handleFindKey(ctrlF());
-    expect(chatFind).toHaveBeenCalledTimes(1);
-    expect(filesFind).not.toHaveBeenCalled();
-  });
-
   it("leaves the chord ALONE on a page with no search at all", () => {
     // Settings and a run view. They used to reach the transcript's handler through
     // the dispatcher's default branch, which declined because the chat view was
@@ -269,7 +262,7 @@ describe("findAffordanceForActiveTab", () => {
   // button that stays visible where nothing can answer it is the same dead door
   // the routing above was written to remove — it was just the other half of it.
   it("is available on a chat tab and on the files browser", () => {
-    for (const kind of ["chat", "plan", "files"] as TabKind[]) {
+    for (const kind of ["chat", "files"] as TabKind[]) {
       activeKind = kind;
       expect(findAffordanceForActiveTab().available).toBe(true);
     }
@@ -308,7 +301,7 @@ describe("findAffordanceForActiveTab", () => {
     // The transcript enumerates server-side over the whole conversation, the file
     // browser greps the tree, and the editor scans a buffer the viewport shows a
     // fraction of. None of the three is a filter over what is painted.
-    for (const kind of ["chat", "plan", "files", "editor"] as TabKind[]) {
+    for (const kind of ["chat", "files", "editor"] as TabKind[]) {
       activeKind = kind;
       expect(findAffordanceForActiveTab().kind, kind).toBe("search");
     }

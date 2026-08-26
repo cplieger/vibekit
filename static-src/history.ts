@@ -19,7 +19,7 @@
 //     so a run opens the read-only run view rather than a chat.
 // ---------------------------------------------------------------------------
 
-import { toggleHistoryView, hasTab, closeTab } from "./tabs.js";
+import { toggleHistoryView, hasTab } from "./tabs.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -214,7 +214,7 @@ const ROW_RENDER_INFO: ToolRenderInfo = {
  *  chat tab's id IS its chat id, so no mapping is needed. */
 function isOpenHere(s: ResumableSessionRow): boolean {
   const chatID = s.chat_id ?? "";
-  return chatID !== "" && hasTab(chatID);
+  return chatID !== "" && hasTab("chat", chatID);
 }
 
 function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): HistoryRow[] {
@@ -324,14 +324,12 @@ class HistoryController {
   }
 
   showView(): void {
-    toggleHistoryView(
-      () => {
-        this.mount();
-      },
-      () => {
-        this.teardown();
-      },
-    );
+    // No callbacks: `mount` and `teardown` are what the tab factory reaches
+    // through this module's own lazy-imported `loadHistoryView` /
+    // `teardownHistoryView`, so every door into this page — this one, a boot
+    // restore, another device's open — gets the same behaviour. Passing them here
+    // as well would be two definitions of one tab.
+    void toggleHistoryView();
   }
 
   teardown(): void {
@@ -412,7 +410,7 @@ class HistoryController {
           return;
         }
         const hit = res.matches.find((x) => x.id === id);
-        openChatTab(id, hit?.name ?? "Chat");
+        void openChatTab(id, hit?.name ?? "Chat");
       },
       { signal },
     );
@@ -504,10 +502,12 @@ class HistoryController {
 /** Open a history row: a chat resumes, a run opens its read-only review. */
 function openRow(row: HistoryRow): void {
   if (row.kind === "run" && row.run !== undefined) {
-    // Only a parentless run offers Retry on its page (user decision). Every run
-    // reaching this page is parentless now, so the argument is always true; it
-    // stays explicit because run-view's own contract is written in those terms.
-    openRunView(row.run.workflow_id, row.title, (row.run.parent_chat_id ?? "") === "");
+    // The parent chat, when there is one, nests the run's tab under it. History
+    // already carries the id, so this costs nothing and is what puts a run beside
+    // its own conversation rather than at the end of the strip. Whether the RUN is
+    // parentless is not passed: it is the run's own fact and the composition root
+    // resolves it from the run store.
+    openRunView(row.run.workflow_id, row.title, row.run.parent_chat_id ?? "");
     return;
   }
   if (row.session !== undefined) {
@@ -556,14 +556,11 @@ async function deleteRow(row: HistoryRow): Promise<boolean> {
   // about to stop existing, so the tab goes only after the delete lands. A chat
   // open on ANOTHER device keeps its tab there until the chat_deleted frame
   // arrives, which is the same path an ordinary delete takes.
-  const done = (await deleteChatAction.dispatch(chatID)) !== null;
-  if (done) {
-    // `skipOnClose` because the chat is already gone server-side: the tab's own
-    // onClose is the close/delete dispatch, and running it here would fire a
-    // second delete against an id the store no longer holds.
-    closeTab(chatID, { skipOnClose: true });
-  }
-  return done;
+  // The TAB is not closed here any more, and that is the point: the membership
+  // coordinator closes every tab for a deleted chat under the same lock that
+  // removes the record, and emits the removal. Closing it from here would be a
+  // second `close_tab` for a tab the server has already dropped.
+  return (await deleteChatAction.dispatch(chatID)) !== null;
 }
 
 function buildRow(row: HistoryRow): HTMLElement {

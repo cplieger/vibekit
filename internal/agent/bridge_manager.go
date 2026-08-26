@@ -95,7 +95,7 @@ func (bm *bridgeManager) removeIfSame(chatID vibekit.ChatID, sb *sharedBridge) b
 // removeIfBridge removes chatID only if the current entry's bridge is the SAME
 // INSTANCE as bridge.
 //
-// The parameter is an identity, not a capability: 0 of the 14 methods are
+// The parameter is an identity, not a capability: 0 of the 15 methods are
 // called on it. It stays the full ACPBridge anyway, because the comparison is
 // only meaningful against what the map holds, and a narrower type here would
 // let a caller pass something that could never have been registered.

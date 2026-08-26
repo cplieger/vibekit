@@ -12,6 +12,7 @@ package testsupport
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,15 +23,16 @@ import (
 // chatStoreUnion is the union of what the real consumers declare, spelled out
 // here rather than named, so a consumer that grows a method fails to compile
 // against these fakes instead of silently outgrowing them. It is
-// ChatStoreContract's 7 plus SetDraft, which internal/command needs and the
-// contract suite does not exercise.
+// ChatStoreContract's 7 plus the two composer writers, which internal/command
+// needs and the contract suite does not exercise.
 //
 // RegisterRoutes is NOT here, and each fake dropped its no-op: only
 // internal/server mounts the chat routes and it does so on the concrete store,
 // so both fakes carried a method no test could reach.
 type chatStoreUnion interface {
 	ChatStoreContract
-	SetDraft(ctx context.Context, id vibekit.ChatID, text string) error
+	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
+	SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error)
 }
 
 // RecordingChatStore is an in-memory chat store that keeps chats in a
@@ -126,13 +128,41 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate
 // depend on. A fake that went through Mutate would stamp activity and make a
 // test unable to observe the one property the real method exists to hold.
 // Absent chat: no-op, like the real store's load-then-write.
-func (s *RecordingChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text string) error {
+//
+// It reports the state that landed, nil-for-nothing, because the draft_changed
+// broadcast keys on exactly that: a fake that always reported a write would make
+// a test unable to see the no-op cases the real method has.
+func (s *RecordingChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, ok := s.Chats[id]; ok {
-		c.Draft = text
+	c, ok := s.Chats[id]
+	if !ok || c.Draft == text {
+		return nil, nil
 	}
-	return nil
+	c.Draft = text
+	state := c.Composer()
+	return &state, nil
+}
+
+// SetAttachments stores the chat's staged attachment paths under the same
+// contract SetDraft holds: no UpdatedAt, no broadcast, no-op on an absent chat.
+func (s *RecordingChatStore) SetAttachments(_ context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.Chats[id]
+	if !ok {
+		return nil, nil
+	}
+	next := slices.Clone(paths)
+	if len(next) == 0 {
+		next = nil
+	}
+	if slices.Equal(c.Attachments, next) {
+		return nil, nil
+	}
+	c.Attachments = next
+	state := c.Composer()
+	return &state, nil
 }
 
 // Delete removes the chat with the given id and broadcasts a chat_deleted event.

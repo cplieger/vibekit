@@ -42,8 +42,12 @@ describe("the permission notification has no off switch", () => {
     expect(html).toContain("notify-finished-toggle");
   });
 
-  it("offers the workspace relaxation as the control that replaced it", () => {
-    expect(html).toContain("workspace-relax-checkbox");
+  // The permission notice has no off switch because a permission ask blocks the
+  // turn. What IS relaxable is the permission SYSTEM, and since 2026-08-25 that is
+  // the security-profile picker rather than a single checkbox: it removes the asks
+  // instead of hiding the notice about them.
+  it("offers the security profile as the control that replaced it", () => {
+    expect(html).toContain("security-profile-list");
   });
 });
 

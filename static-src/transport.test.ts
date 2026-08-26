@@ -4,7 +4,13 @@
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { newRequestID, newMessageID, computeBackoff, BACKOFF_CAP_MS } from "./transport.js";
+import {
+  newRequestID,
+  newMessageID,
+  newOpID,
+  computeBackoff,
+  BACKOFF_CAP_MS,
+} from "./transport.js";
 
 const VALID_CHARS = /^[a-z0-9-]+$/;
 
@@ -280,5 +286,36 @@ describe("newMessageID/newRequestID structural equivalence", () => {
       { numRuns: 50 },
     );
     expect(result.failed).toBe(false);
+  });
+});
+
+// newOpID is the create gesture's correlation id, and it has ONE constraint the
+// other two do not: the server validates it with ids.ValidIdent
+// (`^[A-Za-z0-9_.-]{1,128}$`, and it may not start with '.' or '-'), because it
+// becomes a key in the create ledger's in-memory map. A mint the boundary rejects
+// would 400 every create.
+describe("newOpID", () => {
+  it("passes the server's identifier gate", () => {
+    const ident = /^[A-Za-z0-9_.-]{1,128}$/;
+    for (let i = 0; i < 500; i++) {
+      const id = newOpID();
+      expect(id).toMatch(ident);
+      expect(id.startsWith("op-")).toBe(true);
+    }
+  });
+
+  it("is unique over 1000 calls: one gesture, one id", () => {
+    const ids = new Set<string>();
+    for (let i = 0; i < 1000; i++) {
+      ids.add(newOpID());
+    }
+    expect(ids.size).toBe(1000);
+  });
+
+  // Distinct from the idempotency token on purpose: that one is per DISPATCH and
+  // lives in a 5-minute server cache, this one has to survive a retry the user
+  // makes minutes later. Sharing a value would tie the two windows together.
+  it("is not the same value as a request id", () => {
+    expect(newOpID()).not.toBe(newRequestID());
   });
 });

@@ -10,7 +10,7 @@
 // tabs). The engine (@cplieger/web-terminal-engine) underneath owns the wire
 // protocol, the reconnect/resume reliability layer, and the render/scroll
 // modules. vibekit keeps only its panel chrome (the slide-up panel, the header
-// open/close/restart/full-screen buttons) and its lifecycle (ui-state
+// open/close/restart/full-screen buttons) and its lifecycle (device-view
 // persistence, and the bounded reattach policy below).
 //
 // The terminal handle carries the host controls (ui v6): send(bytes) routes
@@ -29,7 +29,7 @@ import type { TerminalHandle } from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
-import * as uiState from "./ui-state.js";
+import { shellHeight, setShellHeight, setShellOpen as recordShellOpen } from "./device-view.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { restartShell } from "./actions/shell.js";
 
@@ -326,7 +326,7 @@ function applyShellH(h: number): number {
  * Drag-to-resize on the panel's top edge handle: one pointer-capture path for
  * mouse + touch (bottom-docked panel, so dragging up = smaller clientY =
  * taller panel). The height lands in --shell-h and persists per-device in
- * ui-state (shell_h; 0 = CSS default). The handle is also a keyboard
+ * device-view (shell_h; 0 = CSS default). The handle is also a keyboard
  * separator: ArrowUp grows, ArrowDown shrinks (WCAG 2.1.1).
  */
 function initShellResize(): void {
@@ -372,7 +372,7 @@ function initShellResize(): void {
     resizeEl.releasePointerCapture(e.pointerId);
     resizeEl.classList.remove("dragging");
     $.shellPanel.classList.remove("resizing");
-    uiState.save({ shell_h: lastH });
+    setShellHeight(lastH);
   };
   resizeEl.addEventListener("pointerup", end);
   resizeEl.addEventListener("pointercancel", end);
@@ -384,13 +384,13 @@ function initShellResize(): void {
     e.preventDefault();
     const cur = $.shellPanel.getBoundingClientRect().height;
     const next = applyShellH(cur + (e.key === "ArrowUp" ? SHELL_KEY_STEP : -SHELL_KEY_STEP));
-    uiState.save({ shell_h: next });
+    setShellHeight(next);
   });
 
   // Restore the persisted height (re-clamped: the viewport may have changed
   // since it was saved). Harmless while closed — the closed state pins
   // height 0; the value takes effect on open.
-  const saved = uiState.load().shell_h;
+  const saved = shellHeight();
   if (saved > 0) {
     applyShellH(saved);
   }
@@ -452,7 +452,7 @@ let shellOpen = false;
  *  boot-time restore must not steal focus from the prompt input). Close:
  *  collapse the panel (the CSS animates height/opacity, then flips
  *  visibility); the server PTY keeps running so reopening resumes the same
- *  session. State is persisted per-device in ui-state so a reload restores
+ *  session. State is persisted per-device in device-view so a reload restores
  *  it (see restoreShell). */
 function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
   shellOpen = open;
@@ -487,11 +487,11 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     $.shellPanel.classList.add("shell-closed");
     $.shellBtn.classList.remove("active");
   }
-  uiState.save({ shell_open: open });
+  recordShellOpen(open);
 }
 
 /**
- * Restore the shell panel on page load when ui-state had it open. Runs the full
+ * Restore the shell panel on page load when this device left it open. Runs the full
  * open path (build terminal + CSS slide), so the WebSocket only opens when the
  * shell was actually left open — but without focusing the terminal, so boot
  * doesn't steal focus from the prompt input.

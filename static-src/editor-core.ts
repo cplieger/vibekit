@@ -15,18 +15,16 @@
 import { effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction } from "./actions/editor.js";
 import { isPending } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
 import { showEditMode, updateGutter, renderReadSurface, renderEditModeUI } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
-import { activateFile, closeEditorFile, fetchGitDiffSources } from "./editor-openers.js";
+import { fetchGitDiffSources } from "./editor-openers.js";
 import {
   fileStates,
   getActiveFilePath,
-  freshState,
   activeDirty,
   unsavedDiffSource,
   gitDiffSource,
@@ -89,29 +87,6 @@ export function initEditor(): void {
   effect(() => {
     $.editorSaveBtn.disabled = !activeDirty.value || isPending("editor.save_file");
   });
-}
-
-export function restoreEditorTabs(paths: string[]): void {
-  for (const p of paths) {
-    if (!fileStates.has(p)) {
-      fileStates.set(p, freshState(p));
-    }
-    // Open WITHOUT activating (B8): activation runs activateFile, which
-    // fetches the file — restoring N saved editor tabs active fanned out
-    // N pre-auth fetches at boot. The saved active tab (if it's an editor
-    // tab) is activated exactly once by restoreTabState(), which fetches
-    // just that file; the rest load lazily on first click.
-    openEditorView(
-      p,
-      () => {
-        activateFile(p);
-      },
-      () => {
-        closeEditorFile(p);
-      },
-      { activate: false },
-    );
-  }
 }
 
 // --- Mode switches ---

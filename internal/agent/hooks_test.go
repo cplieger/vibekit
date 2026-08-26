@@ -125,6 +125,13 @@ func TestToHookInfo(t *testing.T) {
 	if cmd.Trigger != "Manual" || cmd.Matcher != ".*" || !cmd.Enabled {
 		t.Errorf("meta flatten wrong: %+v", cmd)
 	}
+	// A Manual hook carrying a matcher IS the ineffective pairing, and the read
+	// surface DOES report it even though create_hook refuses that shape: a hook
+	// file can be hand-written or copied in from outside vibekit, and this row is
+	// the only place such a mistake becomes visible.
+	if cmd.MatcherWarning != "ineffective" {
+		t.Errorf("a Manual hook with a matcher should be badged ineffective; got %q", cmd.MatcherWarning)
+	}
 	if cmd.FilePath != ".kiro/hooks/greet.json" {
 		t.Errorf("file path not workspace-relative: %q", cmd.FilePath)
 	}
@@ -163,5 +170,60 @@ func TestToHookInfo(t *testing.T) {
 	}
 	if agent.Enabled || agent.DisabledReason != "untrusted-workspace" {
 		t.Errorf("askAgent meta wrong: %+v", agent)
+	}
+}
+
+// TestToHookInfo_MatcherWarning pins the one diagnostic this surface computes: a
+// tool-name trigger with no matcher runs on EVERY tool call, which upstream warns
+// about in its own log and never tells a client.
+//
+// It is a badge rather than a refusal because the state is legitimate, and it is
+// computed here rather than in TypeScript because the trigger-to-subject table
+// would then exist twice and could disagree about a subject.
+func TestToHookInfo_MatcherWarning(t *testing.T) {
+	work := t.TempDir()
+	h := &Settings{lifecycle: &lifetime{workDir: work}}
+	fp := filepath.Join(work, ".kiro", "hooks", "h.json")
+
+	info := func(trigger, matcher string) hookInfo {
+		return h.toHookInfo(&kasHook{
+			ID:     fp + "#hook-0",
+			Name:   "h",
+			Action: kasHookAction{Type: actionRunCommand, Command: "true"},
+			Meta:   kasHookMeta{Trigger: trigger, Matcher: matcher, FilePath: fp, Enabled: true},
+		})
+	}
+
+	for _, tc := range []struct {
+		name    string
+		trigger string
+		matcher string
+		want    string
+	}{
+		{"pre tool use with no matcher is badged", "PreToolUse", "", "missing_tool_matcher"},
+		{"post tool use with no matcher is badged", "PostToolUse", "", "missing_tool_matcher"},
+		{"a tool matcher clears it", "PreToolUse", "fsWrite", ""},
+		// The ineffective pairing reaches this surface too, even though create_hook
+		// refuses it: a hook file can be hand-written or copied in, and this row is
+		// then the only place the mistake is visible.
+		{"a matcher on a none-subject trigger is badged", "SessionStart", `\.go$`, "ineffective"},
+		{"an alias spelling is badged too", "userTriggered", "x", "ineffective"},
+		// The two subjects that never badge, in the direction each could be wrong:
+		// a path matcher is effective, and a path trigger without one means every
+		// file rather than a mistake.
+		{"file save with a matcher is silent", "PostFileSave", `\.go$`, ""},
+		{"file save with no matcher is silent", "PostFileSave", "", ""},
+		{"session start with no matcher is silent", "SessionStart", "", ""},
+		// A trigger KAS reports that this table does not know must not produce a
+		// diagnostic about its matcher: the real defect is the trigger, and naming
+		// the matcher would send the reader to the wrong field.
+		{"an unknown trigger is silent", "SomeFutureTrigger", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := info(tc.trigger, tc.matcher).MatcherWarning; got != tc.want {
+				t.Errorf("MatcherWarning for trigger %q matcher %q = %q, want %q",
+					tc.trigger, tc.matcher, got, tc.want)
+			}
+		})
 	}
 }

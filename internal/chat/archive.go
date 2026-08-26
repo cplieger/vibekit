@@ -20,6 +20,9 @@ func (s *Store) archiveSvc() *archive.Service {
 		if s.isLive != nil {
 			opts = append(opts, archive.WithLiveChats(s.isLive))
 		}
+		if s.hasOpenTab != nil {
+			opts = append(opts, archive.WithOpenTabs(s.hasOpenTab))
+		}
 		s.archive = archive.New(s, opts...)
 	})
 	return s.archive

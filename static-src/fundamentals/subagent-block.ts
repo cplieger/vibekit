@@ -135,19 +135,17 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
 
   const icon = el("span", { className: "subagent-icon" });
   const nameEl = el("span", { className: "subagent-name" }, name);
-  // The chevron is purely decorative: the HEADER is the disclosure trigger
-  // (it carries aria-expanded + activation), so a nested focusable button
-  // would be a redundant tab stop announcing a second control.
-  const chevron = el(
-    "button",
-    {
-      className: "subagent-toggle",
-      type: "button",
-      "aria-hidden": "true",
-      tabindex: "-1",
-    },
-    chevronEl(),
-  );
+  // The chevron is purely decorative: the HEADER is the disclosure trigger (it
+  // carries aria-expanded + activation), so this glyph has never had a handler.
+  //
+  // A SPAN, not a button, and the change is a real fix rather than tidiness. The
+  // header is `role="button"`, so a `<button>` inside it is axe's
+  // `nested-interactive` (serious) — and `aria-hidden` plus `tabindex="-1"` does
+  // NOT clear it, because a `tabindex="-1"` element is still focusable by click
+  // and by script. `tabs.ts`'s `createTabEl` documents the same finding for the
+  // tab row's close affordance; this card had the same shape and the run card
+  // copied it before an axe pass over the run card caught all three.
+  const chevron = el("span", { className: "subagent-toggle", "aria-hidden": "true" }, chevronEl());
   const header = el(
     "div",
     { className: "subagent-header", role: "button", tabindex: "0" },

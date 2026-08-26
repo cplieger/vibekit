@@ -63,6 +63,54 @@ const (
 	OwnerStep
 )
 
+// FrameAttribution is who a `session/update` frame belongs to, in the form a
+// per-kind handler can act on.
+//
+// It exists because the previous shape lost a distinction the classifier had
+// already made. Handlers received a bare `subSessionID string`, and the
+// dispatcher derived it by collapsing three owners into two values: a subagent
+// got its session id, and BOTH the chat and a run step got "". That is lossy in
+// exactly the direction that matters — every handler reads a non-empty value as
+// "a subagent did this", so a step had to be flattened, and any handler needing
+// to tell a step from the chat had nothing left to read.
+//
+// The cost was a live defect: `HandleSessionInfoUpdate` derived its step flag
+// from `_meta.kiro.workflow`, which a `session_info_update` never carries (KAS's
+// `buildSessionInfoUpdate` composes `_meta.kiro` from the update object alone and
+// merges no `promptMeta`), so the flag was always false and every workflow step's
+// `turn_completion` was counted as one of the launching chat's own turns.
+type FrameAttribution struct {
+	// SubSessionID is the frame's session id when a SUBAGENT owns it, and empty
+	// for the chat and for a run step. Handlers stamp it onto a tool call or an
+	// ask, so a non-empty value means "attribute this to a subagent" and nothing
+	// else; do not repurpose it as "not the chat".
+	SubSessionID string
+	// Step reports that a workflow STEP session owns the frame. A step's own
+	// display attribution rides its blocks instead (ACPWorkflowMeta.SubtaskID),
+	// so this exists for handlers that must not apply a step's frame to the
+	// chat's own accounting.
+	Step bool
+}
+
+// Attribute classifies a frame and returns what its handlers need.
+//
+// The one derivation point for a `session/update` frame, so a step cannot
+// classify differently depending on which handler reads it. `workflowMarked` is
+// the frame's own answer when it has one — true when `_meta.kiro.workflow` is
+// present, which is how a CONTENT frame classifies correctly even when the
+// step registry is cold after a restart.
+func (t *Translator) Attribute(chatID vibekit.ChatID, sessionID string, workflowMarked bool) FrameAttribution {
+	switch t.ClassifyFrame(chatID, sessionID, workflowMarked) {
+	case OwnerSubagent:
+		return FrameAttribution{SubSessionID: sessionID}
+	case OwnerStep:
+		return FrameAttribution{Step: true}
+	case OwnerChat:
+		return FrameAttribution{}
+	}
+	return FrameAttribution{}
+}
+
 // stepRegistry maps a step's ACP session id to the run and node it belongs to,
 // and counts each step instance's tool calls for the turn cap.
 //
@@ -73,15 +121,17 @@ type stepRegistry struct {
 	byID  map[string]StepRef
 	byRun map[string]map[string]struct{}
 	// turns counts tool calls per step INSTANCE, keyed by the RUN plus the
-	// `wf:<nodePath>` subtask id. Both halves are load-bearing and for different
+	// step's display subtask id. Both halves are load-bearing and for different
 	// reasons. The node path rather than the node id, because a repeat node's
 	// second iteration is fresh work and must not inherit the first's count. The
-	// workflow id beside it, because a node path is only unique WITHIN a run —
-	// `wf:<nodePath>` omits the run entirely, so two concurrent workflows
-	// executing the same path shared one counter: their combined calls could reach
-	// the cap and cancel a run neither step had exhausted, after which the other
-	// might never land on exactly the cap and go unbounded. Bounded by forgetRun,
-	// like the session map beside it.
+	// workflow id beside it, because a node path is only unique WITHIN a run, so
+	// two concurrent workflows executing the same path shared one counter: their
+	// combined calls could reach the cap and cancel a run neither step had
+	// exhausted, after which the other might never land on exactly the cap and go
+	// unbounded. `ACPWorkflowMeta.SubtaskID` now carries the run id in its own
+	// first segment, so the two keys no longer differ in what they identify — but
+	// they still differ in KIND, which is why this stays a struct; see
+	// stepTurnKey. Bounded by forgetRun, like the session map beside it.
 	turns   map[stepTurnKey]int
 	turnRun map[string]map[stepTurnKey]struct{}
 	mu      sync.RWMutex
@@ -94,8 +144,10 @@ type stepRegistry struct {
 // program's to escape — a node path comes from a workflow file — and a struct key
 // cannot be forged by a separator inside one of them. It is deliberately separate
 // from the DISPLAY grouping id (ACPWorkflowMeta.SubtaskID, which the client uses
-// to fold a step's blocks into one box): the display id must stay stable and
-// human-shaped, while this one only has to be unique.
+// to fold a step's blocks into one box inside its run's card): the display id must
+// stay stable and human-shaped, while this one only has to be unique. They now
+// carry the same two facts, and that is a coincidence of the display id gaining
+// its run segment rather than a reason to collapse them.
 type stepTurnKey struct {
 	workflowID string
 	stepKey    string

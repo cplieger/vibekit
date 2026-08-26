@@ -5,9 +5,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Message, Session } from "./types.js";
 
-const { sessions, mockApiGetTyped } = vi.hoisted(() => ({
+const { sessions, mockApiGetTyped, mockSetSessions } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
   mockApiGetTyped: vi.fn(),
+  mockSetSessions: vi.fn(),
 }));
 
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
@@ -15,15 +16,24 @@ vi.mock("./api-client.js", () => ({ apiGetTyped: mockApiGetTyped }));
 vi.mock("./store.js", () => ({
   get: (id: string) => sessions.get(id),
   getSessions: () => [...sessions.values()],
-  setSessions: vi.fn(),
+  setSessions: mockSetSessions,
   rebuildMsgIndex: vi.fn(),
   emitMessages: vi.fn(),
   // Identity here — the block-synthesis path is covered by store.test.ts; these
   // tests assert pagination/dedupe by id.
   normalizeMessage: (m: Message) => m,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getActive: vi.fn(() => undefined),
+  tabStatusFor: vi.fn(() => ""),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGet: vi.fn(),
 }));
 
-import { loadMessages } from "./store-load.js";
+import { loadMessages, loadList } from "./store-load.js";
 
 function msg(id: string, ts: number): Message {
   return { id, role: "assistant", ts } as Message;
@@ -41,6 +51,44 @@ function seedSession(id: string, messages: Message[]): void {
 beforeEach(() => {
   vi.clearAllMocks();
   sessions.clear();
+});
+
+describe("loadList pruning", () => {
+  // The unacknowledged-chat exemption is GONE, and this is the case that used to
+  // need it, asserted from the other side. A chat minted client-side was absent
+  // from /api/chats by definition, so `loadList` pruned its row on every SSE
+  // `connected` and nothing could bring it back. Server-minted ids remove the
+  // state: a chat with a store row is a chat the server has, so absence from the
+  // listing means DELETED and pruning is the correct answer.
+  it("prunes a chat the server does not list, with no unacknowledged exemption", async () => {
+    seedSession("real", []);
+    sessions.set("c-untracked", {
+      id: "c-untracked",
+      messages: [],
+      message_count: 0,
+    } as unknown as Session);
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "real", name: "Real", message_count: 0, usage: {} }],
+    });
+
+    const ok = await loadList();
+    expect(ok).toBe(true);
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.map((s) => s.id)).toEqual(["real"]);
+  });
+
+  // The direction the rescue above does NOT cover, kept so the prune cannot be
+  // read as "never prune": a chat the server really has forgotten still goes.
+  it("still prunes an acknowledged chat the server no longer lists", async () => {
+    seedSession("gone", []);
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "kept", name: "Kept", message_count: 0, usage: {} }],
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed.map((s) => s.id)).toEqual(["kept"]);
+  });
 });
 
 describe("loadMessages pagination dedupe", () => {

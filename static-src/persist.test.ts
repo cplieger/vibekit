@@ -4,6 +4,10 @@ vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve({})),
   withTimeout: (_signal: AbortSignal | undefined, _ms: number) => AbortSignal.timeout(30000),
   API_TIMEOUT_MS: 30000,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),

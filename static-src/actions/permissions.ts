@@ -58,3 +58,25 @@ export const explainPolicy = apiAction<
   request: (a) => ({ method: "POST", path: "/api/permissions/explain", body: a }),
   error: false,
 });
+
+/** Select the security profile.
+ *
+ *  Its own endpoint rather than a settings patch because a selection REPLACES the
+ *  policy: it clears both writable permissions files and lets the profile's presets
+ *  be the whole policy. `seed` is the Customize button, which materialises the
+ *  profile in force into the editable table first, so the two doors into Custom
+ *  differ by this one flag.
+ *
+ *  Not retryable and not idempotency-keyed, deliberately. It is destructive and not
+ *  idempotent in the way a retry needs: a replayed request after a partial failure
+ *  would clear a policy the user has since started editing. A failed selection is
+ *  reported and the user chooses again, which is one click. */
+export const setSecurityProfile = apiAction<
+  { profile: string; seed: boolean },
+  { ok?: boolean; error?: string }
+>({
+  name: "permissions.set_profile",
+  scope: "permissions",
+  request: (a) => ({ method: "POST", path: "/api/permissions/profile", body: a }),
+  error: false,
+});

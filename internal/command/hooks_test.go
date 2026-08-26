@@ -76,9 +76,24 @@ func TestValidateHookPayload(t *testing.T) {
 		{name: "command at max", p: hookCreatePayload{Name: validName, EventType: validEvent, ActionType: "runCommand", Command: atMax}, wantCode: 0, wantErr: false},
 		{name: "command over max", p: hookCreatePayload{Name: validName, EventType: validEvent, ActionType: "runCommand", Command: overMax}, wantCode: http.StatusRequestEntityTooLarge, wantErr: true},
 
-		// patterns: no other constraint -> at max passes.
+		// patterns: no other constraint -> at max passes. validEvent is a
+		// filePath-subject trigger, so a matcher is effective and the pairing
+		// check below leaves these rows alone.
 		{name: "patterns at max", p: hookCreatePayload{Name: validName, EventType: validEvent, ActionType: "askAgent", Prompt: "p", Patterns: atMax}, wantCode: 0, wantErr: false},
 		{name: "patterns over max", p: hookCreatePayload{Name: validName, EventType: validEvent, ActionType: "askAgent", Prompt: "p", Patterns: overMax}, wantCode: http.StatusRequestEntityTooLarge, wantErr: true},
+
+		// The trigger-and-matcher pairing. A matcher on a trigger with nothing to
+		// match on is refused, because KAS ignores it and says so only in its own
+		// log; the SIBLING condition (a tool-name trigger with no matcher) is
+		// accepted, because "run on every tool call" is a legitimate choice that
+		// earns a badge on the read surface instead. Both directions are here, or
+		// the check could be a blanket refusal and still pass.
+		{name: "a matcher on a none-subject trigger is refused", p: hookCreatePayload{Name: validName, EventType: "SessionStart", ActionType: "askAgent", Prompt: "p", Patterns: `\.go$`}, wantCode: http.StatusBadRequest, wantErr: true},
+		{name: "an alias spelling is refused too", p: hookCreatePayload{Name: validName, EventType: "userTriggered", ActionType: "askAgent", Prompt: "p", Patterns: "x"}, wantCode: http.StatusBadRequest, wantErr: true},
+		{name: "a none-subject trigger with no matcher is accepted", p: hookCreatePayload{Name: validName, EventType: "SessionStart", ActionType: "askAgent", Prompt: "p"}, wantCode: 0, wantErr: false},
+		{name: "whitespace is not a matcher", p: hookCreatePayload{Name: validName, EventType: "SessionStart", ActionType: "askAgent", Prompt: "p", Patterns: "   "}, wantCode: 0, wantErr: false},
+		{name: "a tool trigger with NO matcher is accepted", p: hookCreatePayload{Name: validName, EventType: "PreToolUse", ActionType: "askAgent", Prompt: "p"}, wantCode: 0, wantErr: false},
+		{name: "a tool trigger with a matcher is accepted", p: hookCreatePayload{Name: validName, EventType: "PreToolUse", ActionType: "askAgent", Prompt: "p", Patterns: "fsWrite"}, wantCode: 0, wantErr: false},
 
 		// name: the length check precedes the regex. At max the length
 		// guard passes but the 1-64 char regex fails -> 400; over max -> 413.
@@ -140,72 +155,6 @@ func FuzzValidateHookPayload(f *testing.F) {
 	})
 }
 
-// TestNormalizeTrigger pins the event-type -> PascalCase v1 trigger map:
-// canonical names pass through, v2/IDE camelCase aliases are rewritten
-// (case-insensitively), and unknown values pass through trimmed.
-func TestNormalizeTrigger(t *testing.T) {
-	cases := []struct{ in, want string }{
-		// Canonical PascalCase passes through.
-		{"SessionStart", "SessionStart"},
-		{"PostFileSave", "PostFileSave"},
-		{"Manual", "Manual"},
-		// v2 / Kiro-IDE camelCase aliases map to PascalCase.
-		{"fileEdited", "PostFileSave"},
-		{"fileCreated", "PostFileCreate"},
-		{"fileDeleted", "PostFileDelete"},
-		{"userTriggered", "Manual"},
-		{"agentStop", "Stop"},
-		{"userPromptSubmit", "UserPromptSubmit"},
-		// Case-insensitive + trimmed.
-		{"POSTFILESAVE", "PostFileSave"},
-		{"  fileEdited  ", "PostFileSave"},
-		// The three aliases KAS accepts that this map used to be missing.
-		{"agentSpawn", "SessionStart"},
-		{"SessionEnd", "Stop"},
-		{"AfterFileEdit", "PostFileSave"},
-	}
-	for _, tc := range cases {
-		got, ok := normalizeTrigger(tc.in)
-		if !ok {
-			t.Errorf("normalizeTrigger(%q) reported unknown, want %q", tc.in, tc.want)
-			continue
-		}
-		if got != tc.want {
-			t.Errorf("normalizeTrigger(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-// TestNormalizeTrigger_RejectsUnknown is the inverted case, and the inversion is
-// the point. This used to pass an unknown trigger through trimmed, which read as
-// leniency and behaved as silence: KAS's parseHookDocument DROPS a hook whose
-// trigger it does not recognise, so create_hook answered 200 with a file path for
-// a hook that loads nowhere, never fires and never appears in /api/hooks.
-func TestNormalizeTrigger_RejectsUnknown(t *testing.T) {
-	for _, in := range []string{"someFutureTrigger", "  x  ", "", "PostFileSaved!"} {
-		if got, ok := normalizeTrigger(in); ok {
-			t.Errorf("normalizeTrigger(%q) = (%q, true), want it reported unknown so the "+
-				"caller can refuse instead of writing a hook KAS will discard", in, got)
-		}
-	}
-}
-
-// TestKnownHookTriggers_NamesTheAcceptedSet guards the error message rather than
-// the refusal, because a rejection that does not say what IS accepted just moves
-// the guessing from the server to the user.
-func TestKnownHookTriggers_NamesTheAcceptedSet(t *testing.T) {
-	got := knownHookTriggers()
-	for _, want := range []string{"SessionStart", "Stop", "PreToolUse", "PostToolUse", "Manual"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("knownHookTriggers() = %q, missing %q", got, want)
-		}
-	}
-	// Deduped: every trigger has several aliases mapping onto it.
-	if strings.Count(got, "PostFileSave") != 1 {
-		t.Errorf("knownHookTriggers() = %q, want PostFileSave listed once", got)
-	}
-}
-
 // TestBuildHookDoc pins the v1 envelope shape and the action/matcher/
 // timeout mapping for both action branches.
 func TestBuildHookDoc(t *testing.T) {
@@ -249,4 +198,33 @@ func TestBuildHookDoc(t *testing.T) {
 			t.Errorf("matcher = %q, want empty", h.Matcher)
 		}
 	})
+}
+
+// TestValidateHookPayload_IneffectiveMatcherNamesTheTrigger guards the MESSAGE
+// rather than the refusal, which the table above already covers.
+//
+// A 400 that says only "invalid payload" on a form with seven fields moves the
+// guessing to the user, and this refusal is one the user can fix in one keystroke
+// once they know which field and which trigger. It also has to name the value, so
+// a matcher arriving from a paste is recognisable in the message.
+func TestValidateHookPayload_IneffectiveMatcherNamesTheTrigger(t *testing.T) {
+	_, _, code, err := validateHookPayload(hookCmd(t, hookCreatePayload{
+		Name: "valid-hook", EventType: "sessionStart", ActionType: "askAgent",
+		Prompt: "p", Patterns: `  \.go$  `,
+	}))
+	if code != http.StatusBadRequest || err == nil {
+		t.Fatalf("validateHookPayload = (%d, %v), want 400 with an error", code, err)
+	}
+	// The CANONICAL name, not the payload's spelling: the user has to be able to
+	// look the trigger up, and "sessionStart" is one of several aliases.
+	for _, want := range []string{"SessionStart", `\.go$`, "patterns"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not mention %q", err.Error(), want)
+		}
+	}
+	// TrimSpace'd, because that is what buildHookDoc writes into the file. Quoting
+	// the raw padded value would describe a matcher the hook would never have had.
+	if strings.Contains(err.Error(), `  \.go$  `) {
+		t.Errorf("refusal %q quotes the untrimmed value; buildHookDoc stores the trimmed one", err.Error())
+	}
 }

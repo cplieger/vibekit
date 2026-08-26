@@ -201,28 +201,17 @@
                    interactive content inside a <button>. -->
               <span class="pill-slot">
                 <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage — tokens, credits and turns for this chat" aria-label="Context usage">
-                  <!-- A PIE, not a ring. The three circles share one radius and
+                  <!-- A PIE, not a ring. Both circles share one radius and
                        one stroke width: r=4 with an 8-wide stroke spans r 0..8,
                        so each stroke IS a filled sector, and pathLength="100"
                        makes every dash number a percentage. That is what let the
-                       hardcoded 50.27 circumference go, and it is why no second
-                       one had to arrive with the wedge.
+                       hardcoded 50.27 circumference go.
 
                        No stroke-linecap anywhere: butt is the default, and it is
-                       load-bearing twice over — a round cap bulges a sector's
-                       two radial edges outward, and it paints a zero-length dash
-                       as a dot, which is exactly the reserve at 0%. -->
+                       load-bearing, because a round cap bulges a sector's two
+                       radial edges outward. -->
                   <svg class="context-ring" viewBox="0 0 20 20" width="16" height="16">
                     <circle cx="10" cy="10" r="8" fill="var(--c-border)"/>
-                    <!-- The compaction RESERVE: the slice from the threshold
-                         round to 12 o'clock, so where auto-compaction fires is a
-                         region you can see rather than a tick you have to know
-                         how to read. Drawn UNDER the usage pie, so usage eats
-                         into it last. Rotated to the threshold and sized to the
-                         buffer by status.ts. -->
-                    <circle id="context-ring-wedge" cx="10" cy="10" r="4" fill="none"
-                      stroke-width="8" pathLength="100"
-                      stroke-dasharray="0 100" transform="rotate(-90 10 10)"/>
                     <circle id="context-ring-fill" cx="10" cy="10" r="4" fill="none" stroke="var(--c-green)"
                       stroke-width="8" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"
                       transform="rotate(-90 10 10)"/>
@@ -387,75 +376,45 @@
 
             <div class="page-section" id="general-retention-section">
               <h3 class="section-title">Chat retention</h3>
-              <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. vibekit manages this itself; kiro-cli's own cleanup is off.</p>
-              <div class="section-option">
-                <label for="chat-retention-days" class="section-option-label">Days kept</label>
-                <input type="number" id="chat-retention-days" class="page-input-sm" min="0" max="90" value="1" aria-label="Chat retention days">
-              </div>
+              <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. Otherwise <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. vibekit manages this itself; kiro-cli's own cleanup is off.</p>
               <div class="section-option">
                 <label for="chat-retention-forever" class="section-option-label">Keep forever</label>
                 <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
               </div>
+              <div class="section-option" id="chat-retention-days-row">
+                <label for="chat-retention-days" class="section-option-label">Days kept</label>
+                <input type="number" id="chat-retention-days" class="page-input-sm" min="0" max="90" value="1" aria-label="Chat retention days">
+              </div>
             </div>
 
-            <div class="page-section" id="general-compaction-section">
-              <h3 class="section-title">Compaction</h3>
-              <p class="section-hint">When the context window fills up, kiro-cli summarizes older messages to free space. These settings control that behavior.</p>
+            <div class="page-section" id="general-agent-section">
+              <h3 class="section-title">Agent capabilities</h3>
+              <p class="section-hint">What the agent can reach. Each one applies to <strong>new conversations</strong>: kiro-cli resolves it when a session starts and keeps that answer for the session's life, so an open chat is unaffected until you reopen it.</p>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="flag-auto-compact" aria-label="Auto-compact" checked>
+                  <input type="checkbox" id="flag-knowledge" aria-label="Knowledge base search" checked>
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Auto-compact</span>
-                  <p class="section-hint">Automatically summarize history when the context window is nearly full. Off means you must type /compact manually.</p>
+                  <span class="section-option-label">Knowledge base search</span>
+                  <p class="section-hint">Lets the agent search the directories you have indexed ("add this folder to my knowledge base"). On by default. Off withdraws the agent's search tool and the list of indexed bases it sees; the bases themselves stay on disk and Settings → Custom instructions still manages them, so nothing is lost by turning it off.</p>
                 </div>
               </div>
               <div class="section-option">
-                <label for="compact-keep-messages" class="section-option-label">Keep last N exchanges</label>
-                <p class="section-hint">Number of recent message pairs to exclude from compaction. Higher values preserve more recent context but leave less room for the model's response.</p>
-                <input type="number" id="compact-keep-messages" class="page-input-sm" min="0" max="50" value="5" aria-label="Messages to keep">
-              </div>
-              <div class="section-option">
-                <label for="compact-context-buffer" class="section-option-label">Context buffer (%)</label>
-                <p class="section-hint">Percentage of the context window to keep free so the model has room to respond after compaction. Higher values leave more headroom.</p>
-                <input type="number" id="compact-context-buffer" class="page-input-sm" min="0" max="50" value="10" aria-label="Context buffer percentage">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-tool-search" aria-label="Load MCP tools on demand">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Load MCP tools on demand</span>
+                  <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt — the agent can call any tool immediately, but the tool list takes context-window space (~200–500 tokens per tool) on every turn. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model; when the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves context for 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Worth turning on only when you feel the context squeeze.</p>
+                </div>
               </div>
             </div>
 
             <div class="page-section" id="general-experimental-section">
               <h3 class="section-title">Experimental features</h3>
-              <p class="section-hint">Optional kiro-cli capabilities. All three are on by default. Turning one off takes effect on the next conversation; running sessions keep their current configuration.</p>
-              <div class="section-option">
-                <label class="toggle">
-                  <input type="checkbox" id="flag-checkpoint" aria-label="Track file changes">
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <span class="section-option-label">Track file changes</span>
-                  <p class="section-hint">Keeps shadow-git snapshots of your workspace across the conversation so kiro-cli can roll back a failed tool call without touching your real git history. Off means a failed edit stays on disk.</p>
-                </div>
-              </div>
-              <div class="section-option">
-                <label class="toggle">
-                  <input type="checkbox" id="flag-todolist" aria-label="Track multi-step tasks">
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <span class="section-option-label">Track multi-step tasks</span>
-                  <p class="section-hint">Lets the agent maintain a to-do list when it breaks a big ask into steps. The list renders inline in chat as the agent ticks items off. Off means the agent works step by step without the visible tracker.</p>
-                </div>
-              </div>
-              <div class="section-option">
-                <label class="toggle">
-                  <input type="checkbox" id="flag-knowledge" aria-label="Knowledge base search">
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <span class="section-option-label">Knowledge base search</span>
-                  <p class="section-hint">Indexes directories you ask it to ("add this folder to my knowledge base") for semantic search across conversations. Off removes the feature entirely — no disk usage and no knowledge tool call option.</p>
-                </div>
-              </div>
+              <p class="section-hint">Optional kiro-cli capabilities. Turning one off takes effect on the next conversation; running sessions keep their current configuration.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="flag-hooks-status" aria-label="Show hook status" checked>
@@ -474,16 +433,6 @@
                 <div>
                   <span class="section-option-label">kiro-cli telemetry</span>
                   <p class="section-hint">Anonymous usage telemetry sent by kiro-cli (not vibekit). Helps the Kiro team improve the CLI. Off disables all telemetry collection. This does not affect vibekit's own operation.</p>
-                </div>
-              </div>
-              <div class="section-option">
-                <label class="toggle">
-                  <input type="checkbox" id="flag-tool-search" aria-label="Load MCP tools on demand">
-                  <span class="toggle-slider"></span>
-                </label>
-                <div>
-                  <span class="section-option-label">Load MCP tools on demand</span>
-                  <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt — the agent can call any tool immediately, but the tool list takes context-window space (~200–500 tokens per tool) on every turn. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model; when the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves significant context tokens for users with 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Recommended only when you actually feel the context squeeze — for small MCP setups it adds latency without benefit.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -549,7 +498,17 @@
           <div class="settings-panel hidden" data-settings-panel="permissions">
             <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. The layers under it (supervised mode, agent ignore files) are vibekit's own complementary controls. Defaults here apply to new conversations; the Supervised pill next to the chat prompt toggles the per-chat review gate.</p>
 
-            <div class="page-section">
+            <div class="page-section" id="security-profile-section">
+              <h3 class="section-title">Security profile</h3>
+              <p class="section-hint">How much the agent may do here without asking. The profile is the policy: selecting one replaces the rules below with its own, so the table describes what is in force rather than competing with it. It applies to every chat and every workflow run, and a change reaches a chat when that chat's session next starts.</p>
+              <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
+              <div class="profile-actions">
+                <button id="security-profile-customize" class="btn btn-small hidden" type="button">Customize</button>
+                <p id="security-profile-status" class="section-hint hidden"></p>
+              </div>
+            </div>
+
+            <div class="page-section" id="native-policy-section">
               <h3 class="section-title">Active policy</h3>
               <p class="section-hint">The native permission rules kiro-cli enforces, layered by scope. Precedence is <strong>deny</strong> &gt; <strong>ask</strong> &gt; <strong>allow</strong>. You can edit the <strong>user</strong> and <strong>workspace</strong> layers; edits take effect immediately, with no restart. New rules default to <strong>Ask</strong> — widen to Allow only deliberately.</p>
               <p id="native-policy-status" class="section-hint hidden"></p>
@@ -607,15 +566,6 @@
               </details>
             </div>
 
-            <div class="page-section" id="workspace-relax-section">
-              <h3 class="section-title">Stop asking in this workspace</h3>
-              <p class="section-hint">Writes a broad <strong>allow</strong> rule for each everyday capability at <strong>workspace</strong> scope, so the agent stops asking for them here. This is the way to be interrupted less: it removes the <em>asks</em>, where muting the notification would only hide them and leave every turn waiting. It applies to this workspace and every chat in it, permanently, until you switch it back off. Installing a <strong>power</strong> still asks, because a power's servers are governed by this policy alone. Each rule appears in the Active policy above and can be removed individually.</p>
-              <label class="perm-mode">
-                <input type="checkbox" id="workspace-relax-checkbox">
-                <span>Allow every everyday capability in this workspace without asking</span>
-              </label>
-              <p id="workspace-relax-status" class="section-hint hidden"></p>
-            </div>
 
             <div class="page-section">
               <h3 class="section-title">Supervised mode (default for new chats)</h3>

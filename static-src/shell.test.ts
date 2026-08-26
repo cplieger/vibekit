@@ -51,8 +51,9 @@ interface Live {
   presetTouch: (...args: unknown[]) => unknown;
   getScrollEl: () => HTMLElement;
   setShellRunCallback: (cb: (cmd: string) => void) => void;
-  save: (patch: unknown) => void;
-  load: () => { shell_h: number };
+  setShellHeight: (px: number) => void;
+  recordShellOpen: (open: boolean) => void;
+  shellHeight: () => number;
   restartDispatch: (...args: unknown[]) => Promise<unknown>;
   confirmMock: (...args: unknown[]) => Promise<boolean>;
   toastError: (...args: unknown[]) => void;
@@ -72,9 +73,12 @@ vi.mock("./messages.js", () => ({ getScrollEl: (): HTMLElement => live.getScroll
 vi.mock("./code-blocks.js", () => ({
   setShellRunCallback: (cb: (cmd: string) => void): void => live.setShellRunCallback(cb),
 }));
-vi.mock("./ui-state.js", () => ({
-  save: (patch: unknown): void => live.save(patch),
-  load: (): { shell_h: number } => live.load(),
+// The three per-device fields moved out of the arrangement document into their
+// own module; only the two this panel owns are stubbed.
+vi.mock("./device-view.js", () => ({
+  shellHeight: (): number => live.shellHeight(),
+  setShellHeight: (px: number): void => live.setShellHeight(px),
+  setShellOpen: (open: boolean): void => live.recordShellOpen(open),
 }));
 vi.mock("./actions/shell.js", () => ({
   restartShell: {
@@ -113,7 +117,8 @@ interface Harness {
   shellPanel: HTMLDivElement;
   shellTerminal: HTMLDivElement;
   shellResize: HTMLDivElement;
-  save: ReturnType<typeof vi.fn>;
+  setShellHeight: ReturnType<typeof vi.fn>;
+  recordShellOpen: ReturnType<typeof vi.fn>;
   restartDispatch: ReturnType<typeof vi.fn>;
   confirmMock: ReturnType<typeof vi.fn>;
   getRunCb: () => ((cmd: string) => void) | null;
@@ -204,12 +209,13 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   const setShellRunCallback = vi.fn((cb: (cmd: string) => void) => {
     runCb = cb;
   });
-  const save = vi.fn();
+  const setShellHeight = vi.fn();
+  const recordShellOpen = vi.fn();
   const restartDispatch = vi.fn(() => Promise.resolve({ ok: true }));
   const confirmMock = vi.fn(() => Promise.resolve(true));
   const toastError = vi.fn();
-  // initShellPanel reads load().shell_h to restore a persisted height.
-  const load = vi.fn(() => ({ shell_h: uiStateData.shell_h ?? 0 }));
+  // initShellPanel reads shellHeight() to restore a persisted height.
+  const shellHeight = vi.fn(() => uiStateData.shell_h ?? 0);
 
   live = {
     createTerminal,
@@ -217,8 +223,9 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     presetTouch,
     getScrollEl,
     setShellRunCallback,
-    save,
-    load,
+    setShellHeight,
+    recordShellOpen,
+    shellHeight,
     restartDispatch,
     confirmMock,
     toastError,
@@ -249,7 +256,8 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     shellPanel,
     shellTerminal,
     shellResize,
-    save,
+    setShellHeight,
+    recordShellOpen,
     restartDispatch,
     confirmMock,
     getRunCb: () => runCb,
@@ -518,7 +526,7 @@ describe("shell.ts: restore", () => {
     h.mod.restoreShell();
     expect(h.createTerminal).toHaveBeenCalledTimes(1);
     expect(h.shellPanel.classList.contains("shell-closed")).toBe(false);
-    expect(h.save).toHaveBeenCalledWith({ shell_open: true });
+    expect(h.recordShellOpen).toHaveBeenCalledWith(true);
   });
 
   it("restoreShell does NOT steal focus at boot; a user open does focus", async () => {
@@ -580,7 +588,7 @@ describe("shell.ts: resize handle", () => {
     h.shellResize.dispatchEvent(ptr("pointerup", 300));
     expect(h.shellResize.classList.contains("dragging")).toBe(false);
     expect(h.shellPanel.classList.contains("resizing")).toBe(false);
-    expect(h.save).toHaveBeenCalledWith({ shell_h: 200 });
+    expect(h.setShellHeight).toHaveBeenCalledWith(200);
   });
 
   it("clamps the drag to [96px, 80% of innerHeight]", async () => {
@@ -597,7 +605,7 @@ describe("shell.ts: resize handle", () => {
     expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe(`${String(max)}px`);
 
     h.shellResize.dispatchEvent(ptr("pointerup", 0));
-    expect(h.save).toHaveBeenCalledWith({ shell_h: max });
+    expect(h.setShellHeight).toHaveBeenCalledWith(max);
   });
 
   it("ignores pointermove without capture and non-primary pointerdown", async () => {
@@ -615,7 +623,7 @@ describe("shell.ts: resize handle", () => {
     // The unstyled panel's rect height is 0 → 0 + 32 clamps to the 96px floor.
     h.shellResize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
     expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("96px");
-    expect(h.save).toHaveBeenCalledWith({ shell_h: 96 });
+    expect(h.setShellHeight).toHaveBeenCalledWith(96);
   });
 });
 

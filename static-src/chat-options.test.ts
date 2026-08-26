@@ -64,6 +64,13 @@ vi.mock("./store.js", () => ({
   isThinking: (id: string) => id === activeID && thinking,
   isEmptyChat: (s: { message_count: number } | undefined) =>
     s === undefined || s.message_count === 0,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker }));

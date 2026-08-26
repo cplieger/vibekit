@@ -15,7 +15,11 @@ import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getActiveTabRoute: vi.fn<() => { kind: string } | null>(),
-  toggleSettingsView: vi.fn(),
+  // Opening a singleton is a round trip, so the toggle RESOLVES: `openSetting`
+  // sequences the panel swap, the URL push and the highlight in its continuation,
+  // because all three address a view the open has to produce first.
+  toggleSettingsView: vi.fn(() => Promise.resolve()),
+  setSettingsTab: vi.fn(),
   forceSettingsTab: vi.fn(),
   pushRoute: vi.fn(),
 }));
@@ -23,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./tabs.js", () => ({
   getActiveTabRoute: mocks.getActiveTabRoute,
   toggleSettingsView: mocks.toggleSettingsView,
+  setSettingsTab: mocks.setSettingsTab,
 }));
 vi.mock("./settings-tabs.js", () => ({ forceSettingsTab: mocks.forceSettingsTab }));
 vi.mock("./router.js", () => ({ pushRoute: mocks.pushRoute }));
@@ -199,13 +204,23 @@ describe("highlightControl repeat flashes", () => {
 });
 
 describe("openSetting", () => {
-  it("opens the Settings view, selects the tab, pushes the URL and marks the control", async () => {
+  // Opening the tab is a ROUND TRIP now, so everything that addresses the panel it
+  // produces runs in the open's continuation: the panel swap, the URL push and the
+  // highlight are all DOM writes against a view that has to exist first. Awaiting
+  // the promise is therefore what a caller has to do, and this case asserts the
+  // ordering rather than only the calls.
+  it("opens the Settings view, then selects the tab, pushes the URL and marks the control", async () => {
+    expect.assertions(5);
     mocks.getActiveTabRoute.mockReturnValue({ kind: "chat" });
     control("workspace-relax-checkbox");
 
     openSetting("permissions", "workspace-relax-checkbox");
 
     expect(mocks.toggleSettingsView).toHaveBeenCalledWith("permissions");
+    // Nothing has reached the panel yet: the open has not resolved.
+    expect(mocks.forceSettingsTab).not.toHaveBeenCalled();
+
+    await mocks.toggleSettingsView.mock.results[0]?.value;
     expect(mocks.forceSettingsTab).toHaveBeenCalledWith("permissions");
     expect(mocks.pushRoute).toHaveBeenCalledWith({ kind: "settings", tab: "permissions" });
     await frames(1);
@@ -213,8 +228,11 @@ describe("openSetting", () => {
   });
 
   // toggleSettingsView CLOSES an active singleton, so calling it from inside
-  // Settings would dismiss the panel the link points at.
+  // Settings would dismiss the panel the link points at. That path stays
+  // SYNCHRONOUS: reaching the panel is a round trip only when the tab has to be
+  // opened.
   it("does not toggle the view when Settings is already active", async () => {
+    expect.assertions(3);
     mocks.getActiveTabRoute.mockReturnValue({ kind: "settings" });
     control("notify-toggle");
 

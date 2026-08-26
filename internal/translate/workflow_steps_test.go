@@ -46,7 +46,7 @@ func TestStepTurnCap_ReportsOnceAtTheCap(t *testing.T) {
 
 	for i := range StepTurnCap + 5 {
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", path)), "")
+			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
 	}
 
 	if len(deps.stepCapBreaches) != 1 {
@@ -69,7 +69,7 @@ func TestStepTurnCap_StaysSilentBelowTheCap(t *testing.T) {
 
 	for i := range StepTurnCap - 1 {
 		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"),
-			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", []string{"wf", "step-a"})), "")
+			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", []string{"wf", "step-a"})), FrameAttribution{})
 	}
 	if len(deps.stepCapBreaches) != 0 {
 		t.Errorf("a step one call short of the cap reported %d breaches", len(deps.stepCapBreaches))
@@ -91,12 +91,12 @@ func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 	for i := range half {
 		// Same run, same node id, DIFFERENT iteration.
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "loop-step", []string{"wf", "loop", "iter-0", "loop-step"})), "")
+			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "loop-step", []string{"wf", "loop", "iter-0", "loop-step"})), FrameAttribution{})
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_1", "loop-step", []string{"wf", "loop", "iter-1", "loop-step"})), "")
+			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_1", "loop-step", []string{"wf", "loop", "iter-1", "loop-step"})), FrameAttribution{})
 		// Same run, a different step entirely.
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("c-"+strconv.Itoa(i), "wf_1", "other", []string{"wf", "other"})), "")
+			mustJSON(t, stepToolFrame("c-"+strconv.Itoa(i), "wf_1", "other", []string{"wf", "other"})), FrameAttribution{})
 	}
 
 	if len(deps.stepCapBreaches) != 0 {
@@ -120,7 +120,7 @@ func TestStepTurnCap_IgnoresANonStepToolCall(t *testing.T) {
 			"kind":       "read",
 			"status":     "pending",
 			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "sub-1"}},
-		}), "")
+		}), FrameAttribution{})
 	}
 	if len(deps.stepCapBreaches) != 0 {
 		t.Errorf("a subagent's tool calls reported %d step breaches", len(deps.stepCapBreaches))
@@ -146,9 +146,9 @@ func TestStepTurnCap_CountsPerRunNotPerNodePath(t *testing.T) {
 
 	for i := range StepTurnCap {
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "step-a", path)), "")
+			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_2", "step-a", path)), "")
+			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_2", "step-a", path)), FrameAttribution{})
 	}
 
 	// Each run reached the cap on its own, so each reports exactly once — and
@@ -180,9 +180,9 @@ func TestStepTurnCap_HalfTheCapEachDoesNotTripEitherRun(t *testing.T) {
 
 	for i := range StepTurnCap / 2 {
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "step-a", path)), "")
+			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
 		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_2", "step-a", path)), "")
+			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_2", "step-a", path)), FrameAttribution{})
 	}
 	if len(deps.stepCapBreaches) != 0 {
 		t.Errorf("two runs at half the cap each reported %d breaches", len(deps.stepCapBreaches))

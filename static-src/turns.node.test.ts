@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { projectTurns, turnLedger, turnAnchorID } from "./turns.js";
+import { projectTurns, turnLedger, turnAnchorID, turnRunIDs } from "./turns.js";
 import type { Message } from "./types.js";
 
 function user(id: string, content: string, ts = 1000): Message {
@@ -257,6 +257,49 @@ describe("turnLedger", () => {
     expect(led.commands).toBe(3);
     // Counted across every message in the turn; `edit` and `search` are neither.
     expect(led.reads).toBe(3);
+  });
+});
+
+// The launches inside a turn, which the fold rule needs so a turn holding a run
+// that is still going does not fold away. Exact rather than a heuristic: a launch
+// is the only tool call carrying a workflow id.
+describe("turnRunIDs", () => {
+  const withCalls = (calls: unknown[]): Message =>
+    assistant("a1", { tool_calls: calls } as Partial<Message>);
+
+  it("finds the launch's workflow id in the turn's body", () => {
+    const [t] = projectTurns(
+      [user("u1", "run it"), withCalls([{ id: "t1", workflow_id: "wf_1" }])],
+      false,
+    );
+    expect(turnRunIDs(t!)).toEqual(["wf_1"]);
+  });
+
+  it("is empty for a turn whose tool calls launched nothing", () => {
+    const [t] = projectTurns([user("u1", "read it"), withCalls([{ id: "t1" }])], false);
+    expect(turnRunIDs(t!)).toEqual([]);
+  });
+
+  it("is empty for a turn with no tool calls at all", () => {
+    const [t] = projectTurns([user("u1", "hello"), assistant("a1")], false);
+    expect(turnRunIDs(t!)).toEqual([]);
+  });
+
+  it("reports two launches once each, in order", () => {
+    // An agent can launch several runs in one turn, and the same call can be
+    // re-ingested (a tool_call then a tool_call_update), so duplicates must fold.
+    const [t] = projectTurns(
+      [
+        user("u1", "run both"),
+        withCalls([
+          { id: "t1", workflow_id: "wf_a" },
+          { id: "t2", workflow_id: "wf_b" },
+          { id: "t1", workflow_id: "wf_a" },
+        ]),
+      ],
+      false,
+    );
+    expect(turnRunIDs(t!)).toEqual(["wf_a", "wf_b"]);
   });
 });
 

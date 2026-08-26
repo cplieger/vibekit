@@ -3,14 +3,31 @@
 // DOM because the interesting part is the capacity rule, and asserting it
 // through rendered pixels would test the browser instead. (The harness only
 // because the module's scroll.ts import self-initialises against `document`.)
-import { describe, it, expect, vi } from "vitest";
+//
+// The second half of the file is the LIFECYCLE, which does need the DOM: which
+// chat the rail currently belongs to is module state, and both directions of
+// getting it wrong were live defects.
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 // scroll.ts self-initialises a singleton against #messages at import time, and
 // the rail imports it to park the reader on jump. Neither is under test
 // here, so stub it rather than staging the whole chat DOM.
 vi.mock("./scroll.js", () => ({ jumpTo: vi.fn() }));
+// The session-wide index is the rail's own fetch; the lifecycle cases below
+// decide what it does with the answer, not how it asks.
+vi.mock("./api-client.js", () => ({ apiGet: vi.fn() }));
 
-import { railRows, ROW_PITCH_PX, type TurnSummary } from "./turn-rail.js";
+import {
+  railRows,
+  ROW_PITCH_PX,
+  mountTurnRail,
+  loadTurnRail,
+  pointTurnRail,
+  refreshTurnRail,
+  resetTurnRail,
+  type TurnSummary,
+} from "./turn-rail.js";
+import { apiGet } from "./api-client.js";
 import type { TurnOutcome } from "./turns.js";
 
 const MINUTE = 60_000;
@@ -196,5 +213,115 @@ describe("railRows gap markers", () => {
     const rows = railRows(withGaps, height);
     expect(rows.length).toBeLessThanOrEqual(10);
     expect(rows.some((r) => r.kind === "cluster")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which chat the rail belongs to.
+//
+// The rail is a module singleton spanning a session while the transcript store
+// holds a paginated window, so the chat it currently points at is state, and
+// both directions of leaving it unset were shipped defects: a rail still holding
+// the previous chat's index rendered that chat's markers over a conversation
+// with no messages in it, and a refresh naming a chat the rail had never been
+// handed was discarded, so the first turn of a chat started from empty got no
+// marker at all.
+// ---------------------------------------------------------------------------
+
+describe("which chat the rail belongs to", () => {
+  const host = document.createElement("div");
+
+  beforeAll(() => {
+    document.body.appendChild(host);
+    mountTurnRail(host);
+  });
+
+  beforeEach(() => {
+    resetTurnRail();
+  });
+
+  function rail(): HTMLElement {
+    const el = host.querySelector<HTMLElement>(".turn-rail");
+    if (el === null) {
+      throw new Error("rail not mounted");
+    }
+    return el;
+  }
+
+  /** The marker labels currently painted, in order. */
+  function markers(): string[] {
+    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.textContent ?? "");
+  }
+
+  it("paints one marker per turn once the index arrives", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-a");
+    expect(markers()).toEqual(["1", "2"]);
+  });
+
+  it("empties itself when handed another chat", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-a");
+
+    pointTurnRail("c-b");
+
+    expect(markers()).toEqual([]);
+    // No child NODES, not merely no markers: `.turn-rail:empty` is what hides
+    // the axis, and a text node would satisfy the selector's negation.
+    expect(rail().childNodes).toHaveLength(0);
+  });
+
+  it("asks the server nothing when it is only pointed", () => {
+    // An empty chat has no turns by definition, and a client-minted id has no
+    // record to ask about, so the fetch is skipped rather than 404'd.
+    pointTurnRail("c-b");
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it("adopts a later refresh for the chat it points at", async () => {
+    pointTurnRail("c-b");
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+
+    await refreshTurnRail("c-b");
+
+    expect(markers()).toEqual(["1"]);
+  });
+
+  it("drops a refresh for a chat it no longer points at", async () => {
+    pointTurnRail("c-a");
+    vi.mocked(apiGet).mockImplementation(async () => {
+      // The reader switches chats while the index is in flight.
+      pointTurnRail("c-b");
+      return { turns: [turn(1), turn(2)] };
+    });
+
+    await refreshTurnRail("c-a");
+
+    expect(markers()).toEqual([]);
+  });
+
+  // The mirror of the stale-markers defect, and the reason pointing cannot be
+  // skipped for an empty chat. `turn_ended` is the only moment the index is
+  // re-read, so a rail that was never handed the chat discards the very refresh
+  // that would have drawn its first marker, and the session stays blank until
+  // the reader switches away and back.
+  it("drops a refresh for a chat it was never pointed at", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+
+    await refreshTurnRail("c-never-pointed");
+
+    expect(markers()).toEqual([]);
+  });
+
+  it("keeps what it is showing when the fetch fails", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+    await loadTurnRail("c-a");
+
+    // A rail that empties itself on a transient failure is worse than one that
+    // is briefly a turn behind.
+    vi.mocked(apiGet).mockResolvedValue(null);
+    await refreshTurnRail("c-a");
+
+    expect(markers()).toEqual(["1"]);
   });
 });

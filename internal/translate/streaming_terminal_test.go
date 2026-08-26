@@ -35,7 +35,7 @@ func TestAdoptTerminalOutput_LinkAndCompletionInOneFrame(t *testing.T) {
 		"content": []map[string]any{
 			{"type": "terminal", "terminalId": termID},
 		},
-	}), "")
+	}), FrameAttribution{})
 
 	tc, ok := lastToolCallUpdate(t, events)
 	if !ok {
@@ -62,7 +62,7 @@ func TestAdoptTerminalOutput_LinkOnAnEarlierFrame(t *testing.T) {
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1", "status": "in_progress",
 		"content": []map[string]any{{"type": "terminal", "terminalId": termID}},
-	}), "")
+	}), FrameAttribution{})
 	// An in_progress frame must NOT adopt: the command is still running, so the
 	// bytes are provisional and the live stream owns them.
 	if tc, ok := lastToolCallUpdate(t, events); ok && tc.Output != "" {
@@ -70,7 +70,7 @@ func TestAdoptTerminalOutput_LinkOnAnEarlierFrame(t *testing.T) {
 	}
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1", "status": "completed",
-	}), "")
+	}), FrameAttribution{})
 
 	tc, ok := lastToolCallUpdate(t, events)
 	if !ok {
@@ -97,10 +97,10 @@ func TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment(t *testing.T) {
 			{"type": "terminal", "terminalId": termID},
 			{"type": "content", "content": map[string]any{"text": "line 1"}},
 		},
-	}), "")
+	}), FrameAttribution{})
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1", "status": "completed",
-	}), "")
+	}), FrameAttribution{})
 
 	tc, _ := lastToolCallUpdate(t, events)
 	if tc.Output != "line 1\nline 2\nline 3\n" {
@@ -120,7 +120,7 @@ func TestParseToolUpdateContent_TerminalBlockContributesNoOutput(t *testing.T) {
 				"content": map[string]any{"text": "SHOULD NOT APPEAR"},
 			},
 		},
-	}), "")
+	}), FrameAttribution{})
 	tc, _ := lastToolCallUpdate(t, events)
 	if strings.Contains(tc.Output, "SHOULD NOT APPEAR") {
 		t.Errorf("output = %q, want the terminal block's text left to the stream", tc.Output)
@@ -183,7 +183,7 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 					"content": []map[string]any{
 						{"type": "content", "content": map[string]any{"text": tt.priorOutput}},
 					},
-				}), "")
+				}), FrameAttribution{})
 			}
 			update := map[string]any{"toolCallId": "tc-1", "status": "completed"}
 			if tt.linkTerminal {
@@ -191,7 +191,7 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 					{"type": "terminal", "terminalId": termID},
 				}
 			}
-			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, update), "")
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, update), FrameAttribution{})
 
 			if got := strings.Contains(logs.String(), warning); got != tt.wantWarn {
 				t.Errorf("logged miss = %v, want %v (%s)\nlogs: %s",
@@ -224,7 +224,7 @@ func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
 		"toolCallId": "tc-9", "title": "run", "kind": "execute", "status": "in_progress",
 		"content": []map[string]any{{"type": "terminal", "terminalId": "term-9"}},
-	}), "")
+	}), FrameAttribution{})
 
 	for _, e := range *events {
 		if e.Type != vibekit.EventToolCall {

@@ -120,6 +120,15 @@ class ScrollController {
    *  style invalidation. */
   private scrollbarWidth = "";
 
+  /** Teardown for the pagination pass in flight, or null when none is running.
+   *
+   *  A pass belongs to the chat that started it, and both halves of its
+   *  completion handshake are chat-blind: the signal is the presence of one
+   *  global element id, and the compensation is a height captured in a closure.
+   *  So the pass has to be reachable from outside the method that armed it, or a
+   *  chat switch cannot cancel it. */
+  private pendingLoad: (() => void) | null = null;
+
   constructor(messagesEl: HTMLElement, scrollEl: HTMLElement) {
     this.messagesEl = messagesEl;
     this.scrollEl = scrollEl;
@@ -391,14 +400,36 @@ class ScrollController {
     this.maybeLoadMore(true);
   }
 
+  /** Hand the scroller to a different chat, or to no chat at all.
+   *
+   *  Every line here is mechanism- or order-sensitive, and each one was a way the
+   *  outgoing chat's furniture survived into the next chat.
+   *
+   *  The queue is emptied FIRST: returning to Following flushes deferred
+   *  mutations, and those close over the transcript that is about to be replaced.
+   *
+   *  The state change goes through `setState`, the only writer of the resume
+   *  control's `hidden` class. Assigning the field left the control visible over
+   *  a chat the reader had never scrolled, and the unchanged-state guard then
+   *  made it unclearable — the field already said Following, so the next genuine
+   *  return to Following was a no-op.
+   *
+   *  Pagination is dropped through `setLoadMore`, which also REMOVES the "Load
+   *  older messages" button. That button is an unkeyed child of `#messages`, so
+   *  the transcript's keyed reconcile never touches it; nulling the two fields
+   *  alone left it on screen over the next chat, still holding the previous
+   *  chat's callback, so pressing it fetched a page of the wrong conversation.
+   *
+   *  A fetch already in flight is ABANDONED rather than left to land. Its page
+   *  still arrives in the store for the chat that asked, which is where it
+   *  belongs; what must not survive is this scroller's half of the pass. */
   resetScrollState(): void {
-    this.onLoadMore = null;
-    this.hasMoreMessages = false;
-    this.loadingMore = false;
-    this.state = "following";
+    this.deferred = [];
+    this.abandonLoadPass();
     this.userScrollingUntil = 0;
     this.selfScrollTop = -1;
-    this.deferred = [];
+    this.setLoadMore(null, false);
+    this.setState("following");
   }
 
   // --- Internal ---
@@ -520,22 +551,47 @@ class ScrollController {
     this.onLoadMore();
     const observer = new MutationObserver(() => {
       if (document.getElementById("load-more-skeleton") === null) {
-        observer.disconnect();
-        clearTimeout(safetyTimer);
+        this.endLoadPass();
         const newHeight = this.scrollEl.scrollHeight;
         this.scrollEl.scrollTop += newHeight - prevHeight;
-        this.loadingMore = false;
       }
     });
     const safetyTimer = setTimeout(() => {
-      observer.disconnect();
-      const stale = document.getElementById("load-more-skeleton");
-      if (stale !== null) {
-        stale.remove();
-      }
-      this.loadingMore = false;
+      this.abandonLoadPass();
     }, 15_000);
+    // What makes the pass CANCELLABLE, and it has to be a field because the
+    // observer and the timer are locals nothing outside this method can reach.
+    // Both the completion signal and the height above are the previous chat's
+    // the moment the scroller changes hands: the signal is a global element id
+    // that the caller drops when ITS fetch resolves, whichever chat is on screen
+    // by then, so an uncancelled pass charged the incoming chat a delta measured
+    // against a transcript it never showed.
+    this.pendingLoad = (): void => {
+      observer.disconnect();
+      clearTimeout(safetyTimer);
+    };
     observer.observe(this.messagesEl, { childList: true });
+  }
+
+  /** End the pagination pass in flight, so neither its observer nor its timer can
+   *  fire again. Idempotent, and safe to call when there is no pass — the
+   *  in-flight flag is cleared either way, so a pass that died before it could be
+   *  armed cannot wedge pagination off. */
+  private endLoadPass(): void {
+    const end = this.pendingLoad;
+    this.pendingLoad = null;
+    this.loadingMore = false;
+    end?.();
+  }
+
+  /** Give up on the pass in flight and take its skeleton down.
+   *
+   *  Order is load-bearing: ending the pass first is what stops the removal below
+   *  from being read as the fetch completing and compensating with a stale
+   *  height. */
+  private abandonLoadPass(): void {
+    this.endLoadPass();
+    document.getElementById("load-more-skeleton")?.remove();
   }
 
   /** A real BUTTON, not inert text.

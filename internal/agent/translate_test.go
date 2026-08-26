@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -510,8 +511,8 @@ func registerParentSession(t *testing.T, h *Runtime, chatID vibekit.ChatID, pare
 func captureSubSession(t *testing.T, h *Runtime, chatID vibekit.ChatID, sessionID string) (got string, called bool) {
 	t.Helper()
 	h.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
-		vibekit.ACPUpdateAgentChunk: func(_ context.Context, _ vibekit.ChatID, _ json.RawMessage, sub string) {
-			got = sub
+		vibekit.ACPUpdateAgentChunk: func(_ context.Context, _ vibekit.ChatID, _ json.RawMessage, attr translate.FrameAttribution) {
+			got = attr.SubSessionID
 			called = true
 		},
 	}
@@ -580,6 +581,59 @@ func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 	}
 }
 
+// captureAttribution is captureSubSession's sibling for the whole attribution.
+//
+// Separate rather than a widened return, because the table above asserts only
+// the subagent id and reads better for it; this one exists for the STEP case,
+// which cannot be expressed as a string at all.
+func captureAttribution(t *testing.T, h *Runtime, chatID vibekit.ChatID, sessionID string) (got translate.FrameAttribution, called bool) {
+	t.Helper()
+	h.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
+		vibekit.ACPUpdateSessionInfo: func(_ context.Context, _ vibekit.ChatID, _ json.RawMessage, attr translate.FrameAttribution) {
+			got = attr
+			called = true
+		},
+	}
+	update := mustJSON(t, map[string]any{
+		"sessionUpdate": string(vibekit.ACPUpdateSessionInfo),
+		"_meta":         map[string]any{"kiro": map[string]any{"kind": "turn_completion"}},
+	})
+	params := mustJSON(t, map[string]any{"sessionId": sessionID, "update": update})
+	h.handleSessionUpdate(t.Context(), chatID, &vibekit.RPCResponse{Params: params})
+	return got, called
+}
+
+// TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock is the
+// regression test for a shipped defect, and the frame it sends is the whole
+// point: a `session_info_update` carrying NO `_meta.kiro.workflow`.
+//
+// KAS's `buildSessionInfoUpdate` composes `_meta.kiro` from `legacyFields(update)`
+// plus the update object and merges no `promptMeta`, so a workflow step's
+// `turn_completion` is byte-identical to the chat's own. The handler used to
+// derive its step flag from that absent block, which made the flag permanently
+// false and counted every step of every run as one of the launching chat's turns.
+// The step fact can only come from the SESSION, which is what this pins.
+func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T) {
+	const (
+		chatID  = vibekit.ChatID("chat-step")
+		stepSID = "step-session-1"
+	)
+	h, _, _ := newTestHub()
+	defer shutdownHub(t, h)
+	registerParentSession(t, h, chatID, "parent-A")
+	h.translator.RecordStepSession(stepSID, "wf_1", "build")
+
+	got, called := captureAttribution(t, h, chatID, stepSID)
+	if !called {
+		t.Fatal("handleSessionUpdate did not invoke the sub-handler (sub-dispatch returned early)")
+	}
+	want := translate.FrameAttribution{Step: true}
+	if got != want {
+		t.Errorf("handleSessionUpdate(step session %q, no _meta.kiro.workflow) attribution = %+v, want %+v",
+			stepSID, got, want)
+	}
+}
+
 // --- Replayed frames must not reach the live handlers ---
 
 // dispatchUpdate installs a capturing sub-handler for `kind`, drives
@@ -588,7 +642,9 @@ func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 func dispatchUpdate(t *testing.T, h *Runtime, kind vibekit.ACPUpdateKind, extra map[string]any) (called bool) {
 	t.Helper()
 	h.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
-		kind: func(_ context.Context, _ vibekit.ChatID, _ json.RawMessage, _ string) { called = true },
+		kind: func(_ context.Context, _ vibekit.ChatID, _ json.RawMessage, _ translate.FrameAttribution) {
+			called = true
+		},
 	}
 	update := map[string]any{"sessionUpdate": string(kind)}
 	maps.Copy(update, extra)

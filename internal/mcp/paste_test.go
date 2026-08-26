@@ -382,6 +382,66 @@ func TestImport_OAuthObjectReachesTheRecord(t *testing.T) {
 	}
 }
 
+// TestImport_ClientMetadataURLInstallsWithANote is the OTHER half of the nested
+// classification pass, and the two are only correct together: a key the schema
+// carries and vibekit cannot honour has to be accepted with a reason, or the pass
+// turns a correctly copied block into a 400 blaming a typo.
+//
+// clientMetadataUrl arrived in kiro-cli 2.19.2. vibekit cannot honour it — the
+// hosted document declares a redirect URI, and KAS owns the loopback listener and
+// never tells the client which port it bound — so the field is dropped. What was
+// wrong before was the REFUSAL: the key reaches the raw-paste box straight out of
+// a publisher's README, and it earned a hard 400 with a "did you mean" that could
+// never match.
+func TestImport_ClientMetadataURLInstallsWithANote(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"slack": {"url":"https://mcp.slack.com/mcp",
+	    "oauth": {"clientId":"cid-1","clientMetadataUrl":"https://slack.test/oauth-client.json"}}}
+	}`))
+
+	// Installed, and the credential beside the ignored key still landed: an
+	// ignored member must not cost the object's real content.
+	raw := s.EnabledRaw(t.Context())
+	if len(raw) != 1 {
+		t.Fatalf("stored = %d, want the server installed", len(raw))
+	}
+	if raw[0].OAuthClientID != "cid-1" {
+		t.Errorf("clientId = %q, want it carried past the ignored sibling", raw[0].OAuthClientID)
+	}
+
+	// The note names the key AND the reason. A note saying only "ignoring
+	// clientMetadataUrl" would leave the reader to guess whether vibekit will
+	// support it later or is refusing it on purpose.
+	joined := strings.Join(got.Notes, "\n")
+	for _, want := range []string{"clientMetadataUrl", "redirect", "oauth"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("notes %q missing %q", joined, want)
+		}
+	}
+}
+
+// TestImport_ClientMetadataURLIsSuggestedForItsOwnTypo pins that the ignored set
+// joined the SUGGESTION candidates rather than only the accept list.
+//
+// Without it a near-miss on the new key would be reported with no "did you mean",
+// which is the same dead end the refusal was — the reader is told a key is
+// unknown and left to find the spelling themselves.
+func TestImport_ClientMetadataURLIsSuggestedForItsOwnTypo(t *testing.T) {
+	body := `{"name":"x","url":"https://x.test/mcp","type":"http",` +
+		`"oauth":{"clientMetadataURL":"https://x.test/c.json"}}`
+	_, err := parseImportBody([]byte(body))
+	if err == nil {
+		t.Fatal("a miscased clientMetadataUrl was accepted; the key set is case-sensitive")
+	}
+	for _, want := range []string{"clientMetadataURL", "did you mean", "clientMetadataUrl"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, missing %q", err, want)
+		}
+	}
+}
+
 // The nested object needs its own classification pass. The outer one only sees
 // that `oauth` is a key the translator consumes, so before this the object went
 // straight into json.Unmarshal, which drops an unmatched member: a misspelt
