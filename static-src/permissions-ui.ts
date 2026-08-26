@@ -236,7 +236,7 @@ function profileDescription(id: string): string {
     case "trusted":
       return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
     case "unrestricted":
-      return "Never asks, including before installing a power, and the only profile that also covers workflow steps. It writes a durable allow rule to your user permissions file, so it survives a restart and applies to every Kiro client on this machine until you pick another profile. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
+      return "Never asks, including before installing a power, and the only preset profile that also covers workflow steps. It writes a durable allow rule to your user permissions file, so it survives a restart and applies to every Kiro client on this machine until you pick another profile. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
     case CUSTOM_PROFILE:
       return "Your own rules, edited in the table below. Nothing is granted that you do not add, and they apply to workflow steps too.";
     default:
