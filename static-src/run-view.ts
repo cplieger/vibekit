@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { el, effect } from "@cplieger/reactive";
-import { openRunTab, tabIdFor } from "./tabs.js";
+import { closeTab, getActiveTabId, openRunTab, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks } from "./decision-dock.js";
 import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
 import { RUN_CONTROLS, CONTROL_LABEL, type RunVerb } from "./run-controls.js";
@@ -136,6 +136,10 @@ function installViewEffect(): void {
  *  `insertRow` would fall back to top-level for an absent parent anyway, and
  *  asking first keeps the intent explicit rather than incidental. */
 export function openRunView(workflowID: string, name: string, parentChatID = ""): void {
+  // From here on this tab is the READER's, so the completion auto-close leaves it
+  // alone. Same reasoning as the offer guard, pointing the other way: a tab
+  // someone asked for must not be taken away on a schedule of the app's choosing.
+  autoOpened.delete(workflowID);
   const parentChat = parentChatID === "" ? runChatID(workflowID) : parentChatID;
   // The PARENT is a tab id, and a chat id is no longer one — so the nesting
   // question and the id it needs are the same lookup.
@@ -181,6 +185,35 @@ export function openRunView(workflowID: string, name: string, parentChatID = "")
  */
 const offered = new Set<string>();
 
+/** The runs whose sub-tab this client opened BY ITSELF, and therefore the only
+ *  tabs it may close by itself.
+ *
+ *  Not the same set as `offered`, though they start identical, and the difference
+ *  is the whole reason there are two. `offered` records that the automatic path
+ *  has spent its one offer, and it must never be un-recorded or the tab would
+ *  reappear on the next progress frame. Membership HERE says the tab on screen is
+ *  the app's own doing rather than something the reader asked for — so a reader
+ *  who re-opens the run through `openRunView` takes it out, and from then on the
+ *  tab is theirs to close. Closing a tab a reader deliberately opened would be
+ *  the same argument-with-the-reader the offer guard exists to avoid, in the
+ *  other direction. */
+const autoOpened = new Set<string>();
+
+/** The endings an automatic sub-tab closes itself on.
+ *
+ *  Not every terminal status, and the exclusions come from this app's own rule
+ *  for automatic hiding rather than from taste: `tool-group.ts` never auto-
+ *  collapses a group holding a failure, and re-opens one that fails while already
+ *  collapsed, because a failure is not noise. A failed or aborted run is the one
+ *  a reader wants the detail of, so its tab stays. `paused` is not an ending at
+ *  all — KAS reports an onMaxIterations policy stop through the same frame, and
+ *  the run is still this process's to resume. An unrecognised status stays too:
+ *  a tab is cheap and a closed one the reader wanted is not.
+ *
+ *  `cancelled` is in, because the reader asked for the stop and a run they
+ *  cancelled has nothing they were waiting to read. */
+const CLEAN_ENDINGS: ReadonlySet<string> = new Set(["completed", "cancelled"]);
+
 export function openRunSubTab(workflowID: string, name: string, parentChatID: string): void {
   if (workflowID === "" || parentChatID === "" || offered.has(workflowID)) {
     return;
@@ -193,7 +226,46 @@ export function openRunSubTab(workflowID: string, name: string, parentChatID: st
     return;
   }
   offered.add(workflowID);
+  autoOpened.add(workflowID);
   void openRunTab(workflowID, name, { parent: parentTab, owns: false, activate: false });
+}
+
+/** Close a run's automatic sub-tab now that the run has ended cleanly.
+ *
+ *  The counterpart of the offer above, and it is deliberately narrower than "close
+ *  the tab of a finished run". Three gates, each closing a way this could take a
+ *  tab someone still wanted:
+ *
+ *   - AUTOMATIC ONLY. Only a tab this client opened by itself is closed. A run
+ *     opened from History or from its card's "Open run" link was asked for; a
+ *     launcher-owned tab is worse still, since its × means cancel. A TANGENT is
+ *     out by construction rather than by a filter: nothing but the run door above
+ *     ever puts an id in this set, so a forked chat's sub-tab is unreachable from
+ *     here.
+ *   - CLEAN ENDINGS ONLY. See `CLEAN_ENDINGS`.
+ *   - NEVER THE TAB ON SCREEN. Closing the active tab would take the view out
+ *     from under a reader who is watching the run finish, which is the moment its
+ *     output becomes worth reading. They can close it themselves; the point of
+ *     this is the tabs nobody is looking at.
+ *
+ *  Every connected client runs this independently and `closeTab` tolerates an id
+ *  that is already gone, so the races between them are not a case to handle. */
+export function autoCloseRunSubTab(workflowID: string, status: string): void {
+  if (!autoOpened.has(workflowID) || !CLEAN_ENDINGS.has(status)) {
+    return;
+  }
+  const tabID = tabIdFor("run", workflowID);
+  if (tabID === "") {
+    // The reader already closed it. Drop the claim so nothing here holds a run
+    // whose tab is gone.
+    autoOpened.delete(workflowID);
+    return;
+  }
+  if (tabID === getActiveTabId()) {
+    return;
+  }
+  autoOpened.delete(workflowID);
+  void closeTab(tabID);
 }
 
 /** Open a LAUNCHER-OWNED run tab: closing it CANCELS the run (user decision —
@@ -202,6 +274,9 @@ export function openRunSubTab(workflowID: string, name: string, parentChatID: st
  *  these. Cancel is fire-and-forget: the terminal run_complete tears the
  *  server-side bridge down, and the run_finished event settles every list. */
 export function openLiveRunView(workflowID: string, name: string): void {
+  // An owned tab is never auto-closed: its × cancels, so the auto-close must not
+  // be able to reach it even if this run somehow carried an automatic tab first.
+  autoOpened.delete(workflowID);
   // `owns: true` is the whole difference from the review above, and it is a
   // SUBJECT field now rather than a local spec choice — which is what lets the two
   // coexist for one `(kind, ref)` on the wire. The × cancels through the factory's

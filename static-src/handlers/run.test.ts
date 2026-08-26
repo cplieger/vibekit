@@ -12,10 +12,12 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../run-store.js", () => ({ invalidateRun: vi.fn(), noteRunChat: vi.fn() }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-// The proactive sub-tab opener. Its own rules (nest under the launching chat, do
-// not activate, do not stop the run on close) are run-view's; what this suite pins
-// is WHICH events reach it and with what.
-vi.mock("../run-view.js", () => ({ openRunSubTab: vi.fn() }));
+// The proactive sub-tab opener and its counterpart, the completion auto-close.
+// Their own rules (nest under the launching chat, do not activate, do not stop the
+// run on close; close only an automatic tab, only on a clean ending, never the tab
+// on screen) are run-view's; what this suite pins is WHICH events reach them and
+// with what.
+vi.mock("../run-view.js", () => ({ openRunSubTab: vi.fn(), autoCloseRunSubTab: vi.fn() }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 
 import "./run.js";
@@ -23,13 +25,14 @@ import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
 import { invalidateRun, noteRunChat } from "../run-store.js";
 import { trackRun } from "../run-dots.js";
-import { openRunSubTab } from "../run-view.js";
+import { openRunSubTab, autoCloseRunSubTab } from "../run-view.js";
 import { info, success, error } from "../toast.js";
 
 const invalidate = vi.mocked(invalidateRun);
 const noteChat = vi.mocked(noteRunChat);
 const track = vi.mocked(trackRun);
 const openSubTab = vi.mocked(openRunSubTab);
+const autoClose = vi.mocked(autoCloseRunSubTab);
 const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
@@ -53,6 +56,7 @@ beforeEach(() => {
   noteChat.mockClear();
   track.mockClear();
   openSubTab.mockClear();
+  autoClose.mockClear();
   toastInfo.mockClear();
   toastSuccess.mockClear();
   toastError.mockClear();
@@ -145,6 +149,26 @@ describe("run SSE handlers", () => {
   it("passes the workflow id through so a surface showing another run ignores it", () => {
     send("run_progress", { workflow_id: "wf_other", kind: "node_start" });
     expect(invalidate).toHaveBeenCalledWith("wf_other");
+  });
+
+  // The finish frame's other half: the tab the run opened for itself goes away with
+  // it. The STATUS travels because the decision needs it — a failed run keeps its
+  // tab — and this suite only pins that the frame reaches the rule with the run's
+  // own verdict rather than a boolean this handler derived.
+  it("hands the finish frame's status to the auto-close", () => {
+    send("run_finished", { workflow_id: "wf_5", status: "completed" });
+    expect(autoClose).toHaveBeenCalledWith("wf_5", "completed");
+  });
+
+  it("routes a bad ending to it too, verdict intact, and decides nothing itself", () => {
+    send("run_finished", { workflow_id: "wf_6", status: "failed" });
+    expect(autoClose).toHaveBeenCalledWith("wf_6", "failed");
+  });
+
+  it("leaves the auto-close out of the frames that are not an ending", () => {
+    send("run_started", { workflow_id: "wf_7", name: "publish" });
+    send("run_progress", { workflow_id: "wf_7", kind: "node_complete" });
+    expect(autoClose).not.toHaveBeenCalled();
   });
 });
 

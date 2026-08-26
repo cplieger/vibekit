@@ -1,18 +1,29 @@
-/* Sub-tab: a generic indent, driven by TabSpec.parentId rather than by any one
-   feature's data. The seven lines are the original rewind-child skin unchanged
-   apart from the name — the visual was right, only its key was wrong. */
+/* Sub-tab: a generic indent, driven by the SUBJECT's parent rather than by any
+   one feature's data. Inherited from the original rewind-child skin — the visual
+   was right, only its key was wrong. */
 .tab.tab-child {
   margin-inline-start: 1rem;
 }
 
-.tab.tab-child .tab-name::before {
-  content: "↳ ";
+/* The nesting marker. It was `content: "↳ "` on `.tab-name::before`, and being a
+   real element in the leading slot is what lets the activity dot sit BESIDE it,
+   in the position a parent chat row already puts its own dot. A pseudo-element
+   could not: it lived inside the name, so anything placed ahead of the name
+   landed ahead of the arrow too and the marker stopped reading as an indent.
+
+   Not `.tab-icon`, so it carries that class's flex box here rather than
+   inheriting it — see tabs.ts for why (the icon class also means "grab me", and
+   a sub-tab cannot be dragged). */
+.tab .tab-nest {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
   color: var(--c-text-tertiary);
 }
 
 /* On the active tab the row is an accent fill, and --c-text-tertiary against it
    is too quiet to read as structure. Inherit the row's own colour there. */
-.tab.tab-child.active .tab-name::before {
+.tab.tab-child.active .tab-nest {
   color: inherit;
   opacity: 0.7;
 }
@@ -115,6 +126,37 @@
    pin marker and needs its own separation from it. */
 .tab-status-dot:not(:first-child) {
   margin-inline-start: var(--sp-1);
+}
+
+/* A SUB-TAB's dot is leading too; it just has the nesting arrow ahead of it. So
+   it wants neither the 14px glyph slot above (the arrow holds that slot) nor the
+   trailing separation below — the row's own `gap` is the whole spacing.
+
+   This ties `.tab-status-dot:not(:first-child)` on specificity (two compound
+   parts each), so it wins by coming AFTER it and must stay after it. */
+.tab-nest + .tab-status-dot {
+  margin-inline-start: 0;
+}
+
+/* The diamond's slot correction, one position over from the leading one below.
+   `failed` is 8px where every other state is 9px, so a run sub-tab's name moved
+   1px sideways at the exact moment its status flipped to or from failed — which
+   for a run is the moment that matters most. Re-derived against the 9px disc
+   rather than the 14px glyph slot, because here the nesting arrow holds the glyph
+   slot and the dot only has to match its own siblings. */
+.tab.tab-child .tab-status-dot[data-status="failed"] {
+  margin-inline: calc((9px - 8px) / 2);
+}
+
+/* A sub-tab's dot RESERVES its slot even with no state to show, which the
+   leading chat dot never has to: a chat is always in some state (idle is one),
+   while a run has none until its first frame lands, and an `idle` ring there
+   would claim one it cannot support. Without this the name sat 17px left and
+   then jumped sideways the moment the run reported — the same defect the failed
+   diamond's re-derived margin exists to prevent, one element over. */
+.tab.tab-child .tab-status-dot:not([data-status]) {
+  display: block;
+  visibility: hidden;
 }
 
 /* Idle — a chat that exists with nothing happening in it. HOLLOW, and the fill

@@ -62,8 +62,6 @@ export const ICON_EXPORT =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
-export const ICON_CHECK =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 export const ICON_X =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 export const ICON_PLAY = svg(14, '<polygon points="5 3 19 12 5 21 5 3"/>');
@@ -409,6 +407,19 @@ export const ICON_TAB_RUN = svg(
   14,
   '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
 );
+/** The nesting marker a SUB-TAB carries instead of its kind glyph (Lucide
+ *  "corner-down-right"). It replaces a `content: "↳ "` on `.tab-name::before`,
+ *  and being a real element is what lets the activity dot sit beside it: a text
+ *  arrow lived INSIDE the name, so anything placed before the name landed ahead
+ *  of the arrow and the marker stopped reading as an indent.
+ *
+ *  Written out rather than built with `svg()` because it needs stroke-width 3
+ *  and that helper hard-codes 2 — a duplicate attribute appended through `extra`
+ *  loses to the first spelling in HTML parsing. The heavier stroke is the point:
+ *  at 14px the shared weight rendered as a hairline the eye read as an artifact
+ *  of the glyph beside it rather than as structure. */
+export const ICON_TAB_SUBTAB =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v7a4 4 0 004 4h12"/><path d="m15 10 5 5-5 5"/></svg>';
 /** Seti file type icons keyed by short name. */
 export const FILE_ICONS: Record<string, string> = {
   go: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="currentColor" d="M18.3 10c-1.1 0-1.9-.6-2.1-1.6-.1-.6.1-1.1.5-1.5.6-.7 1.6-.9 2.5-.6.8.3 1.3 1 1.2 1.9 0 .8-.5 1.4-1.4 1.7-.3.1-.5.1-.7.1zm-1.7-1.8c0 .4.3.7.6.7s.6-.3.6-.7c0-.4-.3-.7-.6-.7-.3.1-.6.4-.6.7zm-3.5-1.8C15 6.4 15.5 8 15 9.1c-.3.7-.9 1-1.7 1.1-1 .2-1.9-.4-2.2-1.3-.4-1.1.3-2.2 1.5-2.5h.5zm-.4 2c0-.4-.3-.7-.6-.7s-.6.3-.6.7c0 .4.3.7.6.7s.6-.3.6-.7zm3.2 1c.2 0 .4 0 .6.1.3.1.4.4.3.6 0 .1 0 .1.1.2.2.1.3.2.5.4s.2.4.1.6c-.1.2-.4.3-.6.2-.1 0-.3-.1-.4-.2-.3-.1-.6-.1-.9 0-.2.1-.4.2-.6.2-.4 0-.6-.2-.5-.6 0-.3.2-.5.4-.6 0 0 .1 0 .1-.1-.1-.4.2-.5.4-.7.1-.1.3-.1.5-.1zm-.1 1.1c.3 0 .6-.1.8-.2.3-.2.3-.4.1-.6-.1-.1-.3-.2-.4-.2-.3-.1-.7 0-.9.2-.3.3-.2.6.2.7-.1.1 0 .1.2.1z"/><path fill="currentColor" d="M16.7 12.1v.2c0 .2-.1.4-.3.4-.2 0-.4-.2-.4-.3-.1-.3 0-.6 0-1 0-.1 0-.1.1-.1.2 0 .4.1.5.2.1 0 .1.1.1.1v.5zm-.9-.2v.3c0 .2-.1.3-.2.4-.2.2-.4.1-.5-.1-.1-.2-.1-.5-.1-.8 0-.1 0-.1.1-.1.2-.1.4-.1.6-.2.1 0 .1 0 .1.1v.4z"/><g fill="currentColor"><path fill="currentColor" d="M10.5 27h-.2c-.1-.1-.3-.2-.4-.4-.2-.2-.2-.5.1-.8.2-.3.6-.5.9-.7-.8-.7-1.2-1.5-1.4-2.5-.2-.7-.2-1.5-.2-2.3 0-1.2.2-2.3.2-3.5-.3.2-.6.4-1 .5h-.2c-.2-.2-.3-.4-.3-.6 0-.2.2-.4.3-.5.3-.2.6-.3 1-.3.2 0 .2-.1.2-.2-.1-1-.2-2-.2-3-.1-1-.1-2.1.1-3.1.1-.5.1-.5-.3-.6-.5-.3-.8-.9-.7-1.4.2-1.1 1.4-1.6 2.4-1.1.1.1.2.1.3 0 .5-.4 1-.7 1.6-.9 1.7-.6 3.5-.7 5.2-.4.9.1 1.8.4 2.5 1 .2.2.4.2.6.1.8-.4 1.7-.1 2.1.7.4.8.1 1.5-.8 1.9-.1.1-.1.1-.1.2.3 1 .4 2 .4 3.1 0 1.2 0 2.3.1 3.5 0 .2 0 .2.2.3.4 0 .7.2 1 .5.2.2.2.3 0 .6v.1c0 .2-.2.3-.4.3s-.4-.1-.5-.2c-.1 0-.2-.1-.3-.1v.1c0 .6.1 1.2.1 1.9 0 1.1 0 2.1-.2 3.2-.2 1-.6 2-1.3 2.8-.1.1-.1.2 0 .3.3.2.6.5.8.9.1.3 0 .5-.3.7-.2.2-.4.1-.6 0l-.4-.4c-.2-.2-.3-.4-.5-.5-.1-.1-.2-.1-.3 0-1.1.6-2.3.8-3.5.8-1.4.1-2.9-.1-4.2-.7h-.1c-.2.2-.6.3-.8.5-.3-.2-.6 0-.9.2zm7.8-17c.2 0 .5 0 .7-.1.8-.3 1.3-.9 1.4-1.7 0-.9-.5-1.6-1.2-1.9-.8-.3-1.9 0-2.5.6-.4.4-.6.9-.5 1.5.2 1 1 1.6 2.1 1.6zm-5.2-3.6h-.5c-1.2.2-1.9 1.3-1.5 2.5.3.9 1.2 1.4 2.2 1.3.7-.1 1.3-.4 1.7-1.1.5-1.1 0-2.7-1.9-2.7zm2.8 3c-.2 0-.4 0-.6.1-.3.2-.5.3-.4.7 0 .1-.1.1-.1.1-.2.1-.4.3-.4.6-.1.4.2.6.5.6.2 0 .4-.1.6-.2.3-.1.6-.1.9 0 .1.1.3.1.4.2.3.1.5 0 .6-.2.1-.2.1-.4-.1-.6-.1-.2-.3-.3-.5-.4-.1 0-.1-.1-.1-.2.1-.3 0-.5-.3-.6-.1-.1-.3-.1-.5-.1zm.8 2.7v-.5c0-.1 0-.1-.1-.1-.2-.1-.4-.1-.5-.2-.1 0-.1 0-.1.1 0 .3-.1.6 0 1 0 .2.2.4.4.3.2 0 .3-.2.3-.4v-.2zm-.9-.2v-.4c0-.1 0-.1-.1-.1-.2.1-.4.1-.6.2-.1 0-.1.1-.1.1 0 .3 0 .5.1.8.1.2.3.3.5.1.1-.1.2-.2.2-.4-.1-.1 0-.2 0-.3z"/><path fill="currentColor" d="M16.6 8.2c0-.4.3-.7.6-.7s.6.3.6.7c0 .4-.3.7-.6.7s-.6-.3-.6-.7zm1.1.2c0-.1 0-.2-.1-.2s-.1.1-.1.2 0 .2.1.2c0 0 0-.1.1-.2zm-5 0c0 .4-.3.7-.6.7s-.6-.3-.6-.7c0-.4.3-.7.6-.7s.6.3.6.7zm-.3.3c.1 0 .1-.1.1-.1 0-.1 0-.2-.1-.2s-.1.1-.1.1c-.1.1 0 .2.1.2zm3.4 1.8c-.1 0-.3 0-.4-.1-.4-.1-.4-.4-.2-.7.3-.2.6-.3.9-.2.2 0 .3.1.4.2.2.2.2.5-.1.6-.1.1-.3.2-.6.2z"/></g><path fill="currentColor" d="M17.7 8.4c0 .1 0 .2-.1.2s-.1-.1-.1-.2 0-.2.1-.2c0 0 0 .1.1.2zm-5.3.3c-.1 0-.1-.1-.1-.2s0-.2.1-.1c.1 0 .1.1.1.2s0 .1-.1.1z"/></svg>',
