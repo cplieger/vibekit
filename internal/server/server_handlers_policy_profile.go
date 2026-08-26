@@ -240,6 +240,8 @@ func snapshotPolicyFiles(roots policyfile.Roots) (policySnapshot, string, error)
 	for _, scope := range writableScopes() {
 		path, err := policyfile.PathFor(scope, roots)
 		if err != nil {
+			slog.Warn("a writable permissions file path could not be resolved, so the profile selection was refused",
+				"scope", scope, "error", err)
 			return nil, scope, err
 		}
 		f, err := policyfile.Load(path)
