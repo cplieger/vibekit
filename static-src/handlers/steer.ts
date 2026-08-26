@@ -7,19 +7,32 @@
 //   steer_injected  the model has read it; the redirection is in effect
 //   steer_cleared   these were dropped at a turn boundary, unread
 //
+// The first confirms a dock row, the other two REMOVE one — a steer leaves the
+// dock the moment it is resolved either way, and lands in the turn transcript as
+// a note (`steer_marks`, rendered by fundamentals/steer-note.ts): read, or "not
+// delivered".
+//
 // steer_injected arrives TWICE for a steer the agent answers, and the second one
 // is not a duplicate: the first is KAS's read frame, the second carries `ack` —
 // the agent's own statement of what it did — off the assistant text stream once
-// it has acted. Both merge onto the same chip by id.
+// it has acted. Both merge onto the same note by id.
 //
-// This is the ONLY writer of `session.steers`. The code that sends a steer
-// records nothing locally (submit.ts), so the chip a user sees is always the
-// server's account of what the agent knows — which is what makes the row correct
-// on a second device and after a reconnect, not just on the tab that typed it.
+// THIS IS NO LONGER THE ONLY WRITER of `session.steers`, and the second writer is
+// deliberate: `chat.steer`'s `optimistic` draws the row on submit and its
+// `rollback` un-draws it on a refusal. The division is intent versus fact — the
+// client says "I sent this", the server says "it is in the buffer / the agent
+// read it / it was dropped" — and the reconcile is by the derivable id, so the
+// optimistic row and the confirmed one are never two rows. Without that half the
+// user watched the composer clear and saw nothing for a whole POST, an awaited
+// JSON-RPC round trip to the kiro-cli subprocess and an SSE fan-out.
 //
-// A steer's own text is not rendered as a message here. It reaches the transcript
-// as an ordinary user turn when KAS persists it (`source: "steer"`), through the
-// same message handlers as everything else.
+// A steer's own text does NOT reach the transcript through the message handlers
+// during the live turn. `user_message_chunk` has no live handler
+// (`internal/agent/translate.go:345`) and is decoded only by the `session/load`
+// replay projection (`internal/translate/projection.go:187-200`), so a steer is a
+// transcript message only after a RELOAD. That is why the client promotes it into
+// the running turn itself: otherwise the transcript shows the agent changing
+// course with nothing explaining why.
 //
 // A FOURTH event lands in this file, `agent_notice`, because it arrives on the
 // same KAS channel: a workflow step's or a subagent's progress line, which the
@@ -28,7 +41,7 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { recordSteerQueued, markSteerInjected, clearSteers } from "../store.js";
+import { recordSteerQueued, promoteSteer, dropSteers } from "../store.js";
 import { info, success, error } from "../toast.js";
 
 onSSE("steer_queued", (chatID, p) => {
@@ -36,15 +49,19 @@ onSSE("steer_queued", (chatID, p) => {
 });
 
 onSSE("steer_injected", (chatID, p) => {
-  markSteerInjected(chatID, p.steer_id, p.text, p.ack);
+  promoteSteer(chatID, p.steer_id, p.text, p.ack);
 });
 
 // Named ids only. KAS clears its buffer at EVERY turn boundary and the server
 // suppresses the empty case, so an event that arrives here always names
-// something — and clearing by id rather than wholesale is what lets an explicit
+// something — and dropping by id rather than wholesale is what lets an explicit
 // discard of two steers coexist with a third that arrived in between.
+//
+// An id the agent already READ is routine on this frame (the boundary clears
+// everything) and `dropSteers` ignores it: it already has a note, and a second
+// one claiming it was missed would be false.
 onSSE("steer_cleared", (chatID, p) => {
-  clearSteers(chatID, p.steer_ids);
+  dropSteers(chatID, p.steer_ids);
 });
 
 // ---------------------------------------------------------------------------

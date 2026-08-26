@@ -20,7 +20,7 @@ import {
   tabStatusFor,
   setTurnFailed,
   setTurnDone,
-  clearSteers,
+  dropSteers,
 } from "../store.js";
 import { notifyIfHidden, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
 import {
@@ -130,11 +130,14 @@ onSSE("turn_ended", (chatID, p) => {
   clearAgentDown();
   onTurnEnded(chatID);
   refreshGitBadge();
-  // KAS clears its steering buffer at EVERY turn boundary, so the chip row must
-  // empty here too. The `steer_cleared` frame covers the case where something
-  // was still unread; this covers the ordinary one, where every steer was
-  // injected and the server sends nothing because there was nothing to drop.
-  clearSteers(chatID);
+  // KAS clears its steering buffer at EVERY turn boundary, so the dock must empty
+  // here too — and anything still sitting in it was never read, which is a fact
+  // worth keeping. `dropSteers` promotes each one into the transcript as "not
+  // delivered" with its text and a put-it-back control, rather than deleting it
+  // silently. The ordinary path leaves nothing to do: every steer was injected,
+  // so the dock is already empty and the server sent no `steer_cleared` because
+  // there was nothing to drop.
+  dropSteers(chatID);
   // The model-switch queue still drains off the per-chat turn_ended (not the
   // active-only turn:idle bus event) so a background chat's queued switch fires
   // when ITS turn ends. There is no prompt queue left to drain — a mid-turn

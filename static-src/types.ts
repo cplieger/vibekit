@@ -171,39 +171,89 @@ export interface ModelInfo {
 /** Connection status flag, surfaced through the status bar. */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
-/** One mid-turn steer, projected from the server.
+/** One mid-turn steer the agent has NOT read yet: a row in the bottom dock.
  *
- *  This is NOT a client-side queue entry. It is vibekit's view of a message
- *  sitting in KAS's own per-session steering buffer, and every field here is
- *  written by an SSE event (`steer_queued` / `steer_injected` /
- *  `steer_cleared`) rather than by the code that sent it. The client keeps no
- *  independent copy: there is nothing to drain, nothing to retry and no order
- *  to preserve, because the buffer and its delivery are KAS's.
+ *  THE CLIENT WRITES INTENT, THE SERVER WRITES FACT. That is the whole rule,
+ *  and it replaced an earlier one ("every field here is written by an SSE
+ *  event ... rather than by the code that sent it") that this shape no longer
+ *  obeys. Sending a steer writes a `pending` entry immediately — the user
+ *  pressed Send and is owed a row for it — and `chat.steer`'s `rollback`
+ *  un-draws that entry if the POST fails, in the same gesture that puts the
+ *  text back in the composer. Everything else is still the server's: the
+ *  confirmed id (`steer_queued`), the promotion into the transcript
+ *  (`steer_injected`) and the drop at a turn boundary (`steer_cleared`).
+ *
+ *  A `pending` entry renders as "Sending" and NOTHING else — no Edit, no
+ *  Discard, because there is no server-side id to clear yet. Reconciliation is
+ *  by id (the client derives `steer-<messageID>`, which is what KAS returns),
+ *  and if that convention ever drifts, by exact text against the OLDEST
+ *  pending entry. Both branches adopt onto the existing entry rather than
+ *  appending, so the optimistic entry and the confirmed one can never both
+ *  render as two rows.
  *
  *  Always the USER's own message. An agent's progress notice travels the same
  *  KAS buffer but arrives as `agent_notice`, so nothing here needs a field for
  *  whose words it holds.
+ *
+ *  A steer LEAVES this array when the agent reads it or a boundary drops it,
+ *  and becomes a `SteerMark` — see below. So the array is strictly "waiting",
+ *  which is why there is no `injected` flag any more: the dock's lifetime is
+ *  the turn, and a mark's lifetime is the loaded transcript.
  *
  *  It replaced a `QueuedPrompt` FIFO that held text until `turn_ended` and then
  *  sent it as a NEW turn — so a correction always arrived after the work it was
  *  correcting had finished. A steer lands in the turn already running. */
 export interface PendingSteer {
   /** KAS's own steer id (`steer-<uuid>`), and the key for every lifecycle
-   *  event. Client-minted and echoed back, so the chip that appears is the
+   *  event. Client-minted and echoed back, so the row that appears is the
    *  one this device sent. */
   id: string;
   text: string;
-  /** Whether the model has actually READ it. False means it is in the buffer
-   *  waiting for the next node boundary. This is the distinction the chip row
-   *  exists to show, and the reason `steer_injected` is its own event. */
-  injected: boolean;
+  /** Written on SUBMIT and cleared by `steer_queued`: this row is the local
+   *  claim that a POST is in flight, and its id is derived rather than
+   *  confirmed. Absent on every entry the server has acknowledged. */
+  pending?: boolean;
+}
+
+/** Where in a running turn a steer was read.
+ *
+ *  BLOCK granularity, not message granularity, and that is forced: KAS calls
+ *  `StartTurn` once per turn, so a whole turn accumulates into ONE assistant
+ *  message and "chronologically at the injection point" can only mean between
+ *  two of that message's blocks. */
+export interface SteerAnchor {
+  /** The assistant message the steer landed in. Empty when the steer was read
+   *  before the turn had produced anything; the store rebinds it to the first
+   *  assistant message that arrives. */
+  msgID: string;
+  /** How many blocks that message had at the moment of promotion. The mark
+   *  renders immediately before the block at this index. */
+  blockIndex: number;
+}
+
+/** A steer that has LEFT the dock and now renders inside the turn transcript.
+ *
+ *  Two ways in, and the row says which: the agent read it (`steer_injected`),
+ *  or a turn boundary dropped it unread (`steer_cleared` → `dropped`). The
+ *  second is worth a row precisely because it is the fact a reader would
+ *  otherwise never learn — "I sent this and the agent never saw it".
+ *
+ *  Its lifetime is the LOADED TRANSCRIPT rather than the turn, which is why it
+ *  is a separate field from `steers`: the dock empties at every boundary and
+ *  this must survive one. */
+export interface SteerMark {
+  id: string;
+  text: string;
   /** What the agent said it DID about the steer, from the acknowledgement
-   *  marker KAS asks it to close its response with. Arrives later than
-   *  `injected` and on a different channel (the text stream, not the steering
-   *  one), because reading a steer and acting on it are separate moments.
-   *  Absent until the marker closes, and absent for good if the agent never
-   *  emits one. */
+   *  marker KAS asks it to close its response with. Arrives later than the read
+   *  frame and on a different channel (the text stream, not the steering one),
+   *  because reading a steer and acting on it are separate moments. Absent
+   *  until the marker closes, and absent for good if the agent never emits
+   *  one. */
   ack?: string;
+  /** The agent never read it: a turn boundary cleared the buffer first. */
+  dropped?: boolean;
+  anchor: SteerAnchor;
 }
 
 // --- Local session state (client-only projection of server chat) ---
@@ -265,10 +315,16 @@ export interface Session {
    *  `turn_failed`; NOT by opening the chat, because seeing a finished turn does
    *  not un-finish it. Never set for a cancelled turn: nothing was finished. */
   turn_done?: boolean;
-  /** Mid-turn steers KAS is holding or has just delivered for this chat.
-   *  A pure projection of the three steer SSE events; cleared at every turn
-   *  boundary because that is when KAS clears its own buffer. */
+  /** Mid-turn steers the agent has NOT read yet: the bottom dock's rows.
+   *  Written on submit (intent) and by the three steer SSE events (fact);
+   *  emptied at every turn boundary because that is when KAS clears its own
+   *  buffer, and each entry that leaves becomes a `steer_marks` entry. */
   steers?: PendingSteer[];
+  /** Steers that have left the dock and now render INSIDE the turn transcript,
+   *  each anchored at the block it was injected before. Survives the turn
+   *  boundary that empties `steers`, so its lifetime is the loaded transcript;
+   *  `store-load.ts` carries it across a header refetch for the same reason. */
+  steer_marks?: SteerMark[];
   supervised_mode?: boolean;
   /** Reasoning-effort level ("low".."max", "" = the engine default). The
    *  fourth per-chat composer setting, beside model, mode and supervised; it

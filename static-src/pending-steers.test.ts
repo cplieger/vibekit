@@ -1,12 +1,26 @@
 //
 // The stack is a pure projection of `session.steers`, so these tests drive the
-// store the way the SSE handlers do and read the DOM the way a person does.
+// store the way the submit path and the SSE handlers do and read the DOM the way
+// a person does.
 //
-// The control set is the part worth guarding, because it is pinned to what KAS's
-// wire can actually honour: two verbs, `_session/steer` and
-// `_session/steer/clear`, the second taking only a sessionId. So a read row has
-// no controls, Discard always clears every unread message, and Edit is offered
-// only when exactly one is unread. Each of those is a case below.
+// IT HOLDS ONLY WHAT THE AGENT HAS NOT READ, and that is the invariant most of
+// these cases are about: a steer LEAVES the stack the moment it is read
+// (`promoteSteer`) or dropped at a turn boundary (`dropSteers`), and reappears
+// inside the turn transcript as a note. So there is no read row, no checkmark and
+// no ack line here — the count falling to zero is the whole read signal, and the
+// ack rides the transcript mark, which several cases below assert on directly
+// because that is where the fact moved rather than a fact that stopped existing.
+//
+// The two states that remain are both "not read yet": `pending` (this device's
+// own claim that a POST is in flight, drawn on submit) and confirmed by KAS's
+// `steer_queued`.
+//
+// The control set is the other part worth guarding, because it is pinned to what
+// KAS's wire can actually honour: two verbs, `_session/steer` and
+// `_session/steer/clear`, the second taking only a sessionId. So a pending row
+// has no controls (there is no server-side id to clear yet), Discard always
+// clears every unread message, and Edit is offered only when exactly one is
+// unread. Each of those is a case below.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 
 // The controls dispatch an action and open a confirm; the stack's rendering and
@@ -28,7 +42,15 @@ vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValue
 
 const { clearDispatch, confirmMock, setComposerValueMock } = mocks;
 
-import { setSessions, setActive, recordSteerQueued, markSteerInjected } from "./store.js";
+import {
+  setSessions,
+  setActive,
+  recordSteerQueued,
+  recordSteerSent,
+  promoteSteer,
+  dropSteers,
+  steerMarks,
+} from "./store.js";
 import { initPendingSteers } from "./pending-steers.js";
 import type { Session } from "./types.js";
 
@@ -74,8 +96,15 @@ function textOf(row: HTMLElement): string {
   return row.querySelector(".steer-text")?.textContent ?? "";
 }
 
+/** The dock's ack line, which no longer exists. Kept as the guard that it does
+ *  not come back: what the agent did belongs on the transcript note, not on a row
+ *  sitting inside the composer. */
 function ackOf(row: HTMLElement): string | null {
   return row.querySelector(".steer-ack")?.textContent ?? null;
+}
+
+function stackHidden(): boolean {
+  return document.getElementById("steer-stack")?.classList.contains("hidden") ?? false;
 }
 
 function actions(row: HTMLElement): string[] {
@@ -158,43 +187,76 @@ describe("the steer stack", () => {
     expect(row.getAttribute("aria-label")).toBe("Sent, waiting for the agent: use tabs instead");
   });
 
-  it("flips to read with no verdict when the agent said nothing about it", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
-    markSteerInjected("chat-1", "steer-1", "use tabs instead");
+  // "Sending" is the in-flight claim: the POST has gone, KAS has not confirmed it
+  // yet, and the row exists so pressing Send draws something on the keystroke
+  // rather than after a round trip.
+  it("says a message is still sending before KAS confirms it", () => {
+    recordSteerSent("chat-1", "m-1", "use tabs instead");
 
     const row = firstRow();
-    expect(row.dataset["state"]).toBe("read");
-    expect(row.querySelector(".steer-state-label")?.textContent).toBe("Read");
-    expect(ackOf(row)).toBeNull();
-    expect(row.getAttribute("aria-label")).toBe("Read by the agent: use tabs instead");
-  });
-
-  it("carries what the agent did once the acknowledgement lands", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main" });
-    markSteerInjected("chat-1", "steer-1", "actually target main");
-    markSteerInjected("chat-1", "steer-1", "", "rebased onto main instead");
-
-    const row = firstRow();
-    expect(ackOf(row)).toBe("rebased onto main instead");
-    // The steer's own text is still the message: the row has to stay
-    // identifiable as the thing the user sent.
-    expect(textOf(row)).toBe("actually target main");
+    expect(row.dataset["state"]).toBe("sending");
+    expect(row.querySelector(".steer-state-label")?.textContent).toBe("Sending");
     expect(row.getAttribute("aria-label")).toBe(
-      "Read by the agent: actually target main. The agent did: rebased onto main instead",
+      "Sending, not in the agent's buffer yet: use tabs instead",
     );
-    expect(row.getAttribute("title")).toBe("actually target main\n\nrebased onto main instead");
   });
 
-  // The repaint key has to include the ack. The computed dedups by string value,
-  // so an ack arriving on an already-read steer changes nothing else about the
-  // session and would otherwise paint nothing.
-  it("repaints when only the ack changed", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    markSteerInjected("chat-1", "steer-1", "one");
-    expect(ackOf(firstRow())).toBeNull();
+  // The read state has no row at all: the stack is what the agent has NOT read,
+  // so the message leaves it and lands in the transcript instead. Its being read
+  // with nothing said about it is a mark with no ack.
+  it("takes a message the agent has read out of the stack entirely", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
+    promoteSteer("chat-1", "steer-1", "use tabs instead");
 
-    markSteerInjected("chat-1", "steer-1", "", "did the thing");
-    expect(ackOf(firstRow())).toBe("did the thing");
+    expect(rows()).toHaveLength(0);
+    // It was the last one, so the stack goes away rather than sitting empty.
+    expect(stackHidden()).toBe(true);
+    expect(steerMarks("chat-1")).toEqual([
+      { id: "steer-1", text: "use tabs instead", anchor: { msgID: "", blockIndex: 0 } },
+    ]);
+    expect(steerMarks("chat-1")[0]?.ack).toBeUndefined();
+  });
+
+  // What the agent DID about a steer is still recorded — on the transcript note,
+  // which is where the change of course actually happened. The dock never renders
+  // it: an ack line here was the agent's own words inside the message box.
+  it("carries what the agent did on the mark rather than on a dock row", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main" });
+    promoteSteer("chat-1", "steer-1", "actually target main");
+    promoteSteer("chat-1", "steer-1", "", "rebased onto main instead");
+
+    expect(rows()).toHaveLength(0);
+    expect(document.querySelectorAll("#steer-stack .steer-ack")).toHaveLength(0);
+    const mark = steerMarks("chat-1")[0];
+    // The steer's own text survives the ack frame: the note has to stay
+    // identifiable as the thing the user sent.
+    expect(mark?.text).toBe("actually target main");
+    expect(mark?.ack).toBe("rebased onto main instead");
+  });
+
+  // A dropped steer leaves the stack the same way a read one does — the dock's
+  // lifetime is the turn, and the transcript keeps the record.
+  it("takes a message dropped at a turn boundary out of the stack", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "never read this" });
+    dropSteers("chat-1", ["steer-1"]);
+
+    expect(rows()).toHaveLength(0);
+    expect(stackHidden()).toBe(true);
+    expect(steerMarks("chat-1")[0]?.dropped).toBe(true);
+  });
+
+  // The repaint key has to include the SENDING state. The computed dedups by
+  // string value, so a confirmation that changes no text would otherwise paint
+  // nothing and the row would keep saying "Sending" — with no controls — for the
+  // rest of the turn.
+  it("repaints when only the sending state changed", () => {
+    recordSteerSent("chat-1", "m-1", "one");
+    expect(firstRow().querySelector(".steer-state-label")?.textContent).toBe("Sending");
+    expect(actions(firstRow())).toEqual([]);
+
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "one" });
+    expect(firstRow().querySelector(".steer-state-label")?.textContent).toBe("Sent");
+    expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
   });
 
   // --- The message gets the room -------------------------------------------
@@ -219,14 +281,16 @@ describe("the steer stack", () => {
   });
 
   // Each steer's verdict belongs to that steer. Two answered in one response is
-  // the case where a shared render would put one answer on the other's message.
-  it("keeps each steer's acknowledgement on its own row", () => {
+  // the case where a shared render would put one answer on the other's message —
+  // which is now a case about the marks, since both rows have left the stack.
+  it("keeps each steer's acknowledgement on its own mark", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "first ask" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "second ask" });
-    markSteerInjected("chat-1", "steer-1", "first ask", "answered the first");
-    markSteerInjected("chat-1", "steer-2", "second ask", "answered the second");
+    promoteSteer("chat-1", "steer-1", "first ask", "answered the first");
+    promoteSteer("chat-1", "steer-2", "second ask", "answered the second");
 
-    expect(rows().map((r) => [textOf(r), ackOf(r)])).toEqual([
+    expect(rows()).toHaveLength(0);
+    expect(steerMarks("chat-1").map((m) => [m.text, m.ack])).toEqual([
       ["first ask", "answered the first"],
       ["second ask", "answered the second"],
     ]);
@@ -234,11 +298,21 @@ describe("the steer stack", () => {
 
   // --- Controls, bounded by what the wire can honour -----------------------
 
-  // A read steer cannot be unsent and cannot be changed. No control, rather
-  // than a disabled one implying the operation exists somewhere.
-  it("offers no controls on a message the agent has read", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    markSteerInjected("chat-1", "steer-1", "one");
+  // A read steer cannot be unsent and cannot be changed, and the stack does not
+  // offer a control that lies about it — because it does not keep the row at all.
+  // The other row is left standing so the emptiness is the promotion's doing
+  // rather than an empty stack.
+  it("offers no controls on a message the agent has read, having no row for it", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "read one" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "still waiting" });
+    promoteSteer("chat-1", "steer-1", "read one");
+    expect(rows().map(textOf)).toEqual(["still waiting"]);
+  });
+
+  // A pending row has no server-side id yet, so `_session/steer/clear` has nothing
+  // to address and a control there would be one that cannot act.
+  it("offers no controls on a message that is still sending", () => {
+    recordSteerSent("chat-1", "m-1", "one");
     expect(actions(firstRow())).toEqual([]);
   });
 
@@ -257,15 +331,33 @@ describe("the steer stack", () => {
     }
   });
 
-  // A read row alongside an unread one does not count toward the unread total,
-  // so the single-unread case still offers Edit.
-  it("counts only unread messages when deciding whether Edit is safe", () => {
+  // The count that decides Edit is the count of rows a clear would take, and a
+  // steer the agent reads stops being one of them by leaving. So two unread
+  // withholding Edit becomes one unread offering it the moment the first is read.
+  it("counts only what is left waiting when deciding whether Edit is safe", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
-    markSteerInjected("chat-1", "steer-1", "one");
-    const [read, unread] = rows();
-    expect(actions(read as HTMLElement)).toEqual([]);
-    expect(actions(unread as HTMLElement)).toEqual(["Edit this message", "Discard this message"]);
+    for (const row of rows()) {
+      expect(actions(row)).toEqual(["Discard all 2 unread messages"]);
+    }
+
+    promoteSteer("chat-1", "steer-1", "one");
+    expect(rows()).toHaveLength(1);
+    expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
+  });
+
+  // A row still sending is not one a clear can address, so it does not count
+  // toward the total either: one confirmed row beside one pending one still
+  // offers Edit.
+  it("does not count a still-sending row toward the unread total", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "confirmed" });
+    recordSteerSent("chat-1", "m-2", "still sending");
+    const [confirmed, sending] = rows();
+    expect(actions(confirmed as HTMLElement)).toEqual([
+      "Edit this message",
+      "Discard this message",
+    ]);
+    expect(actions(sending as HTMLElement)).toEqual([]);
   });
 
   it("fills the composer and clears the buffer when a message is edited", async () => {

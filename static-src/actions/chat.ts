@@ -18,7 +18,13 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
 } from "./index.js";
 
-import type { ChatHeader, ResumableSessionRow, Session, WorkflowRunRow } from "../types.js";
+import type {
+  ChatHeader,
+  PendingSteer,
+  ResumableSessionRow,
+  Session,
+  WorkflowRunRow,
+} from "../types.js";
 import { decodeChatHeader } from "../wire/decoders.gen.js";
 import {
   get,
@@ -31,6 +37,11 @@ import {
   setCurrentMode,
   setTurnFailed,
   setTurnDone,
+  recordSteerSent,
+  forgetSteer,
+  steerIDFor,
+  dropConfirmedSteers,
+  restoreSteers,
 } from "../store.js";
 import { send as transportSend, type SendResult } from "../transport.js";
 import { clearFailure } from "../failure-notice.js";
@@ -288,19 +299,34 @@ export const compactChat = transportAction<{ chatID: string }>({
 
 /** Deliver a message INTO the running turn (`_session/steer`).
  *
- *  No optimistic anything, deliberately. The chip appears when KAS's own
- *  `steer_queued` frame arrives, not when this dispatch resolves — same rule as
- *  a user message waiting for `message_appended` (vibekit.md #2). Optimism here
- *  would also be wrong rather than merely early: the server can refuse with 409
- *  when the turn ended mid-flight, and a chip that appeared and then vanished
- *  reads as a message that was lost.
+ *  OPTIMISTIC, and the rollback is what makes it honest. The waiting row is
+ *  drawn on submit, because the composer clears its text at that moment and the
+ *  user is owed a row for the message they just sent — the alternative was
+ *  waiting out a POST, an awaited JSON-RPC round trip to the kiro-cli
+ *  subprocess, KAS's own buffer append and an SSE fan-out before anything
+ *  appeared, with the text gone and nothing in its place.
+ *
+ *  A refusal (409 when the turn ended mid-flight, 400 on a
+ *  `[notification/...]` prefix) UN-DRAWS the row, in the same gesture that puts
+ *  the text back in the composer. So a lost message is reported rather than
+ *  implied: this is not the vanishing-bubble shape, where a bubble appeared and
+ *  then went with no replacement.
+ *
+ *  The optimistic row is keyed by the DERIVED steer id (`steer-<messageID>`,
+ *  `internal/vibekit/commands.go:329-330`), which is what makes the reconcile a
+ *  plain by-id merge. The POST's reply does carry the authoritative id, but
+ *  `TransportSendResult` has no body, so it is unreachable here; `store.ts`'s
+ *  `recordSteerQueued` keeps an exact-text fallback for that reason.
  *
  *  The error toast is the server's own words. Both refusals it can return are
  *  specific and actionable — the turn ended, or the text opens with a
  *  `[notification/...]` prefix KAS would reclassify — so restating them here
  *  would only make them vaguer.
  */
-export const steerChat = transportAction<{ chatID: string; text: string; messageID: string }>({
+export const steerChat = transportAction<
+  { chatID: string; text: string; messageID: string },
+  { chatID: string; steerID: string }
+>({
   name: "chat.steer",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
@@ -310,17 +336,52 @@ export const steerChat = transportAction<{ chatID: string; text: string; message
     chat_id: chatID,
     payload: { text, message_id: messageID },
   }),
+  optimistic: ({ chatID, text, messageID }) => {
+    recordSteerSent(chatID, messageID, text);
+    return { chatID, steerID: steerIDFor(messageID) };
+  },
+  // `rollback` receives (args, op, err), so the id is re-derived from the
+  // message id rather than read off `op` — which is `undefined` when the
+  // dispatch dies before `optimistic` ran, exactly the case that must still
+  // leave no row behind.
+  rollback: ({ chatID, messageID }) => {
+    forgetSteer(chatID, steerIDFor(messageID));
+  },
 });
 
 /** Drop every steer KAS is still holding for this chat (`_session/steer/clear`).
  *
  *  Does not cancel the turn: changing your mind about a message you just sent
- *  should not also throw away the work in flight. */
-export const clearSteers = transportAction<{ chatID: string }>({
+ *  should not also throw away the work in flight.
+ *
+ *  OPTIMISTIC, and that is what keeps an explicit discard out of the transcript.
+ *  Taking a message back is not the same as the agent missing it, so it must not
+ *  leave the "not delivered" note a turn-boundary drop leaves — and for Edit it
+ *  would be a ghost of the text now being edited. Removing the entries here
+ *  means that by the time the server's `steer_cleared` frame arrives those ids
+ *  are already gone from `session.steers`, so `dropSteers` finds nothing to
+ *  promote. No local "I discarded these" latch is needed.
+ *
+ *  Only the CONFIRMED entries go. A `pending` one has no server-side id yet, so
+ *  the clear cannot address it and removing it locally would hide a message that
+ *  is still on its way. */
+export const clearSteers = transportAction<
+  { chatID: string },
+  { chatID: string; removed: readonly PendingSteer[] }
+>({
   name: "chat.clear_steers",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
   command: ({ chatID }) => ({ type: "steer_clear", chat_id: chatID }),
+  optimistic: ({ chatID }) => ({ chatID, removed: dropConfirmedSteers(chatID) }),
+  // The removed entries exist only on the optimistic result, so this rollback
+  // reads the second parameter. `undefined` means `optimistic` never ran, so
+  // nothing was taken out and there is nothing to put back.
+  rollback: (_args, op) => {
+    if (op !== undefined) {
+      restoreSteers(op.chatID, op.removed);
+    }
+  },
   error: "Couldn't discard",
 });
 

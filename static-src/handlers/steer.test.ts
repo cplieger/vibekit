@@ -1,5 +1,9 @@
 // ---------------------------------------------------------------------------
-// Tests for handlers/steer.ts: the only writer of `session.steers`.
+// Tests for handlers/steer.ts: the SERVER's writer of the steer state.
+//
+// It is no longer the only one — `chat.steer`'s `optimistic` draws the waiting
+// row on submit — so several cases below start from `recordSteerSent`, the intent
+// half, and assert that the frame confirms that row instead of adding a second.
 //
 // The real store is driven so the projection is observable; only the bus is
 // mocked, to capture the handler registrations.
@@ -7,7 +11,9 @@
 // These cases are about the WIRE rather than about the store's mechanics (which
 // store.test.ts owns): the three frames arriving in the wrong order, twice, or
 // without each other, because that is what an SSE reconnect and a second device
-// actually produce.
+// actually produce. What each frame MEANS after the split: `steer_queued`
+// confirms a dock row, and `steer_injected` / `steer_cleared` REMOVE one, moving
+// it into `session.steer_marks` as a transcript note — read, or not delivered.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -28,7 +34,16 @@ vi.mock("../toast.js", () => ({
   error: (m: string) => toastError(m),
 }));
 
-import { setSessions, setActive, get, steerCount } from "../store.js";
+import {
+  setSessions,
+  setActive,
+  get,
+  appendMessage,
+  recordSteerSent,
+  steerIDFor,
+  steerCount,
+  steerMarks,
+} from "../store.js";
 import type { Session } from "../types.js";
 
 // Import after the mock so the handler registers against it.
@@ -68,10 +83,43 @@ beforeEach(() => {
   toastError.mockClear();
 });
 
+/** Put a turn on `c1`: one assistant message with two blocks, which is what a
+ *  promoted steer's anchor is measured against. */
+function turnOnC1(): void {
+  appendMessage("c1", { id: "u-1", role: "user", ts: 1, content: "go" });
+  appendMessage("c1", {
+    id: "a-1",
+    role: "assistant",
+    ts: 2,
+    blocks: [
+      { type: "text", text: "first" },
+      { type: "text", text: "second" },
+    ],
+  });
+}
+
 describe("steer_queued", () => {
   it("records the steer as waiting", () => {
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs" });
-    expect(get("c1")?.steers).toEqual([{ id: "steer-1", text: "use tabs", injected: false }]);
+    expect(get("c1")?.steers).toEqual([{ id: "steer-1", text: "use tabs" }]);
+  });
+
+  // The whole point of the optimistic row: the user sees it on the keystroke, and
+  // KAS's frame CONFIRMS that row rather than adding a second one beside it. The
+  // ids agree because the client derives the one KAS returns.
+  it("confirms the row the submit already drew, leaving one row", () => {
+    recordSteerSent("c1", "m-1", "use tabs");
+    fireSSE("steer_queued", "c1", { steer_id: steerIDFor("m-1"), text: "use tabs" });
+    expect(get("c1")?.steers).toEqual([{ id: "steer-m-1", text: "use tabs" }]);
+  });
+
+  // The safety net for a KAS whose id convention has drifted: an exact TEXT match
+  // against the oldest pending row adopts the server's id, so one row still
+  // becomes one row.
+  it("confirms it through the text fallback when the ids disagree", () => {
+    recordSteerSent("c1", "m-1", "use tabs");
+    fireSSE("steer_queued", "c1", { steer_id: "kas-generated-7", text: "use tabs" });
+    expect(get("c1")?.steers).toEqual([{ id: "kas-generated-7", text: "use tabs" }]);
   });
 
   // A notice KAS classified as the AGENT's (a workflow step or a subagent
@@ -97,11 +145,27 @@ describe("steer_queued", () => {
 });
 
 describe("steer_injected", () => {
-  it("flips a waiting steer to read", () => {
+  // The read frame MOVES the steer: out of the dock (it is no longer waiting) and
+  // into the transcript as a note anchored where the running turn had got to.
+  it("removes the row from the dock and records a mark in the turn", () => {
+    turnOnC1();
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs" });
     fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "use tabs" });
-    expect(get("c1")?.steers?.[0]?.injected).toBe(true);
-    expect(steerCount("c1")).toBe(1);
+    expect(steerCount("c1")).toBe(0);
+    expect(get("c1")?.steers).toBeUndefined();
+    expect(steerMarks("c1")).toEqual([
+      { id: "steer-1", text: "use tabs", anchor: { msgID: "a-1", blockIndex: 2 } },
+    ]);
+  });
+
+  // It also has to find a row KAS never confirmed: the injected frame can beat
+  // the queued one to an optimistic row, and the text is what identifies it then.
+  it("promotes a row that is still pending from the submit", () => {
+    turnOnC1();
+    recordSteerSent("c1", "m-1", "use tabs");
+    fireSSE("steer_injected", "c1", { steer_id: "kas-generated-7", text: "use tabs" });
+    expect(get("c1")?.steers).toBeUndefined();
+    expect(steerMarks("c1").map((m) => m.id)).toEqual(["kas-generated-7"]);
   });
 
   // Out of order, and it has to work: the injected frame can arrive first if the
@@ -110,18 +174,38 @@ describe("steer_injected", () => {
   // changing course with nothing on screen explaining why.
   it("records a steer it never saw queued", () => {
     fireSSE("steer_injected", "c1", { steer_id: "steer-ghost", text: "from another tab" });
-    expect(get("c1")?.steers).toEqual([
-      { id: "steer-ghost", text: "from another tab", injected: true },
+    expect(get("c1")?.steers).toBeUndefined();
+    expect(steerMarks("c1")).toEqual([
+      { id: "steer-ghost", text: "from another tab", anchor: { msgID: "", blockIndex: 0 } },
     ]);
   });
 
-  // A reconnect replays the queued frame; it must not un-read what the model has
-  // already consumed.
+  // The second injected frame for one id is not a duplicate: it carries the
+  // agent's own account of what it did, off the text stream. It merges onto the
+  // same note without blanking the text the first frame put there.
+  it("merges the agent's acknowledgement onto the same mark", () => {
+    turnOnC1();
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "use tabs" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "", ack: "switched to tabs" });
+    expect(steerMarks("c1")).toEqual([
+      {
+        id: "steer-1",
+        text: "use tabs",
+        ack: "switched to tabs",
+        anchor: { msgID: "a-1", blockIndex: 2 },
+      },
+    ]);
+  });
+
+  // A reconnect replays the queued frame for a steer the agent has since read.
+  // Appending it as confirmed would put a delivered message back in the dock.
   it("survives a replayed queued frame afterwards", () => {
     fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "one" });
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
-    expect(get("c1")?.steers?.[0]?.injected).toBe(true);
-    expect(steerCount("c1")).toBe(1);
+    expect(steerCount("c1")).toBe(0);
+    expect(get("c1")?.steers).toBeUndefined();
+    expect(steerMarks("c1")).toHaveLength(1);
   });
 });
 
@@ -131,6 +215,37 @@ describe("steer_cleared", () => {
     fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
     expect(get("c1")?.steers?.map((e) => e.id)).toEqual(["steer-2"]);
+  });
+
+  // A boundary drop is not a deletion: "I sent this and the agent never read it"
+  // is exactly the fact the transcript is for, so the text is kept and the note
+  // says it was not delivered.
+  it("promotes an unread steer as undelivered, keeping its text", () => {
+    turnOnC1();
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "never read this" });
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
+    expect(get("c1")?.steers).toBeUndefined();
+    expect(steerMarks("c1")).toEqual([
+      {
+        id: "steer-1",
+        text: "never read this",
+        dropped: true,
+        anchor: { msgID: "a-1", blockIndex: 2 },
+      },
+    ]);
+  });
+
+  // KAS clears its buffer at EVERY turn boundary, so this frame routinely names
+  // ids the model already read. Those keep the note they have; a second one
+  // claiming they were missed would be false.
+  it("ignores an id it has already promoted", () => {
+    turnOnC1();
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "one" });
+    fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
+    expect(steerMarks("c1")).toEqual([
+      { id: "steer-1", text: "one", anchor: { msgID: "a-1", blockIndex: 2 } },
+    ]);
   });
 
   // Clearing by id rather than wholesale is what lets an explicit discard of two
@@ -147,12 +262,15 @@ describe("steer_cleared", () => {
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
     expect(get("c1")?.steers).toBeUndefined();
+    // Gone from the dock, but not gone: the message is in the transcript.
+    expect(steerMarks("c1").map((m) => m.dropped)).toEqual([true]);
   });
 
   it("ignores ids it does not hold", () => {
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-nope"] });
     expect(steerCount("c1")).toBe(1);
+    expect(get("c1")?.steer_marks).toBeUndefined();
   });
 });
 

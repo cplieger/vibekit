@@ -29,7 +29,7 @@
 // There is no separate legacy path and no text-preview fold.
 // ---------------------------------------------------------------------------
 
-import type { Message, Block, ToolCall, PlanStatus, FileChange } from "./types.js";
+import type { Message, Block, ToolCall, PlanStatus, FileChange, SteerMark } from "./types.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import {
@@ -46,6 +46,7 @@ import { buildAssistantBubble, type AssistantBubble } from "./fundamentals/text-
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
 import { buildSubagentBlock, type SubagentView } from "./fundamentals/subagent-block.js";
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
+import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { toolSpec } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group.js";
@@ -69,6 +70,10 @@ interface BlockCbs {
   pushStreamingEffect(msgId: string, cleanup: () => void): void;
   /** Build an avatar row for a top-level assistant bubble. */
   makeRow(): HTMLDivElement;
+  /** Put an undelivered steer's text back in the message box. Injected rather
+   *  than imported so `fundamentals/` and this dispatcher keep pointing
+   *  downward — the composer is above them both. */
+  restoreSteer(text: string): void;
 }
 
 let cbs: BlockCbs = {
@@ -76,6 +81,9 @@ let cbs: BlockCbs = {
     /* until init */
   },
   makeRow: () => el("div") as HTMLDivElement,
+  restoreSteer: () => {
+    /* until init */
+  },
 };
 
 export function initBlockRenderer(c: BlockCbs): void {
@@ -164,6 +172,10 @@ interface MsgRender {
   openReasoning: Map<HTMLElement, ReasoningView>;
   /** The open tool group per container (consecutive tool cards share one). */
   toolGroups: Map<HTMLElement, HTMLDivElement>;
+  /** Steer-mark ids already mounted into this message's block stream. This set
+   *  is what makes `flushSteerNotes` idempotent: it is called from two places
+   *  that deliberately overlap, and a mark must render exactly once. */
+  steerNotes: Set<string>;
 }
 
 const renders = new Map<string, MsgRender>();
@@ -173,7 +185,12 @@ const renders = new Map<string, MsgRender>();
 // ---------------------------------------------------------------------------
 
 /** Build the assistant body from scratch. Renders every block, then the plan. */
-export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean): void {
+export function buildAssistantBody(
+  wrap: HTMLElement,
+  m: Message,
+  live: boolean,
+  marks: readonly SteerMark[] = [],
+): void {
   const blocksEl = el("div", { className: "assistant-blocks" });
   wrap.appendChild(blocksEl);
   const st: MsgRender = {
@@ -189,26 +206,38 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
     reasonings: [],
     openReasoning: new Map(),
     toolGroups: new Map(),
+    steerNotes: new Set(),
   };
   renders.set(m.id, st);
   const blocks = m.blocks ?? [];
-  renderRange(st, m, 0, blocks.length, live);
+  renderRange(st, m, 0, blocks.length, live, marks);
   mountPlan(wrap, m);
 }
 
-/** Incrementally sync the assistant body: mount newly-arrived blocks, bring
- *  already-mounted ones up to the store's text, and update the plan. */
-export function updateAssistantBody(wrap: HTMLElement, m: Message, streaming: boolean): void {
+/** Incrementally sync the assistant body: mount newly-arrived blocks and steer
+ *  notes, bring already-mounted blocks up to the store's text, update the plan. */
+export function updateAssistantBody(
+  wrap: HTMLElement,
+  m: Message,
+  streaming: boolean,
+  marks: readonly SteerMark[] = [],
+): void {
   const st = renders.get(m.id);
   if (st === undefined) {
     // Should not happen (build runs first), but stay self-healing.
-    buildAssistantBody(wrap, m, streaming);
+    buildAssistantBody(wrap, m, streaming, marks);
     return;
   }
   const blocks = m.blocks ?? [];
   if (blocks.length > st.rendered) {
-    renderRange(st, m, st.rendered, blocks.length, streaming);
+    renderRange(st, m, st.rendered, blocks.length, streaming, marks);
   }
+  // OUTSIDE that guard, deliberately. A steer read between two chunks of the
+  // same block adds no block, so gating this on block growth would strand its
+  // note until the next one arrived — which on a long text block is the whole
+  // rest of the turn. The two calls coincide whenever a block DID arrive, and
+  // `st.steerNotes` is what makes that harmless.
+  flushSteerNotes(st, marks, m.id, blocks.length);
   syncMountedText(st, m);
   mountPlan(wrap, m);
 }
@@ -295,7 +324,14 @@ function disposeAll(st: MsgRender): void {
 // Block dispatch
 // ---------------------------------------------------------------------------
 
-function renderRange(st: MsgRender, m: Message, from: number, to: number, live: boolean): void {
+function renderRange(
+  st: MsgRender,
+  m: Message,
+  from: number,
+  to: number,
+  live: boolean,
+  marks: readonly SteerMark[],
+): void {
   const blocks = m.blocks ?? [];
   const lastIdx = blocks.length - 1;
   if (to > from) {
@@ -311,11 +347,58 @@ function renderRange(st: MsgRender, m: Message, from: number, to: number, live: 
     if (block === undefined) {
       continue;
     }
+    // BEFORE the block, so a note anchored at index i lands above it. This is
+    // the whole of "chronologically at the point it was injected".
+    flushSteerNotes(st, marks, m.id, i);
     // Only the trailing block of a live message streams; earlier blocks are
     // sealed (a new block started because the run kind / subtask changed).
     placeBlock(st, m, block, i, live && i === lastIdx);
   }
+  // A note anchored at the CURRENT end has no block to sit above yet, and the
+  // loop above can never reach it. Mounting it here is what puts it below
+  // everything so far and above everything that arrives next.
+  flushSteerNotes(st, marks, m.id, to);
   st.rendered = to;
+}
+
+/** Mount every not-yet-drawn steer note whose anchor this render has reached.
+ *
+ *  Idempotent by mark id, which is required rather than defensive: `renderRange`
+ *  and `updateAssistantBody` both call it and their ranges overlap by design.
+ *
+ *  Closing the open reasoning trace AND the open tool group first is
+ *  CORRECTNESS, not tidiness. A group is keyed by container and stays open until
+ *  something closes it, so a steer landing mid tool-loop would otherwise be
+ *  appended after the group's container while the later tool cards still went
+ *  INTO that group — rendering them above the note that preceded them. */
+function flushSteerNotes(
+  st: MsgRender,
+  marks: readonly SteerMark[],
+  msgID: string,
+  upto: number,
+): void {
+  for (const mark of marks) {
+    if (
+      st.steerNotes.has(mark.id) ||
+      mark.anchor.msgID !== msgID ||
+      mark.anchor.blockIndex > upto
+    ) {
+      continue;
+    }
+    sealReasoning(st, st.blocksEl);
+    closeToolGroup(st, st.blocksEl);
+    st.blocksEl.appendChild(
+      buildSteerNote({
+        text: mark.text,
+        ...(mark.ack !== undefined ? { ack: mark.ack } : {}),
+        dropped: mark.dropped === true,
+        onRestore: () => {
+          cbs.restoreSteer(mark.text);
+        },
+      }),
+    );
+    st.steerNotes.add(mark.id);
+  }
 }
 
 /** End the bubble currently carrying the caret, if any. */

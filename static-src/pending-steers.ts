@@ -26,23 +26,27 @@
 // the three steer SSE events (store.ts). This module sends nothing and records
 // nothing; it renders server state and offers the controls the WIRE can honour.
 //
-// TWO STATES, and telling them apart is the stack's whole job. A steer that has
-// reached KAS's buffer is SENT and unread — the agent has not seen it and is
-// still doing whatever you are trying to redirect. Once `steer_injected` arrives
-// it has been READ, and the redirection is in effect. Collapsing those into one
-// look would hide the only fact a person steering a live turn is watching for.
+// THE STACK HOLDS ONLY WHAT THE AGENT HAS NOT READ. That is the invariant, and
+// it is what a person steering a live turn is watching: these messages are in
+// KAS's buffer and the agent is still doing the thing you are trying to redirect.
+// A steer LEAVES the stack the moment it is read (`steer_injected`) or dropped at
+// a turn boundary (`steer_cleared`), and reappears INSIDE the turn transcript as
+// a note at the block it landed on (fundamentals/steer-note.ts). So the count
+// here falling to zero is the whole read signal; there is no settled row to
+// distinguish, and there is no checkmark.
 //
-// A read row also carries WHAT THE AGENT DID, when the agent said so. KAS asks
-// it to close its response with `[STEERING steer-<id>: what I did about it]`;
-// vibekit hides that marker from the transcript as machinery, and the sentence
-// inside it lands here instead (`steer.ack`). It is strictly better information
-// than a check glyph — "read" becomes "read: rebased onto main instead" — and it
-// is the agent's own account rather than an inference, which is why the row
-// shows it verbatim and adds no interpretation of its own.
+// That replaced a green check on the row plus the agent's own account of what it
+// did (`[STEERING steer-<id>: ...]`, which vibekit strips from the transcript as
+// machinery). Both were real information in the wrong place: a tick in the
+// composer while the transcript showed the agent change course with nothing
+// explaining why. The ack rides the transcript note now.
 //
-// Neither state is a sent user message in the transcript: a steer becomes
-// transcript when the turn's messages arrive, exactly like a prompt waiting on
-// `message_appended` (vibekit.md #2/#6).
+// TWO STATES, and both are "not read yet". `pending` is this device's own claim
+// that a POST is in flight — drawn on submit, so the row appears on the keystroke
+// rather than after a round trip, and un-drawn by the action's rollback if the
+// POST fails. Once KAS's `steer_queued` frame confirms it, the row is SENT and
+// gains its controls, because only then is there a server-side id a clear can
+// address.
 //
 // WHAT THE CONTROLS CAN BE, measured against KAS 2.18.0's own source rather
 // than assumed. There are exactly two steer verbs, `_session/steer` and
@@ -51,9 +55,11 @@
 // steering epoch. So there is no per-steer removal and no edit verb anywhere on
 // the wire, and three rules follow:
 //
-//   - A READ row carries no controls at all. It cannot be unsent and it cannot
-//     be changed; offering either would be a button that lies.
-//   - Discard appears on the unread rows and always drops EVERY unread message.
+//   - A `pending` row carries no controls at all. Its id is derived rather than
+//     confirmed, so there is no server-side id to clear; a control there would
+//     be a button that cannot act yet.
+//   - Discard appears on the confirmed rows and always drops EVERY unread
+//     message.
 //     With one unread that is unambiguous, so it acts immediately. With more it
 //     confirms first, naming the count, because a × beside one row looks like it
 //     removes that row.
@@ -76,7 +82,7 @@ import { activeSession, getActiveId } from "./store.js";
 import { clearSteers } from "./actions/chat.js";
 import { setComposerValue } from "./composer-value.js";
 import { confirm } from "./confirm.js";
-import { ICON_HOURGLASS, ICON_CHECK, ICON_EDIT, ICON_TRASH } from "./icons.js";
+import { ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { PendingSteer } from "./types.js";
 
@@ -91,20 +97,18 @@ export function initPendingSteers(): void {
   }
   bound = true;
   const stack = $.steerStack;
-  // Re-render only when the active chat, the steer texts, their READ state or
-  // their acknowledgement changes. The computed returns a string so it dedups by
-  // value — an unrelated session write (usage, thinking, a streaming chunk) must
-  // not re-render the stack, and `injected` and `ack` each have to be in the key
-  // or a steer being read, or answered, would repaint nothing.
+  // Re-render only when the active chat, the steer texts or their SENDING state
+  // change. The computed returns a string so it dedups by value — an unrelated
+  // session write (usage, thinking, a streaming chunk) must not re-render the
+  // stack — and `pending` has to be in the key or a row gaining its controls when
+  // `steer_queued` confirms it would repaint nothing.
   const sig = computed(() => {
     const s = activeSession.value;
     const steers = s?.steers ?? [];
     return (
       (s?.id ?? "") +
       "\u0001" +
-      steers
-        .map((e) => (e.injected ? "1" : "0") + ":" + (e.ack ?? "") + "\u0002" + e.text)
-        .join("\u0000")
+      steers.map((e) => (e.pending === true ? "1" : "0") + "\u0002" + e.text).join("\u0000")
     );
   });
   effect(() => {
@@ -117,7 +121,9 @@ function render(stack: HTMLUListElement): void {
   const s = activeSession.peek();
   const steers = s?.steers ?? [];
   const id = s?.id ?? "";
-  const waiting = steers.filter((e) => !e.injected).length;
+  // Every row in the stack is waiting; a confirmed one is what a clear can
+  // actually address, which is what decides whether Edit is offerable.
+  const waiting = steers.filter((e) => e.pending !== true).length;
 
   stack.replaceChildren();
   if (steers.length === 0) {
@@ -151,26 +157,18 @@ function render(stack: HTMLUListElement): void {
   prevId = id;
 }
 
-/** One full-width row. `waiting` is the stack-wide unread count, which is what
+/** One full-width row. `waiting` is the stack-wide confirmed count, which is what
  *  decides whether Edit is offerable — see the header. */
 function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
-  const read = steer.injected;
-  // Only on a read row. An ack cannot arrive before the read frame, but the
-  // states are independent on the wire and a "sent" row claiming an outcome
-  // would be the worst thing this stack could say.
-  const ack = read ? (steer.ack ?? "") : "";
+  const sending = steer.pending === true;
 
   const state = el(
     "span",
     { className: "steer-state" },
-    el(
-      "span",
-      { className: "steer-state-icon", "aria-hidden": "true" },
-      iconEl(read ? ICON_CHECK : ICON_HOURGLASS),
-    ),
+    el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
     // The word, not only the glyph. "Sent" is the fact the user asked this stack
     // to state: the message has left, it is not a draft, and it is waiting.
-    el("span", { className: "steer-state-label" }, read ? "Read" : "Sent"),
+    el("span", { className: "steer-state-label" }, sending ? "Sending" : "Sent"),
   );
 
   // No truncation here. The row is full width and the text clamps to two lines
@@ -181,32 +179,25 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
     { className: "steer-body" },
     el("span", { className: "steer-text" }, oneLine(steer.text)),
   );
-  if (ack !== "") {
-    body.appendChild(el("span", { className: "steer-ack" }, oneLine(ack)));
-  }
 
   const row = el(
     "li",
     {
       className: "steer-row",
-      // Read by CSS for the state treatment, so the two states differ by more
-      // than a glyph without a second class to keep in sync.
-      "data-state": read ? "read" : "sent",
-      // Both halves in full: the visible text is clamped by layout and the
-      // agent's answer is the part worth reading whole.
-      title: ack === "" ? steer.text : steer.text + "\n\n" + ack,
-      // The state is carried by the glyph AND the label, and the ack is a third
-      // visual channel, so all of it has to be in the accessible name too.
-      //
-      // The RAW strings, not the clamped ones: clamping is a layout answer to a
-      // fixed-width row, and an accessible name has no width.
-      "aria-label": accessibleName(steer.text, read, ack),
+      // Read by CSS, so the in-flight row differs by more than a word without a
+      // second class to keep in sync.
+      "data-state": sending ? "sending" : "sent",
+      // The RAW text, not the clamped one: the visible row is clamped by layout.
+      title: steer.text,
+      // The state is carried by the glyph AND the label, both visual, so it has
+      // to be in the accessible name too.
+      "aria-label": accessibleName(steer.text, sending),
     },
     state,
     body,
   );
 
-  const actions = buildActions(steer, read, waiting);
+  const actions = buildActions(steer, sending, waiting);
   if (actions !== null) {
     row.appendChild(actions);
   }
@@ -215,10 +206,11 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
 
 /** The right-hand controls, or null for a row that honestly has none.
  *
- *  A read steer cannot be unsent or changed, so it gets nothing rather than a
- *  disabled control implying the operation exists. */
-function buildActions(steer: PendingSteer, read: boolean, waiting: number): HTMLElement | null {
-  if (read) {
+ *  A row still SENDING gets nothing: its id is derived rather than confirmed, so
+ *  `_session/steer/clear` has nothing to address yet and a control would be one
+ *  that cannot act. It gains them when `steer_queued` lands. */
+function buildActions(steer: PendingSteer, sending: boolean, waiting: number): HTMLElement | null {
+  if (sending) {
     return null;
   }
   const actions = el("span", { className: "steer-actions" });
@@ -323,23 +315,19 @@ async function discardSteers(waiting: number): Promise<void> {
   await clearSteers.dispatch({ chatID });
 }
 
-// accessibleName spells out the row's state in words, because the glyph, the
-// label's styling and the ack span are all visual.
+// accessibleName spells out the row's state in words, because the glyph and the
+// label's styling are both visual.
 //
-// Nothing is shortened here. Both strings are collapsed to one line, because an
+// Nothing is shortened here. The text is collapsed to one line, because an
 // accessible name is announced as a single string and stray newlines buy
-// nothing, but the whole of each is present: the visible row clamps to fit, and
-// a reader who cannot see it is not subject to that constraint. The title
-// attribute carries the same two strings for a mouse.
-function accessibleName(text: string, read: boolean, ack: string): string {
+// nothing, but the whole of it is present: the visible row clamps to fit, and a
+// reader who cannot see it is not subject to that constraint. The title
+// attribute carries the same string for a mouse.
+function accessibleName(text: string, sending: boolean): string {
   const steerText = oneLine(text);
-  if (!read) {
-    return `Sent, waiting for the agent: ${steerText}`;
-  }
-  if (ack === "") {
-    return `Read by the agent: ${steerText}`;
-  }
-  return `Read by the agent: ${steerText}. The agent did: ${oneLine(ack)}`;
+  return sending
+    ? `Sending, not in the agent's buffer yet: ${steerText}`
+    : `Sent, waiting for the agent: ${steerText}`;
 }
 
 // oneLine collapses whitespace without shortening. A steer is one message

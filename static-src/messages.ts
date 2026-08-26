@@ -22,11 +22,12 @@
 // ---------------------------------------------------------------------------
 
 import type { Message } from "./types.js";
-import { getActive, getActiveId, messagesVersion, activeSession } from "./store.js";
+import { getActive, getActiveId, messagesVersion, activeSession, steerMarks } from "./store.js";
 import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
+import { setComposerValue } from "./composer-value.js";
 import {
   getScrollEl,
   scrollToBottom,
@@ -195,7 +196,18 @@ initTurnActionCallbacks({ svgTemplate });
 // Injected because turn-header.ts is a pure fundamental: it renders the band,
 // it does not know about the actions framework.
 initTurnHeaderCallbacks({ copy: copyWithFeedback });
-initBlockRenderer({ pushStreamingEffect, makeRow });
+initBlockRenderer({
+  pushStreamingEffect,
+  makeRow,
+  // The restore control on an UNDELIVERED steer note. The same pair
+  // `pending-steers.ts` uses for Edit — fill the box, then focus it — because it
+  // is the same gesture: put the message back where it was typed so the next
+  // Send is the retry.
+  restoreSteer: (text: string) => {
+    setComposerValue(text);
+    $.promptInput.focus();
+  },
+});
 // The refusal callout's Rewind CTA reuses the standard rewind flow (confirm →
 // branch → open the new tab). Injected — refusal.ts can't import messages.ts.
 setRefusalRewindHandler((m) => {
@@ -855,7 +867,7 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
  *  message's canonical `blocks` array. */
 function buildAssistant(m: Message): HTMLElement {
   const wrap = el("div", { className: "msg-wrap msg-wrap-assistant" });
-  buildAssistantBody(wrap, m, isLikelyLiveStreaming(m));
+  buildAssistantBody(wrap, m, isLikelyLiveStreaming(m), steerMarks(getActiveId()));
   return wrap;
 }
 
@@ -867,7 +879,7 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
   if (state === undefined) {
     return;
   }
-  updateAssistantBody(wrap, m, state.streaming);
+  updateAssistantBody(wrap, m, state.streaming, steerMarks(getActiveId()));
 }
 
 /** Finalize a streamed assistant turn: flush every markdown stream + seal

@@ -21,30 +21,15 @@ vi.mock("../transport.js", () => ({
 const { mockGet } = vi.hoisted(() => ({
   mockGet: vi.fn(() => ({ id: "c1", model: "m1" }) as Record<string, unknown> | undefined),
 }));
-vi.mock("../store.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  activeSession: undefined,
-  getActive: undefined,
-  getActiveId: undefined,
-  setCurrentMode: undefined,
+// The TOTAL store mock, plus the one reader this file drives: `get` is what the
+// rollback reads the latched outcome off, so each case sets its own return.
+// Browser Mode links real ESM, so every name any module in this graph imports has
+// to be present — which is what the shared helper is for, and what the
+// hand-listed factory that used to live here got wrong the moment store.ts gained
+// an export.
+vi.mock("../store.js", async () => ({
+  ...(await import("../__test-helpers__/store-mock.js")).storeMock,
   get: mockGet,
-  setThinking: vi.fn(),
-  setTurnFailed: vi.fn(),
-  setTurnDone: vi.fn(),
-  recordSteerQueued: vi.fn(),
-  setModel: vi.fn(),
-  setSupervisedMode: vi.fn(),
-  removeChat: vi.fn(),
-  reinsertSession: vi.fn(),
-  indexOfSession: () => 0,
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  getSessions: vi.fn(() => []),
-  tabStatusFor: vi.fn(() => ""),
 }));
 
 vi.mock("../api-client.js", () => ({
