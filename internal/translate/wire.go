@@ -225,10 +225,10 @@ type ACPWorkflowMeta struct {
 // A step's prose otherwise MERGES into the launching chat's own paragraph, and
 // that reproduces exactly the context confusion workflows exist to avoid. The
 // mechanism: the chunk handlers append through `Buffer.AppendTextDelta(text,
-// subtask)`, which extends the trailing block only when kind AND subtask match —
-// and a step's text frame carries an EMPTY `agentSubtaskId` (KAS sets that only
-// on tool frames), so empty matched empty and the step's words landed inside the
-// parent agent's block.
+// subtask)`, which extends a block only when kind AND subtask match — and a
+// step's text frame carries an EMPTY `agentSubtaskId` (KAS sets that only on tool
+// frames), so empty matched empty and the step's words landed inside the parent
+// agent's block.
 //
 // Reusing `agent_subtask_id` rather than adding a parallel channel is deliberate:
 // the client already groups same-subtask blocks into a collapsible

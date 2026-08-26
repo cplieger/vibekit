@@ -130,10 +130,17 @@ const (
 )
 
 // Block is one entry in an assistant message's chronological content
-// array. Position in Message.Blocks IS the order in which the agent
-// emitted the block — text → tool → text → tool, etc. — so the client
-// renders them inline as they happened rather than concatenating all
-// text into one bubble at the top with tools dumped below.
+// array. Within ONE agent's stream, position in Message.Blocks IS the
+// order that agent emitted the block — text → tool → text → tool, etc.
+// — so the client renders them inline as they happened rather than
+// concatenating all text into one bubble at the top with tools dumped
+// below.
+//
+// ACROSS streams the position is NOT a global chronology, because a
+// parent and its delegates share one array: internal/buffer extends the
+// newest block of the delta's OWN subtask, so a parent delta arriving
+// after a delegate opened a block lands BEHIND that delegate's block.
+// Order is per AgentSubtaskID; Content is what carries arrival order.
 //
 // Replay-compatible: messages persisted before this field existed have
 // Blocks=nil. Renderers fall back to the legacy Content + ToolCalls

@@ -91,7 +91,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	}
 	// Mirror the delta into the chronological block array, which also
 	// accumulates it into the turn's content (or reasoning) builder. For runs of
-	// same-kind chunks the helper extends the trailing block; a switch
+	// same-kind chunks the helper extends this subtask's newest block; a switch
 	// from text to thinking (or vice versa) starts a new block. Tool
 	// calls between chunks bump the next text run to its own block via
 	// HandleToolCall's AppendToolUseBlock call.

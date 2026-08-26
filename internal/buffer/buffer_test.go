@@ -148,6 +148,104 @@ func TestBlockAccumulators(t *testing.T) {
 		}
 	})
 
+	// The interleave cases. Two agents stream into ONE array, so the parent's
+	// next delta arrives with a delegate's block already sitting at the tail. The
+	// candidate is therefore the newest block of the DELTA'S OWN subtask, not the
+	// tail — matching the tail cut the parent's paragraph at every interleave
+	// point, and the client renders non-contiguous halves as separate bubbles.
+	t.Run("an interleaved delegate delta does not cut the parent's block", func(t *testing.T) {
+		buf := &Buffer{}
+		buf.AppendTextDelta("The", "")
+		buf.AppendTextDelta("I", "wf:wf_1:wf_1/plan")
+		idx, _ := buf.AppendTextDelta(" workflow is running.", "")
+		// Deliberately BACKWARDS: the parent's block is behind the delegate's.
+		if idx != 0 {
+			t.Errorf("the parent's second delta landed on block %d, want 0", idx)
+		}
+		if got, want := len(buf.Blocks), 2; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d (one per stream)", got, want)
+		}
+		if got, want := buf.Blocks[0].Text, "The workflow is running."; got != want {
+			t.Errorf("Blocks[0].Text = %q, want %q", got, want)
+		}
+		if got, want := buf.Blocks[1].Text, "I"; got != want {
+			t.Errorf("Blocks[1].Text = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a delegate's own run survives a parent interruption", func(t *testing.T) {
+		// The mirror image: the delegate is the one interrupted.
+		buf := &Buffer{}
+		buf.AppendTextDelta("I", "agent-7")
+		buf.AppendTextDelta("The", "")
+		idx, _ := buf.AppendTextDelta("'ll start now.", "agent-7")
+		if idx != 0 {
+			t.Errorf("the delegate's second delta landed on block %d, want 0", idx)
+		}
+		if got, want := len(buf.Blocks), 2; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d (one per stream)", got, want)
+		}
+		if got, want := buf.Blocks[0].Text, "I'll start now."; got != want {
+			t.Errorf("Blocks[0].Text = %q, want %q", got, want)
+		}
+	})
+
+	// THE CHRONOLOGY PIN. Skipping another subtask's block must not become
+	// skipping this subtask's: the tool call really ran between the two text runs,
+	// so merging across it would reorder the transcript.
+	t.Run("a same-subtask tool_use still breaks the text run across an interleave", func(t *testing.T) {
+		buf := &Buffer{}
+		buf.AppendTextDelta("a", "")
+		buf.AppendToolUseBlock("tc-1", "")
+		buf.AppendTextDelta("delegate", "agent-7")
+		idx, _ := buf.AppendTextDelta("b", "")
+		if idx != 3 {
+			t.Errorf("the text-after-tool block index = %d, want 3 (its own block)", idx)
+		}
+		if got, want := len(buf.Blocks), 4; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d", got, want)
+		}
+		if got, want := buf.Blocks[0].Text, "a"; got != want {
+			t.Errorf("Blocks[0].Text = %q, want %q (the tool call must still break the run)", got, want)
+		}
+		if got, want := buf.Blocks[3].Text, "b"; got != want {
+			t.Errorf("Blocks[3].Text = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("an interleaved delegate delta does not cut the parent's thinking block", func(t *testing.T) {
+		buf := &Buffer{}
+		buf.AppendThinkingDelta("Let me ", "")
+		buf.AppendThinkingDelta("delegate reasoning", "agent-7")
+		idx, _ := buf.AppendThinkingDelta("think.", "")
+		if idx != 0 {
+			t.Errorf("the parent's second thought landed on block %d, want 0", idx)
+		}
+		if got, want := len(buf.Blocks), 2; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d (one per stream)", got, want)
+		}
+		if got, want := buf.Blocks[0].Thinking, "Let me think."; got != want {
+			t.Errorf("Blocks[0].Thinking = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a same-subtask text block still breaks a thinking run across an interleave", func(t *testing.T) {
+		buf := &Buffer{}
+		buf.AppendThinkingDelta("thought", "")
+		buf.AppendTextDelta("answer", "")
+		buf.AppendThinkingDelta("delegate thought", "agent-7")
+		idx, _ := buf.AppendThinkingDelta("second thought", "")
+		if idx != 3 {
+			t.Errorf("the thinking-after-text block index = %d, want 3 (its own block)", idx)
+		}
+		if got, want := len(buf.Blocks), 4; got != want {
+			t.Fatalf("len(Blocks) = %d, want %d", got, want)
+		}
+		if got, want := buf.Blocks[0].Thinking, "thought"; got != want {
+			t.Errorf("Blocks[0].Thinking = %q, want %q (the text block must still break the run)", got, want)
+		}
+	})
+
 	t.Run("tool_use block stamps the subtask id", func(t *testing.T) {
 		buf := &Buffer{}
 		idx := buf.AppendToolUseBlock("tc-42", "agent-9")

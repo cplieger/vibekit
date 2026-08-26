@@ -307,11 +307,14 @@ func (buf *Buffer) SetRefusal(r *vibekit.RefusalInfo) {
 }
 
 // AppendTextDelta accumulates a text delta into the turn's content and extends
-// the last text block with it, or starts a new text block if the trailing block
-// isn't text. Returns the index of the (possibly new) text block — broadcast on
-// MessageChunkPayload.BlockIndex so the client knows which block the
+// this subtask's newest block with it, or starts a new text block when that
+// block isn't text. Returns the index of the (possibly new) text block —
+// broadcast on MessageChunkPayload.BlockIndex so the client knows which block the
 // delta belongs to — and the delta's sequence number (broadcast as
 // MessageChunkPayload.Seq; see the chunkSeq field).
+//
+// The returned index is NOT monotonic across a turn: a delta extending a block an
+// interleaved delegate has since appended past addresses a block behind the tail.
 //
 // The builder write is IN here rather than beside every call, because all five
 // callers did both and a Snapshot needs them consistent: written separately, a
@@ -319,36 +322,64 @@ func (buf *Buffer) SetRefusal(r *vibekit.RefusalInfo) {
 // the block, and the two are what it assembles the message from.
 //
 // subtaskID attributes the block to the agent that produced it ("" =
-// top-level agent). A trailing text block is only extended when it
-// belongs to the SAME subtask; a differing subtask starts a new block
-// so a subagent's text never merges into the parent's trailing block.
+// top-level agent), and only a block belonging to the SAME subtask is
+// ever extended, so a subagent's text never merges into the parent's.
+// Which of that subtask's blocks is the candidate is lastBlockOfSubtask's
+// answer, not the array's tail.
 func (buf *Buffer) AppendTextDelta(delta, subtaskID string) (idx int, seq int64) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	buf.Content.WriteString(delta)
 	buf.chunkSeq++
-	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == vibekit.BlockText && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
-		buf.Blocks[n-1].Text += delta
-		return n - 1, buf.chunkSeq
+	if i := buf.lastBlockOfSubtask(subtaskID); i >= 0 && buf.Blocks[i].Type == vibekit.BlockText {
+		buf.Blocks[i].Text += delta
+		return i, buf.chunkSeq
 	}
 	buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockText, Text: delta, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1, buf.chunkSeq
 }
 
+// lastBlockOfSubtask is the index of the newest block belonging to subtaskID, or
+// -1 when the turn holds none. Must be called with mu held.
+//
+// A block of a DIFFERENT subtask is SKIPPED rather than read as a break, because
+// a delegate and its parent are two independent streams sharing one array: with
+// the tail as the only candidate, a delegate's delta landing between two of the
+// parent's cut the parent's paragraph in half, and the client renders
+// non-contiguous halves as separate bubbles — so one visible break per interleave
+// point, mid-word, with any markdown straddling the cut rendered literally.
+//
+// A same-subtask block of the WRONG kind is a barrier and is not skipped. That is
+// the chronology: a tool call between two text runs of one stream really happened
+// between them, so merging across it would reorder the transcript.
+//
+// The scan is O(blocks since this subtask's last one), which is O(1) for the
+// common single-stream turn (its own block IS the tail). A per-subtask index
+// would make it constant in the interleaved case too, and is deliberately not
+// here: the scan is auditable and the observed turns hold tens of blocks.
+func (buf *Buffer) lastBlockOfSubtask(subtaskID string) int {
+	for i := len(buf.Blocks) - 1; i >= 0; i-- {
+		if buf.Blocks[i].AgentSubtaskID == subtaskID {
+			return i
+		}
+	}
+	return -1
+}
+
 // AppendThinkingDelta is the BlockThinking analogue of AppendTextDelta, and
-// accumulates into Reasoning rather than Content. Reasoning chunks share a block
-// until a non-thinking block (tool_use or text) breaks the run — or until the
-// subtask id differs, so a subagent's reasoning starts its own block rather than
-// merging into the parent's trailing thinking block. subtaskID attributes the
-// block to the producing agent ("" = top-level).
+// accumulates into Reasoning rather than Content. One subtask's reasoning chunks
+// share a block until that subtask's own tool_use or text block breaks the run;
+// another subtask's blocks are skipped, so an interleaved delegate never splits
+// the parent's reasoning. subtaskID attributes the block to the producing agent
+// ("" = top-level).
 func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) (idx int, seq int64) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	buf.Reasoning.WriteString(delta)
 	buf.chunkSeq++
-	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == vibekit.BlockThinking && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
-		buf.Blocks[n-1].Thinking += delta
-		return n - 1, buf.chunkSeq
+	if i := buf.lastBlockOfSubtask(subtaskID); i >= 0 && buf.Blocks[i].Type == vibekit.BlockThinking {
+		buf.Blocks[i].Thinking += delta
+		return i, buf.chunkSeq
 	}
 	buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockThinking, Thinking: delta, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1, buf.chunkSeq
