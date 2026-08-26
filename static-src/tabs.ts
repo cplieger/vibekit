@@ -1052,12 +1052,42 @@ function viewTransition(fn: () => void): void {
 }
 
 function showView(row: TabRow): void {
-  viewTransition(() => {
-    for (const node of document.querySelectorAll(ALL_VIEWS_SELECTOR)) {
-      (node as HTMLElement).classList.add("hidden");
-    }
-    document.querySelector(row.spec.view)?.classList.remove("hidden");
-  });
+  // Swap the visible view ONLY when it is not already the right one.
+  //
+  // The effect that calls this re-runs on EVERY projection mutation, not just on
+  // an activation, so without this guard closing a tab that was not even active
+  // still queued a full hide-all-then-unhide inside a view transition. That is
+  // not merely wasteful: `viewTransition` serializes each call behind the
+  // previous one's `finished` (with a 1s watchdog ceiling), and a running
+  // transition suppresses rendering — so closing four tabs cost four crossfades
+  // the reader had to wait behind for a view that never changed. Measured on the
+  // live instance while diagnosing it: the close commands answered in 1-4ms and
+  // the POSTs arrived ~1s apart, because the strip could only repaint between
+  // transitions and the reader was pacing themselves off that.
+  //
+  // Read the current state from the DOM rather than remembering the last
+  // selector. Nothing else writes these classes today, so a cached answer would
+  // be correct — and silently wrong the first time something did, leaving a view
+  // hidden with no way back. The scan is a handful of nodes.
+  //
+  // This also skips the swap for a chat-to-chat switch, and that loses no
+  // animation: both rows resolve to the SAME view element, so the update callback
+  // toggled nothing, the transition captured two identical snapshots, and the
+  // content the reader actually sees change is re-rendered by the chat view
+  // afterwards, outside the transition entirely. It animated nothing and cost a
+  // serialized transition to do it.
+  const target = document.querySelector(row.spec.view);
+  const shown = [...document.querySelectorAll(ALL_VIEWS_SELECTOR)].filter(
+    (n) => !(n as HTMLElement).classList.contains("hidden"),
+  );
+  if (shown.length !== 1 || shown[0] !== target) {
+    viewTransition(() => {
+      for (const node of document.querySelectorAll(ALL_VIEWS_SELECTOR)) {
+        (node as HTMLElement).classList.add("hidden");
+      }
+      target?.classList.remove("hidden");
+    });
+  }
 
   // Mobile toolbar title reads directly from the tab name.
   $.toolbarTitle.textContent = row.subject.kind === "chat" ? "" : row.name;

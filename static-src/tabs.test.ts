@@ -1196,3 +1196,125 @@ describe("close provenance", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Which mutations are allowed to swap the visible view
+// ---------------------------------------------------------------------------
+
+// The view/route effect re-runs on EVERY projection mutation, and its DOM swap
+// runs inside `viewTransition`, which serializes each call behind the previous
+// one's `finished` and suppresses rendering while one is live. So a swap on a
+// mutation that changes nothing about which view is visible is not merely wasted
+// work — it is a crossfade the reader waits behind. Closing four tabs cost four
+// of them, which is what made rapid closing feel like it needed a pause between
+// clicks (measured on the live instance: the close commands answered in 1-4ms
+// while their POSTs arrived ~1s apart).
+//
+// These cases count `class` mutations on the view elements, which is what the
+// swap actually does and the only thing that separates a skip from an idempotent
+// re-run. No transition mock is needed: with boot not marked done, viewTransition
+// invokes its callback synchronously.
+describe("the visible view is only swapped when it actually changes", () => {
+  let views: HTMLElement[];
+  let mutations = 0;
+  let mo: MutationObserver | undefined;
+
+  /** Stage the two views showView resolves against, with chat already the shown
+   *  one — the state a reader is in whenever a chat tab is active. */
+  function stageViews(): void {
+    for (const id of ["chat-view", "settings-view"]) {
+      const v = document.createElement("div");
+      v.id = id;
+      v.setAttribute("data-tab-view", "");
+      if (id !== "chat-view") {
+        v.classList.add("hidden");
+      }
+      document.body.appendChild(v);
+    }
+    views = [...document.querySelectorAll<HTMLElement>("[data-tab-view]")];
+  }
+
+  function watch(): void {
+    mutations = 0;
+    mo = new MutationObserver((records) => {
+      mutations += records.length;
+    });
+    for (const v of views) {
+      mo.observe(v, { attributes: true, attributeFilter: ["class"] });
+    }
+  }
+
+  /** MutationObserver delivers in a microtask, so let it flush before counting. */
+  async function settle(): Promise<number> {
+    await Promise.resolve();
+    mo?.takeRecords().forEach(() => {
+      mutations += 1;
+    });
+    return mutations;
+  }
+
+  beforeEach(() => {
+    stageViews();
+  });
+
+  afterEach(() => {
+    mo?.disconnect();
+    mo = undefined;
+  });
+
+  it("does not touch the views when a non-active tab closes", async () => {
+    await openChat("a");
+    await openChat("b");
+    // "b" is active and the chat view is already the shown one.
+    watch();
+
+    await closeTab(chatID("a"));
+
+    // The strip lost a row, but which view is visible did not change, so there is
+    // nothing to animate and nothing to swap.
+    expect(await settle()).toBe(0);
+    expect(document.getElementById("chat-view")?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("does not touch the views when the active tab moves between two chats", async () => {
+    await openChat("a");
+    await openChat("b");
+    watch();
+
+    // Both rows resolve to the SAME view element, so the old swap captured two
+    // identical snapshots and animated nothing while still costing a serialized
+    // transition. Skipping it loses no animation: the content the reader sees
+    // change is re-rendered by the chat view afterwards, outside any transition.
+    activateTab(chatID("a"));
+
+    expect(await settle()).toBe(0);
+  });
+
+  it("still swaps when the active tab needs a different view", async () => {
+    await openChat("a");
+    watch();
+
+    await openTab({ kind: "settings", ref: "" });
+
+    // A real navigation: settings has its own view element, so the swap has to
+    // run — and this is the case the guard must not swallow.
+    expect(await settle()).toBeGreaterThan(0);
+    expect(document.getElementById("settings-view")?.classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("chat-view")?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("repairs a view state that drifted, even with the active tab unchanged", async () => {
+    await openChat("a");
+    // Something outside this module left every view hidden. The guard reads the
+    // DOM rather than remembering what it last showed, so the next mutation
+    // notices and puts the right one back instead of trusting a cached answer.
+    for (const v of views) {
+      v.classList.add("hidden");
+    }
+    watch();
+
+    await openChat("b");
+
+    expect(document.getElementById("chat-view")?.classList.contains("hidden")).toBe(false);
+  });
+});
