@@ -117,14 +117,33 @@ func TestProfileFor_ReportsAbsenceInBand(t *testing.T) {
 // TestProfiles_ReturnsAnIsolatedCopy: the value being handed out is a security
 // posture, so a caller appending to its Presets must not rewrite the profile for
 // every later caller.
+//
+// FileRules needs the same guard one level deeper, and the glob lists are where a
+// shallow clone leaks: the rules a profile writes are BARE, which is what makes
+// them removable by Signature, so a caller that set Match on a shared rule would
+// leave the package copy writing a rule the removal set can no longer match.
 func TestProfiles_ReturnsAnIsolatedCopy(t *testing.T) {
 	first := Profiles()
 	for i := range first {
 		first[i].Presets = append(first[i].Presets, "tampered")
+		first[i].FileRules = append(first[i].FileRules, Rule{Capability: "tampered", Effect: EffectAllow})
+	}
+	firstFor, _ := ProfileFor(ProfileUnrestricted)
+	for i := range firstFor.FileRules {
+		firstFor.FileRules[i].Match = []string{"tampered"}
 	}
 	for _, p := range Profiles() {
 		if slices.Contains(p.Presets, "tampered") {
 			t.Fatalf("profile %q kept a caller's append; Profiles() shares its backing array", p.ID)
+		}
+		for i := range p.FileRules {
+			r := p.FileRules[i]
+			if r.Capability == "tampered" {
+				t.Fatalf("profile %q kept a caller's appended file rule; Profiles() shares its FileRules array", p.ID)
+			}
+			if slices.Contains(r.Match, "tampered") {
+				t.Fatalf("profile %q rule %q kept a caller's Match; the clone is shallow", p.ID, r.Capability)
+			}
 		}
 	}
 	if p, _ := ProfileFor(ProfileUnrestricted); slices.Contains(p.Presets, "tampered") {

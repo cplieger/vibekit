@@ -1,12 +1,15 @@
 // ---------------------------------------------------------------------------
-// The permission card's pointer at the workspace relaxation (D115 caller: "the
-// permission relaxation (D103)").
+// The permission card's pointer at the security profile picker.
 //
-// The whole reason this is a link and not a button that grants something: D103's
-// third ruling is that the Settings pane is the ONLY writer, with no path where
-// answering a permission prompt widens the policy as a side effect. So the tests
-// below assert both halves — the pointer reaches the switch, and clicking it
-// writes nothing.
+// The whole reason this is a link and not a button that grants something: the
+// Settings pane is the ONLY writer, with no path where answering a permission
+// prompt widens the policy as a side effect. So the tests below assert both halves
+// — the pointer reaches the picker, and clicking it writes nothing.
+//
+// The target id is asserted rather than assumed because the pointer has already
+// been wrong once: it aimed at `workspace-relax-checkbox`, an id the profile picker
+// replaced, and highlightControl is deliberately quiet on an unknown one, so the
+// link opened the panel and highlighted nothing with no error anywhere.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -47,17 +50,17 @@ beforeEach(() => {
 });
 
 describe("the permission card's policy pointer", () => {
-  it("opens the relaxation switch in Settings", () => {
+  it("opens the security profile picker in Settings", () => {
     const card = buildPermissionCard("chat-1", ask(), vi.fn());
     const link = pointer(card);
     expect(link).not.toBeNull();
     link?.click();
-    expect(mocks.openSetting).toHaveBeenCalledWith("permissions", "workspace-relax-checkbox");
+    expect(mocks.openSetting).toHaveBeenCalledWith("permissions", "security-profile-list");
   });
 
-  // D103 ruling 3, asserted rather than assumed: the pointer NAVIGATES. It must
-  // not answer the ask and must not write a rule — the user still has to switch
-  // the relaxation on in Settings and clear its confirm there.
+  // Asserted rather than assumed: the pointer NAVIGATES. It must not answer the ask
+  // and must not write a rule — the user still has to pick a profile in Settings
+  // and clear its confirm there.
   it("neither answers the ask nor writes a policy rule", () => {
     const onSelect = vi.fn();
     const card = buildPermissionCard("chat-1", ask(), onSelect);

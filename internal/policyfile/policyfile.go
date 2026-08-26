@@ -531,6 +531,61 @@ func (f *File) Upsert(r *Rule) (bool, error) {
 	return true, nil
 }
 
+// SetProfileRules makes rules the security profile's whole contribution to this
+// file, preserving every rule the profile mechanism did not write.
+//
+// It drops every rule whose Signature appears in [ProfileOwnedRules] and then
+// Upserts each of rules, so a selection replaces the OUTGOING profile's rules and
+// nothing else. Returns ErrTooManyRules when the file is already at the cap.
+// SetProfileRules(nil) is the remove-and-add-nothing case, which is what a
+// restrictive rung and the workspace file both want.
+//
+// MERGE by ownership, and Signature is the only ownership handle there is: a rule
+// carries no provenance in the file, and no RPC reports which writer produced one.
+// The alternative was the blanket overwrite this replaced, which destroyed a
+// hand-authored rule on every profile click without saying so.
+//
+// Three consequences, all deliberate:
+//
+//   - A hand-authored rule that happens to be byte-identical to one a profile
+//     writes — `capability: all, effect: allow` with no globs — is indistinguishable
+//     from the profile's own and IS removed. Removal is the right side to err on for
+//     that exact shape, because "the profile is the policy" is what the panel
+//     promises about it.
+//   - A NARROWER rule for the same capability survives (`all: allow` with a match
+//     list is a different Signature), which is the property
+//     TestRelaxCapabilities_RulesAreExactlyReversible already pins.
+//   - A surviving deny or ask still beats the profile's allow, because effects
+//     resolve by restrictiveness. So a hand-authored rule can outlive a profile
+//     change and grant more or less than the profile's name suggests; the panel copy
+//     says so, and the Active policy table lists it.
+func (f *File) SetProfileRules(rules []Rule) error {
+	owned := ProfileOwnedRules()
+	sigs := make(map[string]struct{}, len(owned))
+	for i := range owned {
+		sigs[Signature(&owned[i])] = struct{}{}
+	}
+	// A fresh slice rather than an in-place filter: reusing the backing array would
+	// leave a removed rule's Match and Exclude reachable through the tail of a
+	// security policy this file is about to hand to Save. One pass rather than
+	// repeated Remove calls, so a hand-edited file holding the same rule twice loses
+	// both copies — leaving one would leave the outgoing profile's grant in force.
+	kept := make([]Rule, 0, len(f.Rules))
+	for i := range f.Rules {
+		if _, isProfileRule := sigs[Signature(&f.Rules[i])]; isProfileRule {
+			continue
+		}
+		kept = append(kept, f.Rules[i])
+	}
+	f.Rules = kept
+	for i := range rules {
+		if _, err := f.Upsert(&rules[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Remove deletes the first rule matching r by Signature. Returns true if a
 // rule was removed.
 func (f *File) Remove(r *Rule) bool {

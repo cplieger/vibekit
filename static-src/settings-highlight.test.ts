@@ -85,10 +85,10 @@ function control(id: string): HTMLInputElement {
 
 describe("highlightControl", () => {
   it("scrolls the control into view and flashes a ring", async () => {
-    const box = control("workspace-relax-checkbox");
-    highlightControl("workspace-relax-checkbox");
+    const box = control("security-profile-list");
+    highlightControl("security-profile-list");
     await frames(1);
-    expect(scrolled).toEqual(["workspace-relax-checkbox"]);
+    expect(scrolled).toEqual(["security-profile-list"]);
     expect(box.classList.contains("setting-flash")).toBe(true);
   });
 
@@ -212,9 +212,9 @@ describe("openSetting", () => {
   it("opens the Settings view, then selects the tab, pushes the URL and marks the control", async () => {
     expect.assertions(5);
     mocks.getActiveTabRoute.mockReturnValue({ kind: "chat" });
-    control("workspace-relax-checkbox");
+    control("security-profile-list");
 
-    openSetting("permissions", "workspace-relax-checkbox");
+    openSetting("permissions", "security-profile-list");
 
     expect(mocks.toggleSettingsView).toHaveBeenCalledWith("permissions");
     // Nothing has reached the panel yet: the open has not resolved.
@@ -224,7 +224,7 @@ describe("openSetting", () => {
     expect(mocks.forceSettingsTab).toHaveBeenCalledWith("permissions");
     expect(mocks.pushRoute).toHaveBeenCalledWith({ kind: "settings", tab: "permissions" });
     await frames(1);
-    expect(scrolled).toEqual(["workspace-relax-checkbox"]);
+    expect(scrolled).toEqual(["security-profile-list"]);
   });
 
   // toggleSettingsView CLOSES an active singleton, so calling it from inside

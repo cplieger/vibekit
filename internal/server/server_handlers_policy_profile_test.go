@@ -90,6 +90,19 @@ func loadRules(t *testing.T, path string) []policyfile.Rule {
 	return f.Rules
 }
 
+// ruleCapabilities is the sorted capability projection of a rule set — the shape a
+// profile expectation is written in, since the rules a profile writes are bare and
+// so distinguished by capability alone. A pure projection, so it takes no *testing.T
+// and cannot fail.
+func ruleCapabilities(rules []policyfile.Rule) []string {
+	out := make([]string, 0, len(rules))
+	for i := range rules {
+		out = append(out, rules[i].Capability)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // TestPolicyProfile_NamedSelectionClearsBothFiles is the profile's central claim:
 // selecting one means what it says. A rule left standing in either writable file
 // would widen or narrow the profile with nothing on screen saying so, and the
@@ -171,10 +184,18 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 	}
 }
 
-// TestPolicyProfile_CustomWithoutSeedStartsBlank is the second door, and the
-// difference between the two IS the seed flag: Customize starts from the outgoing
-// profile, direct selection starts from nothing.
-func TestPolicyProfile_CustomWithoutSeedStartsBlank(t *testing.T) {
+// TestPolicyProfile_CustomWithoutSeedKeepsHandAuthoredRules is the second door,
+// and the seed flag is still the whole difference between the two: Customize copies
+// the outgoing profile's rules in, direct selection adds nothing.
+//
+// DELIBERATE CONTRACT CHANGE, not a weakened test. This case used to assert the
+// file was EMPTIED, and wiping a file the user hand-edited is the silent
+// destruction the merge decision forbids — a selection now removes only the rules
+// the profile mechanism itself could have written. What the original reason was
+// actually protecting is that the two doors differ, and the seed flag still carries
+// that: the Customize case (_SeedMaterialisesTheProfileInForce) copies the live
+// preset rules in and this one does not.
+func TestPolicyProfile_CustomWithoutSeedKeepsHandAuthoredRules(t *testing.T) {
 	s, _, _, userPath, _ := profileFixture(t, []vibekit.PolicyRule{seedRule("fs_read", "read-workspace")})
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: "allow"},
@@ -185,8 +206,185 @@ func TestPolicyProfile_CustomWithoutSeedStartsBlank(t *testing.T) {
 	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom}); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
-	if got := loadRules(t, userPath); len(got) != 0 {
-		t.Errorf("custom without seed left %v; selecting it from the list starts blank", got)
+	got := loadRules(t, userPath)
+	if len(got) != 1 || got[0].Capability != "shell" {
+		t.Errorf("custom without seed left %v, want only the hand-authored shell rule", got)
+	}
+	// The live fs_read preset rule is what the seeding door would have copied in, so
+	// its absence is what still separates the two doors.
+	if slices.ContainsFunc(got, func(r policyfile.Rule) bool { return r.Capability == "fs_read" }) {
+		t.Errorf("custom without seed materialised the live profile's rules (%v); that is the Customize door", got)
+	}
+}
+
+// TestPolicyProfile_LoosestRungWritesUserScopeRules is the fix itself, asserted at
+// the endpoint.
+//
+// A session-scope preset never reaches a session KAS creates itself, which every
+// workflow step's session is, so the loosest rung has to put its posture where KAS
+// reads it for every session in the process: the USER file. The workspace file
+// stays empty — it would be a second writer of one posture and buys no precision
+// when one instance is one HOME and one workspace root.
+func TestPolicyProfile_LoosestRungWritesUserScopeRules(t *testing.T) {
+	s, _, reload, userPath, wsPath := profileFixture(t, nil)
+
+	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileUnrestricted}); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	got := loadRules(t, userPath)
+	for _, r := range got {
+		// Bare, or Signature removal cannot reverse the selection: the rule the next
+		// profile change looks for would not be the rule this one wrote.
+		if r.Effect != policyfile.EffectAllow || r.Match != nil || r.Exclude != nil {
+			t.Errorf("user rule %+v is not a bare allow; the selection would not be reversible", r)
+		}
+	}
+	want := policyfile.RelaxCapabilities()
+	if caps := ruleCapabilities(got); !slices.Equal(caps, want) {
+		t.Errorf("selecting %q wrote %v to the user file, want RelaxCapabilities() = %v",
+			policyfile.ProfileUnrestricted, caps, want)
+	}
+	if r := loadRules(t, wsPath); len(r) != 0 {
+		t.Errorf("workspace file holds %v; the user file is the profile's single home", r)
+	}
+	if reload.restarts != 1 {
+		t.Errorf("utility restarts = %d, want 1", reload.restarts)
+	}
+}
+
+// TestPolicyProfile_RestrictiveRungsWriteNoAllowRule is the guard on the other side
+// of the design decision. A user-scope rule is durable — it survives a restart and
+// applies to every ACP client sharing this HOME, with no session boundary to expire
+// it — so writing one for a restrictive rung would WIDEN that posture rather than
+// deliver it.
+func TestPolicyProfile_RestrictiveRungsWriteNoAllowRule(t *testing.T) {
+	for _, id := range []string{
+		policyfile.ProfileGuarded, policyfile.ProfileReadOnly, policyfile.ProfileTrusted,
+	} {
+		t.Run(id, func(t *testing.T) {
+			s, _, _, userPath, wsPath := profileFixture(t, nil)
+			if rec := postProfile(t, s, profileBody{Profile: id}); rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+			}
+			for _, path := range []string{userPath, wsPath} {
+				if got := loadRules(t, path); len(got) != 0 {
+					t.Errorf("selecting %q left %v in %s; a restrictive rung writes no durable rule", id, got, path)
+				}
+			}
+		})
+	}
+}
+
+// TestPolicyProfile_KeepsHandAuthoredUserRules is the merge decision end to end,
+// staged as the live container's own file: a hand-written `shell: allow`, added as
+// the workaround for the defect this change fixes.
+//
+// A full guarded -> unrestricted -> guarded round trip, because the decision has
+// two halves and each has its own way to fail. The blanket overwrite this replaced
+// destroyed the rule on the first click; a removal set keyed on the OUTGOING rung
+// would leave the loosest rung's `all: allow` standing on the way back down, and a
+// narrowing that does not narrow is worse than the bug being fixed.
+//
+// Deliberately NOT subtests: each step reads the file the one before it wrote, so
+// "runnable alone" is not the property here, and the step index is in every message
+// instead.
+func TestPolicyProfile_KeepsHandAuthoredUserRules(t *testing.T) {
+	s, _, _, userPath, _ := profileFixture(t, nil)
+	handAuthored := policyfile.Rule{Capability: "shell", Effect: policyfile.EffectAllow}
+	if err := policyfile.Save(t.Context(), userPath,
+		&policyfile.File{Rules: []policyfile.Rule{handAuthored}}); err != nil {
+		t.Fatalf("Setup: stage the hand-authored rule: %v", err)
+	}
+
+	for i, step := range []struct {
+		profile string
+		want    []string
+	}{
+		{policyfile.ProfileGuarded, []string{"shell"}},
+		{policyfile.ProfileUnrestricted, append([]string{"shell"}, policyfile.RelaxCapabilities()...)},
+		{policyfile.ProfileGuarded, []string{"shell"}},
+	} {
+		if rec := postProfile(t, s, profileBody{Profile: step.profile}); rec.Code != http.StatusOK {
+			t.Fatalf("step %d selecting %q: status = %d, body %s", i, step.profile, rec.Code, rec.Body)
+		}
+		want := slices.Clone(step.want)
+		slices.Sort(want)
+		if caps := ruleCapabilities(loadRules(t, userPath)); !slices.Equal(caps, want) {
+			t.Errorf("step %d, after selecting %q the user file holds %v, want %v",
+				i, step.profile, caps, want)
+		}
+	}
+}
+
+// TestPolicyProfile_PersistFailureRestoresTheFiles is the atomicity requirement:
+// three files, no cross-file atomicity to be had, so a failure after the policy
+// files were written must not leave them granting one posture while config.json
+// names another.
+//
+// The injection is fixture-only and adds no production seam — configDir points
+// inside a REGULAR FILE, so persistProfile's mkdir cannot succeed. It is also
+// uid-independent, unlike a 0500 directory, which root can still write.
+func TestPolicyProfile_PersistFailureRestoresTheFiles(t *testing.T) {
+	s, _, reload, userPath, wsPath := profileFixture(t, nil)
+	staged := []policyfile.Rule{{Capability: "shell", Effect: policyfile.EffectAllow}}
+	for _, path := range []string{userPath, wsPath} {
+		if err := policyfile.Save(t.Context(), path, &policyfile.File{Rules: staged}); err != nil {
+			t.Fatalf("Setup: stage %s: %v", path, err)
+		}
+	}
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("Setup: stage the blocker: %v", err)
+	}
+	s.configDir = filepath.Join(blocker, "config")
+
+	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileUnrestricted})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
+	}
+	for _, path := range []string{userPath, wsPath} {
+		got := loadRules(t, path)
+		if len(got) != 1 || got[0].Capability != "shell" {
+			t.Errorf("%s holds %v after a failed selection, want the staged shell rule back", path, got)
+		}
+	}
+	if reload.restarts != 0 {
+		t.Errorf("utility restarts = %d; a selection that failed must not recycle a session", reload.restarts)
+	}
+}
+
+// TestPolicyProfile_RefusesAnUnparseableUserFile: the overwrite this replaced never
+// read these files, so a hand-edit vibekit could not parse was destroyed silently.
+// A selection now refuses with the same 409 policyRuleAdd answers, and the bytes
+// stay on disk for the user to fix.
+func TestPolicyProfile_RefusesAnUnparseableUserFile(t *testing.T) {
+	s, _, reload, userPath, _ := profileFixture(t, nil)
+	malformed := []byte("rules: [ this is not a rule list\n")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatalf("Setup: stage the directory: %v", err)
+	}
+	if err := os.WriteFile(userPath, malformed, 0o600); err != nil {
+		t.Fatalf("Setup: stage the malformed file: %v", err)
+	}
+
+	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileUnrestricted})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body %s", rec.Code, rec.Body)
+	}
+	back, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("read back %s: %v", userPath, err)
+	}
+	if !bytes.Equal(back, malformed) {
+		t.Errorf("the unparseable file was rewritten as %q, want it left byte-for-byte alone", back)
+	}
+	var persisted string
+	if settings.FieldInto(t.Context(), s.configDir, settings.KeySecurityProfile, &persisted) && persisted != "" {
+		t.Errorf("persisted %q on a refused selection", persisted)
+	}
+	if reload.restarts != 0 {
+		t.Errorf("utility restarts = %d; a refused selection recycled a session", reload.restarts)
 	}
 }
 

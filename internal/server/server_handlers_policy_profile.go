@@ -20,18 +20,48 @@ import (
 
 // POST /api/permissions/profile — select the named security posture.
 //
-// The profile is the one control that owns a rule SET rather than editing one
-// rule, and it owns it by REPLACEMENT: selecting a profile clears both writable
-// permissions files and lets the profile's KAS presets be the policy. That is why
-// it is its own endpoint rather than a key on PATCH /api/settings — persisting the
+// A selection has TWO halves, and the second one is why this endpoint has the
+// shape it does. The presets ride the session door (_meta.kiro.policyPreset on
+// session/new), and KAS injects them at SESSION scope bound to the one session
+// they arrived on. KAS creates a workflow STEP's session itself, with no _meta and
+// no vibekit involvement, so a preset can never reach one — measured on this
+// container: 280 permission prompts, every one of them on a step session and none
+// on a seeded one. A USER-scope rule in permissions.yaml IS evaluated for every
+// session in the process, step sessions included, so the loosest rung writes its
+// posture there as well. Every other rung writes none, because a durable allow at
+// user scope survives a restart and applies to any other ACP client sharing this
+// HOME; policyfile.Profile.FileRules records that decision in full.
+//
+// It owns that rule set by MERGE, not by replacement: only the rules the profile
+// mechanism itself could have written are removed (policyfile.ProfileOwnedRules),
+// so a hand-authored rule survives a profile change and keeps applying beside the
+// new profile's own. The blanket overwrite this replaced destroyed such a rule
+// silently on every click. Both facts are in the panel copy, because a description
+// promising a posture the code does not deliver is the defect being fixed and the
+// inverse would be the same defect.
+//
+// Its own endpoint rather than a key on PATCH /api/settings: persisting the
 // setting is the smallest part of what a selection does, and a settings PATCH that
-// silently deleted policy files would be a side effect nobody reading the route
+// silently rewrote policy files would be a side effect nobody reading the route
 // could predict.
+//
+// THREE files and no cross-file atomicity to be had, so a defined ORDER plus a
+// compensating restore is what keeps the two halves from disagreeing: snapshot both
+// writable files, write the user file, write the workspace file, then config.json;
+// on a failure at either write, put both files back and answer 500. The FILES are
+// restored rather than the setting because they are the half that has already taken
+// effect — KAS watches them and hot-reloads, while the setting only reaches a
+// session at its next start — so a part-way failure leaves both halves naming the
+// OLD profile. Accepted cost: KAS sees two reloads on that path, the new rules and
+// then the restore. Either ordering has such a window; this one keeps it on the
+// half that can be undone.
 //
 // Two doors into Custom, and Seed is the difference. The Customize button sends
 // seed=true, which MATERIALISES what is currently in force into the user file so
 // the editable table opens on the outgoing profile's rules as a starting point.
-// Selecting Custom from the list sends seed=false, which starts blank on purpose.
+// Selecting Custom from the list sends seed=false, which adds nothing — and, since
+// the merge preserves what it does not own, leaves the user's own rules standing
+// rather than wiping the file.
 
 // errNoLivePolicy is returned when the profile's own rules cannot be read, which
 // is the one condition that must not degrade into a silent blank slate: an empty
@@ -93,12 +123,29 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.replacePolicyFiles(r.Context(), roots, seeded); err != nil {
-		httpreply.InternalError(w, err)
+	// The user-scope rules this selection writes: a seed copies the outgoing
+	// profile's, a named rung writes its own (empty on every rung but the loosest),
+	// and Custom picked from the list writes none and keeps whatever is there.
+	userRules := profile.FileRules
+	if body.Seed {
+		userRules = seeded
+	}
+	// Read both files before touching either, which buys two things from one read.
+	// The overwrite this replaced never read them, so an unparseable hand-edited
+	// file was destroyed silently; this adopts policyRuleAdd's refusal instead. And
+	// the same read is the snapshot a failed write is put back from.
+	snap, err := snapshotPolicyFiles(roots)
+	if err != nil {
+		webhttp.WriteJSONStatus(w, http.StatusConflict,
+			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
+		return
+	}
+	if err := writeProfilePolicy(r.Context(), roots, userRules); err != nil {
+		failProfileSelection(r.Context(), w, roots, snap, err)
 		return
 	}
 	if err := s.persistProfile(r.Context(), profile.ID); err != nil {
-		httpreply.InternalError(w, err)
+		failProfileSelection(r.Context(), w, roots, snap, err)
 		return
 	}
 	// The presets ride the session door, so the sessions already running still
@@ -110,7 +157,7 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 		s.policyReload.RestartUtilitySession()
 	}
 	slog.Info("security profile selected", "profile", profile.ID,
-		"presets", profile.Presets, "seeded_rules", len(seeded))
+		"presets", profile.Presets, "seeded_rules", len(seeded), "file_rules", len(userRules))
 	webhttp.Ok(w)
 	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
 	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventPermissionsChanged, "",
@@ -159,30 +206,111 @@ func (s *Server) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, err
 	return out, nil
 }
 
-// replacePolicyFiles makes rules the ENTIRE content of the user file and empties
-// the workspace one.
+// policySnapshot is both writable files' rules as they stood before a selection,
+// keyed by scope.
 //
-// Both files, because a profile selection means what it says: a workspace rule
-// left standing would widen or narrow the profile with nothing on screen saying
-// so. Only the user file receives content, because that is the scope whose reach
-// matches the profile setting's own — one vibekit instance is one HOME, one user
-// and one workspace root, so the workspace file buys no precision and having two
-// writers of one posture is what makes a UI disagree with its own policy.
-func (s *Server) replacePolicyFiles(ctx context.Context, roots policyfile.Roots, rules []policyfile.Rule) error {
-	for _, scope := range []string{policyfile.ScopeUser, policyfile.ScopeWorkspace} {
+// atomicfile gives per-FILE atomicity and a selection writes three files, so
+// cross-file atomicity is not something the library can provide and this endpoint
+// does not invent one. A snapshot plus a compensating restore is the achievable
+// form of "the panel never disagrees with its own policy".
+type policySnapshot map[string][]policyfile.Rule
+
+// writableScopes are the two scopes a selection touches, in the order it touches
+// them: user first, because that is the scope carrying the posture. One list for
+// the snapshot, the write and the restore, so the three cannot disagree about
+// which files are in play.
+func writableScopes() []string {
+	return []string{policyfile.ScopeUser, policyfile.ScopeWorkspace}
+}
+
+// snapshotPolicyFiles reads both writable files so a failed selection can be put
+// back. A parse error propagates: the caller refuses the request rather than
+// overwriting a file vibekit could not understand.
+func snapshotPolicyFiles(roots policyfile.Roots) (policySnapshot, error) {
+	snap := make(policySnapshot, len(writableScopes()))
+	for _, scope := range writableScopes() {
+		path, err := policyfile.PathFor(scope, roots)
+		if err != nil {
+			return nil, err
+		}
+		f, err := policyfile.Load(path)
+		if err != nil {
+			return nil, err
+		}
+		snap[scope] = f.Rules
+	}
+	return snap, nil
+}
+
+// writeProfilePolicy makes userRules the profile's contribution to the user file
+// and takes the profile mechanism's rules out of the workspace one, preserving
+// every hand-authored rule in both.
+//
+// Only the user file receives content, and that is the fix rather than a
+// simplification: user scope is the only scope KAS evaluates for a session it
+// created itself, which every workflow step's session is. The workspace file gets
+// the removal half so a rule the previous release's relaxation wrote there cannot
+// outlive the profile that replaced it, and so a leftover workspace rule cannot
+// widen or narrow the posture with nothing on screen saying so.
+func writeProfilePolicy(ctx context.Context, roots policyfile.Roots, userRules []policyfile.Rule) error {
+	for _, scope := range writableScopes() {
 		path, err := policyfile.PathFor(scope, roots)
 		if err != nil {
 			return err
 		}
-		f := &policyfile.File{Rules: []policyfile.Rule{}}
+		f, err := policyfile.Load(path)
+		if err != nil {
+			return err
+		}
+		var incoming []policyfile.Rule
 		if scope == policyfile.ScopeUser {
-			f.Rules = rules
+			incoming = userRules
+		}
+		if err := f.SetProfileRules(incoming); err != nil {
+			return err
 		}
 		if err := policyfile.Save(ctx, path, f); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// restorePolicyFiles puts both writable files back to snap, compensating a
+// selection that failed after writing them.
+//
+// Its own failure is logged with the path, because at that point the file grants a
+// posture config.json does not name and only the operator can reconcile the two;
+// the caller then answers a 500 naming both files rather than the generic one.
+func restorePolicyFiles(ctx context.Context, roots policyfile.Roots, snap policySnapshot) error {
+	for _, scope := range writableScopes() {
+		path, err := policyfile.PathFor(scope, roots)
+		if err != nil {
+			return err
+		}
+		if err := policyfile.Save(ctx, path, &policyfile.File{Rules: snap[scope]}); err != nil {
+			slog.Error("could not restore a permissions file after a failed profile selection",
+				"scope", scope, "path", path, "error", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// failProfileSelection answers a selection that failed after the files were
+// touched: put them back, then report. Never a 200 — the files and config.json
+// would then name different postures, which is exactly what the write order and
+// this restore exist to prevent.
+func failProfileSelection(ctx context.Context, w http.ResponseWriter, roots policyfile.Roots,
+	snap policySnapshot, cause error,
+) {
+	if err := restorePolicyFiles(ctx, roots, snap); err != nil {
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
+			"the profile could not be applied and the previous rules could not be put back; "+
+				"inspect permissions.yaml under ~/.kiro/settings and ~/.kiro/workspace-roots"))
+		return
+	}
+	httpreply.InternalError(w, cause)
 }
 
 // persistProfile writes the profile id into config.json, merging rather than

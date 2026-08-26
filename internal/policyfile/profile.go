@@ -80,6 +80,19 @@ type Profile struct {
 	// Presets are the KAS preset ids sent as _meta.kiro.policyPreset. Empty for
 	// Custom, which is the difference that makes the files authoritative.
 	Presets []string
+	// FileRules are the rules this profile writes to the USER-scope permissions
+	// file, in ADDITION to sending its presets at the session door — the half that
+	// reaches a session vibekit did not open.
+	//
+	// A preset arrives at SESSION scope bound to the one session it was sent on,
+	// and KAS creates a workflow step's session itself with no _meta, so a preset
+	// can never reach one. A user-scope file rule is evaluated for every session in
+	// the process, step sessions included, which is why the loosest rung carries
+	// both halves. Empty on every other rung: a durable allow at user scope
+	// survives a restart and applies to every ACP client sharing this HOME, so
+	// materialising a restrictive rung's posture would widen it rather than
+	// describe it.
+	FileRules []Rule
 }
 
 // profiles is the ordered ladder, loosest last. Order is part of the contract:
@@ -122,8 +135,18 @@ var profiles = []Profile{
 		// ~/.kiro/settings and still asks before writing .git/**, .kiro/agents/**,
 		// .kiro/hooks/** and .vscode/**, because deny and ask both beat allow and
 		// that scope sits above every file. The UI says so beside the option.
-		ID:      ProfileUnrestricted,
-		Presets: []string{PresetAllowAll},
+		//
+		// The ONE rung that also writes file rules, and the only one vibekit can
+		// author from its own definitions: `allow-all` resolves to a single
+		// umbrella, and RelaxCapabilities() is already the derived, tested answer to
+		// "the broadest grant a permissions file can express". The rungs below it
+		// grant through edit-workspace and dev-shell, whose rule sets are a security
+		// review upstream maintains (see the package comment) — spelling those to
+		// disk would freeze upstream's judgement at today's bundle and make it
+		// vibekit's to keep current.
+		ID:        ProfileUnrestricted,
+		Presets:   []string{PresetAllowAll},
+		FileRules: relaxRules(),
 	},
 	{
 		ID:      ProfileCustom,
@@ -131,15 +154,88 @@ var profiles = []Profile{
 	},
 }
 
+// relaxRules maps RelaxCapabilities() to the bare allow rules the loosest profile
+// writes: one rule per member, no match and no exclude.
+//
+// Bareness is load-bearing rather than incidental. Signature keys on capability +
+// effect + sorted globs, so a bare rule is removable by exactly the value that
+// wrote it — which is what lets [File.SetProfileRules] take a profile's rules back
+// out of a file without disturbing a narrower hand-authored rule for the same
+// capability. A match list on these would break that.
+func relaxRules() []Rule {
+	caps := RelaxCapabilities()
+	out := make([]Rule, 0, len(caps))
+	for _, c := range caps {
+		out = append(out, Rule{Capability: c, Effect: EffectAllow})
+	}
+	return out
+}
+
+// ProfileOwnedRules returns every rule the profile mechanism itself could have
+// written, deduplicated by Signature. It is the set a selection REMOVES from a
+// writable file before writing the incoming rung's own rules.
+//
+// The UNION over the whole ladder rather than the outgoing rung's set, for two
+// reasons. Switching from the loosest rung to a restrictive one has to genuinely
+// narrow, and a narrowing that left the previous rung's `all: allow` standing
+// would be the worst failure this mechanism could ship — so the removal set cannot
+// depend on correctly identifying which rung is being left, which is a setting
+// that can be absent or stale. And a rung added later must not orphan its rules on
+// disk when a user moves off it; the union is a property of the code instead.
+//
+// It also reverses the retired workspace-relaxation checkbox for free: that
+// checkbox wrote byte-identical bare rules from the same RelaxCapabilities() set,
+// so the first profile selection is its own migration with no special case.
+func ProfileOwnedRules() []Rule {
+	var out []Rule
+	seen := make(map[string]struct{})
+	for i := range profiles {
+		for j := range profiles[i].FileRules {
+			r := profiles[i].FileRules[j]
+			sig := Signature(&r)
+			if _, dup := seen[sig]; dup {
+				continue
+			}
+			seen[sig] = struct{}{}
+			out = append(out, cloneRule(r))
+		}
+	}
+	return out
+}
+
+// cloneRules deep-copies a rule slice, glob lists included. A bare slices.Clone
+// would leave every rule's Match and Exclude sharing a backing array with the
+// package copy, and the value being handed out is a security posture.
+func cloneRules(in []Rule) []Rule {
+	if in == nil {
+		return nil
+	}
+	out := make([]Rule, len(in))
+	for i := range in {
+		out[i] = cloneRule(in[i])
+	}
+	return out
+}
+
+// cloneRule deep-copies one rule. Rule is a value, so only its two glob slices
+// need it.
+func cloneRule(r Rule) Rule {
+	r.Match = slices.Clone(r.Match)
+	r.Exclude = slices.Clone(r.Exclude)
+	return r
+}
+
 // Profiles returns the ladder in picker order.
 func Profiles() []Profile {
 	out := make([]Profile, len(profiles))
 	copy(out, profiles)
-	// Each entry's Presets slice is shared with the package copy, so hand out a
-	// clone: a caller that appended to it would rewrite the profile for every
-	// later caller, and the value being mutated here would be a security posture.
+	// Each entry's Presets and FileRules slices are shared with the package copy,
+	// so hand out a clone: a caller that appended to one would rewrite the profile
+	// for every later caller, and the value being mutated here would be a security
+	// posture.
 	for i := range out {
 		out[i].Presets = slices.Clone(out[i].Presets)
+		out[i].FileRules = cloneRules(out[i].FileRules)
 	}
 	return out
 }
@@ -155,6 +251,7 @@ func ProfileFor(id string) (Profile, bool) {
 		if profiles[i].ID == id {
 			p := profiles[i]
 			p.Presets = slices.Clone(p.Presets)
+			p.FileRules = cloneRules(p.FileRules)
 			return p, true
 		}
 	}

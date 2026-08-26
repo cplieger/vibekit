@@ -195,19 +195,29 @@ function profileLabel(id: string): string {
  *
  *  Read-only names where it reaches on purpose. It grants reads OUTSIDE the
  *  workspace, so an SSH key or a sibling project is readable without a prompt, and
- *  a description that said only "reads" would be hiding the part that matters. */
+ *  a description that said only "reads" would be hiding the part that matters.
+ *
+ *  Every named rung also says whether a WORKFLOW STEP is covered, because that is
+ *  the one place the two halves of a profile differ. A profile's presets ride the
+ *  session door and reach only the sessions vibekit opens; Kiro creates a workflow
+ *  step's session itself, so a preset never arrives there. Only the loosest rung
+ *  also writes a durable rule to the user-scope permissions file, which is the half
+ *  a step session does read — and that rule outlives a restart and applies to every
+ *  Kiro client on this machine, so it is stated rather than implied. A description
+ *  promising a posture the code does not deliver is the defect this text was
+ *  rewritten to remove; one that quietly under-delivers is the same defect. */
 function profileDescription(id: string): string {
   switch (id) {
     case "guarded":
-      return "Reads files in this workspace. Everything else asks.";
+      return "Reads files in this workspace. Everything else asks, and a workflow step still asks even for that.";
     case "read-only":
-      return "Also reads any file on this machine, including outside the workspace, runs read-only commands, and reaches the web. Every change asks.";
+      return "Also reads any file on this machine, including outside the workspace, runs read-only commands, and reaches the web. Every change asks, and a workflow step still asks for all of it.";
     case "trusted":
-      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean.";
+      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. A workflow step still asks.";
     case "unrestricted":
-      return "Never asks, including before installing a power. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
+      return "Never asks, including before installing a power, and the only profile that also covers workflow steps and subagents. It writes a durable allow rule to your user permissions file, so it survives a restart and applies to every Kiro client on this machine until you pick another profile. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
     case CUSTOM_PROFILE:
-      return "Your own rules, edited in the table below. Nothing is granted that you do not add.";
+      return "Your own rules, edited in the table below. Nothing is granted that you do not add, and they apply to workflow steps too.";
     default:
       return "";
   }
@@ -326,15 +336,22 @@ class NativePolicyController {
 
   // --- The security profile --------------------------------------------------
   //
-  // The profile is the policy. Selecting one replaces both writable permissions
-  // files with that profile's rules server-side, so the table below describes what
-  // is in force rather than competing with it, and outside Custom the table is
-  // read-only for that reason: with a profile in charge, a hand-edit would be a
-  // second writer of one posture and the first thing to disagree with the picker.
+  // The profile is the policy. Selecting one writes that profile's own rules into
+  // the user permissions file server-side and takes the previous profile's back
+  // out, so the table below describes what is in force rather than competing with
+  // it, and outside Custom the table is read-only for that reason: with a profile
+  // in charge, a hand-edit would be a second writer of one posture and the first
+  // thing to disagree with the picker.
+  //
+  // It MERGES rather than replaces: a rule the user authored is not the profile
+  // mechanism's to delete, so it survives the switch and keeps applying. That is
+  // what the leaving-Custom confirm now warns about — a surviving grant, not a
+  // deletion.
   //
   // Two doors into Custom and they differ in where the table starts. Customize
   // materialises the profile in force as a baseline to tweak; picking Custom from
-  // the list starts blank. Both go through one endpoint, distinguished by `seed`.
+  // the list adds nothing and leaves whatever is already there. Both go through one
+  // endpoint, distinguished by `seed`.
 
   /** Render the picker. One radio per profile, its own description under the label,
    *  because what separates two of them is a sentence rather than a word.
@@ -420,8 +437,10 @@ class NativePolicyController {
     }
   }
 
-  /** Select a profile. Replaces the policy, so a Custom set the user authored is
-   *  lost and the confirm says exactly that before anything is written.
+  /** Select a profile. The server merges rather than replaces, so the rules the
+   *  user authored SURVIVE the switch — and the confirm says that, because a grant
+   *  outliving the posture change that was supposed to narrow it is the surprise
+   *  this screen can produce.
    *
    *  Reverting the radio on cancel is not enough on its own — the paint comes from
    *  the server either way — but it stops the picker showing a selection that never
@@ -437,9 +456,10 @@ class NativePolicyController {
     if (leavingCustom && editable > 0) {
       const ok = await confirm(
         `Switch to ${profileLabel(id)}? Your ${String(editable)} custom ` +
-          `${editable === 1 ? "rule" : "rules"} will be DELETED and replaced by that profile's own. ` +
-          `To keep them, cancel and copy them somewhere first.`,
-        "Replace my rules",
+          `${editable === 1 ? "rule STAYS" : "rules STAY"} on disk and ${editable === 1 ? "keeps" : "keep"} ` +
+          `applying alongside that profile, so the agent can end up with more than its name suggests. ` +
+          `Remove them in the table first if that is not what you want.`,
+        "Switch anyway",
         "destructive",
       );
       if (!ok) {
