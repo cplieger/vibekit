@@ -45,8 +45,9 @@ export interface AssistantBubble {
 
 /**
  * Build an assistant markdown bubble. `live` primes an incremental stream plus a
- * reveal cursor and adds the streaming pulse; replay renders the full markdown
- * one-shot.
+ * reveal cursor and marks the bubble `.streaming` — the accent wash and the
+ * blinking block caret, not a pulsing dot (css/13-messages.css). Replay renders
+ * the full markdown one-shot.
  */
 export function buildAssistantBubble(initial: string, live: boolean): AssistantBubble {
   const root = el("div", { className: "message assistant" }) as HTMLDivElement;
@@ -89,7 +90,8 @@ export function buildAssistantBubble(initial: string, live: boolean): AssistantB
     }
   };
 
-  /** Finalize the markdown stream and drop the streaming pulse. Idempotent. */
+  /** Finalize the markdown stream and drop `.streaming` — the wash and the
+   *  caret go with it. Idempotent. */
   const seal = (): void => {
     stream?.end();
     stream = null;
