@@ -14,7 +14,9 @@
 //
 // The "liquid" feel comes from CSS:
 //   - @starting-style + transitions on `.msg-row` for entry animations
-//   - .streaming class on the active assistant bubble (subtle pulse)
+//   - .streaming class on the active assistant TEXT bubble: an accent wash
+//     plus a blinking block caret (css/13-messages.css). A reasoning trace
+//     carries no such marker — see fundamentals/reasoning.ts
 //   - interpolate-size: allow-keywords on :root so height: auto can
 //     animate (set in css/01-tokens.css)
 //   - content-visibility: auto on rows so off-screen messages don't pay
