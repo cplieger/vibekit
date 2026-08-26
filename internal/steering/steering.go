@@ -176,6 +176,28 @@ func (g *Generator) Generate(ctx context.Context) {
 	b.WriteString("- Shell commands execute in the workspace directory\n")
 	b.WriteString("- Git operations are available via the Git panel\n")
 
+	// The tools engine's HTTP surface, which the agent could reach all along and
+	// was never told about. writeTools above lists what is INSTALLED, so without
+	// this the agent knows its current toolset and has no way to learn that more
+	// is one request away -- it shells out to `apt-get install` (no record, lost
+	// on the next container recreate) or gives up. The API is loopback-only by
+	// socket peer precisely so an agent inside the container is the consumer.
+	//
+	// Port 9847 is the container-INTERNAL listen address, so it is correct from
+	// in here whatever the host published it as.
+	b.WriteString("- More tools than the ones listed above are installable, and the tools engine is ")
+	b.WriteString("reachable from your shell on loopback: `curl -s ")
+	b.WriteString("'localhost:9847/api/tools/search?q=<name>'` searches a catalog of ~870 tools ")
+	b.WriteString("AND the host's Debian packages in one answer, each hit carrying its source and ")
+	b.WriteString("version (the two can differ for the same name, which is why both are shown). ")
+	b.WriteString("`POST localhost:9847/api/tools` with `{\"name\":\"<name>\"}` installs one; the ")
+	b.WriteString("install is recorded, versioned and survives a container recreate, which is what ")
+	b.WriteString("a bare `apt-get install` in the shell does not. Prefer it for anything you ")
+	b.WriteString("expect to use again, and tell the user what you installed\n")
+	b.WriteString("- A tool the engine cannot install is still reported, with the reason, when you ")
+	b.WriteString("add `&unavailable=1` to that search. Those are the ones to install in the shell ")
+	b.WriteString("instead\n")
+
 	// Workflow-run recovery, and the two halves are NOT symmetric.
 	//
 	// This used to tell the agent it could retry a failed run, on the reasoning
