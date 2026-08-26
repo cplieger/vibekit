@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -59,6 +60,9 @@ import (
 // Two doors into Custom, and Seed is the difference. The Customize button sends
 // seed=true, which MATERIALISES what is currently in force into the user file so
 // the editable table opens on the outgoing profile's rules as a starting point.
+// "What is in force" has TWO halves and both have to be copied: the live session's
+// preset rules, which only a live policy view can report, and the outgoing rung's
+// own FileRules, which live in the user file the merge is about to rewrite.
 // Selecting Custom from the list sends seed=false, which adds nothing — and, since
 // the merge preserves what it does not own, leaves the user's own rules standing
 // rather than wiping the file.
@@ -122,10 +126,27 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 				httpreply.ErrorJSON("cannot read the current profile's rules to copy them; nothing was changed"))
 			return
 		}
+		// The outgoing rung's OWN file rules are the other half of what is in force,
+		// and presetRulesInForce cannot see them: it filters to SESSION scope, and
+		// these live in the user file. Without them the removal pass inside
+		// SetProfileRules takes `sandbox_network: allow` out and nothing puts it back
+		// — the one capability `all` does not cover, and the whole reason
+		// RelaxCapabilities has two members — so Customize would hand the user a
+		// Custom posture narrower than the profile it claims to have materialised.
+		// Upsert dedups by Signature, so an overlap with a session-scope rule of the
+		// same shape costs nothing.
+		//
+		// activeProfile only ever answers with an id the ladder holds, so this lookup
+		// cannot miss; the boolean is checked rather than discarded because a later
+		// change to that fallback must not silently drop this half again.
+		if outgoing, found := policyfile.ProfileFor(s.activeProfile(r.Context())); found {
+			seeded = append(seeded, outgoing.FileRules...)
+		}
 	}
-	// The user-scope rules this selection writes: a seed copies the outgoing
-	// profile's, a named rung writes its own (empty on every rung but the loosest),
-	// and Custom picked from the list writes none and keeps whatever is there.
+	// The user-scope rules this selection writes: a seed copies what is in force
+	// (the live preset rules AND the outgoing rung's file rules), a named rung
+	// writes its own (empty on every rung but the loosest), and Custom picked from
+	// the list writes none and keeps whatever is there.
 	userRules := profile.FileRules
 	if body.Seed {
 		userRules = seeded
@@ -275,25 +296,33 @@ func snapshotPolicyFiles(roots policyfile.Roots) (policySnapshot, string, error)
 // previous release's relaxation wrote there cannot outlive the profile that
 // replaced it, and a leftover workspace rule cannot widen or narrow the posture
 // with nothing on screen saying so.
+//
+// Every error names the SCOPE it came from, because two files go through this loop
+// and the caller's 400 and 500 both reach the log without one otherwise — the
+// sibling snapshotPolicyFiles logs scope and path on each of its failure branches,
+// and an asymmetry inside one file is how the next reader learns the wrong lesson.
+// Wrapped with %w rather than %v: policyfile.ErrTooManyRules must stay reachable
+// through errors.Is, which failProfileSelection tests for to answer 400 instead of
+// 500, and TestPolicyProfile_AFullUserFileIsTheCallersProblem pins that status.
 func writeProfilePolicy(ctx context.Context, roots policyfile.Roots, userRules []policyfile.Rule) error {
 	for _, scope := range writableScopes() {
 		path, err := policyfile.PathFor(scope, roots)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolve the %s-scope permissions file: %w", scope, err)
 		}
 		f, err := policyfile.Load(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("read the %s-scope permissions file: %w", scope, err)
 		}
 		var incoming []policyfile.Rule
 		if scope == policyfile.ScopeUser {
 			incoming = userRules
 		}
 		if err := f.SetProfileRules(incoming); err != nil {
-			return err
+			return fmt.Errorf("apply the profile to the %s-scope permissions file: %w", scope, err)
 		}
 		if err := policyfile.Save(ctx, path, f); err != nil {
-			return err
+			return fmt.Errorf("write the %s-scope permissions file: %w", scope, err)
 		}
 	}
 	return nil
@@ -337,20 +366,29 @@ func restorePolicyFiles(ctx context.Context, roots policyfile.Roots, snap policy
 // and can fix, and the sibling rule endpoint already answers 400 for it. Folding
 // it into an internal error made every profile selection report a bug in vibekit
 // for a full file.
+//
+// The sentinel is tested BEFORE the restore because on that path there is nothing
+// to put back. SetProfileRules is the only source of ErrTooManyRules here and it
+// returns before writeProfilePolicy reaches its Save, so both files are still
+// exactly as the caller left them; restoring anyway rewrote them with byte-
+// identical content, which bumps mtime, wakes KAS's watcher and produces a
+// policy-changed notification for a request that changed nothing. It also let the
+// 500 below claim "the previous rules could not be put back" for a case with
+// nothing to put back. Reordering these two blocks reintroduces both.
 func (s *Server) failProfileSelection(ctx context.Context, w http.ResponseWriter, roots policyfile.Roots,
 	snap policySnapshot, cause error,
 ) {
+	if errors.Is(cause, policyfile.ErrTooManyRules) {
+		httpreply.BadRequest(w,
+			"the permissions file is at its rule limit; remove a rule from the table and try again")
+		return
+	}
 	if err := restorePolicyFiles(ctx, roots, snap); err != nil {
 		s.agent.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPermissionsChanged, "",
 			vibekit.PermissionsChangedPayload{Status: "failed"}))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
 			"the profile could not be applied and the previous rules could not be put back; "+
 				"inspect permissions.yaml under ~/.kiro/settings and ~/.kiro/workspace-roots"))
-		return
-	}
-	if errors.Is(cause, policyfile.ErrTooManyRules) {
-		httpreply.BadRequest(w,
-			"the permissions file is at its rule limit; remove a rule from the table and try again")
 		return
 	}
 	httpreply.InternalError(w, cause)

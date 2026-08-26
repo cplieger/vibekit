@@ -91,7 +91,7 @@ describe("the permission card's Always-allow row", () => {
 
   // A control that does nothing teaches the reader to distrust every other one,
   // so the withdrawn offer is prose. The card already carries the policy pointer
-  // to the workspace relaxation, which is the real escape hatch.
+  // to the security-profile picker, which is the real escape hatch.
   it("renders the note as text, never as a disabled control", () => {
     const c = card({ always_allow_blocked: "unparseable" });
     expect(note(c)?.tagName).not.toBe("BUTTON");

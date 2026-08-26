@@ -54,9 +54,10 @@ type PolicyRuleCore struct {
 // filter on the other. Capabilities is what the rule-adder's dropdown OFFERS —
 // the suggested set unioned with every capability the live rules already use, so
 // it can learn a name vibekit shipped without. RelaxCapabilities is the fixed
-// membership of the workspace relaxation switch, derived in policyfile and
-// deliberately not discovered: it decides what one click grants, so it may not
-// grow from whatever happens to be in the returned rules.
+// membership of the LOOSEST security profile's file rules, derived in policyfile
+// and deliberately not discovered: it decides what picking that rung grants, so it
+// may not grow from whatever happens to be in the returned rules. (It named the
+// Settings -> Permissions relaxation switch until the profile picker replaced it.)
 type PolicyView struct {
 	// Profile is the posture in force; Profiles below is the ladder it comes from.
 	// Split apart here only because the two have different alignments — read them

@@ -16,7 +16,10 @@ import (
 // profile is a global posture and a door that computed its own answer could
 // disagree with the others. The utility session matters more than it looks: it is
 // the session answering GET /api/permissions, so it is the only place a profile's
-// own rules are readable, which is what the Customize button materialises from.
+// PRESET rules are readable, which is half of what the Customize button
+// materialises from. The other half is the loosest rung's own FileRules, which live
+// in the user permissions file rather than in any session — see
+// policyfile.Profile.FileRules and the seed path in handlePolicyProfile.
 //
 // An empty result is a real answer and not a failure: it is the Custom profile,
 // where the permissions files are the whole policy, and the kascap row withholds
