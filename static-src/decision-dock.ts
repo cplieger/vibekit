@@ -90,26 +90,64 @@ function bump(): void {
   queueVersion.value = queueVersion.peek() + 1;
 }
 
-/** One mounted dock: its element, which decisions it shows, and what it last
- *  rendered. The composer's dock shows the ACTIVE CHAT's queue; a run tab's
- *  shows one RUN's decisions wherever they are keyed — an agent-launched run's
- *  ask lives under the launching chat's id, a manual one's under `run:<id>`,
- *  and the run tab must render both. */
+/** Which of the three motion phases a host is in. The attribute
+ *  `data-dock-phase` carries the same word into `css/26-dock.css`, which owns
+ *  every duration, easing and keyframe. */
+type Phase = "entering" | "leaving" | "advancing";
+
+/** The phase windows in milliseconds, the TWIN of the durations in
+ *  `css/26-dock.css` (`--dur-standard`, `--dock-exit-dur`, `--dur-exit`).
+ *
+ *  There is deliberately no `transitionend` or `animationend` listener anywhere
+ *  in this module: one timer per host is the sole cleanup authority, which
+ *  removes a whole class of leak because there is no listener to orphan. The
+ *  cost of that choice is this duplication, so `decision-dock.test.ts` reads the
+ *  durations back out of the stylesheet and asserts the two agree — a retune of
+ *  one side cannot silently desynchronise the cleanup from the animation.
+ *
+ *  Exported for that test only; nothing else reads it. */
+export const DOCK_PHASE_MS: Readonly<Record<Phase, number>> = {
+  entering: 200,
+  leaving: 120,
+  advancing: 150,
+};
+
+/** The two inline values a phase writes on the host box, as strings. `""` means
+ *  "hand the property back to the stylesheet" — `height: auto` and
+ *  `margin-block-end: var(--sp-2)`. */
+interface BoxState {
+  height: string;
+  margin: string;
+}
+
+/** One mounted dock: its element, which decisions it shows, what it last
+ *  rendered, and the live phase's three pieces of state. The composer's dock
+ *  shows the ACTIVE CHAT's queue; a run tab's shows one RUN's decisions wherever
+ *  they are keyed — an agent-launched run's ask lives under the launching chat's
+ *  id, a manual one's under `run:<id>`, and the run tab must render both.
+ *
+ *  Each host owns its own phase, so the composer dock and a run dock rendering
+ *  the same decision can be at different points without interfering. */
 interface DockHost {
   el: HTMLElement;
   match: (d: Decision) => boolean;
   renderedKey: string;
+  /** The answered card, kept on screen (neutralised) for the phase's duration.
+   *  At most one per host, ever. */
+  outgoing: HTMLElement | null;
+  /** The cleanup timer. `clearTimeout` is the optimisation; `gen` is the
+   *  guarantee. */
+  timer: ReturnType<typeof setTimeout> | null;
+  /** Bumped by `endPhase`. A timer callback whose generation has moved on
+   *  returns without touching the DOM. */
+  gen: number;
 }
 
 const hosts: DockHost[] = [];
 
 /** Wire the composer's dock into the chat bottom bar. Idempotent per host. */
 export function mountDecisionDock(hostEl: HTMLElement): void {
-  addHost({
-    el: hostEl,
-    match: (d) => d.chatID === activeChatID(),
-    renderedKey: "",
-  });
+  addHost(hostEl, (d) => d.chatID === activeChatID());
 }
 
 /** Wire the run view's dock: it shows the CURRENT run's decisions regardless
@@ -119,13 +157,9 @@ export function mountDecisionDock(hostEl: HTMLElement): void {
  *  run is a GETTER and a tab switch re-keys the same host (the switch bumps the
  *  queue version via renderRunDock). Idempotent per host element. */
 export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
-  addHost({
-    el: hostEl,
-    match: (d) => {
-      const id = runID();
-      return id !== "" && (d.runID === id || d.chatID === `run:${id}`);
-    },
-    renderedKey: "",
+  addHost(hostEl, (d) => {
+    const id = runID();
+    return id !== "" && (d.runID === id || d.chatID === `run:${id}`);
   });
 }
 
@@ -136,10 +170,18 @@ export function rerenderDocks(): void {
   bump();
 }
 
-function addHost(h: DockHost): void {
-  if (hosts.some((existing) => existing.el === h.el)) {
+function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
+  if (hosts.some((existing) => existing.el === hostEl)) {
     return;
   }
+  const h: DockHost = {
+    el: hostEl,
+    match,
+    renderedKey: "",
+    outgoing: null,
+    timer: null,
+    gen: 0,
+  };
   hosts.push(h);
   // Two triggers: the active chat changed (a different queue is on screen), or
   // this module's queue changed (a decision arrived or was answered).
@@ -351,17 +393,17 @@ function renderHost(h: DockHost): void {
   const head = mine[0];
 
   if (head === undefined) {
+    // `renderedKey` is cleared the moment a `leaving` phase starts, so a second
+    // render with an empty queue does not restart the exit.
     if (h.renderedKey !== "") {
-      h.el.replaceChildren();
-      h.el.classList.add("hidden");
-      h.renderedKey = "";
+      swap(h, undefined, 0);
     }
     return;
   }
 
   // Rebuilding a card the user is filling in would discard their typing, so a
   // render for the same decision is a no-op. Only the depth line, which lives
-  // outside the card, updates in place.
+  // outside the card, updates in place. This branch MUST NOT start a phase.
   const key = decisionKey(head.chatID, head.kind, head.requestID);
   const depth = mine.length;
   if (key === h.renderedKey) {
@@ -369,14 +411,204 @@ function renderHost(h: DockHost): void {
     return;
   }
 
+  swap(h, head, depth);
+}
+
+// ---------------------------------------------------------------------------
+// The phase machine.
+//
+// `renderHost` is still the only funnel and it gained no lookahead: the phase
+// falls out of two facts it already had. Whether another decision is queued
+// behind the answered one is not DETECTED, it is OBSERVED — `settle` splices the
+// answered entry and then calls `bump()`, so by the time the render effect runs,
+// `matching(h)[0]` is already the NEXT decision, or undefined when the queue is
+// empty. The advance is therefore the ordinary render path, keyed on nothing
+// new: no coupling to click handlers, no timing dependency on an animation, no
+// change to queue semantics. Every retirement path (`settle`,
+// `collapseSettledDecision`, `dropDecisions`, `dropTurnDecisions`) animates
+// identically for free, because they all splice then bump.
+//
+// The dispatch is NEVER gated on any of this. `settle` splices, calls `submit`
+// and bumps synchronously inside the click handler, so the response is on the
+// wire BEFORE the render effect that starts the animation runs.
+// ---------------------------------------------------------------------------
+
+/** Swap the host's content, animating the change unless motion is off.
+ *
+ *  | had content on screen | has an incoming head | phase     |
+ *  |-----------------------|----------------------|-----------|
+ *  | no                    | yes                  | entering  |
+ *  | yes                   | yes                  | advancing |
+ *  | yes                   | no                   | leaving   |
+ *
+ *  (No/no is unreachable: `renderHost` returns early.) */
+function swap(h: DockHost, head: Decision | undefined, depth: number): void {
+  // Measured FIRST, before endPhase and before any write, so it reads the LIVE
+  // height. One code path then serves all three starting states: collapsed
+  // (0), settled (the card's height), and mid-animation (wherever the box
+  // currently is) — which is what makes rapid Allow-Allow-Allow morph from the
+  // current geometry instead of snapping.
+  const from = measure(h);
+  const phase: Phase =
+    head === undefined ? "leaving" : h.renderedKey === "" ? "entering" : "advancing";
+
+  // Idempotent, and every phase starts with it: at most one timer and one
+  // outgoing element per host, ever.
+  endPhase(h);
+
+  // Reduced motion and a background tab take NO phase at all: same final DOM,
+  // same response behaviour, no outgoing element and no timer, so there is
+  // nothing left to clean up. `document.hidden` is in the gate for a real
+  // reason — animations do not advance in a background tab but `setTimeout`
+  // does, so without it the user would return to a stale outgoing card sitting
+  // at full opacity over the new one.
+  if (motionOff()) {
+    if (head === undefined) {
+      h.el.replaceChildren();
+      h.el.classList.add("hidden");
+      h.renderedKey = "";
+    } else {
+      show(h, head, depth);
+    }
+    return;
+  }
+
+  // The answered card stays on screen for the phase. Nothing to take on an
+  // enter: the host is either empty or mid-collapse with its content already
+  // detached.
+  const outgoing = phase === "entering" ? null : takeOutgoing(h);
+
+  if (head === undefined) {
+    // `.hidden` deliberately does NOT land here — it lands in `finishPhase`,
+    // after the collapse. Adding it now is what made the old exit unanimatable.
+    h.el.replaceChildren();
+    h.renderedKey = "";
+  } else {
+    show(h, head, depth);
+  }
+  if (outgoing !== null) {
+    h.el.prepend(outgoing);
+    h.outgoing = outgoing;
+  }
+
+  h.el.dataset["dockPhase"] = phase;
+  pinAndRelease(
+    h,
+    from,
+    phase === "leaving" ? { height: "0px", margin: "0px" } : { height: "", margin: "" },
+  );
+
+  const gen = h.gen;
+  h.timer = setTimeout(() => {
+    finishPhase(h, gen, phase);
+  }, DOCK_PHASE_MS[phase]);
+}
+
+/** Put a decision on screen. Identical on the animated and the instant path, so
+ *  `announce()` keeps firing on exactly today's schedule — once per new head,
+ *  with the card already in the DOM and never itself opacity-0. */
+function show(h: DockHost, head: Decision, depth: number): void {
   h.el.replaceChildren(buildCard(head), depthRow(depth));
   h.el.classList.remove("hidden");
-  h.renderedKey = key;
+  h.renderedKey = decisionKey(head.chatID, head.kind, head.requestID);
   announce(announcementFor(head));
 }
 
+/** The box's current geometry. A collapsed host is `display: none`, which
+ *  occupies nothing at all — margin included — so its margin start is 0 rather
+ *  than the resting value `getComputedStyle` still reports for it. */
+function measure(h: DockHost): BoxState {
+  const height = `${String(h.el.getBoundingClientRect().height)}px`;
+  if (h.el.classList.contains("hidden")) {
+    return { height, margin: "0px" };
+  }
+  return { height, margin: getComputedStyle(h.el).marginBlockEnd };
+}
+
+/** Pin the box at a measured geometry with transitions SUPPRESSED, then release
+ *  to the target.
+ *
+ *  The suppression is the single most load-bearing mechanical fact here.
+ *  Measured in Chromium: writing the pin with transitions live starts a height
+ *  transition for the PIN, and clearing the inline value in the same task then
+ *  cancels it and starts no replacement — the box snaps. A forced reflow alone
+ *  does not fix it and neither does waiting two animation frames. Suppressing
+ *  for the pin's duration makes the release the only style change the transition
+ *  machinery sees. */
+function pinAndRelease(h: DockHost, from: BoxState, to: BoxState): void {
+  const s = h.el.style;
+  s.transition = "none";
+  s.height = from.height;
+  s.marginBlockEnd = from.margin;
+  // Flush: the pin has to land in a COMPLETED style resolution.
+  void getComputedStyle(h.el).height;
+  s.transition = "";
+  s.height = to.height;
+  s.marginBlockEnd = to.margin;
+}
+
+/** Move the answered content into a neutralised wrapper that stays on screen for
+ *  the phase. `aria-hidden` so it is not read a second time, `inert` so it can
+ *  be neither tabbed into nor clicked (the retained-handle case is also caught
+ *  by `settle`'s membership guard, which is the authoritative one). Moving a
+ *  focused button into an inert subtree blurs it, which is exactly what the
+ *  previous `replaceChildren()` already produced. */
+function takeOutgoing(h: DockHost): HTMLElement | null {
+  const kids = [...h.el.children];
+  if (kids.length === 0) {
+    return null;
+  }
+  const wrap = el("div", { className: "dock-outgoing", "aria-hidden": "true" });
+  wrap.setAttribute("inert", "");
+  wrap.append(...kids);
+  return wrap;
+}
+
+/** Tear down whatever phase this host is in. Idempotent, and safe to call when
+ *  there is no phase. */
+function endPhase(h: DockHost): void {
+  h.gen++;
+  if (h.timer !== null) {
+    clearTimeout(h.timer);
+    h.timer = null;
+  }
+  h.outgoing?.remove();
+  h.outgoing = null;
+  delete h.el.dataset["dockPhase"];
+  h.el.style.transition = "";
+  h.el.style.height = "";
+  h.el.style.marginBlockEnd = "";
+}
+
+/** The phase's window elapsed. The generation check is what makes a superseded
+ *  timer harmless even if it somehow escaped `clearTimeout`. */
+function finishPhase(h: DockHost, gen: number, phase: Phase): void {
+  if (h.gen !== gen) {
+    return;
+  }
+  endPhase(h);
+  if (phase === "leaving") {
+    h.el.classList.add("hidden");
+  }
+}
+
+/** Animate nothing: the reader asked for no motion, or the tab is in the
+ *  background where animations do not advance. Read live per transition rather
+ *  than cached, so flipping the preference takes effect on the next swap. */
+function motionOff(): boolean {
+  if (document.hidden) {
+    return true;
+  }
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+/** Scoped to a DIRECT child: a stale depth row inside `.dock-outgoing` sits
+ *  earlier in document order and would win an unscoped lookup. */
 function updateDepth(h: DockHost, depth: number): void {
-  const row = h.el.querySelector(".dock-depth");
+  const row = h.el.querySelector(":scope > .dock-depth");
   if (row === null) {
     return;
   }
@@ -436,8 +668,14 @@ function buildCard(d: Decision): HTMLElement {
   }
 }
 
-/** Reset module state for test isolation. Production never calls this. */
+/** Reset module state for test isolation. Production never calls this.
+ *
+ *  `endPhase` first, and not optionally: a pending cleanup timer from one test
+ *  would otherwise fire into the next test's DOM. */
 export function _resetForTest(): void {
+  for (const h of hosts) {
+    endPhase(h);
+  }
   queues.clear();
   hosts.length = 0;
   queueVersion.value = 0;

@@ -51,6 +51,34 @@
     scroll-behavior: auto !important;
   }
   /* stylelint-enable declaration-no-important, time-min-milliseconds */
+
+  /* The interaction dock gates on this preference in JS too, and that gate is
+     the one that normally applies: it takes NO phase at all, so there is no
+     outgoing card and no timer. This covers the single case the gate cannot —
+     the preference flipping WHILE a phase is already live, after the gate was
+     evaluated as false.
+
+     Not a duplicate of the sweep above. That sweep ZEROES a duration, and a
+     zeroed animation RUNS to completion rather than being suppressed, so the
+     dock's outgoing card would still paint at full opacity over the incoming
+     one for a frame; and the sweep says nothing about the inline pixel height
+     `pinAndRelease` writes, which would transition on the next release.
+
+     The `[data-dock-phase]` in the selector is load-bearing and is NOT
+     decoration. A live phase is exactly when this rule has to win, and each
+     phase rule in `26-dock.css` is `.decision-dock[data-dock-phase="…"]`
+     (0,2,0). A bare `.decision-dock` here scores (0,1,0) and LOSES to every
+     one of them, so the only case the paragraph above cites was the one case
+     it did not cover. The attribute selector ties at (0,2,0) and wins on
+     source order, because both files are unlayered and `css/MANIFEST` lists
+     40-a11y.css after 26-dock.css. Reordering the MANIFEST breaks this. */
+  .decision-dock[data-dock-phase] {
+    transition: none;
+  }
+
+  .dock-outgoing {
+    display: none;
+  }
 }
 
 @media (prefers-contrast: more) {

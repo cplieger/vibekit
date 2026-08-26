@@ -19,19 +19,19 @@ import type { UserInputNeededPayload, UserInputOption } from "./types.js";
 type UserInputAction = "answered" | "dismissed";
 type SubmitFn = (action: UserInputAction, answer?: string) => void;
 
-// The mounted card's reporter. One card is on screen at a time (the dock
-// renders its queue head), and the dock rejects a second answer for the same
-// request, so the stage renderers can reach it as module state instead of
-// threading it through every stage transition.
-let activeSubmit: SubmitFn | null = null;
-
-/** Build the dock card for one agent question. */
+/** Build the dock card for one agent question.
+ *
+ *  The reporter is threaded through every stage rather than parked in module
+ *  state, and that is a correctness requirement rather than a style choice. The
+ *  dock keeps the ANSWERED card on screen for the length of its advance
+ *  animation, so two cards coexist: a module-level reporter would have been
+ *  overwritten by the incoming card, and the outgoing card's handlers would then
+ *  report against the INCOMING decision — which `settle`'s membership guard
+ *  cannot catch, because that decision is legitimately still in the queue. */
 export function buildUserInputCard(
   payload: UserInputNeededPayload,
   onSubmit: SubmitFn,
 ): HTMLElement {
-  activeSubmit = onSubmit;
-
   const body = el(
     "div",
     { className: "user-input-body" },
@@ -41,7 +41,7 @@ export function buildUserInputCard(
   const freeformEl = el("div", { className: "user-input-freeform" });
   const actions = el("div", { className: "user-input-actions" });
 
-  renderOptionsStage(optionsEl, freeformEl, actions, payload.options ?? []);
+  renderOptionsStage(optionsEl, freeformEl, actions, payload.options ?? [], onSubmit);
 
   return el(
     "div",
@@ -59,6 +59,7 @@ function renderOptionsStage(
   freeformEl: HTMLElement,
   actions: HTMLElement,
   options: readonly UserInputOption[],
+  submit: SubmitFn,
 ): void {
   optionsEl.replaceChildren();
   freeformEl.replaceChildren();
@@ -68,16 +69,16 @@ function renderOptionsStage(
     optionsEl.appendChild(
       optionCard(opt, () => {
         if ((opt.sub_options ?? []).length > 0) {
-          renderSubOptionsStage(optionsEl, freeformEl, actions, opt, options);
+          renderSubOptionsStage(optionsEl, freeformEl, actions, opt, options, submit);
         } else {
-          finish("answered", opt.title);
+          submit("answered", opt.title);
         }
       }),
     );
   }
 
-  renderFreeform(freeformEl, options.length > 0);
-  actions.appendChild(dismissButton());
+  renderFreeform(freeformEl, options.length > 0, submit);
+  actions.appendChild(dismissButton(submit));
 }
 
 /** One selectable answer card: title + optional description + badge. */
@@ -117,6 +118,7 @@ function renderSubOptionsStage(
   actions: HTMLElement,
   opt: UserInputOption,
   all: readonly UserInputOption[],
+  submit: SubmitFn,
 ): void {
   optionsEl.replaceChildren();
   freeformEl.replaceChildren();
@@ -150,7 +152,7 @@ function renderSubOptionsStage(
   ) as HTMLButtonElement;
   confirm.addEventListener("click", () => {
     const picked = boxes.filter((b) => b.box.checked).map((b) => b.title);
-    finish("answered", `${opt.title} [${picked.join(", ")}]`);
+    submit("answered", `${opt.title} [${picked.join(", ")}]`);
   });
   const back = el(
     "button",
@@ -158,14 +160,14 @@ function renderSubOptionsStage(
     "Back",
   ) as HTMLButtonElement;
   back.addEventListener("click", () => {
-    renderOptionsStage(optionsEl, freeformEl, actions, all);
+    renderOptionsStage(optionsEl, freeformEl, actions, all, submit);
   });
-  actions.append(confirm, back, dismissButton());
+  actions.append(confirm, back, dismissButton(submit));
 }
 
 /** The typed-answer editor. Primary (textarea) for a free-form question;
  *  compact alternative under the cards when options exist. */
-function renderFreeform(freeformEl: HTMLElement, hasOptions: boolean): void {
+function renderFreeform(freeformEl: HTMLElement, hasOptions: boolean, submit: SubmitFn): void {
   const input = el("textarea", {
     className: "user-input-text",
     rows: hasOptions ? "1" : "3",
@@ -180,7 +182,7 @@ function renderFreeform(freeformEl: HTMLElement, hasOptions: boolean): void {
   send.addEventListener("click", () => {
     const text = input.value.trim();
     if (text !== "") {
-      finish("answered", text);
+      submit("answered", text);
     } else {
       input.focus();
     }
@@ -194,23 +196,27 @@ function renderFreeform(freeformEl: HTMLElement, hasOptions: boolean): void {
   freeformEl.append(input, send);
 }
 
-function dismissButton(): HTMLButtonElement {
+function dismissButton(submit: SubmitFn): HTMLButtonElement {
   const btn = el(
     "button",
     { type: "button", className: "btn-small confirm-danger" },
     "Skip",
   ) as HTMLButtonElement;
   btn.addEventListener("click", () => {
-    finish("dismissed");
+    // Explicit `undefined` rather than a one-argument call: the wire contract is
+    // an action with no answer, and the arity is what `user-input.test.ts`
+    // asserts.
+    submit("dismissed", undefined);
   });
   return btn;
 }
 
-function finish(action: UserInputAction, answer?: string): void {
-  activeSubmit?.(action, answer);
-}
-
-/** Reset module state for test isolation. Production never calls this. */
+/** Reset module state for test isolation. Production never calls this.
+ *
+ *  A documented NO-OP: this module holds no module state any more (see
+ *  `buildUserInputCard`). It stays exported because `user-input.test.ts` imports
+ *  it, and that file is outside this change's scope. Dropping the export and its
+ *  import is a one-line follow-up for whoever next touches that suite. */
 export function _resetForTest(): void {
-  activeSubmit = null;
+  // Nothing to reset.
 }
