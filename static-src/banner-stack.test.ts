@@ -34,6 +34,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import type * as BannerStack from "./banner-stack.js";
+import toolCardSource from "./tool-card.ts?raw";
 
 /** Cache-buster for the re-imports below.
  *
@@ -277,5 +278,110 @@ describe("banner-stack: single live region", () => {
       expect(node.hasAttribute("role")).toBe(false);
       expect(node.hasAttribute("aria-live")).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The severity's non-colour channel.
+//
+// Before the glyph, a banner's level lived in exactly two places —
+// `border-left-color` and `color` — both of them colour, which is WCAG 1.4.1 for
+// the same reason a bare coloured dot is. It was also the reason the left border
+// could not simply be deleted with the other state-carrying edges: a border is
+// the only one of the two channels that survives `forced-colors: active` (a
+// background-color is flattened there, a border still renders), and
+// `40-a11y.css`'s forced-colors block covers `.uip-modal-dialog`, `.popup`,
+// `.tool-call` and `.subagent-block` — not banners. So the shape had to land
+// before the edge could go, and these cases are what say it did.
+// ---------------------------------------------------------------------------
+
+/** `tool-card.ts`'s OUTCOME_BADGE, read as SOURCE.
+ *
+ *  It is not exported, and this is the check that would otherwise be a comment:
+ *  the banner glyphs MIRROR that vocabulary rather than inventing a second one,
+ *  so if a future edit changes the cross or the triangle over there, this fails
+ *  here instead of the transcript and the banner stack quietly disagreeing. Read
+ *  as text rather than imported for real, the same technique
+ *  `__test-helpers__/css-rules.ts` uses on the stylesheets — importing tool-card
+ *  would drag its whole DOM graph into this file's mock set for one constant. */
+function outcomeBadge(state: string): string {
+  // `const` anchors the DECLARATION: the first bare `OUTCOME_BADGE` in that file
+  // is the lookup inside applyOutcome, whose braces are a subscript.
+  const body = /const OUTCOME_BADGE[^{]*\{([^}]*)\}/.exec(toolCardSource)?.[1] ?? "";
+  const hit = new RegExp(`${state}:\\s*"([^"]*)"`).exec(body)?.[1];
+  if (hit === undefined) {
+    throw new Error(`tool-card.ts OUTCOME_BADGE has no ${state} member`);
+  }
+  // The source spells them as escapes; this is the character they denote.
+  return JSON.parse(`"${hit}"`) as string;
+}
+
+describe("banner-stack: severity carries a shape, not colour alone", () => {
+  it("gives every level a glyph, and mirrors tool-card's outcome vocabulary", async () => {
+    const { container, mod } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    mod.showBanner("A", "e", "boom", "error", false);
+    mod.showBanner("A", "w", "careful", "warning", false);
+    mod.showBanner("A", "i", "note", "info", false);
+
+    const glyphFor = (code: string): string =>
+      container.querySelector(
+        `.banner-${code === "e" ? "error" : code === "w" ? "warning" : "info"} .banner-glyph`,
+      )?.textContent ?? "";
+
+    // error takes OUTCOME_BADGE.fail, warning takes OUTCOME_BADGE.warn.
+    expect(glyphFor("e")).toBe(outcomeBadge("fail"));
+    expect(glyphFor("w")).toBe(outcomeBadge("warn"));
+    // `info` has no member over there (that vocabulary covers settled TOOL
+    // outcomes only), so the banner picks U+2139 INFORMATION SOURCE.
+    expect(glyphFor("i")).toBe("\u2139");
+  });
+
+  it("makes the three levels distinguishable by SHAPE, which is the point", async () => {
+    const { container, mod } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    mod.showBanner("A", "e", "boom", "error", false);
+    mod.showBanner("A", "w", "careful", "warning", false);
+    mod.showBanner("A", "i", "note", "info", false);
+
+    const glyphs = [...container.querySelectorAll(".banner-glyph")].map((g) => g.textContent);
+    expect(glyphs).toHaveLength(3);
+    // Three banners, three DIFFERENT characters. A shared glyph would leave the
+    // level readable only by hue again, which is the failure being fixed.
+    expect(new Set(glyphs).size).toBe(3);
+  });
+
+  it("hides the glyph from assistive tech, so the message is the whole announcement", async () => {
+    const { container, mod } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    mod.showBanner("A", "e", "boom", "error", false);
+
+    const glyph = container.querySelector(".banner-glyph");
+    expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+    // The glyph is a restatement for the eye. The stack's own live region
+    // announces the message text once; a glyph in that name would read as a
+    // character before every notice.
+    expect(container.querySelector(".banner-msg")?.textContent).toBe("boom");
+  });
+
+  it("keeps the glyph when a repeat call replaces the message in place", async () => {
+    const { container, mod } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    mod.showBanner("A", "e", "boom", "error", false);
+    // Same (chat, code): showBanner rewrites the text node on the entry-owned
+    // element rather than rebuilding it, so the channel must survive that path.
+    mod.showBanner("A", "e", "still boom", "error", false);
+
+    expect(container.querySelectorAll(".banner")).toHaveLength(1);
+    expect(container.querySelectorAll(".banner-glyph")).toHaveLength(1);
+    expect(container.querySelector(".banner-msg")?.textContent).toBe("still boom");
   });
 });

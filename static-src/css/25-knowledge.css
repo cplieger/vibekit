@@ -9,11 +9,13 @@
    ========================================================================== */
 
 /* Enable hint: shown only when chat.enableKnowledge is off. A subtle amber
-   wash so it reads as an advisory, not an error. */
+   wash so it reads as an advisory, not an error. The wash is the whole state
+   channel — the amber left edge that used to sit beside it said the same thing,
+   which is the decision `.pill-status-content` records in `15-input.css`. What
+   the hint IS is carried by its own prose. */
 .knowledge-hint {
   margin-block-start: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
-  border-inline-start: 2px solid var(--c-yellow);
   border-radius: var(--r);
   background: color-mix(in srgb, var(--c-yellow) 8%, transparent);
 }

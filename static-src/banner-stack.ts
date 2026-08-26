@@ -207,6 +207,29 @@ function updateBannerLink(node: HTMLDivElement, link: BannerLink): void {
   }
 }
 
+/** One glyph per severity, MIRRORING `tool-card.ts`'s `OUTCOME_BADGE` rather
+ *  than inventing a second vocabulary: `error` takes its `fail` cross and
+ *  `warning` its `warn` triangle, so a reader who has learned the transcript's
+ *  outcome shapes reads a banner with no second lesson.
+ *
+ *  `info` has no member over there — that vocabulary only covers SETTLED tool
+ *  outcomes, and an informational notice is not one — so U+2139 INFORMATION
+ *  SOURCE is chosen here: it is the conventional glyph for the meaning, it is
+ *  distinct in SHAPE from both the cross and the triangle (which is the whole
+ *  point of the channel), and it carries text presentation by default, so it
+ *  renders as a glyph in the banner's own colour rather than as an emoji that
+ *  would ignore it.
+ *
+ *  This is deliberately NOT a call to `applyOutcome`: that function requires a
+ *  `.tool-icon` child and overwrites `aria-label`, which would clobber the
+ *  banner's accessible text. The vocabulary is mirrored; the function is not
+ *  reused. */
+const LEVEL_GLYPH: Readonly<Record<BannerLevel, string>> = {
+  error: "\u2717",
+  warning: "\u26A0",
+  info: "\u2139",
+};
+
 export function showBanner(
   chatID: string,
   code: string,
@@ -234,6 +257,20 @@ export function showBanner(
     return;
   }
   const msg = el("span", { className: "banner-msg" }, message);
+  // The SEVERITY's non-colour channel. Without it the level lived in exactly two
+  // places, `border-left-color` and `color`, both of them colour — WCAG 1.4.1,
+  // the same failure a bare coloured dot is. The border was also the only channel
+  // that survived `forced-colors: active` (a background-color is flattened there,
+  // a border still renders) and `40-a11y.css`'s forced-colors block does not cover
+  // banners, so the shape had to land before the border could go.
+  //
+  // aria-hidden because it is a restatement for the eye: the message text is the
+  // whole accessible content, announced once by the stack's own live region.
+  const glyph = el(
+    "span",
+    { className: "banner-glyph", "aria-hidden": "true" },
+    LEVEL_GLYPH[level],
+  );
   // No per-banner role/aria-live: the stack container (ensureBound) is the single
   // aria-live="polite" region, so individual banners are NOT separately live —
   // nesting a role="alert"/"status" child inside a live region double-announces
@@ -243,6 +280,7 @@ export function showBanner(
     {
       className: `banner banner-${level}`,
     },
+    glyph,
     msg,
   ) as HTMLDivElement;
   if (link !== undefined) {
