@@ -4,7 +4,6 @@ import { vi } from "vitest";
 
 export const scrollMock = {
   getScrollEl: vi.fn(() => document.createElement("div")),
-  scrollEl: null as HTMLElement | null,
   scrollToBottom: vi.fn(),
   setUserScrolledUp: vi.fn(),
   jumpTo: vi.fn(),
@@ -23,4 +22,9 @@ export const scrollMock = {
     mutate();
   }),
   fillViewport: vi.fn(),
+  // How much room the transcript has left to scroll. Defaults to a comfortably
+  // navigable value rather than 0, because the turn rail hides itself below
+  // MIN_SCROLL_PX — a 0 here would silently withdraw the rail from every suite
+  // that renders one and assert nothing about why.
+  scrollableBy: vi.fn(() => 500),
 };
