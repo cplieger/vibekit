@@ -384,7 +384,6 @@ func TestCloseTab_AnIdThatIsNotOpenIsNotAnError(t *testing.T) {
 	_, before := st.List()
 
 	closed, version, err := mem.CloseTab(t.Context(), "not-open", "op-close")
-
 	if err != nil {
 		t.Fatalf("closing an absent id = %v, want no error", err)
 	}
@@ -445,12 +444,10 @@ func TestDeleteChatAndCloseTabs_TheRecordLeads(t *testing.T) {
 	var openDone sync.WaitGroup
 	flaky.setBeforeClose(func() {
 		_, recordPresentAtClose = store.Get(context.Background(), chatID)
-		openDone.Add(1)
-		go func() {
-			defer openDone.Done()
+		openDone.Go(func() {
 			_, openErr = mem.OpenTab(context.Background(),
 				vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: string(chatID)}, "op-racer")
-		}()
+		})
 	})
 
 	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); err != nil {
@@ -506,7 +503,7 @@ func TestDeleteChatAndCloseTabs_AnnouncesTheRemovalEvenWhenTheCloseKeepsFailing(
 	mem, flaky, bus := newFlakyMembership(t, store)
 	opened := createChat(t, mem, "op-a")
 	chatID := vibekit.ChatID(opened.Chat.ID)
-	_, versionBefore := flaky.Store.List()
+	_, versionBefore := flaky.List()
 	flaky.openFails(0)
 	flaky.setFailCloses(10)
 

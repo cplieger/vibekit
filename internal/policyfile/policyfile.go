@@ -115,8 +115,15 @@ const (
 // this set (see the view handler, which unions in every capability the rules KAS
 // reports already use). What is left is a suggestion list: being incomplete now
 // costs a dropdown entry, not a write.
+// capAll is KAS's umbrella alias meaning every capability it resolves through
+// META_CAPABILITIES. One spelling because three separate sets name it — the
+// suggestion list, the umbrella set and the relaxation's own first element — and
+// a divergence between them would make the relaxation claim a grant it never
+// wrote.
+const capAll = "all"
+
 var suggestedCapabilities = map[string]struct{}{
-	"all": {}, "builtin": {}, "filesystem": {},
+	capAll: {}, "builtin": {}, "filesystem": {},
 	"fs_read": {}, "fs_write": {}, "shell": {},
 	"web_fetch": {}, "web_search": {}, "mcp": {},
 	"subagent": {}, "skill": {}, "power": {},
@@ -139,7 +146,7 @@ func Capabilities() []string {
 // thing. KAS resolves each against META_CAPABILITIES; vibekit only needs to know
 // which names are aliases, not what two of them expand to.
 var umbrellas = map[string]struct{}{
-	"all": {}, "builtin": {}, "filesystem": {},
+	capAll: {}, "builtin": {}, "filesystem": {},
 }
 
 // allMembers is what KAS's `all` alias expands to, snapshotted off the 2.19.1
@@ -203,7 +210,7 @@ var allMembers = map[string]struct{}{
 // force. The UI says so beside the switch; a control that implied otherwise would
 // be the same defect as one that silently does nothing.
 func RelaxCapabilities() []string {
-	out := []string{"all"}
+	out := []string{capAll}
 	for c := range suggestedCapabilities {
 		if _, alias := umbrellas[c]; alias {
 			continue

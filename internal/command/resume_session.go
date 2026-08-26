@@ -75,5 +75,5 @@ func CmdResumeSession(ctx context.Context, mem *Membership, cmd *vibekit.ClientC
 	}
 	slog.Info("session resumed into a new chat",
 		"chat_id", opened.Chat.ID, "acp_session", p.SessionID, "tab", opened.Subject.ID)
-	return openedResponse(opened, nil), nil
+	return openedResponse(&opened, nil), nil
 }

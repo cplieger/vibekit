@@ -81,77 +81,37 @@ const (
 
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
-	// lifecycleCtx bounds the subprocess: the receiving half of
-	// vibekit.StartOpts.Lifetime, assigned by Start, which refuses a nil one. It is
-	// a lifetime HANDLE rather than a stashed caller context — never a request
-	// or turn context — which is why it is required at the method that runs the
-	// process instead of defaulted anywhere.
-	lifecycleCtx context.Context
-	stdin        io.WriteCloser
-	modes        atomic.Pointer[[]vibekit.SessionMode]
-	stdout       *frameReader
-	pending      map[int64]chan *vibekit.RPCResponse
-	notifCh      chan *vibekit.RPCResponse
-	done         chan struct{}
-	models       atomic.Pointer[[]vibekit.SessionModel]
-	// servedModels is every model id session/new advertised, UNFILTERED. models
-	// above drops end-of-life entries for the picker; this one must not, because
-	// it is the input to the entitlement check and a deprecated model the account
-	// can still use has to pass it.
-	servedModels atomic.Pointer[[]string]
-	cmd          *exec.Cmd
-	modelID      vibekit.ModelID
-	sessionID    vibekit.SessionID
-	// effortLevel is the reasoning-effort tier the session last REPORTED running
-	// at, read off the `effortLevel` config option's currentValue. Observed rather
-	// than requested, which is what makes applyInitialEffort a repair instead of an
-	// unconditional round trip. Empty means unknown: KAS omits the option for a
-	// model with no tiers and omits it from every session/load result, and an
-	// unknown level must assert rather than assume a match.
-	effortLevel  string
-	workDir      string
-	cliPath      string
-	currentMode  string
-	sessionTitle string
-	agentEngine  string
-	// extraEnv is appended to the inherited environment of the kiro-cli
-	// process this bridge starts. The install manager's active version
-	// directory leads PATH through it, so `kiro-cli` resolves any sibling it
-	// needs out of the same verified install rather than through whatever else
-	// $TOOLS/bin holds. Empty leaves the inherited environment (screened, see
-	// bridge_env.go) as the whole environment.
-	extraEnv []string
-	// envAllow re-permits names the credential screen would otherwise drop
-	// (bridge_env.go, EnvAllowVar). Nil is the shipped configuration.
-	envAllow map[string]struct{}
-	// extraArgs are the filtered operator launch flags for this spawn
-	// (StartOpts.ExtraArgs). Immutable after Start, like agentEngine.
-	extraArgs   []string
-	nextID      atomic.Int64
-	enableHooks bool
-	// secretStorage gates the `_meta.kiro.secretStorage` declaration in
-	// initialize (StartOpts.SecretStorage). Immutable after Start, like
-	// enableHooks.
+	lifecycleCtx  context.Context
+	stdin         io.WriteCloser
+	modes         atomic.Pointer[[]vibekit.SessionMode]
+	stdout        *frameReader
+	pending       map[int64]chan *vibekit.RPCResponse
+	notifCh       chan *vibekit.RPCResponse
+	done          chan struct{}
+	models        atomic.Pointer[[]vibekit.SessionModel]
+	servedModels  atomic.Pointer[[]string]
+	cmd           *exec.Cmd
+	envAllow      map[string]struct{}
+	cliPath       string
+	modelID       vibekit.ModelID
+	workDir       string
+	sessionID     vibekit.SessionID
+	currentMode   string
+	sessionTitle  string
+	agentEngine   string
+	effortLevel   string
+	extraArgs     []string
+	extraEnv      []string
+	presets       []string
+	nextID        atomic.Int64
+	stopOnce      sync.Once
+	mu            sync.Mutex
+	writeMu       sync.Mutex
+	pendingMu     sync.Mutex
+	enableHooks   bool
 	secretStorage bool
-	// presets are the KAS policy-preset ids this session opens with
-	// (StartOpts.Presets), from the active security profile. Immutable after
-	// Start, like the two above, and for a stronger reason than symmetry: KAS
-	// does not persist the ids, so session/new and session/load must send the
-	// SAME set or a resumed chat silently changes posture. Holding them on the
-	// bridge rather than reading a setting per call is what guarantees that.
-	presets []string
-	// toolSearch and knowledge gate the `_meta.kiro.settings.toolSearch` row and
-	// the two `knowledge` rows (StartOpts.ToolSearch / .Knowledge). Immutable
-	// after Start, for the same reason as presets: KAS resolves both at session
-	// creation and freezes them, so the connection door and the session door have
-	// to describe one spawn rather than each re-reading a setting that may have
-	// changed in between.
-	toolSearch bool
-	knowledge  bool
-	stopOnce   sync.Once
-	mu         sync.Mutex
-	writeMu    sync.Mutex
-	pendingMu  sync.Mutex
+	toolSearch    bool
+	knowledge     bool
 }
 
 // Option configures a Bridge at construction time.

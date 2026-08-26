@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/kascap"
@@ -165,9 +166,7 @@ func (b *Bridge) withSessionChoices(params map[string]any, opts *vibekit.StartOp
 		kiro = make(map[string]any, len(choices))
 		meta[metaKeyKiro] = kiro
 	}
-	for k, v := range choices {
-		kiro[k] = v
-	}
+	maps.Copy(kiro, choices)
 	return params
 }
 

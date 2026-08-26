@@ -63,7 +63,7 @@ func CmdCreateChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientComm
 	if err != nil {
 		return nil, err
 	}
-	return openedResponse(opened, nil), nil
+	return openedResponse(&opened, nil), nil
 }
 
 // openedResponse is the shape every create-and-open answers with: the chat, the
@@ -82,11 +82,11 @@ func CmdCreateChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientComm
 // the hint bought nothing measurable, and spelling it as len(extra)+3 is an
 // addition on a length that go/allocation-size-overflow reads as a potential
 // overflow. Do not put the arithmetic back to save one growth.
-func openedResponse(opened ChatOpened, extra map[string]any) any {
+func openedResponse(opened *ChatOpened, extra map[string]any) any {
 	body := make(map[string]any)
 	maps.Copy(body, extra)
 	body["chat"] = opened.Chat.Header()
-	body["version"] = opened.Version
+	body[keyVersion] = opened.Version
 	if opened.Subject.ID != "" {
 		body["subject"] = opened.Subject
 	}

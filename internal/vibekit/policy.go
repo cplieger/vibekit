@@ -58,21 +58,13 @@ type PolicyRuleCore struct {
 // deliberately not discovered: it decides what one click grants, so it may not
 // grow from whatever happens to be in the returned rules.
 type PolicyView struct {
-	Rules             []PolicyRule `json:"rules"`
-	WritableScopes    []string     `json:"writable_scopes"`
-	Capabilities      []string     `json:"capabilities"`
-	RelaxCapabilities []string     `json:"relax_capabilities"`
-	// Profiles is the security-posture ladder in picker order, loosest last, and
-	// Profile is the one in force. Both travel here rather than being derived
-	// client-side for the same reason RelaxCapabilities does: the ladder decides
-	// what one click grants, so policyfile owns it and the client renders it.
-	//
-	// Order is part of the payload. A client that sorted these would put the
-	// loosest option somewhere in the middle of a list a reader scans from
-	// cautious to permissive.
-	Profiles  []SecurityProfile `json:"profiles"`
-	Profile   string            `json:"profile"`
-	Available bool              `json:"available"`
+	Profile           string            `json:"profile"`
+	Rules             []PolicyRule      `json:"rules"`
+	WritableScopes    []string          `json:"writable_scopes"`
+	Capabilities      []string          `json:"capabilities"`
+	RelaxCapabilities []string          `json:"relax_capabilities"`
+	Profiles          []SecurityProfile `json:"profiles"`
+	Available         bool              `json:"available"`
 }
 
 // SecurityProfile is one entry in the picker: the persisted id and the KAS policy

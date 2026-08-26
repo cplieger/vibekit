@@ -50,6 +50,27 @@ var errForkParentUnknown = errors.New("the chat this tangent came from no longer
 // RecordSession and retire the session it is still using.
 var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens into")
 
+// forkPayload decodes and validates the tangent command's payload: the door's
+// own job, per this file's header, and nothing beyond it.
+//
+// Split out of CmdForkChat because three refusals that all answer the same 400
+// carried a third of that function's branching while saying only "the payload is
+// not addressable". The fork's real decisions — the ledger read, the replay, the
+// degrade to a primed session — are what is left behind.
+func forkPayload(cmd *vibekit.ClientCommand) (vibekit.ForkChatCommand, error) {
+	var p vibekit.ForkChatCommand
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > vibekit.MaxChatNameBytes {
+		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	if !ValidIdent(p.OpID) {
+		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	return p, nil
+}
+
 // CmdForkChat opens a tangent off another chat and returns the chat it created
 // plus the tab it opened for it.
 //
@@ -57,15 +78,9 @@ var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens in
 // carries the chat because nothing else can: the caller opens a sub-tab for the
 // tangent, and before this it could only address it by having invented the id.
 func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.ForkChatCommand
-	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
-	}
-	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > vibekit.MaxChatNameBytes {
-		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
-	}
-	if !ValidIdent(p.OpID) {
-		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	p, err := forkPayload(cmd)
+	if err != nil {
+		return nil, err
 	}
 
 	parent, ok := chats.Get(ctx, p.ParentChatID)
@@ -105,11 +120,15 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 			// can have created the chat and then failed its tab write: this is where
 			// that tab is finished. Open is idempotent, so the ordinary replay costs
 			// one scan and emits nothing.
-			opened, err := mem.CreateChatAndOpen(ctx, forkCreate(p, chatID, parent, c.ACPSessionID))
+			//
+			// Assigned rather than declared: `err` is already the function's, and a
+			// `:=` here would shadow it.
+			var opened ChatOpened
+			opened, err = mem.CreateChatAndOpen(ctx, forkCreate(p, chatID, parent, c.ACPSessionID))
 			if err != nil {
 				return nil, err
 			}
-			return openedResponse(opened, map[string]any{
+			return openedResponse(&opened, map[string]any{
 				"outcome":    outcome,
 				"session_id": c.ACPSessionID,
 			}), nil
@@ -148,7 +167,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 	slog.Info("tangent opened",
 		"chat", opened.Chat.ID, "parent", p.ParentChatID,
 		"outcome", outcome, "acp_session", opened.Chat.ACPSessionID, "tab", opened.Subject.ID)
-	return openedResponse(opened, map[string]any{
+	return openedResponse(&opened, map[string]any{
 		"outcome":    outcome,
 		"session_id": opened.Chat.ACPSessionID,
 	}), nil

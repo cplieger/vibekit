@@ -180,32 +180,10 @@ func NewMembership(deps MembershipDeps) *Membership {
 // ChatCreate is one create-and-open request: what to write on the new record,
 // and where its tab goes.
 type ChatCreate struct {
-	// OpID correlates every attempt of ONE create gesture. A repeat resolves to
-	// the chat the first attempt made instead of minting a second one, and it
-	// FINISHES A MISSING TAB WRITE — the first attempt can have created the chat
-	// and failed on the tab, and answering with a chat that has no tab would
-	// leave the caller with nothing to show.
-	OpID string
-	// ChatID is the id the envelope supplied, or empty to mint one. A supplied id
-	// bypasses the ledger: the caller chose the key, so a retry carries it again
-	// and Mutate's exists branch is already idempotent.
-	ChatID vibekit.ChatID
-	// ParentChat names the chat whose tab the new tab hangs under, empty for a top
-	// level tab. Its one user is the tangent, which is the only create that nests.
-	//
-	// A CHAT id rather than a tab id, so the resolution happens inside the
-	// operation lock: a caller that looked the tab up itself would be reading the
-	// set before this operation takes the lock, so a parent tab closing in between
-	// would leave a Parent naming nothing. An absent parent promotes the new tab
-	// to top level, which is tabs.Store.Open's own rule for an orphan.
+	Init       func(c *vibekit.Chat)
+	OpID       string
+	ChatID     vibekit.ChatID
 	ParentChat vibekit.ChatID
-	// Init fills the new record's fields. Called INSIDE chat.Store.Mutate, so it
-	// runs under that chat's record lock and must not reach either store — see
-	// the lock order on this file.
-	//
-	// Not called at all when the record already exists, which is both the replay
-	// case and the reason a create cannot reshape a chat it did not make.
-	Init func(c *vibekit.Chat)
 }
 
 // ChatOpened is what a create answers with.
@@ -359,7 +337,7 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 	m.mu.Lock()
 	closed, version, err = m.tabs.Close(ctx, id)
 	if err == nil && len(closed) > 0 {
-		m.emit(ctx, vibekit.TabsChangedPayload{
+		m.emit(ctx, &vibekit.TabsChangedPayload{
 			RemovedIDs: subjectIDs(closed),
 			Order:      m.order(),
 			Version:    version,
@@ -407,7 +385,7 @@ func (m *Membership) ReorderTabs(ctx context.Context, ids []string, opID string)
 	// nothing and must emit nothing. The version is what says which happened —
 	// the store returns the current one unchanged for a no-op.
 	if version != before {
-		m.emit(ctx, vibekit.TabsChangedPayload{Order: m.order(), Version: version, OpID: opID})
+		m.emit(ctx, &vibekit.TabsChangedPayload{Order: m.order(), Version: version, OpID: opID})
 	}
 	return version, nil
 }
@@ -434,7 +412,7 @@ func (m *Membership) SetPinned(ctx context.Context, id string, pinned bool, opID
 	}
 	if version != before {
 		if changed, ok := m.subject(id); ok {
-			m.emit(ctx, vibekit.TabsChangedPayload{Changed: &changed, Version: version, OpID: opID})
+			m.emit(ctx, &vibekit.TabsChangedPayload{Changed: &changed, Version: version, OpID: opID})
 		}
 	}
 	return version, nil
@@ -508,7 +486,7 @@ func (m *Membership) openTab(ctx context.Context, spec vibekit.OpenTab, opID str
 		return TabOpened{}, tabStatus(err)
 	}
 	if created {
-		m.emit(ctx, vibekit.TabsChangedPayload{
+		m.emit(ctx, &vibekit.TabsChangedPayload{
 			Changed: &subject,
 			Order:   m.order(),
 			Version: version,
@@ -558,7 +536,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, op
 		if err != nil {
 			slog.Error("tab close still failing after its chat was removed; announcing the removal anyway",
 				"chat_id", chatID, "tab", doomed.ID, keyError, err)
-			m.emit(ctx, vibekit.TabsChangedPayload{
+			m.emit(ctx, &vibekit.TabsChangedPayload{
 				RemovedIDs: []string{doomed.ID},
 				Version:    m.version() + 1,
 				OpID:       opID,
@@ -568,7 +546,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, op
 		if len(closed) == 0 {
 			continue // already gone; another close won the race
 		}
-		m.emit(ctx, vibekit.TabsChangedPayload{
+		m.emit(ctx, &vibekit.TabsChangedPayload{
 			RemovedIDs: subjectIDs(closed),
 			Order:      m.order(),
 			Version:    version,
@@ -652,11 +630,11 @@ func (m *Membership) subject(id string) (vibekit.TabSubject, bool) {
 // emit broadcasts one aggregate frame. Workspace-global, so the chat id is
 // empty: the arrangement is not per chat, and a chat-scoped frame would be
 // filtered by every consumer keyed on a session.
-func (m *Membership) emit(ctx context.Context, p vibekit.TabsChangedPayload) {
+func (m *Membership) emit(ctx context.Context, p *vibekit.TabsChangedPayload) {
 	if m.bus == nil {
 		return
 	}
-	m.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTabsChanged, "", p))
+	m.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTabsChanged, "", *p))
 }
 
 // tabStatus maps the tab store's sentinels onto HTTP statuses.
