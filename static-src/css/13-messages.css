@@ -695,8 +695,9 @@
  * 14px of gap, a second grey bar, then text — with the accent bar 16px left of
  * the prose and the text 12px right of it. The accent bar also smothered the
  * `.streaming` accent-mix this file used to set on the body's border, by being
- * permanently at full strength; the breathing pulse dot on the summary is the
- * live affordance now. */
+ * permanently at full strength, so this bar is the block's one border and the
+ * block carries no live indicator of its own — see the note below the summary
+ * row for why. */
 .reasoning-block {
   max-width: var(--content-max-w);
 
@@ -721,26 +722,17 @@
    * details<>summary native open/close animation is still visible. */
 }
 
-/* Live-streaming reasoning block (open + actively receiving chunks): a subtle
- * breath on the summary so the user sees the model is actively thinking. It used
- * to read "accent left-border + subtle breath"; the border half was the
- * `.reasoning-body` accent-mix that the legacy full-strength accent bar made
- * invisible, and the bar is now the block's one border, so the dot is the whole
- * live affordance. Conditioned on `.streaming` (set by mountReasoningBlock and
- * removed in onFinalize) — NOT on `[open]`, because `[open]` flips back to true
- * whenever the user re-expands a finalized thinking trace and we don't want the
- * "actively thinking" pulse to come back for a completed turn. */
-.msg-reasoning.streaming > .reasoning-summary::before {
-  content: "";
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-inline-end: var(--sp-1);
-  border-radius: 50%;
-  background: var(--c-accent);
-  vertical-align: 1px;
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
-}
+/* NO pulse dot on a live thinking trace, deliberately — this is where the
+ * breathing accent disc used to be, and re-adding one is a regression rather
+ * than a restoration. A streaming trace already says it is live three times
+ * over: it mounts EXPANDED with text growing into `.reasoning-body`, its label
+ * reads "Thinking…" until `seal()` rewrites it to "Thinking completed", and the
+ * turn card's own header dot pulses for the turn's duration
+ * (`.turn-header[data-outcome="running"] .turn-dot`, 29-turns.css). A fourth
+ * animated marker inside the card was motion without information.
+ *
+ * `reasoning-live-cue.test.ts` pins the absence. `@keyframes vk-breathe`
+ * (03-base.css) stays — ten other consumers, none of them this one. */
 
 /* The summary row: chevron + label, on one line. `display: flex` and
  * `list-style: none` are load-bearing — without them the native `<details>`
@@ -766,6 +758,41 @@
  * affordance on the disclosure resolved to the colour it already had. */
 .reasoning-summary:hover {
   color: var(--c-text-primary);
+}
+
+/* The label holds its width so the COUNT beside it is the part that gives on a
+ * narrow row. Which way this shrinks is not a toss-up: the label is the block's
+ * state ("Thinking…" / "Thinking completed") and the count annotates it, so an
+ * ellipsized label would drop the sentence and keep the footnote. */
+.reasoning-label {
+  flex-shrink: 0;
+}
+
+/* The trace's word count, filling the empty space to the right of the label —
+ * collapsed, the state alone says nothing about how much is folded behind it.
+ * `margin-inline-start: auto` is what pushes it to the far edge.
+ *
+ * Metadata treatment, borrowed rather than invented: the tertiary ink and the
+ * `--fs-xs` step are what `.code-refs` below already uses for a footnote, one
+ * size under the summary's own `--fs-sm`. Upright against the row's italic
+ * because it is a measurement rather than prose, and `tabular-nums` because it
+ * repaints on every streamed chunk — proportional digits would twitch the row
+ * as the number grows.
+ *
+ * `overflow: hidden` is load-bearing twice over: it clips to the ellipsis, and
+ * it is what lets this item shrink past its own content at all (a flex item's
+ * automatic minimum size only applies while overflow is visible). */
+.reasoning-count {
+  flex-shrink: 1;
+  min-width: 0;
+  margin-inline-start: auto;
+  overflow: hidden;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The trace itself. Indented from the bar by its own padding, which is what

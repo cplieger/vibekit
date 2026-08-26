@@ -78,10 +78,14 @@ describe("every disclosure builder emits the shared chevron", () => {
   it("reasoning summary, and sealing rewrites the LABEL not the summary", () => {
     const r = buildReasoning("thinking about it", true);
     expect(r.root.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
+    // The word count is the summary's other sibling of the label, so it is the
+    // second thing a `summary.textContent = …` would delete.
+    expect(r.root.querySelectorAll(".reasoning-count")).toHaveLength(1);
     // The defect this guards: `summary.textContent = …` would delete the glyph.
     r.seal();
     expect(r.root.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
     expect(r.root.querySelector(".reasoning-label")?.textContent).toBe("Thinking completed");
+    expect(r.root.querySelector(".reasoning-count")?.textContent).toBe("3 words");
   });
 
   it("turn header fold toggle", () => {
