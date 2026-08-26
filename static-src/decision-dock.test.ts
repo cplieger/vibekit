@@ -10,9 +10,17 @@
 //   - SSE reconnect replays every unanswered permission, so a re-delivery must
 //     not stack a duplicate
 //   - answering twice on one request id is worse than a dropped click
+//
+// The MOTION half is here too, because the phases are a property of the dock's
+// state machine rather than of any card: an answered card stays on screen for
+// the length of a phase, so every lookup in this file is scoped to the LIVE card
+// (`:scope > .dock-card`) or it would find the answered one first. The phase
+// timer is the only clock the dock has — the test page links no app stylesheet,
+// so no transition or animation event ever fires here — which is why the timers
+// are faked rather than awaited.
 // ---------------------------------------------------------------------------
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // The store is NOT mocked: the dock's chat-switch trigger is an effect over the
 // real `activeSession` computed, and a stubbed signal would test the stub's
@@ -47,8 +55,14 @@ import {
   pushDecision,
   dropDecisions,
   collapseSettledDecision,
+  DOCK_PHASE_MS,
   _resetForTest,
 } from "./decision-dock.js";
+import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+// Not reachable through `loadCSS`: its glob is `../css/*.css`, and the MANIFEST
+// carries no extension. Read directly, because the file ORDER it declares is a
+// load-bearing cascade fact for the reduced-motion disarm below.
+import cssManifest from "./css/MANIFEST?raw";
 import { setSessions, setActive } from "./store.js";
 import type { PermissionNeededPayload, Session } from "./types.js";
 
@@ -105,20 +119,60 @@ function pushPerm(chatID: string, requestID: number, submit = vi.fn()): typeof s
   return submit;
 }
 
-function clickButton(label: string): void {
-  const btn = [...host().querySelectorAll<HTMLButtonElement>("button")].find(
+/** The LIVE cards, excluding an answered one still on screen for the length of a
+ *  phase. `:scope >` excludes it by construction: the outgoing content sits one
+ *  level deeper, inside `.dock-outgoing`. */
+function liveCards(h: HTMLElement = host()): HTMLElement[] {
+  return [...h.querySelectorAll<HTMLElement>(":scope > .dock-card")];
+}
+
+function liveCard(h: HTMLElement = host()): HTMLElement | null {
+  return h.querySelector<HTMLElement>(":scope > .dock-card");
+}
+
+/** The live depth row. Scoped for the same reason: a stale depth row inside
+ *  `.dock-outgoing` sits earlier in document order. */
+function liveDepth(h: HTMLElement = host()): HTMLElement | null {
+  return h.querySelector<HTMLElement>(":scope > .dock-depth");
+}
+
+function outgoings(h: HTMLElement = host()): HTMLElement[] {
+  return [...h.querySelectorAll<HTMLElement>(".dock-outgoing")];
+}
+
+function clickButton(label: string, h: HTMLElement = host()): void {
+  const scope: HTMLElement = liveCard(h) ?? h;
+  const btn = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
     (b) => b.textContent === label,
   );
   btn?.click();
 }
 
+/** Let every phase's cleanup timer fire. The phase is purely visual — the
+ *  response went out synchronously on the click — but `.hidden` and the removal
+ *  of the answered card land at the END of it, so a test asserting the settled
+ *  DOM has to get there. */
+function settleMotion(): void {
+  vi.advanceTimersByTime(Math.max(...Object.values(DOCK_PHASE_MS)) + 1);
+}
+
 beforeEach(() => {
+  // Only the two functions the dock uses. Faking Date and performance as well
+  // would reach the reactive graph and the announcer for no benefit; the phase
+  // timer is the whole clock under test.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   _resetForTest();
   mockToastInfo.mockClear();
   document.body.innerHTML = `<div id="decision-dock" class="hidden"></div>`;
   setSessions([session("c1"), session("c2")]);
   setActive("c1");
   mountDecisionDock(host());
+});
+
+afterEach(() => {
+  // `restoreMocks` does not undo fake timers, and a leaked fake clock breaks
+  // every later file in this worker.
+  vi.useRealTimers();
 });
 
 describe("the dock's visibility", () => {
@@ -130,9 +184,13 @@ describe("the dock's visibility", () => {
   it("reveals on a decision and hides again once answered", () => {
     pushPerm("c1", 1);
     expect(host().classList.contains("hidden")).toBe(false);
-    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard()).not.toBeNull();
 
     clickButton("Allow");
+    // `.hidden` lands at the END of the collapse, not on the click: the utility
+    // class is `display: none !important` and cannot be animated out, which is
+    // why the old collapse rule never rendered a frame.
+    settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
     expect(host().children.length).toBe(0);
   });
@@ -144,16 +202,18 @@ describe("the queue", () => {
     const second = pushPerm("c1", 2);
 
     // Only the head is rendered, and the depth line reports the rest.
-    expect(host().querySelectorAll(".dock-card").length).toBe(1);
-    expect(host().querySelector(".dock-depth")?.textContent).toBe("1 more waiting");
+    expect(liveCards().length).toBe(1);
+    expect(liveDepth()?.textContent).toBe("1 more waiting");
 
     clickButton("Allow");
     expect(first).toHaveBeenCalledWith("allow_once", undefined);
     expect(second).not.toHaveBeenCalled();
 
-    // The second is now the head, and its depth line is empty.
-    expect(host().querySelectorAll(".dock-card").length).toBe(1);
-    expect(host().querySelector(".dock-depth")?.classList.contains("hidden")).toBe(true);
+    // The second is now the head, and its depth line is empty. The answered
+    // card is still on screen behind it for the length of the advance, which is
+    // why these lookups are scoped to the live one.
+    expect(liveCards().length).toBe(1);
+    expect(liveDepth()?.classList.contains("hidden")).toBe(true);
     clickButton("Reject");
     expect(second).toHaveBeenCalledWith("reject_once", undefined);
   });
@@ -173,7 +233,7 @@ describe("the queue", () => {
   it("ignores a re-delivered request (SSE reconnect replays unanswered asks)", () => {
     pushPerm("c1", 7);
     pushPerm("c1", 7);
-    expect(host().querySelector(".dock-depth")?.classList.contains("hidden")).toBe(true);
+    expect(liveDepth()?.classList.contains("hidden")).toBe(true);
   });
 });
 
@@ -192,14 +252,16 @@ describe("per-chat routing", () => {
   it("keeps an unanswered ask across a switch away and back", () => {
     pushPerm("c1", 1);
     setActive("c2");
+    settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
     setActive("c1");
-    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard()).not.toBeNull();
   });
 
   it("dropDecisions clears a chat's asks without answering them", () => {
     const submit = pushPerm("c1", 1);
     dropDecisions("c1");
+    settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
     expect(submit).not.toHaveBeenCalled();
   });
@@ -233,7 +295,7 @@ describe("turn approval", () => {
       payload: perm({ request_id: 5, title: "Review changes", files }),
       submit,
     });
-    const boxes = host().querySelectorAll<HTMLInputElement>(".dock-file-check");
+    const boxes = liveCard()?.querySelectorAll<HTMLInputElement>(".dock-file-check") ?? [];
     expect(boxes.length).toBe(2);
     boxes[1]?.click(); // uncheck b.ts
     clickButton("Keep selected");
@@ -258,8 +320,8 @@ describe("turn approval", () => {
       }),
       submit,
     });
-    expect(host().querySelectorAll(".dock-file-row").length).toBe(1);
-    expect(host().querySelectorAll(".dock-file-check").length).toBe(1);
+    expect(liveCard()?.querySelectorAll(".dock-file-row").length).toBe(1);
+    expect(liveCard()?.querySelectorAll(".dock-file-check").length).toBe(1);
     expect(host().querySelector(".dock-file-atomic")).not.toBeNull();
     clickButton("Keep selected");
     expect(submit).toHaveBeenCalledWith("allow_once", { "ren-1": true });
@@ -299,7 +361,7 @@ describe("the run tab's dock", () => {
       submit: vi.fn(),
     });
     expect(host.classList.contains("hidden")).toBe(false);
-    expect(host.querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard(host)).not.toBeNull();
   });
 
   it("renders an AGENT-LAUNCHED run's ask — keyed to the launching chat — in sync with the chat's dock", () => {
@@ -320,12 +382,14 @@ describe("the run tab's dock", () => {
     });
 
     // Both surfaces show it.
-    expect(host().querySelector(".dock-card")).not.toBeNull();
-    expect(runHost.querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard()).not.toBeNull();
+    expect(liveCard(runHost)).not.toBeNull();
 
-    // Answer from the CHAT's dock; the run tab's rendering clears too.
-    host().querySelector<HTMLButtonElement>("button")?.click();
+    // Answer from the CHAT's dock; the run tab's rendering clears too. Each host
+    // owns its own phase, so both have to be let through it.
+    liveCard()?.querySelector<HTMLButtonElement>("button")?.click();
     expect(submit).toHaveBeenCalledTimes(1);
+    settleMotion();
     expect(host().classList.contains("hidden")).toBe(true);
     expect(runHost.classList.contains("hidden")).toBe(true);
   });
@@ -386,7 +450,7 @@ describe("the run tab's dock", () => {
     expect(stepSubmit).toHaveBeenCalledTimes(1);
     expect(chatSubmit).not.toHaveBeenCalled();
     // The chat's own ask is still on screen, unharmed.
-    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard()).not.toBeNull();
   });
 });
 
@@ -406,9 +470,10 @@ describe("a decision another surface answered", () => {
 
   it("collapses the card and says a person answered elsewhere", () => {
     const submit = pushPerm("c1", 1);
-    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard()).not.toBeNull();
 
     collapseSettledDecision("c1", "permission", 1, "user");
+    settleMotion();
 
     expect(host().classList.contains("hidden")).toBe(true);
     expect(host().children.length).toBe(0);
@@ -445,8 +510,8 @@ describe("a decision another surface answered", () => {
     // The queued one leaves without a word; the head is untouched and its depth
     // line drops back to nothing.
     expect(mockToastInfo).not.toHaveBeenCalled();
-    expect(host().querySelectorAll(".dock-card").length).toBe(1);
-    expect(host().querySelector(".dock-depth")?.classList.contains("hidden")).toBe(true);
+    expect(liveCards().length).toBe(1);
+    expect(liveDepth()?.classList.contains("hidden")).toBe(true);
     clickButton("Allow");
     expect(head).toHaveBeenCalledTimes(1);
   });
@@ -460,7 +525,7 @@ describe("a decision another surface answered", () => {
     collapseSettledDecision("c-unknown", "permission", 1, "user");
 
     expect(mockToastInfo).not.toHaveBeenCalled();
-    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard()).not.toBeNull();
   });
 
   it("matches on kind as well as request id", () => {
@@ -470,7 +535,7 @@ describe("a decision another surface answered", () => {
     const submit = pushPerm("c1", 1);
     collapseSettledDecision("c1", "elicitation", 1, "user");
 
-    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(liveCard()).not.toBeNull();
     expect(mockToastInfo).not.toHaveBeenCalled();
     clickButton("Allow");
     expect(submit).toHaveBeenCalledTimes(1);
@@ -493,8 +558,471 @@ describe("a decision another surface answered", () => {
     expect(runHost.classList.contains("hidden")).toBe(false);
 
     collapseSettledDecision("c1", "permission", 30, "user");
+    settleMotion();
 
     expect(runHost.classList.contains("hidden")).toBe(true);
     expect(host().classList.contains("hidden")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Motion. The three phases, the dispatch order, and the one thing requirement 3
+// is: an advance must never take the tray through zero.
+//
+// Nothing here asserts wall-clock timing. The phase window is a number the dock
+// and `26-dock.css` agree on (pinned at the bottom of this file); what these
+// cases pin is the STATE MACHINE — which phase is entered, what coexists during
+// it, and what is left behind after it.
+// ---------------------------------------------------------------------------
+
+describe("the enter phase", () => {
+  it("grows from collapsed with the content in place, then cleans up after itself", () => {
+    pushPerm("c1", 1);
+
+    expect(host().dataset["dockPhase"]).toBe("entering");
+    // Un-hidden for the whole phase: the box has to be laid out to animate.
+    expect(host().classList.contains("hidden")).toBe(false);
+    expect(liveCard()).not.toBeNull();
+    // Nothing was on screen, so there is nothing to fade out alongside it.
+    expect(outgoings().length).toBe(0);
+
+    settleMotion();
+    expect(host().dataset["dockPhase"]).toBeUndefined();
+    expect(host().classList.contains("hidden")).toBe(false);
+    expect(liveCard()).not.toBeNull();
+  });
+});
+
+describe("the exit phase", () => {
+  it("keeps the answered card on screen while the tray shrinks, and hides only at the end", () => {
+    pushPerm("c1", 1);
+    settleMotion();
+
+    clickButton("Allow");
+
+    expect(host().dataset["dockPhase"]).toBe("leaving");
+    // The card is what fades out, so it has to still be there — and the host
+    // must NOT be `.hidden` yet, or `display: none` would end the animation on
+    // the frame it started.
+    expect(host().classList.contains("hidden")).toBe(false);
+    expect(outgoings().length).toBe(1);
+    expect(outgoings()[0]?.querySelector(".dock-card")).not.toBeNull();
+    // No live card: this is the last decision.
+    expect(liveCard()).toBeNull();
+
+    settleMotion();
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(host().children.length).toBe(0);
+    expect(host().dataset["dockPhase"]).toBeUndefined();
+  });
+});
+
+describe("the advance phase", () => {
+  it("morphs between two cards instead of collapsing and re-growing", () => {
+    pushPerm("c1", 1);
+    pushPerm("c1", 2);
+    settleMotion();
+
+    clickButton("Allow");
+
+    expect(host().dataset["dockPhase"]).toBe("advancing");
+    // Exactly one of each, coexisting: the outgoing card is what cross-fades
+    // out while the incoming one fades in, so a frame with neither is
+    // unreachable.
+    expect(outgoings().length).toBe(1);
+    expect(liveCards().length).toBe(1);
+    expect(host().classList.contains("hidden")).toBe(false);
+
+    settleMotion();
+    expect(outgoings().length).toBe(0);
+    expect(liveCards().length).toBe(1);
+  });
+
+  it("never adds .hidden at any point — requirement 3, watched rather than sampled", async () => {
+    pushPerm("c1", 1);
+    pushPerm("c1", 2);
+    settleMotion();
+
+    // Records are collected raw and analysed at the end rather than judged in
+    // the callback. `oldValue` is the only trustworthy reading: `r.target`'s
+    // className at CALLBACK time is the current one, so an add-and-remove inside
+    // a single synchronous block would look like nothing happened. The sequence
+    // of oldValues plus the final value IS every value the attribute held.
+    const records: MutationRecord[] = [];
+    const obs = new MutationObserver((batch) => {
+      records.push(...batch);
+    });
+    obs.observe(host(), {
+      attributes: true,
+      attributeFilter: ["class"],
+      attributeOldValue: true,
+    });
+
+    clickButton("Allow");
+    expect(host().classList.contains("hidden")).toBe(false);
+    await Promise.resolve();
+    settleMotion();
+    await Promise.resolve();
+    records.push(...obs.takeRecords());
+    obs.disconnect();
+
+    const held = [...records.map((r) => r.oldValue ?? ""), host().className];
+    expect(held.filter((cls) => cls.split(/\s+/).includes("hidden"))).toEqual([]);
+    expect(liveCard()).not.toBeNull();
+  });
+
+  it("updates the LIVE depth row mid-advance, not the answered card's stale one", () => {
+    pushPerm("c1", 1);
+    pushPerm("c1", 2);
+    pushPerm("c1", 3);
+    settleMotion();
+    expect(liveDepth()?.textContent).toBe("2 more waiting");
+
+    clickButton("Allow");
+    expect(liveDepth()?.textContent).toBe("1 more waiting");
+
+    // A queue-depth change for the SAME head takes the update-in-place branch,
+    // which must not rebuild the card (that would discard the user's typing).
+    // The answered card is prepended, so it and its stale depth row come FIRST
+    // in document order: an unscoped lookup writes into the card on its way out
+    // and the live row keeps a number that is no longer true.
+    collapseSettledDecision("c1", "permission", 3, "user");
+
+    expect(liveDepth()?.textContent).toBe("");
+    expect(liveDepth()?.classList.contains("hidden")).toBe(true);
+    expect(liveCards().length).toBe(1);
+  });
+
+  it("does not drop the next decision, and it is answerable", () => {
+    const first = pushPerm("c1", 1);
+    const second = pushPerm("c1", 2);
+    settleMotion();
+
+    clickButton("Allow");
+    expect(first).toHaveBeenCalledTimes(1);
+    // Mid-advance, with the answered card still on screen: the incoming card is
+    // live, not a placeholder.
+    clickButton("Reject");
+    expect(second).toHaveBeenCalledWith("reject_once", undefined);
+  });
+});
+
+describe("the dispatch is never gated on the animation", () => {
+  it("submits in the same tick as the click, before any timer runs", () => {
+    const submit = pushPerm("c1", 1);
+    settleMotion();
+
+    clickButton("Allow");
+    // No timer advanced, no frame waited: `settle` splices, dispatches and
+    // bumps synchronously inside the click handler, and the render effect that
+    // starts the animation runs after the dispatch has returned.
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledWith("allow_once", undefined);
+    // And the phase is live at that same moment, so the two genuinely overlap.
+    expect(host().dataset["dockPhase"]).toBe("leaving");
+  });
+});
+
+describe("interruption and cleanup", () => {
+  it("survives rapid Allow-Allow-Allow with nothing half-faded left over", () => {
+    const subs = [pushPerm("c1", 1), pushPerm("c1", 2), pushPerm("c1", 3)];
+    settleMotion();
+
+    // No timer advance between clicks: every phase interrupts the previous one.
+    clickButton("Allow");
+    expect(outgoings().length).toBe(1);
+    expect(liveCards().length).toBe(1);
+
+    clickButton("Allow");
+    expect(outgoings().length).toBe(1);
+    expect(liveCards().length).toBe(1);
+
+    clickButton("Allow");
+    expect(outgoings().length).toBe(1);
+    expect(liveCards().length).toBe(0);
+
+    for (const s of subs) {
+      expect(s).toHaveBeenCalledTimes(1);
+    }
+
+    settleMotion();
+    // The final state, with nothing orphaned anywhere in the document and no
+    // inline geometry left pinned on the box.
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(host().children.length).toBe(0);
+    expect(document.querySelectorAll(".dock-outgoing").length).toBe(0);
+    expect(host().dataset["dockPhase"]).toBeUndefined();
+    expect(host().style.height).toBe("");
+    expect(host().style.marginBlockEnd).toBe("");
+    expect(host().style.transition).toBe("");
+  });
+
+  it("re-enters when a decision arrives mid-exit instead of completing the exit", () => {
+    pushPerm("c1", 1);
+    settleMotion();
+    clickButton("Allow");
+    expect(host().dataset["dockPhase"]).toBe("leaving");
+
+    // The exit's own timer must not survive to hide a dock that has something
+    // in it again.
+    pushPerm("c1", 2);
+    expect(host().dataset["dockPhase"]).toBe("entering");
+    expect(liveCard()).not.toBeNull();
+
+    settleMotion();
+    expect(host().classList.contains("hidden")).toBe(false);
+    expect(liveCard()).not.toBeNull();
+    expect(outgoings().length).toBe(0);
+  });
+
+  it("neutralises the answered card so it is neither read again nor focusable", () => {
+    pushPerm("c1", 1);
+    pushPerm("c1", 2);
+    settleMotion();
+    liveCard()?.querySelector<HTMLButtonElement>("button")?.focus();
+
+    clickButton("Allow");
+
+    const [out] = outgoings();
+    expect(out?.getAttribute("aria-hidden")).toBe("true");
+    expect(out?.hasAttribute("inert")).toBe(true);
+    expect(out?.contains(document.activeElement)).toBe(false);
+  });
+
+  it("takes no second answer from a handle retained on the answered card", () => {
+    const first = pushPerm("c1", 1);
+    const second = pushPerm("c1", 2);
+    settleMotion();
+
+    const allow = liveCard()?.querySelector<HTMLButtonElement>("button");
+    allow?.click();
+    // The card is inside `.dock-outgoing` now. A scripted click still dispatches
+    // through `inert`, so the authoritative guard is `settle`'s membership check
+    // — and the incoming decision must not be answered by the outgoing card's
+    // button either, which is why `user-input.ts` stopped keeping its reporter
+    // in module state.
+    allow?.click();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it("_resetForTest leaves no timer that can fire into a later test", () => {
+    const dock = host();
+    pushPerm("c1", 1);
+    settleMotion();
+    clickButton("Allow");
+    expect(dock.dataset["dockPhase"]).toBe("leaving");
+
+    _resetForTest();
+    // endPhase ran: the outgoing card is gone and the phase attribute with it,
+    // but the host was deliberately NOT hidden, so a surviving timer would be
+    // visible as a `.hidden` appearing out of nowhere.
+    expect(dock.querySelectorAll(".dock-outgoing").length).toBe(0);
+    expect(dock.dataset["dockPhase"]).toBeUndefined();
+
+    settleMotion();
+    expect(dock.classList.contains("hidden")).toBe(false);
+  });
+});
+
+describe("motion off: reduced motion and a background tab", () => {
+  function reduceMotion(): void {
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q.includes("prefers-reduced-motion"),
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+  }
+
+  it("swaps instantly on an exit, with the same DOM and the same response", () => {
+    const submit = pushPerm("c1", 1);
+    reduceMotion();
+
+    clickButton("Allow");
+
+    // Same tick, no phase, nothing to clean up.
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(host().children.length).toBe(0);
+    expect(host().dataset["dockPhase"]).toBeUndefined();
+    expect(outgoings().length).toBe(0);
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("swaps instantly on an advance too", () => {
+    pushPerm("c1", 1);
+    const second = pushPerm("c1", 2);
+    reduceMotion();
+
+    clickButton("Allow");
+
+    expect(host().dataset["dockPhase"]).toBeUndefined();
+    expect(outgoings().length).toBe(0);
+    expect(liveCards().length).toBe(1);
+    clickButton("Reject");
+    expect(second).toHaveBeenCalledWith("reject_once", undefined);
+  });
+
+  it("takes no phase in a background tab, where setTimeout runs but animations do not", () => {
+    // An accessor on the prototype, so spying on the instance does not work.
+    const submit = pushPerm("c1", 1);
+    vi.spyOn(Document.prototype, "hidden", "get").mockReturnValue(true);
+
+    clickButton("Allow");
+
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(host().dataset["dockPhase"]).toBeUndefined();
+    expect(outgoings().length).toBe(0);
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The stylesheet, read as SOURCE. The test page links no app stylesheet, so
+// there is no cascade for `getComputedStyle` to report on; these assert what is
+// authored. See __test-helpers__/css-rules.ts.
+// ---------------------------------------------------------------------------
+
+describe("26-dock.css carries the phases the module names", () => {
+  const dock = loadCSS("26-dock.css");
+
+  it("declares the enter, exit and advance rules", () => {
+    expect(
+      /height var\(--dur-standard\)/.test(ruleContaining(dock, ".decision-dock", "top").body),
+    ).toBe(true);
+    expect(
+      /animation: vk-slide-up/.test(
+        ruleContaining(dock, '.decision-dock[data-dock-phase="entering"] > .dock-card').body,
+      ),
+    ).toBe(true);
+    expect(
+      /height var\(--dock-exit-dur\)/.test(
+        ruleContaining(dock, '.decision-dock[data-dock-phase="leaving"]').body,
+      ),
+    ).toBe(true);
+    expect(
+      /height var\(--dur-exit\)/.test(
+        ruleContaining(dock, '.decision-dock[data-dock-phase="advancing"]').body,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not make the exit a display toggle", () => {
+    // The whole point of the phase attribute: `.hidden` is `display: none
+    // !important` from an unlayered utility rule and beats any component rule
+    // that tries to animate it, which is why the old `.decision-dock.hidden`
+    // collapse never rendered. The class lands after the collapse instead.
+    const leaving = ruleContaining(dock, '.decision-dock[data-dock-phase="leaving"]');
+    expect(/display:/.test(leaving.body)).toBe(false);
+  });
+
+  it("takes the outgoing card out of flow only for the advance", () => {
+    // In flow for the exit, so a shrinking box CLIPS it; out of flow for the
+    // advance, so the box's height is the incoming card's and the two overlap.
+    expect(/position:/.test(ruleContaining(dock, ".dock-outgoing").body)).toBe(false);
+    expect(
+      /position: absolute/.test(
+        ruleContaining(dock, '.decision-dock[data-dock-phase="advancing"] > .dock-outgoing').body,
+      ),
+    ).toBe(true);
+  });
+
+  it("offsets the two advance halves in opposite directions", () => {
+    expect(/translate: var\(--dock-shift\) 0/.test(dock)).toBe(true);
+    expect(/translate: calc\(-1 \* var\(--dock-shift\)\) 0/.test(dock)).toBe(true);
+  });
+
+  it("is disarmed under reduced motion, which the global duration sweep cannot do", () => {
+    // A zeroed animation RUNS to completion rather than being suppressed, and the
+    // sweep says nothing about the inline pixel height the module pins.
+    const a11y = loadCSS("40-a11y.css");
+    expect(
+      /transition: none/.test(
+        ruleContaining(a11y, ".decision-dock[data-dock-phase]", "prefers-reduced-motion").body,
+      ),
+    ).toBe(true);
+    expect(
+      /display: none/.test(ruleContaining(a11y, ".dock-outgoing", "prefers-reduced-motion").body),
+    ).toBe(true);
+  });
+
+  // The two guards below are why the rule above is spelled with an attribute
+  // selector. Asserting its BODY says `transition: none` proves the declaration
+  // was authored, not that it ever applies — and the first spelling of this rule
+  // was a bare `.decision-dock`, which scores (0,1,0) and loses to every
+  // `.decision-dock[data-dock-phase="…"]` (0,2,0) phase rule in 26-dock.css. It
+  // passed a body assertion while being dead in the only case it exists for: a
+  // live phase. A body-only test cannot see that, so the cascade facts it
+  // depends on are pinned directly.
+  it("spells the reduced-motion disarm specifically enough to beat a live phase", () => {
+    const a11y = loadCSS("40-a11y.css");
+    const disarm = ruleContaining(
+      a11y,
+      ".decision-dock[data-dock-phase]",
+      "prefers-reduced-motion",
+    ).selector;
+    // Every phase rule qualifies `.decision-dock` with one attribute, so the
+    // disarm needs one too. A bare class can never win, whatever the file order.
+    expect(disarm).toMatch(/\.decision-dock\[data-dock-phase/u);
+  });
+
+  it("keeps 40-a11y.css after 26-dock.css, which is what breaks the specificity tie", () => {
+    // Both files are unlayered and the disarm ties the phase rules at (0,2,0),
+    // so it wins on source order alone. That makes the MANIFEST's order a
+    // load-bearing part of the reduced-motion behaviour rather than a listing
+    // convention: swapping these two lines silently re-arms the animation.
+    const order = cssManifest.split("\n").map((l) => l.trim());
+    expect(order.indexOf("40-a11y.css")).toBeGreaterThan(order.indexOf("26-dock.css"));
+  });
+});
+
+describe("the cleanup timer and the stylesheet agree on every duration", () => {
+  // There is no transitionend or animationend listener in the module: one timer
+  // per host is the sole cleanup authority. The cost of that is a duplicated
+  // number, so a retune of one side without the other must fail here rather than
+  // leave an outgoing card on screen or remove it mid-animation.
+  const dock = loadCSS("26-dock.css");
+
+  function tokenMs(name: string): number {
+    for (const file of ["26-dock.css", "01-tokens.css"]) {
+      const hit = new RegExp(`\\${name}:\\s*([0-9.]+)s`).exec(loadCSS(file));
+      if (hit?.[1] !== undefined) {
+        return Number(hit[1]) * 1000;
+      }
+    }
+    throw new Error(`no time token ${name}`);
+  }
+
+  function heightToken(body: string): string {
+    const hit = /height (var\((--[a-z-]+)\))/.exec(body);
+    expect(hit?.[2], `no height transition token in ${body}`).toBeDefined();
+    return hit?.[2] ?? "";
+  }
+
+  it("matches DOCK_PHASE_MS to the transition each phase actually runs", () => {
+    const pairs: [keyof typeof DOCK_PHASE_MS, string][] = [
+      ["entering", heightToken(ruleContaining(dock, ".decision-dock", "top").body)],
+      [
+        "leaving",
+        heightToken(ruleContaining(dock, '.decision-dock[data-dock-phase="leaving"]').body),
+      ],
+      [
+        "advancing",
+        heightToken(ruleContaining(dock, '.decision-dock[data-dock-phase="advancing"]').body),
+      ],
+    ];
+    for (const [phase, token] of pairs) {
+      expect(DOCK_PHASE_MS[phase], `${phase} vs ${token}`).toBe(tokenMs(token));
+    }
+  });
+
+  it("keeps the enter and exit inside the bands the requirement names", () => {
+    expect(DOCK_PHASE_MS.entering).toBeGreaterThanOrEqual(180);
+    expect(DOCK_PHASE_MS.entering).toBeLessThanOrEqual(220);
+    expect(DOCK_PHASE_MS.leaving).toBeGreaterThanOrEqual(110);
+    expect(DOCK_PHASE_MS.leaving).toBeLessThanOrEqual(140);
+    // The exit is the fast one: the tray has to be gone before the reader
+    // reaches for the box underneath it.
+    expect(DOCK_PHASE_MS.leaving).toBeLessThan(DOCK_PHASE_MS.entering);
   });
 });

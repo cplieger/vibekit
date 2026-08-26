@@ -12,7 +12,54 @@
    transcript's flex row shrinks by exactly that much. Nothing is covered.
    ========================================================================== */
 
+/* ==========================================================================
+   MOTION. Three phases, and `decision-dock.ts` names the one it is in with
+   `data-dock-phase`. The JS half is the twin of this block — the phase
+   durations are duplicated there as the cleanup timer, and
+   `decision-dock.test.ts` asserts the two agree.
+
+     entering   nothing was on screen, something asks. Tray grows, card fades
+                in and rises.
+     leaving    the last decision was answered. Tray shrinks, card fades out,
+                and only THEN does `.hidden` land.
+     advancing  another decision was queued behind the answered one. The tray
+                stays mounted and its height morphs from the outgoing card's to
+                the incoming card's, NEVER through zero; the two cards
+                cross-dissolve with opposite horizontal offsets.
+
+   TWO MECHANICAL FACTS, both measured in this repo's own Chromium, both
+   load-bearing:
+
+   1. A CONTENT SWAP CANNOT TRANSITION ON ITS OWN. `interpolate-size:
+      allow-keywords` (inherited from `:root`) is what makes `auto` an
+      interpolable height, but a swap leaves the SPECIFIED value at `auto` on
+      both sides, so no transition starts. The start value has to be an
+      explicit measured pixel height written inline; the end is this rule's
+      `auto`, which resolves to whatever the new content needs — so the
+      incoming card is never measured.
+   2. THE PIN NEEDS `transition: none` FOR ITS OWN DURATION. Writing the pin
+      with transitions live starts a height transition FOR THE PIN, and
+      clearing the inline height then cancels it and starts no replacement:
+      the box snaps. A forced reflow does not fix it and neither does waiting
+      two frames. `pinAndRelease` in `decision-dock.ts` is that sequence.
+
+   The exit is the one phase that needs no measurement in principle (`auto ->
+   0` does transition, as long as the outgoing content stays IN FLOW — an
+   absolutely positioned child re-resolves the `auto` start to 0 and it
+   snaps), but it is pinned anyway so a rapid second answer starts from
+   wherever the box currently is instead of jumping.
+
+   Height is a layout property and cannot be composited, so each frame
+   relayouts the bar and the transcript's flex row. Two things bound the cost:
+   the subtree is one card, and a phase runs at most once per click.
+   ========================================================================== */
+
 .decision-dock {
+  /* The advance overlays two cards, so the outgoing one positions against
+     this. No dock card holds a `position: fixed` descendant — pill-expand
+     popups and tooltips are hosted into <body>, and the always-allow
+     expansion is a plain <details>. */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
@@ -20,42 +67,102 @@
   margin: 0 auto var(--sp-2);
   width: 100%;
 
-  /* Grow-in. interpolate-size + calc-size let height animate from the
-     content's own measurement, so no magic max-height has to be guessed and
-     then be wrong for a 12-field form. Browsers without it get the opacity and
-     translate halves, which is the part that reads as motion. */
-  interpolate-size: allow-keywords;
+  /* Component-local, because neither is in the global duration vocabulary and
+     one deliberate value beside its reader beats a sixth global tier.
+     --dock-exit-dur is the requested 110-140ms band's midpoint: --dur-exit is
+     150ms and --dur-micro is 100ms and is reserved for non-layout beats. */
+  --dock-exit-dur: 0.12s;
+
+  /* The carousel offset: the incoming card enters from the right, the outgoing
+     leaves to the left, so an advance reads as a queue moving forward. */
+  --dock-shift: 0.75rem;
+
   overflow: clip;
   height: auto;
-  opacity: 1;
-  translate: 0 0;
-  transition:
-    height var(--dur-enter) var(--ease-enter),
-    opacity var(--dur-enter) var(--ease-enter),
-    translate var(--dur-enter) var(--ease-enter),
-    margin-block-end var(--dur-enter) var(--ease-enter);
 
-  @starting-style {
-    height: 0;
+  /* Enter is the resting tier (--dur-standard is exactly the requested
+     180-220ms). The two phases that want a different tempo override it below.
+     Only the BOX is transitioned here; the cards animate with keyframes, so
+     the live card is never itself an opacity-0 element the moment
+     `announce()` fires. */
+  transition:
+    height var(--dur-standard) var(--ease-enter),
+    margin-block-end var(--dur-standard) var(--ease-enter);
+}
+
+/* Grow in, and the content arrives with it. */
+.decision-dock[data-dock-phase="entering"] > .dock-card,
+.decision-dock[data-dock-phase="entering"] > .dock-depth {
+  animation: vk-slide-up var(--dur-standard) var(--ease-enter);
+}
+
+/* Collapse. Deliberately NO `display` declaration: the phase attribute exists
+   so the exit is not a display toggle. `.hidden` is `display: none
+   !important` from the unlayered utility layer and beats any component rule
+   that tries to animate it, which is why the old `.decision-dock.hidden`
+   collapse never rendered a single frame. The class lands at the END of this
+   phase instead, from the cleanup timer. */
+.decision-dock[data-dock-phase="leaving"] {
+  transition:
+    height var(--dock-exit-dur) var(--ease-exit),
+    margin-block-end var(--dock-exit-dur) var(--ease-exit);
+}
+
+/* Shorter than the box, so the card is gone before the tray finishes closing
+   and no squashed card is visible at the end. `forwards` holds it invisible
+   for the remaining ~20ms. */
+.decision-dock[data-dock-phase="leaving"] > .dock-outgoing {
+  animation: vk-fade-out var(--dur-micro) var(--ease-exit) forwards;
+}
+
+/* Morph. --ease-standard rather than an enter or an exit curve, because this
+   starts and ends in a resting state. */
+.decision-dock[data-dock-phase="advancing"] {
+  transition: height var(--dur-exit) var(--ease-standard);
+}
+
+.decision-dock[data-dock-phase="advancing"] > .dock-card,
+.decision-dock[data-dock-phase="advancing"] > .dock-depth {
+  animation: vk-dock-advance-in var(--dur-exit) var(--ease-standard);
+}
+
+/* Out of flow for this phase only, so the box's height is the INCOMING card's
+   and the two overlap instead of stacking. Both halves run the full duration
+   from t=0 — a full cross-dissolve, so an empty frame is unreachable by
+   construction rather than by tuning an offset. */
+.decision-dock[data-dock-phase="advancing"] > .dock-outgoing {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  animation: vk-dock-advance-out var(--dur-exit) var(--ease-standard) forwards;
+}
+
+/* The answered card, still on screen for the length of a phase. It is a
+   WRAPPER around the card and its depth row, so it has to re-declare the
+   column it now sits inside or it would swallow their gap. `flex: 0 0 auto`
+   makes a shrinking box CLIP the card (with the overflow above) instead of
+   squashing it. `aria-hidden` and `inert` are set in JS: an answered card must
+   not be read a second time, tabbed into, or clicked. */
+.dock-outgoing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+@keyframes vk-dock-advance-in {
+  from {
     opacity: 0;
-    translate: 0 var(--sp-3);
+    translate: var(--dock-shift) 0;
   }
 }
 
-/* .hidden is the utility layer's `display: none`, which cannot animate out.
-   The dock overrides it to collapse instead, so dismissing a decision reads as
-   the bar shrinking rather than as a jump. */
-.decision-dock.hidden {
-  display: flex;
-  height: 0;
-  margin-block-end: 0;
-  opacity: 0;
-  translate: 0 var(--sp-2);
-  transition:
-    height var(--dur-exit) var(--ease-exit),
-    opacity var(--dur-exit) var(--ease-exit),
-    translate var(--dur-exit) var(--ease-exit),
-    margin-block-end var(--dur-exit) var(--ease-exit);
+@keyframes vk-dock-advance-out {
+  to {
+    opacity: 0;
+    translate: calc(-1 * var(--dock-shift)) 0;
+  }
 }
 
 /* One card shape for all three decision types. They differ in accent colour
@@ -192,14 +299,20 @@
    Rows stack oldest-first, so a new message appears at the bottom nearest the
    box it was typed into and every earlier one moves up.
 
-   TWO STATES, and the difference is the stack's whole job:
+   EVERY ROW HERE IS UNREAD. A steer that the agent has read leaves the stack
+   and becomes a note inside the turn transcript (`.steer-note`,
+   13-messages.css), so there is no settled state to style and no checkmark. The
+   count falling to zero IS the read signal.
 
-     sent  dashed edge + breathing hourglass + accent — in KAS's buffer, unread
-     read  solid edge + steady check + green — the model has consumed it
+   The one distinction left is whether the row is confirmed. `sending` is this
+   device's own claim that the POST is in flight — drawn on the keystroke so the
+   row is immediate — and it is subordinate: dimmer edge, aside ink, no controls,
+   because there is no server-side id yet for a clear to address. It becomes
+   `sent` when KAS's own `steer_queued` frame confirms it, which is what makes
+   the row correct on every device and after a reconnect.
 
-   Carried by BORDER STYLE, GLYPH and the state WORD, never by colour alone, so
+   Carried by the state WORD as well as the treatment, never by colour alone, so
    it survives a colour-vision difference and a monochrome display (WCAG 1.4.1).
-   The animation stops on read, because a breathing icon means "still waiting".
    ========================================================================== */
 
 .steer-stack {
@@ -240,11 +353,18 @@
   }
 }
 
-/* Read: settled. Solid edge and the green a completed tool card already uses. */
-.steer-row[data-state="read"] {
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--c-green) 45%, var(--c-border));
-  background: color-mix(in srgb, var(--c-green) 6%, var(--c-bg-secondary));
+/* Sending: not in KAS's buffer yet, so the row is subordinate to a confirmed
+   one. The ink is CHOSEN (`--c-text-aside`) rather than dimmed with an opacity,
+   because an opacity multiplies the measured contrast and is invisible to the
+   contrast gates. */
+.steer-row[data-state="sending"] {
+  border-color: var(--c-border);
+  background: var(--c-bg-secondary);
+}
+
+.steer-row[data-state="sending"] .steer-state,
+.steer-row[data-state="sending"] .steer-text {
+  color: var(--c-text-aside);
 }
 
 /* --- State column ------------------------------------------------------- */
@@ -259,10 +379,6 @@
   color: var(--c-accent);
 }
 
-.steer-row[data-state="read"] .steer-state {
-  color: var(--c-green);
-}
-
 .steer-state-icon {
   display: inline-flex;
   flex: none;
@@ -272,10 +388,6 @@
   width: 0.85rem;
   height: 0.85rem;
   animation: vk-breathe 2s var(--ease-standard) infinite;
-}
-
-.steer-row[data-state="read"] .steer-state-icon svg {
-  animation: none;
 }
 
 /* The WORD, not only the glyph. "Sent" is the fact the stack exists to state:
@@ -319,19 +431,6 @@
   overflow: hidden;
   color: var(--c-text-primary);
   line-height: 1.35;
-}
-
-/* What the agent said it DID about the steer, from its own acknowledgement
-   marker. Present only on a read row, so it is styled as the settled half: the
-   green the read state already established, one step down in weight from the
-   message, and clamped to one line because the message above it is the part the
-   reader wrote and already knows. */
-.steer-ack {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  color: color-mix(in srgb, var(--c-green) 70%, var(--c-text-secondary));
 }
 
 /* --- Actions column ----------------------------------------------------- */
