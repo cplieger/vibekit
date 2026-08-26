@@ -179,9 +179,11 @@ func DecisionKindForEvent(t EventType) (DecisionKind, bool) {
 // land on different fields client-side (Message.Reasoning vs Content).
 // BlockIndex addresses the chronological content block this delta
 // belongs to (Anthropic's content_block_delta.index): consecutive text
-// chunks share an index; a tool_call between text segments bumps the
-// next text chunk to a new index. Clients use this to accumulate
-// deltas into the right block in Message.Blocks.
+// chunks of one subtask share an index; a tool_call between text segments
+// of that subtask bumps the next text chunk to a new index, while an
+// interleaved OTHER subtask does not — so an index may go BACKWARDS
+// mid-turn. Clients accumulate by index rather than assuming the newest
+// one, which is what makes a non-monotonic index harmless.
 type MessageChunkPayload struct {
 	// Refusal tags this delta as the model-refusal explanation (kiro-cli
 	// 2.13 _meta.kiro.refusal on the chunk). Set on at most one chunk per
