@@ -402,7 +402,7 @@ const ALWAYS_ALLOW_UNAVAILABLE: Record<AlwaysAllowBlock, string> = {
  *  A one-line NOTE, deliberately not a disabled button: a control that does
  *  nothing teaches the reader to distrust every other one. There is no second
  *  escape hatch here either — the card already carries buildPolicyPointer at
- *  the workspace relaxation, which is the real one. */
+ *  the security-profile picker, which is the real one. */
 function buildAlwaysAllowNote(blocked: AlwaysAllowBlock): HTMLElement {
   return el("div", { className: "always-allow-unavailable" }, ALWAYS_ALLOW_UNAVAILABLE[blocked]);
 }

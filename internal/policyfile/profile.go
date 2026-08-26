@@ -4,13 +4,22 @@ import "slices"
 
 // Named security profiles for the Settings -> Permissions picker.
 //
-// A profile is a POSTURE, expressed as a set of KAS policy presets rather than as
-// rules vibekit authors. That indirection is the whole design:
+// A profile is a POSTURE, expressed MAINLY as a set of KAS policy presets rather
+// than as rules vibekit authors. That indirection is most of the design:
 // `_meta.kiro.policyPreset` takes preset ids at the session door and KAS resolves
 // each against its own registry, injecting the rules at SESSION scope with
-// `source: preset:<id>`. So a named profile writes nothing to disk, cannot go
-// stale against upstream's judgement about which commands are safe, and applies
-// to every session vibekit starts.
+// `source: preset:<id>`. So the preset half writes nothing to disk, cannot go
+// stale against upstream's judgement about which commands are safe, and covers
+// every session vibekit opens itself.
+//
+// "Mainly" is load-bearing: the presets are NOT the whole posture. A preset is
+// bound to the one session it arrived on, and KAS creates a workflow step's
+// session itself with no `_meta`, so a preset can never reach one. The loosest
+// rung therefore ALSO writes rules to the user-scope permissions file, which is
+// the only mechanism vibekit has that such a session reads. Every other rung
+// writes none, because a user-scope rule is durable — it survives a restart and
+// applies to every ACP client sharing this HOME. [Profile.FileRules] records that
+// asymmetry and why it is the decision rather than an omission.
 //
 // Upstream's judgement is the reason not to hand-roll the equivalent rule sets.
 // `dev-shell` allows `git add`/`commit`/`pull` and `go build`/`test` while
@@ -68,8 +77,11 @@ const (
 	// policy. Note what that costs and why it is still right: without
 	// read-workspace there is no fs_read floor, so an EMPTY custom policy makes
 	// the agent ask even to read a file. The UI reaches Custom either through the
-	// Customize button, which pre-populates the file from the outgoing profile, or
-	// by direct selection, which starts blank on purpose.
+	// Customize button, which copies what is currently in force into the user
+	// file, or by direct selection, which copies nothing and leaves whatever the
+	// files already hold. Direct selection does NOT start blank: a selection
+	// removes only the rules the profile mechanism itself could have written
+	// ([File.SetProfileRules]), so a hand-authored rule is still there afterwards.
 	ProfileCustom = "custom"
 )
 
@@ -95,10 +107,12 @@ type Profile struct {
 	//
 	// THE PICKER'S COPY DUPLICATES THIS DISTRIBUTION and the wire does not carry
 	// it: vibekit.SecurityProfile ships ID and Presets only, so
-	// profileDescription in static-src/permissions-ui.ts states "the only profile
-	// that also covers workflow steps" from a hand-maintained copy of which rung
-	// holds these rules. A rung gaining FileRules must change that copy in the same
-	// commit. What catches the omission is
+	// profileDescription in static-src/permissions-ui.ts states "the only preset
+	// profile that also covers workflow steps" from a hand-maintained copy of which
+	// rung holds these rules. ("Preset" is the narrowing that keeps it true: Custom
+	// sends no preset, and its own user-scope rules cover a step session too.) A
+	// rung gaining FileRules must change that copy in the same commit. What catches
+	// the omission is
 	// TestProfiles_OnlyTheLoosestRungWritesFileRules, which tables all five rungs
 	// against a wantRules boolean — editing that table is the moment to re-read the
 	// client text.

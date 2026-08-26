@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -192,6 +193,61 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 	}
 	if r := loadRules(t, wsPath); len(r) != 0 {
 		t.Errorf("workspace file holds %v; the user file is the profile's single home", r)
+	}
+}
+
+// bareAllows is the rule shape a profile writes: one bare allow per capability, no
+// match and no exclude. A pure projection, so it takes no *testing.T and cannot
+// fail.
+func bareAllows(caps []string) []policyfile.Rule {
+	out := make([]policyfile.Rule, 0, len(caps))
+	for _, c := range caps {
+		out = append(out, policyfile.Rule{Capability: c, Effect: policyfile.EffectAllow})
+	}
+	return out
+}
+
+// TestPolicyProfile_SeedKeepsTheOutgoingRungsFileRules is the half of "what is in
+// force" that a session-scope read cannot see.
+//
+// On the loosest rung the posture is its presets AND the bare allow rules it wrote
+// to the user file. presetRulesInForce filters to SESSION scope, so the file half
+// has to come from the profile definition — and the removal pass inside
+// SetProfileRules deletes it unconditionally, keying on the union over the ladder.
+// Without the union the only rule coming back is the one KAS's allow-all preset
+// resolves to at session scope, `all: allow`, so `sandbox_network` — the one
+// capability `all` does not cover, and the whole reason RelaxCapabilities has two
+// members — was silently dropped and Customize handed back a posture narrower than
+// the rung it claimed to have materialised.
+//
+// The fixture reports ONLY `all` live, which is the real distribution: that is what
+// the preset resolves to, and sandbox_network exists nowhere but the user file.
+func TestPolicyProfile_SeedKeepsTheOutgoingRungsFileRules(t *testing.T) {
+	s, _, _, userPath, _ := profileFixture(t, []vibekit.PolicyRule{seedRule("all", "allow-all")})
+	if err := s.persistProfile(t.Context(), policyfile.ProfileUnrestricted); err != nil {
+		t.Fatalf("Setup: put the loosest rung in force: %v", err)
+	}
+	if err := policyfile.Save(t.Context(), userPath,
+		&policyfile.File{Rules: bareAllows(policyfile.RelaxCapabilities())}); err != nil {
+		t.Fatalf("Setup: stage the loosest rung's own file rules: %v", err)
+	}
+
+	if rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileCustom, Seed: true}); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	got := loadRules(t, userPath)
+	want := policyfile.RelaxCapabilities()
+	if caps := ruleCapabilities(got); !slices.Equal(caps, want) {
+		t.Errorf("Customize away from %q left %v in the user file, want the whole outgoing posture %v",
+			policyfile.ProfileUnrestricted, caps, want)
+	}
+	for _, r := range got {
+		// A recovered rule that is not a bare allow grants less than the rung did and
+		// is not removable by the Signature the next selection looks for.
+		if r.Effect != policyfile.EffectAllow || r.Match != nil || r.Exclude != nil {
+			t.Errorf("materialised rule %+v is not a bare allow; Customize must copy the posture as it stood", r)
+		}
 	}
 }
 
@@ -433,8 +489,18 @@ func TestPolicyProfile_WorkspaceWriteFailureRestoresTheUserFile(t *testing.T) {
 // condition the user created in their own file and can fix from the table, and the
 // sibling rule endpoint has always answered 400 for it. Answered as a 500 it read
 // as vibekit being broken, for every profile selection, until they found the log.
+//
+// It also pins that this refusal writes NOTHING, which needs two observables
+// because the restore it must not run would have produced byte-identical rules. The
+// staged file carries a YAML comment, which Load parses through and Save cannot
+// reproduce, so a re-marshal is visible in the bytes; and the workspace file is
+// absent, where a restore writes `rules: []` to both scopes and so brings it into
+// existence. Together they separate "the cap was refused before any write" from
+// "the cap was refused and then both files were rewritten with what they already
+// held" — the second bumps mtime, wakes KAS's watcher and produces a policy-changed
+// notification for a request that changed nothing.
 func TestPolicyProfile_AFullUserFileIsTheCallersProblem(t *testing.T) {
-	s, _, reload, userPath, _ := profileFixture(t, nil)
+	s, _, reload, userPath, wsPath := profileFixture(t, nil)
 	// Hand-authored, so none of them is profile-owned and the removal pass keeps
 	// every one: the file is still full when the incoming rules are upserted.
 	full := make([]policyfile.Rule, 0, 512)
@@ -446,6 +512,14 @@ func TestPolicyProfile_AFullUserFileIsTheCallersProblem(t *testing.T) {
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: full}); err != nil {
 		t.Fatalf("Setup: stage a full user file: %v", err)
 	}
+	marshalled, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("Setup: read the staged file: %v", err)
+	}
+	staged := append([]byte("# hand-edited; a comment Save cannot reproduce\n"), marshalled...)
+	if err := os.WriteFile(userPath, staged, 0o600); err != nil {
+		t.Fatalf("Setup: stage the commented file: %v", err)
+	}
 
 	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileUnrestricted})
 	if rec.Code != http.StatusBadRequest {
@@ -454,6 +528,19 @@ func TestPolicyProfile_AFullUserFileIsTheCallersProblem(t *testing.T) {
 	if got := loadRules(t, userPath); len(got) != len(full) {
 		t.Errorf("the user file holds %d rules after the refusal, want the staged %d back",
 			len(got), len(full))
+	}
+	back, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("read back %s: %v", userPath, err)
+	}
+	if !bytes.Equal(back, staged) {
+		t.Errorf("the user file was rewritten after a refusal that wrote nothing; want it left "+
+			"byte-for-byte alone, got %d bytes and lost the comment: %t",
+			len(back), !bytes.Contains(back, []byte("# hand-edited")))
+	}
+	if _, err := os.Stat(wsPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("os.Stat(%s) = %v, want the file still absent; a refusal that wrote nothing must "+
+			"not create a workspace policy file on the way out", wsPath, err)
 	}
 	if reload.restarts != 0 {
 		t.Errorf("utility restarts = %d; a refused selection must not recycle a session", reload.restarts)

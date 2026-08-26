@@ -73,7 +73,7 @@ const (
 // tags were dead. They also carried a latent surprise: `omitempty` on a slice
 // changes the wire under encoding/json/v2, where a nil slice emits `[]` instead
 // of being omitted, and sanitizePatterns returns nil for the empty case that the
-// workspace relaxation writes for every rule. Deleting them removes both.
+// relaxation's own rules carry on every one of them. Deleting them removes both.
 type Rule struct {
 	Capability string   `yaml:"capability"`
 	Effect     string   `yaml:"effect"`
@@ -170,9 +170,15 @@ var allMembers = map[string]struct{}{
 	"context": {}, "diagnostics": {},
 }
 
-// RelaxCapabilities returns the capability set the Settings -> Permissions
-// workspace relaxation writes broad allow rules for, sorted. It is the broadest
-// grant a permissions file can express.
+// RelaxCapabilities returns the capability set the LOOSEST security profile
+// writes broad allow rules for, sorted. It is the broadest grant a permissions
+// file can express.
+//
+// Its consumer is [Profile.FileRules] on the unrestricted rung, reached through
+// relaxRules in profile.go — not the Settings -> Permissions relaxation CHECKBOX
+// this doc used to name, which the profile picker replaced. The switch is gone;
+// the set outlived it because the question it answers ("what is the broadest
+// grant") is the same one the loosest rung has to answer.
 //
 // DERIVED as `all` plus every non-umbrella capability that alias does not cover,
 // which today is exactly {all, sandbox_network}, rather than listed — so it
@@ -180,35 +186,37 @@ var allMembers = map[string]struct{}{
 // either input is a visible decision.
 //
 // TWO rules rather than one, because `all` is an alias over a fixed table and not
-// a wildcard: writing only `all` would leave sandbox_network asking while a
-// switch that says it allows everything claimed otherwise. Two rather than the
-// twelve discrete names for the opposite reason: eleven of them would be pure
-// noise in the Active policy list, and keeping the alias is what makes a
-// capability a later KAS version adds to BUILTIN allowed with no vibekit release,
-// which is what someone who pressed this switch meant.
+// a wildcard: writing only `all` would leave sandbox_network asking while the
+// rung's own description says it never asks. Two rather than the twelve discrete
+// names for the opposite reason: eleven of them would be pure noise in the Active
+// policy list, and keeping the alias is what makes a capability a later KAS
+// version adds to BUILTIN allowed with no vibekit release, which is what someone
+// who picked this rung meant.
 //
 // It writes one bare rule per member, which is what makes it exactly reversible:
 // Signature keys on capability + effect + globs, so removing the same bare rules
 // removes precisely what was written and leaves any hand-authored narrower rule
-// for the same capability untouched.
+// for the same capability untouched. [File.SetProfileRules] is what depends on
+// that.
 //
-// ONE switch, not a ladder. An "everyday" rung that withheld `power` was built
-// and then removed (2026-08-25) on the user's call: two controls whose only
-// difference is one capability cost a reveal rule, a cascade rule and a second
-// status line, and the narrow shape stays expressible by hand as `all: allow`
-// plus `power: ask` — which works cleanly, since deny > ask > allow and `power`
-// has none of shell's parse-driven ask paths. What the switch grants that a user
-// should know about is therefore stated in its confirm rather than withheld by
-// omission: a power runs its author's code at the user's privilege, and Cedar is
-// the only guard, because a power's manifest carries no permissions field.
+// ONE set, not a ladder of its own. An "everyday" variant that withheld `power`
+// was built and then removed (2026-08-25) on the user's call: two postures whose
+// only difference is one capability cost a reveal rule, a cascade rule and a
+// second status line, and the narrow shape stays expressible by hand as
+// `all: allow` plus `power: ask` — which works cleanly, since deny > ask > allow
+// and `power` has none of shell's parse-driven ask paths. What this grants that a
+// user should know about is therefore stated in the picker's copy rather than
+// withheld by omission: a power runs its author's code at the user's privilege,
+// and Cedar is the only guard, because a power's manifest carries no permissions
+// field.
 //
 // What it CANNOT do, because effects resolve by restrictiveness and a hardcoded
 // scope sits above every file: the kiro scope still denies writes under
 // ~/.kiro/settings, .kiro/settings and ~/.kiro/workspace-roots, and still asks
 // before writing .git/**, .kiro/agents/**, .kiro/hooks/**, .vscode/** and
 // **/*.code-workspace. Measured on the live engine with an all=allow rule in
-// force. The UI says so beside the switch; a control that implied otherwise would
-// be the same defect as one that silently does nothing.
+// force. The picker's description says so; copy that implied otherwise would be
+// the same defect as a control that silently does nothing.
 func RelaxCapabilities() []string {
 	out := []string{capAll}
 	for c := range suggestedCapabilities {
@@ -538,7 +546,15 @@ func (f *File) Upsert(r *Rule) (bool, error) {
 // Upserts each of rules, so a selection replaces the OUTGOING profile's rules and
 // nothing else. Returns ErrTooManyRules when the file is already at the cap.
 // SetProfileRules(nil) is the remove-and-add-nothing case, which is what a
-// restrictive rung and the workspace file both want.
+// restrictive rung and the workspace file both want, and it can never return
+// ErrTooManyRules because nothing is Upserted.
+//
+// ALL OR NOTHING: an error leaves f exactly as it was found. The removal pass runs
+// before the Upsert loop, so building in place would leave an ErrTooManyRules
+// holding a PARTIAL posture — the outgoing profile's rules gone and only part of
+// the incoming set added — and a caller that Saved after the error would persist
+// it. Staging into a scratch value and assigning once is two lines and removes
+// that; nothing has to know the failure order to use this safely.
 //
 // MERGE by ownership, and Signature is the only ownership handle there is: a rule
 // carries no provenance in the file, and no RPC reports which writer produced one.
@@ -577,12 +593,16 @@ func (f *File) SetProfileRules(rules []Rule) error {
 		}
 		kept = append(kept, f.Rules[i])
 	}
-	f.Rules = kept
+	// Upsert through a scratch File rather than f, so a refusal partway through the
+	// loop cannot leave the receiver holding half a posture. kept is already a fresh
+	// allocation, so the append aliases nothing f still points at.
+	staged := File{Rules: kept}
 	for i := range rules {
-		if _, err := f.Upsert(&rules[i]); err != nil {
+		if _, err := staged.Upsert(&rules[i]); err != nil {
 			return err
 		}
 	}
+	f.Rules = staged.Rules
 	return nil
 }
 

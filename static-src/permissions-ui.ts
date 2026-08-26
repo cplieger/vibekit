@@ -213,6 +213,14 @@ function profileLabel(id: string): string {
  *  asks for is writes and anything outside that allowlist, and that is what the
  *  three restrictive rungs say.
  *
+ *  CUSTOM does cover a step session, and its claim is narrowed to USER scope for
+ *  the same reason the rest of this text was rewritten. Only user scope was
+ *  measured against a step session; the rule-add form's scope select defaults to
+ *  WORKSPACE, and while KAS loads both files process-wide and may well evaluate a
+ *  workspace rule for a step too, "may well" is an inference. Promising coverage
+ *  for the scope a user's rules land in by default, on an inference, would be this
+ *  text's own defect pointed at the one rung the user authors by hand.
+ *
  *  SUBAGENTS are covered on every rung, so no rung claims them: invoke_sub_agent
  *  creates no session, so a subagent rides its parent's session id and inherits
  *  whatever the parent was seeded with. Only STEP sessions were ever uncovered.
@@ -238,7 +246,7 @@ function profileDescription(id: string): string {
     case "unrestricted":
       return "Never asks, including before installing a power, and the only preset profile that also covers workflow steps. It writes a durable allow rule to your user permissions file, so it survives a restart and applies to every Kiro client on this machine until you pick another profile. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
     case CUSTOM_PROFILE:
-      return "Your own rules, edited in the table below. Nothing is granted that you do not add, and they apply to workflow steps too.";
+      return "Your own rules, edited in the table below. Nothing is granted that you do not add, and a rule you add at user scope covers workflow steps too.";
     default:
       return "";
   }

@@ -2,6 +2,7 @@ package policyfile
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -124,21 +125,59 @@ func TestSetProfileRules_IsIdempotent(t *testing.T) {
 // of the policy and out of the CLI argv, and a selection that hits it must report
 // the refusal rather than persist a partial posture that grants some capabilities
 // and not others.
+//
+// It also pins the all-or-nothing half, which is what makes the refusal safe for a
+// caller that does not know the failure order. The removal pass runs BEFORE the
+// Upsert loop, so building in place would hand back a file with the outgoing
+// profile's rules already gone and part of the incoming set already added — a
+// posture narrower than the old one and looser than the new one, which a caller
+// that Saved after the error would write to disk. The staged rule is profile-owned
+// so the removal pass is guaranteed to have something to take: without the scratch
+// value the received file comes back one rule shorter.
 func TestSetProfileRules_RefusesAFullFile(t *testing.T) {
 	loosest, ok := ProfileFor(ProfileUnrestricted)
 	if !ok {
 		t.Fatal("ProfileFor(unrestricted) missing")
 	}
 	f := &File{Rules: make([]Rule, 0, maxRulesPerFile)}
-	for i := range maxRulesPerFile {
+	// One profile-owned rule the removal pass must drop, then hand-authored filler
+	// up to the cap so the first Upsert of the incoming set is refused.
+	f.Rules = append(f.Rules, loosest.FileRules[0])
+	for i := range maxRulesPerFile - 1 {
 		f.Rules = append(f.Rules, Rule{
 			Capability: "fs_read", Effect: EffectAsk,
 			Match: []string{"p" + strconv.Itoa(i)},
 		})
 	}
+	before := signatures(f.Rules)
+
 	err := f.SetProfileRules(loosest.FileRules)
 	if !errors.Is(err, ErrTooManyRules) {
 		t.Errorf("SetProfileRules(%v) on a %d-rule file = %v, want ErrTooManyRules",
 			loosest.FileRules, maxRulesPerFile, err)
 	}
+	// Reported as ONE message naming the first divergence rather than per rule: an
+	// in-place build shifts all 512 signatures by one, and 512 near-identical lines
+	// bury the fact that the file simply lost its profile-owned rule.
+	after := signatures(f.Rules)
+	if !slices.Equal(after, before) {
+		t.Errorf("after a refused SetProfileRules the file holds %d rules (%s), want the %d it "+
+			"started with unchanged (%s); a refusal must leave the receiver untouched",
+			len(after), firstDivergence(after, before), len(before), before[0])
+	}
+}
+
+// firstDivergence describes where two signature projections part company, so a
+// failure carries one line instead of one per rule. A pure projection, so it takes
+// no *testing.T and cannot fail.
+func firstDivergence(got, want []string) string {
+	for i := range min(len(got), len(want)) {
+		if got[i] != want[i] {
+			return "rule " + strconv.Itoa(i) + " = " + got[i]
+		}
+	}
+	if len(got) == len(want) {
+		return "same rules"
+	}
+	return "length " + strconv.Itoa(len(got))
 }

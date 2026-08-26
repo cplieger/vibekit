@@ -11,7 +11,9 @@
 //   - the table is read-only unless Custom is active, and genuinely disabled
 //     rather than only dimmed,
 //   - the two doors into Custom differ by one flag: Customize seeds from the
-//     profile in force, direct selection starts blank,
+//     profile in force, direct selection copies nothing and leaves the file's own
+//     rules standing (it does NOT start blank — the merge preserves what the
+//     profile mechanism did not write),
 //   - an empty Custom policy says so, because it asks for everything including
 //     reading a file.
 //
@@ -437,6 +439,19 @@ describe("what a profile description promises", () => {
     for (const id of ["guarded", "read-only", "trusted", "custom"]) {
       expect(descriptionFor(id)).not.toContain("durable");
     }
+  });
+
+  // Custom's own rules DO reach a step session — it sends no preset, so the files
+  // are its whole policy — but only the scope that was MEASURED may be claimed. The
+  // rule-add form defaults to workspace scope, and workspace reachability for a
+  // session Kiro created itself is an inference rather than a measurement, so a flat
+  // "they apply to workflow steps too" promised coverage for the scope a user's
+  // rules land in by default on the strength of that inference.
+  it("scopes Custom's step claim to the scope that was measured", async () => {
+    await mount(view("guarded"));
+    const desc = descriptionFor("custom");
+    expect(desc).toContain("workflow steps");
+    expect(desc).toContain("user scope");
   });
 });
 
