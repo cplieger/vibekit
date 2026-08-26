@@ -164,6 +164,17 @@ type runBoundsState struct {
 	// eviction queue for it.
 	reasons map[string]string
 	order   []string
+	// heals counts the automatic resumes this process has issued for a run SINCE
+	// IT LAST MADE PROGRESS, which is what bounds the pause-heal loop (run_host.go
+	// healPaused). Reset by a node completing and by the run ending, so a
+	// long-running job that hits an unrelated blip hours later gets a fresh budget
+	// rather than being written off for the rest of the process.
+	//
+	// Here rather than on its own field, because the documented lock protocol is
+	// "mu guards bounds" and a second per-run counter with a second mutex would be
+	// two protocols where one works. It is the same class of thing as `terminating`
+	// — in-memory bookkeeping about a run's execution, worthless after a restart.
+	heals map[string]int
 }
 
 // armDeadline gives a run its deadline and the timer that enforces it.
@@ -398,7 +409,42 @@ func (rs *Runs) finishTermination(ctx context.Context, workflowID, reason string
 func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
 	rs.stopTimer(workflowID)
 	rs.releaseTermination(workflowID)
+	rs.clearHeals(workflowID)
 	rs.releaseLease(ctx, workflowID)
+}
+
+// claimHeal takes one of a run's automatic-resume attempts, reporting false once
+// the budget is spent.
+//
+// The budget exists because a heal and a pause can drive each other: a network
+// that is genuinely down fails the step again the moment the run resumes, KAS
+// parks it again, and the frame that says so is the same frame that triggered the
+// heal. Three attempts, then the run stays paused and the ordinary
+// chat-rehydration path owns it — which is the right place for a fault that is not
+// clearing on its own.
+//
+// Returns the attempt NUMBER as well as the verdict, so the caller's backoff is
+// computed from the count this claim took rather than from a second read that two
+// interleaved frames could race.
+func (rs *Runs) claimHeal(workflowID string) (attempt int, ok bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.bounds.heals == nil {
+		rs.bounds.heals = map[string]int{}
+	}
+	if rs.bounds.heals[workflowID] >= maxAutoHeals {
+		return rs.bounds.heals[workflowID], false
+	}
+	rs.bounds.heals[workflowID]++
+	return rs.bounds.heals[workflowID], true
+}
+
+// clearHeals gives a run its full heal budget back. Called when a node completes
+// (the run is moving, so whatever paused it has cleared) and when the run ends.
+func (rs *Runs) clearHeals(workflowID string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	delete(rs.bounds.heals, workflowID)
 }
 
 // clearEnd forgets a run's recorded termination, so a RE-DRIVEN run is bounded

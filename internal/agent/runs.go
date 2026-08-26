@@ -51,7 +51,9 @@ type Runs struct {
 }
 
 // runChatReader is the chat store as the run surface uses it: one method, to
-// resolve a chat's session chain when cancelling its runs.
+// resolve a chat's session chain. Read in both directions — from a chat to the
+// runs its sessions launched (cancel on close, resume on rehydrate), and from a
+// run's parent session back to the chat whose bridge hosts it (hostBridge).
 type runChatReader interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 }
