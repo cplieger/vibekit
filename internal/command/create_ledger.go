@@ -46,11 +46,11 @@ const maxCreateOps = 512
 // Safe for concurrent use. The zero value IS usable — a nil map is only read
 // until the first record — but construct with newCreateLedger, which says so.
 type createLedger struct {
-	mu   sync.Mutex
 	ops  map[string]createOp
 	now  func() time.Time
 	ttl  time.Duration
 	maxN int
+	mu   sync.Mutex
 }
 
 type createOp struct {

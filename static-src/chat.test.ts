@@ -31,8 +31,13 @@ const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, message
     });
     return {
       setModeDispatch: vi.fn(),
-      forkDispatch: vi.fn(async () => serverHeader("c-forked")),
-      createDispatch: vi.fn(async () => serverHeader("c-created")),
+      // Both creating dispatches are called WITH a payload, so the fakes declare
+      // that parameter: without it the mock's calls tuple is empty and the cases
+      // below cannot read the argument they exist to assert on.
+      forkDispatch: vi.fn(async (_payload?: Record<string, unknown>) => serverHeader("c-forked")),
+      createDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
+        serverHeader("c-created"),
+      ),
       submitPromptMock: vi.fn(),
       messagesEl: document.createElement("div"),
     };

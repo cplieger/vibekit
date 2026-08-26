@@ -28,6 +28,7 @@ func (d *benchDeps) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, 
 func (d *benchDeps) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {
 	return nil
 }
+
 func (d *benchDeps) SetDraft(context.Context, vibekit.ChatID, string) (*vibekit.ComposerState, error) {
 	return nil, nil
 }

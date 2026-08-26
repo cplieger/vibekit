@@ -25,6 +25,12 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// keyVersion is the response field carrying the collection version a mutation
+// committed. One spelling across every tab response and the three creating
+// commands, because a client keys its whole gap detection on this field: a typo
+// in one response reads as a missing version rather than as an error.
+const keyVersion = "version"
+
 // errTooManyOrderIDs is reorder_tabs' 413: a list longer than the decode bound
 // is refused before it reaches the store, because the exact-set check would
 // reject it anyway and there is no reason to allocate two maps for it first.
@@ -65,9 +71,9 @@ func CmdOpenTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand
 		return nil, err
 	}
 	return responseWith(map[string]any{
-		"subject": opened.Subject,
-		"created": opened.Created,
-		"version": opened.Version,
+		"subject":  opened.Subject,
+		"created":  opened.Created,
+		keyVersion: opened.Version,
 	}), nil
 }
 
@@ -95,8 +101,8 @@ func CmdCloseTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientComman
 		return nil, err
 	}
 	return responseWith(map[string]any{
-		"closed":  subjectIDs(closed),
-		"version": version,
+		"closed":   subjectIDs(closed),
+		keyVersion: version,
 	}), nil
 }
 
@@ -127,7 +133,7 @@ func CmdReorderTabs(ctx context.Context, mem *Membership, cmd *vibekit.ClientCom
 	if err != nil {
 		return nil, err
 	}
-	return responseWith(map[string]any{"version": version}), nil
+	return responseWith(map[string]any{keyVersion: version}), nil
 }
 
 // CmdPinTab pins or unpins one tab. Idempotent in both directions.
@@ -147,7 +153,7 @@ func CmdPinTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand)
 	if err != nil {
 		return nil, err
 	}
-	return responseWith(map[string]any{"version": version}), nil
+	return responseWith(map[string]any{keyVersion: version}), nil
 }
 
 // tabsMaxOrderIDs is deliberately not a constant here: the bound a reorder is

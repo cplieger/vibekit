@@ -4,6 +4,7 @@
 // factory's own rules rather than about a store's contents.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Mock } from "vitest";
 import type { TabKind, TabSubject } from "./types.js";
 import type { Route } from "./router.js";
 import type { TabDotStatus, TabViewSpec } from "./tab-view.js";
@@ -43,12 +44,12 @@ vi.mock("./history.js", () => ({
 }));
 vi.mock("./docs.js", () => ({
   loadDocsView: vi.fn(),
-  toggleDocsView: vi.fn(),
+  showDocsView: vi.fn(),
 }));
 
 import { get } from "./store.js";
 import { peekRunState } from "./run-store.js";
-import { loadDocsView, toggleDocsView } from "./docs.js";
+import { loadDocsView, showDocsView } from "./docs.js";
 import { loadFileBrowser, resetFileBrowser } from "./files.js";
 import { loadGitRepos } from "./git.js";
 import { loadHistoryView, teardownHistoryView } from "./history.js";
@@ -68,26 +69,26 @@ function subject(over: Partial<TabSubject> & { kind: TabKind }): TabSubject {
 }
 
 interface Spies {
-  chatShow: ReturnType<typeof vi.fn>;
-  chatClose: ReturnType<typeof vi.fn>;
-  chatDot: ReturnType<typeof vi.fn>;
-  editorShow: ReturnType<typeof vi.fn>;
-  editorClose: ReturnType<typeof vi.fn>;
-  runShow: ReturnType<typeof vi.fn>;
-  runCancel: ReturnType<typeof vi.fn>;
+  chatShow: Mock<TabOpeners["chat"]["show"]>;
+  chatClose: Mock<TabOpeners["chat"]["close"]>;
+  chatDot: Mock<TabOpeners["chat"]["dot"]>;
+  editorShow: Mock<TabOpeners["editor"]["show"]>;
+  editorClose: Mock<TabOpeners["editor"]["close"]>;
+  runShow: Mock<TabOpeners["run"]["show"]>;
+  runCancel: Mock<TabOpeners["run"]["cancel"]>;
 }
 
 let spies: Spies;
 
 function register(dot: TabDotStatus | "" = ""): void {
   spies = {
-    chatShow: vi.fn(),
-    chatClose: vi.fn(),
-    chatDot: vi.fn(() => dot),
-    editorShow: vi.fn(),
-    editorClose: vi.fn(),
-    runShow: vi.fn(),
-    runCancel: vi.fn(),
+    chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
+    chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
+    chatDot: vi.fn<TabOpeners["chat"]["dot"]>(() => dot),
+    editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
+    editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
+    runShow: vi.fn<TabOpeners["run"]["show"]>(),
+    runCancel: vi.fn<TabOpeners["run"]["cancel"]>(),
   };
   const openers: TabOpeners = {
     chat: { show: spies.chatShow, close: spies.chatClose, dot: spies.chatDot },
@@ -390,15 +391,16 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
   }
 
   // A toggle CLOSES the tab when it is already active, so a factory that reached
-  // one would make materializing a subject destroy the tab it describes. The docs
-  // module exports both verbs, which is what makes this assertable rather than
-  // merely stated.
+  // one would make materializing a subject destroy the tab it describes.
+  // showDocsView is that hazard concretely: it delegates straight to tabs.ts's
+  // toggleDocsView, and docs.js exports it beside the plain loader, which is what
+  // makes this assertable rather than merely stated.
   it("docs", async () => {
     register();
     materializeTab(subject({ kind: "docs" })).onShow?.();
     await settle();
     expect(loadDocsView).toHaveBeenCalledWith("steering");
-    expect(toggleDocsView).not.toHaveBeenCalled();
+    expect(showDocsView).not.toHaveBeenCalled();
   });
 
   it("settings", async () => {

@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { Mock } from "vitest";
 import { effect } from "@cplieger/reactive";
 
 // Mock dependencies that tabs.ts imports at module level.
@@ -114,6 +115,7 @@ import {
 } from "./tabs.js";
 import { attachDrag, setReorderCallback } from "./tabs-drag.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
+import type { TabOpeners } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
@@ -137,24 +139,24 @@ const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
 // teardown watches the opener it delegates to.
 
 interface Openers {
-  chatShow: ReturnType<typeof vi.fn>;
-  chatClose: ReturnType<typeof vi.fn>;
-  editorShow: ReturnType<typeof vi.fn>;
-  editorClose: ReturnType<typeof vi.fn>;
-  runShow: ReturnType<typeof vi.fn>;
-  runCancel: ReturnType<typeof vi.fn>;
+  chatShow: Mock<TabOpeners["chat"]["show"]>;
+  chatClose: Mock<TabOpeners["chat"]["close"]>;
+  editorShow: Mock<TabOpeners["editor"]["show"]>;
+  editorClose: Mock<TabOpeners["editor"]["close"]>;
+  runShow: Mock<TabOpeners["run"]["show"]>;
+  runCancel: Mock<TabOpeners["run"]["cancel"]>;
 }
 
 let openers: Openers;
 
 function registerOpeners(): void {
   openers = {
-    chatShow: vi.fn(),
-    chatClose: vi.fn(),
-    editorShow: vi.fn(),
-    editorClose: vi.fn(),
-    runShow: vi.fn(),
-    runCancel: vi.fn(),
+    chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
+    chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
+    editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
+    editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
+    runShow: vi.fn<TabOpeners["run"]["show"]>(),
+    runCancel: vi.fn<TabOpeners["run"]["cancel"]>(),
   };
   registerTabOpeners({
     chat: { show: openers.chatShow, close: openers.chatClose, dot: () => "" },

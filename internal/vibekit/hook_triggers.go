@@ -48,6 +48,26 @@ type HookTrigger struct {
 	Subject HookMatcherSubject
 }
 
+// The eleven canonical trigger names, as KAS's hook loader spells them.
+//
+// Constants rather than repeated literals because the alias table below points
+// many spellings at ONE canonical name, and that is the file's invariant: a typo
+// in an alias would otherwise mint a silent twelfth trigger that KAS then drops.
+// Unexported — nothing outside this package names a trigger, it normalizes one.
+const (
+	triggerSessionStart     = "SessionStart"
+	triggerStop             = "Stop"
+	triggerPreToolUse       = "PreToolUse"
+	triggerPostToolUse      = "PostToolUse"
+	triggerPreTaskExec      = "PreTaskExec"
+	triggerPostTaskExec     = "PostTaskExec"
+	triggerUserPromptSubmit = "UserPromptSubmit"
+	triggerPostFileCreate   = "PostFileCreate"
+	triggerPostFileSave     = "PostFileSave"
+	triggerPostFileDelete   = "PostFileDelete"
+	triggerManual           = "Manual"
+)
+
 // hookTriggers maps event-type payload values (vibekit's own vocabulary plus v2
 // / Kiro-IDE camelCase aliases) to the canonical trigger. Keys are lowercased
 // for case-insensitive lookup, and every alias points at the SAME meta as its
@@ -59,37 +79,37 @@ type HookTrigger struct {
 // in the same edit — TestEveryCanonicalTriggerHasASubject fails otherwise.
 var hookTriggers = map[string]HookTrigger{
 	// Canonical PascalCase names (self-map via their lowercase key).
-	"sessionstart":     {Name: "SessionStart", Subject: HookMatcherSubjectNone},
-	"stop":             {Name: "Stop", Subject: HookMatcherSubjectNone},
-	"pretooluse":       {Name: "PreToolUse", Subject: HookMatcherSubjectToolName},
-	"posttooluse":      {Name: "PostToolUse", Subject: HookMatcherSubjectToolName},
-	"pretaskexec":      {Name: "PreTaskExec", Subject: HookMatcherSubjectNone},
-	"posttaskexec":     {Name: "PostTaskExec", Subject: HookMatcherSubjectNone},
-	"userpromptsubmit": {Name: "UserPromptSubmit", Subject: HookMatcherSubjectNone},
-	"postfilecreate":   {Name: "PostFileCreate", Subject: HookMatcherSubjectFilePath},
-	"postfilesave":     {Name: "PostFileSave", Subject: HookMatcherSubjectFilePath},
-	"postfiledelete":   {Name: "PostFileDelete", Subject: HookMatcherSubjectFilePath},
-	"manual":           {Name: "Manual", Subject: HookMatcherSubjectNone},
+	"sessionstart":     {Name: triggerSessionStart, Subject: HookMatcherSubjectNone},
+	"stop":             {Name: triggerStop, Subject: HookMatcherSubjectNone},
+	"pretooluse":       {Name: triggerPreToolUse, Subject: HookMatcherSubjectToolName},
+	"posttooluse":      {Name: triggerPostToolUse, Subject: HookMatcherSubjectToolName},
+	"pretaskexec":      {Name: triggerPreTaskExec, Subject: HookMatcherSubjectNone},
+	"posttaskexec":     {Name: triggerPostTaskExec, Subject: HookMatcherSubjectNone},
+	"userpromptsubmit": {Name: triggerUserPromptSubmit, Subject: HookMatcherSubjectNone},
+	"postfilecreate":   {Name: triggerPostFileCreate, Subject: HookMatcherSubjectFilePath},
+	"postfilesave":     {Name: triggerPostFileSave, Subject: HookMatcherSubjectFilePath},
+	"postfiledelete":   {Name: triggerPostFileDelete, Subject: HookMatcherSubjectFilePath},
+	"manual":           {Name: triggerManual, Subject: HookMatcherSubjectNone},
 	// v2 / Kiro-IDE camelCase aliases.
-	"agentstop":         {Name: "Stop", Subject: HookMatcherSubjectNone},
-	"promptsubmit":      {Name: "UserPromptSubmit", Subject: HookMatcherSubjectNone},
-	"userprompt":        {Name: "UserPromptSubmit", Subject: HookMatcherSubjectNone},
-	"pretaskexecution":  {Name: "PreTaskExec", Subject: HookMatcherSubjectNone},
-	"posttaskexecution": {Name: "PostTaskExec", Subject: HookMatcherSubjectNone},
-	"filecreate":        {Name: "PostFileCreate", Subject: HookMatcherSubjectFilePath},
-	"filecreated":       {Name: "PostFileCreate", Subject: HookMatcherSubjectFilePath},
-	"filesave":          {Name: "PostFileSave", Subject: HookMatcherSubjectFilePath},
-	"filesaved":         {Name: "PostFileSave", Subject: HookMatcherSubjectFilePath},
-	"fileedit":          {Name: "PostFileSave", Subject: HookMatcherSubjectFilePath},
-	"fileedited":        {Name: "PostFileSave", Subject: HookMatcherSubjectFilePath},
-	"filedelete":        {Name: "PostFileDelete", Subject: HookMatcherSubjectFilePath},
-	"filedeleted":       {Name: "PostFileDelete", Subject: HookMatcherSubjectFilePath},
-	"usertriggered":     {Name: "Manual", Subject: HookMatcherSubjectNone},
+	"agentstop":         {Name: triggerStop, Subject: HookMatcherSubjectNone},
+	"promptsubmit":      {Name: triggerUserPromptSubmit, Subject: HookMatcherSubjectNone},
+	"userprompt":        {Name: triggerUserPromptSubmit, Subject: HookMatcherSubjectNone},
+	"pretaskexecution":  {Name: triggerPreTaskExec, Subject: HookMatcherSubjectNone},
+	"posttaskexecution": {Name: triggerPostTaskExec, Subject: HookMatcherSubjectNone},
+	"filecreate":        {Name: triggerPostFileCreate, Subject: HookMatcherSubjectFilePath},
+	"filecreated":       {Name: triggerPostFileCreate, Subject: HookMatcherSubjectFilePath},
+	"filesave":          {Name: triggerPostFileSave, Subject: HookMatcherSubjectFilePath},
+	"filesaved":         {Name: triggerPostFileSave, Subject: HookMatcherSubjectFilePath},
+	"fileedit":          {Name: triggerPostFileSave, Subject: HookMatcherSubjectFilePath},
+	"fileedited":        {Name: triggerPostFileSave, Subject: HookMatcherSubjectFilePath},
+	"filedelete":        {Name: triggerPostFileDelete, Subject: HookMatcherSubjectFilePath},
+	"filedeleted":       {Name: triggerPostFileDelete, Subject: HookMatcherSubjectFilePath},
+	"usertriggered":     {Name: triggerManual, Subject: HookMatcherSubjectNone},
 	// Three more spellings KAS itself accepts. Their absence meant a payload
 	// using any of them produced a hook file KAS then discarded.
-	"agentspawn":    {Name: "SessionStart", Subject: HookMatcherSubjectNone},
-	"sessionend":    {Name: "Stop", Subject: HookMatcherSubjectNone},
-	"afterfileedit": {Name: "PostFileSave", Subject: HookMatcherSubjectFilePath},
+	"agentspawn":    {Name: triggerSessionStart, Subject: HookMatcherSubjectNone},
+	"sessionend":    {Name: triggerStop, Subject: HookMatcherSubjectNone},
+	"afterfileedit": {Name: triggerPostFileSave, Subject: HookMatcherSubjectFilePath},
 }
 
 // NormalizeHookTrigger maps a client event-type value (or a canonical name KAS

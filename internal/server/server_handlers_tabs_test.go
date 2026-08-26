@@ -178,9 +178,7 @@ func TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet(t *testing.T) {
 	const opens = 60
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range opens {
 			if _, _, _, err := st.Open(t.Context(), vibekit.OpenTab{
 				Kind: vibekit.TabKindEditor,
@@ -189,7 +187,7 @@ func TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet(t *testing.T) {
 				return // the store's own limit; the reads are what this asserts
 			}
 		}
-	}()
+	})
 
 	for range 400 {
 		got, code := getTabs(t, s)

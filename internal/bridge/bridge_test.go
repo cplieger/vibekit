@@ -1713,7 +1713,8 @@ func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 		&vibekit.RPCResponse{Result: json.RawMessage(
 			`{"sessionId":"acp-session-xyz","configOptions":[` +
 				`{"id":"model","currentValue":"claude-opus-5","options":[{"value":"claude-opus-5","name":"O5","_meta":{"kiro":{"rateMultiplier":1}}}]},` +
-				`{"id":"effortLevel","currentValue":"max","options":[{"value":"max","name":"max"}]}]}`)})
+				`{"id":"effortLevel","currentValue":"max","options":[{"value":"max","name":"max"}]}]}`,
+		)})
 	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
 	}
@@ -1739,7 +1740,8 @@ func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
 		&vibekit.StartOpts{Effort: "max"},
 		// The session came back at the model's default rather than at max.
 		&vibekit.RPCResponse{Result: json.RawMessage(
-			`{"sessionId":"acp-session-xyz","configOptions":[{"id":"effortLevel","currentValue":"high","options":[{"value":"high"},{"value":"max"}]}]}`)})
+			`{"sessionId":"acp-session-xyz","configOptions":[{"id":"effortLevel","currentValue":"high","options":[{"value":"high"},{"value":"max"}]}]}`,
+		)})
 	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
 	}

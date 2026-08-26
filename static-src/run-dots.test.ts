@@ -24,7 +24,7 @@ vi.mock("./tabs.js", () => ({
   // The projection's lookup: a run's TAB id is opaque, so the module asks for it
   // by `(kind, ref)`. The fake keeps the old readable id as the answer, which is
   // what the assertions below name.
-  tabIdFor: vi.fn((kind: string, ref: string) => (m.tabs.has(`run:${ref}`) ? `run:${ref}` : "")),
+  tabIdFor: vi.fn((_kind: string, ref: string) => (m.tabs.has(`run:${ref}`) ? `run:${ref}` : "")),
   setTabStatus: vi.fn((id: string, status: string) => {
     m.painted.push({ id, status });
   }),

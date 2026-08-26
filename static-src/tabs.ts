@@ -649,7 +649,10 @@ export async function closeTab(id: string): Promise<void> {
  *  its parent's, exactly as with drag. */
 export async function setTabPinned(id: string, pinned: boolean): Promise<void> {
   const row = rowOfID(id);
-  if (row === undefined || row.subject.parent !== "" || row.subject.pinned === pinned) {
+  if (row === undefined) {
+    return;
+  }
+  if (row.subject.parent !== "" || row.subject.pinned === pinned) {
     return;
   }
   const opID = newOpID();

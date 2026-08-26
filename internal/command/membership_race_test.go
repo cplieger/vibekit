@@ -82,12 +82,10 @@ func TestMembership_TwoOpensRaceForTheFinalSlot(t *testing.T) {
 		var wg sync.WaitGroup
 		errs := make([]error, 2)
 		for j, ref := range []string{"c-alpha", "c-beta"} {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				_, errs[j] = mem.OpenTab(t.Context(),
 					vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: ref}, "op-race")
-			}()
+			})
 		}
 		wg.Wait()
 
