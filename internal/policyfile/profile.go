@@ -92,6 +92,16 @@ type Profile struct {
 	// survives a restart and applies to every ACP client sharing this HOME, so
 	// materialising a restrictive rung's posture would widen it rather than
 	// describe it.
+	//
+	// THE PICKER'S COPY DUPLICATES THIS DISTRIBUTION and the wire does not carry
+	// it: vibekit.SecurityProfile ships ID and Presets only, so
+	// profileDescription in static-src/permissions-ui.ts states "the only profile
+	// that also covers workflow steps" from a hand-maintained copy of which rung
+	// holds these rules. A rung gaining FileRules must change that copy in the same
+	// commit. What catches the omission is
+	// TestProfiles_OnlyTheLoosestRungWritesFileRules, which tables all five rungs
+	// against a wantRules boolean — editing that table is the moment to re-read the
+	// client text.
 	FileRules []Rule
 }
 

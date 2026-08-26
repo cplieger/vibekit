@@ -402,10 +402,33 @@ describe("what a profile description promises", () => {
   // The inverse of the same defect: a rung that quietly under-delivers. Each of
   // these sends presets and writes no file rule, so a workflow step gets none of
   // what the description promises unless the description says so.
-  it("says a workflow step still asks on every rung that writes no rule", async () => {
+  //
+  // And it has to say it WITHOUT overstating the restriction, which is the trap the
+  // first draft fell into ("a workflow step still asks even for that", where "that"
+  // was reading a file). An uncovered step is not bare: it carries the bundled
+  // agent's policy, which allows workspace reads and a few read-only commands, so a
+  // description claiming a step asks for reads sends a reader up the ladder for
+  // coverage they already have.
+  it("says a workflow step is uncovered and what it still gets, on every rung that writes no rule", async () => {
     await mount(view("guarded"));
     for (const id of ["guarded", "read-only", "trusted"]) {
-      expect(descriptionFor(id)).toContain("workflow step still asks");
+      const desc = descriptionFor(id);
+      expect(desc).toContain("A workflow step is not covered");
+      expect(desc).toContain("reads this workspace");
+      expect(desc).toContain("asks before writing a file");
+    }
+  });
+
+  // Subagents are covered on EVERY rung, so no rung may claim them: invoke_sub_agent
+  // creates no session, so a subagent rides its parent's session id and inherits
+  // whatever the parent was seeded with. Only step sessions were ever uncovered, and
+  // billing the loosest rung as the only one covering subagents pushed a reader to
+  // it on a false premise — the same class of defect as the posture claim this
+  // change exists to fix.
+  it("claims subagent coverage on no rung, because every rung already has it", async () => {
+    await mount(view("guarded"));
+    for (const id of ["guarded", "read-only", "trusted", "unrestricted", "custom"]) {
+      expect(descriptionFor(id)).not.toContain("subagent");
     }
   });
 

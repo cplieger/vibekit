@@ -203,19 +203,40 @@ function profileLabel(id: string): string {
  *  step's session itself, so a preset never arrives there. Only the loosest rung
  *  also writes a durable rule to the user-scope permissions file, which is the half
  *  a step session does read — and that rule outlives a restart and applies to every
- *  Kiro client on this machine, so it is stated rather than implied. A description
- *  promising a posture the code does not deliver is the defect this text was
- *  rewritten to remove; one that quietly under-delivers is the same defect. */
+ *  Kiro client on this machine, so it is stated rather than implied.
+ *
+ *  An UNCOVERED step is not a step that asks for everything, and saying so was this
+ *  text's own version of the defect it exists to fix. A step session carries the
+ *  bundled agent's policy: workspace reads are allowed there (measured — 123
+ *  read_file and 46 grep_search allows in the same logs that produced the 145 asks)
+ *  plus a small read-only command allowlist. So what an uncovered step actually
+ *  asks for is writes and anything outside that allowlist, and that is what the
+ *  three restrictive rungs say.
+ *
+ *  SUBAGENTS are covered on every rung, so no rung claims them: invoke_sub_agent
+ *  creates no session, so a subagent rides its parent's session id and inherits
+ *  whatever the parent was seeded with. Only STEP sessions were ever uncovered.
+ *
+ *  The step-coverage sentence duplicates a SERVER fact the wire does not carry —
+ *  which rungs hold policyfile.Profile.FileRules, where vibekit.SecurityProfile
+ *  ships id and presets only. The Go side owns the guard:
+ *  TestProfiles_OnlyTheLoosestRungWritesFileRules tables all five rungs against a
+ *  wantRules boolean, so a rung gaining file rules turns it red, and that field's
+ *  doc comment points back at this function. The two move together.
+ *
+ *  A description promising a posture the code does not deliver is the defect this
+ *  text was rewritten to remove; one that under-delivers, or that oversells what a
+ *  restrictive rung withholds, is the same defect pointed the other way. */
 function profileDescription(id: string): string {
   switch (id) {
     case "guarded":
-      return "Reads files in this workspace. Everything else asks, and a workflow step still asks even for that.";
+      return "Reads files in this workspace. Everything else asks. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
     case "read-only":
-      return "Also reads any file on this machine, including outside the workspace, runs read-only commands, and reaches the web. Every change asks, and a workflow step still asks for all of it.";
+      return "Also reads any file on this machine, including outside the workspace, runs read-only commands, and reaches the web. Every change asks. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
     case "trusted":
-      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. A workflow step still asks.";
+      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
     case "unrestricted":
-      return "Never asks, including before installing a power, and the only profile that also covers workflow steps and subagents. It writes a durable allow rule to your user permissions file, so it survives a restart and applies to every Kiro client on this machine until you pick another profile. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
+      return "Never asks, including before installing a power, and the only profile that also covers workflow steps. It writes a durable allow rule to your user permissions file, so it survives a restart and applies to every Kiro client on this machine until you pick another profile. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
     case CUSTOM_PROFILE:
       return "Your own rules, edited in the table below. Nothing is granted that you do not add, and they apply to workflow steps too.";
     default:
