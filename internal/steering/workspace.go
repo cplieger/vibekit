@@ -61,6 +61,48 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, for
 		}
 		b.WriteString("\n")
 	}
+	// Only when repos sit UNDER the workspace root. If the root is itself a
+	// repo there is no sibling path to suggest — everything under workDir
+	// would be inside that repo — and with no repos there is nothing to stay
+	// out of. Same guard shape as Directories above.
+	if len(repos) > 0 && !isRoot {
+		writeScratchGuidance(b, workDir)
+	}
+}
+
+// writeScratchGuidance suggests a scratch location outside every repo.
+//
+// The agent arrives already holding the bundled workflow-orchestration
+// guidance, which names `<workdir>/.agents/tasks/` for plans and review
+// artifacts and `<repo_dir>/.agents/tasks/<repo>-<branch>-<date>/` for
+// publish-pr run dirs. Measured 2026-08-26 across two repos in one afternoon:
+// 42 scratch files written into working trees by workflow and skill sessions
+// following it, which the user then had to separate from real changes by hand.
+//
+// A canary probe the same day established the reach this text needs. A workflow
+// STEP session receives the always-on set only — this file plus always-loaded
+// workspace steering — and no fileMatch or manual steering doc at all, so a
+// generated always-on doc is the only place a rule reaches one. It also showed
+// the orchestration guidance is absent from a step session and present only in
+// the ORCHESTRATOR, which is the seat that chooses artifact paths, so this is
+// aimed at a reader who has both texts.
+//
+// Deliberately a preference, not a prohibition: an agent has legitimate reasons
+// to write inside a repo (a test fixture, a file destined for the commit), and
+// the enforcement lever is a permissions.yaml fs_write deny rule, not prose.
+func writeScratchGuidance(b *strings.Builder, workDir string) {
+	b.WriteString("### Scratch files\n\n")
+	b.WriteString("Prefer a directory OUTSIDE every repo for files that are not headed for a ")
+	b.WriteString("commit: plans, investigation notes, probe output, draft commit messages, ")
+	b.WriteString("review verdicts, run state. ")
+	fmt.Fprintf(b, "`%s/_scratch/<task>/` is a good default; any path outside a repo working "+
+		"tree works.\n\n", workDir)
+	b.WriteString("This applies to a path a workflow or skill suggests, not just to one you ")
+	b.WriteString("pick. Where the guidance you were given names an in-repo artifact path ")
+	b.WriteString("(`<repo>/.agents/tasks/...` is the common one), a `_scratch` path can be ")
+	b.WriteString("substituted, including in artifact maps and `fileCheck` stop-condition ")
+	b.WriteString("paths. Scratch left in a working tree is work for whoever reads ")
+	b.WriteString("`git status` next, and it can end up in a commit.\n\n")
 }
 
 func writeRepoEntry(b *strings.Builder, workDir, r string, forgeKinds map[string]bool) {
