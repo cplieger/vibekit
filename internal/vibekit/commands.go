@@ -351,11 +351,23 @@ type SteerCommand struct {
 // that observable. Without it, a client that resolves on the event would wait
 // forever for a frame the server correctly never sends.
 type OpenTabCommand struct {
-	Kind   TabKind `json:"kind"`
-	Ref    string  `json:"ref,omitempty"`
-	Parent string  `json:"parent,omitempty"`
-	OpID   string  `json:"op_id,omitempty"`
-	Owns   bool    `json:"owns,omitempty"`
+	// Kind must be one of the eight (TabKind.Valid).
+	Kind TabKind `json:"kind"`
+	// Ref is required for every kind but a singleton, where it must be empty. A
+	// chat ref is validated as a chat id AND checked against the chat store,
+	// which is what makes an open racing a delete a refusal rather than a tab
+	// pointing at nothing.
+	Ref string `json:"ref,omitempty"`
+	// Parent names an already-open tab to hang this one under. A parent that is
+	// not open promotes the new tab to top level rather than refusing it.
+	Parent string `json:"parent,omitempty"`
+	// OpID correlates the frame this open produces with the dispatch that asked
+	// for it. See CreateChatCommand.OpID for how it differs from
+	// Idempotency-Key.
+	OpID string `json:"op_id,omitempty"`
+	// Owns means closing this tab tears down what it shows. The client decides
+	// it because only the caller knows whether it launched the thing.
+	Owns bool `json:"owns,omitempty"`
 }
 
 // CloseTabCommand is the payload for type="close_tab".

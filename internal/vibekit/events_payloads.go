@@ -663,9 +663,32 @@ type SteerClearedPayload struct {
 // instance, 2026-08-25). Absence from Order still never means closure — a client
 // holding a tab the order does not name keeps its position and sorts last.
 type TabsChangedPayload struct {
-	Changed    *TabSubject `json:"changed,omitempty"`
-	OpID       string      `json:"op_id,omitempty"`
-	RemovedIDs []string    `json:"removed_ids,omitempty"`
-	Order      []string    `json:"order,omitempty"`
-	Version    uint64      `json:"version"`
+	// Changed is the one tab this mutation added or altered, absent on a close
+	// and on a reorder. A pointer because "no tab changed" and "a zero-valued
+	// tab changed" are different facts and the client branches on which.
+	Changed *TabSubject `json:"changed,omitempty"`
+	// OpID is the client-minted correlation id from the command that caused this
+	// mutation, echoed back so the caller can match the frame to its own
+	// dispatch. Empty for a mutation no client asked for (a retention close, a
+	// load-time prune). Distinct from Idempotency-Key, which keeps its
+	// retry-safety job: this has no TTL, no cache and no 409 branch.
+	OpID string `json:"op_id,omitempty"`
+	// RemovedIDs names every tab this mutation closed, per id and explicitly. A
+	// close of a parent with children is one mutation, so this is where the
+	// children arrive.
+	RemovedIDs []string `json:"removed_ids,omitempty"`
+	// Order is the EXPANDED list: every open tab including children, in the order
+	// the collection now holds. Sent whenever the membership or the position
+	// moved, so a client never has to derive a position from a delta.
+	Order []string `json:"order,omitempty"`
+	// Version is the collection version this mutation produced, and it is the
+	// client's only watermark. Three rules, exhaustive: at or below local is a
+	// duplicate or stale frame and is ignored, exactly one past applies, more
+	// than one past means a frame was missed so stop applying and re-list.
+	//
+	// ONLY AN EVENT MAY ADVANCE THE LOCAL VERSION. A command response carries the
+	// version for diagnostics and a client must not adopt it: adopting a
+	// response's v+2 would make another device's in-flight v+1 read as stale, so
+	// it would be dropped and no gap would ever be detectable.
+	Version uint64 `json:"version"`
 }

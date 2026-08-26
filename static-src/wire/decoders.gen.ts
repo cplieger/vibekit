@@ -700,12 +700,12 @@ export const decodePolicyRuleCore: Decoder<PolicyRuleCore> = (v) => {
 export const decodePolicyView: Decoder<PolicyView> = (v) => {
   const o = asObject(v, "$.policy_view");
   const out: PolicyView = {
+    profile: reqStr(o, "profile", "$.policy_view"),
     rules: o["rules"] === null ? [] : decodeArray(o["rules"], decodePolicyRule, "$.policy_view.rules"),
     writable_scopes: o["writable_scopes"] === null ? [] : decodeArray(o["writable_scopes"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.writable_scopes"),
     capabilities: o["capabilities"] === null ? [] : decodeArray(o["capabilities"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.capabilities"),
     relax_capabilities: o["relax_capabilities"] === null ? [] : decodeArray(o["relax_capabilities"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.relax_capabilities"),
     profiles: o["profiles"] === null ? [] : decodeArray(o["profiles"], decodeSecurityProfile, "$.policy_view.profiles"),
-    profile: reqStr(o, "profile", "$.policy_view"),
     available: reqBool(o, "available", "$.policy_view"),
   };
   return out;
@@ -1036,10 +1036,10 @@ export const decodeTabsChangedPayload: Decoder<TabsChangedPayload> = (v) => {
     version: reqNum(o, "version", "$.tabs_changed_payload"),
   };
   if (o["changed"] !== undefined && o["changed"] !== null) out.changed = decodeTabSubject(o["changed"]);
-  if (o["removed_ids"] !== undefined && o["removed_ids"] !== null) out.removed_ids = decodeArray(o["removed_ids"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tabs_changed_payload.removed_ids");
-  if (o["order"] !== undefined && o["order"] !== null) out.order = decodeArray(o["order"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tabs_changed_payload.order");
   const opId = o["op_id"] === null ? undefined : optStr(o, "op_id", "$.tabs_changed_payload");
   if (opId !== undefined) out.op_id = opId;
+  if (o["removed_ids"] !== undefined && o["removed_ids"] !== null) out.removed_ids = decodeArray(o["removed_ids"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tabs_changed_payload.removed_ids");
+  if (o["order"] !== undefined && o["order"] !== null) out.order = decodeArray(o["order"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tabs_changed_payload.order");
   return out;
 };
 

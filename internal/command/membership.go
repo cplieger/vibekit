@@ -180,9 +180,31 @@ func NewMembership(deps MembershipDeps) *Membership {
 // ChatCreate is one create-and-open request: what to write on the new record,
 // and where its tab goes.
 type ChatCreate struct {
-	Init       func(c *vibekit.Chat)
-	OpID       string
-	ChatID     vibekit.ChatID
+	// Init fills the new record's fields. Called INSIDE chat.Store.Mutate, so it
+	// runs under that chat's record lock and must not reach either store — see
+	// the lock order on this file.
+	//
+	// Not called at all when the record already exists, which is both the replay
+	// case and the reason a create cannot reshape a chat it did not make.
+	Init func(c *vibekit.Chat)
+	// OpID correlates every attempt of ONE create gesture. A repeat resolves to
+	// the chat the first attempt made instead of minting a second one, and it
+	// FINISHES A MISSING TAB WRITE — the first attempt can have created the chat
+	// and failed on the tab, and answering with a chat that has no tab would
+	// leave the caller with nothing to show.
+	OpID string
+	// ChatID is the id the envelope supplied, or empty to mint one. A supplied id
+	// bypasses the ledger: the caller chose the key, so a retry carries it again
+	// and Mutate's exists branch is already idempotent.
+	ChatID vibekit.ChatID
+	// ParentChat names the chat whose tab the new tab hangs under, empty for a top
+	// level tab. Its one user is the tangent, which is the only create that nests.
+	//
+	// A CHAT id rather than a tab id, so the resolution happens inside the
+	// operation lock: a caller that looked the tab up itself would be reading the
+	// set before this operation takes the lock, so a parent tab closing in between
+	// would leave a Parent naming nothing. An absent parent promotes the new tab
+	// to top level, which is tabs.Store.Open's own rule for an orphan.
 	ParentChat vibekit.ChatID
 }
 
