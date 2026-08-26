@@ -86,11 +86,41 @@ const (
 // decision the caller has already made for THIS subprocess, never a preference
 // this package could look up for itself.
 type Spawn struct {
-	Presets       []string
+	// Presets are the KAS policy-preset ids this session opens with, from the
+	// active security profile (policyfile.Profile). EMPTY is meaningful and is
+	// not a missing value: it means the Custom profile, where the permissions
+	// files are the whole policy, so the key is withheld rather than sent empty.
+	//
+	// A slice on Spawn rather than a compiled row value because the profile is a
+	// user setting that changes without a rebuild. It reaches the wire through the
+	// policyPreset row's gate, on session/new and session/load alike, because KAS
+	// re-reads the ids on each and persists neither. Both doors must therefore
+	// resolve from the SAME source rather than each computing its own answer — a
+	// resumed session picking up a profile the user has since changed is the
+	// intended way a change reaches an existing chat, but the two doors disagreeing
+	// for any other reason would be a posture nobody selected.
+	Presets []string
+	// SecretStorage is whether the caller has a credential store standing
+	// behind the secretStorage capability. See that row's Because: declaring
+	// the capability without a store is worse than declining it.
 	SecretStorage bool
-	Hooks         bool
-	ToolSearch    bool
-	Knowledge     bool
+	// Hooks is whether this bridge opts into KAS's v2 hook engine.
+	Hooks bool
+	// ToolSearch is whether this session ships KAS's tool_search tool instead of
+	// every MCP tool's full description. Presence-gated: absent already resolves
+	// false at isSettingEnabled, so an off state has nothing to say on the wire.
+	ToolSearch bool
+	// Knowledge is whether this session gets the knowledge feature, and it gates
+	// TWO rows — the `knowledge` capability and the `knowledge` setting — because
+	// they are two thirds of one gate and splitting them is what shipped a
+	// knowledge UI over a store the agent had no tool to query.
+	//
+	// Value-gated rather than presence-gated, unlike ToolSearch, and that
+	// asymmetry is deliberate: the capability's resolver compares `=== true`, so
+	// its key has to be present with a real boolean either way, and sending the
+	// pair together keeps one field from meaning two different things about
+	// presence.
+	Knowledge bool
 }
 
 // decl is one capability key vibekit can put on the wire, with everything a

@@ -959,13 +959,19 @@ export interface PolicyRuleCore {
  * grow from whatever happens to be in the returned rules.
  */
 export interface PolicyView {
+  /**
+ * Profile is the posture in force; Profiles below is the ladder it comes from.
+ * Split apart here only because the two have different alignments — read them
+ * together.
+ */
+  profile: string;
   rules: PolicyRule[];
   writable_scopes: string[];
   capabilities: string[];
   relax_capabilities: string[];
   /**
  * Profiles is the security-posture ladder in picker order, loosest last, and
- * Profile is the one in force. Both travel here rather than being derived
+ * Profile above is the one in force. Both travel here rather than being derived
  * client-side for the same reason RelaxCapabilities does: the ladder decides
  * what one click grants, so policyfile owns it and the client renders it.
  * //
@@ -974,7 +980,6 @@ export interface PolicyView {
  * cautious to permissive.
  */
   profiles: SecurityProfile[];
-  profile: string;
   available: boolean;
 }
 
@@ -1495,6 +1500,14 @@ export interface TabsChangedPayload {
  */
   changed?: TabSubject;
   /**
+ * OpID is the client-minted correlation id from the command that caused this
+ * mutation, echoed back so the caller can match the frame to its own
+ * dispatch. Empty for a mutation no client asked for (a retention close, a
+ * load-time prune). Distinct from Idempotency-Key, which keeps its
+ * retry-safety job: this has no TTL, no cache and no 409 branch.
+ */
+  op_id?: string;
+  /**
  * RemovedIDs names every tab this mutation closed, per id and explicitly. A
  * close of a parent with children is one mutation, so this is where the
  * children arrive.
@@ -1518,14 +1531,6 @@ export interface TabsChangedPayload {
  * it would be dropped and no gap would ever be detectable.
  */
   version: number;
-  /**
- * OpID is the client-minted correlation id from the command that caused this
- * mutation, echoed back so the caller can match the frame to its own
- * dispatch. Empty for a mutation no client asked for (a retention close, a
- * load-time prune). Distinct from Idempotency-Key, which keeps its
- * retry-safety job: this has no TTL, no cache and no 409 branch.
- */
-  op_id?: string;
 }
 
 /** TerminalCreatedPayload is the payload for type="terminal_created". */
