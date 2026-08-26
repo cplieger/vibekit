@@ -38,7 +38,7 @@ import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
 import { info, success, error } from "../toast.js";
 import { invalidateRun, noteRunChat } from "../run-store.js";
 import { trackRun } from "../run-dots.js";
-import { openRunSubTab } from "../run-view.js";
+import { autoCloseRunSubTab, openRunSubTab } from "../run-view.js";
 
 // ---------------------------------------------------------------------------
 // The signal half: an ephemeral toast at each end of a run.
@@ -137,6 +137,11 @@ onSSE("run_finished", (chatID, p) => {
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);
   toastCompletion(p.status, p.name);
+  // AFTER the toast, which is what the closing tab is traded for: the strip stops
+  // carrying a row for work that is over, and the toast is what says the work is
+  // over. Which tabs qualify is run-view.ts's — a tangent's sub-tab is
+  // unreachable from there, and so is any run tab a reader opened themselves.
+  autoCloseRunSubTab(p.workflow_id, p.status);
 });
 
 onSSE("run_progress", (chatID, p) => {

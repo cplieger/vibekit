@@ -78,9 +78,7 @@
  * across the app (file browser, settings toggles, markdown task
  * lists, MCP forms, diff pane) all share one visual language and
  * automatically pick up the active theme's bg / accent / border
- * tokens. The check glyph is an inline SVG data URI that mirrors
- * the polyline shape used by ICON_CHECK / ICON_CHECK_GREEN
- * elsewhere — same checkmark everywhere.
+ * tokens. The check glyph is an inline SVG data URI.
  *
  * Hidden checkboxes inside .toggle (the iOS-style switch under
  * Settings → notifications, etc.) keep their opacity:0; width:0

@@ -78,7 +78,7 @@ import {
 } from "./actions/tabs.js";
 import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
-import { ICON_CLOSE, ICON_PIN_FILLED } from "./icons.js";
+import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $ } from "./dom.js";
@@ -1220,7 +1220,35 @@ function createTabEl(row: TabRow): HTMLElement {
     el("span", { className: "sr-only" }, "Pinned"),
   );
 
-  if (kind === "chat") {
+  // The nesting marker a sub-tab carries INSTEAD of its kind glyph. It is not a
+  // `.tab-icon`: that class means "grab me to reorder this row", and a sub-tab's
+  // position is its parent's, so a run sub-tab used to show a grab cursor on a
+  // row no drag can move.
+  const nest = el(
+    "span",
+    { className: "tab-nest", "aria-hidden": "true" },
+    iconEl(ICON_TAB_SUBTAB),
+  );
+
+  if (row.subject.parent !== "") {
+    // A SUB-TAB is the parent chat row's layout with the nesting arrow in front:
+    // arrow, dot, name. Both halves of that come from the same reading — a row
+    // that says what is happening in it beats a row that says what KIND it is,
+    // and a sub-tab already says its kind by sitting under its parent. So the
+    // kind glyph is spent on the marker and the dot takes the position it holds
+    // on every parent chat row rather than the trailing slot, where it sat far
+    // from the name it describes with the × between them.
+    //
+    // Keyed on the SUBJECT's parent, the same predicate `renderDOM` toggles
+    // `tab-child` with, so the indent and the marker cannot disagree. Safe to
+    // decide once at creation: `Parent` is set at open and never reassigned.
+    node.append(nest, statusDot, name, statusSR, pin, close);
+    // The `idle` floor is the chat rule below, and it does not generalize: a run
+    // sub-tab has no state until its first frame lands, and an idle ring there
+    // would claim one. 12-tabs.css reserves the slot instead, so the name does
+    // not move when the real state arrives.
+    paintDot(node, row.dotStatus ?? (kind === "chat" ? "idle" : ""));
+  } else if (kind === "chat") {
     // A chat tab LEADS with its activity dot, in the slot the per-mode role glyph
     // used to hold. That is the replacement, not a supplement: the strip exists
     // to say what is happening in the chats you are not looking at, and a chat's

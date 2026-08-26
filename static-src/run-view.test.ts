@@ -59,6 +59,12 @@ vi.mock("./tabs.js", () => ({
   // no real tabs, so there is no dot to paint.
   tabIdFor: vi.fn(() => ""),
   setTabStatus: vi.fn(),
+  // The completion auto-close's two reads. Inert here for the same reason
+  // `tabIdFor` is: with no tab id to resolve, nothing is closable, and this suite
+  // is about the view's paint rather than the strip. run-subtab.test.ts owns the
+  // auto-close's rules.
+  closeTab: vi.fn(),
+  getActiveTabId: vi.fn(() => ""),
 }));
 
 vi.mock("./decision-dock.js", () => ({

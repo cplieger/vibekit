@@ -1016,13 +1016,10 @@ h3.section-title {
 /* The decision region, above the content it is about — the run tab's half of
    the "one dock, two hosts" contract. No composer: there is nobody to type to,
    which is exactly why the dock is a bottom-bar region rather than a composer
-   feature. The view becomes a column so the page content scrolls and the bar
-   stays pinned, same shape as the file browser's toolbar. */
-[id="run-view"] {
-  display: flex;
-  flex-direction: column;
-}
-
+   feature. The column shape the pinned bar needs, and the `flex: 1` that gives
+   this scroller a parent height to fill, both come from the shared view group in
+   16-login.css — a `flex-basis: 0` scroller under a content-sized parent
+   collapses, so the two cannot be separated. */
 [id="run-view"] .page-content {
   flex: 1 1 0;
   min-height: 0;

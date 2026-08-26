@@ -111,13 +111,22 @@
   color: var(--c-text-primary);
 }
 
+/* Every `data-tab-view` element belongs in this group, and a view left out of
+   it does not merely lose the fade: it becomes a `flex: 0 1 auto` item of the
+   #chat-area column, so its height comes from its content. That is fatal for
+   any view whose inner scroller is `flex-basis: 0` (the run view, the file
+   browser), because a basis of 0 contributes nothing to the parent's intrinsic
+   height and the whole view collapses to its padding. #run-view shipped that
+   way and rendered as a 32px strip at the top of the page with its body
+   overflowing out of the clipped scroller. */
 [id="chat-view"],
 [id="settings-view"],
 [id="git-view"],
 [id="editor-view"],
 [id="files-view"],
 [id="history-view"],
-[id="docs-view"] {
+[id="docs-view"],
+[id="run-view"] {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -158,6 +167,12 @@
   view-transition-name: docs-view;
 }
 
+[id="run-view"] {
+  view-transition-name: run-view;
+}
+
+/* #files-view, #editor-view and #run-view are deliberately absent: each pins an
+   inner element as its scroller and keeps a toolbar or bar pinned outside it. */
 [id="settings-view"],
 [id="git-view"],
 [id="history-view"],

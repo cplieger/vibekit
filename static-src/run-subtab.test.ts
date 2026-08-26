@@ -24,8 +24,10 @@ interface Opened {
 
 const m = {
   opened: [] as Opened[],
+  closed: [] as string[],
   tabs: new Set<string>(),
   launchedBy: new Map<string, string>(),
+  active: "",
 };
 
 vi.mock("./tabs.js", () => ({
@@ -45,6 +47,12 @@ vi.mock("./tabs.js", () => ({
       return Promise.resolve();
     },
   ),
+  closeTab: vi.fn((id: string) => {
+    m.closed.push(id);
+    m.tabs.delete(id);
+    return Promise.resolve();
+  }),
+  getActiveTabId: vi.fn(() => m.active),
 }));
 
 vi.mock("./decision-dock.js", () => ({
@@ -66,12 +74,15 @@ vi.mock("./actions/runs.js", () => {
   return { cancelRun: stub, pauseRun: stub, resumeRun: stub, retryRun: stub };
 });
 
-const { openRunSubTab, openRunView } = await import("./run-view.js");
+const { openRunSubTab, openRunView, openLiveRunView, autoCloseRunSubTab } =
+  await import("./run-view.js");
 
 beforeEach(() => {
   m.opened.length = 0;
+  m.closed.length = 0;
   m.tabs.clear();
   m.launchedBy.clear();
+  m.active = "";
 });
 
 describe("the automatic offer", () => {
@@ -190,5 +201,104 @@ describe("the re-open", () => {
     // No parent, because the chat has no tab to nest under — and the review's own
     // `owns: false` still travels, which is what keeps its × from stopping the run.
     expect(m.opened[0]?.opts).toEqual({ owns: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The completion auto-close.
+//
+// The offer's counterpart, and it is narrower than "close a finished run's tab" in
+// three directions: only a tab this client opened by itself, only a clean ending,
+// and never the tab on screen. Each gate closes a way the app could take a tab
+// someone still wanted, which is the same rule the offer guard enforces from the
+// other side.
+// ---------------------------------------------------------------------------
+
+describe("the completion auto-close", () => {
+  it("closes an automatic sub-tab once its run completes", () => {
+    m.tabs.add("c-1");
+    openRunSubTab("wf_ac1", "publish-pr", "c-1");
+    autoCloseRunSubTab("wf_ac1", "completed");
+    expect(m.closed).toEqual(["run:wf_ac1"]);
+  });
+
+  // The house rule for automatic hiding, borrowed from tool-group.ts: a failure is
+  // not noise, so nothing folds it away. A failed run is the one whose detail is
+  // worth the row.
+  it.each(["failed", "aborted"])("keeps the tab when the run ended badly: %s", (status) => {
+    m.tabs.add("c-1");
+    openRunSubTab(`wf_bad_${status}`, "publish-pr", "c-1");
+    autoCloseRunSubTab(`wf_bad_${status}`, status);
+    expect(m.closed).toEqual([]);
+  });
+
+  // `paused` arrives on the same frame as a real ending (KAS reports an
+  // onMaxIterations stop through it), so treating it as one would close the tab of
+  // a run that is still this process's to resume — and the claim has to SURVIVE it,
+  // or the resumed run's real completion would find nothing to close.
+  it("treats paused as no ending at all, and still closes on the real one", () => {
+    m.tabs.add("c-1");
+    openRunSubTab("wf_ac2", "publish-pr", "c-1");
+    autoCloseRunSubTab("wf_ac2", "paused");
+    expect(m.closed).toEqual([]);
+
+    autoCloseRunSubTab("wf_ac2", "completed");
+    expect(m.closed).toEqual(["run:wf_ac2"]);
+  });
+
+  it("keeps a tab whose status it cannot classify", () => {
+    m.tabs.add("c-1");
+    openRunSubTab("wf_ac3", "publish-pr", "c-1");
+    autoCloseRunSubTab("wf_ac3", "something-new-upstream");
+    expect(m.closed).toEqual([]);
+  });
+
+  // The moment a run's output becomes worth reading is the moment it finishes, so
+  // this is exactly when the view must not be pulled away.
+  it("never closes the tab the reader is looking at", () => {
+    m.tabs.add("c-1");
+    openRunSubTab("wf_ac4", "publish-pr", "c-1");
+    m.active = "run:wf_ac4";
+    autoCloseRunSubTab("wf_ac4", "completed");
+    expect(m.closed).toEqual([]);
+  });
+
+  it("leaves a tab the reader opened themselves alone, for good", () => {
+    m.tabs.add("c-1");
+    m.launchedBy.set("wf_ac5", "c-1");
+    openRunSubTab("wf_ac5", "publish-pr", "c-1");
+    // The card's "Open run" link, or a /run/{id} deep link. From here the tab is
+    // theirs.
+    openRunView("wf_ac5", "publish-pr");
+    autoCloseRunSubTab("wf_ac5", "completed");
+    expect(m.closed).toEqual([]);
+  });
+
+  // A launcher-owned tab's × CANCELS, so it must be unreachable from here even
+  // though a finished run's cancel would be a no-op.
+  it("leaves a launcher-owned tab alone", () => {
+    m.tabs.add("c-1");
+    openRunSubTab("wf_ac6", "publish-pr", "c-1");
+    openLiveRunView("wf_ac6", "publish-pr");
+    autoCloseRunSubTab("wf_ac6", "completed");
+    expect(m.closed).toEqual([]);
+  });
+
+  // This is what keeps a TANGENT out without a filter naming one: only the run
+  // door above ever makes a tab closable here, so a forked chat's sub-tab — and
+  // any other tab in the strip — is unreachable from this function.
+  it("closes nothing for an id it never opened itself", () => {
+    m.tabs.add("c-1");
+    m.tabs.add("run:wf_elsewhere");
+    autoCloseRunSubTab("wf_elsewhere", "completed");
+    expect(m.closed).toEqual([]);
+  });
+
+  it("tolerates a tab the reader already closed", () => {
+    m.tabs.add("c-1");
+    openRunSubTab("wf_ac7", "publish-pr", "c-1");
+    m.tabs.delete("run:wf_ac7");
+    autoCloseRunSubTab("wf_ac7", "completed");
+    expect(m.closed).toEqual([]);
   });
 });

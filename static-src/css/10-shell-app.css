@@ -201,8 +201,8 @@
      *
      * The 2px accent left-border it replaces marked selection with a sliver at
      * one edge, which is easy to miss on a dense strip and impossible to see at
-     * all once a row is indented (a sub-tab's `↳` sits exactly where the border
-     * was). A fill is unambiguous at any indent. */
+     * all once a row is indented (a sub-tab's nesting arrow sits exactly where
+     * the border was). A fill is unambiguous at any indent. */
     /* The active row's fill/edge/ink triple lives in 70-selection.css with
      * every other selected surface. Its hover and press stay here: they score
      * (0,3,0), so they still beat that file's (0,2,0) resting rule. */
