@@ -4,9 +4,11 @@
 // through rendered pixels would test the browser instead. (The harness only
 // because the module's scroll.ts import self-initialises against `document`.)
 //
-// The second half of the file is the LIFECYCLE, which does need the DOM: which
-// chat the rail currently belongs to is module state, and both directions of
-// getting it wrong were live defects.
+// The rest of the file does need the DOM. The LIFECYCLE block covers which chat
+// the rail currently belongs to — module state, and both directions of getting it
+// wrong were live defects; the block after it covers whether the rail is worth
+// showing at all; and the last covers which turn it calls current, over a faked
+// IntersectionObserver.
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 // scroll.ts self-initialises a singleton against #messages at import time, and
@@ -40,6 +42,7 @@ import {
   type TurnSummary,
 } from "./turn-rail.js";
 import { apiGet } from "./api-client.js";
+import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnOutcome } from "./turns.js";
 
 const MINUTE = 60_000;
@@ -440,5 +443,305 @@ describe("the rail only appears once the transcript can be scrolled", () => {
     observeTurns([]);
 
     expect(rail().querySelector(".rail-marker")).toBe(first);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which turn the rail calls current.
+//
+// The rule: among the cards intersecting the viewport, the LATEST (greatest
+// turn number) is active. A turn half off the top with a whole turn below it is
+// the turn the reader has left, and naming it current marked a turn they had
+// already scrolled past.
+//
+// Two properties are pinned here rather than one, because they fail
+// independently. The max-n pick is the reported defect. The KEPT visible set is
+// the other half: an IntersectionObserver callback carries only the cards whose
+// state CHANGED, so a scroll bringing a turn in above one already on screen
+// delivers the arrival alone — and picking from that callback's entries, by any
+// rule, names the higher card.
+// ---------------------------------------------------------------------------
+
+/** One notification's worth of state for a single card. `top` is carried because
+ *  the module used to select on it; the cases keep setting it so a regression to
+ *  a position rule is a failure here rather than a silent pass. */
+interface FakeEntry {
+  target: Element;
+  isIntersecting: boolean;
+  top?: number;
+}
+
+/** The layout engine's half of the observer contract: a recorder plus a trigger.
+ *  Nothing in a harness-built DOM scrolls, so with the real observer this
+ *  module's selection is unobservable — no notification would ever fire. Same
+ *  discipline as scroll.observers.test.ts's FakeResizeObserver. */
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = [];
+  readonly targets = new Set<Element>();
+  private readonly cb: (entries: IntersectionObserverEntry[]) => void;
+
+  constructor(cb: (entries: IntersectionObserverEntry[]) => void) {
+    this.cb = cb;
+    FakeIntersectionObserver.instances.push(this);
+  }
+
+  observe(el: Element): void {
+    this.targets.add(el);
+  }
+
+  /** Stop watching one target. The real API fires NO callback for it, and that
+   *  silence is the whole reason the module has a departure path — so this must
+   *  not helpfully deliver a not-intersecting entry. */
+  unobserve(el: Element): void {
+    this.targets.delete(el);
+  }
+
+  disconnect(): void {
+    this.targets.clear();
+  }
+
+  /** Deliver one notification. The callback reads `target`, `isIntersecting` and
+   *  `boundingClientRect.top` and nothing else, so the cast is honest. */
+  fire(states: FakeEntry[]): void {
+    this.cb(
+      states.map(
+        (s) =>
+          ({
+            target: s.target,
+            isIntersecting: s.isIntersecting,
+            boundingClientRect: { top: s.top ?? 0 },
+          }) as unknown as IntersectionObserverEntry,
+      ),
+    );
+  }
+}
+
+describe("which turn the rail calls current", () => {
+  const host = document.createElement("div");
+  let rail: HTMLElement;
+
+  beforeAll(() => {
+    document.body.appendChild(host);
+    // Idempotent and a module SINGLETON, so on a whole-file run this no-ops and
+    // the rail is still inside the block above's host. Resolve it from the
+    // document rather than from `host`, which holds it only when this block runs
+    // first.
+    mountTurnRail(host);
+    const mounted = document.querySelector<HTMLElement>(".turn-rail");
+    if (mounted === null) {
+      throw new Error("rail not mounted");
+    }
+    rail = mounted;
+    // Browser Mode serves no stylesheet, and `.turn-rail` takes its height from
+    // `position: absolute; inset-block: …` (29-turns.css), so the mounted nav
+    // measures whatever its markers happen to occupy — ~21px. That makes
+    // `capacity` 1, the whole session renders as ONE cluster, and there is no
+    // `.rail-marker` to carry `data-current`, so every assertion below would read
+    // "". An explicit box is the harness standing in for the stylesheet, not a
+    // workaround for the module.
+    rail.style.height = "600px";
+    rail.style.display = "block";
+  });
+
+  beforeEach(() => {
+    // These cases predate the navigability gate, so none of them sets scroll
+    // room. Every assertion below reads `.rail-marker[data-current]`, which only
+    // exists while `navigable()` is true — so restore the comfortable default
+    // rather than inheriting whatever the visibility block above left behind.
+    scrollable.by = 500;
+    resetTurnRail();
+    FakeIntersectionObserver.instances.length = 0;
+    // Inside the test, never at module scope: `unstubGlobals` restores the
+    // global between tests, and turn-rail.ts checks `typeof
+    // IntersectionObserver` at CALL time rather than at import.
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+  });
+
+  /** A mounted turn card, carrying the reconcile key `numberOf` resolves. */
+  function card(n: number): HTMLElement {
+    const e = document.createElement("div");
+    e.className = "turn";
+    e.setAttribute(KEY_ATTR, `m${String(n)}`);
+    return e;
+  }
+
+  /** The label of the marker the rail marks current, or "" when none is. */
+  function current(): string {
+    const el = rail.querySelector<HTMLElement>(".rail-marker[data-current]");
+    return el?.textContent ?? "";
+  }
+
+  /** Seat the session-wide index, then observe one card per turn. Returns the
+   *  cards by turn number and the observer the rail just built. */
+  async function seat(
+    id: string,
+    ns: number[],
+  ): Promise<{ cards: Map<number, HTMLElement>; io: FakeIntersectionObserver }> {
+    vi.mocked(apiGet).mockResolvedValue({ turns: ns.map((n) => turn(n)) });
+    await loadTurnRail(id);
+    const cards = new Map(ns.map((n) => [n, card(n)]));
+    observeTurns([...cards.values()]);
+    const io = FakeIntersectionObserver.instances.at(-1);
+    if (io === undefined) {
+      throw new Error("no observer built");
+    }
+    return { cards, io };
+  }
+
+  function at(cards: Map<number, HTMLElement>, n: number): HTMLElement {
+    const c = cards.get(n);
+    if (c === undefined) {
+      throw new Error(`no card for turn ${String(n)}`);
+    }
+    return c;
+  }
+
+  // The reported scenario. Turn 2 is half off the top and turn 3 is whole below
+  // it, which is a reader who has finished with 2.
+  it("names the lower of two visible turns, not the one scrolled past", async () => {
+    const { cards, io } = await seat("c-a", [1, 2, 3]);
+
+    io.fire([
+      { target: at(cards, 1), isIntersecting: false, top: -900 },
+      { target: at(cards, 2), isIntersecting: true, top: -120 },
+      { target: at(cards, 3), isIntersecting: true, top: 240 },
+    ]);
+
+    expect(current()).toBe("3");
+  });
+
+  // Written as "turn 1 is the only turn in the viewport", NOT "all three are
+  // visible, expect 1" — the latter would contradict the rule. At the top of a
+  // transcript the first turn is active because it is the lowest one on screen,
+  // not because it is first.
+  it("names the first turn at the very top of the transcript", async () => {
+    const { cards, io } = await seat("c-a", [1, 2, 3]);
+
+    io.fire([
+      { target: at(cards, 1), isIntersecting: true, top: 0 },
+      { target: at(cards, 2), isIntersecting: false, top: 700 },
+      { target: at(cards, 3), isIntersecting: false, top: 1400 },
+    ]);
+
+    expect(current()).toBe("1");
+  });
+
+  it("names the last turn at the very bottom of the transcript", async () => {
+    const { cards, io } = await seat("c-a", [1, 2, 3, 4, 5]);
+
+    io.fire([
+      { target: at(cards, 1), isIntersecting: false, top: -1400 },
+      { target: at(cards, 2), isIntersecting: false, top: -1000 },
+      { target: at(cards, 3), isIntersecting: false, top: -600 },
+      { target: at(cards, 4), isIntersecting: true, top: -100 },
+      { target: at(cards, 5), isIntersecting: true, top: 300 },
+    ]);
+    expect(current()).toBe("5");
+
+    // A departure must not move the mark, in either direction.
+    io.fire([{ target: at(cards, 4), isIntersecting: false, top: -500 }]);
+    expect(current()).toBe("5");
+  });
+
+  it("keeps the lower turn when a partial callback reports only an arrival", async () => {
+    const { cards, io } = await seat("c-a", [4, 5]);
+
+    io.fire([{ target: at(cards, 5), isIntersecting: true, top: 100 }]);
+    expect(current()).toBe("5");
+
+    // Nothing about turn 5 changed, so it is absent from this callback. Deriving
+    // the pick from these entries alone would name 4.
+    io.fire([{ target: at(cards, 4), isIntersecting: true, top: -300 }]);
+    expect(current()).toBe("5");
+  });
+
+  it("drops the previous chat's visible turns when re-pointed", async () => {
+    const a = await seat("c-a", [1, 2, 3]);
+    a.io.fire([{ target: at(a.cards, 3), isIntersecting: true, top: 0 }]);
+    expect(current()).toBe("3");
+
+    pointTurnRail("c-b");
+    const b = await seat("c-b", [1, 2]);
+    b.io.fire([{ target: at(b.cards, 1), isIntersecting: true, top: 0 }]);
+
+    // Never "3": chat B has no turn 3, and a leftover member would outrank
+    // every turn it does have.
+    expect(current()).toBe("1");
+  });
+
+  // -------------------------------------------------------------------------
+  // The observer is built ONCE and its target set is diffed.
+  //
+  // `paint()` calls observeTurns on every repaint, and a repaint fires at SSE
+  // frame rate, so this used to disconnect and construct a fresh
+  // IntersectionObserver over every turn card many times a second. Dropping the
+  // rebuild is what forces the departure handling: a fresh observer re-reported
+  // every target it was given, and a persistent one reports nothing for a target
+  // it already watches.
+  // -------------------------------------------------------------------------
+
+  it("builds ONE observer however many paints re-observe", async () => {
+    const { cards } = await seat("c-a", [1, 2, 3]);
+    observeTurns([...cards.values()]);
+    observeTurns([...cards.values()]);
+
+    expect(FakeIntersectionObserver.instances).toHaveLength(1);
+  });
+
+  it("keeps the intersecting set across a paint", async () => {
+    const { cards, io } = await seat("c-a", [2, 3]);
+    io.fire([{ target: at(cards, 3), isIntersecting: true, top: 0 }]);
+    expect(current()).toBe("3");
+
+    // A repaint with the same cards. Nothing re-reports an already-watched
+    // target, so a `visible.clear()` here is never refilled.
+    observeTurns([...cards.values()]);
+    expect(current()).toBe("3");
+
+    // The assertion above is NOT what pins the set, and the difference is worth
+    // stating: `pickLatest` deliberately leaves the marker alone on an empty set
+    // (see its doc comment), so an emptied set still reads "3" until something
+    // fires. What it has lost is the incumbent — so the next PARTIAL callback,
+    // which is what a small scroll produces, becomes the whole set and names the
+    // arrival. Turn 2 scrolling in above turn 3 must not become current; with the
+    // set cleared it does.
+    io.fire([{ target: at(cards, 2), isIntersecting: true, top: -100 }]);
+
+    expect(current()).toBe("3");
+  });
+
+  it("observes an arrival and leaves the incumbents alone", async () => {
+    const { cards, io } = await seat("c-a", [1, 2]);
+    const arrival = card(3);
+
+    observeTurns([...cards.values(), arrival]);
+
+    expect(io.targets.has(arrival)).toBe(true);
+    expect(io.targets.size).toBe(3);
+    expect(FakeIntersectionObserver.instances).toHaveLength(1);
+  });
+
+  it("unobserves a departure and stops calling its turn current", async () => {
+    const { cards, io } = await seat("c-a", [1, 2, 3]);
+    io.fire([
+      { target: at(cards, 2), isIntersecting: true, top: -100 },
+      { target: at(cards, 3), isIntersecting: true, top: 200 },
+    ]);
+    expect(current()).toBe("3");
+
+    // Turn 3's card leaves the transcript. `unobserve` fires no callback, so
+    // without an explicit delete AND a re-pick its number stays in the set and
+    // keeps naming a turn that is no longer mounted.
+    //
+    // This is the scenario a rebuild-per-paint observer also covered, and the
+    // assertion is deliberately stronger than that version's: a rebuild emptied
+    // the set and could only refill it from the fresh observer's first callback,
+    // so the marker stayed on the departed turn until the browser delivered one.
+    // Resolving the departure here corrects it AT the paint, with no callback in
+    // between and no second observer to fire through.
+    observeTurns([at(cards, 1), at(cards, 2)]);
+
+    expect(io.targets.has(at(cards, 3))).toBe(false);
+    expect(current()).toBe("2");
   });
 });

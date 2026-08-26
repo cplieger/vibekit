@@ -85,8 +85,17 @@ let currentN = 0;
 /** The range the rail is zoomed into, set by clicking a cluster. */
 let zoom: { from: number; to: number } | undefined;
 let observer: IntersectionObserver | undefined;
+/** The cards `observer` is currently watching, so a repaint can observe the
+ *  ARRIVALS and unobserve the DEPARTURES instead of tearing the observer down.
+ *  Must be cleared wherever `observer` is dropped: a `disconnect()` unobserves
+ *  every target, so a stale set would make the next pass skip re-observing. */
+let observed = new Set<Element>();
 /** Turn numbers whose jump is waiting on a fetch, so the marker can say so. */
 const pending = new Set<number>();
+/** The turn numbers currently intersecting the viewport. STATE rather than a
+ *  per-callback derivation, because an IntersectionObserver callback carries only
+ *  the cards whose intersection CHANGED — see `observeTurns`. */
+const visible = new Set<number>();
 
 /** How far the transcript must be able to scroll before the rail appears.
  *
@@ -156,6 +165,10 @@ export function pointTurnRail(id: string): void {
   pending.clear();
   summaries = [];
   currentN = 0;
+  // A turn number from the previous chat is a live wrong answer, not merely a
+  // stale one: `numberOf` resolves against THIS chat's summaries, so a leftover
+  // member would name one of the new chat's turns current.
+  visible.clear();
   chatID = id;
   render();
 }
@@ -190,14 +203,44 @@ export function resetTurnRail(): void {
   zoom = undefined;
   renderedNavigable = false;
   pending.clear();
+  visible.clear();
   observer?.disconnect();
   observer = undefined;
+  // `disconnect` unobserves every target, so the set has to go with it or the
+  // next pass would treat those cards as already observed and skip them.
+  observed.clear();
   render();
 }
 
 /** Observe the mounted turn cards so the rail knows which turn is in view.
- *  Called after each transcript paint; cheap because it re-observes the same
- *  elements rather than rebuilding anything. */
+ *
+ *  Called after EVERY transcript paint, which is what makes the cost shape the
+ *  point. This used to `disconnect()` and construct a brand-new
+ *  IntersectionObserver over every card on every call, while claiming to be
+ *  "cheap because it re-observes the same elements rather than rebuilding
+ *  anything" — the opposite of what it did. Nothing about the observer varies
+ *  between paints; only the target set does. So the observer is built once and
+ *  this diffs the set, observing arrivals and unobserving departures.
+ *
+ *  Dropping the rebuild is what forces the departure handling below: a fresh
+ *  observer reported every target it was given, so clearing `visible` each pass
+ *  was safe and the callbacks refilled it. A persistent observer reports nothing
+ *  for a target it already watches, so that clear would empty the set with no
+ *  callback coming to refill it, and the next partial report — which is what a
+ *  small scroll produces — would be the whole set and name the arrival.
+ *
+ *  THE ACTIVE TURN IS THE LATEST ONE ON SCREEN — the greatest turn number among
+ *  the cards intersecting the viewport. A turn half off the top with a whole turn
+ *  below it is the turn the reader has LEFT, so naming it current marks a turn
+ *  they have already scrolled past. Position is not consulted at all:
+ *  `boundingClientRect.top` was only ever a proxy for order, and `n` is the
+ *  order, resolved through the server's own index.
+ *
+ *  The intersecting set is KEPT across callbacks rather than re-derived from one,
+ *  because the entries list is a DELTA: it carries only the cards whose
+ *  intersection state changed. A small scroll that brings a turn in above one
+ *  already on screen reports the arrival alone, so picking from that callback's
+ *  entries — by any rule — would name the higher card. */
 export function observeTurns(cards: Iterable<HTMLElement>): void {
   // Content just changed, so the transcript may have crossed the navigable
   // threshold in either direction. The IntersectionObserver below cannot cover
@@ -210,32 +253,72 @@ export function observeTurns(cards: Iterable<HTMLElement>): void {
   if (typeof IntersectionObserver !== "function") {
     return;
   }
-  observer?.disconnect();
-  observer = new IntersectionObserver(
-    (entries) => {
-      let best: { n: number; top: number } | undefined;
-      for (const e of entries) {
-        if (!e.isIntersecting) {
-          continue;
-        }
-        const n = numberOf(e.target);
-        if (n === 0) {
-          continue;
-        }
-        const top = e.boundingClientRect.top;
-        if (best === undefined || top < best.top) {
-          best = { n, top };
-        }
-      }
-      if (best !== undefined && best.n !== currentN) {
-        currentN = best.n;
-        render();
-      }
-    },
-    { threshold: 0 },
-  );
-  for (const c of cards) {
-    observer.observe(c);
+  observer ??= new IntersectionObserver(onIntersect, { threshold: 0 });
+  const next = new Set<Element>(cards);
+  let dropped = false;
+  for (const c of observed) {
+    if (next.has(c)) {
+      continue;
+    }
+    observer.unobserve(c);
+    dropped = true;
+    // `unobserve` fires NO callback, so a departed card's number would sit in
+    // `visible` forever and keep `latest` naming a turn that is no longer
+    // mounted. Resolved here rather than remembered per card because the
+    // alternative is a number per observed card recomputed every paint, and
+    // `numberOf` is a linear scan of the index — that trade is what makes this
+    // O(departures) instead of O(turns) per paint. Residual: if the index moved
+    // between the observe and the departure the delete misses, which the two
+    // chat-level `visible.clear()` sites cover for every case that matters.
+    visible.delete(numberOf(c));
+  }
+  for (const c of next) {
+    if (!observed.has(c)) {
+      observer.observe(c);
+    }
+  }
+  observed = next;
+  if (dropped) {
+    // A departure changed the set with no callback behind it, so the pick has to
+    // be re-run here or the marker stays on a turn that is no longer mounted.
+    pickLatest();
+  }
+}
+
+/** Fold one DELTA of intersection changes into `visible`, then re-pick.
+ *  Module scope so the observer is constructed once. */
+function onIntersect(entries: IntersectionObserverEntry[]): void {
+  for (const e of entries) {
+    const n = numberOf(e.target);
+    if (n === 0) {
+      // A card whose id is not in the index yet; it cannot be placed.
+      continue;
+    }
+    if (e.isIntersecting) {
+      visible.add(n);
+    } else {
+      visible.delete(n);
+    }
+  }
+  pickLatest();
+}
+
+/** Name the latest turn on screen. Shared by the observer callback and the
+ *  departure path, because both change `visible` and the rule must not fork.
+ *
+ *  An EMPTY set leaves `currentN` alone rather than clearing it: between a
+ *  departure and the next callback nothing is known to be on screen, and dropping
+ *  the marker there would blink it off on every repaint that removes a turn. */
+function pickLatest(): void {
+  let latest = 0;
+  for (const n of visible) {
+    if (n > latest) {
+      latest = n;
+    }
+  }
+  if (latest !== 0 && latest !== currentN) {
+    currentN = latest;
+    render();
   }
 }
 

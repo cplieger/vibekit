@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { PlanEntry } from "./types.js";
-import { getActive, messagesVersion } from "./store.js";
+import { getActive, messagesVersion, activeSession } from "./store.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 
@@ -17,8 +17,16 @@ const STATUS_ICON: Record<string, string> = {
 
 export function initTaskListPill(): void {
   effect(() => {
+    // The transcript effect's two inputs, for the same reason it has two: the
+    // body below reads `getActive()`, which is a `peek` and subscribes to
+    // nothing, so `messagesVersion` alone left the pill showing the PREVIOUS
+    // chat's plan until some chat happened to bump it. `messagesVersion` is now
+    // bumped only for the chat on screen (see `scheduleMessages`), so the
+    // incidental cross-chat refresh that used to cover for this is gone and the
+    // switch has to be tracked rather than waited for.
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     messagesVersion.value;
+    void activeSession.value;
     refreshTaskList();
   });
 }

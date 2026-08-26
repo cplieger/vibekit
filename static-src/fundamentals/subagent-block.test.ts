@@ -6,7 +6,8 @@
 // iconForSubagent keys it off the invoke_sub_agent input name).
 // ---------------------------------------------------------------------------
 
-import { vi, describe, it, expect } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { loadCSS } from "../__test-helpers__/css-rules.js";
 
 // Partial mock: the card now imports turn-footer (whose navigate → tabs chain
 // reads the whole icon table), so only the identity glyph is overridden.
@@ -194,5 +195,107 @@ describe("the footer", () => {
     // Still ONE footer, updated rather than stacked.
     expect(sa.root.querySelectorAll(".subagent-footer").length).toBe(1);
     expect(footer?.dataset["outcome"]).toBe("completed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The lazy rendering of a closed card, measured rather than read off the source.
+//
+// `content-visibility` cannot be checked with a `toMatch` on the rule body: what
+// matters is which of two rules WINS on the element in each state, and that is a
+// cascade question only a layout engine answers. The browser project is a real
+// headless Chromium, so the shipped sheet is injected and the computed value read
+// — the pattern reasoning-live-cue.test.ts uses for the count's alignment.
+//
+// `01-tokens.css` rides along because the body's transition reads duration and
+// easing tokens; without it the transition shorthand is invalid and the whole
+// rule could be dropped.
+// ---------------------------------------------------------------------------
+describe("lazy rendering of a closed card, computed", () => {
+  let style: HTMLStyleElement;
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    style = document.createElement("style");
+    style.textContent = [loadCSS("01-tokens.css"), loadCSS("14-tools.css")].join("\n");
+    document.head.appendChild(style);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    style.remove();
+    host.remove();
+  });
+
+  /** A mounted card plus its body, in the styled host. */
+  function card(): { root: HTMLElement; body: HTMLElement } {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    host.appendChild(sa.root);
+    const body = sa.root.querySelector<HTMLElement>(".subagent-body");
+    expect(body).not.toBeNull();
+    return { root: sa.root, body: body as HTMLElement };
+  }
+
+  it("takes a closed card's body out of layout entirely", () => {
+    // The win. `height: 0` + `overflow: hidden` clips paint but leaves every
+    // descendant in flow, so twenty collapsed delegates were still laid out on
+    // every reflow — and a reflow happens per streamed delta.
+    const { root, body } = card();
+    expect(root.classList.contains("collapsed")).toBe(true);
+    expect(getComputedStyle(body).contentVisibility).toBe("hidden");
+  });
+
+  it("renders it again the moment the reader opens the card", () => {
+    const { root, body } = card();
+    // Transitions off for this element first, and the reason is the subject of the
+    // last two cases: `content-visibility` is DISCRETE, so with `allow-discrete`
+    // the value is still the from-value while the transition runs and a read in the
+    // click's own tick reports `hidden` however the cascade resolved. What this
+    // case is about is the CASCADE — which of the two rules wins once
+    // `.collapsed` is gone — so the animation is taken out of the question here and
+    // asserted on its own below.
+    body.style.transition = "none";
+    root.querySelector<HTMLElement>(".subagent-header")?.click();
+    expect(root.classList.contains("collapsed")).toBe(false);
+    expect(getComputedStyle(body).contentVisibility).not.toBe("hidden");
+  });
+
+  it("is keyed on the ROOT's collapsed class, not the body's aria-hidden", () => {
+    // The load-bearing half, and the one a source read cannot express.
+    // `createDisclosure`'s `set` writes aria-hidden (reflectAria) BEFORE it starts
+    // the height animation (applyHeight), and a collapse begins by reading
+    // `region.scrollHeight` for a concrete start height. An aria-keyed rule would
+    // already be in effect for that read, making it 0, so the card would snap shut
+    // instead of animating. Asserted by putting the element in the state that
+    // separates the two rules: aria-hidden set, `.collapsed` absent.
+    const { root, body } = card();
+    body.style.transition = "none";
+    root.querySelector<HTMLElement>(".subagent-header")?.click();
+    expect(root.classList.contains("collapsed")).toBe(false);
+    body.setAttribute("aria-hidden", "true");
+    expect(getComputedStyle(body).contentVisibility).not.toBe("hidden");
+  });
+
+  it("defers the flip to the end of the collapse, so content animates away first", () => {
+    // `content-visibility` is a discrete property: without `allow-discrete` the
+    // flip is immediate and the box animates shut already empty. Read off the
+    // computed transition rather than the source for the same reason as above —
+    // the shorthand has to survive the cascade and token resolution.
+    const { body } = card();
+    const t = getComputedStyle(body).transition;
+    expect(t).toContain("content-visibility");
+    expect(t).toContain("allow-discrete");
+    // The height transition is still there beside it; the point is both, not one.
+    expect(t).toContain("height");
+  });
+
+  it("needs no intrinsic-size estimate, because the closed height is already 0", () => {
+    // What `content-visibility: auto` on an unbounded container would have forced
+    // us to guess. The controller pins the closed height inline, so a skipped
+    // subtree has nothing to estimate.
+    const { body } = card();
+    expect(body.style.height).toBe("0px");
+    expect(getComputedStyle(body).containIntrinsicSize).toBe("none");
   });
 });
