@@ -214,7 +214,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
 		slog.Debug("git log failed", "repo", logsafe.Field(dir), "ref", ref, "error", logsafe.Field(err.Error()), "out", scrubAuth(out))
-		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
+		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0, "commit_url_prefix": ""})
 		return
 	}
 	// Not pinned to []string{} the way `branches` below is: git log answering
@@ -232,6 +232,9 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	if rErr != nil {
 		slog.Debug("git remote get-url failed during log", "repo", dir, "error", rErr)
 	}
+	// Scrubbed once, so the commit prefix is derived from the same
+	// credential-free string the client is handed.
+	remote = scrubAuth(remote)
 	behind := 0
 	if ab, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"); err == nil {
 		parts := strings.Fields(ab)
@@ -241,7 +244,12 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	webhttp.WriteJSON(w, map[string]any{"entries": lines, "remote": scrubAuth(remote), "behind": behind})
+	webhttp.WriteJSON(w, map[string]any{
+		"entries":           lines,
+		"remote":            remote,
+		"behind":            behind,
+		"commit_url_prefix": commitURLPrefix(remote),
+	})
 }
 
 func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
