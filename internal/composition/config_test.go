@@ -310,20 +310,34 @@ func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 // reader that this warning means nothing. An EXPLICIT path that does not resolve
 // is the opposite: nobody typed it by accident, so running overlay-less without
 // saying so leaves the operator looking at an unpatched tool catalog with nothing
-// in the log to explain it.
-func TestOverlayFiles(t *testing.T) {
+// TestBundledToolsFiles pins the resolution of vibekit's bundled-tools file,
+// and the ONE property here that changed on purpose is that a missing default
+// now warns.
+//
+// While that file held display copy, a missing default was dropped silently:
+// the path only exists inside the image, so a bare `go run` would have warned
+// every time about something no operator configured. Now the file is the only
+// place gopls, typescript, typescript-language-server and pyright exist — the
+// published catalog is a general reference and carries none of them, while
+// DefaultSeed names all four — so its absence makes every seeded template fail
+// at enable time. Staying silent about that means the operator debugs "my
+// language servers will not install" with nothing in the log pointing at a
+// file. The `explicit` attribute is what still separates an operator's typo
+// from the ordinary out-of-container case, so the distinction survives without
+// the silence.
+func TestBundledToolsFiles(t *testing.T) {
 	t.Run("a resolvable explicit path is used", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "catalog-overlays.json")
-		if err := os.WriteFile(path, []byte(`[]`), 0o600); err != nil {
-			t.Fatalf("write overlay: %v", err)
+		path := filepath.Join(t.TempDir(), "bundled-tools.json")
+		if err := os.WriteFile(path, []byte(`{"entries":{}}`), 0o600); err != nil {
+			t.Fatalf("Setup: write bundled tools: %v", err)
 		}
 		logs := captureDefaultLogger(t)
 
-		got := overlayFiles(path)
+		got := bundledToolsFiles(path)
 		if len(got) != 1 || got[0] != path {
-			t.Errorf("overlayFiles(%q) = %v, want [%s]", path, got, path)
+			t.Errorf("bundledToolsFiles(%q) = %v, want [%s]", path, got, path)
 		}
-		if strings.Contains(logs.String(), "VIBEKIT_TOOL_CATALOG_OVERLAY") {
+		if strings.Contains(logs.String(), "bundled tools file does not resolve") {
 			t.Errorf("logs = %q, must not warn about a path that resolved", logs.String())
 		}
 	})
@@ -332,19 +346,31 @@ func TestOverlayFiles(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "absent.json")
 		logs := captureDefaultLogger(t)
 
-		if got := overlayFiles(path); got != nil {
-			t.Errorf("overlayFiles(%q) = %v, want nil", path, got)
+		if got := bundledToolsFiles(path); got != nil {
+			t.Errorf("bundledToolsFiles(%q) = %v, want nil", path, got)
 		}
-		if !strings.Contains(logs.String(), "VIBEKIT_TOOL_CATALOG_OVERLAY") {
+		if !strings.Contains(logs.String(), "VIBEKIT_BUNDLED_TOOLS") {
 			t.Errorf("logs = %q, want a warning naming the variable the operator set", logs.String())
+		}
+		if !strings.Contains(logs.String(), `"explicit":true`) {
+			t.Errorf("logs = %q, want \"explicit\":true so a typo is distinguishable from the "+
+				"out-of-container case", logs.String())
 		}
 	})
 
-	t.Run("the default path is never blamed on the operator", func(t *testing.T) {
+	t.Run("a missing default warns too, marked not explicit", func(t *testing.T) {
 		logs := captureDefaultLogger(t)
-		overlayFiles("")
-		if strings.Contains(logs.String(), "VIBEKIT_TOOL_CATALOG_OVERLAY") {
-			t.Errorf("logs = %q, must stay silent when nobody configured a path", logs.String())
+
+		if got := bundledToolsFiles(""); got != nil {
+			t.Errorf("bundledToolsFiles(\"\") = %v, want nil outside the image", got)
+		}
+		if !strings.Contains(logs.String(), "bundled tools file does not resolve") {
+			t.Errorf("logs = %q, want a warning: the seeded language servers live only in "+
+				"that file, so its absence is not a silent condition", logs.String())
+		}
+		if !strings.Contains(logs.String(), `"explicit":false`) {
+			t.Errorf("logs = %q, want \"explicit\":false so nobody reads it as an operator mistake",
+				logs.String())
 		}
 	})
 }
