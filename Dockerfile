@@ -232,10 +232,13 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #   - xz-utils: Node/shellcheck tarball extract (.tar.xz)
 #   - jq: entrypoint.sh JSON parsing + a generally useful agent tool
 #
-# Notably NOT here (opt-in via Settings -> Tools):
+# Notably NOT here. Each is installable at runtime from Settings -> Tools:
+# nodejs and python3 as catalog entries (node, uv), and the rest as `apt:`
+# entries now that the engine has an apt source -- so this list is a starting
+# point rather than a ceiling. Removing them drops ~190 MB off the compressed
+# image (212 MB -> ~22 MB):
 #   nodejs, npm, python3, python3-pip, python3-venv, wget, gcc,
-#   libc6-dev, make, openssl, rsync. Removing these drops ~190 MB
-#   off the compressed image (212 MB -> ~22 MB).
+#   libc6-dev, make, openssl, rsync.
 # kiro-cli itself is downloaded on first boot by entrypoint.sh
 # (licensing prevents us from baking it into the image).
 # PKG_REFRESH busts the cache for this layer. Without it BuildKit restores the

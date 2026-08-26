@@ -179,18 +179,21 @@ environment:
   VIBEKIT_ALLOW_BRIDGE_ENV: "BUILDKITE_AGENT_TOKEN"
 ```
 
-### OS packages (`APT_PACKAGES`)
+### OS packages
 
-The tools engine installs language servers, runtimes and CLIs onto `/config`, but not OS packages: an `apt` package lives in the container layer, so it does not survive a recreate the way everything on the volume does. OS packages are this variable's job, `apt-get install`ed at every container start, whitespace-separated:
+The tools engine installs OS packages now, so there is no separate variable for them. Add one from **Settings → Tools** the way you add anything else, or by name with an explicit source:
 
-```yaml
-environment:
-  APT_PACKAGES: "gcc libc6-dev"
+```json
+{ "tools": { "gcc": { "source": "apt:gcc" }, "libc6-dev": { "source": "apt:libc6-dev" } } }
 ```
 
-Two cases need it. Go work that runs `go test -race` needs a C compiler the image does not ship. And a runtime the engine installs can link a shared library the image lacks, so the tool installs and then refuses to start; the tools panel names the missing library on that runtime's row.
+Two cases need this. Go work that runs `go test -race` needs a C compiler the image does not ship. And a runtime the engine installs can link a shared library the image lacks, so the tool installs and then refuses to start; the tools panel names the missing library on that runtime's row.
 
-Plain package names only. A version pin (`pkg=1.2`), `pkg:arch`, `pkg/release`, a trailing `-` (apt reads that as a removal), a name absent from the package index, and a pure virtual package such as `awk` (name a concrete provider such as `mawk`) are each skipped with a warning in the container log. An install failure warns without blocking startup.
+What an `apt:` entry buys over `apt-get install` in the shell is the record: the entry is on the `/config` volume, so a container recreate reinstalls the package instead of losing it, and the row reports the installed version. Removing the entry is a logged no-op rather than an uninstall — apt packages are shared, and the engine will not remove one it cannot prove nothing else needs.
+
+Plain package names only. A version pin (`pkg=1.2`), `pkg:arch`, `pkg/release`, a trailing `-` (apt reads that as a removal), a name absent from the package index, and a pure virtual package such as `awk` (name a concrete provider such as `mawk`) are each refused with the reason. Pinning an entry holds the installed version and marks it held in dpkg, so apt will not move it as a dependency of something else either.
+
+The `APT_PACKAGES` variable this replaced is gone and is not read at all. Remove it from your compose file and add each package as a manifest entry instead — a clean break rather than a migration, so nothing is imported for you.
 
 ### Environment variable reference
 
@@ -209,7 +212,6 @@ Every knob, the ones detailed above included. A malformed duration warns and fal
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
-| `APT_PACKAGES` | OS packages `apt-get install`ed at every container start, whitespace-separated. See [OS packages](#os-packages-apt_packages). | _(unset)_ |
 | `VIBEKIT_TOOLS_DIR` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
 | `VIBEKIT_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a fetched catalog replaces it. | `/opt/vibekit/tool-catalog.json` |
 | `VIBEKIT_TOOL_CATALOG_URL` | Where catalog refreshes fetch from; point it at a fork or mirror to leave the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
