@@ -19,7 +19,7 @@ import {
   setThinking,
   setAgentStatus,
   setCurrentMode,
-  clearSteers,
+  forgetSteers,
   clearTurnFailed,
   clearTurnDone,
 } from "../store.js";
@@ -97,12 +97,22 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     // connect) — and that replay lands after this handler, which runs off the
     // `connected` frame itself.
     dropDecisions(s.id);
-    // Steers are KAS's state, and a gap means we may have missed the frames
-    // that resolved or dropped them. Clearing is the honest default for the same
-    // reason `thinking` is cleared above: a chip claiming the agent has not read
-    // something is a claim this client can no longer support. A turn still
-    // running re-announces its buffer through the connect replay.
-    clearSteers(s.id);
+    // Steers are KAS's state, and a gap means we may have missed the frames that
+    // resolved or dropped them. Emptying the dock is the honest default for the
+    // same reason `thinking` is cleared above: a row claiming the agent has not
+    // read something is a claim this client can no longer support.
+    //
+    // FORGOTTEN, not promoted. The turn-boundary path leaves a "not delivered"
+    // note; doing that here would assert "the agent never read this" on no
+    // evidence, when the likeliest truth is that the frame saying it did was
+    // among the dropped ones. Notes already established stay.
+    //
+    // And nothing brings the dock back: `streamInitialState`
+    // (`internal/agent/sse.go`) replays pending permissions, `turn_state` and the
+    // waiting status, and NOT the steering buffer. So a gap mid-turn loses the
+    // rows for the rest of that turn. Recovering them is a server change (a
+    // per-busy-bridge `steer_queued` replay) and is recorded as a follow-up.
+    forgetSteers(s.id);
     // Same reasoning for a queued mid-turn model switch: its drain rides
     // turn_ended, which we missed during the gap. Fire it for the now-idle
     // chat so the switch isn't stranded behind a stuck ".pending" pill.

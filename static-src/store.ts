@@ -25,6 +25,8 @@ import type {
   RefusalInfo,
   FileChange,
   PendingSteer,
+  SteerAnchor,
+  SteerMark,
 } from "./types.js";
 import { signal, computed, createCollection, batch } from "@cplieger/reactive";
 import {
@@ -43,12 +45,59 @@ export const messagesVersion = signal(0);
 export function emitMessages(): void {
   messagesVersion.value = messagesVersion.peek() + 1;
 }
+
+/**
+ * `emitMessages`, but only for the chat on screen.
+ *
+ * The same gate `scheduleMessages` applies and for the same reason (see its
+ * comment), kept as a second function rather than folded into one because the
+ * TIMING is a real difference and neither caller should have to think about it.
+ * The paths here change the message LIST — a message arriving, a turn's ledger
+ * being stamped — which the renderer's keyed reconcile has to see before the
+ * frame it was announced in, so this bump stays synchronous. `scheduleMessages`
+ * defers because its callers fire per DELTA and a microtask is what collapses a
+ * tick's worth of them into one repaint.
+ *
+ * The ungated `emitMessages` above stays exported for the two callers outside
+ * this module (`store-load.ts` after a page fetch, `chat-search.ts` around a
+ * reveal), both of which act on the chat the reader is looking at by
+ * construction — a page fetch is an activation or a scroll-up, and a search runs
+ * on the open transcript. Neither is on a per-frame path, so gating them would
+ * buy nothing and cost two more files a reason to import an id they only have to
+ * satisfy a guard.
+ */
+function emitMessagesFor(chatID: string): void {
+  if (chatID !== activeId.peek()) {
+    return;
+  }
+  emitMessages();
+}
 let messagesScheduled = false;
-function scheduleMessages(): void {
-  // Coalesce multiple new-block/new-tool events arriving in one tick into a
-  // single render on the next microtask. (The package's batch() flushes
-  // synchronously, so the microtask deferral is owned here.)
-  if (messagesScheduled) {
+/**
+ * Coalesce the streaming paths' "the list shape changed" bumps for ONE chat into
+ * a single render on the next microtask. (The package's batch() flushes
+ * synchronously, so the microtask deferral is owned here.)
+ *
+ * THE CHAT ID IS THE POINT, and it is required rather than optional so a new
+ * call site cannot skip the question by omission. `messagesVersion` is global but
+ * both of its consumers render the ACTIVE chat and nothing else — the transcript
+ * effect in `messages.ts` (whose `paint()` reads `getActive()`) and the
+ * task-list pill (which reads `getActive()` too) — so a bump on behalf of a
+ * background chat repaints a transcript that did not change, which is the
+ * expensive half of a full keyed reconcile over every turn, message and block on
+ * screen. Ungated, a chat streaming in a background tab drove that repaint at SSE
+ * frame rate: with N chats streaming the visible transcript was repainted N times
+ * per frame, and the transcript being repainted was the largest one only by
+ * coincidence. That is the multi-tab freeze.
+ *
+ * A background chat's DATA still lands — every caller mutates the session's
+ * messages before reaching here, and this only decides whether anything repaints
+ * now. Switching to that chat paints it from the mutated store: `setActive` writes
+ * `activeId`, which re-derives `activeSession`, which the same effect tracks.
+ * That is why the gate needs no catch-up bump of its own.
+ */
+function scheduleMessages(chatID: string): void {
+  if (chatID !== activeId.peek() || messagesScheduled) {
     return;
   }
   messagesScheduled = true;
@@ -376,118 +425,325 @@ export function setWorkingLabel(id: string, label: string): void {
   sessions.update(id, (s) => ({ ...s, working_label: label }));
 }
 
-// --- Mid-turn steers (a projection of KAS's own steering buffer) ---
+// --- Mid-turn steers (the dock's waiting rows + the transcript's marks) ---
 //
-// Not a queue. Every function here is driven by an SSE event, never by the code
-// that sent a steer: `steer_queued` records one, `steer_injected` marks it read,
-// `steer_cleared` (and every turn boundary) drops it. There is no enqueue, no
-// peek, no dequeue and no promote, because vibekit no longer owns delivery —
-// KAS's buffer does, and the client's job is to show its state.
+// TWO FIELDS, TWO LIFETIMES, and that split is the whole shape here.
+// `session.steers` is what the agent has NOT read: the bottom dock's rows, whose
+// lifetime is the turn. `session.steer_marks` is what has LEFT the dock — read,
+// or dropped unread at a boundary — rendered inside the turn transcript at the
+// block it landed on, and whose lifetime is the loaded transcript. An entry moves
+// from the first to the second and never back.
+//
+// The client writes INTENT and the server writes FACT. `recordSteerSent` is the
+// intent half (a `pending` row on submit, under the id the client can derive) and
+// `forgetSteer` un-writes it when the POST fails. Everything else is a frame:
+// `steer_queued` confirms, `steer_injected` promotes, `steer_cleared` and every
+// turn boundary drop. The confirm is idempotent in every branch, so the
+// optimistic row and the confirmed one can never both render.
 //
 // What this replaced: a client-side FIFO with five mutators, a re-entrant drain
 // guard, a 409-after-turn_ended race check and a promote-to-front used to jump
 // the queue by CANCELLING the running turn. All of it existed to work around not
-// being able to reach a live turn. Reactive because it is a field on the session,
-// so pending-steers.ts renders straight off `session.steers`.
+// being able to reach a live turn. Reactive because both are fields on the
+// session, so pending-steers.ts renders straight off `session.steers` and
+// messages-blocks.ts interleaves straight off `session.steer_marks`.
 
-/** Number of steers outstanding for a chat, injected or not. */
+/** The steer id KAS will return for a message id.
+ *
+ *  `internal/vibekit/commands.go:329-330` documents the convention (`"steer-" +
+ *  messageID`) and `internal/command/steer_test.go` pins it. Deriving it is what
+ *  lets the optimistic row be reconciled by a plain id match: the POST's reply
+ *  does carry the authoritative id, but `transportAction` discards the body, so
+ *  it is unreachable from here. `recordSteerQueued`'s text fallback is the safety
+ *  net if the convention ever drifts. */
+export function steerIDFor(messageID: string): string {
+  return `steer-${messageID}`;
+}
+
+/** Number of steers waiting for the agent, confirmed or still in flight. */
 export function steerCount(id: string): number {
   return get(id)?.steers?.length ?? 0;
 }
 
-/** Record a steer KAS has accepted into its buffer.
+/** The steers that have left the dock and now belong to the transcript. */
+export function steerMarks(id: string): readonly SteerMark[] {
+  return get(id)?.steer_marks ?? [];
+}
+
+/** Record a steer this client has just POSTed, before any server frame.
  *
- *  Idempotent by id: the same `steer_queued` can arrive twice through an SSE
- *  reconnect replay, and a second chip for one message would misreport how much
- *  the agent has been told. A repeat refreshes the entry rather than being
- *  dropped, so a corrected text still lands. */
+ *  The row the user is owed for pressing Send. `pending` says the id is DERIVED
+ *  rather than confirmed, which is what the dock reads to withhold Edit and
+ *  Discard: there is no server-side id to clear yet. Rolled back by
+ *  `forgetSteer` when the POST fails. */
+export function recordSteerSent(id: string, messageID: string, text: string): void {
+  const s = get(id);
+  if (s === undefined || messageID === "") {
+    return;
+  }
+  const entry: PendingSteer = { id: steerIDFor(messageID), text, pending: true };
+  const existing = s.steers ?? [];
+  // Idempotent by id: submit.ts reuses one message id for a retry of a failed
+  // attempt, and that retry must refresh the row rather than add a second.
+  const at = existing.findIndex((e) => e.id === entry.id);
+  const next = at >= 0 ? existing.map((e, i) => (i === at ? entry : e)) : [...existing, entry];
+  sessions.update(id, (cur) => ({ ...cur, steers: next }));
+}
+
+/** Un-draw one steer row. The rollback half of `recordSteerSent`.
+ *
+ *  Removes by id and leaves everything else alone, so a 409 for the message just
+ *  sent cannot take a sibling still waiting with it. */
+export function forgetSteer(id: string, steerID: string): void {
+  const s = get(id);
+  if (s?.steers === undefined) {
+    return;
+  }
+  const rest = s.steers.filter((e) => e.id !== steerID);
+  if (rest.length === s.steers.length) {
+    return;
+  }
+  sessions.update(id, (cur) => withSteers(cur, rest));
+}
+
+/** Adopt KAS's own confirmation of a steer into the dock.
+ *
+ *  THREE BRANCHES, one outcome — exactly one row per message:
+ *
+ *    1. The id matches (the ordinary case, because the client derives the id KAS
+ *       returns): adopt the text and clear `pending`.
+ *    2. No id match but the OLDEST pending row carries the same text: adopt the
+ *       server's id onto it. The fallback for a KAS whose prefix convention has
+ *       drifted, so the reconcile does not depend on that convention.
+ *    3. Neither: append it confirmed. This is the frame for a steer another
+ *       device sent, or one this client sent before a reload.
+ *
+ *  Idempotent in all three: a replayed `steer_queued` re-enters branch 1 and
+ *  refreshes the row rather than adding one, so a corrected text still lands. An
+ *  id already PROMOTED is not resurrected — `steer_marks` is checked first,
+ *  because a reconnect replays the queued frame for a steer the agent has since
+ *  read, and branch 3 would otherwise put a delivered message back in the dock. */
 export function recordSteerQueued(id: string, steer: { id: string; text: string }): void {
   const s = get(id);
   if (s === undefined || steer.id === "") {
     return;
   }
-  const entry: PendingSteer = {
-    id: steer.id,
-    text: steer.text,
-    injected: false,
-  };
+  if ((s.steer_marks ?? []).some((m) => m.id === steer.id)) {
+    return;
+  }
   const existing = s.steers ?? [];
   const at = existing.findIndex((e) => e.id === steer.id);
+  const adoptAt =
+    at >= 0 ? at : existing.findIndex((e) => e.pending === true && e.text === steer.text);
+  const entry: PendingSteer = { id: steer.id, text: steer.text };
   const next =
-    at >= 0
-      ? existing.map((e, i) => (i === at ? { ...entry, injected: e.injected } : e))
-      : [...existing, entry];
+    adoptAt >= 0 ? existing.map((e, i) => (i === adoptAt ? entry : e)) : [...existing, entry];
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
 }
 
-/** Mark a steer as read by the model, and record what it did about it.
+/** Promote a steer the agent has READ out of the dock and into the transcript.
  *
- *  Tolerates an id it has never seen by CREATING the entry: `steer_injected` can
- *  legitimately arrive without its `steer_queued` — another device sent the
- *  steer, or this one connected mid-turn — and dropping it would leave the
- *  transcript with no sign that the agent was redirected.
+ *  It LEAVES `steers` — the dock holds only what is still waiting — and gains a
+ *  `steer_marks` entry anchored at the block the running turn had reached, which
+ *  is what makes the note render chronologically rather than at the end.
  *
  *  TWO FRAMES, one id. KAS's steering channel sends the read frame (text, no
  *  ack); the agent's acknowledgement marker on the text stream sends the ack
  *  frame (ack, no text) once it has acted. So each field is adopted only when
- *  the frame carries it, or the second frame would blank the first's text.
+ *  the frame carries it, or the second frame would blank the first's text — and
+ *  the second must not re-anchor a note that is already placed, or the reader
+ *  would watch it jump down the turn.
  *
- *  An ack frame for an id this client has never seen is IGNORED rather than
- *  creating an entry: with no text there is nothing to label the chip with, and
- *  a blank chip carrying only a verdict names no message. */
-export function markSteerInjected(id: string, steerID: string, text: string, ack?: string): void {
+ *  Tolerates an id it has never seen by creating the mark from the frame's own
+ *  text: `steer_injected` can legitimately arrive without its `steer_queued`
+ *  (another device sent it, or this one connected mid-turn), and dropping it
+ *  would leave the transcript showing the agent change course with nothing
+ *  explaining why. An ack-only frame for an id with no mark and no text IS
+ *  ignored — with no text there is nothing to label the note with. */
+export function promoteSteer(id: string, steerID: string, text: string, ack?: string): void {
   const s = get(id);
   if (s === undefined || steerID === "") {
     return;
   }
   const existing = s.steers ?? [];
-  const at = existing.findIndex((e) => e.id === steerID);
-  if (at < 0) {
-    if (text === "") {
+  let at = existing.findIndex((e) => e.id === steerID);
+  if (at < 0 && text !== "") {
+    // The same text fallback `recordSteerQueued` uses, for the sequence where
+    // the injected frame beats the queued one to an optimistic row.
+    at = existing.findIndex((e) => e.pending === true && e.text === text);
+  }
+  const rest = at >= 0 ? existing.filter((_, i) => i !== at) : existing;
+  const dockText = at >= 0 ? (existing[at]?.text ?? "") : "";
+  const marks = s.steer_marks ?? [];
+  const mi = marks.findIndex((m) => m.id === steerID);
+  if (mi < 0) {
+    const body = text !== "" ? text : dockText;
+    if (body === "") {
       return;
     }
-    const entry: PendingSteer = {
+    const mark: SteerMark = {
       id: steerID,
-      text,
-      injected: true,
+      text: body,
       ...(ack !== undefined && ack !== "" ? { ack } : {}),
+      anchor: anchorFor(s),
     };
-    sessions.update(id, (cur) => ({ ...cur, steers: [...existing, entry] }));
+    sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: [...marks, mark] }, rest));
     return;
   }
-  const next = existing.map((e, i) =>
-    i === at ? { ...e, injected: true, ...(ack !== undefined && ack !== "" ? { ack } : {}) } : e,
+  const nextMarks = marks.map((m, i) =>
+    i === mi
+      ? {
+          ...m,
+          ...(text !== "" ? { text } : {}),
+          ...(ack !== undefined && ack !== "" ? { ack } : {}),
+        }
+      : m,
   );
-  sessions.update(id, (cur) => ({ ...cur, steers: next }));
+  sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: nextMarks }, rest));
 }
 
-/** Drop steers. Named ids remove just those; an empty list clears the chat's
- *  whole set, which is what a turn boundary means.
+/** Drop steers at a turn boundary: out of the dock, into the transcript as
+ *  UNDELIVERED.
  *
- *  The field is DELETED rather than left as an empty array so a session object
- *  compares equal to one that never had steers — the chip row's `computed`
- *  dedups by value, and an empty array would re-render on every clear. */
-export function clearSteers(id: string, steerIDs?: readonly string[]): void {
+ *  Named ids drop just those; an empty or absent list drops the chat's whole set,
+ *  which is what a turn boundary means. Each one keeps its text and earns a
+ *  `dropped` mark, because "I sent this and the agent never read it" is exactly
+ *  the kind of fact the transcript is for — and the note offers to put the text
+ *  back in the composer, so it is one click from being re-sent as a prompt.
+ *
+ *  An id already in `steer_marks` is HOUSEKEEPING and a no-op: KAS clears its
+ *  buffer at every boundary, so `steer_cleared` routinely names ids the model
+ *  already read, and those must keep their existing mark rather than gain a
+ *  second one claiming they were missed.
+ *
+ *  KNOWN LIMITATION, accepted: another device's explicit discard reaches this
+ *  client only as `steer_cleared`, so it renders as "not delivered". The label is
+ *  still true — the agent never read it — it just does not say who took it back.
+ *  Distinguishing the two would be a wire flag for a rare multi-device case. THIS
+ *  device's own discard leaves no row, because `chat.clear_steers` removes the
+ *  entries optimistically at dispatch, so by the time the frame lands there is
+ *  nothing here to promote. */
+export function dropSteers(id: string, steerIDs?: readonly string[]): void {
   const s = get(id);
   if (s?.steers === undefined) {
     return;
   }
-  const rest =
-    steerIDs === undefined || steerIDs.length === 0
-      ? []
-      : s.steers.filter((e) => !steerIDs.includes(e.id));
-  if (rest.length === s.steers.length) {
+  const named = steerIDs === undefined || steerIDs.length === 0 ? undefined : new Set(steerIDs);
+  const going = s.steers.filter((e) => named === undefined || named.has(e.id));
+  if (going.length === 0) {
     return;
   }
-  sessions.update(id, (cur) => {
-    const copy = { ...cur };
-    if (rest.length === 0) {
-      delete copy.steers;
-    } else {
-      copy.steers = rest;
+  const goingIDs = new Set(going.map((e) => e.id));
+  const rest = s.steers.filter((e) => !goingIDs.has(e.id));
+  const marks = s.steer_marks ?? [];
+  const held = new Set(marks.map((m) => m.id));
+  const anchor = anchorFor(s);
+  const added = going
+    .filter((e) => !held.has(e.id))
+    .map((e): SteerMark => ({ id: e.id, text: e.text, dropped: true, anchor }));
+  sessions.update(id, (cur) =>
+    withSteers(added.length > 0 ? { ...cur, steer_marks: [...marks, ...added] } : cur, rest),
+  );
+}
+
+/** Remove every CONFIRMED waiting steer, returning a snapshot to restore from.
+ *
+ *  The optimistic half of `chat.clear_steers`, and the reason an explicit discard
+ *  leaves no transcript row: the entries are gone before the server's
+ *  `steer_cleared` frame arrives, so `dropSteers` finds nothing to promote as
+ *  "not delivered". Taking a message back is not the agent missing it.
+ *
+ *  A `pending` entry STAYS: `_session/steer/clear` drains KAS's buffer, and a
+ *  steer still in flight is not in that buffer yet, so removing it locally would
+ *  hide a message that is still on its way.
+ *
+ *  Returns the array as it was, not the entries taken, so the rollback restores
+ *  the exact order rather than reconstructing it. Empty means nothing changed. */
+export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
+  const s = get(id);
+  if (s?.steers === undefined) {
+    return [];
+  }
+  const prev = s.steers;
+  const rest = prev.filter((e) => e.pending === true);
+  if (rest.length === prev.length) {
+    return [];
+  }
+  sessions.update(id, (cur) => withSteers(cur, rest));
+  return prev;
+}
+
+/** Put a `dropConfirmedSteers` snapshot back. The rollback half. */
+export function restoreSteers(id: string, prev: readonly PendingSteer[]): void {
+  if (prev.length === 0 || get(id) === undefined) {
+    return;
+  }
+  sessions.update(id, (cur) => withSteers(cur, prev));
+}
+
+/** Forget the dock's contents WITHOUT promoting them. The `transport:gap` path.
+ *
+ *  A gap means the frames that resolved these steers may be among the ones we
+ *  lost, so promoting them would assert "the agent never read this" on no
+ *  evidence. Existing marks stay: those are facts already established. */
+export function forgetSteers(id: string): void {
+  const s = get(id);
+  if (s?.steers === undefined) {
+    return;
+  }
+  sessions.update(id, (cur) => withSteers(cur, []));
+}
+
+/** Where a steer read RIGHT NOW belongs: after everything the turn's assistant
+ *  message has produced so far.
+ *
+ *  An empty `msgID` means the steer was read before the turn produced anything;
+ *  `rebindPendingAnchors` binds it to the first assistant message that arrives. */
+function anchorFor(s: Session): SteerAnchor {
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const m = s.messages[i];
+    if (m?.role === "assistant") {
+      return { msgID: m.id, blockIndex: (m.blocks ?? []).length };
     }
-    return copy;
-  });
+  }
+  return { msgID: "", blockIndex: 0 };
+}
+
+/** Bind every anchor-less mark to a newly-arrived assistant message.
+ *
+ *  A steer read before the turn produced anything belongs ABOVE that turn's
+ *  first block, and until the message exists there is no id to say so with.
+ *  Called from `ingestMessage`'s push branch through `sessions.update` rather
+ *  than `emitMessages`, because only `sessions.update` re-derives
+ *  `activeSession` — which is what the renderers' value-dedup computeds read. */
+function rebindPendingAnchors(chatID: string, msgID: string): void {
+  const marks = get(chatID)?.steer_marks;
+  if (marks?.some((m) => m.anchor.msgID === "") !== true) {
+    return;
+  }
+  const next = marks.map((m) =>
+    m.anchor.msgID === "" ? { ...m, anchor: { msgID, blockIndex: 0 } } : m,
+  );
+  sessions.update(chatID, (cur) => ({ ...cur, steer_marks: next }));
+}
+
+/** Write `steers` onto a session, DELETING the field when the list is empty.
+ *
+ *  Deleted rather than left as an empty array so a session compares equal to one
+ *  that never had steers — pending-steers.ts's `computed` dedups by value, and an
+ *  empty array would repaint on every clear. `steer_marks` gets the same
+ *  treatment for the same reason (messages.ts reads it per repaint). */
+function withSteers(s: Session, steers: readonly PendingSteer[]): Session {
+  const copy = { ...s };
+  if (steers.length === 0) {
+    delete copy.steers;
+  } else {
+    copy.steers = [...steers];
+  }
+  if (copy.steer_marks?.length === 0) {
+    delete copy.steer_marks;
+  }
+  return copy;
 }
 
 /** Rebuild the message index for a session. Exported for store-load.ts. */
@@ -725,14 +981,22 @@ function ingestMessage(chatID: string, incoming: Message): void {
     mi.set(incoming.id, s.messages.length);
     s.messages.push(normalizeMessage(incoming));
     s.message_count = Math.max(s.message_count, s.messages.length);
-    emitMessages();
+    emitMessagesFor(chatID);
+    if (incoming.role === "assistant") {
+      // A steer read before this turn produced anything is anchored at no
+      // message; this is the first moment there is an id to give it. AFTER the
+      // push, and through `sessions.update` rather than `emitMessages`, because
+      // the anchor has to be readable off `activeSession` by the time the
+      // transcript repaints.
+      rebindPendingAnchors(chatID, incoming.id);
+    }
     return;
   }
   const existing = s.messages[idx];
   if (existing !== undefined) {
     s.messages[idx] = mergeMessage(existing, normalizeMessage(incoming));
   }
-  emitMessages();
+  emitMessagesFor(chatID);
 }
 
 /** message_appended → merge path (was a dedup no-op that dropped the final
@@ -798,7 +1062,7 @@ export function setTurnSummary(
     changed = true;
   }
   if (changed) {
-    emitMessages();
+    emitMessagesFor(chatID);
   }
 }
 
@@ -869,6 +1133,39 @@ export function clearSnapshotSeq(chatID: string): void {
   snapshotSeqs.delete(chatID);
 }
 
+/**
+ * Reserve the block indices below `upto` whose own frame has not arrived yet.
+ *
+ * `block_index` is the server's position in ONE chronological array that the
+ * client fills from TWO event streams — text and thinking over `message_chunk`,
+ * tool calls over `tool_call` — so a frame can legitimately name an index past
+ * the end of what has arrived. A pad keeps the array aligned with the server's
+ * numbering AND reserves the DOM position, which is load-bearing rather than
+ * defensive: the block mounter is append-only (`messages-blocks.ts`), so a block
+ * whose frame lands late cannot be inserted between two mounted siblings. The
+ * slot has to exist before its content does, and the text fills into it after.
+ *
+ * The kind is a GUESS, because nothing here knows what a missing frame will turn
+ * out to be. `text` is the guess because it mounts a FILLABLE node; `thinking`
+ * would mount nothing at all (`mountThinking` drops an empty settled trace), and
+ * a slot that turned out to be text would then have nowhere to put it.
+ * `isPadBlock` is what lets the real frame correct the guess when it lands.
+ */
+function padBlocks(blocks: Block[], upto: number): void {
+  while (blocks.length < upto) {
+    blocks.push({ type: "text" });
+  }
+}
+
+/** Whether `b` is still a pad: a kind, and nothing behind it.
+ *
+ *  Conservative by construction — every real block carries the content that
+ *  created it (`text`, `thinking`, or `tool_call_id`, each set in the same
+ *  literal as its `type`), so this cannot misread one as a pad. */
+function isPadBlock(b: Block): boolean {
+  return b.text === undefined && b.thinking === undefined && b.tool_call_id === undefined;
+}
+
 export function appendChunk(
   chatID: string,
   messageID: string,
@@ -921,11 +1218,7 @@ export function appendChunk(
   msg.blocks ??= [];
   const blockKind = isReasoning ? "thinking" : "text";
   if (msg.blocks[blockIndex] === undefined) {
-    // pad any gaps (shouldn't happen, but defends against out-of-order
-    // events). Empty placeholder blocks of the right kind.
-    while (msg.blocks.length < blockIndex) {
-      msg.blocks.push({ type: blockKind });
-    }
+    padBlocks(msg.blocks, blockIndex);
     msg.blocks.push({
       type: blockKind,
       ...subtaskField(subtaskID),
@@ -933,6 +1226,15 @@ export function appendChunk(
     });
   } else {
     const existing = msg.blocks[blockIndex];
+    // A PAD'S KIND IS A GUESS (see padBlocks), so the first real delta for the
+    // slot is what decides it. Without this the guess stuck and
+    // `syncMountedText` then read the wrong field: a thinking delta merged into
+    // a `text` pad left `existing.text` undefined, so the block rendered as an
+    // empty row and its reasoning was dropped outright rather than collapsed.
+    if (isPadBlock(existing)) {
+      existing.type = blockKind;
+      Object.assign(existing, subtaskField(subtaskID));
+    }
     if (isReasoning) {
       existing.thinking = (existing.thinking ?? "") + delta;
     } else {
@@ -941,13 +1243,13 @@ export function appendChunk(
   }
 
   if (isNew) {
-    scheduleMessages();
+    scheduleMessages(chatID);
     return;
   }
   if (refusalStamped) {
     // Message-level state changed (not just a block's text): run the keyed
     // reconcile so the refusal callout mounts on the streaming message.
-    scheduleMessages();
+    scheduleMessages(chatID);
   }
   // Fire the per-block signal (fine-grained — only the block at blockIndex
   // re-renders) before the legacy per-message signal.
@@ -965,14 +1267,14 @@ export function appendChunk(
     if (sig !== undefined) {
       sig.value = msg.reasoning ?? "";
     } else if (blockSig === undefined) {
-      scheduleMessages();
+      scheduleMessages(chatID);
     }
   } else {
     const sig = streamingTextSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.content ?? "";
     } else if (blockSig === undefined) {
-      scheduleMessages();
+      scheduleMessages(chatID);
     }
   }
 }
@@ -997,7 +1299,7 @@ export function setCodeReferences(chatID: string, messageID: string, refs: CodeR
     return;
   }
   msg.code_references = refs;
-  emitMessages();
+  emitMessagesFor(chatID);
 }
 
 export function upsertToolCall(
@@ -1014,19 +1316,30 @@ export function upsertToolCall(
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
   if (msg === undefined) {
+    // HONOUR `blockIndex` HERE TOO. This used to hard-code the tool_use block at
+    // index 0, so a turn whose first frame to reach the client was a `tool_call`
+    // at index 2 started life misaligned by two, and every index after it was
+    // wrong for the rest of the turn — the hole the cascade below then fed on.
+    const blocks: Block[] = [];
+    padBlocks(blocks, blockIndex);
+    blocks[blockIndex] = {
+      type: "tool_use",
+      tool_call_id: call.id,
+      ...subtaskField(call.agent_subtask_id),
+    };
     msg = {
       id: messageID,
       role: "assistant",
       ts: Date.now(),
       content: "",
       tool_calls: [call],
-      blocks: [{ type: "tool_use", tool_call_id: call.id, ...subtaskField(call.agent_subtask_id) }],
+      blocks,
     };
     const newIdx = s.messages.length;
     s.messages.push(msg);
     s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
-    emitMessages();
+    emitMessagesFor(chatID);
     return;
   }
   msg.tool_calls ??= [];
@@ -1034,19 +1347,40 @@ export function upsertToolCall(
   const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
   if (tcIdx === -1) {
     msg.tool_calls.push(call);
-    // First time we see this tool call — pin it to the chronological
-    // block index the server reported.
-    while (msg.blocks.length < blockIndex) {
-      msg.blocks.push({ type: "text" });
-    }
-    if (msg.blocks[blockIndex] === undefined) {
-      msg.blocks.push({
+    // First time we see this tool call — pin it to the chronological block index
+    // the server reported, REPLACING whatever pad is sitting there.
+    //
+    // The replacement is the fix for a CASCADE, not a tidy-up. This used to read
+    // `if (msg.blocks[blockIndex] === undefined) push(...)`, which is false
+    // immediately after its own padding above, so the tool_use block was never
+    // written: the card was dropped from the transcript AND `msg.blocks.length`
+    // stayed one short of the server's next index, so the next tool call padded
+    // again and dropped itself the same way. One hole early in a turn therefore
+    // corrupted every tool call after it, and the abandoned pads rendered as
+    // zero-height rows that still cost the block column's gap. Measured on a live
+    // turn: 128 tool_use blocks server-side became 2 tool groups and 122 empty
+    // rows, about 1464px of dead space in one card.
+    //
+    // Assigned rather than conditionally pushed: the server's index is
+    // authoritative for what belongs at that position, and a silent skip here is
+    // exactly what hid this for so long.
+    //
+    // A PAD is overwritten; a REAL block is not. The two cases are different
+    // failures and only the pad case is this method's to fix: replacing a
+    // standing text or thinking block would delete transcript content the
+    // server already streamed, which is worse than the misalignment above.
+    // `isPadBlock` is safe to lean on because every real block carries the
+    // content that created it.
+    padBlocks(msg.blocks, blockIndex);
+    const standing = msg.blocks[blockIndex];
+    if (standing === undefined || isPadBlock(standing)) {
+      msg.blocks[blockIndex] = {
         type: "tool_use",
         tool_call_id: call.id,
         ...subtaskField(call.agent_subtask_id),
-      });
+      };
     }
-    scheduleMessages();
+    scheduleMessages(chatID);
     return;
   }
   msg.tool_calls[tcIdx] = call;
@@ -1054,7 +1388,7 @@ export function upsertToolCall(
   if (sig !== undefined) {
     sig.value = call;
   } else {
-    scheduleMessages();
+    scheduleMessages(chatID);
   }
 }
 

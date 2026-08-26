@@ -212,6 +212,30 @@
   contain-intrinsic-size: auto 3rem;
 }
 
+/* A RESERVED BLOCK SLOT TAKES NO ROW UNTIL IT HAS SOMETHING TO SHOW, and the
+ * node has to stay in the DOM for it: `store.ts` `padBlocks` reserves an index
+ * whose frame has not arrived, and the block mounter is append-only, so that
+ * mounted-but-empty bubble IS the position its text will fill into. A bubble with
+ * no content still measured 0px and still cost the block column's `--sp-3` gap,
+ * so a turn grew 12px per reserved slot with nothing visible to explain it.
+ * `display: none` is what removes the gap as well — a zero-height flex item is
+ * still an item, and `gap` counts it.
+ *
+ * `:not(.streaming)` mirrors `mountThinking`'s `initial === "" && !live` guard, so
+ * a live bubble waiting on its first token keeps its caret. The row comes back on
+ * its own the moment the bubble has a child, which is why this is a style rule
+ * rather than a guard in `mountText`: skipping the mount would throw the reserved
+ * position away and lose the text that lands in it later.
+ *
+ * `.message` rather than `.message.assistant` to stay inside the specificity cap
+ * — `:has()` and `:not()` each take their argument's specificity, and the fuller
+ * form scores (0,5,0) against a (0,4,3) maximum. It loses nothing: a `.msg-row`
+ * only ever wraps an assistant bubble (`mountText`'s top-level branch), because
+ * the user's request is the turn HEADER and there are no user bubbles. */
+.msg-row:has(> .message:empty:not(.streaming)) {
+  display: none;
+}
+
 /* Slide-in for genuinely new appended messages (set by paint() in
  * messages.ts on appendNewIds + the staggered tail of chat-switch
  * replay). Pre-existing rows on chat reload don't re-animate.
@@ -277,7 +301,7 @@
    * reasoning block, whose accent bar is a drawn line at that edge. The card
    * already has a gutter (`.turn-body` padding), so a second one on the prose
    * alone was buying nothing and breaking the alignment the body was built for.
-   * `&.system` and `&.inbox-message` set their own padding and are unaffected. */
+   * `&.system` sets its own padding and is unaffected. */
 
   /* NO BLOCK PADDING EITHER, and that is `.msg-wrap`'s gap instead. This read
    * `var(--sp-3) 0`, which made prose the only block kind that spaced itself
@@ -637,15 +661,6 @@
     font-size: var(--fs-sm);
     padding: var(--sp-1) var(--sp-3);
   }
-
-  &.inbox-message {
-    border-left: 3px solid var(--c-accent);
-    background: color-mix(in srgb, var(--c-accent) 5%, transparent);
-    padding: var(--sp-2) var(--sp-3);
-    border-radius: var(--r-md);
-    font-style: normal;
-    color: var(--c-text-secondary);
-  }
 }
 
 /* Load older messages: a real BUTTON, not the instruction it used to be.
@@ -695,9 +710,8 @@
  * 14px of gap, a second grey bar, then text — with the accent bar 16px left of
  * the prose and the text 12px right of it. The accent bar also smothered the
  * `.streaming` accent-mix this file used to set on the body's border, by being
- * permanently at full strength, so this bar is the block's one border and the
- * block carries no live indicator of its own — see the note below the summary
- * row for why. */
+ * permanently at full strength; the breathing pulse dot on the summary is the
+ * live affordance now. */
 .reasoning-block {
   max-width: var(--content-max-w);
 
@@ -722,17 +736,31 @@
    * details<>summary native open/close animation is still visible. */
 }
 
-/* NO pulse dot on a live thinking trace, deliberately — this is where the
- * breathing accent disc used to be, and re-adding one is a regression rather
- * than a restoration. A streaming trace already says it is live three times
- * over: it mounts EXPANDED with text growing into `.reasoning-body`, its label
- * reads "Thinking…" until `seal()` rewrites it to "Thinking completed", and the
- * turn card's own header dot pulses for the turn's duration
- * (`.turn-header[data-outcome="running"] .turn-dot`, 29-turns.css). A fourth
- * animated marker inside the card was motion without information.
+/* Live-streaming reasoning block (open + actively receiving chunks): a subtle
+ * breath on the summary so the user sees the model is actively thinking. It used
+ * to read "accent left-border + subtle breath"; the border half was the
+ * `.reasoning-body` accent-mix that the legacy full-strength accent bar made
+ * invisible, and the bar is now the block's one border, so the dot is the whole
+ * live affordance. Conditioned on `.streaming` (set by buildReasoning for a live
+ * trace and removed in `seal()`) — NOT on `[open]`, because `[open]` flips back
+ * to true whenever the user re-expands a finalized thinking trace and we don't
+ * want the "actively thinking" pulse to come back for a completed turn.
  *
- * `reasoning-live-cue.test.ts` pins the absence. `@keyframes vk-breathe`
- * (03-base.css) stays — ten other consumers, none of them this one. */
+ * Motion is the ONLY channel here, which is fine because it is not the only
+ * channel the row has: the label reads "Thinking…" until `seal()` rewrites it,
+ * so nothing is carried by the animation alone (WCAG 1.4.1 is about colour, and
+ * the same argument applies to a lone animated marker). `40-a11y.css` collapses
+ * every `*::before` animation under `prefers-reduced-motion: reduce`, so this
+ * dot goes still there without a rule of its own. */
+.msg-reasoning.streaming > .reasoning-summary::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-inline-end: var(--sp-1);
+  border-radius: 50%;
+  background: var(--c-accent);
+  animation: vk-breathe 1.4s var(--ease-standard) infinite;
+}
 
 /* The summary row: chevron + label, on one line. `display: flex` and
  * `list-style: none` are load-bearing — without them the native `<details>`
@@ -763,7 +791,12 @@
 /* The label holds its width so the COUNT beside it is the part that gives on a
  * narrow row. Which way this shrinks is not a toss-up: the label is the block's
  * state ("Thinking…" / "Thinking completed") and the count annotates it, so an
- * ellipsized label would drop the sentence and keep the footnote. */
+ * ellipsized label would drop the sentence and keep the footnote.
+ *
+ * That leaves the count as the row's only shrinkable item, which is the point:
+ * `.disclosure-chevron` (10-shell-app.css) declares its own `flex-shrink: 0`, so
+ * pinning the label here redirects the squeeze onto the count rather than onto
+ * the glyph. `reasoning-live-cue.test.ts` pins all three. */
 .reasoning-label {
   flex-shrink: 0;
 }
@@ -1016,6 +1049,12 @@
   }
 }
 
+/* Severity is the 8% wash plus the ink, and the non-colour channel is the
+ * `.banner-glyph` `banner-stack.ts` now emits — which is what let the 3px
+ * severity-coloured left edge go, on the decision `.pill-status-content` records
+ * in `15-input.css`. The glyph had to land FIRST: without it the level lived in
+ * `border-left-color` and `color` alone, both colour (WCAG 1.4.1), and the
+ * border was the only one of the two that survives `forced-colors: active`. */
 .banner {
   display: flex;
   align-items: center;
@@ -1023,7 +1062,6 @@
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
-  border-left: 3px solid;
 
   /* Entry animation on bindList insert: fade + subtle drop-in using the app's
    * enter vocabulary. Exit can't animate (bindList removes nodes
@@ -1041,20 +1079,26 @@
 
 .banner-error {
   background: color-mix(in srgb, var(--c-red) 8%, transparent);
-  border-left-color: var(--c-red);
   color: var(--c-red);
 }
 
 .banner-warning {
   background: color-mix(in srgb, var(--c-yellow) 8%, transparent);
-  border-left-color: var(--c-yellow);
   color: var(--c-yellow);
 }
 
 .banner-info {
   background: color-mix(in srgb, var(--c-accent) 8%, transparent);
-  border-left-color: var(--c-accent);
   color: var(--c-accent);
+}
+
+/* Shape only: the hue is inherited from the severity rule above, so this rule
+ * never has to know which level it is in. `flex-shrink` because the message is
+ * the element allowed to ellipsize, never the channel that says what kind of
+ * message it is. */
+.banner-glyph {
+  flex-shrink: 0;
+  line-height: 1;
 }
 
 .banner-msg {
@@ -1314,8 +1358,11 @@
    * had to go once `.msg-wrap` became a flex column with a gap. */
   margin: 0;
   padding: var(--sp-2) var(--sp-3);
+  /* A symmetric tinted ring, no state-coloured left edge: the 3px override said
+   * the same thing this ring and the wash below already say, which is the
+   * decision `.pill-status-content` records in `15-input.css`. The non-colour
+   * channels are the octagon glyph, the title and the category chip. */
   border: 1px solid color-mix(in srgb, var(--c-red) 35%, var(--c-border));
-  border-left: 3px solid var(--c-red);
   border-radius: var(--r);
   background: color-mix(in srgb, var(--c-red) 6%, transparent);
   font-size: var(--fs-sm);
@@ -1393,4 +1440,115 @@
 .refusal-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* ==========================================================================
+   The mid-turn steer note — a correction, rendered where it landed
+   ==========================================================================
+
+   A message sent while the turn was already running. It waits in the bottom
+   dock until the agent reads it, then leaves the dock and appears HERE, between
+   the blocks the turn had produced and the ones that came after. It replaced a
+   green checkmark on the dock row, which said the agent had read the message
+   and nothing else — so the transcript showed the agent changing course with
+   nothing explaining why.
+
+   IT HAS TO BE DISTINCT FROM THE TURN HEADER, because both are the user's own
+   words and only one of them started the work. Two vocabularies the reader
+   already knows, recombined: the accent TINT means user input (the same wash
+   `.turn-header` carries) and the accent LEFT EDGE means steer (the dock row's
+   own edge), so the note reads as the object that just left the dock. The
+   uppercase label is what says "mid-turn" rather than "this is the prompt", and
+   it is why the state is never carried by colour alone (WCAG 1.4.1).
+
+   Two states: `read` (accent, optionally with the agent's own account of what
+   it did) and `dropped` (a turn boundary cleared the buffer first — neutral
+   edge, aside ink, and one control to put the text back in the message box).
+   ========================================================================== */
+
+.steer-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+
+  /* The prose measure, matching `.reasoning-block`: the note is read as text
+     beside the assistant's own, not as evidence like a diff. */
+  max-width: var(--content-max-w);
+  margin-block: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-inline-start: 3px solid var(--c-accent);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-accent) 8%, var(--c-bg-secondary));
+  font-size: var(--fs-sm);
+}
+
+/* The word, not only the tint. Uppercase and tracked out so it reads as a
+   status rather than as the first line of the message. */
+.steer-note-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-accent);
+}
+
+/* Two lines at the prose measure, clamped rather than single-line-ellipsised so
+   a long message still gives its shape; the accessible name carries the whole
+   of it. */
+.steer-note-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--c-text-primary);
+  line-height: 1.35;
+}
+
+/* What the agent said it DID about the steer, from its own acknowledgement
+   marker. One step down in weight from the message, because the message above
+   it is the part the reader wrote and already knows. */
+.steer-note-ack {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+/* Dropped: the agent never read it. Subordinate rather than dimmed — the ink is
+   chosen (`--c-text-aside`), never an `opacity`, because an opacity multiplies
+   the measured contrast and is invisible to both contrast gates. */
+.steer-note[data-state="dropped"] {
+  border-inline-start-color: var(--c-border);
+  background: var(--c-bg-secondary);
+}
+
+.steer-note[data-state="dropped"] .steer-note-label,
+.steer-note[data-state="dropped"] .steer-note-text {
+  color: var(--c-text-aside);
+}
+
+/* The one control the wire can honour on a dropped steer: the text back in the
+   message box, from which it is one Send from being a prompt. Aligned left with
+   the label rather than stretched across the note. */
+.steer-note-restore {
+  align-self: flex-start;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
+}
+
+.steer-note-restore:hover {
+  color: var(--c-text-primary);
+  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+}
+
+.steer-note-restore:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }

@@ -108,6 +108,11 @@ export async function loadList(): Promise<boolean> {
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
       ...(existing?.steers !== undefined && { steers: existing.steers }),
+      // The promoted steers too, and this one is load-bearing rather than
+      // symmetric: a mark's lifetime is the loaded TRANSCRIPT, not the turn, so
+      // without it every reconnect would wipe the notes back out of turns the
+      // reader can still see.
+      ...(existing?.steer_marks !== undefined && { steer_marks: existing.steer_marks }),
       // Every CLIENT-ONLY projection carries over, not just steers. This list is
       // the header endpoint's blind spot: the server sends none of these fields,
       // so rebuilding a Session from a header alone silently resets them — and
