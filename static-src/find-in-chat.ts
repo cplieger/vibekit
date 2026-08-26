@@ -44,7 +44,7 @@ import { createPopup } from "@cplieger/ui-primitives/popup";
 import type { PopupController } from "@cplieger/ui-primitives/popup";
 import { $, byId } from "./dom.js";
 import { jumpTo } from "./scroll.js";
-import { runServerSearch, resetServerSearch } from "./chat-search.js";
+import { runServerSearch, resetServerSearch, searchHitTotal } from "./chat-search.js";
 import { getActiveId } from "./store.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
@@ -337,8 +337,13 @@ function updateCounter(query: string): void {
   if (countEl === null || engine === null) {
     return;
   }
-  countEl.textContent = formatCount(engine.total, engine.currentIndex, query);
-  const noResults = query !== "" && engine.total === 0;
+  const session = searchHitTotal();
+  countEl.textContent = formatCount(engine.total, engine.currentIndex, query, session);
+  // The no-results skin is a claim that the text is not in the conversation, so
+  // the server's answer gates it too: a query whose only matches sit in collapsed
+  // or non-resident content found something, and painting the box as a miss would
+  // contradict the count beside it.
+  const noResults = query !== "" && engine.total === 0 && session === 0;
   overlayEl?.classList.toggle("chat-find-no-results", noResults);
 }
 

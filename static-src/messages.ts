@@ -242,15 +242,77 @@ export function mountChatView(): void {
 // The follow model's two client-side obligations (§3.4).
 // ---------------------------------------------------------------------------
 
-/** Total blocks across a session, which is what the resume chip counts.
+/** The subtask ids whose container is open RIGHT NOW, so a block carrying one
+ *  contributes document height the reader can scroll to.
+ *
+ *  Two container kinds, and the set holds both under one key because the server
+ *  stamps a step's id as `wf:<workflowId>:<nodePath>`
+ *  (`internal/translate/wire.go`): reassembling that string from the run card's
+ *  `data-run` and the step row's `data-node` means the caller does a plain set
+ *  membership test and no second copy of `parseStepSubtask` lives here.
+ *
+ *  A step needs BOTH of its containers open — the card and the row inside it —
+ *  because either one closed hides the step's body. A run card mounts open and a
+ *  step row mounts closed (`fundamentals/run-card.ts`), so a step's blocks are
+ *  unreachable until the reader opens that row. A delegate box is one container
+ *  and mounts closed, always (`fundamentals/subagent-block.ts`).
+ *
+ *  Built once per call rather than per block: `refreshResumeLabel` runs on every
+ *  paint, and this is two `querySelectorAll` passes over a subtree it is already
+ *  touching, not one lookup per block in the session. */
+function expandedSubtasks(): ReadonlySet<string> {
+  const open = new Set<string>();
+  for (const box of messagesEl.querySelectorAll<HTMLElement>(".subagent-block[data-subtask]")) {
+    const id = box.dataset["subtask"];
+    if (id !== undefined && id !== "" && !box.classList.contains("collapsed")) {
+      open.add(id);
+    }
+  }
+  for (const card of messagesEl.querySelectorAll<HTMLElement>(".run-card[data-run]")) {
+    const runID = card.dataset["run"];
+    if (runID === undefined || runID === "" || card.classList.contains("collapsed")) {
+      continue;
+    }
+    for (const row of card.querySelectorAll<HTMLElement>(".run-step[data-node]")) {
+      const node = row.dataset["node"];
+      if (node !== undefined && node !== "" && !row.classList.contains("collapsed")) {
+        open.add(`wf:${runID}:${node}`);
+      }
+    }
+  }
+  return open;
+}
+
+/** Blocks the reader can REACH, which is what the resume chip counts.
  *
  *  Blocks, not messages: a single streaming turn can produce dozens of blocks,
  *  and a chip reading "1 new message" for four minutes of work is a static badge
- *  rather than a progress read-out. */
+ *  rather than a progress read-out.
+ *
+ *  REACHABLE, not merely present, and that is the same argument one level down. A
+ *  delegate's blocks are members of the parent assistant message's `blocks` array,
+ *  but they render into a card that collapses to `block-size: 0` with
+ *  `overflow: hidden` — so while that card is shut they contribute ZERO document
+ *  height. Counting them makes the control promise a distance that does not exist:
+ *  the reader resumes expecting nine blocks of new content and lands on the same
+ *  view they parked at. The resume control is the only element on screen that
+ *  knows the reader is behind, so it is the only one that says how far, and a
+ *  number nothing on the page can account for is worse than no number.
+ *
+ *  A block with no `agent_subtask_id` is the parent stream: always inline, always
+ *  counted. One with a subtask id counts only while its container is open, so
+ *  opening a card legitimately raises the count — those blocks became reachable at
+ *  that moment. */
 function blockCount(msgs: readonly Message[]): number {
+  const open = expandedSubtasks();
   let n = 0;
   for (const m of msgs) {
-    n += m.blocks?.length ?? 0;
+    for (const b of m.blocks ?? []) {
+      const subtask = b.agent_subtask_id ?? "";
+      if (subtask === "" || open.has(subtask)) {
+        n++;
+      }
+    }
   }
   return n;
 }

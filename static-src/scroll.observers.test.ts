@@ -263,6 +263,58 @@ describe("the scroller's resize observer", () => {
     expect(setProperty.mock.calls.filter((c) => c[0] === "--scrollbar-w")).toHaveLength(1);
   });
 
+  it("releases Reading when the content shrinks to where the reader already is", async () => {
+    // Collapsing a delegate's card: its body goes to `height: 0`, so the
+    // document now ENDS at the reader. No node was inserted or removed, no
+    // gesture was made, and a shrink need not move `scrollTop` — so before the
+    // revalidation nothing re-asked the question and the resume control stayed up
+    // over a transcript with nothing below it, counting the collapsed card's own
+    // blocks as what the reader was behind.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    expect([
+      h.scroll.readingState(),
+      document.getElementById("scrollBottom")?.classList.contains("hidden"),
+    ]).toEqual(["reading", false]);
+
+    g.scrollHeight = 1500;
+    now.mockReturnValue(1200);
+    h.ro.fire();
+    expect([
+      h.scroll.readingState(),
+      document.getElementById("scrollBottom")?.classList.contains("hidden"),
+    ]).toEqual(["following", true]);
+  });
+
+  it("leaves Reading alone while a gesture is still in flight", async () => {
+    // The debounce window is the reader's answer outranking the layout's, and it
+    // is also what keeps a smooth `jumpTo` from being undone: its intermediate
+    // scroll events refresh the window all the way to the landing.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1000 });
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.scrollEl.dispatchEvent(new Event("scroll"));
+    g.scrollHeight = 1500;
+    h.ro.fire();
+    expect(h.scroll.readingState()).toBe("reading");
+  });
+
+  it("never declares the reader Reading from a size change", async () => {
+    // ONE-DIRECTIONAL. Following pins to the ANCHOR, not the document bottom, so
+    // tall evidence rendering below the pin legitimately leaves the controller
+    // hundreds of pixels from the end — a demotion here would switch the
+    // auto-scroll off mid-turn, which is the defect `selfScrollTop` exists for.
+    const h = await freshModule();
+    const g = fakeGeometry(h.scrollEl, { scrollHeight: 600, clientHeight: 500, scrollTop: 100 });
+    expect(h.scroll.readingState()).toBe("following");
+    g.scrollHeight = 4000;
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    h.ro.fire();
+    expect(h.scroll.readingState()).toBe("following");
+  });
+
   it("re-pins the reader to the live edge when the box shrinks under them", async () => {
     // The composer growing or the shell panel opening leaves the reader Following
     // but no longer AT the edge, and no DOM mutation says so.

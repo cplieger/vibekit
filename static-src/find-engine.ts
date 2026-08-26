@@ -35,16 +35,44 @@ const ELEMENT_NODE = 1;
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-/** Format the match counter. 1-based for humans; "" when the query is empty,
- *  "No matches" when a non-empty query finds nothing. */
-export function formatCount(total: number, current: number, query: string): string {
+/**
+ * Format the match counter. 1-based for humans; "" when the query is empty.
+ *
+ * `total` is what the caller could MARK — for the transcript that is the DOM
+ * pass, which prunes every hidden subtree (see `isSearchableElement`).
+ * `sessionTotal` is what a session-wide enumerator found, 0 when there is none
+ * (the editor's find has no second opinion and passes nothing).
+ *
+ * The two are reported side by side rather than subtracted. A difference has
+ * several causes at once — hits inside a collapsed delegate card, hits on a page
+ * that is not resident, and the server matching raw markdown where the DOM holds
+ * rendered text — so "${n} hidden" would name a cause this function cannot know,
+ * and the subtraction can go either way (the live streaming turn is in the DOM
+ * and not yet in the chat file). Two independent true statements beat one
+ * inferred one.
+ *
+ * The `total === 0` branch is the case that was an outright lie: "No matches"
+ * while the server had answered that the text occurs N times.
+ */
+export function formatCount(
+  total: number,
+  current: number,
+  query: string,
+  sessionTotal = 0,
+): string {
   if (query === "") {
     return "";
   }
   if (total === 0) {
-    return "No matches";
+    // Never "No matches" when something DID match somewhere the walker could not
+    // reach. No "1 of" prefix either: nothing here is navigable, so an index
+    // would point at nothing.
+    return sessionTotal > 0 ? `${sessionTotal} in chat` : "No matches";
   }
-  return `${current + 1} of ${total}`;
+  const here = `${current + 1} of ${total}`;
+  // Only when it genuinely adds something. Equal counts are the common case and
+  // a redundant second figure would train the reader to ignore it.
+  return sessionTotal > total ? `${here} · ${sessionTotal} in chat` : here;
 }
 
 /** True when `elem` (and thus its descendant text) should be searched. Prunes

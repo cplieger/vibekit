@@ -35,6 +35,13 @@ let hitTurns = new Set<number>();
 /** Hits per turn number, so a folded row can advertise what is inside it rather
  *  than hiding it. */
 let countsByTurn = new Map<number, number>();
+/** Every hit the server reported for the current query, session-wide.
+ *
+ *  Kept as its own number rather than summed from `countsByTurn` on demand: the
+ *  map's keys are turn numbers, so summing it would answer the same question by a
+ *  longer route and would silently change meaning if a hit ever arrived without a
+ *  resolvable turn. */
+let hitTotal = 0;
 
 export function searchHitTurns(): ReadonlySet<number> {
   return hitTurns;
@@ -42,6 +49,22 @@ export function searchHitTurns(): ReadonlySet<number> {
 
 export function searchHitCount(turn: number): number {
   return countsByTurn.get(turn) ?? 0;
+}
+
+/** How many matches the server found in the WHOLE conversation for the current
+ *  query, or 0 when no server search is standing.
+ *
+ *  This is the figure the counter needs and did not have. The DOM pass can only
+ *  count what it marked, and it prunes at every `aria-hidden` subtree — which is
+ *  every collapsed delegate card and workflow step row, since `createDisclosure`
+ *  writes `aria-hidden` + `inert` on a closed region — plus every closed
+ *  reasoning `<details>`, and it never reaches a non-resident page at all. The
+ *  server searches the chat FILE, so it sees all of it. Reporting only the DOM
+ *  number let the overlay print "No matches" in the same tick the server had
+ *  answered that the text occurs N times, which is the data-loss case this
+ *  module's own header says the pre-pass exists to prevent. */
+export function searchHitTotal(): number {
+  return hitTotal;
 }
 
 /**
@@ -77,6 +100,7 @@ export async function runServerSearch(
 
   hitTurns = new Set<number>();
   countsByTurn = new Map<number, number>();
+  hitTotal = hits.length;
   for (const h of hits) {
     hitTurns.add(h.turn);
     countsByTurn.set(h.turn, (countsByTurn.get(h.turn) ?? 0) + 1);
@@ -104,6 +128,7 @@ export async function runServerSearch(
 export function resetServerSearch(chatID: string): void {
   hitTurns = new Set<number>();
   countsByTurn = new Map<number, number>();
+  hitTotal = 0;
   if (chatID !== "" && clearSearchOpened(chatID)) {
     emitMessages();
   }
