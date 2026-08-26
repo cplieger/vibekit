@@ -258,6 +258,27 @@ function syncAttachments(header: HTMLElement, atts: readonly AttachmentRef[]): v
   row.replaceChildren(...atts.map((att) => buildAttachmentPill(att)));
 }
 
+/** Whether a click at `target` inside a turn header belongs to the FOLD.
+ *
+ *  The header is the fold's hit target rather than the chevron at its start (see
+ *  `disclosure-row.ts` for why that changed, and `messages.ts` for the wiring),
+ *  and this is where the surface STOPS. It lives beside `buildTurnHeader`
+ *  because it is a statement about this header's structure: the answer is a
+ *  class name this file writes.
+ *
+ *  OPEN, the surface is the meta row and nothing else. The rest of an open
+ *  header is `.turn-req` — the user's own prompt, holding linkified paths, the
+ *  show-more, the attachment pills and text a reader selects — and folding the
+ *  turn out from under someone reading it is a worse failure than the small
+ *  chevron this replaced.
+ *
+ *  FOLDED, the whole band answers: `.turn-req` is one ellipsized line, Copy and
+ *  the show-more are `display: none` beside it, and re-expanding is precisely
+ *  the click that used to need a 16x16 target. */
+export function clickFoldsTurn(target: Element, folded: boolean): boolean {
+  return folded || target.closest(".turn-head-row") !== null;
+}
+
 function isExpanded(header: HTMLElement): boolean {
   return header.dataset["expanded"] === "";
 }

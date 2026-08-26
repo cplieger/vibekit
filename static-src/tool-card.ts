@@ -21,6 +21,7 @@ import { openChange, openAtLine } from "./navigate.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
+import { wireRowToggle } from "./disclosure-row.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
@@ -438,6 +439,7 @@ function wireToggle(el: HTMLElement): void {
   if (toggle === null || details === null) {
     return;
   }
+  const header = el.querySelector<HTMLElement>(".tool-header");
   // The disclosure primitive owns aria-expanded/aria-controls, activation,
   // and the animated height 0↔auto with aria-hidden + inert on the collapsed
   // region (which the old class flip never set — collapsed details stayed in
@@ -457,6 +459,16 @@ function wireToggle(el: HTMLElement): void {
       }
     },
   });
+  // The whole row activates that chevron, so the card matches the tool group it
+  // sits inside instead of asking for a 24x24 target at the far end of a 775px
+  // header. Wired HERE rather than in buildHeader, which is what keeps a
+  // claim-only card inert: no toggle means no `.tool-details`, an early return
+  // above, and a header that never becomes clickable. `.tool-file-link` already
+  // stops propagation (wireFileLink), and would be skipped as a `<button>`
+  // anyway.
+  if (header !== null) {
+    wireRowToggle(header, toggle);
+  }
   detailCtls.set(el, ctl);
 }
 
