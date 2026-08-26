@@ -77,8 +77,13 @@ func CmdCreateChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientComm
 //
 // The subject is omitted when no tab store is wired (see Membership), because a
 // zero-valued subject on the wire would name a tab with an empty id.
+//
+// No size hint on the map, deliberately: the body holds three to five entries, so
+// the hint bought nothing measurable, and spelling it as len(extra)+3 is an
+// addition on a length that go/allocation-size-overflow reads as a potential
+// overflow. Do not put the arithmetic back to save one growth.
 func openedResponse(opened ChatOpened, extra map[string]any) any {
-	body := make(map[string]any, len(extra)+3)
+	body := make(map[string]any)
 	maps.Copy(body, extra)
 	body["chat"] = opened.Chat.Header()
 	body["version"] = opened.Version
