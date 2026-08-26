@@ -162,6 +162,28 @@
   gap: var(--sp-2);
   padding: var(--sp-2) 0.75rem;
   min-width: 0; /* allow ellipsis on flex children */
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+/* The WHOLE header expands the card, like the group header above it and the
+   delegated-work card below — the chevron alone was a 24x24 target at the far
+   end of a 775px row, so this row and `.tool-group-header` answered the same
+   gesture differently. `disclosure-row.ts` forwards the click to the chevron
+   button, which keeps `aria-expanded` and the keyboard path where they were.
+
+   Gated on the chevron's PRESENCE, so a claim-only card stays inert without a
+   second flag to keep in step: `TOOL_DEPTH1 === "none"` builds no toggle and no
+   details region, and a header that reveals nothing must not offer to. Bare
+   `:hover` like its four siblings rather than an `any-hover` gate — a sticky
+   hover after a tap is what every other header here already does, and the point
+   of this change is that they stop disagreeing. */
+.tool-header:has(> .tool-disclosure) {
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-header:has(> .tool-disclosure):hover {
+  background: var(--c-hover);
 }
 
 /* THE OUTCOME LIVES HERE. The per-kind glyph carries whether-it-worked by tint
@@ -493,7 +515,6 @@
 .subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
-  border-inline-start: 0.1875rem solid var(--c-accent);
   border-radius: var(--r);
   font-size: var(--fs-base);
   overflow: hidden;
@@ -579,7 +600,51 @@
   padding: var(--sp-2) var(--sp-3) var(--sp-3);
   border-block-start: 1px solid var(--c-border);
   overflow: hidden;
-  transition: height var(--dur-standard) var(--ease-standard);
+  transition:
+    height var(--dur-standard) var(--ease-standard),
+    content-visibility var(--dur-standard) allow-discrete;
+}
+
+/* LAZY RENDERING OF A CLOSED CARD.
+ *
+ * `height: 0` + `overflow: hidden` clips PAINT but keeps every descendant in
+ * flow, so a transcript holding twenty collapsed delegate cards still laid out
+ * every block inside all twenty on every reflow — and a reflow happens on each
+ * streamed delta, because the live text above them grows. `content-visibility:
+ * hidden` takes the subtree out of layout as well.
+ *
+ * THREE CHOICES HERE ARE NOT INTERCHANGEABLE.
+ *
+ * 1. `hidden`, not `auto`. `auto` is keyed on viewport relevancy, which buys two
+ *    problems this does not have. It would hide OFF-SCREEN content from the
+ *    find-in-chat walker even while the card is OPEN — the walker prunes at any
+ *    element whose `checkVisibility({contentVisibilityAuto:true})` is false — and
+ *    it would make the scroller's own `scrollHeight` change as the reader
+ *    scrolls, which `scroll.ts` differences to compensate reading position
+ *    (`preserveReadingPosition`, and the load-older-pages path). `hidden` applies
+ *    only in the closed state, which is exactly the state whose content is
+ *    already excluded from search by the `aria-hidden` the disclosure sets.
+ *
+ * 2. Keyed on the root's `.collapsed`, NOT on `[aria-hidden="true"]` on this
+ *    element. Both mark the same state, but not at the same MOMENT.
+ *    `createDisclosure`'s `set` runs `reflectAria()` (which writes aria-hidden)
+ *    and only then `applyHeight()`, which starts a collapse by reading
+ *    `region.scrollHeight` for a concrete start height. An aria-keyed rule is
+ *    therefore already in effect when that read happens, making it 0, and the
+ *    collapse would snap instead of animating. `.collapsed` is written by the
+ *    `onToggle` callback, which runs after `applyHeight`.
+ *
+ * 3. No `contain-intrinsic-size`. A skipped subtree takes its size from that
+ *    property, and for these bodies the height is already pinned to 0 by the
+ *    controller's inline style — so there is nothing to estimate, and none of the
+ *    guesswork `auto` on an unbounded container would need.
+ *
+ * `allow-discrete` is what keeps the animation honest in both directions:
+ * `content-visibility` is a discrete property, so the flip TO hidden lands at the
+ * END of the height transition (the content animates away and is only then
+ * dropped) and the flip back to visible lands at its START. */
+.subagent-block.collapsed > .subagent-body {
+  content-visibility: hidden;
 }
 
 /* Collapsed chrome (the height itself is the disclosure controller's inline
@@ -1100,16 +1165,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
-}
-
-.git-log-local {
-  border-inline-start: 0.125rem solid var(--c-yellow);
-  padding-inline-start: 0.375rem;
-}
-
-.git-log-local .git-log-sha,
-.git-log-local .git-log-sha a {
-  color: var(--c-yellow);
 }
 
 .git-branch-current {

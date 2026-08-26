@@ -99,6 +99,20 @@
      the shape the stylesheet gate cannot decide. `.turn-n` beside it is already
      secondary and stays distinct on weight and the mono face. */
   color: var(--c-text-secondary);
+
+  /* The row FOLDS THE TURN — the fold's hit target is this whole band, not the
+     chevron sitting at its start. `disclosure-row.ts` forwards the click to
+     `.turn-fold-toggle`, which keeps the button, its label and its focus ring.
+     `user-select: none` is scoped to this row on purpose: `.turn-req` below
+     holds the user's own prompt and stays selectable. */
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--r-sm);
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.turn-head-row:hover {
+  background: var(--c-hover);
 }
 
 .turn-n {
@@ -335,7 +349,16 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--sp-1) var(--sp-2);
+
+  /* ROW gap only. A column gap is charged between the tracks even when the
+     second one is EMPTY — `auto` resolves to 0px but the gap beside it does not
+     — so every footer without a Rewind held its readout 8px off the card's own
+     gutter, while the header's action at the other end of the card sits on it.
+     The inline spacing is Rewind's own margin (below), which exists exactly
+     when Rewind does. The folded row does not need the gap either:
+     `.turn-fold-summary` already carries its own `margin-inline-start`, because
+     folded the footer is a flex row rather than this grid. */
+  row-gap: var(--sp-1);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
   padding: var(--sp-1) var(--sp-3);
@@ -355,6 +378,9 @@
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
+  /* The footer's inline gap, carried by the element it separates rather than by
+     the grid — see `row-gap` above. */
+  margin-inline-start: var(--sp-2);
 }
 
 .turn-footer > .turn-ledger-files {
@@ -452,8 +478,18 @@
   --chev-size: 0.75rem;
 }
 
+/* `display: none`, not `visibility: hidden`. The readout is RIGHT-aligned, so a
+   reserved 0.75rem box plus the summary's own gap in front of it held the line
+   20px off the card's gutter on every turn that changed no files — which is most
+   of them, and together with the empty Rewind column's gap it was the 28px of
+   dead space to the right of `2 cmds`. Reserving the box bought a stable right
+   edge across the disabled-to-enabled transition, and there was nothing to
+   stabilise: the text itself is rewritten in the same repaint that enables the
+   caret (`2 cmds` becomes `2 files +297 · 2 cmds`), so the line moves anyway.
+   This is also the treatment the ledger glyph and the header dot already take
+   for a mark that is not worth showing. */
 .turn-ledger-summary:disabled .turn-ledger-caret {
-  visibility: hidden;
+  display: none;
 }
 
 .turn-footer[data-files="open"] .turn-ledger-caret {
@@ -847,6 +883,26 @@
   gap: var(--sp-2);
 }
 
+/* Folded, the WHOLE band re-expands the turn, `.turn-req` included — so the
+   cursor moves from the meta row to the header, matching what the `skip` hook in
+   messages.ts allows in each state. Open, `.turn-req` is the prompt a reader
+   selects and it keeps its own click; folded, it is one ellipsized line with
+   Copy and the show-more set to `display: none` beside it, and re-expanding is
+   exactly the click that used to need the 16x16 chevron. */
+.turn[data-folded] > .turn-header {
+  cursor: pointer;
+}
+
+.turn[data-folded] > .turn-header:hover {
+  background: var(--c-hover);
+}
+
+/* One fill, not two: the meta row's own hover would composite a second
+   translucent overlay on top of the header's and paint that half darker. */
+.turn[data-folded] .turn-head-row:hover {
+  background: none;
+}
+
 .turn[data-folded] .turn-req {
   flex: 1 1 auto;
   min-width: 0;
@@ -913,9 +969,14 @@
    (chevron.ts), which replaced a chevron drawn from two rotated borders. The
    rotation is on the glyph rather than the button, so the focus ring below stays
    axis-aligned. */
+/* 1.5rem, matching `.turn-action-btn` at the row's other end, so the row's two
+   buttons are one size and the band's height is unchanged (the copy button
+   already set it). It was 1rem — a 16x16 target, under the 24px desktop floor,
+   and the measurement behind this whole change. The glyph stays 0.75rem below;
+   the extra 8px is hit area, not ink. */
 .turn-fold-toggle {
-  width: 1rem;
-  height: 1rem;
+  width: 1.5rem;
+  height: 1.5rem;
   flex-shrink: 0;
   display: grid;
   place-items: center;

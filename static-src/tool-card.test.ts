@@ -37,7 +37,7 @@ vi.mock("./tool-group.js", () => ({
   },
 }));
 
-const { extractSubtitle, mcpHue } = await import("./tool-card.js");
+const { extractSubtitle, mcpHue, buildToolCard } = await import("./tool-card.js");
 
 // ---------------------------------------------------------------------------
 // extractSubtitle — table-driven
@@ -465,5 +465,127 @@ describe("disclose_context and policy denials", () => {
     });
     expect(card.dataset["outcome"]).toBe("fail");
     expect(card.querySelector(".tool-denial")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The header IS the disclosure's hit target (disclosure-row.ts).
+//
+// Before this, the chevron alone toggled a tool card while the group header it
+// sits inside took a click anywhere — the same gesture, two answers. These pin
+// the header surface, the two things inside it that must keep their own click,
+// and the claim-only card that must stay inert.
+// ---------------------------------------------------------------------------
+
+describe("tool card: whole-header disclosure", () => {
+  it("a click on the header toggles the card's details", () => {
+    const card = buildToolCard({
+      id: "hdr1",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      input: { command: "ls -la" },
+      live: false,
+    });
+    document.body.appendChild(card);
+
+    const header = card.querySelector<HTMLElement>(".tool-header")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    header.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    header.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    card.remove();
+  });
+
+  it("a click on the title inside the header toggles it too", () => {
+    const card = buildToolCard({
+      id: "hdr2",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      input: { command: "ls -la" },
+      live: false,
+    });
+    document.body.appendChild(card);
+
+    const title = card.querySelector<HTMLElement>(".tool-title")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+
+    title.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    card.remove();
+  });
+
+  it("the chevron still toggles exactly once", () => {
+    // The forwarded click bubbles back into the header's listener, so a chevron
+    // click could have counted twice and landed back where it started.
+    const card = buildToolCard({
+      id: "hdr3",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      input: { command: "ls -la" },
+      live: false,
+    });
+    document.body.appendChild(card);
+
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    card.remove();
+  });
+
+  it("the filename link opens the change and does NOT toggle the card", () => {
+    const card = buildToolCard({
+      id: "hdr4",
+      title: "fsAppend",
+      kind: "write",
+      status: "completed",
+      input: { path: "src/main.ts" },
+      live: false,
+    });
+    document.body.appendChild(card);
+
+    const link = card.querySelector<HTMLElement>(".tool-file-link")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    expect(link).not.toBeNull();
+
+    const before = opened.length;
+    link.click();
+    expect(opened.length).toBe(before + 1);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    card.remove();
+  });
+
+  it("a claim-only card has no toggle and its header stays inert", () => {
+    // `readFile` resolves to kind `read`, whose depth 1 is "none": no toggle and
+    // no details region, so the header must not become a control that opens an
+    // empty one.
+    const card = buildToolCard({
+      id: "hdr5",
+      title: "readFile",
+      kind: "read",
+      status: "completed",
+      input: { path: "src/main.ts" },
+      live: false,
+    });
+    document.body.appendChild(card);
+
+    const header = card.querySelector<HTMLElement>(".tool-header")!;
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+    expect(card.querySelector(".tool-details")).toBeNull();
+
+    header.click();
+    expect(card.querySelector("[aria-expanded]")).toBeNull();
+
+    card.remove();
   });
 });

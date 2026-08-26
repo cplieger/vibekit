@@ -45,6 +45,7 @@ import {
   buildTurnHeader,
   updateTurnHeader,
   initTurnHeaderCallbacks,
+  clickFoldsTurn,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -63,6 +64,7 @@ import {
 } from "./turns.js";
 import { peekRunState, runIsLive } from "./run-store.js";
 import { isTurnOpen, setTurnOpen } from "./fold-state.js";
+import { wireRowToggle } from "./disclosure-row.js";
 import { searchHitCount } from "./chat-search.js";
 import {
   mountTurnRail,
@@ -681,6 +683,16 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
     preserveReadingPosition(() => {
       setCardFolded(card, !open);
     }, "content-growth");
+  });
+  // The band activates that button, so folding a turn is not a 16x16 target.
+  // Copy, the show-more, an attachment pill and a linkified path inside the
+  // request all keep their own click — `wireRowToggle` skips a control by kind.
+  // The band activates that button, so folding a turn is no longer a 16x16
+  // target. Where the surface STOPS is `clickFoldsTurn`'s call, next to the
+  // header it describes; the cursor and hover fill in 29-turns.css mark exactly
+  // the region it admits, in both states.
+  wireRowToggle(header, btn, {
+    skip: (target) => !clickFoldsTurn(target, card.hasAttribute("data-folded")),
   });
 }
 
