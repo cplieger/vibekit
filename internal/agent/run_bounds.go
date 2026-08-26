@@ -134,6 +134,12 @@ const maxRunEndReasons = 256
 // path to ask afterwards wins) and a recorded reason (an already-finished run's
 // row falls back to plain "aborted"). Both are facts about an ending in progress
 // in THIS process, which is why neither is worth persisting.
+//
+// FIELD ORDER IS govet's fieldalignment, not readability: `order` is the only
+// field carrying non-pointer words (a slice's len and cap), so it goes LAST or
+// the GC's pointer scan has to reach past it to the map behind. Keep it there,
+// and carry each field's doc comment with it if this is ever reordered again —
+// the autofix drops them.
 type runBoundsState struct {
 	// timers holds the live deadline timer per run, keyed by workflow id.
 	//
@@ -160,10 +166,6 @@ type runBoundsState struct {
 	// re-drives it (clearEnd), which is what bounds it: membership is the set
 	// of runs currently terminating, not a log of runs that did.
 	terminating map[string]struct{}
-	// reasons maps a workflow id to why it was stopped; order is the FIFO
-	// eviction queue for it.
-	reasons map[string]string
-	order   []string
 	// heals counts the automatic resumes this process has issued for a run SINCE
 	// IT LAST MADE PROGRESS, which is what bounds the pause-heal loop (run_host.go
 	// healPaused). Reset by a node completing and by the run ending, so a
@@ -175,6 +177,10 @@ type runBoundsState struct {
 	// two protocols where one works. It is the same class of thing as `terminating`
 	// — in-memory bookkeeping about a run's execution, worthless after a restart.
 	heals map[string]int
+	// reasons maps a workflow id to why it was stopped; order is the FIFO
+	// eviction queue for it.
+	reasons map[string]string
+	order   []string
 }
 
 // armDeadline gives a run its deadline and the timer that enforces it.

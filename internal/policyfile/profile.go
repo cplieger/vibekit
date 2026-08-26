@@ -221,7 +221,7 @@ func ProfileOwnedRules() []Rule {
 				continue
 			}
 			seen[sig] = struct{}{}
-			out = append(out, cloneRule(r))
+			out = append(out, cloneRule(&r))
 		}
 	}
 	return out
@@ -236,17 +236,26 @@ func cloneRules(in []Rule) []Rule {
 	}
 	out := make([]Rule, len(in))
 	for i := range in {
-		out[i] = cloneRule(in[i])
+		out[i] = cloneRule(&in[i])
 	}
 	return out
 }
 
 // cloneRule deep-copies one rule. Rule is a value, so only its two glob slices
 // need it.
-func cloneRule(r Rule) Rule {
-	r.Match = slices.Clone(r.Match)
-	r.Exclude = slices.Clone(r.Exclude)
-	return r
+//
+// It takes a POINTER and copies INSIDE, and the second half is not a style
+// choice. Rule is 80 bytes, which is what gocritic's hugeParam objects to, but
+// the parameter cannot double as the copy: assigning the cloned glob lists
+// through the pointer would write them back into the caller's rule, and
+// cloneRules is reached from Profiles with the package's own FileRules slices
+// still aliased — so the mutation would land on the very posture these clones
+// exist to keep private.
+func cloneRule(r *Rule) Rule {
+	out := *r
+	out.Match = slices.Clone(r.Match)
+	out.Exclude = slices.Clone(r.Exclude)
+	return out
 }
 
 // Profiles returns the ladder in picker order.

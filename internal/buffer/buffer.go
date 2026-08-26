@@ -358,8 +358,8 @@ func (buf *Buffer) AppendTextDelta(delta, subtaskID string) (idx int, seq int64)
 // would make it constant in the interleaved case too, and is deliberately not
 // here: the scan is auditable and the observed turns hold tens of blocks.
 func (buf *Buffer) lastBlockOfSubtask(subtaskID string) int {
-	for i := len(buf.Blocks) - 1; i >= 0; i-- {
-		if buf.Blocks[i].AgentSubtaskID == subtaskID {
+	for i, b := range slices.Backward(buf.Blocks) {
+		if b.AgentSubtaskID == subtaskID {
 			return i
 		}
 	}

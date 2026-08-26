@@ -120,27 +120,11 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	// instead of landing on an empty Custom, which drops every grant they had.
 	var seeded []policyfile.Rule
 	if body.Seed {
-		seeded, err = s.presetRulesInForce(r.Context())
+		seeded, err = s.rulesInForce(r.Context())
 		if err != nil {
 			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				httpreply.ErrorJSON("cannot read the current profile's rules to copy them; nothing was changed"))
 			return
-		}
-		// The outgoing rung's OWN file rules are the other half of what is in force,
-		// and presetRulesInForce cannot see them: it filters to SESSION scope, and
-		// these live in the user file. Without them the removal pass inside
-		// SetProfileRules takes `sandbox_network: allow` out and nothing puts it back
-		// — the one capability `all` does not cover, and the whole reason
-		// RelaxCapabilities has two members — so Customize would hand the user a
-		// Custom posture narrower than the profile it claims to have materialised.
-		// Upsert dedups by Signature, so an overlap with a session-scope rule of the
-		// same shape costs nothing.
-		//
-		// activeProfile only ever answers with an id the ladder holds, so this lookup
-		// cannot miss; the boolean is checked rather than discarded because a later
-		// change to that fallback must not silently drop this half again.
-		if outgoing, found := policyfile.ProfileFor(s.activeProfile(r.Context())); found {
-			seeded = append(seeded, outgoing.FileRules...)
 		}
 	}
 	// The user-scope rules this selection writes: a seed copies what is in force
@@ -158,7 +142,8 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	snap, badScope, err := snapshotPolicyFiles(roots)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(
-			"the existing "+badScope+"-scope permissions file could not be read; edit it manually"))
+			"the existing "+badScope+"-scope permissions file could not be read; edit it manually",
+		))
 		return
 	}
 	if err := writeProfilePolicy(r.Context(), roots, userRules); err != nil {
@@ -183,6 +168,37 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
 	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventPermissionsChanged, "",
 		vibekit.PermissionsChangedPayload{Status: "success"}))
+}
+
+// rulesInForce is what the OUTGOING profile currently contributes to policy, as
+// writable file rules — the two halves this file's header calls "what is in
+// force", and what a seed materialises into the user file. A hand-authored rule is
+// deliberately not among them and does not need to be: the merge preserves what it
+// does not own. Its own function rather than inline in the handler because the
+// handler sits at its cognitive-complexity ceiling and this is the one sub-step of
+// a selection that stands on its own.
+//
+// TWO halves and both have to be copied. The outgoing rung's OWN file rules are
+// the half presetRulesInForce cannot see: it filters to SESSION scope, and these
+// live in the user file. Without them the removal pass inside SetProfileRules
+// takes `sandbox_network: allow` out and nothing puts it back — the one capability
+// `all` does not cover, and the whole reason RelaxCapabilities has two members —
+// so Customize would hand the user a Custom posture narrower than the profile it
+// claims to have materialised. Upsert dedups by Signature, so an overlap with a
+// session-scope rule of the same shape costs nothing.
+//
+// activeProfile only ever answers with an id the ladder holds, so that lookup
+// cannot miss; the boolean is checked rather than discarded because a later change
+// to that fallback must not silently drop this half again.
+func (s *Server) rulesInForce(ctx context.Context) ([]policyfile.Rule, error) {
+	seeded, err := s.presetRulesInForce(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if outgoing, found := policyfile.ProfileFor(s.activeProfile(ctx)); found {
+		seeded = append(seeded, outgoing.FileRules...)
+	}
+	return seeded, nil
 }
 
 // presetRulesInForce reads the rules the ACTIVE profile's presets contributed to
@@ -388,7 +404,8 @@ func (s *Server) failProfileSelection(ctx context.Context, w http.ResponseWriter
 			vibekit.PermissionsChangedPayload{Status: "failed"}))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
 			"the profile could not be applied and the previous rules could not be put back; "+
-				"inspect permissions.yaml under ~/.kiro/settings and ~/.kiro/workspace-roots"))
+				"inspect permissions.yaml under ~/.kiro/settings and ~/.kiro/workspace-roots",
+		))
 		return
 	}
 	httpreply.InternalError(w, cause)
