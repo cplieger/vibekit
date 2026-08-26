@@ -144,6 +144,55 @@ func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
 	}
 }
 
+// TestWriteWorkspace_ScratchGuidance covers the three states of the scratch
+// suggestion: present with repos under a non-repo root, and absent in the two
+// cases where no sibling path outside a repo can be suggested.
+func TestWriteWorkspace_ScratchGuidance(t *testing.T) {
+	t.Run("emitted with a repo under a non-repo root", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWriteFile(t, filepath.Join(dir, "myrepo", ".git", "HEAD"), "ref: refs/heads/main\n")
+		var b strings.Builder
+		writeWorkspace(t.Context(), &b, dir, nil)
+		out := b.String()
+		for _, want := range []string{
+			"### Scratch files",
+			"OUTSIDE every repo",
+			// Built from workDir, not a hardcoded /workspace.
+			"`" + dir + "/_scratch/<task>/`",
+			// The redirect half: a suggested in-repo path may be substituted.
+			"`<repo>/.agents/tasks/...`",
+			"`fileCheck` stop-condition",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output missing %q\n--- output ---\n%s", want, out)
+			}
+		}
+	})
+	t.Run("omitted with zero repos", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "plaindir"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var b strings.Builder
+		writeWorkspace(t.Context(), &b, dir, nil)
+		if out := b.String(); strings.Contains(out, "### Scratch files") {
+			t.Errorf("scratch guidance emitted with zero repos:\n%s", out)
+		}
+	})
+	t.Run("omitted when the workspace root is itself a repo", func(t *testing.T) {
+		dir := t.TempDir()
+		// Root is a repo, so every path under workDir is inside it and there
+		// is no sibling _scratch to suggest.
+		mustWriteFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+		mustWriteFile(t, filepath.Join(dir, "nested", ".git", "HEAD"), "ref: refs/heads/main\n")
+		var b strings.Builder
+		writeWorkspace(t.Context(), &b, dir, nil)
+		if out := b.String(); strings.Contains(out, "### Scratch files") {
+			t.Errorf("scratch guidance emitted with the root itself a repo:\n%s", out)
+		}
+	})
+}
+
 func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
 	dir := t.TempDir()
 	repoDir := filepath.Join(dir, "myrepo")
