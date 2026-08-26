@@ -410,6 +410,16 @@
                   <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt — the agent can call any tool immediately, but the tool list takes context-window space (~200–500 tokens per tool) on every turn. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model; when the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves context for 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Worth turning on only when you feel the context squeeze.</p>
                 </div>
               </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-memory" aria-label="Remember things between conversations">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <span class="section-option-label">Remember things between conversations</span>
+                  <p class="section-hint">Off by default. Lets kiro-cli keep its own notes across chats — your stated preferences, decisions and corrections — written by the agent on its own initiative rather than by you, and fed into later conversations as a short list it can expand on demand. Three things to know before turning it on. The notes live in a file under the container's home directory that <strong>this app cannot show you</strong>, so you cannot read, edit or delete an individual note from here; the only control is switching the feature back off. <strong>Nothing prunes it</strong> — it grows for as long as it is on. And every note is filed under one shared workspace bucket rather than the repository it came from, because every chat runs from the same directory, so notes from unrelated projects land in one pile. For anything you want remembered deliberately, Settings → Custom instructions is reviewable, editable and version-controlled.</p>
+                </div>
+              </div>
             </div>
 
             <div class="page-section" id="general-experimental-section">

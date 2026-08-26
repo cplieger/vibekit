@@ -73,10 +73,21 @@ var spawnMatrix = []struct {
 	// tool to query.
 	{"tool search on", Spawn{ToolSearch: true}},
 	{"knowledge on", Spawn{Knowledge: true}},
+	// Memory is the sixth gate and it is VALUE-gated like Knowledge, but for the
+	// opposite reason and with the opposite polarity, so it earns both states here.
+	// Its key is ALWAYS PRESENT: KAS reads userMemoryOptIn as a tri-state through
+	// hasOwnProperty and only an explicit false vetoes, so withholding it means "no
+	// opinion, let the experiment decide" — the one state that must never reach the
+	// wire. Every line above is therefore its off fixture, asserting the literal
+	// `{"enabled":false}` rather than an absence, and the line below is the only
+	// place the value flips. A regression that presence-gated this row instead
+	// would produce a payload with the key simply gone, which is invisible to a
+	// test asserting on the key's presence and is exactly what the golden catches.
+	{"memory on", Spawn{Memory: true}},
 	{"every gate on", Spawn{
 		SecretStorage: true, Hooks: true,
 		Presets:    []string{"read-workspace"},
-		ToolSearch: true, Knowledge: true,
+		ToolSearch: true, Knowledge: true, Memory: true,
 	}},
 }
 

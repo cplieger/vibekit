@@ -67,6 +67,18 @@ export interface AppSettings {
    *  They were kiro-cli settings until 2026-08, and that door reaches no running
    *  chat. Neither is live — KAS freezes both at session creation. */
   tool_search_enabled?: boolean;
+  /** Whether a session opts into kiro-cli's memory subsystem. Defaults false, and
+   *  here the zero value IS the answer, unlike knowledge_enabled — memory is a
+   *  feature vibekit has never had, so an absent key means nobody asked for it and
+   *  the server leaves it out of GET /api/settings.
+   *
+   *  Off is not a quiet state on the wire. The server still SENDS the
+   *  `userMemoryOptIn` veto, because kiro-cli reads an absent key as "no opinion,
+   *  let the experiment decide" and only an explicit false refuses; withholding it
+   *  is what would let a backend rollout turn memory on with no setting and no
+   *  signal. On also contributes an environment variable to the agent process,
+   *  which is the only lever that can make the feature eligible at all. */
+  memory_enabled?: boolean;
   /** The theme choice: "dark", "light" or "system". Absent means nothing was
    *  chosen, which resolves to the OS preference.
    *

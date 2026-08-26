@@ -97,6 +97,30 @@ const (
 	KeyToolSearchEnabled = "tool_search_enabled"
 	KeyKnowledgeEnabled  = "knowledge_enabled"
 
+	// KeyMemoryEnabled opts INTO kiro-cli's memory subsystem, and it is the one
+	// setting here that has to move two levers at once, because neither alone can
+	// decide the question.
+	//
+	// The `userMemoryOptIn` row vetoes; the child environment's
+	// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED is the only thing that can make memory
+	// ELIGIBLE. resolveMemoryEnabled reads AB_MEMORY_INTERNAL first and consults
+	// the external arm only when the internal one reads "disabled", and
+	// AB_MEMORY_INTERNAL is absent from ENV_FEATURE_VARIABLES — so an AWS-side ramp
+	// of the internal arm bypasses the variable entirely and only the veto closes
+	// it, while a ramp that never comes leaves the variable as the only way to open
+	// it. Off therefore still SENDS `{"enabled": false}` rather than going quiet.
+	//
+	// Defaults OFF, and deliberately not in Default(): the zero value is the safe
+	// state here, which is the opposite of KeyKnowledgeEnabled above. This is a
+	// feature nothing in vibekit has ever had, so an absent key means nobody asked
+	// for it, and the standing verdict is that curation beats automatic capture —
+	// see the userMemoryOptIn row in internal/kascap/table.go for why the argument
+	// does not expire when upstream fixes a defect.
+	//
+	// Not live: KAS freezes the gate at session creation and the environment is
+	// fixed at spawn, so a flip reaches NEW chats only. The UI hint says so.
+	KeyMemoryEnabled = "memory_enabled"
+
 	// KeyTheme and KeyFBPath are the two fields that came here when
 	// internal/uistate was deleted: the whole-document arrangement it held is a
 	// modelled tab collection now (internal/tabs), and these two are the members
@@ -245,6 +269,7 @@ var KnownKeys = map[string]struct{}{
 	KeyKnowledgeEnabled:     {},
 	KeyLastEffort:           {},
 	KeyLastModel:            {},
+	KeyMemoryEnabled:        {},
 	KeyNotificationsEnabled: {},
 	KeyNotifyAgentFinished:  {},
 	KeyNotifyPRStatus:       {},

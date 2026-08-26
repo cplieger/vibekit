@@ -153,6 +153,27 @@ type StartOpts struct {
 	// and its panel keep working with the switch off.
 	ToolSearch bool
 	Knowledge  bool
+	// Memory opts INTO kiro-cli's memory subsystem, and it is the only field here
+	// that moves TWO levers, because neither alone decides the question.
+	//
+	// The `userMemoryOptIn` kascap row carries the veto and the child environment's
+	// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED carries eligibility. Off SENDS
+	// `{"enabled": false}` rather than withholding the key: KAS reads it as a
+	// tri-state through hasOwnProperty, and only an explicit false vetoes, so an
+	// absent key means "let the experiment decide" — which is the state an
+	// AWS-side ramp turns on silently.
+	//
+	// The environment half is not redundant with the row and not a kill switch on
+	// its own. resolveMemoryEnabled consults AB_MEMORY_INTERNAL first and falls
+	// through to the external arm only when the internal one reads "disabled", and
+	// AB_MEMORY_INTERNAL is absent from ENV_FEATURE_VARIABLES — so the variable is
+	// the only lever that can turn memory ON and the row is the only one that can
+	// keep it OFF against both arms.
+	//
+	// Resolved per SPAWN like its two siblings, and not live for a second reason
+	// beyond theirs: the environment is fixed when the subprocess starts, so even a
+	// KAS that re-read the gate could not see a flip. Reaches NEW chats only.
+	Memory bool
 }
 
 // There is no ACPBridge interface here, and no ACPBridgeFactory. The subprocess

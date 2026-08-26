@@ -43,6 +43,7 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	b.presets = opts.Presets
 	b.toolSearch = opts.ToolSearch
 	b.knowledge = opts.Knowledge
+	b.memory = opts.Memory
 	b.extraArgs = opts.ExtraArgs
 	if opts.SessionID != "" && !ids.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
@@ -296,6 +297,10 @@ func (b *Bridge) startProcess(engine string) error {
 	// b.extraEnv still lands LAST, so the active version directory wins PATH
 	// resolution over anything the inherited environment puts ahead of it.
 	env, dropped := screenBridgeEnv(os.Environ(), b.extraEnv, b.envAllow)
+	// AFTER the screen, so it wins over anything inherited or overlaid: this is
+	// the half of the memory switch that cannot ride the wire, because the
+	// settings bridge reaches the gate's veto but not its eligibility term.
+	env = append(env, memoryEnv(b.memory)...)
 	b.cmd.Env = env
 	if len(dropped) > 0 {
 		// NAMES only: their values are the credentials this dropped. One line

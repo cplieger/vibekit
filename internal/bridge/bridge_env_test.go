@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -307,5 +308,80 @@ func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), probe) {
 		t.Errorf("the spawn dropped %s without naming it in the log:\n%s", probe, logs.String())
+	}
+}
+
+// The memory switch's second lever is an environment variable rather than a wire
+// key, because the settings bridge reaches the gate's veto and not its
+// eligibility term. These two tests cover the halves separately: the composer's
+// own rule, and that a real spawn carries the result.
+
+func TestMemoryEnv_StatesBothValuesExplicitly(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		name := "off"
+		if on {
+			name = "on"
+		}
+		t.Run(name, func(t *testing.T) {
+			got := memoryEnv(on)
+			want := []string{MemoryEnvVar + "=" + strconv.FormatBool(on)}
+			if !slices.Equal(got, want) {
+				t.Errorf("memoryEnv(%t) = %q, want %q", on, got, want)
+			}
+		})
+	}
+	// The off state must be an explicit "false" and never an empty slice. The env
+	// provider parses this to a real boolean and overrides in both directions, so
+	// withholding it hands the external A/B arm back to the experiment — which is
+	// the state this switch exists to take away from it.
+	if len(memoryEnv(false)) != 1 {
+		t.Errorf("memoryEnv(false) = %q, want one explicit assignment: an absent variable is not the off state",
+			memoryEnv(false))
+	}
+}
+
+func TestStart_ChildEnvironmentCarriesTheMemoryLever(t *testing.T) {
+	// The ambient value is part of this fixture, so it is set rather than assumed:
+	// os/exec keeps the LAST value for a repeated key and the bridge appends after
+	// the screen, so a conflicting inherited assignment is exactly what proves the
+	// append order rather than a coincidence of an unset host.
+	t.Setenv(MemoryEnvVar, "ambient-should-lose")
+
+	for _, on := range []bool{false, true} {
+		name := "memory off"
+		if on {
+			name = "memory on"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			dumpPath := filepath.Join(dir, "child.env")
+			scriptPath := envDumpFake(t, dir, dumpPath)
+
+			b := New(scriptPath, dir)
+			t.Cleanup(b.Stop)
+			if err := b.Start(context.Background(), &vibekit.StartOpts{
+				Lifetime: context.Background(),
+				Memory:   on,
+			}); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+
+			dump, err := os.ReadFile(dumpPath)
+			if err != nil {
+				t.Fatalf("read the child environment dump: %v", err)
+			}
+			// Composed through the production function rather than restating its
+			// rule, so a change to the spelling cannot leave this test asserting
+			// the old one.
+			want := memoryEnv(on)[0]
+			if !slices.Contains(strings.Split(string(dump), "\n"), want) {
+				t.Errorf("child environment is missing %q with Memory=%t; the spawn does not carry the memory lever:\n%s",
+					want, on, dump)
+			}
+			if slices.Contains(strings.Split(string(dump), "\n"), MemoryEnvVar+"=ambient-should-lose") {
+				t.Errorf("the inherited %s survived with Memory=%t; the lever must be appended AFTER the screen so it wins",
+					MemoryEnvVar, on)
+			}
+		})
 	}
 }

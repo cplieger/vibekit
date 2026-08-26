@@ -700,14 +700,21 @@ already sends, so behaviour there is correct today.`,
 		key:      "userMemoryOptIn",
 		door:     doorConnection,
 		resolver: resolverSetting,
-		value:    map[string]any{enabledMember: false},
-		send:     true,
-		because: `SENT AS A VETO, unconditionally, and it is the one row here whose value
-is false. It refuses kiro-cli's memory subsystem for every session vibekit
-starts. Ungated on purpose: there is no vibekit setting behind it, because the
-only state worth having is off.
+		// Always present, value from the spawn, and the presence is the whole
+		// point: withholding this key is the one state that must never happen,
+		// because an absent key reads as "no opinion, let the experiment decide".
+		// A false here is a refusal; an absent key is a shrug. See because.
+		gate: func(s Spawn) (any, bool) { return enabledIf(s.Memory), true },
+		send: true,
+		because: `THE VETO, and the one row here whose value is normally false. It
+refuses kiro-cli's memory subsystem for every session vibekit starts unless the
+user has opted in through the memory_enabled setting.
 
-WHY IT IS SENT NOW, when the 2.19.1 row withheld it. That row named two watch
+GATED, not ungated, since the setting exists — but the gate moves the VALUE and
+never the presence, which is the opposite of every presence-gated row here. Off
+sends {"enabled": false} rather than going quiet, because absent is not off.
+
+WHY IT IS SENT AT ALL, when the 2.19.1 row withheld it. That row named two watch
 conditions and said the veto "is what to reach for if a watch condition below
 fires". One fired. On 2.19.1 neither memory key appeared in
 ENV_FEATURE_VARIABLES, which is what made the subsystem client-unreachable and
@@ -723,8 +730,9 @@ the internal arm reads "disabled". AB_MEMORY_INTERNAL is NOT in
 ENV_FEATURE_VARIABLES, so an AWS-side ramp of the internal arm makes the ternary
 never consult the external key and no value of the variable can reach the
 decision. Setting it to "false" would look like a kill switch and would not be
-one. This key is the only lever that vetoes BOTH arms, so the two are not
-redundant mechanism: each covers a case the other cannot.
+one. This key is the only lever that vetoes BOTH arms, and the variable is the
+only lever that can turn memory ON, so the two are not redundant mechanism: each
+covers a case the other cannot, which is why one vibekit setting drives both.
 
 THE VALUE MUST BE EXACTLY THIS SHAPE. KAS reads the key as a TRI-STATE — it tests
 hasOwnProperty(settings,"userMemoryOptIn") and only then calls isSettingEnabled —
@@ -734,23 +742,14 @@ does NOT veto. That is the inverse of the trap every other settings row here
 guards against, and it is why the golden asserts these literal bytes rather than
 the key's presence.
 
-WHY MEMORY IS DECLINED RATHER THAN OFFERED, and this argument does not expire when
-upstream fixes a defect. Memory's own retention policy asks the model to record
-architecture decisions and their rationale, non-obvious mechanisms, gotchas, and
-user preferences and corrections. That is this project's steering corpus in
-different words, and against it memory loses review, routing, version control,
-discoverability and bounds, while its one genuine addition is automatic capture by
-an unreviewed writer whose own prompt admits there is no dedup. Curation over
-capture is a standing decision here.
-
-Three deployment facts make it worse, and the second is vibekit's own to fix. The
-store is affirmatively unreachable through vibekit's file surface, since
-internal/filebrowse deny-lists the home tree as credentials, so a model would
-write entries no user can read or delete. Scoping collapses: residency is computed
-from ONE workspace path and vibekit sends a single cwd for every chat, so every
-repo under /workspace shares one bucket and the feature's headline
-scope-resident injection does not function. And there is NO cleanup mechanism
-upstream, so the store grows without bound.
+WHAT TURNING IT ON COSTS, recorded because the switch does not make these go
+away. The store is affirmatively unreachable through vibekit's file surface, since
+internal/filebrowse deny-lists the home tree as credentials, so the model writes
+entries no user can read or delete. Scoping collapses: residency is computed from
+ONE workspace path and vibekit sends a single cwd for every chat, so every repo
+under /workspace shares one bucket and the feature's headline scope-resident
+injection does not function. And there is NO cleanup mechanism upstream, so the
+store grows without bound. The setting's hint says the first and the third.
 
 Do not plant a .git in /workspace to fix the scoping. Residency resolves from one
 path, so whatever remote that .git names becomes a single repo tag for every

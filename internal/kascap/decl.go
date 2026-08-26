@@ -121,6 +121,16 @@ type Spawn struct {
 	// pair together keeps one field from meaning two different things about
 	// presence.
 	Knowledge bool
+	// Memory is whether this session opts into kiro-cli's memory subsystem. It
+	// gates the `userMemoryOptIn` row, which is ALWAYS PRESENT either way — the
+	// row's value is the veto, so withholding it is the one state that must never
+	// happen (see that row's because for the tri-state read).
+	//
+	// Value-gated for that reason, like Knowledge and unlike ToolSearch. The
+	// second half of this switch is not on the wire at all: the child environment
+	// carries KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED, because the settings bridge
+	// cannot reach the gate's eligibility term.
+	Memory bool
 }
 
 // decl is one capability key vibekit can put on the wire, with everything a

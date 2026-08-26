@@ -732,7 +732,7 @@ function initExperimentalToggles(): void {
 // answer for that session's life, which is why the section hint says new
 // conversations rather than leaving a user to discover it.
 const agentCapabilities: readonly {
-  key: "knowledge_enabled" | "tool_search_enabled";
+  key: "knowledge_enabled" | "tool_search_enabled" | "memory_enabled";
   inputID: string;
   fallback: boolean;
 }[] = [
@@ -742,6 +742,11 @@ const agentCapabilities: readonly {
   // cannot — a settings payload written before the key existed.
   { key: "knowledge_enabled", inputID: "flag-knowledge", fallback: true },
   { key: "tool_search_enabled", inputID: "flag-tool-search", fallback: false },
+  // memory_enabled defaults FALSE, and here the zero value IS the answer: memory
+  // is a feature vibekit has never had, so an absent key means nobody asked for
+  // it. Off is not a quiet state on the wire — the server still sends the veto,
+  // because an absent key reads to kiro-cli as "let the experiment decide".
+  { key: "memory_enabled", inputID: "flag-memory", fallback: false },
 ];
 
 function initAgentCapabilities(initial: AppSettings): void {
