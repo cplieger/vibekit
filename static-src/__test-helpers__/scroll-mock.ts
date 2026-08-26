@@ -1,6 +1,11 @@
 // Canonical scroll.js mock for test files. Single source of truth for all
 // scroll exports — add new exports here when scroll.ts gains them.
 import { vi } from "vitest";
+// Type-only, so this does NOT pull the module being mocked in at runtime. It is
+// what lets a suite drive the reading state (`readingState.mockReturnValue`) with
+// the other member of the union: inferred from the default alone, the mock's
+// return type would be the literal "following" and "reading" would not typecheck.
+import type { ReadingState } from "../scroll.js";
 
 export const scrollMock = {
   getScrollEl: vi.fn(() => document.createElement("div")),
@@ -9,7 +14,7 @@ export const scrollMock = {
   jumpTo: vi.fn(),
   resetScrollState: vi.fn(),
   setLoadMore: vi.fn(),
-  readingState: vi.fn(() => "following" as const),
+  readingState: vi.fn((): ReadingState => "following"),
   onReadingStateChange: vi.fn(),
   setAnchorProvider: vi.fn(),
   setResumeLabel: vi.fn(),

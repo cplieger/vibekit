@@ -188,6 +188,7 @@ class ScrollController {
     });
 
     const mutationObserver = new MutationObserver(() => {
+      this.revalidateReadingState();
       this.autoScrollIfAnchored();
     });
     mutationObserver.observe(this.messagesEl, {
@@ -205,6 +206,7 @@ class ScrollController {
       // strip that no longer existed. `stable` means overflow alone never resizes
       // this box, so streaming costs no extra writes.
       this.publishScrollbarWidth();
+      this.revalidateReadingState();
       this.autoScrollIfAnchored();
     });
     resizeObserver.observe(this.scrollEl);
@@ -276,7 +278,15 @@ class ScrollController {
   }
 
   /** Enter Reading explicitly — a collapse the user asked for parks them on the
-   *  content above it, and nothing may then move under them. */
+   *  content above it, and nothing may then move under them.
+   *
+   *  The park is not unconditional, and `revalidateReadingState` is the one thing
+   *  that revokes it: a LATER size change leaving the reader within
+   *  BOTTOM_TOLERANCE_PX of the end releases them back to Following. That is the
+   *  case this park cannot serve — a collapse that removes everything below the
+   *  reader would otherwise hold them on a transcript that no longer extends past
+   *  the fold, with the resume control offering a journey to where they already
+   *  are. */
   setUserScrolledUp(v: boolean): void {
     this.setState(v ? "reading" : "following");
   }
@@ -482,6 +492,46 @@ class ScrollController {
       this.scrollEl.scrollTop + this.scrollEl.clientHeight >=
       this.scrollEl.scrollHeight - BOTTOM_TOLERANCE_PX
     );
+  }
+
+  /**
+   * Re-derive Reading from the geometry after the content's SIZE changed.
+   *
+   * Both observers reach this, and without it a Reading reader could only ever
+   * be released by a scroll event — so content DISAPPEARING from below them left
+   * the state (and therefore the resume control) describing a transcript that no
+   * longer exists. Collapsing a delegate's card is the case that reported it: the
+   * body goes to `height: 0`, the reader is now at the end, and no node was
+   * inserted or removed and no gesture was made, so nothing re-asked the
+   * question. A shrink need not even move `scrollTop`, so there may be no scroll
+   * event at all.
+   *
+   * ONE-DIRECTIONAL, and that is the whole safety of it. Promoting Following to
+   * Reading from a size change is what the `selfScrollTop` marker exists to
+   * prevent (see its comment): tall evidence rendering below the anchor puts the
+   * controller's own legitimate pin hundreds of pixels from the bottom, so a
+   * resize-driven demotion would switch the auto-scroll off exactly when a turn
+   * is streaming. Deleting `autoScrollIfAnchored`'s early return would be that
+   * bug; this is the other half of the state machine and nothing else.
+   *
+   * The debounce window still wins: a gesture in flight is the reader's answer,
+   * not the layout's — and it is also what keeps this off a smooth `jumpTo`,
+   * whose intermediate scroll events refresh the window all the way to the
+   * landing.
+   *
+   * Cheap on the hot path by construction: a streaming turn holds Following, so
+   * the per-chunk call ends at the first field compare and reads no layout.
+   */
+  private revalidateReadingState(): void {
+    if (this.state !== "reading") {
+      return;
+    }
+    if (Date.now() < this.userScrollingUntil) {
+      return;
+    }
+    if (this.isAtBottom()) {
+      this.setState("following");
+    }
   }
 
   /**

@@ -69,6 +69,43 @@ describe("formatCount", () => {
     expect(formatCount(3, 2, "x")).toBe("3 of 3");
     expect(formatCount(12, 6, "x")).toBe("7 of 12");
   });
+
+  // The session-wide figure. The DOM pass can only count what it MARKED, and it
+  // prunes at every aria-hidden subtree — a collapsed delegate card, a workflow
+  // step row, a closed reasoning <details> — and never reaches a non-resident
+  // page. The server searches the chat file, so it sees all of it.
+
+  it("never claims no matches when the server found some", () => {
+    // The defect. A query whose every occurrence sits inside collapsed delegate
+    // bodies marked nothing, so this printed "No matches" in the same tick the
+    // server had answered that the text occurs 5 times.
+    expect(formatCount(0, -1, "zzz", 5)).toBe("5 in chat");
+    // No "1 of" prefix on that branch: nothing here is navigable, so an index
+    // would point at nothing.
+    expect(formatCount(0, -1, "zzz", 1)).toBe("1 in chat");
+  });
+
+  it("still reports no matches when nothing matched anywhere", () => {
+    expect(formatCount(0, -1, "zzz", 0)).toBe("No matches");
+  });
+
+  it("carries the session figure beside the reachable one when they disagree", () => {
+    expect(formatCount(3, 0, "x", 8)).toBe("1 of 3 · 8 in chat");
+  });
+
+  it("stays quiet when the session figure adds nothing", () => {
+    // Equal is the common case, and a redundant second number would train the
+    // reader to ignore it. LOWER is real too and must not render as negative
+    // news: the live streaming turn is in the DOM before it is in the chat file,
+    // and the server matches raw markdown where the DOM holds rendered text.
+    expect(formatCount(3, 0, "x", 3)).toBe("1 of 3");
+    expect(formatCount(3, 0, "x", 2)).toBe("1 of 3");
+    expect(formatCount(3, 0, "x", 0)).toBe("1 of 3");
+  });
+
+  it("keeps an empty query empty whatever the server said", () => {
+    expect(formatCount(0, -1, "", 9)).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------
