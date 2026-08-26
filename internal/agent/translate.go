@@ -108,7 +108,19 @@ func (rt *Runtime) initDispatch() {
 	// EXECUTING time: a run parked on purpose must not be cancelled for having
 	// been parked. Node-level pauses keep it — a step waiting inside a run that is
 	// still going is exactly what the ceiling is for.
-	rt.chatHandlers[methodWFPaused] = rt.runs.observePaused(rt.chatHandlers[methodWFPaused])
+	//
+	// TWO wrappers, composed rather than merged, because they read different
+	// collaborators off one frame: observePaused reaches the bounds, healPaused
+	// reaches the bridges and the chat store. Order is load-bearing in one
+	// direction only — the clock must be parked before anything can decide to
+	// resume, and healPaused runs its own work after `next`, so the client renders
+	// the pause before the heal undoes it.
+	rt.chatHandlers[methodWFPaused] = rt.runs.observePaused(
+		rt.runs.healPaused(rt.chatHandlers[methodWFPaused]),
+	)
+	// A completed node is the only honest evidence that whatever paused a run has
+	// cleared, so it is what returns the run's heal budget.
+	rt.chatHandlers[methodWFNodeComplete] = rt.runs.healProgress(rt.chatHandlers[methodWFNodeComplete])
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
 	// REST, and the session inventory diff which has no client consumer now

@@ -539,3 +539,158 @@ func TestOrphanSweepBudget_ExceedsThePerCallTimeout(t *testing.T) {
 			"is a stall, not a sweep", orphanSweepBudget)
 	}
 }
+
+// TestResumablePause_CoversEveryInvoluntaryReasonAndNothingElse pins the boundary
+// the resume sweep is allowed to act on.
+//
+// KAS records a pause for about thirteen different causes and they fall into three
+// groups. Involuntary: the reconcile's restart literal, an interruption, a
+// transient network code, a transient model 5xx. Waiting on a human: a step that
+// asked for input, a step waiting for the next message. Stopped by policy: a
+// repeat at maxIterations, a recorded failure. Only the first group may be resumed
+// without asking, so a reason that drifts into the wrong group here either strands
+// a run forever or restarts one somebody parked on purpose.
+//
+// The network reason is matched by PREFIX, which is the one place this could go
+// wrong quietly, so the negative cases include the shapes a loose prefix would
+// swallow.
+func TestResumablePause_CoversEveryInvoluntaryReasonAndNothingElse(t *testing.T) {
+	for name, tc := range map[string]struct {
+		reason string
+		want   bool
+	}{
+		// Involuntary: nobody chose this, and KAS's own text says so.
+		"the reconcile's restart literal": {stalePauseReason, true},
+		"an interrupted step":             {interruptedPauseReason, true},
+		"a transient model 5xx":           {modelServicePauseReason, true},
+		"a transient network code":        {"Transient connection error (EAI_AGAIN); the run is paused and can be resumed.", true},
+		"a different network code":        {"Transient connection error (ECONNRESET); the run is paused and can be resumed.", true},
+
+		// Waiting on a human. Resuming these would answer a question nobody asked.
+		"a step that asked for input":   {"Step requested user input via send_message.", false},
+		"a step awaiting the next turn": {"Step 'review' is waiting for the next user message.", false},
+		"a step awaiting user input":    {"Step 'design' is waiting for user input.", false},
+
+		// Stopped by policy or already over. Resuming these overrides a decision.
+		"a repeat at maxIterations":   {"Repeat 'implement' reached maxIterations.", false},
+		"a repeat aborted at the cap": {"Repeat 'implement' aborted at maxIterations.", false},
+		"a recorded failure":          {"Run failed: the reviewer never approved", false},
+		"a deliberate pause":          {"Paused by user request", false},
+
+		// The shapes a careless prefix match would swallow.
+		"no reason at all":                           {"", false},
+		"the network phrase mid-sentence":            {"Step failed: Transient connection error (EAI_AGAIN)", false},
+		"the network phrase without its parenthesis": {"Transient connection error EAI_AGAIN", false},
+		"a permanent connection failure":             {"Permanent connection error (ENOTFOUND); the run failed.", false},
+		"the interruption literal truncated":         {"Step interrupted (agent shutdown or connection reset)", false},
+		"the restart literal in different case":      {"interrupted by agent restart; the previously running step was paused for resume.", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := resumablePause(tc.reason); got != tc.want {
+				t.Errorf("resumablePause(%q) = %v, want %v", tc.reason, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResumablePause_IsStrictlyWiderThanTheCancelPredicate is the asymmetry, and
+// it is the whole reason these are two functions instead of one.
+//
+// The orphan sweep CANCELS on its predicate, so it may only fire when the owning
+// process died; the resume sweep RESUMES, so it may fire for any involuntary stop.
+// Widening the cancel side would destroy work — `clearOrphaned` carries a standing
+// instruction against exactly that — and narrowing the resume side is what
+// stranded six live runs. So every reason the narrow predicate accepts must also
+// pass the wide one, and the wide one must accept strictly more.
+func TestResumablePause_IsStrictlyWiderThanTheCancelPredicate(t *testing.T) {
+	// Both predicates are driven over the SAME inspect fixture, so this asserts the
+	// relationship between the two live rules rather than restating either of them.
+	both := func(t *testing.T, reason string) (cancel, resume bool) {
+		t.Helper()
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{
+			methodKiroWorkflowInspect: inspectPaused(t, "wf_1", reason),
+		}
+		return h.runs.restartPaused(t.Context(), "wf_1"), h.runs.involuntarilyPaused(t.Context(), "wf_1")
+	}
+
+	t.Run("everything the cancel side accepts, the resume side accepts too", func(t *testing.T) {
+		// Otherwise a restart-paused run would be cancellable by the orphan sweep and
+		// never resumable by its own chat, which is the worst of both rules.
+		cancel, resume := both(t, stalePauseReason)
+		if !cancel || !resume {
+			t.Errorf("restartPaused = %v, involuntarilyPaused = %v for KAS's restart literal; want both true",
+				cancel, resume)
+		}
+	})
+
+	for name, reason := range map[string]string{
+		"an interrupted step":      interruptedPauseReason,
+		"a transient model 5xx":    modelServicePauseReason,
+		"a transient network code": "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.",
+	} {
+		t.Run(name+" is resumable but never cancellable", func(t *testing.T) {
+			cancel, resume := both(t, reason)
+			if cancel {
+				t.Errorf("restartPaused = true for %q; widening the CANCEL side destroys work "+
+					"a resume would have saved (see clearOrphaned)", reason)
+			}
+			if !resume {
+				t.Errorf("involuntarilyPaused = false for %q; this is the class that stranded "+
+					"six live runs", reason)
+			}
+		})
+	}
+}
+
+// TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions.
+//
+// The reason predicate is wider than restartPaused's, and nothing else about the
+// check is. The status is still re-read off THIS reply, because a pause reason
+// outlives its pause: a run resumed after the caller's inventory row was taken
+// still carries the reason that parked it, and acting on the reason alone would
+// resume a run that is already executing. The identity check still refuses a reply
+// naming another run, and a failed RPC still means no.
+func TestInvoluntarilyPaused_KeepsItsSiblingsThreeConditions(t *testing.T) {
+	transient := "Transient connection error (EAI_AGAIN); the run is paused and can be resumed."
+
+	t.Run("an involuntary pause on this paused run is resumable", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{
+			methodKiroWorkflowInspect: inspectPaused(t, "wf_1", transient),
+		}
+		if !h.runs.involuntarilyPaused(t.Context(), "wf_1") {
+			t.Error("involuntarilyPaused = false for a transient-network pause on this very run")
+		}
+	})
+
+	for name, reply := range map[string]json.RawMessage{
+		"a reply naming a DIFFERENT run": inspectPaused(t, "wf_other", transient),
+		"a run KAS says is running":      inspectReply(t, "wf_1", "running", transient),
+		"a run KAS says completed":       inspectReply(t, "wf_1", "completed", transient),
+		"a reply carrying no status":     inspectReply(t, "wf_1", "", transient),
+	} {
+		t.Run(name+" is not resumable", func(t *testing.T) {
+			h, _, br := newTestHub()
+			br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: reply}
+			if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
+				t.Errorf("involuntarilyPaused = true for %s", name)
+			}
+		})
+	}
+
+	t.Run("a failed inspect leaves the run paused", func(t *testing.T) {
+		h, _, br := newTestHub()
+		br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
+		if h.runs.involuntarilyPaused(t.Context(), "wf_1") {
+			t.Error("an unreadable pause reason was treated as resumable")
+		}
+	})
+
+	t.Run("an empty workflow id is not resumable", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		if h.runs.involuntarilyPaused(t.Context(), "") {
+			t.Error("involuntarilyPaused(\"\") = true")
+		}
+	})
+}

@@ -243,6 +243,30 @@ func (rs *Runs) restartPaused(ctx context.Context, workflowID string) bool {
 		res.State.PauseReason == stalePauseReason
 }
 
+// involuntarilyPaused reports whether a paused run stopped for a cause nobody
+// chose, and is therefore vibekit's to resume without being asked.
+//
+// The resume-side sibling of restartPaused above, and it carries the same three
+// conditions for the same three reasons — the status is re-read off THIS reply
+// because a pause reason outlives its pause, and the identity check refuses a
+// reply naming a different run. Only the reason predicate is wider, and
+// resumablePause (run_host.go) is where that asymmetry is argued.
+//
+// FALSE on any RPC failure, same as its sibling. A run left paused keeps every
+// door it had; the cost of guessing is a run resumed on evidence nobody read.
+func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool {
+	if workflowID == "" {
+		return false
+	}
+	res, ok := rs.inspect(ctx, workflowID)
+	if !ok {
+		return false
+	}
+	return res.WorkflowID == workflowID &&
+		res.State.Status == runStatusPaused &&
+		resumablePause(res.State.PauseReason)
+}
+
 // inspectRunState is the part of `_kiro/workflow/inspect`'s reply the orphan
 // predicate reads: `{workflowId, state, nodePlan}` with the run status, inputs,
 // artifacts and node tree on `state` (probed contract, see vibekit-acp.md).
