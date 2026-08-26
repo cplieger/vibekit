@@ -236,6 +236,43 @@ h3.section-title {
   }
 }
 
+/* The security-profile picker: a radio ladder above the Active policy table.
+   One row per profile, its own description beneath the label, because the
+   difference between two of them is a sentence rather than a word. */
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-block: var(--sp-2);
+}
+
+.profile-actions {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.profile-desc {
+  grid-column: 2;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+/* The loosest rung is the one a reader should not select by accident, so its
+   description carries the warning colour. Colour is not the only channel: the
+   text says what it grants, and the confirm names it again. */
+.profile-row-loosest > .profile-desc {
+  color: var(--c-danger);
+}
+
+/* Outside Custom the table is a read-out, not an editor. Dimming it is the
+   honest signal that its controls are inert; the controls are also genuinely
+   disabled, so this is decoration over a real state rather than instead of one. */
+.native-policy-locked {
+  opacity: 0.55;
+}
+
 .chip-list {
   display: flex;
   flex-wrap: wrap;

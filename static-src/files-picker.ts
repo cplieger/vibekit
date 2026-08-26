@@ -26,7 +26,7 @@ import {
   FB_CHECK,
   FB_META,
 } from "./files-shared.js";
-import { attachPathToActiveChat } from "./chat.js";
+import { attachPathsToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { upload } from "./actions/files.js";
 import { screenUploads } from "./upload-policy.js";
@@ -86,9 +86,8 @@ export function initFilePicker(): void {
     if (selected.size === 0) {
       return;
     }
-    for (const name of selected) {
-      attachPathToActiveChat(joinPath(currentPath, name));
-    }
+    // DETACHED: the modal closes on this click and nothing after reads the chat.
+    void attachPathsToActiveChat([...selected].map((name) => joinPath(currentPath, name)));
     selected.clear();
     closeModal(byId<HTMLDivElement>("filepicker-modal"));
   });
@@ -122,9 +121,9 @@ function performUpload(files: FileList): void {
     {
       onSuccess: (paths) => {
         onUploadComplete?.();
-        for (const p of paths) {
-          attachPathToActiveChat(p);
-        }
+        // DETACHED: an upload callback; the modal close below is independent of
+        // whether the chat exists yet.
+        void attachPathsToActiveChat(paths);
         closeModal(modal);
       },
     },

@@ -6,7 +6,13 @@ vi.mock("../toast.js", () =>
   import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
 );
 
-vi.mock("../transport.js", () => ({ send: vi.fn() }));
+vi.mock("../transport.js", () => ({
+  send: vi.fn(),
+  // Reached through tabs.ts, which mints one `op_id` per tab mutation at the
+  // DISPATCH site. Nothing here mutates a tab; the name has to exist for
+  // real-ESM linking.
+  newOpID: vi.fn(() => "op-test"),
+}));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
@@ -14,6 +20,10 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  // Reached through tabs.ts -> tabs-sync.ts, whose `GET /api/tabs` is the only
+  // read in the projection. No case here lists tabs; the name has to exist for
+  // real-ESM linking.
+  apiGetTyped: vi.fn(),
 }));
 import { send as transportSend } from "../transport.js";
 import { setSessions, get, setActive } from "../store.js";
@@ -131,23 +141,152 @@ describe("chat.load_sessions", () => {
   });
 });
 
+// --- chat.create ---
+// The command that mints. Three facts are the wire contract of stage 1b and each
+// one is invisible from the outside if it regresses: the envelope carries no chat
+// id, the op id travels in the payload, and the reply's chat is what the caller
+// opens.
+describe("chat.create", () => {
+  const header = {
+    id: "c-minted",
+    name: "New conversation",
+    model: "claude-opus-5",
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    created_at: 0,
+    updated_at: 0,
+    message_count: 0,
+  };
+
+  it("sends create_chat with the op id and NO chat id", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
+    const { createChat } = await import("./chat.js");
+    await createChat.dispatch({ opID: "op-1", model: "claude-opus-5" });
+
+    const sent = mockSend.mock.calls.at(-1)?.[0] as { chat_id?: string; payload: unknown };
+    expect(sent).toMatchObject({
+      type: "create_chat",
+      payload: { op_id: "op-1", model: "claude-opus-5" },
+    });
+    expect(sent.chat_id).toBeUndefined();
+  });
+
+  // The framework generates ONE idempotency key per dispatch and threads it through
+  // every retry attempt, so honouring it is what makes a retry inside the server's
+  // 5-minute cache dedupe. The op id covers the fall-through past that TTL; both
+  // halves have to travel or the create is idempotent over neither window.
+  it("carries the framework's idempotency key alongside the op id", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
+    const { createChat } = await import("./chat.js");
+    const { IDEMPOTENCY_COMMAND_FIELD } = await import("./index.js");
+    await createChat.dispatch({ opID: "op-1" });
+
+    const sent = mockSend.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(typeof sent[IDEMPOTENCY_COMMAND_FIELD]).toBe("string");
+  });
+
+  it("returns the chat the server minted", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
+    const { createChat } = await import("./chat.js");
+    const got = await createChat.dispatch({ opID: "op-1" });
+
+    expect(got?.id).toBe("c-minted");
+    expect(got?.model).toBe("claude-opus-5");
+  });
+
+  // A 200 the client cannot read a chat out of is a FAILURE, not a null the caller
+  // re-judges: there is nothing to open, and opening a tab for an id nobody has is
+  // the exact window this change removes.
+  it("fails when the reply names no chat", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
+    const { createChat } = await import("./chat.js");
+    expect(await createChat.dispatch({ opID: "op-1" })).toBeNull();
+  });
+
+  it("fails when the command itself fails", async () => {
+    mockSend.mockResolvedValue({ ok: false, status: 500, error: "boom" });
+    const { createChat } = await import("./chat.js");
+    expect(await createChat.dispatch({ opID: "op-1" })).toBeNull();
+  });
+
+  // Omitted rather than sent empty: the server defaults the name to "New
+  // conversation" and treats an empty model as unset, and sending "" for either
+  // would make the client's silence look like a choice.
+  it("omits an unset name and model rather than sending empty strings", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
+    const { createChat } = await import("./chat.js");
+    await createChat.dispatch({ opID: "op-1", name: "", model: "" });
+
+    const sent = mockSend.mock.calls.at(-1)?.[0] as { payload: Record<string, unknown> };
+    expect(sent.payload).toEqual({ op_id: "op-1" });
+  });
+});
+
+// resume_session no longer takes the new chat's id: the server mints it and
+// returns it. This suite pins both halves, because the action is DORMANT (the
+// history UI resolves a chat id server-side and opens it directly), so nothing
+// else would notice a regression here.
 describe("chat.resume_session", () => {
-  it("sends resume_session with the session id and title", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
+  const header = {
+    id: "c-minted",
+    name: "Earlier work",
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    created_at: 0,
+    updated_at: 0,
+    message_count: 0,
+  };
+
+  it("sends the session id, the title and an op id, and NO chat id", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
     const { resumeSession } = await import("./chat.js");
     await resumeSession.dispatch({
-      chatID: "c-new",
+      opID: "op-1",
       sessionID: "sess_abc-123",
       name: "Earlier work",
     });
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "resume_session",
-        chat_id: "c-new",
-        payload: { session_id: "sess_abc-123", name: "Earlier work" },
-      }),
-      expect.anything(),
-    );
+    const sent = mockSend.mock.calls.at(-1)?.[0] as { chat_id?: string; payload: unknown };
+    expect(sent).toMatchObject({
+      type: "resume_session",
+      payload: { session_id: "sess_abc-123", name: "Earlier work", op_id: "op-1" },
+    });
+    expect(sent.chat_id).toBeUndefined();
+  });
+
+  it("returns the chat the server created, so the caller can open it", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
+    const { resumeSession } = await import("./chat.js");
+    const got = await resumeSession.dispatch({
+      opID: "op-2",
+      sessionID: "sess_abc-123",
+      name: "Earlier work",
+    });
+    expect(got?.id).toBe("c-minted");
+  });
+
+  // A 200 the client cannot read a chat out of is a FAILURE, not a null the caller
+  // has to re-judge: it has adopted a session into a chat it cannot address.
+  it("fails when the reply names no chat", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
+    const { resumeSession } = await import("./chat.js");
+    const got = await resumeSession.dispatch({
+      opID: "op-3",
+      sessionID: "sess_abc-123",
+      name: "Earlier work",
+    });
+    expect(got).toBeNull();
   });
 });
 

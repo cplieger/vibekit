@@ -8,6 +8,18 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// dividerIn returns the last interrupted-event message in a chat, or nil.
+// A helper that cannot fail, so it takes no *testing.T and marks no t.Helper().
+func dividerIn(chat *vibekit.Chat) *vibekit.Message {
+	var last *vibekit.Message
+	for i := range chat.Messages {
+		if m := &chat.Messages[i]; m.Role == vibekit.RoleEvent && m.EventKind == vibekit.EventInterrupted {
+			last = m
+		}
+	}
+	return last
+}
+
 // TestAbandonInFlightTurn_ReleasesTheBuffer pins the mechanism behind the
 // two-turns-in-one-message defect.
 //
@@ -32,7 +44,7 @@ func TestAbandonInFlightTurn_ReleasesTheBuffer(t *testing.T) {
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1")
+	h.AbandonInFlightTurn(ctx, "c1", "the pipe died")
 
 	if _, ok := h.coord.TakeBuffer("c1"); ok {
 		t.Error("the assistant buffer survived AbandonInFlightTurn; the next turn " +
@@ -62,28 +74,24 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	buf.Content.WriteString(partial)
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(ctx, "c1")
+	h.AbandonInFlightTurn(ctx, "c1", "the pipe died")
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
 		t.Fatal("chat record vanished")
 	}
 
-	var sawPartial, sawInterrupted bool
+	var sawPartial bool
 	for i := range chat.Messages {
-		m := &chat.Messages[i]
-		if m.Role == vibekit.RoleAssistant && m.Content == partial {
+		if m := &chat.Messages[i]; m.Role == vibekit.RoleAssistant && m.Content == partial {
 			sawPartial = true
-		}
-		if m.Role == vibekit.RoleEvent && m.EventKind == vibekit.EventInterrupted {
-			sawInterrupted = true
 		}
 	}
 	if !sawPartial {
 		t.Errorf("the partial assistant text was not persisted; the client showed it "+
 			"and a reload would lose it. messages=%d", len(chat.Messages))
 	}
-	if !sawInterrupted {
+	if dividerIn(chat) == nil {
 		t.Error("no interrupted event message; the transcript shows a truncated reply " +
 			"with nothing saying why it stops")
 	}
@@ -96,45 +104,95 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	}
 }
 
-// TestAbandonInFlightTurn_NoBufferIsANoOp guards the common case: most prompt
-// failures happen before the model emits anything (a dead bridge, a fatal RPC
-// error on send), so there is no buffer and nothing to persist. Writing an empty
-// assistant message or a stray interrupted badge for those would put noise in
-// every transcript that ever saw a transient error.
-func TestAbandonInFlightTurn_NoBufferIsANoOp(t *testing.T) {
+// TestAbandonInFlightTurn_MarksATurnThatNeverStarted is the case the user
+// actually hits, and it INVERTS what this file used to assert.
+//
+// The old rule was that no buffer means no-op, on the reasoning that a stray
+// badge would be noise in "every transcript that ever saw a transient error".
+// That was wrong in the one direction that matters: a 429 or a capacity refusal
+// answers BEFORE the first chunk, so there is no buffer, so the turn appended
+// nothing at all — and turns.ts deriveOutcome, which reads persisted messages
+// only, then classified it `completed` and hasTurnSummary suppressed its footer.
+// A rate-limited turn was pixel-identical to a clean short answer, and the whole
+// account of the failure lived in a hover tooltip that a reload discarded.
+//
+// The badge is not noise. It is the only durable record that the turn failed.
+func TestAbandonInFlightTurn_MarksATurnThatNeverStarted(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	ctx := t.Context()
 
-	before, ok := h.chatStore.Get(ctx, "c1")
+	const reason = "Too many requests, please wait before trying again."
+	h.AbandonInFlightTurn(ctx, "c1", reason)
+
+	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
 		t.Fatal("chat record missing")
 	}
-	countBefore := len(before.Messages)
-
-	h.AbandonInFlightTurn(ctx, "c1")
-
-	after, _ := h.chatStore.Get(ctx, "c1")
-	if got := len(after.Messages); got != countBefore {
-		t.Errorf("messages went from %d to %d with no turn in flight; want no change",
-			countBefore, got)
+	divider := dividerIn(chat)
+	if divider == nil {
+		t.Fatal("AbandonInFlightTurn(ctx, c1, <throttle>) appended no interrupted event " +
+			"with no buffer in flight; the turn renders as a clean short answer")
+	}
+	if divider.Content != reason {
+		t.Errorf("divider content = %q, want %q", divider.Content, reason)
+	}
+	// No assistant message: there was nothing to persist, and an empty one would
+	// render as a blank reply bubble under the request.
+	for i := range chat.Messages {
+		if m := &chat.Messages[i]; m.Role == vibekit.RoleAssistant {
+			t.Errorf("an unstarted turn persisted an assistant message %q; the divider is "+
+				"the whole record", m.Content)
+		}
 	}
 }
 
-// TestAbandonInFlightTurn_CarriesTheInterruptReason closes the loop on the
-// tool-interruption fix: the cause has to arrive on the DIVIDER, because that is
-// the only place a user sees it.
+// TestAbandonInFlightTurn_CarriesTheCallersReason is the ordinary failed prompt,
+// and it is the other inversion.
 //
-// The distinction being pinned is against a user cancel and against an ordinary
-// failed prompt, both of which reach this same method and both of which leave the
-// Content empty on purpose — a failed prompt already sends its reason as an error
-// frame, and a user cancel needs no explanation. A turn kiro-cli abandoned
-// without answering sends no frame of any kind, so an empty divider here would
-// make it indistinguishable from a stop the user performed themselves.
-func TestAbandonInFlightTurn_CarriesTheInterruptReason(t *testing.T) {
+// This used to assert the divider stayed EMPTY here, because "a failed prompt
+// already sends its reason as an error frame". The frame is real but ephemeral:
+// it reaches one client surface, for the active chat, until the next reload. So
+// the reason the server had all along never survived to the transcript, and the
+// user was left with the generic "Turn interrupted" label.
+func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	ctx := t.Context()
 
-	const reason = "Stopped by kiro-cli's tool-use security filter"
+	const reason = "The model is at capacity. (request req-9)"
+	buf := h.bridge.assistantBufs.GetOrInit("c1")
+	buf.Started = true
+	buf.MessageID = newMessageID()
+	buf.Content.WriteString("half an answer")
+
+	h.AbandonInFlightTurn(ctx, "c1", reason)
+
+	chat, ok := h.chatStore.Get(ctx, "c1")
+	if !ok {
+		t.Fatal("chat record vanished")
+	}
+	divider := dividerIn(chat)
+	if divider == nil {
+		t.Fatal("no interrupted event message")
+	}
+	if divider.Content != reason {
+		t.Errorf("divider content = %q, want %q — without it the transcript cannot say "+
+			"why the turn stopped once the error frame is gone", divider.Content, reason)
+	}
+}
+
+// TestAbandonInFlightTurn_StashedReasonBeatsTheCallers closes the loop on the
+// tool-interruption fix, and pins the PRECEDENCE between the two writers.
+//
+// InterruptTurn stashes the cause when kiro-cli's tool-use security filter stops
+// a turn. The prompt Call then fails as a consequence of that stop, so the
+// caller's reason describes the fallout rather than the cause. The specific one
+// has to win, or a security-filter stop reads as whatever RPC error it produced.
+func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
+	h, _ := hubForFSTest(t, t.TempDir())
+	ctx := t.Context()
+
+	const stashed = "Stopped by kiro-cli's tool-use security filter"
+	const callers = "The turn was cancelled before the agent answered."
 
 	// Stage a turn the way streaming does, then interrupt it the way the sentinel
 	// detector does — through the coordinator, so the wiring is exercised rather
@@ -152,7 +210,7 @@ func TestAbandonInFlightTurn_CarriesTheInterruptReason(t *testing.T) {
 	t.Cleanup(cancel)
 	sb.BeginPromptCall(cancel)
 
-	h.coord.InterruptTurn("c1", reason)
+	h.coord.InterruptTurn("c1", stashed)
 
 	// The prompt context must be dead, or the blocked Call never returns and the
 	// chat answers 409 busy to every later Send.
@@ -162,48 +220,19 @@ func TestAbandonInFlightTurn_CarriesTheInterruptReason(t *testing.T) {
 		t.Error("InterruptTurn left the prompt context live")
 	}
 
-	h.AbandonInFlightTurn(ctx, "c1")
+	h.AbandonInFlightTurn(ctx, "c1", callers)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
 		t.Fatal("chat record vanished")
 	}
-	var divider *vibekit.Message
-	for i := range chat.Messages {
-		if m := &chat.Messages[i]; m.Role == vibekit.RoleEvent && m.EventKind == vibekit.EventInterrupted {
-			divider = m
-		}
-	}
+	divider := dividerIn(chat)
 	if divider == nil {
 		t.Fatal("no interrupted event message")
 	}
-	if divider.Content != reason {
-		t.Errorf("divider content = %q, want %q — without it the transcript cannot say "+
-			"who stopped the turn", divider.Content, reason)
-	}
-}
-
-// TestAbandonInFlightTurn_LeavesTheDividerEmptyForOrdinaryFailures is the other
-// half of the pair above, and the reason it is a separate test: a reason that
-// leaked onto every failed turn would be worse than none, because it would name a
-// cause that did not apply.
-func TestAbandonInFlightTurn_LeavesTheDividerEmptyForOrdinaryFailures(t *testing.T) {
-	h, _ := hubForFSTest(t, t.TempDir())
-	ctx := t.Context()
-
-	buf := h.bridge.assistantBufs.GetOrInit("c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("half an answer")
-
-	h.AbandonInFlightTurn(ctx, "c1")
-
-	chat, _ := h.chatStore.Get(ctx, "c1")
-	for i := range chat.Messages {
-		m := &chat.Messages[i]
-		if m.Role == vibekit.RoleEvent && m.EventKind == vibekit.EventInterrupted && m.Content != "" {
-			t.Errorf("an ordinary failed turn got divider content %q; the error frame is "+
-				"where that turn's reason belongs", m.Content)
-		}
+	if divider.Content != stashed {
+		t.Errorf("divider content = %q, want the stashed %q — the caller's %q describes "+
+			"the RPC failure the filter caused, not the stop itself",
+			divider.Content, stashed, callers)
 	}
 }

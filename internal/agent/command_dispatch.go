@@ -2,6 +2,7 @@ package agent
 
 import (
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -20,10 +21,16 @@ func (rt *Runtime) registerCommandHandlers() {
 	// ending must close its terminal attribution). Bridges is the coordinator's,
 	// reached through bridgeRole — the *sharedBridge <-> command.Bridge conversion
 	// has to happen somewhere, and it happens in a type that does only that.
-	command.RegisterDefaults(rt.dispatcher, &command.Roles{
+	// The membership coordinator is the one thing this returns, because retention
+	// needs it too: its open-tab predicate and its post-purge close are the only
+	// callers of it outside internal/command. A nil tab store travels as a nil
+	// role — the coordinator's tab half then answers unavailable, which is what a
+	// build with no config dir has.
+	rt.membership = command.RegisterDefaults(rt.dispatcher, &command.Roles{
 		Bridges: bridgeRole{coord: rt.coord},
 		Chats:   rt.chatStore,
 		Bus:     rt.bus,
+		Tabs:    tabSetOrNil(rt.tabs),
 		// Teardown is the runtime's own, and it is the LAST role that has to be:
 		// each member reaches the decision tracker, the coordinator, the terminal
 		// registry, the buffers, the line tracker and the run surface at once, so
@@ -42,3 +49,25 @@ func (rt *Runtime) registerCommandHandlers() {
 	// Register handlers that remain on Runtime (complex internal coupling).
 	rt.dispatcher.Register(vibekit.CmdSwitchModel, rt.cmdSwitchModel)
 }
+
+// tabSetOrNil converts an absent tab store into a nil INTERFACE rather than a
+// non-nil interface holding a nil pointer.
+//
+// The distinction is the whole reason this function exists: `command.TabSet(st)`
+// for a nil *tabs.Store is a non-nil interface value, so the coordinator's
+// `m.tabs == nil` guard would be false and every tab command would nil-deref
+// instead of answering unavailable. bridgeRole exists in this package for exactly
+// the same trap.
+func tabSetOrNil(st *tabs.Store) command.TabSet {
+	if st == nil {
+		return nil
+	}
+	return st
+}
+
+// Membership returns the coordinator over the chat store and the open-tab set.
+//
+// It is the composition root's handle on retention's two tab-facing hooks (the
+// open-tab predicate and the post-purge close), and it exists for nothing else:
+// every command handler receives the coordinator at registration.
+func (rt *Runtime) Membership() *command.Membership { return rt.membership }

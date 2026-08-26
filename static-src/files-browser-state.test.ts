@@ -25,8 +25,8 @@ vi.mock("./tabs.js", () => ({
   // these, so no path under test changes behavior.
   setGitTab: undefined,
   toggleGitView: undefined,
-  toggleFilesView: vi.fn(),
-  showFilesView: vi.fn(),
+  toggleFilesView: vi.fn(() => Promise.resolve()),
+  showFilesView: vi.fn(() => Promise.resolve()),
   getActiveTabKind: vi.fn(() => "files"),
 }));
 vi.mock("./editor-openers.js", () => ({
@@ -39,11 +39,18 @@ vi.mock("./editor-openers.js", () => ({
 }));
 vi.mock("./modals.js", () => ({ closeModal: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn().mockResolvedValue(true) }));
-vi.mock("./ui-state.js", () => ({ save: vi.fn() }));
 vi.mock("./upload.js", () => ({ uploadFiles: vi.fn() }));
-vi.mock("./icons.js", () => ({ fileIcon: vi.fn(() => ""), FILE_ICONS: {} }));
+// The two save-indicator glyphs are present because the browser writes its
+// path through persist.ts now, which reaches save-indicator.ts: Browser Mode
+// links for real, so a name in the graph has to exist on the mock.
+vi.mock("./icons.js", () => ({
+  fileIcon: vi.fn(() => ""),
+  FILE_ICONS: {},
+  ICON_SAVE_OK: "",
+  ICON_SAVE_FAIL: "",
+}));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
-vi.mock("./chat.js", () => ({ attachPathToActiveChat: vi.fn() }));
+vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));
 // files-search.ts is the browser's other satellite, stubbed for the same reason
 // as the drop module: this file tests FileBrowserState, and the search bar's own
@@ -54,6 +61,10 @@ vi.mock("./api-client.js", () => ({ apiPost: vi.fn(), apiGet: vi.fn() }));
 vi.mock("./scroll.js", () => ({
   scroll: vi.fn(),
   setUserScrolledUp: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./transport.js", () => ({ send: vi.fn() }));
 vi.mock("./store.js", () => ({
@@ -63,6 +74,17 @@ vi.mock("./store.js", () => ({
   // these, so no path under test changes behavior.
   activeSession: undefined,
   getActiveId: vi.fn(() => ""),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  newOpID: vi.fn(() => "op-test"),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 import { FileBrowserState } from "./files.js";

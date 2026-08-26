@@ -9,11 +9,27 @@
 // XLSX, DOC, XLS, CSV) is inlined as an ACP embedded `resource` block,
 // an image (PNG, JPEG, GIF, WebP) as an `image` block, and anything else
 // becomes a path reference the agent reads with its file tools.
+//
+// The list PERSISTS on the chat record, through `set_attachments` on the same
+// 600ms debounce the draft uses. It is the draft's twin — authored content parked
+// per chat in a map that parallels `drafts` exactly — and before this it was the
+// only half of the pair persisted nowhere, so attaching three files and reloading
+// lost them while the half-written sentence describing them came back. Every
+// property of the draft's save holds here for the draft's reasons: silent in both
+// directions, per-chat scope so dispatches serialize, no retry (the next debounce
+// supersedes it), and the LOCAL collection stays authoritative for the UI.
 // ---------------------------------------------------------------------------
 
 import { createCollection, bindList, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { buildAttachmentPill } from "./attachment-pill.js";
+import { setAttachments } from "./actions/chat.js";
+import { debouncedDispatch, type DebouncedDispatch } from "./actions/index.js";
+
+/** Quiet window before a change is persisted. The draft's 600ms, deliberately
+ *  shared: the two halves of one composer must not save on two cadences, or a
+ *  reload can show a sentence and the files it does not mention yet. */
+const SAVE_WAIT = 600;
 
 /** One attached file. */
 export interface AttachedFile {
@@ -61,6 +77,45 @@ let liveChatID = "";
  *  chat nobody has dropped reads as. */
 const generations = new Map<string, number>();
 
+/** Chats this device has staged into or seeded, so the server's copy is adopted
+ *  ONCE and never over a local list.
+ *
+ *  `stash` cannot answer this: `restoreAttachments` deletes a chat's entry when it
+ *  moves onto the live row, so an absent entry means either "never touched" or
+ *  "this chat is the one on screen". The seed has to tell those apart, for the
+ *  reason `drafts.has(chatID)` exists on the draft side — a fetch can land after
+ *  the user has already started staging, and the newer local list wins. */
+const touched = new Set<string>();
+
+let debouncedSave: DebouncedDispatch<{ chatID: string; paths: string[] }> | null = null;
+
+/** Schedule the persist for `chatID`, or send it now when `now` is set.
+ *
+ *  Built lazily, for the reason initComposerState builds the draft's saver from
+ *  app.ts: constructing it at module load would put a dispatch in the import graph
+ *  of every test that so much as reads a pill. */
+function persist(chatID: string, paths: string[], now = false): void {
+  if (chatID === "") {
+    return;
+  }
+  touched.add(chatID);
+  debouncedSave ??= debouncedDispatch(setAttachments, { wait: SAVE_WAIT });
+  if (now) {
+    void debouncedSave.flush({ chatID, paths });
+    return;
+  }
+  debouncedSave({ chatID, paths });
+}
+
+/** Persist the LIVE row under the chat it belongs to. The one-argument case,
+ *  because every mutation of the visible row is a mutation of that chat. */
+function persistLive(): void {
+  persist(
+    liveChatID,
+    attached.items().map((a) => a.path),
+  );
+}
+
 /** The chat's current attachment generation, for a caller that will hand it back
  *  to addAttachmentTo after an await. */
 export function attachmentGeneration(chatID: string): number {
@@ -96,6 +151,7 @@ export function addAttachment(path: string): void {
   }
   ensureBound();
   attached.upsert(toAttached(path));
+  persistLive();
 }
 
 /** Add a file to a NAMED chat's attachment list, live if that chat is the one on
@@ -122,19 +178,35 @@ export function addAttachmentTo(chatID: string, path: string, generation?: numbe
   if (held.some((a) => a.path === path)) {
     return;
   }
-  stash.set(chatID, [...held, toAttached(path)]);
+  const next = [...held, toAttached(path)];
+  stash.set(chatID, next);
+  persist(
+    chatID,
+    next.map((a) => a.path),
+  );
 }
 
 /** Remove an attachment by path. */
 function removeAttachment(path: string): void {
   attached.remove(path);
+  persistLive();
 }
 
 /** Take all attachments (clears the list). Returns the array for the
- *  prompt payload. */
+ *  prompt payload.
+ *
+ *  The clear is persisted IMMEDIATELY rather than on the debounce, and it is
+ *  persisted at all even though `prompt` clears the record server-side. Two
+ *  reasons: a STEER also takes the row and is not the prompt path, so the server
+ *  clears nothing for it; and a debounced clear would still be in the air when the
+ *  send's own response lands, so the two writes would race for a value they agree
+ *  on. Sending it now makes the outcome the same whichever arrives second. */
 export function takeAttachments(): AttachedFile[] {
   const out = attached.items();
   attached.clear();
+  if (out.length > 0) {
+    persist(liveChatID, [], true);
+  }
   return out;
 }
 
@@ -156,8 +228,27 @@ export function stashAttachments(): void {
       stash.delete(liveChatID);
     }
   }
+  // Get the pending save out under the OUTGOING id, for the reason
+  // flushComposerDraft runs here: after this the id is unrecoverable and the
+  // debounce would fire against `liveChatID === ""`, which persists nothing.
+  flushAttachments();
   liveChatID = "";
   attached.clear();
+}
+
+/** Send a pending attachment save now. Chat switch, tab close and unload.
+ *
+ *  Only when something is pending: with nothing pending the last debounce has
+ *  already sent the current list, and a flush would be one more POST carrying a
+ *  value the server holds. */
+export function flushAttachments(): void {
+  if (liveChatID === "" || debouncedSave?.isPending() !== true) {
+    return;
+  }
+  void debouncedSave.flush({
+    chatID: liveChatID,
+    paths: attached.items().map((a) => a.path),
+  });
 }
 
 /** Put `chatID`'s attachments on the live row and make it that chat's. */
@@ -182,11 +273,80 @@ export function restoreAttachments(chatID: string): void {
  *  entry just dropped. */
 export function dropAttachments(chatID: string): void {
   stash.delete(chatID);
+  touched.delete(chatID);
   generations.set(chatID, attachmentGeneration(chatID) + 1);
   if (chatID === liveChatID) {
     liveChatID = "";
     attached.clear();
   }
+}
+
+/** Adopt the server's stored list for `chatID`, once its record has loaded.
+ *
+ *  The seed loses to anything local, the same rule seedComposerState follows for
+ *  the same reason: the fetch can land after the user has started staging files,
+ *  and a list still being built outranks the copy last flushed. A chat this device
+ *  has already staged into or already seeded keeps its own copy.
+ *
+ *  What this buys is the reload case: both maps start empty, so the server's list
+ *  is what comes back. */
+export function seedAttachments(chatID: string, paths: readonly string[]): void {
+  if (chatID === "" || touched.has(chatID)) {
+    return;
+  }
+  touched.add(chatID);
+  if (paths.length === 0) {
+    return;
+  }
+  const held = paths.map(toAttached);
+  if (chatID !== liveChatID) {
+    stash.set(chatID, held);
+    return;
+  }
+  // The live row is only written when it is EMPTY, which is the same rule the
+  // draft's seed and the failed-send restore both follow: a row the user has
+  // already put something in is newer than anything a fetch carries.
+  if (attached.ids.peek().length > 0) {
+    return;
+  }
+  ensureBound();
+  for (const a of held) {
+    attached.upsert(a);
+  }
+}
+
+/** Adopt a `draft_changed` frame's attachment list for a chat this device is NOT
+ *  staging into.
+ *
+ *  The live row is authoritative and the frame is ignored for it — for the reason
+ *  composer-state.ts's header gives about the draft map: the visible row is where
+ *  the user's hand is, and adopting a remote list would delete a pill mid-gesture
+ *  or restore one just removed. A chat that is not on screen has no such claim, and
+ *  converging it is the whole point of the event.
+ *
+ *  Unlike the seed this does NOT lose to a local copy: the frame is newer by
+ *  construction, having been produced by a write the server accepted. */
+export function adoptRemoteAttachments(chatID: string, paths: readonly string[]): void {
+  if (chatID === "" || chatID === liveChatID) {
+    return;
+  }
+  touched.add(chatID);
+  if (paths.length === 0) {
+    stash.delete(chatID);
+    return;
+  }
+  stash.set(chatID, paths.map(toAttached));
+}
+
+/** Test seam: reset the module between cases. */
+export function _resetAttachmentsForTest(): void {
+  debouncedSave?.cancel();
+  debouncedSave = null;
+  stash.clear();
+  touched.clear();
+  generations.clear();
+  liveChatID = "";
+  attached.clear();
 }
 
 // buildAttachmentPill lives in attachment-pill.ts. A sent turn's header draws

@@ -174,6 +174,18 @@ type ToolCall struct {
 	// to its nested agent_message_chunk / agent_thought_chunk deltas
 	// (which carry the same id) so the client can render them nested.
 	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	// WorkflowID names the run a `run_workflow` invocation started, taken from
+	// the terminal update's `rawOutput.workflowId`. Empty on every other tool
+	// call, and empty on this one until the run is created.
+	//
+	// It is what makes the invocation the RUN's card in the transcript rather
+	// than a generic row: the client keys a run card on this id, and a step's
+	// blocks arrive carrying the same id in their `agent_subtask_id`
+	// (`wf:<workflowId>:<nodePath>`), so the two sides join with no accumulation
+	// and no guessing. It is also the handle for the route to `/run/{id}` and
+	// for reading `GET /api/runs/{id}`, which is the only refresh-safe source of
+	// a run's plan, per-step status and outputs.
+	WorkflowID string `json:"workflow_id,omitempty"`
 	// TerminalID links an execute tool call to the agent terminal running it,
 	// taken from the ACP type:"terminal" content block KAS sends on the tool
 	// call. It is what lets the CARD be the terminal's rendering surface: the
@@ -490,14 +502,22 @@ type SessionModel struct {
 	// HasEffort reports whether this model supports a reasoning-effort level,
 	// from `_meta.kiro.hasEffort`.
 	//
-	// **kiro-cli 2.18.0 does not stamp it** (the literal appears nowhere in the
-	// chat sidecar; measured 2026-08). So this is false on every entry, the
-	// client's gate reads that as "the catalog does not carry the capability" and
-	// shows the control anyway. The capability question is answered by
-	// Chat.EffortLevels instead — an empty list is exactly what kiro-cli's TUI
-	// treats as "Effort is not available on the current model". Kept because a
-	// catalog that DOES stamp it (another engine build) is still honoured; do not
-	// build new gating on it.
+	// **kiro-cli 2.19.1 DOES stamp it**, on every model choice, alongside
+	// defaultEffortLevel (probed 2026-08-25 against KAS 0.48.0). An earlier note
+	// here said 2.18.0 stamped it nowhere and that the field was therefore false on
+	// every entry, so the client's gate fell through to showing the control always;
+	// that is now stale, and the gate is live.
+	//
+	// The value it reports first is the one that matters: `auto` carries
+	// `hasEffort:false` and every real model in this account's catalog carries
+	// `hasEffort:true` with `defaultEffortLevel:"high"`. So a chat still on `auto`
+	// now HIDES the effort row, which is correct — KAS builds no effortLevel option
+	// for a model with no tiers and silently drops any level sent while a session
+	// sits there.
+	//
+	// Chat.EffortLevels answers the same question from the other side (an empty
+	// list is what kiro-cli's own TUI treats as "Effort is not available on the
+	// current model"), and the two agree.
 	HasEffort bool `json:"has_effort,omitempty"`
 }
 
@@ -543,10 +563,28 @@ type Chat struct {
 	// Retention rides chat_retention_days with no second TTL: the draft is a
 	// field in the one chat file the purge deletes. Store.SetDraft is what keeps
 	// that honest — it does not touch UpdatedAt, which the purge ages from.
-	Draft               string         `json:"draft,omitempty"`
-	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
-	ID                  string         `json:"id"`
-	AvailableModels     []SessionModel `json:"available_models,omitempty"`
+	Draft               string `json:"draft,omitempty"`
+	CompactionWatermark string `json:"compaction_watermark,omitempty"`
+	ID                  string `json:"id"`
+	// Attachments are the workspace paths staged beside the draft and not yet
+	// sent. It is the DRAFT'S TWIN, which is the whole reason it lives here: the
+	// client parks it in a map that parallels `drafts` exactly, keyed by chat and
+	// saved on the same debounce, and until this field existed that map was the
+	// only copy — so attaching three files and reloading lost them, while the
+	// half-written sentence describing them survived.
+	//
+	// Absent from ChatHeader for the reason Draft is absent: the save is
+	// debounced authored content, and a header field would put it in a
+	// chat_updated frame every 600ms that every connected client re-renders. The
+	// single-chat GET carries it.
+	//
+	// Paths, not contents: the file is read at send time by BuildPromptBlocks,
+	// which is also where the path is confined to the workspace. Storing bytes
+	// here would put a 10 MiB image in the chat file for a prompt that may never
+	// be sent. Store.SetAttachments keeps the retention contract Draft has — it
+	// does not stamp UpdatedAt.
+	Attachments     []string       `json:"attachments,omitempty"`
+	AvailableModels []SessionModel `json:"available_models,omitempty"`
 	// ServedModelIDs is every model id this chat's last session advertised,
 	// UNFILTERED, which AvailableModels is not (it drops end-of-life entries for
 	// the picker). It is persisted for one reason: the `--model` launch flag is
@@ -602,6 +640,27 @@ type Chat struct {
 // directory in it holds part of the chat's history.
 func (c *Chat) SessionChain() []string {
 	return sessionChain(c.ACPSessionID, c.PriorACPSessionIDs)
+}
+
+// ComposerState is the pair a chat's composer holds between sends: the text
+// typed and not sent, and the files staged beside it.
+//
+// It exists so the two writers can report what landed. Store.SetDraft and
+// Store.SetAttachments each load the chat under its own lock and write one half,
+// and the draft_changed broadcast needs both — so returning the pair costs
+// nothing where reading the chat a second time would put a file read back on the
+// hot path CmdSetDraft is documented to keep clear.
+//
+// Not a wire type and not persisted: the chat file holds the two fields
+// directly, and DraftChangedPayload is what crosses the wire.
+type ComposerState struct {
+	Text        string
+	Attachments []string
+}
+
+// Composer returns the chat's current composer state.
+func (c *Chat) Composer() ComposerState {
+	return ComposerState{Text: c.Draft, Attachments: slices.Clone(c.Attachments)}
 }
 
 // sessionChain composes the current session id and the retired ones into the

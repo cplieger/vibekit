@@ -163,7 +163,25 @@ func TestDeclIsWellFormed(t *testing.T) {
 // anything else, so a bare true here resolves FALSE and silently turns the
 // feature off. That is the failure mode this column was added to prevent, and
 // it is invisible on the wire.
+//
+// It covers gated rows through their GATE rather than skipping them, because a
+// gated row's wire value is built at runtime and is exactly as able to be the
+// wrong shape. Both Spawn states are exercised: a value-gated row has to carry
+// the object in both, and a presence-gated row has to carry it whenever present.
+//
+// The member's VALUE is a separate question from its shape, and vetoRows is where
+// this test states the difference. Every ungated row means "on", so its enabled
+// must be true; a row deliberately sending false is a REFUSAL of something the
+// client cannot otherwise reach, and listing it here makes a second one a decision
+// somebody takes rather than a typo that passes.
 func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
+	// vetoRows are the sent settings rows whose enabled is deliberately FALSE.
+	// userMemoryOptIn refuses kiro-cli's memory subsystem, and the value has to be
+	// exactly this: KAS tests hasOwnProperty before isSettingEnabled, so an absent
+	// key means "no opinion" and an empty object yields undefined. Only an explicit
+	// false vetoes.
+	vetoRows := map[string]bool{"userMemoryOptIn": true}
+
 	checked := 0
 	for _, row := range table {
 		if row.resolver != resolverSetting || !row.send {
@@ -171,18 +189,69 @@ func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
 		}
 		checked++
 		t.Run(rowID(row), func(t *testing.T) {
-			obj, ok := row.value.(map[string]any)
-			if !ok {
-				t.Fatalf("%s's value is %T, not an object; isSettingEnabled resolves that to false", rowID(row), row.value)
-			}
-			if obj["enabled"] != true {
-				t.Errorf("%s's value is %v, want enabled:true", rowID(row), obj)
+			for _, v := range settingValuesOf(t, row) {
+				obj, ok := v.value.(map[string]any)
+				if !ok {
+					t.Fatalf("%s's value %s is %T, not an object; isSettingEnabled resolves that to false",
+						rowID(row), v.origin, v.value)
+				}
+				on, ok := obj["enabled"].(bool)
+				if !ok {
+					t.Fatalf("%s's value %s is %v; enabled must be a bool, and any other type resolves false",
+						rowID(row), v.origin, obj)
+				}
+				if !on && !v.gated && !vetoRows[row.key] {
+					t.Errorf(`%s sends enabled:false %s and is not listed as a veto.
+An ungated row is a statement that the feature is ON, so a false here is either a
+mistake or a refusal nobody wrote down. Add it to vetoRows with the reason.`, rowID(row), v.origin)
+				}
 			}
 		})
 	}
 	if checked == 0 {
 		t.Error("no settings row is sent; this gate checked nothing")
 	}
+}
+
+// settingValue is one wire value a settings row can produce, with where it came
+// from, so a failure names the state that produced it rather than just the row.
+type settingValue struct {
+	value  any
+	origin string
+	gated  bool
+}
+
+// settingValuesOf returns every wire value a sent settings row can put on the
+// wire: the compiled one, or the gate's answer in both Spawn states.
+//
+// A gate that withholds in a state contributes nothing for it, which is correct
+// rather than a gap — an absent key is a shape KAS reads as false by design, and
+// TestInitializeDeclaresExactly is what pins which states withhold.
+func settingValuesOf(t *testing.T, row decl) []settingValue {
+	t.Helper()
+	if row.gate == nil {
+		return []settingValue{{value: row.value, origin: "(compiled)", gated: false}}
+	}
+	var out []settingValue
+	for _, st := range []struct {
+		name  string
+		spawn Spawn
+	}{
+		{"with every gate field off", Spawn{}},
+		{"with every gate field on", Spawn{
+			SecretStorage: true, Hooks: true,
+			Presets:    []string{"read-workspace"},
+			ToolSearch: true, Knowledge: true,
+		}},
+	} {
+		if v, present := row.gate(st.spawn); present {
+			out = append(out, settingValue{value: v, origin: st.name, gated: true})
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s is sent but its gate withholds in every state, so it can never reach the wire", rowID(row))
+	}
+	return out
 }
 
 // TestEnvOverrideOnlyOnSentRows pins what makes the env column disable-only.
@@ -301,7 +370,7 @@ func TestBuildersDoNotAliasTheTable(t *testing.T) {
 		build func(Spawn) map[string]any
 		key   string
 	}{
-		{"connection", Capabilities, "knowledge"},
+		{"connection", Capabilities, "codeIntelligence"},
 		{"session", SessionMeta, "workflows"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

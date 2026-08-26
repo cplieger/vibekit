@@ -75,7 +75,9 @@ export function routePushMessage(msg: PushPageMessage): void {
   // Reuse the tab if the chat is already open; openChatTab is idempotent
   // by id and activating it routes the URL through the tab store's own
   // subscriber, so no manual pushRoute is needed here.
-  openChatTab(msg.chatId, get(msg.chatId)?.name ?? msg.title);
+  // DETACHED: a notification click has nothing after it, and the open activates
+  // the tab itself, which routes the URL through the projection's own subscriber.
+  void openChatTab(msg.chatId, get(msg.chatId)?.name ?? msg.title);
 }
 
 /** The toast text. Title and body both come from the server, which builds them

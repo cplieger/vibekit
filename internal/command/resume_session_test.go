@@ -18,7 +18,7 @@ type storeDeps struct {
 	store ChatStore
 }
 
-// The five store methods are promoted from the embedded store, not handed back
+// The six store methods are promoted from the embedded store, not handed back
 // through a ChatStore() getter: Roles holds the interface directly now, so a
 // double that only overrode the getter left benchDeps' no-op methods winning and
 // silently stored nothing.
@@ -34,8 +34,12 @@ func (d *storeDeps) AppendMessage(ctx context.Context, chatID vibekit.ChatID, ms
 	return d.store.AppendMessage(ctx, chatID, msg)
 }
 
-func (d *storeDeps) SetDraft(ctx context.Context, id vibekit.ChatID, text string) error {
+func (d *storeDeps) SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
 	return d.store.SetDraft(ctx, id, text)
+}
+
+func (d *storeDeps) SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
+	return d.store.SetAttachments(ctx, id, paths)
 }
 
 func (d *storeDeps) Delete(ctx context.Context, id vibekit.ChatID) error {
@@ -70,7 +74,7 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	host := newTestHost(t, store)
 	ctx := t.Context()
 
-	_, err := CmdResumeSession(ctx, host, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
+	_, err := CmdResumeSession(ctx, newTestMembership(t, host), resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -113,7 +117,7 @@ func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	}
 	host := newTestHost(t, store)
 
-	_, _ = CmdResumeSession(ctx, host, resumeReq(t, "c1", "sess_other", "Hijack"))
+	_, _ = CmdResumeSession(ctx, newTestMembership(t, host), resumeReq(t, "c1", "sess_other", "Hijack"))
 
 	c, _ := store.Get(ctx, "c1")
 	if c.ACPSessionID != "sess_original" {
@@ -155,7 +159,7 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			host := newTestHost(t, store)
 
-			_, err := CmdResumeSession(t.Context(), host, resumeReq(t, "c1", sid, ""))
+			_, err := CmdResumeSession(t.Context(), newTestMembership(t, host), resumeReq(t, "c1", sid, ""))
 
 			if statusOf(err) != http.StatusBadRequest {
 				t.Errorf("status = %d for session id %q, want 400", statusOf(err), sid)
@@ -178,7 +182,7 @@ func TestCmdResumeSession_NameLengthCap(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
 		host := newTestHost(t, store)
 
-		_, err := CmdResumeSession(t.Context(), host, resumeReq(t, "c1", "sess_abc", atCap))
+		_, err := CmdResumeSession(t.Context(), newTestMembership(t, host), resumeReq(t, "c1", "sess_abc", atCap))
 		if err != nil {
 			t.Fatalf("CmdResumeSession with a %d-byte name = %v, want it accepted", len(atCap), err)
 		}
@@ -195,7 +199,7 @@ func TestCmdResumeSession_NameLengthCap(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
 		host := newTestHost(t, store)
 
-		_, err := CmdResumeSession(t.Context(), host, resumeReq(t, "c1", "sess_abc", overCap))
+		_, err := CmdResumeSession(t.Context(), newTestMembership(t, host), resumeReq(t, "c1", "sess_abc", overCap))
 
 		if statusOf(err) != http.StatusBadRequest {
 			t.Errorf("status = %d for a %d-byte name, want 400", statusOf(err), len(overCap))

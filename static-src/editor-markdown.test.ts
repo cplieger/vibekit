@@ -33,7 +33,22 @@ vi.mock("./highlight.js", () => ({
   normalizeLang: undefined,
   highlight: (s: string) => s,
 }));
-vi.mock("./store.js", () => ({ getActiveId: () => "" }));
+// `get` is reached through the tab factory, which reads the chat store for a chat
+// tab's display NAME. Present-but-inert: no tab is materialized here.
+//
+// Spreads the REAL module rather than listing names. Browser Mode links ESM for
+// real rather than reading properties off a namespace object, so every name any
+// module in this graph imports has to exist on the mock even when nothing here
+// calls it. Listing them was a treadmill: the tab projection made `tabs.ts` and
+// `tab-materialize.ts` new importers, and each new name cost another red run to
+// discover. Spreading makes the mock total by construction, and the two
+// overrides below are the only behaviour this file actually needs pinned.
+vi.mock("./store.js", async () => ({
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  ...(await vi.importActual<typeof import("./store.js")>("./store.js")),
+  getActiveId: () => "",
+  get: vi.fn(() => undefined),
+}));
 vi.mock("./actions/editor.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
@@ -42,6 +57,12 @@ vi.mock("./actions/editor.js", () => ({
   loadDiff: undefined,
   suggestResolution: undefined,
   fetchAgentLines: { cancel: () => undefined, dispatch: () => Promise.resolve(null) },
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./editor-scroll.js", () => ({
   scrollToEditorLine: () => undefined,

@@ -2,6 +2,7 @@ package testsupport
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -97,14 +98,39 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate 
 
 // SetDraft stores the chat's draft without touching UpdatedAt and without
 // broadcasting; see (*chat.Store).SetDraft for why those two absences are the point.
-// Absent chat: no-op, like the real store's load-then-write.
-func (s *InMemoryChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text string) error {
+// Absent chat: no-op, like the real store's load-then-write. Reports the state
+// that landed, nil when nothing did.
+func (s *InMemoryChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, ok := s.chats[id]; ok {
-		c.Draft = text
+	c, ok := s.chats[id]
+	if !ok || c.Draft == text {
+		return nil, nil
 	}
-	return nil
+	c.Draft = text
+	state := c.Composer()
+	return &state, nil
+}
+
+// SetAttachments stores the paths staged beside the draft under the same
+// contract: no UpdatedAt, no broadcast, no-op on an absent chat.
+func (s *InMemoryChatStore) SetAttachments(_ context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.chats[id]
+	if !ok {
+		return nil, nil
+	}
+	next := slices.Clone(paths)
+	if len(next) == 0 {
+		next = nil
+	}
+	if slices.Equal(c.Attachments, next) {
+		return nil, nil
+	}
+	c.Attachments = next
+	state := c.Composer()
+	return &state, nil
 }
 
 // Delete removes the chat with the given id and broadcasts a chat_deleted event.

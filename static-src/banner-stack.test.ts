@@ -32,6 +32,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
+import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import type * as BannerStack from "./banner-stack.js";
 
 /** Cache-buster for the re-imports below.
@@ -59,7 +60,6 @@ interface MiniSession {
 // subscribed to a dead one. (A getter does not help: the mocked module's exports
 // are read out of the factory result once, when that module is evaluated.)
 const activeSig = signal<MiniSession | undefined>(undefined);
-let dismissed: string[] = [];
 let container: HTMLDivElement;
 
 // The three mocks are registered ONCE, at module scope, and reach the per-test
@@ -70,20 +70,23 @@ let container: HTMLDivElement;
 // and container. `$` stays a getter because a property read on the exported
 // object IS live.
 vi.mock("./store.js", () => ({ activeSession: activeSig }));
-vi.mock("./ui-state.js", () => ({
-  load: (): { dismissed_banners: string[] } => ({ dismissed_banners: dismissed }),
-  save: (patch: { dismissed_banners?: string[] }): void => {
-    if (patch.dismissed_banners !== undefined) {
-      dismissed = patch.dismissed_banners;
-    }
-  },
-}));
+// No ui-state mock: the dismissals are per-chat localStorage now, which jsdom
+// provides for real. That is worth having rather than faking — the shape under
+// test IS the stored document, and a fake of it could not catch a chat key
+// colliding with another chat's.
 vi.mock("./dom.js", () => ({
   $: {
     get bannerStack(): HTMLDivElement {
       return container;
     },
   },
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 async function setup(): Promise<{
@@ -98,7 +101,7 @@ async function setup(): Promise<{
   // resetModules re-evaluated the graph, a signal built before the reset tracked
   // a foreign instance and never re-derived.)
   activeSig.value = undefined;
-  dismissed = [];
+  localStorage.clear();
   container = document.createElement("div");
   const mod = (await import(
     /* @vite-ignore */ `./banner-stack.ts?boot=${bootSeq}`
@@ -161,20 +164,45 @@ describe("banner-stack: active-chat scoping", () => {
 });
 
 describe("banner-stack: composite key (keyenc)", () => {
-  it("keeps the pre-adoption key bytes, so no persisted dismissal is lost", async () => {
-    // The dismissal set is PERSISTED in localStorage under dismissed_banners.
-    // A chat id is [A-Za-z0-9_-] (ids.ValidChatID) and a code is a call-site
-    // literal, so keyenc emits both verbatim and the key is byte-identical to
-    // the old `${chatID}:${code}` template. Asserted through the public API: a
-    // dismissal recorded in the OLD format must still suppress its banner.
+  // The dismissals are stored per CHAT, so a chat id can no longer be part of a
+  // composite storage key and the forging question does not arise for the
+  // persisted half at all. Asserted through the public API: a dismissal recorded
+  // for one chat suppresses that chat's banner and no other's.
+  it("suppresses a banner this reader dismissed, per chat", async () => {
     const { container, mod } = await setup();
-    dismissed = ["c-1750000000000-ab12cd:rate_limit"];
+    localStorage.setItem(
+      LS_DISMISSED_BANNERS_KEY,
+      JSON.stringify({ "c-1750000000000-ab12cd": ["rate_limit"] }),
+    );
 
     activeSig.value = { id: "c-1750000000000-ab12cd" };
     mod.ensureBound();
     mod.showBanner("c-1750000000000-ab12cd", "rate_limit", "slow down", "warning", true);
-
     expect(container.querySelectorAll(".banner")).toHaveLength(0);
+
+    // A different chat's identical code is a different acknowledgement.
+    activeSig.value = { id: "c-other" };
+    mod.showBanner("c-other", "rate_limit", "slow down", "warning", true);
+    expect(container.querySelectorAll(".banner")).toHaveLength(1);
+  });
+
+  // The whole reason these moved out of the shared arrangement: an
+  // acknowledgement is the VIEWER's, so it must not leave this device. Pinned as
+  // a storage-key assertion because that is the only observable difference
+  // between a per-device store and the server-owned document it replaced.
+  it("records a dismissal in this device's own storage, not the arrangement", async () => {
+    const { container, mod } = await setup();
+
+    activeSig.value = { id: "A" };
+    mod.ensureBound();
+    mod.showBanner("A", "rate_limit", "slow down", "warning", true);
+    container.querySelector<HTMLButtonElement>(".banner-dismiss")?.click();
+
+    const raw = localStorage.getItem(LS_DISMISSED_BANNERS_KEY);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw ?? "{}")).toEqual({ A: ["rate_limit"] });
+    // And nothing was written to the synced arrangement's key.
+    expect(localStorage.getItem("vibekit.ui-state")).toBeNull();
   });
 
   it("does not let one field's content forge the other's boundary", async () => {
@@ -200,9 +228,11 @@ describe("banner-stack: composite key (keyenc)", () => {
   });
 
   it("clearBannersForChat prefix scan: chat \u201cabc\u201d does not clear chat \u201cabcd\u201d", async () => {
-    // clearBannersForChat keeps a `${chatID}:` prefix scan (keyenc exports no
-    // prefix primitive). The trailing ":" is what bounds it — this is the
-    // regression test named in that function's comment.
+    // clearBannersForChat keeps a `${chatID}:` prefix scan over the COLLECTION's
+    // keys (keyenc exports no prefix primitive). The trailing ":" is what bounds
+    // it — this is the regression test named in that function's comment. It no
+    // longer touches localStorage at all: the persisted half went with the global
+    // list, so the sweep is in-memory only.
     const { container, mod } = await setup();
 
     activeSig.value = { id: "abc" };
@@ -211,17 +241,19 @@ describe("banner-stack: composite key (keyenc)", () => {
     mod.showBanner("abcd", "x", "long", "error", true);
     expect(container.textContent).toContain("short");
 
-    // Persist both dismissals so the localStorage half of the scan is covered.
-    dismissed = ["abc:x", "abcd:x"];
-
     mod.clearBannersForChat("abc");
 
-    // Only chat abc's persisted dismissal was pruned.
-    expect(dismissed).toEqual(["abcd:x"]);
-
-    // And the sibling chat's in-memory banner survived the sweep.
+    // The sibling chat's in-memory banner survived the sweep.
     activeSig.value = { id: "abcd" };
     expect(container.textContent).toContain("long");
+
+    // And a dismissal for the sibling is untouched, because nothing prunes
+    // storage here any more.
+    localStorage.setItem(LS_DISMISSED_BANNERS_KEY, JSON.stringify({ abcd: ["x"] }));
+    mod.clearBannersForChat("abc");
+    expect(JSON.parse(localStorage.getItem(LS_DISMISSED_BANNERS_KEY) ?? "{}")).toEqual({
+      abcd: ["x"],
+    });
   });
 });
 

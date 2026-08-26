@@ -36,6 +36,12 @@ vi.mock("./store.js", () => ({
     messages: [{ id: "m1", role: "user", content: PRIOR_PROMPT, ts: 1 }],
   }),
   getActiveId: () => "c1",
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 // Sends, counted at the controller's own onSubmit. It used to count the form's

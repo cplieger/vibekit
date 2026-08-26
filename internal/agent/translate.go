@@ -36,11 +36,11 @@ import (
 // receive an empty chatID.
 type chatHandler = func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 
-// ignoreSubSession adapts a 3-arg handler (ctx, chatID, raw) to the
-// 4-arg sessionUpdateHandler signature by discarding the subSessionID.
+// ignoreAttribution adapts a 3-arg handler (ctx, chatID, raw) to the
+// 4-arg sessionUpdateHandler signature by discarding the attribution.
 // Eliminates repeated anonymous closure boilerplate in the dispatch table.
-func ignoreSubSession(fn func(context.Context, vibekit.ChatID, json.RawMessage)) sessionUpdateHandler {
-	return func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, _ string) {
+func ignoreAttribution(fn func(context.Context, vibekit.ChatID, json.RawMessage)) sessionUpdateHandler {
+	return func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, _ translate.FrameAttribution) {
 		fn(ctx, chatID, raw)
 	}
 }
@@ -124,24 +124,24 @@ func (rt *Runtime) initDispatch() {
 	// Session-update sub-dispatcher: built eagerly to avoid a data race
 	// when multiple bridge goroutines call sessionUpdateHandlers() concurrently.
 	rt.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
-		vibekit.ACPUpdateAgentChunk: ignoreSubSession(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+		vibekit.ACPUpdateAgentChunk: ignoreAttribution(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 			rt.translator.HandleAssistantChunk(ctx, chatID, raw, false)
 		}),
-		vibekit.ACPUpdateThoughtChunk: ignoreSubSession(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+		vibekit.ACPUpdateThoughtChunk: ignoreAttribution(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 			rt.translator.HandleAssistantChunk(ctx, chatID, raw, true)
 		}),
 		vibekit.ACPUpdateToolCall:   rt.translator.HandleToolCall,
 		vibekit.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
-		vibekit.ACPUpdatePlan:       ignoreSubSession(rt.translator.HandlePlan),
-		vibekit.ACPUpdateModeChange: ignoreSubSession(rt.translator.HandleModeUpdate),
+		vibekit.ACPUpdatePlan:       ignoreAttribution(rt.translator.HandlePlan),
+		vibekit.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
 		// v3 (KAS) sub-kinds: context-usage + slash-command catalog moved
 		// here from the v2 _kiro.dev/metadata + commands/available notifs.
 		// session_info_update also carries compaction (summarization) state;
 		// usage_update is the primary v3 context-usage channel; and
 		// config_option_update delivers the live model/mode/effort catalog.
 		vibekit.ACPUpdateSessionInfo:  rt.translator.HandleSessionInfoUpdate,
-		vibekit.ACPUpdateUsage:        ignoreSubSession(rt.translator.HandleUsageUpdate),
-		vibekit.ACPUpdateConfigOption: ignoreSubSession(rt.translator.HandleConfigOptionUpdate),
+		vibekit.ACPUpdateUsage:        ignoreAttribution(rt.translator.HandleUsageUpdate),
+		vibekit.ACPUpdateConfigOption: ignoreAttribution(rt.translator.HandleConfigOptionUpdate),
 	}
 }
 
@@ -288,14 +288,14 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatI
 	// concept — so it comes from KAS's own `_meta.kiro.workflow`, which the
 	// frame carries, plus the step-session registry for frames that do not.
 	//
-	// A STEP resolves to OwnerStep and therefore to an empty subSessionID: the
-	// per-kind handlers all read a non-empty value as "a subagent did this",
-	// which is not true of a step. A step's own attribution rides its blocks
-	// instead (ACPWorkflowMeta.SubtaskID).
-	subSessionID := ""
-	if rt.translator.ClassifyFrame(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil) == translate.OwnerSubagent {
-		subSessionID = env.Params.SessionID
-	}
+	// A STEP carries an empty SubSessionID and Step true: the per-kind handlers
+	// all read a non-empty id as "a subagent did this", which is not true of a
+	// step, and a step's own display attribution rides its blocks instead
+	// (ACPWorkflowMeta.SubtaskID). Step is separate rather than folded into the
+	// id because a handler that touches the CHAT's accounting has to tell a step
+	// from the chat, and one string cannot say three things — see
+	// translate.FrameAttribution for the defect that proved it.
+	attr := rt.translator.Attribute(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil)
 
 	// A REPLAYED frame is stored history, not something happening now, and
 	// must not reach the live handlers. KAS replays a session's whole
@@ -350,11 +350,11 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatI
 	if !ok {
 		return
 	}
-	fn(ctx, chatID, env.Params.Update, subSessionID)
+	fn(ctx, chatID, env.Params.Update, attr)
 }
 
 // sessionUpdateHandler is the common signature for session-update sub-handlers.
-type sessionUpdateHandler = func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string)
+type sessionUpdateHandler = func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr translate.FrameAttribution)
 
 // sessionUpdateHandlers returns the map of sessionUpdate kind → handler.
 // The map is built eagerly in initDispatch and cached on the Runtime.

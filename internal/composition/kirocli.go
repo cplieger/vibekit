@@ -258,31 +258,50 @@ func kiroLegacyPurge() *pinstall.Purge {
 }
 
 // kiroSettings is vibekit's kiro-cli settings set, re-asserted against the
-// active binary on every boot. These are the ten calls entrypoint.sh used to
-// make after the install; they moved here with the installer, because the shell
-// block was gated on the binary already being present and that gate is false on
-// every first boot once the install runs after exec.
+// active binary on every boot. These moved here from entrypoint.sh with the
+// installer, because the shell block was gated on the binary already being
+// present and that gate is false on every first boot once the install runs
+// after exec.
+//
+// A key belongs here only if it has a kiro-cli-SIDE role, and that qualifier is
+// load-bearing rather than descriptive: KAS's ACP path reads no kiro-cli setting
+// at all (measured on the stock 2.19.2 bundle — see internal/server/cli.go's
+// allowlist comment for the counts), so a seed here reaches the TUI, the
+// knowledge index and vibekit's own suppression logic, never a vibekit chat.
 //
 // app.disableAutoupdates is deliberately NOT in this list: kirocli.Release()
 // declares it Mandatory, so the library forces it Required and merges it in
 // whatever a deployment passes — the integrity gate cannot be weakened, reworded
 // or dropped from here. Every assertion here is best-effort: a failure warns and
-// readiness is unaffected. Rationale for each value is in the Settings docs
-// (Settings → General surfaces the same keys through /api/kiro-settings).
+// readiness is unaffected.
+//
+// Three seeds were REMOVED in 2026-08 and each is worth naming, because deleting
+// a seed changes what a hand-run `docker exec … kiro-cli chat` session sees:
+//
+//   - chat.enableTodoList and chat.enableCheckpoint. Their ACP counterparts
+//     (`todoList`, `checkpoint`) are declared in KAS's settings schema with ZERO
+//     readers in any of its three reader shapes, so neither key could change a
+//     chat through either door. Both were seeded only so the Settings toggles
+//     rendered against a real value; the toggles are gone with them.
+//   - toolSearch.enabled. Its ACP counterpart `toolSearch` IS read, so this one
+//     was not inert — it was pointed at the wrong door. The control now drives
+//     the ACP key through kascap's gate, and seeding the kiro-cli key beside it
+//     would leave two writers for one user-visible switch.
+//
+// chat.enableSubagent is deliberately KEPT even though its ACP sibling
+// `_subagent` has no reader either. The LIVE key is `subagentOrchestration`,
+// which kascap already sends, so behaviour is correct today and dropping the
+// seed would only change what the TUI does. It is not a vibekit toggle.
 func kiroSettings() []pinstall.Assertion {
 	return []pinstall.Assertion{
 		// Features vibekit renders natively.
-		kirocli.Setting("chat.enableTodoList", true),
 		kirocli.Setting("chat.enableKnowledge", true),
 		kirocli.Setting("chat.enableSubagent", true),
 		kirocli.Setting("chat.enablePromptHints", true),
 		kirocli.Setting("hooks.showStatus", true),
-		// Off: duplicates of vibekit's own systems, telemetry, and the two
-		// toggles seeded only so the Settings UI reflects reality instead of an
-		// unset-means-on fallback.
-		kirocli.Setting("chat.enableCheckpoint", false),
+		// Off: telemetry, and the resource-inheritance switch seeded so the
+		// Settings UI reflects reality instead of an unset-means-on fallback.
 		kirocli.Setting("telemetry.enabled", false),
-		kirocli.Setting("toolSearch.enabled", false),
 		kirocli.Setting("chat.disableInheritingDefaultResources", false),
 		// vibekit owns chat retention end to end (its own chat_retention_days),
 		// so kiro-cli's competing purge is pinned off: 0 = never. Raw because

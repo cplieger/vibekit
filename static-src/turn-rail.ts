@@ -107,18 +107,34 @@ export function mountTurnRail(host: HTMLElement): void {
   }
 }
 
+/** Hand the rail to a chat, dropping the previous session's index.
+ *
+ *  Separate from the fetch because an EMPTY chat has to re-point too, and it has
+ *  nothing to fetch: its turn count is zero by definition, and a brand-new chat's
+ *  id exists nowhere but the tab that minted it, so asking for its turns is a
+ *  guaranteed 404. Both halves of skipping this were live defects. A rail still
+ *  pointing at the chat before it kept rendering THAT chat's markers over a
+ *  conversation with no messages in it — a timeline before the first message. And
+ *  `refreshTurnRail` drops a result whose id is not the rail's, so the first
+ *  `turn_ended` of a chat the rail had never been handed was discarded, and no
+ *  marker appeared until the reader switched away and back. */
+export function pointTurnRail(id: string): void {
+  if (id === chatID) {
+    return;
+  }
+  // A different chat: drop the previous session's zoom and pending jumps rather
+  // than carrying a stale range onto unrelated turns.
+  zoom = undefined;
+  pending.clear();
+  summaries = [];
+  currentN = 0;
+  chatID = id;
+  render();
+}
+
 /** Point the rail at a chat and (re)load its session-wide index. */
 export async function loadTurnRail(id: string): Promise<void> {
-  if (id !== chatID) {
-    // A different chat: drop the previous session's zoom and pending jumps
-    // rather than carrying a stale range onto unrelated turns.
-    zoom = undefined;
-    pending.clear();
-    summaries = [];
-    currentN = 0;
-    chatID = id;
-    render();
-  }
+  pointTurnRail(id);
   await refreshTurnRail(id);
 }
 

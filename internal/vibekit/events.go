@@ -59,7 +59,14 @@ const (
 	// watching run tab at once, while only the first answer is accepted, so
 	// something has to close the others — and it carries attribution, because a
 	// card that collapses for no stated reason reads as a lost click.
-	EventDecisionSettled   EventType = "decision_settled"
+	EventDecisionSettled EventType = "decision_settled"
+	// EventDraftChanged carries a chat's parked composer state after a
+	// set_draft or set_attachments write, so a device that is NOT typing in that
+	// chat converges on it instead of holding whatever it saw last. Chat-scoped
+	// and deliberately its own event rather than a header field: it fires on a
+	// 600ms debounce while someone types, and chat_updated is re-rendered by
+	// every client.
+	EventDraftChanged      EventType = "draft_changed"
 	EventError             EventType = "error"
 	EventElicitationNeeded EventType = "elicitation_needed"
 	EventUserInputNeeded   EventType = "user_input_needed"
@@ -93,9 +100,18 @@ const (
 	EventSafetyStatus     EventType = "safety_status"
 	EventSafetyProperties EventType = "safety_properties"
 	EventSettingsUpdated  EventType = "settings_updated"
-	// EventUIStateChanged carries the whole synced UI arrangement after any
-	// device writes one, so every other device applies it without a refetch.
-	EventUIStateChanged EventType = "ui_state_changed"
+	// EventTabsChanged is ONE aggregate frame per committed mutation of the
+	// open-tab set: what changed, what was removed, and the order the set is now
+	// in, stamped with the version that mutation produced.
+	//
+	// ONE event type rather than a membership event beside an order event. Two
+	// types can be applied in either order by a client and a Close of a parent
+	// with children is ONE mutation, so a singular event would have forced either
+	// several frames sharing one version (the second reads as a duplicate) or
+	// several version bumps for one mutation. Neither is reachable with one
+	// aggregate frame: the version and the event are one-to-one, and there is no
+	// second channel to race.
+	EventTabsChanged EventType = "tabs_changed"
 	// EventSteerQueued and the two below mirror KAS's own three mid-turn
 	// steering signals rather than collapsing them. Each answers a different
 	// question the chip row asks: queued = it reached the buffer, injected =

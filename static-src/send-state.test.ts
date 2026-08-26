@@ -1,11 +1,16 @@
 // Unit tests for send-state.ts — verifies the SendState computed derives the
-// send-button state reactively from the SSE-status / last-error signals plus
+// send-button state reactively from the SSE-status / agent-down signals plus
 // the reactive store (activeSession), pushing to prompt-input via a single
 // effect with NO manual recompute call.
+//
+// The vocabulary here is narrow on purpose: `agentDown` means there is nothing to
+// send to, and an ordinary failed attempt never reaches it (failure-notice.ts owns
+// that). A test that writes a throttle message into this signal is asserting the
+// wrong thing about the button.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { SendState } from "./prompt-input.js";
 import { setSendState } from "./prompt-input.js";
-import { setSSEStatus, setLastError, clearLastError } from "./send-state.js";
+import { setSSEStatus, setAgentDown, clearAgentDown } from "./send-state.js";
 import { setSessions, setActive, setThinking, recordSteerQueued } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -48,19 +53,19 @@ beforeEach(() => {
   // Reset the shared module-level reactive graph to a known idle baseline.
   setActive("");
   setSessions([]);
-  clearLastError();
+  clearAgentDown();
   setSSEStatus("connecting");
   pushed.mockClear();
 });
 
 describe("send-state precedence", () => {
-  it("orders disconnected > lastError > streaming > idle", () => {
+  it("orders disconnected > agentDown > streaming > idle", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
     // Make every lower-priority condition true at once.
     setThinking(id, true);
-    setLastError("boom");
+    setAgentDown("The agent could not be started for this chat.");
     setSSEStatus("disconnected");
     expect(lastPushed()).toEqual({
       kind: "error",
@@ -68,13 +73,16 @@ describe("send-state precedence", () => {
     });
 
     // Drop disconnected via "connecting" (not "connected", which would clear
-    // lastError) → lastError now wins.
+    // agentDown) → agentDown now wins.
     setSSEStatus("connecting");
-    expect(lastPushed()).toEqual({ kind: "error", reason: "boom" });
+    expect(lastPushed()).toEqual({
+      kind: "error",
+      reason: "The agent could not be started for this chat.",
+    });
 
-    // Clear the error → STREAMING wins. Cancelling the turn is what the one
-    // control has to guarantee, so nothing below it may take the button.
-    clearLastError();
+    // Clear it → STREAMING wins. Cancelling the turn is what the one control has
+    // to guarantee, so nothing below it may take the button.
+    clearAgentDown();
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
     // Turn ends → idle. There is no state between the two: a message typed
@@ -84,23 +92,41 @@ describe("send-state precedence", () => {
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
-  // Every failure rung reports `error`, never a state that locks the composer.
-  // A failed prompt leaves the server idle and a dropped SSE stream says nothing
-  // about the command POST, so the next Send is the retry in both cases. The two
-  // rungs used to push `blocked`, which disabled the textarea and turned one
-  // throttled turn into a dead thread.
-  it("reports every failure as the advisory error state", () => {
+  // Both reachability rungs report `error`, and neither locks the composer: the
+  // next Send respawns the bridge, and a dropped SSE stream says nothing about the
+  // command POST. They used to push `blocked`, which disabled the textarea and
+  // turned one throttled turn into a dead thread.
+  it("reports both unreachable states as the advisory error state", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
 
-    setLastError('{"errorType":"ClientThrottleError","retryErrorType":"THROTTLING"}');
+    setAgentDown("The agent could not be started for this chat.");
     expect(lastPushed()?.kind).toBe("error");
 
-    clearLastError();
+    clearAgentDown();
     setSSEStatus("disconnected");
     expect(lastPushed()?.kind).toBe("error");
+  });
+
+  // The regression this file exists to catch after 2026-08: a failed ATTEMPT must
+  // leave the button alone. Nothing on the prompt-failure path calls setAgentDown,
+  // so a throttled turn on a connected client settles back to idle and the send
+  // icon stays a send icon. If a future change routes prompt_failed here again,
+  // this is what fails.
+  it("leaves the button idle when a turn fails on a reachable agent", () => {
+    const id = "c1";
+    setSessions([makeSession(id)]);
+    setActive(id);
+    setSSEStatus("connected");
+    setThinking(id, true);
+    expect(lastPushed()).toEqual({ kind: "streaming" });
+
+    // What handlers/turn.ts does for a `prompt_failed` frame, in full: clear
+    // thinking, and report the prose somewhere that is not this module.
+    setThinking(id, false);
+    expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
   // Outstanding steers must NOT reach the button. They are server state about

@@ -503,6 +503,24 @@ type ChatDeletedPayload struct {
 	ID string `json:"id"`
 }
 
+// DraftChangedPayload is the payload for type="draft_changed": the composer
+// state one chat now holds, sent so an idle device converges on a draft it is
+// not typing.
+//
+// Both halves travel on every frame, and BOTH writers fill both, because the
+// event describes the composer rather than the field that moved: a receiver
+// applying only what changed would have to know which command fired, and a
+// second event type for the twin would be two channels to order.
+//
+// The set_draft REPLY deliberately carries only a byte count, and this payload
+// carrying the text is not a contradiction. That reply goes back to the device
+// that just sent the words, where echoing them is pure cost; this goes to the
+// devices that do not have them, which is the only thing it is for.
+type DraftChangedPayload struct {
+	Text        string   `json:"text"`
+	Attachments []string `json:"attachments,omitempty"`
+}
+
 // CompactionStartedPayload is the payload for type="compaction_started".
 type CompactionStartedPayload struct{}
 
@@ -527,31 +545,6 @@ const ChatStatusWaitingOnUser = "waiting_on_user"
 
 // MCPConfigChangedPayload is the payload for type="mcp_config_changed".
 type MCPConfigChangedPayload struct{}
-
-// UIStateChangedPayload is the payload for type="ui_state_changed": the whole
-// synced UI arrangement plus the revision that produced it, broadcast after any
-// device writes one.
-//
-// It carries the STATE rather than being a bare invalidation, unlike the run
-// events. Two reasons. The document is small and complete, so a refetch would
-// only re-fetch what the broadcast already had; and every client needs the
-// revision to write next, so an invalidation would make a GET mandatory before
-// any local change could be published — turning one device's tab drag into a
-// round trip on every other device.
-//
-// Workspace-global: the chat id is empty. `active_view` is deliberately not in
-// here (see internal/uistate.State) — a phone must not move the desktop's
-// active tab.
-type UIStateChangedPayload struct {
-	Theme            string                     `json:"theme,omitempty"`
-	FBPath           string                     `json:"fb_path,omitempty"`
-	TurnFolds        map[string]map[string]bool `json:"turn_folds,omitempty"`
-	TabOrder         []string                   `json:"tab_order,omitempty"`
-	PinnedTabs       []string                   `json:"pinned_tabs,omitempty"`
-	EditorFiles      []string                   `json:"editor_files,omitempty"`
-	DismissedBanners []string                   `json:"dismissed_banners,omitempty"`
-	Revision         uint64                     `json:"revision"`
-}
 
 // ForgesChangedPayload is the payload for type="forges_changed".
 // Sent after a forge is connected, disconnected, or re-probed.
@@ -654,4 +647,48 @@ type SteerInjectedPayload struct {
 // which is why injected is its own event.
 type SteerClearedPayload struct {
 	SteerIDs []string `json:"steer_ids"`
+}
+
+// TabsChangedPayload is the payload for type="tabs_changed": ONE committed
+// mutation of the open-tab set.
+//
+// Workspace-global, so the chat id is empty. Every field except Version is
+// optional because one mutation touches a different combination of them: an open
+// carries Changed and Order, a close carries RemovedIDs and Order, a pin carries
+// Changed alone, a reorder carries Order alone.
+//
+// REMOVAL IS STATED, never inferred. That is the whole point of the shape: the
+// arrangement used to travel as one whole list, so the client read "absent from
+// the incoming list" as "closed elsewhere" and closed tabs nobody closed (live
+// instance, 2026-08-25). Absence from Order still never means closure — a client
+// holding a tab the order does not name keeps its position and sorts last.
+type TabsChangedPayload struct {
+	// Changed is the one tab this mutation added or altered, absent on a close
+	// and on a reorder. A pointer because "no tab changed" and "a zero-valued
+	// tab changed" are different facts and the client branches on which.
+	Changed *TabSubject `json:"changed,omitempty"`
+	// RemovedIDs names every tab this mutation closed, per id and explicitly. A
+	// close of a parent with children is one mutation, so this is where the
+	// children arrive.
+	RemovedIDs []string `json:"removed_ids,omitempty"`
+	// Order is the EXPANDED list: every open tab including children, in the order
+	// the collection now holds. Sent whenever the membership or the position
+	// moved, so a client never has to derive a position from a delta.
+	Order []string `json:"order,omitempty"`
+	// Version is the collection version this mutation produced, and it is the
+	// client's only watermark. Three rules, exhaustive: at or below local is a
+	// duplicate or stale frame and is ignored, exactly one past applies, more
+	// than one past means a frame was missed so stop applying and re-list.
+	//
+	// ONLY AN EVENT MAY ADVANCE THE LOCAL VERSION. A command response carries the
+	// version for diagnostics and a client must not adopt it: adopting a
+	// response's v+2 would make another device's in-flight v+1 read as stale, so
+	// it would be dropped and no gap would ever be detectable.
+	Version uint64 `json:"version"`
+	// OpID is the client-minted correlation id from the command that caused this
+	// mutation, echoed back so the caller can match the frame to its own
+	// dispatch. Empty for a mutation no client asked for (a retention close, a
+	// load-time prune). Distinct from Idempotency-Key, which keeps its
+	// retry-safety job: this has no TTL, no cache and no 409 branch.
+	OpID string `json:"op_id,omitempty"`
 }

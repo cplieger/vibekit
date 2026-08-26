@@ -61,7 +61,13 @@ vi.mock("./actions/index.js", () => ({
     Object.assign(mockDispatch, { isPending: mockPending, flush: mockFlush, cancel: vi.fn() }),
   registerCleanup: vi.fn(),
 }));
-vi.mock("./actions/chat.js", () => ({ setDraft: { name: "chat.set_draft" } }));
+// Both composer writers, because attachments.ts dispatches through the same
+// debounced-action layer as the draft: a mock naming only one of them fails the
+// module's IMPORT, not an assertion, so the whole file goes red with no clue why.
+vi.mock("./actions/chat.js", () => ({
+  setDraft: { name: "chat.set_draft" },
+  setAttachments: { name: "chat.set_attachments" },
+}));
 vi.mock("./platform.js", () => ({ fixIOSViewport: vi.fn() }));
 vi.mock("./pill-expand.js", () => ({ collapseAll: vi.fn() }));
 // share-target's other job is the ?agent=planner shortcut, whose import graph is

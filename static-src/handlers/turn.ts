@@ -31,7 +31,8 @@ import {
 } from "../decision-dock.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
-import { setLastError, clearLastError } from "../send-state.js";
+import { setAgentDown, clearAgentDown } from "../send-state.js";
+import { reportFailure } from "../failure-notice.js";
 import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded, type BannerLink } from "../banner-stack.js";
 import { openSetting } from "../settings-highlight.js";
@@ -123,7 +124,10 @@ onSSE("turn_ended", (chatID, p) => {
   // end (that's its point — "I asked you something") and so does a RUN's
   // pending decision, whose ask outlives the turn that raised it.
   setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
-  clearLastError();
+  // A turn ended, so there is demonstrably an agent behind this chat. Failure
+  // toasts are deliberately NOT retracted here: they report a past event and
+  // time out on their own, and the turn's divider keeps the record regardless.
+  clearAgentDown();
   onTurnEnded(chatID);
   refreshGitBadge();
   // KAS clears its steering buffer at EVERY turn boundary, so the chip row must
@@ -291,10 +295,10 @@ function bannerLinkFor(action: ErrorAction | undefined): BannerLink | undefined 
 /** Does this error END the running turn?
  *
  *  `surface` already carries that judgement and the routing table states it per
- *  code: a `send-error` means THIS send failed, a `banner` means something else
- *  is wrong while the turn runs on ("A banner rather than a send-error because
- *  it is not this send that is broken"). Deriving the answer keeps one table
- *  instead of a second field that is a pure function of the first.
+ *  code: a `toast` or `agent-down` means the send did not land, a `banner` means
+ *  something else is wrong while the turn runs on ("A banner rather than a toast
+ *  because it is not one send that is broken"). Deriving the answer keeps one
+ *  table instead of a second field that is a pure function of the first.
  *
  *  An unknown code ends the turn, because a `thinking` left stuck true holds the
  *  composer on Cancel for a turn nothing will ever finish. */
@@ -318,38 +322,51 @@ onSSE("error", (chatID, p) => {
   if (endsTurn(code)) {
     // Unfreeze thinking so send-state can settle correctly.
     setThinking(chatID, false);
-    // Latch the failure on the CHAT, then re-derive its tab dot. This half has to
-    // run for a background chat: the prose below deliberately does not (one chat's
-    // failure must not claim another's send button), which left a failed
-    // background turn with no marker anywhere — its dot simply went out, exactly
-    // as if the turn had finished cleanly.
+    // Latch the failure on the CHAT, then re-derive its tab dot.
     setTurnFailed(chatID);
     setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
   }
 
-  // Only surface the error PROSE for the active chat, to avoid polluting the
-  // send-button state with errors from background chats.
-  if (chatID !== getActiveId()) {
-    return;
-  }
-
   const route = ERROR_ROUTES[code];
   if (route === undefined) {
-    // Unknown codes: fall through to send-button blocker.
-    setLastError(msg !== "" ? `${code}: ${msg}` : code);
+    // An unknown code is a failed attempt of unknown shape, so it takes the same
+    // surface as the known ones. The code stands in when the server sent no
+    // message, which is the only time machine vocabulary is better than nothing.
+    reportFailure(chatID, msg !== "" ? msg : code);
     return;
   }
   switch (route.surface) {
+    case "toast":
+      // Reported for EVERY chat, not just the active one, and that is the half the
+      // send button could not do. This used to sit behind a `chatID !==
+      // getActiveId()` return, on the correct reasoning that one chat's failure
+      // must not claim another's send button — but the consequence was that a
+      // background chat's failure left nothing anywhere except a tab dot. A toast
+      // claims no control, and failure-notice.ts names the chat when it is not the
+      // one on screen.
+      reportFailure(chatID, msg);
+      break;
+    case "agent-down":
+      // Active chat only: this one DOES paint a shared control, so a background
+      // chat's dead bridge must not put an alert face on the button of the chat
+      // the reader is using. The chat keeps its red tab dot either way, and
+      // send-state.ts re-clears the state on every chat switch.
+      if (chatID === getActiveId()) {
+        setAgentDown(msg !== "" ? msg : "The agent could not be started for this chat.");
+      }
+      break;
     case "banner": {
+      // Banners are per-chat and keyed by chat, so this stays gated on the active
+      // chat exactly as before: banner-stack.ts renders the active chat's stack.
+      //
       // A routed banner that names an action carries a jump to it, so the
       // message and the thing that fixes it are one click apart instead of the
       // reader having to hunt the panel the prose named.
-      showBanner(chatID, code, msg, route.level, route.dismissible, bannerLinkFor(route.action));
+      if (chatID === getActiveId()) {
+        showBanner(chatID, code, msg, route.level, route.dismissible, bannerLinkFor(route.action));
+      }
       break;
     }
-    case "send-error":
-      setLastError(`${code}: ${msg}`);
-      break;
     default:
       route.surface satisfies never;
   }

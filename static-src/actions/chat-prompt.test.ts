@@ -6,11 +6,16 @@ vi.mock("../toast.js", () => ({
   info: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  errorWithAction: vi.fn(),
   showToast: vi.fn(),
 }));
 
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  newOpID: vi.fn(() => "op-test"),
 }));
 
 const { mockGet } = vi.hoisted(() => ({
@@ -35,11 +40,21 @@ vi.mock("../store.js", () => ({
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
+  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
+  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
+  // modules reached through it import `apiGet`. Nothing here calls either.
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
 }));
 
 import { send as transportSend } from "../transport.js";

@@ -109,6 +109,24 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	if s.isLive != nil && s.isLive(vibekit.ChatID(entry.name)) {
 		return purgeKept
 	}
+	// The second exemption: a chat with an OPEN TAB is never purged either. Same
+	// rule, different fact — a reader can have a chat open on the strip with no
+	// bridge running at all, and that reader is exactly who the age test cannot
+	// see, because reading a chat stamps nothing.
+	//
+	// Checked BEFORE the record lock, deliberately, and it is what keeps the lock
+	// order acyclic: the coordinator's operation lock is taken ahead of a chat
+	// record lock everywhere else, so a predicate that reached it from inside one
+	// would invert the order. (It reads the tab set under neither.)
+	//
+	// It makes retention OPT-OUT for a chat left open forever, which is accepted:
+	// that is the honest reading of "in use", it is what a reader expects from a
+	// tab they deliberately kept, and the alternative is closing a tab under
+	// someone to satisfy a timer. The draft exemption below has the same shape and
+	// the same answer.
+	if s.hasOpenTab != nil && s.hasOpenTab(vibekit.ChatID(entry.name)) {
+		return purgeKept
+	}
 	m := s.store.Lock(vibekit.ChatID(entry.name))
 	m.Lock()
 	info, err := os.Stat(entry.path)
@@ -124,7 +142,21 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	// fallback (see purgeReferenceTime). Capture the chain BEFORE the remove:
 	// onPurge fires afterwards, when the file is gone and the session ids are
 	// no longer readable.
-	refTime, chain := s.purgeReferenceTime(entry, info.ModTime())
+	refTime, chain, drafting := s.purgeReferenceTime(entry, info.ModTime())
+	// A chat holding an unsent draft is being WORKED IN, and the age test cannot
+	// see it: Store.SetDraft deliberately does not stamp UpdatedAt (a 600ms
+	// autosave would push the cutoff out a whole window per keystroke), so a
+	// paragraph typed into a month-old chat leaves it looking abandoned right up
+	// to the moment the reaper deletes it and the words with it. The exemption is
+	// the other half of that decision rather than a second rule: authored content
+	// nobody has sent is exactly what a retention window does not mean.
+	//
+	// The design's second predicate — skip a chat with an open TAB — is above,
+	// where it needs no chat load and cannot invert the lock order.
+	if drafting {
+		m.Unlock()
+		return purgeKept
+	}
 	if !refTime.Before(cutoff) {
 		m.Unlock()
 		return purgeKept
@@ -141,8 +173,8 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	return purgePurged
 }
 
-// purgeReferenceTime returns the time a purge decision ages from, plus the
-// chat's session chain.
+// purgeReferenceTime returns the time a purge decision ages from, the chat's
+// session chain, and whether the chat holds an unsent draft.
 //
 // The reference time is the chat's own UpdatedAt — its last activity — falling
 // back to the file mtime when the chat cannot be read. UpdatedAt rather than
@@ -150,21 +182,30 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 // rewrite, a settings-driven field change), and a purge that ages from those
 // would keep resetting its own clock.
 //
-// The chain rides along because this is the ONE place that already loads the
-// chat, and the purge needs it: `onPurge` fires after os.Remove(entry.path), so
-// by then the file is gone and the session ids are unreadable. Widening this
+// The chain and the draft flag ride along because this is the ONE place that
+// already loads the chat, and the purge needs both: `onPurge` fires after
+// os.Remove(entry.path), so by then the file is gone and the session ids are
+// unreadable, and the draft is a field the age test cannot reach. Widening this
 // read costs no extra I/O and needs no second hook. Caller holds the per-chat
 // mutex.
-func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string) {
+//
+// An unreadable chat reports no draft, which is the safe direction here: a file
+// the store cannot decode has no draft anyone can recover, so defending it would
+// keep a corrupt chat forever.
+func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string, drafting bool) {
 	c, err := s.store.Load(vibekit.ChatID(entry.name))
 	if err != nil {
-		return mtime, nil
+		return mtime, nil, false
 	}
 	chain := c.SessionChain()
+	// The DRAFT alone, and not the staged attachments beside it. An attachment is
+	// a path to a file that lives on disk in its own right, so purging the chat
+	// loses a reference; a draft is the only copy of the words themselves.
+	drafting = c.Draft != ""
 	if c.UpdatedAt <= 0 {
-		return mtime, chain
+		return mtime, chain, drafting
 	}
-	return time.UnixMilli(c.UpdatedAt), chain
+	return time.UnixMilli(c.UpdatedAt), chain, drafting
 }
 
 // logPurgeResult emits the end-of-pass summary at Warn when any entry

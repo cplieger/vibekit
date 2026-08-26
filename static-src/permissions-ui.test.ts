@@ -19,10 +19,15 @@ vi.mock("./persist.js", () => ({ patchSettings: mocks.patchSettings }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
   bindLoadingState: vi.fn(() => vi.fn()),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./actions/permissions.js", () => ({
   editNativeRule: { dispatch: vi.fn() },
   explainPolicy: { dispatch: vi.fn() },
+  setSecurityProfile: { dispatch: vi.fn() },
 }));
 
 import { initPermissionsUI } from "./permissions-ui.js";

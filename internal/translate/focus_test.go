@@ -50,7 +50,7 @@ func TestHandleSessionInfoUpdate_FocusAdoptsTitleAndStatus(t *testing.T) {
 		"title":       "Photo organizer CLI setup",
 		"description": "Planning module layout and creating the stub main.",
 		"status":      "in_progress",
-	}), "")
+	}), FrameAttribution{})
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -74,7 +74,7 @@ func TestHandleSessionInfoUpdate_FocusStatusOnly(t *testing.T) {
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"description": "Step 1 complete.",
 		"status":      "completed",
-	}), "")
+	}), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Name != "A" {
@@ -93,7 +93,7 @@ func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title": "Sub focus", "status": "in_progress",
-	}), "sub-1")
+	}), FrameAttribution{SubSessionID: "sub-1"})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Name != "A" {
@@ -133,7 +133,7 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 			}
 			tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{"title": tc.title}), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{"title": tc.title}), FrameAttribution{})
 
 			c, _ := store.Get(t.Context(), "c1")
 			if tc.adopt && c.Name != tc.title {
@@ -191,7 +191,7 @@ func TestHandleSessionInfoUpdate_FocusTitleRuneCapIsInclusive(t *testing.T) {
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 				"title": tc.title, "status": "in_progress",
-			}), "")
+			}), FrameAttribution{})
 
 			c, _ := store.Get(t.Context(), "c1")
 			if c.Name != tc.wantName {
@@ -235,7 +235,7 @@ func TestHandleSessionInfoUpdate_FocusBroadcastsOnlyWhenItHasSomethingToSay(t *t
 			deps, events, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, tc.focus), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, tc.focus), FrameAttribution{})
 
 			got := chatStatusPayloads(t, events)
 			if !tc.wantBroadcast {

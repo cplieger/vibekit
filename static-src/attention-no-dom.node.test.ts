@@ -47,6 +47,13 @@ vi.mock("./tabs.js", () => ({
   cueCandidates: (): [] => [],
   subscribeTabCues: (): (() => void) => (): void => undefined,
   setOnTabClosed: (): void => undefined,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./bus.js", () => ({
   BUS_TAB_CHANGED: "tabs:changed",
@@ -757,7 +764,7 @@ function harness(opts: { stored?: string } = {}): Harness {
   const applied: Attention[] = [];
   const controller = createAttentionController({
     candidates: () => candidates,
-    activeChatID: () => active,
+    activeTabID: () => active,
     pageVisible: () => visible,
     rowsInView: () => rows,
     storage,

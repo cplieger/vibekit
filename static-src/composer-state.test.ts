@@ -20,7 +20,13 @@ vi.mock("./actions/index.js", () => ({
     Object.assign(mockDispatch, { isPending: mockPending, flush: mockFlush, cancel: vi.fn() }),
   registerCleanup: vi.fn(),
 }));
-vi.mock("./actions/chat.js", () => ({ setDraft: { name: "chat.set_draft" } }));
+// Both composer writers, because attachments.ts dispatches through the same
+// debounced-action layer as the draft: a mock naming only one of them fails the
+// module's IMPORT, not an assertion, so the whole file goes red with no clue why.
+vi.mock("./actions/chat.js", () => ({
+  setDraft: { name: "chat.set_draft" },
+  setAttachments: { name: "chat.set_attachments" },
+}));
 
 import {
   initComposerState,
@@ -28,7 +34,8 @@ import {
   flushComposerDraft,
   saveComposerState,
   restoreComposerState,
-  seedComposerDraft,
+  seedComposerState,
+  adoptRemoteComposerState,
   dropComposerState,
   _resetComposerStateForTest,
 } from "./composer-state.js";
@@ -242,7 +249,7 @@ describe("adopting the server's draft (the reload case)", () => {
     setSessions([makeSession("c1", "survived the reload")]);
     restoreComposerState("c1");
     expect(input().value).toBe("");
-    seedComposerDraft("c1");
+    seedComposerState("c1");
     expect(input().value).toBe("survived the reload");
   });
 
@@ -251,7 +258,7 @@ describe("adopting the server's draft (the reload case)", () => {
     restoreComposerState("c1");
     input().value = "what the user is typing now";
     noteComposerText(input().value);
-    seedComposerDraft("c1");
+    seedComposerState("c1");
     // Unchanged: the fetch does not get to overwrite live typing.
     expect(input().value).toBe("what the user is typing now");
     saveComposerState();
@@ -264,7 +271,7 @@ describe("adopting the server's draft (the reload case)", () => {
     setSessions([makeSession("c1", "server copy")]);
     restoreComposerState("c1");
     input().value = "restored after a failed send";
-    seedComposerDraft("c1");
+    seedComposerState("c1");
     expect(input().value).toBe("restored after a failed send");
   });
 
@@ -272,7 +279,7 @@ describe("adopting the server's draft (the reload case)", () => {
     setSessions([makeSession("c1", "c1 draft"), makeSession("c2", "c2 draft")]);
     restoreComposerState("c2");
     input().value = "c2 live text";
-    seedComposerDraft("c1");
+    seedComposerState("c1");
     expect(input().value).toBe("c2 live text");
   });
 });
@@ -318,6 +325,33 @@ describe("attachments across a chat switch", () => {
     saveComposerState();
     restoreComposerState("c1");
     expect(takeAttachments()).toEqual([]);
+  });
+
+  // Dropping the LIVE chat's state clears the box, and that is not cosmetic. On
+  // an ordinary close the tab store activates a neighbour straight after, and
+  // restoreComposerState overwrites the box anyway; on the close that empties the
+  // strip nothing follows, so the text stayed on screen in a composer that was
+  // still live while removeChat had already pointed the store's active chat at an
+  // unrelated row. Send then posted it there, which is the reported "my message
+  // ended up in a previous tab".
+  it("clears the composer when the live chat's state is dropped", () => {
+    restoreComposerState("c1");
+    type("half a thought");
+
+    dropComposerState("c1");
+
+    expect(input().value).toBe("");
+  });
+
+  // The box belongs to whoever is live, so dropping some OTHER chat's state must
+  // not reach into it.
+  it("leaves the composer alone when a background chat's state is dropped", () => {
+    restoreComposerState("c1");
+    type("still typing");
+
+    dropComposerState("c2");
+
+    expect(input().value).toBe("still typing");
   });
 
   // The close and the failure race, and the close is the one that has to win: it
@@ -366,5 +400,105 @@ describe("attachments across a chat switch", () => {
     addAttachment("src/new.ts");
     addAttachmentTo("c1", "src/old.ts", stale); // refused
     expect(takeAttachments().map((a) => a.path)).toEqual(["src/new.ts"]);
+  });
+});
+
+// A `draft_changed` frame converges a device that is NOT typing. Before it, a
+// phone that had looked at a chat kept whatever it saw until the next full
+// activation — and a tab switch then flushed that stale copy back over the newer
+// one, which is the drift the local-authoritative rule exists to prevent in the
+// OTHER direction.
+describe("adopting a remote composer change", () => {
+  it("updates a chat this device is not looking at", () => {
+    restoreComposerState("c1");
+    adoptRemoteComposerState("c2", "typed on the desktop", []);
+
+    saveComposerState();
+    restoreComposerState("c2");
+    expect(input().value).toBe("typed on the desktop");
+  });
+
+  // The LIVE chat's map entry is authoritative: adopting there would overwrite the
+  // box under the caret with a value that was current 600ms ago somewhere else.
+  it("ignores a frame for the chat on screen", () => {
+    restoreComposerState("c1");
+    type("what I am typing right now");
+    adoptRemoteComposerState("c1", "what the desktop had", []);
+    expect(input().value).toBe("what I am typing right now");
+
+    // And the map, not just the box: a switch away and back must not surface it.
+    saveComposerState();
+    restoreComposerState("c2");
+    saveComposerState();
+    restoreComposerState("c1");
+    expect(input().value).toBe("what I am typing right now");
+  });
+
+  it("drops a frame with no chat id", () => {
+    restoreComposerState("c1");
+    type("mine");
+    adoptRemoteComposerState("", "nobody's", []);
+    expect(input().value).toBe("mine");
+  });
+
+  // Unlike the seed it does NOT lose to a local copy. The frame was produced by a
+  // write the server accepted, so it is newer than whatever this device flushed
+  // before it stopped typing in that chat.
+  it("replaces a parked draft rather than deferring to it", () => {
+    restoreComposerState("c1");
+    type("stale, flushed an hour ago");
+    saveComposerState();
+    restoreComposerState("c2");
+
+    adoptRemoteComposerState("c1", "fresh, from the desktop", []);
+
+    saveComposerState();
+    restoreComposerState("c1");
+    expect(input().value).toBe("fresh, from the desktop");
+  });
+
+  // BOTH halves ride one frame, because a receiver cannot know which of the two
+  // commands fired. Carrying only the field that moved would blank the other one.
+  it("carries the attachments with the text", () => {
+    restoreComposerState("c1");
+    adoptRemoteComposerState("c2", "look at these", ["docs/spec.pdf"]);
+
+    saveComposerState();
+    restoreComposerState("c2");
+    expect(input().value).toBe("look at these");
+    expect(takeAttachments().map((a) => a.path)).toEqual(["docs/spec.pdf"]);
+  });
+
+  // An adoption is not a local edit, so it must not schedule a save. Publishing it
+  // back would bump the record for a change that came from it, and every device
+  // would re-apply what it already had.
+  it("persists nothing", () => {
+    restoreComposerState("c1");
+    mockDispatch.mockClear();
+    adoptRemoteComposerState("c2", "from elsewhere", ["docs/spec.pdf"]);
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockFlush).not.toHaveBeenCalled();
+  });
+});
+
+// The seed adopts the whole composer, not half of it: a reload that restored the
+// sentence without the files it describes is worse than restoring neither.
+describe("seeding the staged attachments from the chat record", () => {
+  it("restores the row a reload emptied", () => {
+    setSessions([{ ...makeSession("c1", "half a question"), attachments: ["docs/spec.pdf"] }]);
+    restoreComposerState("c1");
+    seedComposerState("c1");
+
+    expect(input().value).toBe("half a question");
+    expect(takeAttachments().map((a) => a.path)).toEqual(["docs/spec.pdf"]);
+  });
+
+  it("loses to a row the user has already staged into", () => {
+    setSessions([{ ...makeSession("c1", ""), attachments: ["docs/theirs.pdf"] }]);
+    restoreComposerState("c1");
+    addAttachment("src/mine.ts");
+    seedComposerState("c1");
+
+    expect(takeAttachments().map((a) => a.path)).toEqual(["src/mine.ts"]);
   });
 });

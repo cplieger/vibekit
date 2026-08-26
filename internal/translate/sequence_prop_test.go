@@ -46,7 +46,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 					"status":     "in_progress",
 					"content":    []any{},
 				})
-				tr.HandleToolCall(t.Context(), chatID, payload, "")
+				tr.HandleToolCall(t.Context(), chatID, payload, FrameAttribution{})
 
 			case actToolCallUpdate:
 				if len(toolIDs) == 0 {
@@ -58,7 +58,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 					"status":     "completed",
 					"content":    []any{},
 				})
-				tr.HandleToolCallUpdate(t.Context(), chatID, payload, "")
+				tr.HandleToolCallUpdate(t.Context(), chatID, payload, FrameAttribution{})
 
 			case actPlan:
 				payload := mustJSONRapid(map[string]any{

@@ -43,7 +43,8 @@ import (
 // Growth is bounded by lifecycle events instead, which is the honest bound
 // because each one PROVES the request is no longer answerable: a successful
 // TakeIfPresent deletes the entry, and ClearForChat drops a chat's entries from
-// CmdCancel, CmdCloseChat and cleanupChatState (delete and archive). A handful of
+// CmdCancel, the chat-tab close teardown and cleanupChatState (delete and
+// archive). A handful of
 // structs per live chat, freed when that chat's turn ends.
 type pendingPermsTracker struct {
 	perms map[int64]vibekit.ServerEvent

@@ -243,7 +243,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 			defer restore()
 
 			deps, _, _ := depsWithStore(t, "c1")
-			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1", infoKindFrame(t, tt.kind), "")
+			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1", infoKindFrame(t, tt.kind), FrameAttribution{})
 
 			out := buf.String()
 			gotWarn := strings.Contains(out, "level=WARN") && strings.Contains(out, "UNKNOWN kind")
@@ -269,7 +269,7 @@ func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 
 	deps, _, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
-		json.RawMessage(`{"_meta":{"kiro":{}}}`), "")
+		json.RawMessage(`{"_meta":{"kiro":{}}}`), FrameAttribution{})
 
 	if out := buf.String(); out != "" {
 		t.Errorf("a kindless session_info_update logged %q, want silence", out)
@@ -366,7 +366,7 @@ func TestHandleSessionInfoUpdate_ContextPctArrivesOnEitherChannel(t *testing.T) 
 			deps, _, store := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", contextUsageInfo(t, key, 42.5), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", contextUsageInfo(t, key, 42.5), FrameAttribution{})
 
 			c, ok := store.Get(t.Context(), "c1")
 			if !ok {
@@ -396,7 +396,7 @@ func TestPersistTurnSummary_AnEmptyUnitCountsAsCredits(t *testing.T) {
 				summary["unit"] = unit
 			}
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, []map[string]any{summary}), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, []map[string]any{summary}), FrameAttribution{})
 
 			c, ok := store.Get(t.Context(), "c1")
 			if !ok {
@@ -420,8 +420,8 @@ func TestPersistTurnSummary_ZeroElapsedKeepsThePreviousDuration(t *testing.T) {
 	tr := New(rolesOf(deps))
 	credit := []map[string]any{{"unit": "credit", "usage": 0.25}}
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, credit), "")
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 0, credit), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, credit), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 0, credit), FrameAttribution{})
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -443,7 +443,7 @@ func TestPersistTurnSummary_ZeroCreditsIsNotRealSpend(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
-		turnSummaryInfo(t, 1200, []map[string]any{{"unit": "credit", "usage": 0.0}}), "")
+		turnSummaryInfo(t, 1200, []map[string]any{{"unit": "credit", "usage": 0.0}}), FrameAttribution{})
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {

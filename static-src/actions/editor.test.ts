@@ -6,18 +6,46 @@ vi.mock("../toast.js", () =>
   import("../__test-helpers__/toast-mock.js").then((m) => m.toastMock()),
 );
 
+// Every name in `api-client.ts`, because Browser Mode links ESM for real: a name
+// any module in this graph imports has to exist on the mock even when nothing
+// here calls it. Four names sufficed until the tab projection widened the graph
+// and `apiGetTyped` started being reached, and the symptom was not a missing
+// export. The `transport.js` mock below calls `importOriginal()`, which threw on
+// the broken link and killed the browser page, so the run reported a closed
+// connection rather than naming what it could not find. That is worth knowing
+// before debugging the next one.
+//
+// Listed rather than spread from `vi.importActual`: the real module's own graph
+// reaches `transport.js`, which this file also mocks, so importing it for real
+// inside a factory is circular and dies the same opaque way.
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
-
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  apiDelete: vi.fn(),
+  apiGetTyped: vi.fn(),
+  apiPostTyped: vi.fn(),
+  apiPutOrError: vi.fn(),
+  apiGetOrError: vi.fn(),
+  fetchKiroSetting: vi.fn(),
 }));
-vi.mock("../transport.js", async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const orig = await importOriginal<typeof import("../transport.js")>();
-  return { ...orig, send: vi.fn() };
-});
+// Every name in `transport.ts`, listed rather than spread from `importOriginal`.
+// This mock used to call it, and that is what turned a broken ESM link elsewhere
+// in the graph into an opaque "browser connection was closed": the factory threw
+// while resolving the real module, which kills the page instead of naming the
+// export it could not find. Listing is duller and it fails legibly.
+//
+// Only `send` needs to be inert; the four id minters are real because a test that
+// asserts on a request wants a real id in it, and `init` is never called here.
+vi.mock("../transport.js", () => ({
+  send: vi.fn(),
+  init: vi.fn(),
+  markHydrated: vi.fn(),
+  newMessageID: () => "m-test",
+  newRequestID: () => "r-test",
+  newOpID: () => "op-test",
+}));
 
 vi.mock("../editor-types.js", () => ({
   routeForPath: (path: string) => ({ writeURL: `/api/file?path=${encodeURIComponent(path)}` }),

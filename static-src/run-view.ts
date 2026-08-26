@@ -26,12 +26,13 @@
 // one more thing to keep in sync for no gain.
 // ---------------------------------------------------------------------------
 
-import { apiGet } from "./api-client.js";
-import { el } from "@cplieger/reactive";
-import { openRunTab } from "./tabs.js";
+import { el, effect } from "@cplieger/reactive";
+import { openRunTab, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks } from "./decision-dock.js";
 import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
 import { RUN_CONTROLS, CONTROL_LABEL, type RunVerb } from "./run-controls.js";
+import { invalidateRun, runState, runChatID, type RunNode, type RunState } from "./run-store.js";
+import { refreshRunDots, trackRun } from "./run-dots.js";
 
 /** Verb → its action. Separate from run-controls.ts's table on purpose: that
  *  module is the pure RULE and must stay importable without the actions
@@ -42,34 +43,6 @@ const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }
   cancel: cancelRun,
   retry: retryRun,
 };
-
-/** One node of a run's state tree, as KAS reports it. Recursive: a sequence or
- *  repeat node carries children, a step node is a leaf. */
-interface RunNode {
-  nodeId: string;
-  type: string;
-  status: string;
-  startedAt?: string;
-  endedAt?: string;
-  iteration?: number;
-  agentName?: string;
-  children?: RunNode[];
-}
-
-interface RunState {
-  workflowId: string;
-  workflowName?: string;
-  status?: string;
-  inputs?: Record<string, unknown>;
-  artifacts?: Record<string, unknown>;
-  capturedOutputs?: Record<string, string>;
-  root?: RunNode;
-}
-
-interface RunInspect {
-  workflowId: string;
-  state?: RunState;
-}
 
 /** The run this view is currently showing, so an SSE invalidation knows whether
  *  it is about the run on screen. Cleared when the view loads a different one;
@@ -92,7 +65,16 @@ let shownRunParentless = false;
  *  and give its dock somewhere to render. The dock host is mounted ONCE with a
  *  dynamic match — the run on screen — so tab switches re-key it without
  *  re-mounting. */
-function showRun(workflowID: string, owned: boolean, parentless: boolean): void {
+/** Point the run view at one run and mount its dock.
+ *
+ *  Exported for the tab factory (tab-materialize.ts): this is a run tab's
+ *  `onShow`, and the factory has to name it without importing the three openers
+ *  above, which build tabs. `parentless` is deliberately NOT derivable from a
+ *  `TabSubject` — see this module's callers and the factory's header: it asks
+ *  whether the RUN has a parent agent session, while a subject's `Parent` names
+ *  the open tab this one nests under, and a chat-parented run reviewed while its
+ *  chat's tab is closed has an empty Parent without being parentless. */
+export function showRun(workflowID: string, owned: boolean, parentless: boolean): void {
   shownRun = workflowID;
   shownRunOwned = owned;
   shownRunParentless = parentless;
@@ -101,7 +83,28 @@ function showRun(workflowID: string, owned: boolean, parentless: boolean): void 
     mountRunDecisionDock(dock, () => shownRun);
   }
   rerenderDocks();
-  void load(workflowID);
+  // ONE effect for the life of the module, installed on the first show. It reads
+  // `shownRun` through the store, so a tab switch re-points it with no teardown:
+  // the previous run's cell simply stops being read. Installing one per show would
+  // leak a subscription per tab opened.
+  installViewEffect();
+  invalidateRun(workflowID);
+}
+
+/** The view's single subscription to the store. Idempotent. */
+let viewEffectInstalled = false;
+function installViewEffect(): void {
+  if (viewEffectInstalled) {
+    return;
+  }
+  viewEffectInstalled = true;
+  effect(() => {
+    const id = shownRun;
+    if (id === "") {
+      return;
+    }
+    paint(id, runState(id));
+  });
 }
 
 /** Open a run REVIEW: read-only, closing the tab closes nothing. The History
@@ -112,11 +115,85 @@ function showRun(workflowID: string, owned: boolean, parentless: boolean): void 
  *  revision let those carry controls on the reasoning that a live run in History
  *  was otherwise a dead end. That is the wrong trade: History is where finished
  *  work is read, and a tab that can pause or cancel is a live surface wearing a
- *  record's clothes. The live door is the Workflows tab. */
-export function openRunView(workflowID: string, name: string, parentless = false): void {
-  openRunTab(workflowID, name, () => {
-    showRun(workflowID, false, parentless);
-  });
+ *  record's clothes. The live door is the Workflows tab.
+ *
+ *  PARENTLESSNESS is no longer an argument here. `showRun`'s third parameter asks
+ *  whether the RUN has a parent agent session, which is the run's own fact, and the
+ *  composition root answers it from the run store when it wires the factory's
+ *  opener — so a review and a restored tab agree instead of each door deciding.
+ *
+ *  `parentChatID` nests it under the chat that launched it when that chat has a
+ *  tab open, which is what makes a run reached from History land beside its own
+ *  conversation instead of at the end of the strip. History already holds the fact
+ *  (`run.parent_chat_id`); nothing new is fetched for it. When the caller does not
+ *  know it — the run card's "Open run" link, a `/run/{id}` deep link — the store's
+ *  own record of which chat launched the run answers instead.
+ *
+ *  NO offer guard here, unlike `openRunSubTab`. This is the RE-OPEN path: a reader
+ *  who closed the automatic tab and then clicked the run in its transcript is
+ *  asking for it back, and refusing them would be the opposite of respecting the
+ *  close. A parentless run, or one whose chat is not open, stays top-level —
+ *  `insertRow` would fall back to top-level for an absent parent anyway, and
+ *  asking first keeps the intent explicit rather than incidental. */
+export function openRunView(workflowID: string, name: string, parentChatID = ""): void {
+  const parentChat = parentChatID === "" ? runChatID(workflowID) : parentChatID;
+  // The PARENT is a tab id, and a chat id is no longer one — so the nesting
+  // question and the id it needs are the same lookup.
+  const parentTab = parentChat === "" ? "" : tabIdFor("chat", parentChat);
+  void openRunTab(
+    workflowID,
+    name,
+    parentTab === "" ? { owns: false } : { parent: parentTab, owns: false },
+  );
+}
+
+/** Open a run's tab PROACTIVELY, as a sub-tab of the chat whose agent launched it,
+ *  without stealing focus.
+ *
+ *  This is the surface a run needs and did not have. A run is initiated in a turn
+ *  and then outlives it: `run_workflow` returns as soon as the run is created, so
+ *  the launching turn ends and its card scrolls away while the run carries on for
+ *  minutes. The transcript keeps the RECORD, the tab carries the DETAIL, and the
+ *  strip carries the LIVENESS through this tab's dot — which is what shows a run
+ *  still executing while its chat's own dot has already gone green.
+ *
+ *  Four properties, each deliberate:
+ *
+ *   - NOT ACTIVATED. The strip is the reader's; a run the agent started on its own
+ *     may appear there but must not take the screen. The same `{ activate: false }`
+ *     the boot loop uses.
+ *   - `owns: false`. Closing it REMOVES A VIEW and stops nothing: not the run, and
+ *     not this client's observation of it, because the run's card in the launching
+ *     chat's transcript is a second live view of the same store cell. The chat's own
+ *     × is what cancels, via `close_chat` server-side (user decision).
+ *   - OFFERED ONCE PER CLIENT, and this is the load-bearing one. `openTab` dedupes
+ *     by id, which is not the same thing: a run emits a `run_progress` per node
+ *     event, so without this guard a reader who closed the tab would watch it
+ *     reappear within seconds, forever, and the app would be arguing with them. The
+ *     guard is what lets a progress frame still open a tab for a client that joined
+ *     MID-RUN and never saw `run_started` — first offer opens, a close is final.
+ *   - RE-OPENABLE on request. A close is final only for the automatic offer; the
+ *     card's "Open run" link and a `/run/{id}` deep link both go through
+ *     `openRunView`, which has no guard and nests under the same parent. That path
+ *     also FOCUSES a tab that is already open, because `openTab` activates an
+ *     existing id unless told not to — so one link serves both "show me this" and
+ *     "bring it back".
+ */
+const offered = new Set<string>();
+
+export function openRunSubTab(workflowID: string, name: string, parentChatID: string): void {
+  if (workflowID === "" || parentChatID === "" || offered.has(workflowID)) {
+    return;
+  }
+  const parentTab = tabIdFor("chat", parentChatID);
+  if (parentTab === "") {
+    // The launching chat has no tab here (a background chat on another device's
+    // arrangement). Not marked offered: if that chat opens later, the run still
+    // deserves its sub-tab.
+    return;
+  }
+  offered.add(workflowID);
+  void openRunTab(workflowID, name, { parent: parentTab, owns: false, activate: false });
 }
 
 /** Open a LAUNCHER-OWNED run tab: closing it CANCELS the run (user decision —
@@ -125,54 +202,39 @@ export function openRunView(workflowID: string, name: string, parentless = false
  *  these. Cancel is fire-and-forget: the terminal run_complete tears the
  *  server-side bridge down, and the run_finished event settles every list. */
 export function openLiveRunView(workflowID: string, name: string): void {
-  openRunTab(
-    workflowID,
-    name,
-    () => {
-      // A launcher-owned run came from LaunchRun, which is always parentless.
-      showRun(workflowID, true, true);
-    },
-    {
-      onClose: () => {
-        void cancelRun.dispatch(workflowID, { silent: true });
-      },
-    },
-  );
+  // `owns: true` is the whole difference from the review above, and it is a
+  // SUBJECT field now rather than a local spec choice — which is what lets the two
+  // coexist for one `(kind, ref)` on the wire. The × cancels through the factory's
+  // own onClose (tab-materialize.ts), so this door passes no callback: a launched
+  // run opened on one device and closed on another means stop either way.
+  void openRunTab(workflowID, name, { owns: true });
 }
 
-/** Re-read the run on screen, if it is this one.
- *
- *  This is the whole client half of the invalidation contract: a run event says
- *  only "something changed", and the state comes from `inspect`. Reconstructing a
- *  run from its events would garble it — `run_start` re-fires on every resume and
- *  `node_complete` carries neither iteration nor branch, so two passes of one
- *  loop are indistinguishable on the wire. */
-export function refreshRunView(workflowID: string): void {
-  if (workflowID !== "" && workflowID === shownRun) {
-    void load(workflowID);
-  }
-}
-
-async function load(workflowID: string): Promise<void> {
+/** Paint the view from a store value. `undefined` means the first fetch has not
+ *  resolved, which is the ONLY case that shows a loading row: a refetch driven by
+ *  an invalidation must not blank a run the reader is looking at, several times a
+ *  minute on a busy one. */
+function paint(workflowID: string, state: RunState | undefined): void {
   const container = document.getElementById("run-body");
   if (container === null) {
     return;
   }
-  // Only the FIRST paint shows a loading row. A refetch driven by an
-  // invalidation would otherwise blank a run the user is reading, several times a
-  // minute on a busy run.
-  if (container.childElementCount === 0) {
-    container.replaceChildren(el("div", { className: "list-empty" }, "Loading run…"));
-  }
-
-  const d = await apiGet<RunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
-  if (d?.state === undefined) {
-    container.replaceChildren(
-      el("div", { className: "list-empty" }, "Couldn't load this run. It may have been deleted."),
-    );
+  if (state === undefined) {
+    if (container.childElementCount === 0) {
+      container.replaceChildren(el("div", { className: "list-empty" }, "Loading run\u2026"));
+    }
     return;
   }
-  const state = d.state;
+  // Nudge the tab dot. A run launched from the Workflows tab is painted by the
+  // `run_started` frame that follows, but a tab restored on boot or opened from
+  // History lands on a run already going, and a PAUSED run emits no frames at all
+  // — so without this its dot would sit blank for as long as the pause lasts.
+  // Unconditional now that every run's tab carries a dot, not just a parentless
+  // one's. Both calls are needed: `trackRun` admits a run this client has seen no
+  // event for (a tab restored on boot), and `refreshRunDots` repaints one it
+  // already knows, where `trackRun` is a no-op.
+  trackRun(workflowID);
+  refreshRunDots();
   const parts: HTMLElement[] = [];
 
   parts.push(

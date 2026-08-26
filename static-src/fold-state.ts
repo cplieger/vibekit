@@ -22,7 +22,8 @@
 // answers from the projection plus the user's own overrides.
 // ---------------------------------------------------------------------------
 
-import * as uiState from "./ui-state.js";
+import { LS_TURN_FOLDS_KEY } from "./ls-keys.js";
+import { readPerChat, writePerChat } from "./per-chat-store.js";
 import type { Turn } from "./turns.js";
 
 /** How many trailing turns stay open regardless of anything else. */
@@ -33,7 +34,14 @@ const OPEN_TAIL = 2;
  *
  *  Keyed by the turn's opening MESSAGE id rather than its ordinal, because an
  *  ordinal shifts when a rewind drops turns and would then point at a different
- *  turn than the one the reader opened. */
+ *  turn than the one the reader opened.
+ *
+ *  PER-DEVICE, in localStorage. It used to be `ui-state.turn_folds`, shared with
+ *  every other device, and that failed the arrangement's own test: a fold is a
+ *  disclosure state, so sharing it meant one screen rearranged a transcript
+ *  someone else was reading. Bounded by chat count with oldest-first eviction,
+ *  because nothing purges it any more — the `forgetChatFolds` call on chat_deleted
+ *  existed only because the state was global. */
 type Overrides = Record<string, boolean>;
 const overrides = new Map<string, Overrides>();
 
@@ -49,21 +57,39 @@ function load(): void {
     return;
   }
   loaded = true;
-  // sanitize() guarantees the field exists, so no fallback is needed here.
-  const raw = uiState.load().turn_folds;
-  for (const [chatID, byTurn] of Object.entries(raw)) {
-    overrides.set(chatID, { ...byTurn });
+  for (const [chatID, byTurn] of Object.entries(readPerChat(LS_TURN_FOLDS_KEY, validOverrides))) {
+    overrides.set(chatID, byTurn);
   }
 }
 
-function persist(): void {
-  const out: Record<string, Overrides> = {};
-  for (const [chatID, byTurn] of overrides) {
-    if (Object.keys(byTurn).length > 0) {
-      out[chatID] = byTurn;
+/** Validate one chat's overrides, dropping any entry that is not a boolean.
+ *
+ *  Per entry rather than per chat: hand-edited or stale bytes must not reach the
+ *  renderer's open/closed decision, and the honest failure is one fold falling
+ *  back to the automatic rule rather than a whole chat losing its overrides. */
+function validOverrides(v: unknown): Overrides | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return undefined;
+  }
+  const out: Overrides = {};
+  for (const [turnID, open] of Object.entries(v as Record<string, unknown>)) {
+    if (turnID !== "" && typeof open === "boolean") {
+      out[turnID] = open;
     }
   }
-  uiState.save({ turn_folds: out });
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Persist ONE chat's overrides, which is what lets the store evict by chat.
+ *
+ *  A whole-document write would have nothing to re-insert, so "oldest" could not
+ *  mean anything and the eviction order would be whatever the map happened to
+ *  hold. An empty record is written as a DELETE so a chat with nothing to remember
+ *  does not occupy a slot. */
+function persist(chatID: string): void {
+  const byTurn = overrides.get(chatID);
+  const value = byTurn !== undefined && Object.keys(byTurn).length > 0 ? byTurn : undefined;
+  writePerChat(LS_TURN_FOLDS_KEY, Object.fromEntries(overrides), chatID, value);
 }
 
 /** Whether a turn renders open.
@@ -71,8 +97,18 @@ function persist(): void {
  *  `index` and `total` position the turn in the CURRENTLY PROJECTED list, which
  *  is the resident window rather than the session. That is the right frame: the
  *  two open turns are the two the reader is looking at, and a turn scrolled off
- *  the top of history is not one of them. */
-export function isTurnOpen(chatID: string, t: Turn, index: number, total: number): boolean {
+ *  the top of history is not one of them.
+ *
+ *  `hasLiveRun` is passed rather than derived, for the same reason `pendingAsk` is
+ *  passed into `tabStatusFor`: the answer needs the run store and the message list,
+ *  and this module must stay a pure fold-state rule that knows about neither. */
+export function isTurnOpen(
+  chatID: string,
+  t: Turn,
+  index: number,
+  total: number,
+  hasLiveRun = false,
+): boolean {
   load();
   const explicit = overrides.get(chatID)?.[t.id];
   if (explicit !== undefined) {
@@ -90,6 +126,17 @@ export function isTurnOpen(chatID: string, t: Turn, index: number, total: number
   if (t.outcome === "running") {
     return true;
   }
+  // A turn holding a LIVE WORKFLOW RUN, however far back it is. Its own outcome is
+  // long settled: `run_workflow` returns as soon as the run is created, so the turn
+  // completes while the run carries on for minutes, and the tail rule would fold
+  // the only surface still showing the work. Sticky like a failure, and for the
+  // same reason — the thing the reader needs is not where the tail rule looks.
+  //
+  // This rule exists only because a run's card lives in a turn. If a run's home
+  // ever moves out of the transcript, delete it with the card.
+  if (hasLiveRun) {
+    return true;
+  }
   return index >= total - OPEN_TAIL;
 }
 
@@ -102,7 +149,7 @@ export function setTurnOpen(chatID: string, turnID: string, open: boolean): void
     overrides.set(chatID, byTurn);
   }
   byTurn[turnID] = open;
-  persist();
+  persist(chatID);
 }
 
 // There is no hasTurnOverride accessor. The distinction it was for — a
@@ -131,11 +178,15 @@ export function clearSearchOpened(chatID: string): boolean {
   return true;
 }
 
-/** Forget a deleted chat's overrides so the store does not grow without bound. */
-export function forgetChatFolds(chatID: string): void {
-  load();
-  if (overrides.delete(chatID)) {
-    persist();
-  }
-  searchOpened.delete(chatID);
+// There is no forgetChatFolds. It existed only because the overrides lived in one
+// global blob where an entry per deleted chat accumulated forever, and its one
+// caller was the chat_deleted handler. Per-chat storage bounds itself by chat count
+// with oldest-first eviction (per-chat-store.ts), so a purged or deleted chat needs
+// nobody to tell this module about it.
+
+/** @internal Test seam: reset the module between cases. */
+export function _resetFoldStateForTest(): void {
+  overrides.clear();
+  searchOpened.clear();
+  loaded = false;
 }

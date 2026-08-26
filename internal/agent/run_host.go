@@ -148,7 +148,19 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	// session/new-time notifications land there are drained once Forward
 	// starts.
 	bridge := rs.bridges.factory()
-	if sErr := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: rs.lifecycle.shutdownCtx}); sErr != nil {
+	// Presets carry the active security profile, same as a chat bridge. A run
+	// executes agent work with the same tools, so a run at a different posture than
+	// the chats beside it would be a gap nobody selected — and the unattended path
+	// is where that matters most, since nobody is watching to answer a prompt the
+	// profile was meant to remove. ToolSearch and Knowledge ride along for exactly
+	// the same reason: a workflow step reaching for a knowledge base or an MCP tool
+	// is the same agent doing the same work.
+	if sErr := bridge.Start(cctx, &vibekit.StartOpts{
+		Lifetime:   rs.lifecycle.shutdownCtx,
+		Presets:    securityPresets(cctx, rs.lifecycle.configDir),
+		ToolSearch: toolSearchEnabled(cctx, rs.lifecycle.configDir),
+		Knowledge:  knowledgeEnabled(cctx, rs.lifecycle.configDir),
+	}); sErr != nil {
 		return "", "", fmt.Errorf("run bridge start: %w", sErr)
 	}
 
@@ -347,7 +359,12 @@ func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
 	recipe := rs.recipeOf(cctx, workflowID)
 
 	bridge := rs.bridges.factory()
-	if err := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: rs.lifecycle.shutdownCtx}); err != nil {
+	if err := bridge.Start(cctx, &vibekit.StartOpts{
+		Lifetime:   rs.lifecycle.shutdownCtx,
+		Presets:    securityPresets(cctx, rs.lifecycle.configDir),
+		ToolSearch: toolSearchEnabled(cctx, rs.lifecycle.configDir),
+		Knowledge:  knowledgeEnabled(cctx, rs.lifecycle.configDir),
+	}); err != nil {
 		return fmt.Errorf("retry bridge start: %w", err)
 	}
 	// Register BEFORE the call, for the same reason Launch does: retry's first
@@ -822,7 +839,8 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 }
 
 // CancelForChat cancels every non-terminal run this chat's sessions launched.
-// The tab-close half of the run lifecycle (command.CmdCloseChat): a run is
+// The tab-close half of the run lifecycle (the teardown close_tab runs for a
+// chat tab, command.closeChatTeardown): a run is
 // durable state, so killing the chat's process only PAUSES it — it must be told
 // to cancel, per run, while the owning bridge is still alive to say it.
 //

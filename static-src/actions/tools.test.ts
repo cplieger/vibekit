@@ -7,6 +7,7 @@ vi.mock("../toast.js", () => ({
   info: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  errorWithAction: vi.fn(),
   showToast: vi.fn(),
 }));
 

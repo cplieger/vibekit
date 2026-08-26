@@ -44,7 +44,8 @@ import {
   clearTurnDone,
   get,
 } from "./store.js";
-import type { ChatHeader, PermissionNeededPayload, Session } from "./types.js";
+import type { ChatHeader, PermissionNeededPayload, Session, TabKind } from "./types.js";
+import type { TabDotStatus } from "./tab-view.js";
 
 function session(over: Partial<Session> = {}): Session {
   return {
@@ -146,17 +147,44 @@ vi.mock("./tabs-drag.js", () => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
-vi.mock("./ui-state.js", () => ({
-  load: vi.fn(() => ({ tab_order: [], pinned_tabs: [], active_view: "" })),
-  save: vi.fn(),
-  patch: vi.fn(),
-}));
+// The tab set is SERVER-owned, so a row lands on the strip through a real round
+// trip against the fake collection: `send` answers the four tab commands off it
+// and emits the frames, `newOpID` mints the correlation id.
+vi.mock("./transport.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
+);
+vi.mock("./device-view.js", () => {
+  let active = "";
+  return {
+    activeView: vi.fn(() => active),
+    setActiveView: vi.fn((id: string) => {
+      active = id;
+    }),
+  };
+});
+vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
+vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 
-// store-load's one HTTP call, stubbed at the boundary so the reconcile logic
-// under test is the real one.
+// TWO readers of `apiGetTyped` in this graph and they answer different routes:
+// store-load's chat read (stubbed at the boundary so the reconcile logic under
+// test is the real one) and tabs-sync's `GET /api/tabs`, which the harness answers
+// off the fake collection.
 const { mockApiGetTyped } = vi.hoisted(() => ({ mockApiGetTyped: vi.fn() }));
-vi.mock("./api-client.js", () => ({ apiGetTyped: mockApiGetTyped }));
-vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
+vi.mock("./api-client.js", () =>
+  import("./__test-helpers__/tabs-server.js").then((m) => {
+    const listTabs = m.tabListRead();
+    return {
+      apiGetTyped: vi.fn((path: string, decode: unknown) =>
+        path === "/api/tabs" ? listTabs(path) : mockApiGetTyped(path, decode),
+      ),
+    };
+  }),
+);
+// `./actions/index.js` is deliberately NOT mocked. It is the actions framework's
+// re-export, and `actions/tabs.ts` — the four tab mutations the projection
+// dispatches — needs its whole surface, so a one-symbol stub no longer links. The
+// harness resets the framework instead, which is what the action suites do.
 
 // The dock's two leaves that reach for DOM it does not own, plus the toast,
 // mocked exactly as decision-dock.test.ts mocks them.
@@ -169,7 +197,7 @@ vi.mock("./editor-openers.js", () => ({
   openFileGitDiff: vi.fn(),
 }));
 vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
-vi.mock("./toast.js", () => ({ info: vi.fn() }));
+vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
 /** The tab strip's real render target, so renderDOM runs for real. */
 vi.mock("./dom.js", () => {
@@ -249,24 +277,77 @@ function nameFromContents(row: HTMLElement): string {
     .trim();
 }
 
+// ---------------------------------------------------------------------------
+// The projection harness the DOM sections below share.
+//
+// Every row on the strip arrives through a real `open_tab` round trip against the
+// fake collection, so the ids are OPAQUE and server-minted: nothing here composes
+// `c1` or `editor:a.ts`, and a row is addressed through `tabIdFor` after it
+// exists. The tab's activation and teardown hooks are the FACTORY's, registered
+// the way the composition root registers them, and the seeded dot rides that same
+// registration rather than a field a caller sets.
+// ---------------------------------------------------------------------------
+
+const seededDots = new Map<string, TabDotStatus>();
+
+async function resetProjection(): Promise<void> {
+  const { _resetForTest } = await import("./tabs.js");
+  const { registerTabOpeners, _resetTabOpenersForTest } = await import("./tab-materialize.js");
+  const { _resetTabsSyncForTest, ingestTabsChanged, listTabs } = await import("./tabs-sync.js");
+  const { resetActionFramework } = await import("./actions/__test-helpers__/action-test-setup.js");
+  const { bindTabsSync, tabServer } = await import("./__test-helpers__/tabs-server.js");
+  bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
+  tabServer.reset();
+  _resetTabsSyncForTest();
+  _resetTabOpenersForTest();
+  seededDots.clear();
+  registerTabOpeners({
+    chat: {
+      show: vi.fn(),
+      close: vi.fn(),
+      dot: (chatID: string) => seededDots.get(chatID) ?? "",
+    },
+    editor: { show: vi.fn(), close: vi.fn() },
+    run: { show: vi.fn(), cancel: vi.fn() },
+  });
+  resetActionFramework();
+  _resetForTest();
+  document.body.innerHTML = '<div id="tab-list"></div>';
+}
+
+/** Open a tab of any kind and answer with its minted id. */
+async function openSubject(
+  kind: TabKind,
+  ref = "",
+  opts: { activate?: boolean } = {},
+): Promise<string> {
+  const { openTab, tabIdFor } = await import("./tabs.js");
+  await openTab({
+    kind,
+    ref,
+    ...(opts.activate === undefined ? {} : { activate: opts.activate }),
+  });
+  return tabIdFor(kind, ref);
+}
+
 describe("the tab's accessible name announces its state", () => {
+  /** The chat tab's opaque id, for the cases that write to it after opening. */
+  let chatTabID = "";
+
   beforeEach(async () => {
-    const { _resetForTest } = await import("./tabs.js");
-    _resetForTest();
-    document.body.innerHTML = '<div id="tab-list"></div>';
+    await resetProjection();
+    chatTabID = "";
   });
 
   async function openChat(): Promise<HTMLElement> {
-    const { openTab } = await import("./tabs.js");
-    openTab({
-      id: "c1",
-      name: "Fix the parser",
-      kind: "chat",
-      view: "#chat-view",
-      route: { kind: "chat", id: "c1" },
-    });
+    const { renameTab } = await import("./tabs.js");
+    chatTabID = await openSubject("chat", "c1");
+    // The store holds no row for this chat, so the factory's derived default is a
+    // placeholder. The label a caller knows is the one field of a spec it may
+    // override, which is exactly how the run and chat openers supply theirs.
+    renameTab(chatTabID, "Fix the parser");
     await paint();
-    const row = document.querySelector<HTMLElement>('[data-tab-id="c1"]');
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${chatTabID}"]`);
     if (row === null) {
       throw new Error("tab did not render");
     }
@@ -281,7 +362,7 @@ describe("the tab's accessible name announces its state", () => {
     // neighbours and never announces a chat with no state.
     expect(nameFromContents(row)).toBe("Fix the parser, idle");
 
-    setTabStatus("c1", "working");
+    setTabStatus(chatTabID, "working");
     expect(nameFromContents(row)).toBe("Fix the parser, working");
   });
 
@@ -290,7 +371,7 @@ describe("the tab's accessible name announces its state", () => {
     const row = await openChat();
     const spoken = new Map<string, string>();
     for (const s of ["idle", "working", "waiting", "input", "failed", "done"] as const) {
-      setTabStatus("c1", s);
+      setTabStatus(chatTabID, s);
       spoken.set(s, nameFromContents(row));
     }
     // `waiting` and `input` share one VISUAL (a 9px disc has no channel left to
@@ -305,7 +386,7 @@ describe("the tab's accessible name announces its state", () => {
   it("does not claim a TURN failed for a failure that had no turn in it", async () => {
     const { setTabStatus } = await import("./tabs.js");
     const row = await openChat();
-    setTabStatus("c1", "failed");
+    setTabStatus(chatTabID, "failed");
     // The latch behind this state is set for every `error` frame naming the chat,
     // and that deliberately includes `switch_failed` and `bridge_start_failed` —
     // failures with no turn in them. The breadth is right (a chat whose bridge
@@ -319,9 +400,9 @@ describe("the tab's accessible name announces its state", () => {
   it("keeps the state word between the name and the pinned marker", async () => {
     const { setTabStatus, setTabPinned } = await import("./tabs.js");
     const row = await openChat();
-    setTabPinned("c1", true);
+    setTabPinned(chatTabID, true);
     await paint();
-    setTabStatus("c1", "input");
+    setTabStatus(chatTabID, "input");
     // Both extra words compose onto the name, in the order they are read: what
     // this chat IS, then what it needs, then how it is filed. That ordering falls
     // out of DOM position, which is the only reason the announced word is a
@@ -338,17 +419,12 @@ describe("the tab's accessible name announces its state", () => {
   });
 
   it("leads a chat row with the dot and gives every other kind its glyph", async () => {
-    const { openTab } = await import("./tabs.js");
     const chat = await openChat();
-    openTab({
-      id: "__files__",
-      name: "Files",
-      kind: "files",
-      view: "#files-view",
-      route: { kind: "files", path: "" },
-    });
+    // A singleton's ref is EMPTY: its identity is its kind, so the `__files__`
+    // sentinel id is gone with every other composed one.
+    const filesID = await openSubject("files");
     await paint();
-    const files = document.querySelector<HTMLElement>('[data-tab-id="__files__"]');
+    const files = document.querySelector<HTMLElement>(`[data-tab-id="${filesID}"]`);
 
     // The replacement: a chat tab has no role glyph at all, and its leading
     // element is the dot. That position is what the CSS's `:first-child` slot
@@ -810,9 +886,7 @@ describe("an abandoned ask does not keep a chat in input", () => {
 
 describe("a row built later paints the state its chat is in", () => {
   beforeEach(async () => {
-    const { _resetForTest } = await import("./tabs.js");
-    _resetForTest();
-    document.body.innerHTML = '<div id="tab-list"></div>';
+    await resetProjection();
   });
 
   function statusOf(id: string): string | null {
@@ -823,110 +897,67 @@ describe("a row built later paints the state its chat is in", () => {
     );
   }
 
-  it("paints the seed the opener derived, not the idle floor", async () => {
-    const { openTab } = await import("./tabs.js");
-    // What openChatTab now passes: the state tabStatusFor derives from the chat
-    // this client already holds. This is the boot restore.
-    openTab({
-      id: "c1",
-      name: "Fix the parser",
-      kind: "chat",
-      dotStatus: "working",
-      view: "#chat-view",
-      route: { kind: "chat", id: "c1" },
-    });
+  it("paints the seed the factory derived, not the idle floor", async () => {
+    // What the factory derives from the chat this client already holds, through the
+    // registered `dot` hook. This is the boot restore: the collection is adopted
+    // before any dot write, so the row has to be BUILT with the right state.
+    seededDots.set("c1", "working");
+    const id = await openSubject("chat", "c1");
     await paint();
-    expect(statusOf("c1")).toBe("working");
+    expect(statusOf(id)).toBe("working");
   });
 
   it("paints a status written before its row existed", async () => {
-    const { openTab, setTabStatus } = await import("./tabs.js");
-    openTab(
-      {
-        id: "c1",
-        name: "Fix the parser",
-        kind: "chat",
-        view: "#chat-view",
-        route: { kind: "chat", id: "c1" },
-      },
-      { activate: false },
-    );
+    const { setTabStatus } = await import("./tabs.js");
+    const id = await openSubject("chat", "c1", { activate: false });
     // renderDOM is rAF-deferred, so this lands while the row does not exist —
     // which is the ordering every state change that arrives during boot has.
-    setTabStatus("c1", "failed");
+    setTabStatus(id, "failed");
     await paint();
-    expect(statusOf("c1")).toBe("failed");
+    expect(statusOf(id)).toBe("failed");
   });
 
-  it("keeps the dot through a promote, which rebuilds the row on purpose", async () => {
-    const { openTab, setTabStatus, promoteTab } = await import("./tabs.js");
-    openTab({
-      id: "parent",
-      name: "Parent",
-      kind: "chat",
-      view: "#chat-view",
-      route: { kind: "chat", id: "parent" },
-    });
-    openTab({
-      id: "c2",
-      name: "Tangent",
-      kind: "chat",
-      parentId: "parent",
-      view: "#chat-view",
-      route: { kind: "chat", id: "c2" },
-    });
+  it("keeps the dot through a rebuild, which a pin change forces", async () => {
+    // `promoteTab` is gone with the reparent it performed: `TabSubject.Parent` is
+    // set at open and never reassigned, which is what makes a parent cycle
+    // unrepresentable. The rebuild it exercised is still reachable — dropping the
+    // node and making the store emit is what any re-render after a lost row does —
+    // so the property survives with the mechanism that remains.
+    const { openTab, setTabStatus, setTabPinned, tabIdFor } = await import("./tabs.js");
+    const parent = await openSubject("chat", "parent");
+    await openTab({ kind: "chat", ref: "c2", parent });
+    const child = tabIdFor("chat", "c2");
     await paint();
-    setTabStatus("c2", "input");
-    expect(statusOf("c2")).toBe("input");
+    setTabStatus(child, "input");
+    expect(statusOf(child)).toBe("input");
 
-    // promoteTab removes the node deliberately (draggability is decided at
-    // creation), so the rebuilt row is a fresh createTabEl with no session write
-    // behind it. Before the spec held the value, this reset a blocked chat to idle.
-    promoteTab("c2");
+    document.querySelector(`[data-tab-id="${child}"]`)?.remove();
+    await setTabPinned(parent, true);
     await paint();
-    expect(statusOf("c2")).toBe("input");
+    expect(statusOf(child)).toBe("input");
   });
 
   it("still floors a chat row at idle and leaves other kinds blank", async () => {
-    const { openTab } = await import("./tabs.js");
-    openTab({
-      id: "c3",
-      name: "New",
-      kind: "chat",
-      view: "#chat-view",
-      route: { kind: "chat", id: "c3" },
-    });
-    openTab({
-      id: "editor:a.ts",
-      name: "a.ts",
-      kind: "editor",
-      view: "#editor-view",
-      route: { kind: "file", path: "a.ts" },
-    });
+    const chat = await openSubject("chat", "c3");
+    const editor = await openSubject("editor", "a.ts");
     await paint();
-    expect(statusOf("c3")).toBe("idle");
+    expect(statusOf(chat)).toBe("idle");
     // An editor tab with nothing unsaved has no state to show, and `[data-status]`
     // is the CSS reveal condition, so the attribute must be ABSENT rather than "".
-    expect(statusOf("editor:a.ts")).toBeNull();
+    expect(statusOf(editor)).toBeNull();
   });
 
   it("carries the editor's dirty mark through a rebuild, in both directions", async () => {
-    const { openTab, setTabDirty, setTabPinned } = await import("./tabs.js");
-    const id = "editor:b.ts";
-    openTab({
-      id,
-      name: "b.ts",
-      kind: "editor",
-      view: "#editor-view",
-      route: { kind: "file", path: "b.ts" },
-    });
+    const { setTabDirty, setTabPinned } = await import("./tabs.js");
+    const id = await openSubject("editor", "b.ts");
     await paint();
 
-    /** Rebuild the row the way promoteTab does — drop the node, then make the
-     *  store emit — so createTabEl runs again with no write behind it. */
+    /** Rebuild the row — drop the node, then make the store emit — so createTabEl
+     *  runs again with no write behind it. A pin is a `changed` upsert, which is
+     *  the cheapest real emit available. */
     async function rebuild(pinned: boolean): Promise<void> {
       document.querySelector(`[data-tab-id="${id}"]`)?.remove();
-      setTabPinned(id, pinned);
+      await setTabPinned(id, pinned);
       await paint();
     }
 
@@ -953,58 +984,47 @@ describe("a row built later paints the state its chat is in", () => {
 // process would be a claim about a turn that ended before the page loaded.
 // ---------------------------------------------------------------------------
 
-describe("the dot status never reaches localStorage", () => {
+// The dot is LIVE state, and the projection is what makes that structural rather
+// than a rule someone has to remember: a `TabSubject` has no dot field at all, so
+// there is nothing for a dot write to travel on. `dotVersion` is the other half —
+// a dot write does not `emit()`, so it queues no re-render.
+describe("the dot is local and costs the projection nothing", () => {
   beforeEach(async () => {
-    const { _resetForTest } = await import("./tabs.js");
-    _resetForTest();
-    document.body.innerHTML = '<div id="tab-list"></div>';
-    vi.clearAllMocks();
+    await resetProjection();
   });
 
-  it("saves ids only, never a TabSpec field", async () => {
-    const { openTab, setTabStatus, setTabPinned } = await import("./tabs.js");
-    const { save } = await import("./ui-state.js");
-    openTab({
-      id: "c1",
-      name: "Fix the parser",
-      kind: "chat",
-      view: "#chat-view",
-      route: { kind: "chat", id: "c1" },
-    });
-    setTabPinned("c1", true);
-    setTabStatus("c1", "failed");
+  it("puts no dot on the wire, whatever the row is showing", async () => {
+    const { setTabStatus, setTabPinned } = await import("./tabs.js");
+    const { tabServer } = await import("./__test-helpers__/tabs-server.js");
+    const id = await openSubject("chat", "c1");
+    await setTabPinned(id, true);
+    setTabStatus(id, "failed");
     await paint();
 
-    const patches = vi.mocked(save).mock.calls.map(([patch]) => patch);
-    expect(patches.length).toBeGreaterThan(0);
-    for (const patch of patches) {
-      // The subscriber writes three named keys derived from ids. That derivation is
-      // what makes the exclusion structural rather than a rule someone has to
-      // remember: a spec field cannot travel unless a key is added here for it.
-      expect(Object.keys(patch ?? {}).sort()).toEqual(["active_view", "pinned_tabs", "tab_order"]);
-      expect(JSON.stringify(patch)).not.toContain("failed");
-      expect(JSON.stringify(patch)).not.toContain("dotStatus");
-    }
+    // Every command this device sent, in full. A dot cannot reach the collection
+    // because no payload has a field for it — which is stronger than a rule about
+    // what a writer must not send.
+    const payloads = JSON.stringify(tabServer.sent());
+    expect(tabServer.sent().length).toBeGreaterThan(0);
+    expect(payloads).not.toContain("failed");
+    expect(payloads).not.toContain("dotStatus");
+    // And the collection itself holds no trace of it.
+    expect(JSON.stringify(tabServer.subjects())).not.toContain("failed");
   });
 
-  it("does not run the persistence subscriber for a dot change at all", async () => {
-    const { openTab, setTabStatus } = await import("./tabs.js");
-    const { save } = await import("./ui-state.js");
-    openTab({
-      id: "c1",
-      name: "Fix the parser",
-      kind: "chat",
-      view: "#chat-view",
-      route: { kind: "chat", id: "c1" },
-    });
+  it("sends nothing at all for a dot change", async () => {
+    const { setTabStatus } = await import("./tabs.js");
+    const { tabServer } = await import("./__test-helpers__/tabs-server.js");
+    const id = await openSubject("chat", "c1");
     await paint();
-    const before = vi.mocked(save).mock.calls.length;
-    setTabStatus("c1", "working");
-    setTabStatus("c1", "done");
+    const before = tabServer.sent().length;
+    setTabStatus(id, "working");
+    setTabStatus(id, "done");
     await paint();
-    // A status write is a direct DOM paint plus a spec field; emitting would put a
-    // localStorage write and a full re-render on every streaming state change.
-    expect(vi.mocked(save).mock.calls.length).toBe(before);
+    // A status write is a direct DOM paint plus a row field, and it deliberately
+    // does not emit: emitting would put a full re-render on every streaming state
+    // change, and a mutation would put a round trip there.
+    expect(tabServer.sent()).toHaveLength(before);
   });
 });
 

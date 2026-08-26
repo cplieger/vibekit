@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
   apiGetOrError: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
 }));
 
 vi.mock("./banner-stack.js", () => ({

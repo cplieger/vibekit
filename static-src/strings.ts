@@ -128,3 +128,29 @@ export function windowSpans(spans: readonly TextSpan[], kept: readonly KeptRange
   }
   return out;
 }
+
+/** A wall-clock span, for a reader rather than a machine.
+ *
+ *  One tenth of a second below a minute, because a turn or a step that took 0.4s
+ *  and one that took 4s read differently and the difference is the point; whole
+ *  seconds above it, because nobody reads a tenth off "2m 31.4s". Zero returns
+ *  "0.0s" rather than an empty string — a caller decides whether a zero span is
+ *  worth showing, and every current one checks first.
+ *
+ *  Lives here rather than in the turn footer that used to own it because the run
+ *  card states the same kind of value in three places (the run's clock, a step's
+ *  duration, the ledger) and a second copy of the thresholds would drift. Pure
+ *  text, so it is testable without a DOM. */
+export function formatElapsed(ms: number): string {
+  if (ms >= 3_600_000) {
+    const h = Math.floor(ms / 3_600_000);
+    const m = Math.floor((ms % 3_600_000) / 60_000);
+    return `${String(h)}h ${String(m)}m`;
+  }
+  if (ms >= 60_000) {
+    const m = Math.floor(ms / 60_000);
+    const s = Math.floor((ms % 60_000) / 1000);
+    return `${String(m)}m ${String(s)}s`;
+  }
+  return `${(ms / 1000).toFixed(1)}s`;
+}

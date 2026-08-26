@@ -28,10 +28,16 @@ func (d *benchDeps) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, 
 func (d *benchDeps) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {
 	return nil
 }
-func (d *benchDeps) SetDraft(context.Context, vibekit.ChatID, string) error { return nil }
-func (d *benchDeps) Delete(context.Context, vibekit.ChatID) error           { return nil }
-func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent)         {}
-func (d *benchDeps) Bridge(vibekit.ChatID) Bridge                           { return nil }
+func (d *benchDeps) SetDraft(context.Context, vibekit.ChatID, string) (*vibekit.ComposerState, error) {
+	return nil, nil
+}
+
+func (d *benchDeps) SetAttachments(context.Context, vibekit.ChatID, []string) (*vibekit.ComposerState, error) {
+	return nil, nil
+}
+func (d *benchDeps) Delete(context.Context, vibekit.ChatID) error   { return nil }
+func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent) {}
+func (d *benchDeps) Bridge(vibekit.ChatID) Bridge                   { return nil }
 func (d *benchDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
@@ -53,8 +59,8 @@ func (d *benchDeps) IsEmptyTurn(*vibekit.RPCResponse, vibekit.ChatID) bool { ret
 func (d *benchDeps) EmitTurnEndedWithStats(context.Context, vibekit.ChatID, *vibekit.RPCResponse, TurnStats) {
 }
 
-func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID) {}
-func (d *benchDeps) LatchTurnModel(vibekit.ChatID, string)               {}
+func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID, string) {}
+func (d *benchDeps) LatchTurnModel(vibekit.ChatID, string)                       {}
 
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called
 // with zero-value arguments without panicking.

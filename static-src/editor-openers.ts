@@ -4,8 +4,7 @@
 
 import { $ } from "./dom.js";
 import { effect } from "@cplieger/reactive";
-import { openEditorView, editorTabID, setTabDirty, getActiveTabId } from "./tabs.js";
-import * as uiState from "./ui-state.js";
+import { openEditorView, tabIdFor, setTabDirty, getActiveTabId } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { abortSuggestion, clearSuggestionState } from "./editor-conflict.js";
@@ -116,21 +115,43 @@ interface OpenOpts {
 // Per-file dirty->tab-indicator effects, disposed on close.
 const dirtyTabUnbinds = new Map<string, () => void>();
 
+/** This module's state for one path, created on first sight.
+ *
+ *  TWO callers, and that is what the tab collection made necessary: `open()`,
+ *  which is a reader deliberately opening a file, and `activateFile`, which is
+ *  the editor tab's `onShow` and therefore also runs for a tab this device did
+ *  not open — one restored from the server's set at boot, or opened on another
+ *  device. Before the collection there was a third path
+ *  (`restoreEditorTabs(ui.editor_files)`) seeding the map from a second list of
+ *  the same paths; an editor tab's path IS its subject's `ref` now, so the seed is
+ *  the activation itself.
+ *
+ *  The dirty binding is installed here rather than at `open()` for the same
+ *  reason: a restored tab is entitled to its unsaved mark. */
+function ensureFileState(path: string): FileState {
+  const existing = fileStates.get(path);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = freshState(path);
+  fileStates.set(path, created);
+  dirtyTabUnbinds.set(
+    path,
+    effect(() => {
+      // Resolved on every run rather than captured: the tab id is opaque and
+      // server-minted, so it does not exist until `open_tab` has answered, and
+      // this effect's first run happens before that. `setTabDirty` no-ops on ""
+      // and the effect re-runs on the next dirty change, by which time the row is
+      // there.
+      setTabDirty(tabIdFor("editor", path), created.dirty.value);
+    }),
+  );
+  return created;
+}
+
 function open(path: string, opts: OpenOpts): void {
   saveCurrentState();
-  let state = fileStates.get(path);
-  if (state === undefined) {
-    state = freshState(path);
-    fileStates.set(path, state);
-    persistOpenFiles();
-    const created = state;
-    dirtyTabUnbinds.set(
-      path,
-      effect(() => {
-        setTabDirty(editorTabID(path), created.dirty.value);
-      }),
-    );
-  }
+  const state = ensureFileState(path);
   state.mode.value = opts.mode;
   if (opts.repo !== undefined) {
     state.repo = opts.repo;
@@ -145,19 +166,26 @@ function open(path: string, opts: OpenOpts): void {
   // Activating unconditionally afterwards ran a FIRST open twice, and each
   // activation issues a /api/file read against a fresh AbortController — the
   // second one aborted the first, so the wasted round trip was invisible.
-  const wasActive = getActiveTabId() === editorTabID(path);
-  openEditorView(
-    path,
-    () => {
+  //
+  // The non-empty check is what keeps that true under OPAQUE ids: `tabIdFor`
+  // answers "" for a file with no tab and `getActiveTabId` answers "" for an empty
+  // strip, so a bare comparison reads two absences as a match and re-fires the
+  // fallback on the first open into an empty strip — the same wasted round trip,
+  // through a different door.
+  const openID = tabIdFor("editor", path);
+  const wasActive = openID !== "" && getActiveTabId() === openID;
+  // Only the TAB half of this function moved to the projection. Everything above
+  // — the mode, the repo, the pending line — is written BEFORE the tab exists and
+  // has to be: they are this opener's arguments, and `activateFile` reads them the
+  // moment the tab is activated. So the open is fired and the route is pushed
+  // without waiting, exactly as before, and the two halves that DO need the row
+  // (the already-active re-activation, and the dirty binding above) find it
+  // through the one lookup.
+  void openEditorView(path).then(() => {
+    if (wasActive) {
       activateFile(path);
-    },
-    () => {
-      closeEditorFile(path);
-    },
-  );
-  if (wasActive) {
-    activateFile(path);
-  }
+    }
+  });
   const line = opts.line;
   pushRoute(line !== undefined && line > 0 ? { kind: "file", path, line } : { kind: "file", path });
 
@@ -225,10 +253,11 @@ export function activateFile(path: string): void {
   activeLoadController?.abort();
   activeLoadController = new AbortController();
   setActiveFilePath(path);
-  const state = fileStates.get(path);
-  if (state === undefined) {
-    return;
-  }
+  // CREATED if absent. This is the editor tab's `onShow`, so it runs for a tab
+  // this device did not open — restored from the server's set at boot, or opened
+  // on another device — and returning early there left the view blank with a tab
+  // above it. The path is all the state needs.
+  const state = ensureFileState(path);
   $.editorFilename.textContent = routeForPath(path).displayPath;
   $.editorError.classList.add("hidden");
   $.editorHighlight.parentElement?.scrollTo(0, 0);
@@ -312,9 +341,12 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   applyPendingLine(state.path);
 }
 
-function persistOpenFiles(): void {
-  uiState.save({ editor_files: [...fileStates.keys()] });
-}
+// persistOpenFiles is GONE, and so is `ui-state.editor_files`. An editor tab's
+// path IS its subject's `ref`, so the open set is already in the one collection
+// that decides what is open — a second list of the same paths could only disagree
+// with it, and did: a path in `editor_files` with no tab in `tab_order` was
+// recovered as a synthetic id, which is the last consumer of the retired
+// `editor:<path>` convention.
 
 /** Tear down one open file's client state.
  *
@@ -327,7 +359,7 @@ function persistOpenFiles(): void {
  *
  *  Ownership runs one way now. The store owns the tab, this owns the file state,
  *  and neither reaches into the other. To close a file programmatically, close
- *  its tab: `closeTab(editorTabID(path))`. */
+ *  its tab: `closeTab(tabIdFor("editor", path))`. */
 export function closeEditorFile(path: string): void {
   const state = fileStates.get(path);
   if (state?.mode.value.kind === "conflict") {
@@ -343,5 +375,4 @@ export function closeEditorFile(path: string): void {
   if (activeFilePath === path) {
     setActiveFilePath("");
   }
-  persistOpenFiles();
 }

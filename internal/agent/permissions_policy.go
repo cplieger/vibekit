@@ -43,13 +43,36 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 	return newUtilityRuntime(
 		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.Models,
 		utilitySessionHooks{
-			onHooksChanged:    rt.config.broadcastHooksChanged,
-			onGovernanceState: rt.config.cacheGovernanceFromUtility,
-			tokenSource:       rt.inbound.kiroAccessTokenResult,
+			onHooksChanged:       rt.config.broadcastHooksChanged,
+			onGovernanceState:    rt.config.cacheGovernanceFromUtility,
+			onPolicyNotification: rt.forwardPolicyNotification,
+			presets: func(ctx context.Context) []string {
+				return securityPresets(ctx, rt.lifecycle.configDir)
+			},
+			tokenSource: rt.inbound.kiroAccessTokenResult,
 		},
 		rt.secrets,
 		true, // enableHooks
 	)
+}
+
+// forwardPolicyNotification hands a _kiro/policy/{changed,error} notification the
+// UTILITY session received to the same translator the chat dispatch table uses,
+// so one decode and one payload shape serve both doors. Both events are
+// broadcast workspace-global (empty chatID) and are pure invalidations, so a
+// chat bridge and the utility session both reporting the same reload costs the
+// client one extra refetch and nothing else.
+//
+// context.Background(), like broadcastHooksChanged: forward is a goroutine with
+// no request behind it, and the frame it carries must not be dropped because
+// whatever wrote the file has since returned.
+func (rt *Runtime) forwardPolicyNotification(msg *vibekit.RPCResponse) {
+	switch msg.Method {
+	case methodV3PolicyChanged:
+		rt.translator.HandlePolicyChanged(context.Background(), "", msg)
+	case methodV3PolicyError:
+		rt.translator.HandlePolicyError(context.Background(), "", msg)
+	}
 }
 
 // PolicyList returns the native policy rules, optionally filtered to one

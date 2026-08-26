@@ -31,8 +31,13 @@
 //
 // Read and write are deliberately NOT declared here. `fs._meta.kiro.readFile` /
 // `writeFile` would move them off the `fs/read_text_file` / `fs/write_text_file`
-// rung vibekit implements — the rung that carries the supervised staging path —
-// onto this one, which has no staging. See `vibekit-acp.md`.
+// rung vibekit implements onto this one, and that rung's handlers are where every
+// guardrail on a KAS-side write lives: path confinement, the size ceiling,
+// permission-bit preservation, atomic replace, and the agent-ignore read filter.
+//
+// It is NOT about supervised staging, which is what this comment used to say.
+// Staging is gone — KAS gates the whole turn and restores a rejected action
+// through an ordinary fs/write_text_file. See `vibekit-acp.md`.
 
 package agent
 

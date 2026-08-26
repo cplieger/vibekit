@@ -492,8 +492,15 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     return section;
   }
 
-  // Action bar
-  inner.appendChild(renderActionBar(r));
+  // Action bar — omitted entirely when the repo state services no action.
+  // Every button in it is state-gated (see renderActionBar), so a clean,
+  // in-sync, stash-free repo produced an EMPTY bar: a zero-height flex child
+  // that still consumes the column's `gap: var(--sp-3)`, which read as 12px of
+  // dead space above "Clean." with nothing to account for it.
+  const actionBar = renderActionBar(r);
+  if (actionBar.childElementCount > 0) {
+    inner.appendChild(actionBar);
+  }
 
   // Open-PR hint after a successful push (transient).
   if (recentlyPushed.has(r.repo) && isFeatureBranch(r.branch)) {
@@ -695,6 +702,15 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     bindingCleanups.push(
       bindLoadingState(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop),
     );
+  }
+
+  // A separator with nothing after it — file ops rendered, but the state
+  // services no sync op (a tree whose only change is an untracked file, in
+  // sync, no stashes) — is dropped. `.action-bar-sep` paints a visible 1px
+  // tick, so a trailing one separates a cluster from nothing.
+  const tail = bar.lastElementChild;
+  if (tail?.classList.contains("action-bar-sep") === true) {
+    tail.remove();
   }
 
   return bar;

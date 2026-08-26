@@ -14,6 +14,10 @@ vi.mock("../toast.js", () => ({
 
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  newOpID: vi.fn(() => "op-test"),
 }));
 
 const storeMessages: { id: string }[] = [];
@@ -32,20 +36,31 @@ vi.mock("../store.js", () => ({
   removeChat: vi.fn(),
   reinsertSession: vi.fn(),
   indexOfSession: () => 0,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
-vi.mock("../send-state.js", () => ({
-  clearLastError: vi.fn(),
+vi.mock("../failure-notice.js", () => ({
+  clearFailure: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
+  // Present-but-inert so real-ESM linking succeeds. The tab projection widened
+  // this graph: `apiGetTyped` is how tabs-sync reads `GET /api/tabs`, and other
+  // modules reached through it import `apiGet`. Nothing here calls either.
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
 }));
 
 import { send as transportSend } from "../transport.js";
 import { setThinking } from "../store.js";
-import { clearLastError } from "../send-state.js";
+import { clearFailure } from "../failure-notice.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { sendPrompt } from "./chat.js";
 
@@ -61,7 +76,7 @@ const args = {
 beforeEach(() => {
   resetActionFramework();
   mockSend.mockReset();
-  vi.mocked(clearLastError).mockReset();
+  vi.mocked(clearFailure).mockReset();
   vi.mocked(setThinking).mockReset();
   storeMessages.length = 0;
 });
@@ -80,8 +95,9 @@ describe("sendPrompt — dead POST with live SSE is non-authoritative", () => {
     const result = await sendPrompt.dispatch(args);
 
     expect(result).toBe("sent");
-    // The blocked send-state painted by transport must be cleaned up.
-    expect(clearLastError).toHaveBeenCalled();
+    // The failure toast transport already raised must be retracted: it would
+    // otherwise stand over a turn the reader can watch streaming.
+    expect(clearFailure).toHaveBeenCalledWith("c1");
     // thinking stays true (the optimistic set), NOT rolled back: the
     // turn is genuinely running; SSE turn_ended will clear it.
     const calls = vi.mocked(setThinking).mock.calls;
@@ -112,7 +128,7 @@ describe("sendPrompt — dead POST with live SSE is non-authoritative", () => {
       expect(await p).toBeNull();
       // Rollback cleared thinking — the send truly failed.
       expect(vi.mocked(setThinking).mock.calls).toContainEqual(["c1", false]);
-      expect(clearLastError).not.toHaveBeenCalled();
+      expect(clearFailure).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -124,6 +140,6 @@ describe("sendPrompt — dead POST with live SSE is non-authoritative", () => {
     storeMessages.push({ id: "m-echo-1" });
     mockSend.mockResolvedValue({ ok: false, status: 500, error: "boom" });
     expect(await sendPrompt.dispatch(args)).toBeNull();
-    expect(clearLastError).not.toHaveBeenCalled();
+    expect(clearFailure).not.toHaveBeenCalled();
   });
 });

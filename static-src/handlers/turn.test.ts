@@ -41,12 +41,21 @@ vi.mock("../decision-dock.js", () => ({
 
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
 
-const mockSetLastError = vi.fn();
-const mockClearLastError = vi.fn();
+const mockSetAgentDown = vi.fn();
+const mockClearAgentDown = vi.fn();
 vi.mock("../send-state.js", () => ({
-  setLastError: mockSetLastError,
-  clearLastError: mockClearLastError,
+  setAgentDown: mockSetAgentDown,
+  clearAgentDown: mockClearAgentDown,
   setSSEStatus: vi.fn(),
+}));
+
+const mockReportFailure = vi.fn();
+vi.mock("../failure-notice.js", () => ({
+  reportFailure: mockReportFailure,
+  // Present-but-undefined so real-ESM linking succeeds: actions/chat.js is in this
+  // graph and imports the name, and Browser Mode links for real rather than
+  // reading properties off a namespace object. No path under test calls it.
+  clearFailure: undefined,
 }));
 
 // There is no isPermissionNeededEnabled to mock: the permission ask has no
@@ -106,6 +115,7 @@ vi.mock("../banner-stack.js", () => ({
 // Capture SSE handlers via shared helper.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
 vi.mock("../bus.js", () => createBusMock());
+import { refreshTurnRail } from "../turn-rail.js";
 
 // Import after mocks so turn.ts registers its handlers against the bus mock.
 const { ERROR_ROUTES } = await import("./turn.js");
@@ -188,19 +198,26 @@ describe("ERROR_ROUTES", () => {
     ],
     ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
     ["compaction_failed", { surface: "banner", level: "error", dismissible: true }],
-    ["switch_failed", { surface: "send-error", level: "error", dismissible: false }],
-    ["bridge_start_failed", { surface: "send-error", level: "error", dismissible: false }],
-    ["prompt_failed", { surface: "send-error", level: "error", dismissible: false }],
+    // The four failed-ATTEMPT codes. Each ends the turn and each leaves a
+    // promptable chat behind, which is why none of them reaches the send button:
+    // an alert icon on the control whose job is to send claims the chat is dead,
+    // and it is not. The reason lands on a toast and on the turn's own divider.
+    ["switch_failed", { surface: "toast", level: "error", dismissible: false }],
+    ["prompt_failed", { surface: "toast", level: "error", dismissible: false }],
+    // A pick refused before it reached the wire: same surface as switch_failed,
+    // which is the other half of choosing a model.
+    ["model_not_served", { surface: "toast", level: "error", dismissible: false }],
+    // Empty-turn recovery could not respawn or resend. Routed explicitly rather
+    // than left to the unknown-code fallthrough, on the one error whose meaning is
+    // "the automatic repair failed".
+    ["recovery_failed", { surface: "toast", level: "error", dismissible: false }],
+    // The ONE code that earns the send button's alert face: kiro-cli could not be
+    // spawned, so there is no ACP connection behind this chat to send to. Every
+    // other code here happened to a live agent.
+    ["bridge_start_failed", { surface: "agent-down", level: "error", dismissible: false }],
     // The chat runs, just not in the requested mode, and one click on the mode
-    // pill fixes it — so a dismissible warning banner rather than a send error.
+    // pill fixes it — so a dismissible warning banner rather than a failure.
     ["mode_not_applied", { surface: "banner", level: "warning", dismissible: true }],
-    // A pick refused before it reached the wire: the send that carried it is what
-    // failed, same surface as switch_failed.
-    ["model_not_served", { surface: "send-error", level: "error", dismissible: false }],
-    // Empty-turn recovery could not respawn or resend. It was routed NOWHERE
-    // before, so it reached setLastError with no level and no banner on the one
-    // error whose meaning is "the automatic repair failed".
-    ["recovery_failed", { surface: "send-error", level: "error", dismissible: false }],
   ];
 
   it.each(expectedRoutes)(
@@ -311,6 +328,20 @@ describe("turn_ended side effects", () => {
     expect(steerCount("chat-1")).toBe(0);
   });
 
+  // turn_ended is the only moment the set of turns changes, so it is the only
+  // moment the rail re-reads its session-wide index — including the FIRST turn
+  // of a chat that was empty when it was activated, whose marker exists nowhere
+  // until this fires. The id has to be the frame's, and the rail only adopts a
+  // result for the chat it was pointed at, so this and the activation-time
+  // pointing are two halves of one thing.
+  it("re-reads the rail's index for the chat the frame names", () => {
+    setSessions([makeSession("chat-1"), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(refreshTurnRail).toHaveBeenCalledWith("chat-1");
+  });
+
   // The dot's headline promise is "your background chat finished", and the signal
   // it used to rest on — the agent's own `completed` status — only arrives when
   // the model calls update_session_information. A turn that ended without one
@@ -398,7 +429,8 @@ describe("error handler", () => {
       true,
       undefined,
     );
-    expect(mockSetLastError).not.toHaveBeenCalled();
+    expect(mockReportFailure).not.toHaveBeenCalled();
+    expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -420,10 +452,12 @@ describe("error handler", () => {
     setActive("chat-2");
     fireSSE("error", "chat-1", { code: "agent_config_error", message: "bad agent front matter" });
     expect(get("chat-1")?.thinking).toBe(true);
-    // The prose is still active-chat only, so a background chat's config error
-    // must not claim the reader's banner or send button either.
+    // A banner is still active-chat only, so a background chat's config error must
+    // not claim the reader's banner stack or send button.
     expect(mockShowBanner).not.toHaveBeenCalled();
-    expect(mockSetLastError).not.toHaveBeenCalled();
+    expect(mockSetAgentDown).not.toHaveBeenCalled();
+    // And nothing toasts: a banner-class error is not a failed send.
+    expect(mockReportFailure).not.toHaveBeenCalled();
   });
 
   // D115: a banner whose route names a setting carries a working in-app jump,
@@ -476,25 +510,69 @@ describe("error handler", () => {
     expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
     // Not a Settings jump: the login modal is not in Settings at all.
     expect(mockOpenSetting).not.toHaveBeenCalled();
-    // And not the send-error surface: it is not this send that is broken.
-    expect(mockSetLastError).not.toHaveBeenCalled();
+    // And neither failure surface: it is not one send that is broken.
+    expect(mockReportFailure).not.toHaveBeenCalled();
+    expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
-  it("routes a send-error-class error to setLastError", () => {
+  // The 2026-08 routing change, and the assertion the user's complaint reduces
+  // to: a throttle / 5xx / capacity failure goes to the toast, carrying the
+  // server's prose VERBATIM (no `code: ` prefix — the code is machine vocabulary
+  // in front of a human sentence), and it does NOT touch the send button.
+  it.each(["prompt_failed", "recovery_failed", "switch_failed", "model_not_served"])(
+    "routes %s to the toast and leaves the send button alone",
+    (code) => {
+      setSessions([makeSession("chat-1", { thinking: true })]);
+      setActive("chat-1");
+      fireSSE("error", "chat-1", { code, message: "boom" });
+      expect(get("chat-1")?.thinking).toBe(false);
+      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom");
+      expect(mockSetAgentDown).not.toHaveBeenCalled();
+      expect(mockShowBanner).not.toHaveBeenCalled();
+    },
+  );
+
+  // The one code that DOES earn the button's alert face: kiro-cli could not be
+  // spawned, so this chat has no ACP connection behind it and the icon is a true
+  // statement rather than a claim about one attempt.
+  it("routes bridge_start_failed to the send button, not the toast", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
-    fireSSE("error", "chat-1", { code: "prompt_failed", message: "boom" });
+    fireSSE("error", "chat-1", { code: "bridge_start_failed", message: "spawn failed" });
     expect(get("chat-1")?.thinking).toBe(false);
-    expect(mockSetLastError).toHaveBeenCalledWith("prompt_failed: boom");
-    expect(mockShowBanner).not.toHaveBeenCalled();
+    expect(mockSetAgentDown).toHaveBeenCalledWith("spawn failed");
+    expect(mockReportFailure).not.toHaveBeenCalled();
   });
 
-  it("falls through unknown codes to the send-button blocker", () => {
+  // A BACKGROUND chat's failure now reaches the user, which is the hole the old
+  // routing left: the prose was dropped for every non-active chat, so a failed
+  // background turn had nothing but a tab dot. A toast claims no shared control,
+  // so it is safe to raise from any chat; the send button still is not.
+  it("reports a background chat's failure and spares its send button", () => {
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+    fireSSE("error", "chat-1", { code: "prompt_failed", message: "at capacity" });
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity");
+
+    mockReportFailure.mockClear();
+    fireSSE("error", "chat-1", { code: "bridge_start_failed", message: "spawn failed" });
+    expect(mockSetAgentDown).not.toHaveBeenCalled();
+  });
+
+  it("falls through unknown codes to the toast", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "mystery_code", message: "huh" });
     expect(get("chat-1")?.thinking).toBe(false);
-    expect(mockSetLastError).toHaveBeenCalledWith("mystery_code: huh");
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "huh");
+  });
+
+  // An empty message is the only time machine vocabulary beats nothing.
+  it("uses the code when an unknown error carries no message", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "mystery_code", message: "" });
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "mystery_code");
   });
 });
 

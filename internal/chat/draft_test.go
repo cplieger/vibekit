@@ -57,7 +57,7 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		if err := s.SetDraft(t.Context(), "c1", "half a question"); err != nil {
+		if _, err := s.SetDraft(t.Context(), "c1", "half a question"); err != nil {
 			t.Fatalf("SetDraft: %v", err)
 		}
 		got, ok := s.Get(t.Context(), "c1")
@@ -95,7 +95,7 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("writeChat: %v", err)
 		}
 
-		if err := s.SetDraft(t.Context(), "c1", "typed and walked away"); err != nil {
+		if _, err := s.SetDraft(t.Context(), "c1", "typed and walked away"); err != nil {
 			t.Fatalf("SetDraft: %v", err)
 		}
 		after, ok := s.Get(t.Context(), "c1")
@@ -145,10 +145,10 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		if err := s.SetDraft(t.Context(), "c1", "something"); err != nil {
+		if _, err := s.SetDraft(t.Context(), "c1", "something"); err != nil {
 			t.Fatalf("SetDraft: %v", err)
 		}
-		if err := s.SetDraft(t.Context(), "c1", ""); err != nil {
+		if _, err := s.SetDraft(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("SetDraft clear: %v", err)
 		}
 		got, _ := s.Get(t.Context(), "c1")
@@ -166,7 +166,7 @@ func TestSetDraft(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewStore: %v", err)
 		}
-		if err := s.SetDraft(t.Context(), "c-nope", "text"); err != nil {
+		if _, err := s.SetDraft(t.Context(), "c-nope", "text"); err != nil {
 			t.Fatalf("SetDraft: %v", err)
 		}
 		if _, ok := s.Get(t.Context(), "c-nope"); ok {
@@ -181,10 +181,10 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		if err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", vibekit.MaxDraftBytes+1)); err == nil {
+		if _, err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", vibekit.MaxDraftBytes+1)); err == nil {
 			t.Error("oversize draft accepted")
 		}
-		if err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", vibekit.MaxDraftBytes)); err != nil {
+		if _, err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", vibekit.MaxDraftBytes)); err != nil {
 			t.Errorf("draft at exactly the cap rejected: %v", err)
 		}
 	})
@@ -198,7 +198,7 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		if err := s.SetDraft(t.Context(), "c1", string([]byte{0xff, 0xfe})); err == nil {
+		if _, err := s.SetDraft(t.Context(), "c1", string([]byte{0xff, 0xfe})); err == nil {
 			t.Error("invalid UTF-8 draft accepted")
 		}
 	})
@@ -218,7 +218,7 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c2")
-		if err := s.SetDraft(t.Context(), "c2", "c2's own unsent question"); err != nil {
+		if _, err := s.SetDraft(t.Context(), "c2", "c2's own unsent question"); err != nil {
 			t.Fatalf("SetDraft c2: %v", err)
 		}
 		c2Before := readRawChat(t, dir, "c2")
@@ -226,7 +226,7 @@ func TestSetDraft(t *testing.T) {
 		// c1's file claims to be c2.
 		writeRawChat(t, dir, "c1", `{"id":"c2","name":"impostor","messages":[]}`)
 
-		if err := s.SetDraft(t.Context(), "c1", "a draft typed into c1"); err == nil {
+		if _, err := s.SetDraft(t.Context(), "c1", "a draft typed into c1"); err == nil {
 			t.Error("SetDraft accepted a chat file holding another chat's id; an autosave for c1 writes the whole object over c2.json")
 		}
 		// Clearing the composer is the same save with empty text, and the planted
@@ -234,7 +234,7 @@ func TestSetDraft(t *testing.T) {
 		// shortcut. It must report the corruption rather than return nil: this is
 		// the save a user makes without thinking about it, and a silent success
 		// here is a broken file nobody hears about.
-		if err := s.SetDraft(t.Context(), "c1", ""); err == nil {
+		if _, err := s.SetDraft(t.Context(), "c1", ""); err == nil {
 			t.Error("SetDraft returned nil for an empty draft on a mismatched file; the corruption stayed silent")
 		}
 		if got := readRawChat(t, dir, "c2"); got != c2Before {

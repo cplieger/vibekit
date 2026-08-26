@@ -40,6 +40,9 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
 	b.secretStorage = opts.SecretStorage
+	b.presets = opts.Presets
+	b.toolSearch = opts.ToolSearch
+	b.knowledge = opts.Knowledge
 	b.extraArgs = opts.ExtraArgs
 	if opts.SessionID != "" && !ids.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
@@ -90,7 +93,7 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	}
 	var err error
 	if opts.SessionID != "" {
-		err = b.loadSession(hctx, opts.SessionID, opts.Model)
+		err = b.loadSession(hctx, opts)
 	} else {
 		err = b.newSession(hctx, opts)
 		// Fail CLOSED when the budget expired inside newSession. Its appliers are

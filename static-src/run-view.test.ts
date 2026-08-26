@@ -17,37 +17,56 @@ interface RunInspectReply {
   state?: { workflowId: string; status?: string; capturedOutputs?: Record<string, string> };
 }
 
+/** What a door decided, which is all a door decides now: `owns` (does the ×
+ *  stop the run) and `parent` (which chat it nests under). Both are SUBJECT
+ *  fields, so they travel to every device rather than living in a local spec. */
 interface OpenedTab {
   id: string;
-  onShow: () => void;
-  // Explicitly `| undefined`: a review tab pushes onClose: undefined, and
-  // exactOptionalPropertyTypes distinguishes that from an absent property.
-  onClose?: (() => void) | undefined;
+  opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
 }
 
 // Hoisted with the vi.mock factories below, which run before ordinary top-level
 // initialisers and would otherwise read these in their TDZ.
 const m = vi.hoisted(() => ({
   reply: { current: undefined as unknown },
-  opened: [] as { id: string; onShow: () => void; onClose?: (() => void) | undefined }[],
+  opened: [] as {
+    id: string;
+    opts?: { parent?: string; owns?: boolean; activate?: boolean } | undefined;
+  }[],
   dispatched: [] as string[],
 }));
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(m.reply.current)),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 
 vi.mock("./tabs.js", () => ({
+  // The spec is the FACTORY's now, so there is no onShow and no onClose to
+  // capture: what a door decides is `owns` (does the × stop the run) and
+  // `parent` (which chat it nests under), both subject fields.
   openRunTab: vi.fn(
-    (id: string, _name: string, onShow: () => void, opts?: { onClose?: () => void }) => {
-      m.opened.push({ id, onShow, onClose: opts?.onClose });
+    (id: string, _name: string, opts?: { parent?: string; owns?: boolean; activate?: boolean }) => {
+      m.opened.push({ id, opts });
+      return Promise.resolve();
     },
   ),
+  // Both reached through run-dots.js, which run-view imports to seed a parentless
+  // run's tab dot from the fetch. "" keeps the seed inert here: this suite opens
+  // no real tabs, so there is no dot to paint.
+  tabIdFor: vi.fn(() => ""),
+  setTabStatus: vi.fn(),
 }));
 
 vi.mock("./decision-dock.js", () => ({
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
+  // Reached through run-dots.js, which run-view imports to seed a parentless
+  // run's tab dot from the fetch.
+  hasPendingDecision: vi.fn(() => false),
 }));
 
 vi.mock("./actions/runs.js", () => {
@@ -65,7 +84,10 @@ vi.mock("./actions/runs.js", () => {
   };
 });
 
-import { openRunView, openLiveRunView } from "./run-view.js";
+// `showRun` is what the tab FACTORY calls as the run tab's activation hook
+// (registered by the composition root), so it is the seam this suite paints
+// through — a door no longer carries an `onShow` of its own.
+import { openRunView, openLiveRunView, showRun } from "./run-view.js";
 
 /** Open a run through one of the two doors and let its first paint settle.
  *  Returns the control labels on screen, in order. */
@@ -96,7 +118,10 @@ async function paint(
   if (tab === undefined) {
     throw new Error("the opener did not open a tab");
   }
-  tab.onShow();
+  // The activation hook, driven the way the composition root wires it: `owns` is
+  // the subject fact the door set, and `parentless` is the RUN's own fact — no
+  // chat launched this one, so it is true through either door.
+  showRun(tab.id, tab.opts?.owns === true, true);
   // load() awaits one apiGet before painting; drain enough microtasks for the
   // promise chain to settle without reaching for fake timers.
   for (let i = 0; i < 5; i++) {
@@ -153,13 +178,17 @@ describe("run view flavour gate", () => {
   // Closing an owned tab cancels; closing a review closes nothing. This is the
   // other half of what the flavour means, and the half with teeth — a review
   // whose × cancelled a live run would destroy work from the read-only surface.
-  it("cancels on close only for the owned tab", async () => {
+  //
+  // The door no longer carries the teardown: `owns` is a SUBJECT field, and the
+  // factory turns it into the × behaviour (tab-materialize pins that half). So
+  // what a door owes is the flag, and this asserts each door sets the one that
+  // makes the two coexist for one `(kind, ref)` on the wire.
+  it("marks only the owned tab as owning the run", async () => {
     const review = await paint(openRunView, "running");
-    expect(review.tab.onClose).toBeUndefined();
+    expect(review.tab.opts?.owns).toBe(false);
 
     const live = await paint(openLiveRunView, "running");
-    live.tab.onClose?.();
-    expect(m.dispatched).toContain("cancel:wf_1");
+    expect(live.tab.opts?.owns).toBe(true);
   });
 
   // The view is shared — one DOM element serves every run tab — so switching

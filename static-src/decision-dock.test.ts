@@ -30,7 +30,15 @@ vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn()
 // The attribution toast is the observable half of a card collapsing under the
 // reader, so it is mocked to be asserted rather than to be silenced.
 const { mockToastInfo } = vi.hoisted(() => ({ mockToastInfo: vi.fn() }));
-vi.mock("./toast.js", () => ({ info: mockToastInfo }));
+// The rest of the surface comes from the canonical factory: the dock's graph
+// reaches failure-notice.ts through the tab projection now, and that module
+// imports `errorWithAction`, so a one-name mock no longer links.
+vi.mock("./toast.js", () =>
+  import("./__test-helpers__/toast-mock.js").then((m) => ({
+    ...m.toastMock(),
+    info: mockToastInfo,
+  })),
+);
 
 import {
   mountDecisionDock,

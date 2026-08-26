@@ -233,7 +233,7 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
         autoApprove,
         onOpenPermissions: () => {
           close();
-          toggleSettingsView("permissions");
+          void toggleSettingsView("permissions");
         },
         // The picker's flag is carried through rather than re-decided here: it
         // was hardcoded true at both ends, so a paused schedule was unreachable

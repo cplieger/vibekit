@@ -1,8 +1,10 @@
 package translate
 
 import (
+	"bytes"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -87,7 +89,7 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]vibekit.S
 		"title":      "readFile",
 		"kind":       "read",
 		"status":     "pending",
-	}), "")
+	}), FrameAttribution{})
 	*events = nil
 	rec.calls = 0
 	rec.lastDiffs = nil
@@ -152,7 +154,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 		chatID := vibekit.ChatID("c1")
-		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), "")
+		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), FrameAttribution{})
 		if hasToolCallEvent(events) {
 			t.Error("hook-ask tool call broadcast a tool_call event; want suppressed (hooks.showStatus off)")
 		}
@@ -165,7 +167,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: true}
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, hookAsk), "")
+		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, hookAsk), FrameAttribution{})
 		if !hasToolCallEvent(events) {
 			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
 		}
@@ -180,7 +182,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 			"title":      "readFile",
 			"kind":       "read",
 			"status":     "pending",
-		}), "")
+		}), FrameAttribution{})
 		if !hasToolCallEvent(events) {
 			t.Error("normal tool call suppressed with hooks.showStatus off; want shown (only hook-ask cards are gated)")
 		}
@@ -202,7 +204,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 			"content": []map[string]any{
 				{"type": "diff", "path": "x.go", "oldText": "a", "newText": "b"},
 			},
-		}), "")
+		}), FrameAttribution{})
 		if rec.calls != 1 {
 			t.Errorf("with diff: RecordFromDiffs calls = %d, want 1", rec.calls)
 		}
@@ -223,7 +225,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 			"content": []map[string]any{
 				{"type": "diff", "path": "y.go", "oldText": "a", "newText": "b"},
 			},
-		}), "")
+		}), FrameAttribution{})
 		if rec.lastTurn != 2 {
 			t.Errorf("second diffed call: RecordFromDiffs turn = %d, want 2", rec.lastTurn)
 		}
@@ -236,7 +238,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 			"title":      "readFile",
 			"kind":       "read",
 			"status":     "pending",
-		}), "")
+		}), FrameAttribution{})
 		if rec.calls != 0 {
 			t.Errorf("without diff: RecordFromDiffs calls = %d, want 0", rec.calls)
 		}
@@ -250,7 +252,7 @@ func TestToolCallUpdate_StatusApplied(t *testing.T) {
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "completed",
-	}), "")
+	}), FrameAttribution{})
 	tc, ok := lastToolCallUpdate(t, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
@@ -277,7 +279,7 @@ func TestToolCallUpdate_TerminalStatusEmitsWorkingLabel(t *testing.T) {
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 				"toolCallId": "tc-1",
 				"status":     tt.status,
-			}), "")
+			}), FrameAttribution{})
 			if !hasWorkingLabel(events) {
 				t.Errorf("status=%q: no working_label event emitted, want one (terminal status must emit it)", tt.status)
 			}
@@ -296,7 +298,7 @@ func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 		"content": []map[string]any{
 			{"type": "content", "content": map[string]any{"text": "hello"}},
 		},
-	}), "")
+	}), FrameAttribution{})
 	tc, ok := lastToolCallUpdate(t, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
@@ -316,7 +318,7 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 			"locations":  []map[string]any{{"path": "f.go", "line": 5}},
-		}), "")
+		}), FrameAttribution{})
 		tc, ok := lastToolCallUpdate(t, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
@@ -331,7 +333,7 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 			"locations":  []map[string]any{}, // decodes to a non-nil empty slice
-		}), "")
+		}), FrameAttribution{})
 		tc, ok := lastToolCallUpdate(t, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
@@ -349,7 +351,7 @@ func TestToolCallUpdate_NoDiffSkipsLineTracker(t *testing.T) {
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "in_progress",
-	}), "")
+	}), FrameAttribution{})
 	if _, ok := lastToolCallUpdate(t, events); !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -369,7 +371,7 @@ func TestToolCallUpdate_IndexBoundaryGuard(t *testing.T) {
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "completed",
-	}), "")
+	}), FrameAttribution{})
 	for _, e := range *events {
 		if e.Type == vibekit.EventToolCallUpdate {
 			t.Error("idx==len: tool_call_update emitted, want early return (no event)")
@@ -388,7 +390,7 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 		"content": []map[string]any{
 			{"type": "diff", "path": "a.go", "oldText": "x", "newText": "y"},
 		},
-	}), "")
+	}), FrameAttribution{})
 	buf := deps.bufStore.GetOrInit(chatID)
 	idx := buf.ToolCallIndex["tc-1"]
 	if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
@@ -416,7 +418,7 @@ func TestToolCallUpdate_SubSessionGate(t *testing.T) {
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
-		}), "sub-9")
+		}), FrameAttribution{SubSessionID: "sub-9"})
 		if got := buf.ToolCalls[idx].SubSessionID; got != "sub-9" {
 			t.Errorf("SubSessionID = %q, want %q (empty existing + non-empty incoming must set it)", got, "sub-9")
 		}
@@ -429,7 +431,7 @@ func TestToolCallUpdate_SubSessionGate(t *testing.T) {
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
-		}), "sub-9")
+		}), FrameAttribution{SubSessionID: "sub-9"})
 		if got := buf.ToolCalls[idx].SubSessionID; got != "existing" {
 			t.Errorf("SubSessionID = %q, want %q (non-empty existing must not be overwritten)", got, "existing")
 		}
@@ -513,7 +515,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 			"content": []map[string]any{
 				{"type": "diff", "path": "new.go", "oldText": "", "newText": "package x\n"},
 			},
-		}), "")
+		}), FrameAttribution{})
 		buf := deps.bufStore.GetOrInit(chatID)
 		fc, ok := buf.ChangedFiles["new.go"]
 		if !ok {
@@ -535,7 +537,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 			"content": []map[string]any{
 				{"type": "diff", "path": "existing.go", "oldText": "a\n", "newText": "b\n"},
 			},
-		}), "")
+		}), FrameAttribution{})
 		buf := deps.bufStore.GetOrInit(chatID)
 		fc, ok := buf.ChangedFiles["existing.go"]
 		if !ok {
@@ -588,7 +590,7 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 				"toolCallId": "tc-1",
 				"status":     "completed",
 				"_meta":      map[string]any{"kiro": map[string]any{"checkpoint": tt.checkpoint}},
-			}), "")
+			}), FrameAttribution{})
 			tc, ok := lastToolCallUpdate(t, events)
 			if !ok {
 				t.Fatal("no tool_call_update event emitted")
@@ -615,7 +617,7 @@ func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"_meta":      map[string]any{"kiro": map[string]any{"checkpoint": cp}},
-		}), "")
+		}), FrameAttribution{})
 	}
 	send(map[string]any{"original": "orig-uri", "modified": "mod-uri", "local": "local-uri"})
 	send(map[string]any{"modified": "mod-uri-2"})
@@ -650,7 +652,7 @@ func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
 			if tt.meta != nil {
 				frame["_meta"] = tt.meta
 			}
-			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, frame), "")
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, frame), FrameAttribution{})
 			tc, ok := lastToolCallUpdate(t, events)
 			if !ok {
 				t.Fatal("no tool_call_update event emitted")
@@ -692,7 +694,7 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 			update := map[string]any{"toolCallId": "tc-1", "status": "completed"}
 			maps.Copy(update, tc.update)
 
-			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, update), "")
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, update), FrameAttribution{})
 
 			got, ok := lastToolCallUpdate(t, events)
 			if !ok {
@@ -729,15 +731,15 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 			"toolCallId": "tc-1",
 			"status":     "completed",
 			"_meta":      map[string]any{"kiro": meta},
-		}), "")
+		}), FrameAttribution{})
 
 		got, ok := lastToolCallUpdate(t, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
-		if got.AgentSubtaskID != "wf:wf_1/build" {
+		if got.AgentSubtaskID != "wf:wf_1:build" {
 			t.Errorf("ToolCall.AgentSubtaskID after an update carrying both ids = %q, want %q",
-				got.AgentSubtaskID, "wf:wf_1/build")
+				got.AgentSubtaskID, "wf:wf_1:build")
 		}
 	})
 
@@ -748,7 +750,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 			"toolCallId": "tc-1",
 			"status":     "completed",
 			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-plain"}},
-		}), "")
+		}), FrameAttribution{})
 
 		got, ok := lastToolCallUpdate(t, events)
 		if !ok {
@@ -770,14 +772,14 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 			"kind":       "read",
 			"status":     "pending",
 			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-first"}},
-		}), "")
+		}), FrameAttribution{})
 		*events = nil
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "completed",
 			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-second"}},
-		}), "")
+		}), FrameAttribution{})
 
 		got, ok := lastToolCallUpdate(t, events)
 		if !ok {
@@ -788,6 +790,79 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 				got.AgentSubtaskID, "uuid-first")
 		}
 	})
+}
+
+// TestToolCallUpdate_WorkflowIDFromRawOutput pins the one field this client reads
+// out of `rawOutput`, which KAS types as `unknown`.
+//
+// `run_workflow` reports the id of the run it just created there, and that id is
+// the ONLY structural link from the invocation to its run: a step's frames name
+// their run, and without this the invocation named nothing, so the transcript
+// could not render a run's steps inside the call that launched them. Every case
+// below is a shape KAS really sends on some tool, and none of them may panic or
+// contaminate the field.
+func TestToolCallUpdate_WorkflowIDFromRawOutput(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  any
+		want string
+	}{
+		{"run_workflow's own shape", map[string]any{
+			"message":    "Workflow 'wf_9' started successfully. Status: running.",
+			"workflowId": "wf_9",
+			"status":     "running",
+		}, "wf_9"},
+		{"an object carrying no id", map[string]any{"message": "done"}, ""},
+		{"a bare string, which most tools send", "some output", ""},
+		{"a number", 42, ""},
+		{"an array", []any{"a", "b"}, ""},
+		{"null", nil, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr, _, _, events, chatID := primeToolCall(t)
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     "completed",
+				"rawOutput":  c.raw,
+			}), FrameAttribution{})
+
+			got, ok := lastToolCallUpdate(t, events)
+			if !ok {
+				t.Fatal("no tool_call_update event emitted")
+			}
+			if got.WorkflowID != c.want {
+				t.Errorf("ToolCall.WorkflowID from rawOutput %v = %q, want %q", c.raw, got.WorkflowID, c.want)
+			}
+		})
+	}
+}
+
+// TestToolCallUpdate_WorkflowIDIsAdoptedOnce mirrors the late-adoption rule the
+// subtask id follows: KAS reports the run on the terminal update, and no later
+// frame for the same call can name a different run.
+func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
+	t.Parallel()
+	tr, _, _, events, chatID := primeToolCall(t)
+
+	for _, id := range []string{"wf_first", "wf_second"} {
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"rawOutput":  map[string]any{"workflowId": id},
+		}), FrameAttribution{})
+	}
+
+	got, ok := lastToolCallUpdate(t, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.WorkflowID != "wf_first" {
+		t.Errorf("ToolCall.WorkflowID after a second id arrived = %q, want %q", got.WorkflowID, "wf_first")
+	}
 }
 
 // A disclosure and a policy denial are both decided when the call is ATTEMPTED,
@@ -806,7 +881,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 					"type": "skill", "displayName": "deploy-app", "uri": "file:///skills/deploy-app.md",
 				},
 			}},
-		}), "")
+		}), FrameAttribution{})
 
 		got, ok := lastToolCallUpdate(t, events)
 		if !ok {
@@ -831,7 +906,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 					"capability": "fs.write", "resource": "/etc/passwd", "scope": "workspace", "source": "policy.json",
 				},
 			}},
-		}), "")
+		}), FrameAttribution{})
 
 		got, ok := lastToolCallUpdate(t, events)
 		if !ok {
@@ -858,7 +933,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 				"disclosedContext": map[string]any{"type": "skill", "displayName": "first", "uri": "file:///a.md"},
 				"policyDenial":     map[string]any{"capability": "fs.write", "resource": "/first"},
 			}},
-		}), "")
+		}), FrameAttribution{})
 		*events = nil
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -868,7 +943,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 				"disclosedContext": map[string]any{"type": "steering", "displayName": "second", "uri": "file:///b.md"},
 				"policyDenial":     map[string]any{"capability": "shell.exec", "resource": "/second"},
 			}},
-		}), "")
+		}), FrameAttribution{})
 
 		got, ok := lastToolCallUpdate(t, events)
 		if !ok {
@@ -883,4 +958,115 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 				got.Denial, "/first")
 		}
 	})
+}
+
+// TestParseToolUpdateContent_UnmodelledType pins today's BEHAVIOUR for a content
+// block vibekit does not decode — nothing rendered — and the two Debug lines that
+// make the drop findable.
+//
+// This is the surface kiro-cli 2.19.2's structuredContent lands on, and vibekit
+// deliberately does not adopt it: there is no renderer, and shipping a decode with
+// nothing behind it is how a UI over an unusable store gets built. What the release
+// DOES owe is a way to tell that a payload was discarded, because the symptom
+// otherwise is a claim-only card with an empty details region and no signal
+// anywhere.
+//
+// Serial (no t.Parallel): captureSlog swaps the process-wide slog default.
+func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+
+	t.Run("an unknown type renders nothing and logs both lines", func(t *testing.T) {
+		var logs bytes.Buffer
+		t.Cleanup(captureSlog(&logs))
+
+		got := tr.parseToolUpdateContent("tc-1", []ACPToolCallContentBlock{
+			{Type: "structuredContent"},
+		})
+
+		// Behaviour first: the block is dropped, which is what it did before the
+		// logging and what this test would catch a silent adoption of.
+		if got.output != "" || got.diffs != nil || got.terminalID != "" {
+			t.Errorf("an unmodelled block produced output: %#v", got)
+		}
+		line := logs.String()
+		for _, want := range []string{"unmodelled type", "structuredContent", "tc-1"} {
+			if !strings.Contains(line, want) {
+				t.Errorf("log %q missing %q", line, want)
+			}
+		}
+		// The second line is the observable SYMPTOM rather than the cause, and it
+		// is what a reader searches for after seeing an empty card.
+		if !strings.Contains(line, "produced nothing to render") {
+			t.Errorf("log %q missing the empty-render line", line)
+		}
+	})
+
+	t.Run("a claim-only tool logs nothing", func(t *testing.T) {
+		// No content blocks at all is the ~95% case (read, delete, think). Logging
+		// here would put a line on almost every tool call and bury the real one.
+		var logs bytes.Buffer
+		t.Cleanup(captureSlog(&logs))
+		tr.parseToolUpdateContent("tc-2", nil)
+		if logs.Len() != 0 {
+			t.Errorf("a claim-only tool logged %q", logs.String())
+		}
+	})
+
+	t.Run("a known type with an unmatched payload is not called unmodelled", func(t *testing.T) {
+		// An empty-text content block and a diff with no path are NORMAL frames,
+		// not gaps in what vibekit decodes. A bare `default` arm would report both
+		// as unmodelled types, which is the noise that would make the real line
+		// unfindable — so the guard is on the TYPE, not on whether an arm matched.
+		var logs bytes.Buffer
+		t.Cleanup(captureSlog(&logs))
+		tr.parseToolUpdateContent("tc-3", []ACPToolCallContentBlock{
+			{Type: ContentTypeContent},
+			{Type: ContentTypeDiff},
+			{Type: ContentTypeTerminal},
+		})
+		line := logs.String()
+		if strings.Contains(line, "unmodelled type") {
+			t.Errorf("log %q calls a known type unmodelled", line)
+		}
+		// The empty-render line DOES fire, and should: content arrived and none of
+		// it reached the card, which is the state worth knowing about however the
+		// blocks were shaped.
+		if !strings.Contains(line, "produced nothing to render") {
+			t.Errorf("log %q missing the empty-render line", line)
+		}
+	})
+
+	t.Run("a block that renders logs nothing", func(t *testing.T) {
+		var logs bytes.Buffer
+		t.Cleanup(captureSlog(&logs))
+		// Field assignment rather than a composite literal: ACPToolCallContentBlock
+		// declares Content as an ANONYMOUS struct, so a literal would have to
+		// restate its type inline.
+		blk := ACPToolCallContentBlock{Type: ContentTypeContent}
+		blk.Content.Text = "hello"
+		got := tr.parseToolUpdateContent("tc-4", []ACPToolCallContentBlock{blk})
+		if got.output == "" {
+			t.Fatal("a content block with text produced no output")
+		}
+		if logs.Len() != 0 {
+			t.Errorf("a rendering block logged %q", logs.String())
+		}
+	})
+}
+
+// TestKnownToolContentType is the closed set the diagnostic above keys on, listed
+// rather than derived: a derived expectation would agree with any switch,
+// including one that had quietly stopped covering a member.
+func TestKnownToolContentType(t *testing.T) {
+	for _, known := range []string{ContentTypeContent, ContentTypeDiff, ContentTypeTerminal} {
+		if !knownToolContentType(known) {
+			t.Errorf("knownToolContentType(%q) = false, want true", known)
+		}
+	}
+	for _, unknown := range []string{"structuredContent", "", "Content", "resource_link"} {
+		if knownToolContentType(unknown) {
+			t.Errorf("knownToolContentType(%q) = true, want false", unknown)
+		}
+	}
 }

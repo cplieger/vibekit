@@ -407,3 +407,84 @@ func TestSwitchModel_TheLiveSessionsSetOutranksTheChatsRecord(t *testing.T) {
 		})
 	}
 }
+
+// The switch-by-restart fallback must land the pick on the RESUMED session.
+//
+// session/load restores KAS's own persisted model and the session/new door does
+// not run on that path, so the swap had to be retried or it silently did not
+// happen: PersistModelSwitch wrote the new id onto the chat while the old model
+// kept answering, and the load's config_option_update then raced that write back
+// to the old id, so the pill snapped back and the pick was lost.
+func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testing.T) {
+	h, cs, br := newTestHub()
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		c.ACPSessionID = "old-acp"
+		c.Model = "m-old"
+		c.Effort = "max"
+		return true
+	})
+	// A LIVE bridge, because the fast path returns early when there is none and
+	// would consume no failure: the fallback has to be reached by a swap that was
+	// actually refused, not by an absent bridge.
+	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	// One failure: the fast path fails against the live session, the restart
+	// reopens over session/load, and the retry on the new bridge succeeds.
+	br.mu.Lock()
+	br.setModelFailures = 1
+	br.effort = ""
+	br.mu.Unlock()
+
+	rec := postCmd(t, h, vibekit.ClientCommand{
+		Type: "switch_model", ChatID: "c1",
+		Payload: json.RawMessage(`{"model":"m-new"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if got := br.ModelID(); got != "m-new" {
+		t.Errorf("resumed session model = %q, want %q; the restart fallback did not apply the pick", got, "m-new")
+	}
+	// And the level rides with it, because a swap can reset it: KAS reconciles the
+	// session's effort against the new model's tier list.
+	if got := br.lastEffort(); got != "max" {
+		t.Errorf("resumed session effort = %q, want %q", got, "max")
+	}
+}
+
+// A fresh session gets no retry: the model and the level already rode _meta.kiro
+// on session/new, so re-sending them would be two round trips that change
+// nothing.
+//
+// A chat that has never had a bridge is the only way to reach that branch. Opening
+// one stamps its session id onto the record (persistNewSessionMetadata), after
+// which every reopen is a session/load.
+func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
+	h, cs, br := newTestHub()
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "m-old"
+		c.Effort = "max"
+		return true
+	})
+
+	rec := postCmd(t, h, vibekit.ClientCommand{
+		Type: "switch_model", ChatID: "c1",
+		Payload: json.RawMessage(`{"model":"m-new"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if got := br.lastEffort(); got != "" {
+		t.Errorf("effort re-applied = %q, want none on a fresh session: the session door already carried it", got)
+	}
+	// The level still reached the session, on the door rather than on a retry.
+	opts := br.lastStartOpts()
+	if opts == nil || opts.Effort != "max" {
+		t.Errorf("StartOpts.Effort = %v, want max on the fresh spawn", opts)
+	}
+}

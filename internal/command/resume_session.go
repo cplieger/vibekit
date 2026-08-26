@@ -26,11 +26,12 @@ import (
 )
 
 // CmdResumeSession creates a chat bound to an existing KAS session so the
-// stored conversation can be opened.
-func CmdResumeSession(ctx context.Context, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
-	if err := requireChatID(cmd); err != nil {
-		return nil, err
-	}
+// stored conversation can be opened, and returns the chat plus its tab.
+//
+// The id is MINTED here when the envelope carries none, and the response is what
+// makes that usable: the caller has to be able to open the chat it just asked
+// for. Returning `{ok:true}` was enough only while the client chose the id.
+func CmdResumeSession(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
 	var p vibekit.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -38,7 +39,7 @@ func CmdResumeSession(ctx context.Context, chats ChatStore, cmd *vibekit.ClientC
 	// The session id reaches a filesystem path inside KAS and vibekit's own
 	// reaper keep-list, so it is validated on the same pattern as a chat id
 	// rather than trusted from the client.
-	if !ids.ValidSessionID(p.SessionID) {
+	if !ids.ValidSessionID(p.SessionID) || !ValidIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	name := cmp.Or(p.Name, vibekit.DefaultChatName)
@@ -46,25 +47,33 @@ func CmdResumeSession(ctx context.Context, chats ChatStore, cmd *vibekit.ClientC
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
-		// Refuse to rebind an existing chat. Pointing a live chat at another
-		// session would strand its own session (its transcript still on disk,
-		// no longer referenced, so the reaper sweeps it) and hand the user a
-		// chat whose history silently changed.
-		if exists {
-			return false
-		}
-		c.Name = name
-		// RecordSession rather than assignment: it is the only sanctioned way
-		// to set this field, and it keeps the chain invariant the reaper's
-		// keep-list depends on (see Chat.RecordSession).
-		c.RecordSession(p.SessionID)
-		return true
+	// The op ledger matters MORE here than for a bare create: minting per attempt
+	// would leave two chats bound to one KAS session, which is two chats claiming
+	// one transcript and two entries in the reaper's keep-list for the same chain.
+	// The coordinator owns it, so the reservation, the mint and both writes are one
+	// critical section.
+	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
+		OpID:   p.OpID,
+		ChatID: cmd.ChatID,
+		Init: func(c *vibekit.Chat) {
+			// Init runs only when the record does NOT exist, which is what refuses to
+			// rebind an existing chat: pointing a live chat at another session would
+			// strand its own session (its transcript still on disk, no longer
+			// referenced, so the reaper sweeps it) and hand the user a chat whose
+			// history silently changed. A replayed op lands on the same branch, and
+			// the no-op is right for it too — the chat is already bound to this
+			// session.
+			c.Name = name
+			// RecordSession rather than assignment: it is the only sanctioned way
+			// to set this field, and it keeps the chain invariant the reaper's
+			// keep-list depends on (see Chat.RecordSession).
+			c.RecordSession(p.SessionID)
+		},
 	})
 	if err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
+		return nil, err
 	}
 	slog.Info("session resumed into a new chat",
-		"chat_id", cmd.ChatID, "acp_session", p.SessionID)
-	return responseOK, nil
+		"chat_id", opened.Chat.ID, "acp_session", p.SessionID, "tab", opened.Subject.ID)
+	return openedResponse(opened, nil), nil
 }

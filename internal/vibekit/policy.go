@@ -62,7 +62,26 @@ type PolicyView struct {
 	WritableScopes    []string     `json:"writable_scopes"`
 	Capabilities      []string     `json:"capabilities"`
 	RelaxCapabilities []string     `json:"relax_capabilities"`
-	Available         bool         `json:"available"`
+	// Profiles is the security-posture ladder in picker order, loosest last, and
+	// Profile is the one in force. Both travel here rather than being derived
+	// client-side for the same reason RelaxCapabilities does: the ladder decides
+	// what one click grants, so policyfile owns it and the client renders it.
+	//
+	// Order is part of the payload. A client that sorted these would put the
+	// loosest option somewhere in the middle of a list a reader scans from
+	// cautious to permissive.
+	Profiles  []SecurityProfile `json:"profiles"`
+	Profile   string            `json:"profile"`
+	Available bool              `json:"available"`
+}
+
+// SecurityProfile is one entry in the picker: the persisted id and the KAS policy
+// preset ids it sends. The presets travel so the UI can say what a profile grants
+// without a second round trip, and so a reader can tell two profiles apart by
+// something more than their names.
+type SecurityProfile struct {
+	ID      string   `json:"id"`
+	Presets []string `json:"presets"`
 }
 
 // PolicyExplainRequest is the POST /api/permissions/explain body. Exactly

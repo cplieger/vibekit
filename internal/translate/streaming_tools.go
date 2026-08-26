@@ -22,7 +22,7 @@ import (
 // call tagged _meta.kiro.kind=="agent-subtask"; AgentSubtaskID is threaded
 // onto the domain ToolCall so the client can render a subagent card and
 // nest the subagent's chunks (which carry the same id) under it.
-func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string) {
+func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tc ACPToolCallWire
 	if json.Unmarshal(raw, &tc) != nil {
 		return
@@ -52,7 +52,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	// place. The create frame deliberately does NOT adopt content.output: the
 	// initial tool_call has never fed Output, and folding it in here would
 	// double-render whatever the following update repeats.
-	content := t.parseToolUpdateContent(tc.Content)
+	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
 	diffs := content.diffs
 	call := vibekit.ToolCall{
 		ID:             tc.ToolCallID,
@@ -60,7 +60,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		Kind:           tc.Kind,
 		Status:         tc.Status,
 		Input:          tc.RawInput,
-		SubSessionID:   subSessionID,
+		SubSessionID:   attr.SubSessionID,
 		AgentSubtaskID: subtask,
 		TerminalID:     content.terminalID,
 		Locations:      tc.Locations,
@@ -89,12 +89,12 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 
 // HandleToolCallUpdate mutates an in-flight tool call's status and
 // appends any new output chunks.
-func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string) {
+func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
-	content := t.parseToolUpdateContent(tu.Content)
+	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
 	buf := t.buffers.GetOrInit(chatID)
 	// A COPY, folded locally and written back, because the fold below reaches the
 	// terminal registry, the line tracker and the event bus — none of which may
@@ -103,7 +103,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	if !ok {
 		return
 	}
-	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, subSessionID)
+	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
 	buf.SetToolCall(idx, &tc)
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
 }
@@ -117,7 +117,21 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 // the bytes arrive on the terminal/* surface instead, and the id is what lets
 // the tool CARD subscribe to that stream and later persist it. Consuming both
 // would double-render.
-func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) toolUpdateContent {
+//
+// toolCallID is carried for the DIAGNOSTICS below and nothing else. The two Debug
+// lines exist because this switch is where a content block vibekit does not model
+// disappears: kiro-cli 2.19.2 added structuredContent to the result union, and a
+// structured-only result renders a claim-only card with an empty details region —
+// no error, no log line, no -32601, so the symptom is a card that looks like a
+// tool that produced nothing. Neither line changes behaviour; the point is that
+// the drop becomes findable in `docker logs vibekit` with debug on.
+//
+// Debug rather than Warn on both, matching unmarshal.go's fall-through and for
+// the same reason: an unmodelled content type is an UPSTREAM ADDITION on a wire
+// that gains members between releases, not a fault in this deployment. A Warn per
+// block would put a recurring line in the operator's log for something only a
+// vibekit release can act on.
+func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCallContentBlock) toolUpdateContent {
 	var out toolUpdateContent
 	var outputDelta strings.Builder
 	for _, item := range items {
@@ -131,10 +145,43 @@ func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) too
 			})
 		case item.Type == ContentTypeTerminal && item.TerminalID != "":
 			out.terminalID = item.TerminalID
+		case !knownToolContentType(item.Type):
+			// The TYPE is what is unmodelled, so this arm is guarded on the type
+			// rather than left as a bare default. A default would also catch a
+			// known type whose payload arm did not match — an empty-text content
+			// block, a diff with no path — which is a normal frame rather than a
+			// gap in what vibekit decodes, and logging those would bury this line.
+			slog.Debug("tool call content block of an unmodelled type, dropped",
+				"tool_call_id", toolCallID, "type", item.Type)
 		}
 	}
 	out.output = outputDelta.String()
+	// The observable SYMPTOM, logged once per frame rather than per block: content
+	// arrived and none of it reached the card, which is exactly the empty details
+	// region a reader reports. Guarded on all three outputs so a legitimately
+	// claim-only tool logs nothing.
+	if len(items) > 0 && out.output == "" && out.diffs == nil && out.terminalID == "" {
+		slog.Debug("tool call carried content blocks that produced nothing to render",
+			"tool_call_id", toolCallID, "blocks", len(items))
+	}
 	return out
+}
+
+// knownToolContentType reports whether the ACP content-block discriminator is one
+// parseToolUpdateContent models.
+//
+// A closed set beside the switch rather than inside it: the switch's arms pair a
+// type WITH a payload condition, so it cannot answer "is this type known" on its
+// own, and the diagnostic needs exactly that question. Both have to move together
+// when a member is adopted, which is what the shared use of the ContentType
+// constants makes visible.
+func knownToolContentType(t string) bool {
+	switch t {
+	case ContentTypeContent, ContentTypeDiff, ContentTypeTerminal:
+		return true
+	default:
+		return false
+	}
 }
 
 // toolUpdateContent is one tool_call_update's parsed content blocks. A struct
@@ -186,6 +233,12 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 		} else if tu.Meta.Kiro.AgentSubtaskID != "" {
 			tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
 		}
+	}
+	// The run a `run_workflow` invocation started. Adopted once and never
+	// overwritten: KAS reports it on the terminal update, and a later frame for
+	// the same call cannot name a different run.
+	if tc.WorkflowID == "" {
+		tc.WorkflowID = rawOutputWorkflowID(tu.RawOutput)
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
 	mergeToolMeta(tc, tu)

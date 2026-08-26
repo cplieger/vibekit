@@ -1,22 +1,23 @@
 // ---------------------------------------------------------------------------
-// Settings panel UI. Global preferences (last_model, notifications)
-// live in server-side /api/settings; per-device state lives in
-// ui-state.ts.
+// Settings panel UI. Workspace preferences (last_model, notifications, theme,
+// the file browser's path) live in server-side /api/settings; the three fields
+// that are genuinely this SCREEN's live in device-view.ts.
 // ---------------------------------------------------------------------------
 
 import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
-import { initGitPanel, loadGitRepos } from "./git.js";
+import { initGitPanel } from "./git.js";
 import { getGitTab } from "./git-tabs.js";
 import { restoreFileBrowser } from "./files.js";
-import { restoreEditorTabs } from "./editor-core.js";
 import { restoreShell } from "./shell.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
 import { loadSettings, patchSettings, initSettingsTracking } from "./persist.js";
 import type { AppSettings } from "./persist.js";
-import * as uiState from "./ui-state.js";
-import { initThemeToggle } from "./theme.js";
+import { cacheTheme, cachedTheme, shellOpen } from "./device-view.js";
+import type { ThemeChoice } from "./device-view.js";
+import { applyThemeChoice, initThemeToggle } from "./theme.js";
+import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
 import { initSettingsTabs } from "./settings-tabs.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
@@ -46,36 +47,171 @@ let kiroSettingGen = 0;
 
 /**
  * Encapsulates the gen-counter + showSaving/showSaved/showError lifecycle
- * for dispatching a kiro-cli setting change. Deduplicates the identical
- * pattern used in initExperimentalToggles and initCompactionSettings.
+ * for dispatching a kiro-cli setting change.
+ *
+ * Every remaining kiro-cli setting is a CHECKBOX, so there is no previous-value
+ * parameter: the focus-time snapshot this used to carry existed for the two
+ * compaction number fields, whose ACP counterparts turned out to have zero
+ * readers upstream, and both fields are gone.
  */
-function dispatchKiroSetting(
-  key: string,
-  value: string,
-  input: HTMLInputElement,
-  previousValue?: string,
-): void {
+function dispatchKiroSetting(key: string, value: string, input: HTMLInputElement): void {
   showSaving();
   const gen = ++kiroSettingGen;
-  void setKiroSetting
-    .dispatch(
-      { key, value, input, ...(previousValue !== undefined ? { previousValue } : {}) },
-      { silent: true },
-    )
-    .then((r) => {
-      if (gen !== kiroSettingGen) {
-        return;
-      }
-      if (r === null) {
-        showError();
-      } else {
-        showSaved();
-      }
-    });
+  void setKiroSetting.dispatch({ key, value, input }, { silent: true }).then((r) => {
+    if (gen !== kiroSettingGen) {
+      return;
+    }
+    if (r === null) {
+      showError();
+    } else {
+      showSaved();
+    }
+  });
 }
 
 export type { AppSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
+
+// --- The theme, and the paint cache that mirrors it ---
+//
+// The VALUE lives in config.json. The cache lives in this browser's
+// localStorage, owned byte-wise by device-view.ts, and the POLICY is here —
+// beside the value it mirrors, which is the only place both halves are visible
+// at once.
+//
+// Three rules, and each one is why the cache is not a second source of truth:
+//
+//   1. Every write refreshes the cache in the same breath, so the NEXT load
+//      paints the chosen theme before its fetch resolves rather than flashing
+//      the old one.
+//   2. Every settings load overwrites the in-memory choice from the server. The
+//      server wins, always.
+//   3. Before that load resolves, a read falls back to the cache. Something asks
+//      for the theme that early on every load — the toggle wires itself during
+//      chrome setup, well before checkAuthAndStart's fetch lands — and answering
+//      "unset" would make the controller resolve the OS preference and then flip
+//      when the real choice arrived.
+
+/** The theme the server last reported, or the cache before it has. Module state
+ *  rather than a read of AppSettings, because the toggle is constructed before
+ *  the settings fetch resolves (rule 3). */
+let themeChoice: ThemeChoice | null = null;
+
+/** Whether a settings payload has been folded in yet. Separates "the server says
+ *  no theme is set" from "the server has not answered", which is the distinction
+ *  the one-time adoption below turns on. */
+let themeLoaded = false;
+
+/** Set while a server value is being pushed into the live controller. The
+ *  controller has one write verb and it means "the user chose this", so adopting
+ *  a value the server just sent would go straight back out as a PATCH — and on
+ *  the settings_updated path that PATCH re-broadcasts settings_updated. Same
+ *  guard shape the old arrangement document used for the same reason: an echo
+ *  that writes is a loop. */
+let adoptingTheme = false;
+
+function asThemeChoice(v: string | undefined): ThemeChoice | null {
+  return v === "dark" || v === "light" || v === "system" ? v : null;
+}
+
+/** Push a choice into the live controller so the page repaints, without writing
+ *  it back. */
+function repaintTheme(choice: ThemeChoice): void {
+  adoptingTheme = true;
+  try {
+    applyThemeChoice(choice);
+  } finally {
+    adoptingTheme = false;
+  }
+}
+
+/** Fold a loaded settings payload's theme in, and carry the cache across ONCE
+ *  when the server has none.
+ *
+ *  That adoption is the single value the deletion of the old whole-document
+ *  arrangement carries over, and it is not a migration path: the document is
+ *  gone and unread, while this cache is a live localStorage field the pre-paint
+ *  snippet is still reading on every load. The theme is also the one loss a
+ *  reader would SEE — on the very next load, as the wrong colour — so it is
+ *  adopted rather than reset. Once, and only when nothing is set server-side, so
+ *  a deliberate later change can never be overwritten by a stale cache.
+ *
+ *  Called on BOTH paths that learn a server theme: app.ts with the payload it
+ *  already fetched at boot (a second GET to read one field would be a round trip
+ *  for nothing), and the settings_updated handler, which is what makes a theme
+ *  chosen on another device land here live — the behaviour the retired
+ *  whole-document broadcast used to provide. */
+export function adoptThemeFromSettings(s: AppSettings): void {
+  const fromServer = asThemeChoice(s.theme);
+  const first = !themeLoaded;
+  themeLoaded = true;
+  if (fromServer !== null) {
+    if (themeChoice !== fromServer) {
+      themeChoice = fromServer;
+      cacheTheme(fromServer);
+      repaintTheme(fromServer);
+    }
+    return;
+  }
+  if (!first) {
+    // The server has no theme and this is not the first answer, so there is
+    // nothing to carry across and nothing new to learn. Adopting the cache again
+    // would let a value the user has since cleared come back.
+    return;
+  }
+  const carried = cachedTheme();
+  themeChoice = carried;
+  if (carried !== null) {
+    // Write it through so the value stops being cache-only and starts
+    // travelling to every other device, which is what it could not do before.
+    void patchSettings({ theme: carried });
+  }
+}
+
+/** The theme choice in force: the server's once it has answered, the paint cache
+ *  until then. */
+function currentTheme(): ThemeChoice | null {
+  if (!themeLoaded && themeChoice === null) {
+    return cachedTheme();
+  }
+  return themeChoice;
+}
+
+/** Record a chosen theme: server first (the authority), cache second (the paint
+ *  hint), in-memory third so a read before the PATCH lands is still right. */
+function setTheme(choice: ThemeChoice): void {
+  themeChoice = choice;
+  themeLoaded = true;
+  cacheTheme(choice);
+  if (adoptingTheme) {
+    return;
+  }
+  void patchSettings({ theme: choice });
+}
+
+/** The adapter @cplieger/ui-primitives' createTheme persists through. Built here
+ *  and INJECTED into initThemeToggle rather than reached from theme.ts, because
+ *  this module already imports that one — a reverse import would be a cycle, and
+ *  the direction is the reason this is a parameter.
+ *
+ *  Exported because it IS the boundary with the controller, and its `set` half is
+ *  what the adopt guard above has to survive: a test that drives the adopt path
+ *  without ever reaching this function proves nothing about the guard, which is
+ *  how the guard first shipped un-covered. */
+export const themeStorage: ThemeStorage = {
+  get: () => currentTheme(),
+  set: (value) => {
+    setTheme(value === "light" || value === "system" ? value : "dark");
+  },
+};
+
+/** @internal Test seam: forget the loaded theme so one case's choice is not the
+ *  answer in the next. */
+export function _resetThemeForTest(): void {
+  themeChoice = null;
+  themeLoaded = false;
+  adoptingTheme = false;
+}
 
 /** Fetch settings from server and apply notification state only.
  *  Used for lightweight re-sync (e.g. after login) without touching
@@ -93,29 +229,33 @@ export async function syncSettings(): Promise<AppSettings> {
   return s;
 }
 
-/** Restore all state: per-device UI from localStorage, global prefs from
- *  the loaded settings payload. Called once at startup. Unlike syncSettings(),
- *  this also restores shell, file browser, and editor tabs. (Theme is applied
- *  separately by initThemeToggle() during initUI.) */
+/** Restore all state: this device's own UI from device-view, workspace prefs
+ *  from the loaded settings payload. Called once at startup. Unlike
+ *  syncSettings(), this also restores shell, file browser, and editor tabs.
+ *  (Theme is applied separately by initThemeToggle() during initUI.) */
 export function restoreAll(s: AppSettings): void {
-  const ui = uiState.load();
-  if (ui.shell_open) {
+  if (shellOpen()) {
     restoreShell();
   }
-  if (ui.fb_path !== "") {
-    restoreFileBrowser(ui.fb_path);
+  if (s.fb_path !== undefined && s.fb_path !== "") {
+    restoreFileBrowser(s.fb_path);
   }
-  if (ui.editor_files.length > 0) {
-    restoreEditorTabs(ui.editor_files);
-  }
+  // Editor tabs are NOT restored from here any more, and there is no second list
+  // of open paths to restore them from: an editor tab's path IS its subject's
+  // `ref`, so the tab set that `listTabs` adopts at boot already names every open
+  // file. `ui-state.editor_files` existed only to recover a path from a synthetic
+  // `editor:<path>` id.
 
   restoreNotifications(s);
   // Theme is applied by initThemeToggle() (initUI), which constructs the
-  // createTheme controller — it reads the ui-state blob and applies the
-  // resolved theme on construction. No separate apply is needed here.
+  // createTheme controller — it reads through the storage adapter above and
+  // applies the resolved theme on construction. No separate apply is needed
+  // here; what IS needed is adoptThemeFromSettings, called by app.ts the moment
+  // the payload lands so the server's choice replaces the paint cache.
   initPermissionsUI(s);
   initNativePolicyUI();
   initDebugLogsToggle(s);
+  initAgentCapabilities(s);
   initChatRetention(s);
 }
 
@@ -123,18 +263,31 @@ export function restoreAll(s: AppSettings): void {
 //
 // kiro-cli's cleanup.periodDays is pinned to 0/never — vibekit owns retention
 // end to end. The Days-kept number field carries 0 (off) .. N (keep N days);
-// the Keep-forever checkbox overrides it to -1 (kept, never purged) and
-// disables the number field. Writes go to /api/settings; the settings_updated
-// SSE refreshes retention.ts (keep-vs-delete-on-close + History visibility).
-function initChatRetention(s: AppSettings): void {
+// the Keep-forever checkbox overrides it to -1 (kept, never purged) and HIDES
+// the Days-kept row. Hiding rather than disabling: -1 has no day count, so a
+// greyed-out field still showing the last number reads as the value in force.
+// The input keeps that number in the DOM, so unchecking restores it.
+// Writes go to /api/settings; the settings_updated SSE refreshes retention.ts
+// (keep-vs-delete-on-close + History visibility).
+//
+// The row carries the whole field (label + input), and it sits BELOW the
+// checkbox so revealing it moves nothing the reader is pointing at. Hiding
+// goes through the `.hidden` utility rather than the `hidden` attribute:
+// `.section-option` declares `display: flex`, which beats the UA
+// `[hidden] { display: none }` rule.
+export function initChatRetention(s: AppSettings): void {
   const daysInput = document.getElementById("chat-retention-days") as HTMLInputElement | null;
+  const daysRow = document.getElementById("chat-retention-days-row");
   const foreverInput = document.getElementById("chat-retention-forever") as HTMLInputElement | null;
   if (daysInput === null || foreverInput === null) {
     return;
   }
+  const showDaysRow = (forever: boolean): void => {
+    daysRow?.classList.toggle("hidden", forever);
+  };
   const current = typeof s.chat_retention_days === "number" ? s.chat_retention_days : 1;
   foreverInput.checked = current === -1;
-  daysInput.disabled = current === -1;
+  showDaysRow(current === -1);
   if (current >= 0) {
     daysInput.value = String(current);
   }
@@ -145,13 +298,13 @@ function initChatRetention(s: AppSettings): void {
 
   daysInput.addEventListener("change", () => {
     if (foreverInput.checked) {
-      return; // forever wins; the number field is disabled
+      return; // forever wins; the Days-kept row is hidden
     }
     const n = parseInt(daysInput.value, 10);
     persist(!isNaN(n) && n >= 0 ? n : 0, daysInput);
   });
   foreverInput.addEventListener("change", () => {
-    daysInput.disabled = foreverInput.checked;
+    showDaysRow(foreverInput.checked);
     if (foreverInput.checked) {
       persist(-1, foreverInput);
       return;
@@ -179,7 +332,7 @@ function loadInstructionsPanel(): void {
 }
 
 export function initUI(): void {
-  initThemeToggle();
+  initThemeToggle(themeStorage);
 
   // Settings gear opens the tabbed Settings panel. Default tab is General;
   // deep-link URLs (e.g. /settings/tools) override this via applyRoute.
@@ -187,7 +340,7 @@ export function initUI(): void {
   // map below) — the gear no longer preloads the Tools list while opening
   // the General panel (B9).
   $.settingsBtn.addEventListener("click", () => {
-    toggleSettingsView("general");
+    void toggleSettingsView("general");
   });
 
   // Per-tab lazy data loaders: fired by settings-tabs on the first
@@ -215,9 +368,12 @@ export function initUI(): void {
   // accounts UI inside that Sources tab.)
 
   $.gitBtn.addEventListener("click", () => {
-    // Open to whichever sub-tab is currently active (defaults to "changes"
-    // on first open) so the URL the tab pushes matches the visible panel.
-    toggleGitView(getGitTab(), loadGitRepos);
+    // Open to whichever sub-tab is currently active (defaults to "changes" on
+    // first open) so the URL the tab pushes matches the visible panel. No loader
+    // callback: the tab factory reaches `loadGitRepos` through a lazy import, so
+    // /git opened from a path link refreshes its repos exactly as the sidebar's
+    // door does — a divergence that was real before the factory existed.
+    void toggleGitView(getGitTab());
   });
 }
 
@@ -484,17 +640,35 @@ interface KiroSettingPayload {
 // experimentalFlags is the single source of truth for which kiro-cli
 // flags we expose in the UI. Adding a row here creates the toggle,
 // its description, and the get/put wiring automatically.
+//
+// A key belongs here only if it has a kiro-cli-SIDE role, because KAS's ACP path
+// reads no kiro-cli setting at all: measured on 2.19.2, the bundle contains zero
+// occurrences of `cli.json`, `kiro-cli/settings`, `readSettingsFile` or
+// `loadCliSettings`, and each `chat.*` literal appears exactly once, as a
+// `@see kiro-cli:` cross-reference inside the settings schema. So a write here
+// reaches the TUI and the index builder, never a vibekit chat. Anything that has
+// to change a vibekit chat goes through `_meta.kiro.settings` instead — the
+// kascap table's door — which is where tool search and knowledge now send.
+//
+// `chat.enableCheckpoint` and `chat.enableTodoList` were REMOVED from this list
+// for the same reason and one more: their ACP counterparts (`checkpoint`,
+// `todoList`) are declared in KAS's own settings schema with ZERO readers in any
+// of its three reader shapes, so neither key could change a chat through either
+// door. Five siblings share that property (`thinking`, `tangentMode`,
+// `_subagent`, `_delegate`, `compaction`); `internal/kascap/table.go` carries a
+// withholding row for each.
+//
+// `chat.enableKnowledge` and `toolSearch.enabled` left for the OPPOSITE reason:
+// their ACP counterparts ARE read, so the controls were pointed at the wrong door
+// rather than being inert. Both moved to initAgentCapabilities below, which writes
+// vibekit's own settings and reaches the agent through kascap's gates.
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
   inverted?: boolean;
 }[] = [
-  { key: "chat.enableCheckpoint", inputID: "flag-checkpoint" },
-  { key: "chat.enableTodoList", inputID: "flag-todolist" },
-  { key: "chat.enableKnowledge", inputID: "flag-knowledge" },
   { key: "hooks.showStatus", inputID: "flag-hooks-status" },
   { key: "telemetry.enabled", inputID: "flag-telemetry" },
-  { key: "toolSearch.enabled", inputID: "flag-tool-search" },
   // Checked = disable inheritance of default steering/skills/AGENTS.md by
   // custom agents (kiro-cli 2.10+). Not inverted: on = true = disabled.
   // Seeded false in entrypoint so the unset->on fallback doesn't mis-render.
@@ -539,84 +713,47 @@ function initExperimentalToggles(): void {
       dispatchKiroSetting(flag.key, wireValue, input);
     });
   }
-  initCompactionSettings();
 }
 
-// --- Compaction settings ---
-
-const compactionSettings: readonly {
-  key: string;
+// --- Agent capabilities (Settings → General) ---
+//
+// Two toggles that look like the kiro-cli flags above and are a different
+// mechanism. They write VIBEKIT settings through /api/settings, and
+// internal/agent resolves each at spawn time into the `_meta.kiro.settings`
+// handshake keys KAS actually reads (`knowledge` plus its capability twin, and
+// `toolSearch`).
+//
+// They used to be `chat.enableKnowledge` and `toolSearch.enabled` in the list
+// above, which measured as unable to reach a running chat: KAS's ACP path reads no
+// kiro-cli setting anywhere, so the knowledge switch appeared to turn knowledge
+// off and did nothing at all. Each control kept its meaning and changed door.
+//
+// Neither is live. KAS resolves both when a session is created and freezes the
+// answer for that session's life, which is why the section hint says new
+// conversations rather than leaving a user to discover it.
+const agentCapabilities: readonly {
+  key: "knowledge_enabled" | "tool_search_enabled";
   inputID: string;
-  isBool: boolean;
+  fallback: boolean;
 }[] = [
-  { key: "chat.disableAutoCompaction", inputID: "flag-auto-compact", isBool: true },
-  { key: "compaction.excludeMessages", inputID: "compact-keep-messages", isBool: false },
-  {
-    key: "compaction.excludeContextWindowPercent",
-    inputID: "compact-context-buffer",
-    isBool: false,
-  },
+  // knowledge_enabled defaults TRUE: the index, its REST surface and its UI all
+  // predate this switch, so an absent key has to read as on. The server sends the
+  // same default in GET /api/settings, and this fallback covers the one case that
+  // cannot — a settings payload written before the key existed.
+  { key: "knowledge_enabled", inputID: "flag-knowledge", fallback: true },
+  { key: "tool_search_enabled", inputID: "flag-tool-search", fallback: false },
 ];
 
-function initCompactionSettings(): void {
-  const inputs = compactionSettings.map(
-    (s) => document.getElementById(s.inputID) as HTMLInputElement | null,
-  );
-  // Snapshot values on focus so we can pass the true previous value
-  // to the action (before the change event updates the input).
-  const snapshots = new Map<HTMLInputElement, string>();
-  for (let i = 0; i < compactionSettings.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const s = compactionSettings[i]!;
-    const input = inputs[i] ?? null;
-    if (input === null || s.isBool) {
-      continue;
-    }
-    input.addEventListener("focus", () => {
-      snapshots.set(input, input.value);
-    });
-  }
-  void Promise.all(
-    compactionSettings.map((s) =>
-      apiGet<KiroSettingPayload>(`/api/kiro-settings?key=${encodeURIComponent(s.key)}`),
-    ),
-  ).then((results) => {
-    for (let i = 0; i < compactionSettings.length; i++) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const s = compactionSettings[i]!;
-      const input = inputs[i] ?? null;
-      if (input === null) {
-        continue;
-      }
-      const v = results[i]?.value ?? "";
-      if (s.isBool) {
-        input.checked = v !== "true";
-      } else {
-        if (v !== "") {
-          input.value = v;
-        }
-      }
-    }
-  });
-  for (let i = 0; i < compactionSettings.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const s = compactionSettings[i]!;
-    const input = inputs[i] ?? null;
+function initAgentCapabilities(initial: AppSettings): void {
+  for (const cap of agentCapabilities) {
+    const input = document.getElementById(cap.inputID) as HTMLInputElement | null;
     if (input === null) {
       continue;
     }
+    const current = initial[cap.key];
+    input.checked = typeof current === "boolean" ? current : cap.fallback;
     input.addEventListener("change", () => {
-      let value: string;
-      if (s.isBool) {
-        value = input.checked ? "false" : "true";
-      } else {
-        value = input.value;
-      }
-      const previousValue = s.isBool ? undefined : snapshots.get(input);
-      if (!s.isBool) {
-        snapshots.set(input, input.value);
-      }
-      dispatchKiroSetting(s.key, value, input, previousValue);
+      void patchSettings({ [cap.key]: input.checked }, input);
     });
   }
 }

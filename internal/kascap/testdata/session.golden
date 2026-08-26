@@ -1,4 +1,10 @@
+{"settings":{"workflows":{"enabled":true}}}
+{"settings":{"workflows":{"enabled":true}}}
+{"settings":{"workflows":{"enabled":true}}}
+{"settings":{"workflows":{"enabled":true}}}
 {"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}
-{"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}
-{"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}
+{"policyPreset":["read-workspace","read-only-shell","read-all"],"settings":{"workflows":{"enabled":true}}}
+{"policyPreset":["allow-all"],"settings":{"workflows":{"enabled":true}}}
+{"settings":{"workflows":{"enabled":true}}}
+{"settings":{"workflows":{"enabled":true}}}
 {"policyPreset":["read-workspace"],"settings":{"workflows":{"enabled":true}}}

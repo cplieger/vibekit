@@ -135,45 +135,80 @@ func Capabilities() []string {
 	return out
 }
 
-// relaxExcluded is what the workspace relaxation deliberately leaves alone, and
-// each entry is excluded for its own reason rather than by a shared theme.
-//
-// The three UMBRELLAS (all, builtin, filesystem) are supersets of the discrete
-// capabilities beside them. One `capability: all, effect: allow` rule would
-// express the whole relaxation in a single write, and that is exactly why it is
-// wrong here: it grants strictly more than the members do (every capability KAS
-// gains later, including ones this snapshot has never heard of), and it makes
-// reversal all-or-nothing where discrete rules can be removed one at a time.
-//
-// POWER is excluded on a different ground. A power's manifest carries no
-// permissions field, so its MCP servers run at the user's privilege governed
-// only by Cedar — Cedar is the whole guard there, and a blanket allow removes
-// it. Installing a power is also rare rather than routine, so leaving it to ask
-// costs the user almost no interruptions while keeping the one prompt that is
-// genuinely load-bearing. See the Permissions section of the vibekit steering
-// doc, which names this as the one surviving argument for a policy floor.
-var relaxExcluded = map[string]struct{}{
+// umbrellas are the capability names that stand for a SET rather than for one
+// thing. KAS resolves each against META_CAPABILITIES; vibekit only needs to know
+// which names are aliases, not what two of them expand to.
+var umbrellas = map[string]struct{}{
 	"all": {}, "builtin": {}, "filesystem": {},
-	"power": {},
+}
+
+// allMembers is what KAS's `all` alias expands to, snapshotted off the 2.19.1
+// bundle (META_CAPABILITIES.all = BUILTIN + mcp) and verified on the live engine
+// through explain.
+//
+// It is here for ONE purpose: to compute what `all` does NOT cover, so the
+// relaxation can name the remainder explicitly. It validates nothing, so going
+// stale cannot fail closed — a member KAS adds later is simply also covered by
+// the `all` rule the switch writes, and a member KAS removes would leave that
+// capability asking, which TestRelaxCapabilities_ExactSet turns into a visible
+// decision rather than a silent gap.
+//
+// sandbox_network is absent on purpose: it is a real capability in KAS's
+// VALID_CAPABILITIES and genuinely not a member of `all`, which is the whole
+// reason the relaxation cannot be the single word "all".
+var allMembers = map[string]struct{}{
+	"fs_read": {}, "fs_write": {}, "shell": {},
+	"web_fetch": {}, "web_search": {}, "mcp": {},
+	"subagent": {}, "skill": {}, "power": {},
+	"context": {}, "diagnostics": {},
 }
 
 // RelaxCapabilities returns the capability set the Settings -> Permissions
-// workspace relaxation writes broad allow rules for, sorted.
+// workspace relaxation writes broad allow rules for, sorted. It is the broadest
+// grant a permissions file can express.
 //
-// It is DERIVED (suggestedCapabilities minus relaxExcluded) rather than listed,
-// so it cannot name a capability the vocabulary snapshot does not have, and a
-// capability added to that snapshot joins the relaxation unless it is
-// deliberately excluded beside it. TestRelaxCapabilities_ExactSet pins the
-// resulting set, so either edit is a visible decision rather than a side effect.
+// DERIVED as `all` plus every non-umbrella capability that alias does not cover,
+// which today is exactly {all, sandbox_network}, rather than listed — so it
+// cannot name a capability the vocabulary snapshot does not have, and a change to
+// either input is a visible decision.
 //
-// The relaxation writes one rule per member with no match/exclude, which is
-// what makes it exactly reversible: Signature keys on capability + effect +
-// globs, so removing the same bare rules removes precisely what was written and
-// leaves any hand-authored narrower rule for the same capability untouched.
+// TWO rules rather than one, because `all` is an alias over a fixed table and not
+// a wildcard: writing only `all` would leave sandbox_network asking while a
+// switch that says it allows everything claimed otherwise. Two rather than the
+// twelve discrete names for the opposite reason: eleven of them would be pure
+// noise in the Active policy list, and keeping the alias is what makes a
+// capability a later KAS version adds to BUILTIN allowed with no vibekit release,
+// which is what someone who pressed this switch meant.
+//
+// It writes one bare rule per member, which is what makes it exactly reversible:
+// Signature keys on capability + effect + globs, so removing the same bare rules
+// removes precisely what was written and leaves any hand-authored narrower rule
+// for the same capability untouched.
+//
+// ONE switch, not a ladder. An "everyday" rung that withheld `power` was built
+// and then removed (2026-08-25) on the user's call: two controls whose only
+// difference is one capability cost a reveal rule, a cascade rule and a second
+// status line, and the narrow shape stays expressible by hand as `all: allow`
+// plus `power: ask` — which works cleanly, since deny > ask > allow and `power`
+// has none of shell's parse-driven ask paths. What the switch grants that a user
+// should know about is therefore stated in its confirm rather than withheld by
+// omission: a power runs its author's code at the user's privilege, and Cedar is
+// the only guard, because a power's manifest carries no permissions field.
+//
+// What it CANNOT do, because effects resolve by restrictiveness and a hardcoded
+// scope sits above every file: the kiro scope still denies writes under
+// ~/.kiro/settings, .kiro/settings and ~/.kiro/workspace-roots, and still asks
+// before writing .git/**, .kiro/agents/**, .kiro/hooks/**, .vscode/** and
+// **/*.code-workspace. Measured on the live engine with an all=allow rule in
+// force. The UI says so beside the switch; a control that implied otherwise would
+// be the same defect as one that silently does nothing.
 func RelaxCapabilities() []string {
-	out := make([]string, 0, len(suggestedCapabilities))
+	out := []string{"all"}
 	for c := range suggestedCapabilities {
-		if _, skip := relaxExcluded[c]; skip {
+		if _, alias := umbrellas[c]; alias {
+			continue
+		}
+		if _, covered := allMembers[c]; covered {
 			continue
 		}
 		out = append(out, c)

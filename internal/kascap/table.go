@@ -14,6 +14,18 @@ const enabledMember = "enabled"
 // them rather than a coincidence repeated at each row.
 func enabled() map[string]any { return map[string]any{enabledMember: true} }
 
+// enabledIf is enabled()'s runtime twin, for a row whose value comes from a
+// Spawn field rather than from the compiled table.
+//
+// Two states, both meaningful, which is why this is not `enabled()` behind a
+// presence gate: `{"enabled": false}` is how KAS is told a feature is OFF, and it
+// is a different statement from an absent key. Both resolve false through
+// isSettingEnabled, so the distinction is invisible where absent-means-false is
+// all a row needs — and it is the whole mechanism where a key has to VETO
+// something the client cannot otherwise reach (userMemoryOptIn) or has to answer
+// a resolver that compares against a real boolean.
+func enabledIf(on bool) map[string]any { return map[string]any{enabledMember: on} }
+
 // hooksValue is the v2 hook-engine opt-in object. Not a bare true: KAS requires
 // an object carrying a v2 member and then checks that member (resolverObject).
 func hooksValue() map[string]any { return map[string]any{"enabled": true, "v2": true} }
@@ -92,13 +104,34 @@ without blocking its turn on a foreground command.`,
 		key:      "knowledge",
 		door:     doorConnection,
 		resolver: resolverCapability,
-		value:    true,
 		send:     true,
+		// Value-gated, always present: resolveCapabilities compares `=== true`, so
+		// the key has to carry a real boolean either way. Gated on the SAME field
+		// as the knowledge SETTING row below, because the two are two thirds of one
+		// gate and turning one off alone reproduces the defect that made the third
+		// key necessary.
+		gate: func(s Spawn) (any, bool) { return s.Knowledge, true },
 		because: `_meta.kiro.knowledge gates getKnowledgeListing into the system prompt,
 i.e. it tells the agent WHICH knowledge bases are indexed (four lines
-per base, undefined when none). vibekit ships the knowledge UI and
-seeds chat.enableKnowledge, so the index exists and /knowledge works —
-the agent just could not see what was in it.`,
+per base, undefined when none). vibekit ships the knowledge UI, so the
+index exists and /knowledge works — the agent just could not see what
+was in it.
+
+GATED since 2026-08, on vibekit's own knowledge_enabled setting. The
+control used to write kiro-cli's chat.enableKnowledge, which measured as
+unable to reach a running chat at all (KAS's ACP path reads no kiro-cli
+setting — see the toolSearch row for the counts), so the switch in
+Settings → General appeared to turn knowledge off and did nothing. It
+now drives this key and the setting below, which are the two KAS reads.
+
+Deliberately NOT declared on the UTILITY bridge, which therefore sends
+false. That session is text-only and enforces it, so it can lose no tool;
+what it loses is a knowledge listing in msg0 on a cheap-model prompt
+whose whole job is a commit message or an error explanation, which was
+wasted context. It does not affect the knowledge PANEL: handleKnowledge
+consults neither this key nor the setting, so _kiro/knowledge lists and
+edits the store whatever the switch says. That split is the intent — the
+switch decides what the AGENT can reach, not what a person can.`,
 	},
 	{
 		key:      "secretStorage",
@@ -164,8 +197,12 @@ works.`,
 		key:      "knowledge",
 		door:     doorConnection,
 		resolver: resolverSetting,
-		value:    enabled(),
 		send:     true,
+		// Value-gated on the same field as the capability row above. enabledIf
+		// rather than enabled(), because the resolver needs the object shape in
+		// both states: isSettingEnabled reads .enabled unchecked, so {"enabled":
+		// false} is the off state and an absent member would be undefined.
+		gate: func(s Spawn) (any, bool) { return enabledIf(s.Knowledge), true },
 		because: `_meta.kiro.settings.knowledge is the THIRD part of the knowledge
 gate, and without it the other two are decoration.
 isSettingEnabled(settings, "knowledge") treats an absent key as
@@ -176,7 +213,47 @@ no tool existed to read it. vibekit shipped the whole knowledge UI,
 the REST surface, the progress polling and a system-prompt listing
 over a store the agent could not query, silently in both
 directions (no error, no -32601). vibekit.md says "both are
-needed"; there are three.`,
+needed"; there are three.
+
+GATED since 2026-08 on knowledge_enabled, together with the capability
+row above — see that row for why the switch moved off
+chat.enableKnowledge and why the knowledge PANEL is unaffected. The
+member name is the only thing this key shares with the index CONFIG KAS
+reads off the same object: ResolvedKnowledgeConfig.resolve reads
+indexType, includePatterns, excludePatterns, maxFiles and chunking and
+never touches enabled, so sending {"enabled": false} withdraws the tool
+without disturbing how the store is built.`,
+	},
+	{
+		key:      "toolSearch",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		send:     true,
+		// PRESENCE-gated, unlike the knowledge pair: absent already resolves false
+		// at isSettingEnabled, so an off state has nothing to say and sending
+		// {"enabled": false} would only add bytes.
+		gate: func(s Spawn) (any, bool) { return enabled(), s.ToolSearch },
+		because: `_meta.kiro.settings.toolSearch makes KAS ship its built-in tool_search
+tool INSTEAD of every connected MCP tool's full description. The agent then asks
+tool_search by intent and gets matches back, which trades one extra round-trip per
+tool it decides to use against the context every description costs on every turn
+(~200-500 tokens each). Worth it at 5+ MCP servers, a latency tax below that,
+which is why it is off by default and a user setting rather than a constant.
+
+THIS ROW EXISTS BECAUSE THE CONTROL WAS POINTED AT THE WRONG DOOR. Settings →
+General wrote kiro-cli's own toolSearch.enabled through /api/kiro-settings, and
+measured on the stock 2.19.2 bundle that store is unreachable from KAS's ACP
+path: zero occurrences of cli.json, kiro-cli/settings, readSettingsFile and
+loadCliSettings, and each chat.* literal appearing exactly once, every one a
+"@see kiro-cli:" cross-reference inside the settings schema rather than a read.
+So the toggle wrote a real file, kiro-cli's TUI honoured it, and a vibekit chat
+never saw it. The key KAS does read is this one, through
+isSettingEnabled(settings, "toolSearch") plus a second isFeatureEnabled site.
+
+Gated on vibekit's tool_search_enabled setting, resolved per spawn
+(internal/agent's toolSearchEnabled), so a flip reaches the NEXT chat. It cannot
+reach an open one: KAS resolves the value at session creation and freezes it,
+which is what the setting's hint has to say.`,
 	},
 	{
 		key:      "workflows",
@@ -491,8 +568,21 @@ are recorded together as a pair rather than argued separately.`,
 		key:      "policyPreset",
 		door:     doorSession,
 		resolver: resolverCapability,
-		value:    []string{"read-workspace"},
-		send:     true,
+		// GATED rather than a compiled value, since 2026-08-25: the ids come from
+		// the active security profile (policyfile.Profile), which is a setting the
+		// user changes without a rebuild. The row was a fixed
+		// []string{"read-workspace"}, and that value is now what the GUARDED
+		// profile happens to send, so the floor this Because describes is
+		// unchanged for anyone who never touches the picker.
+		//
+		// Present only for a NON-EMPTY set, and that is the Custom profile's whole
+		// implementation: sending no key at all is what makes the permissions
+		// files the entire policy. An empty array would not do — resolvePresetIds
+		// treats a zero-length array as absent anyway, so sending one would add
+		// bytes that mean nothing and invite a reader to think Custom grants a
+		// floor it does not.
+		gate: func(s Spawn) (any, bool) { return s.Presets, len(s.Presets) > 0 },
+		send: true,
 		because: `policyPreset restores the fs_read floor that KAS grants a bundled mode
 and denies a custom one, which kiro-cli 2.19.1 turned from a latent asymmetry
 into a silent capability loss.
@@ -540,90 +630,168 @@ isFeatureEnabled population, so the census cannot see it and will not list it in
 unclaimed.txt: this row is the only record it exists.`,
 	},
 	{
-		key:      "userMemoryOptIn",
+		key:      "disableAutoCompaction",
+		door:     doorSession,
+		resolver: resolverSetting,
+		send:     false,
+		because: `WITHHELD, and this is the row a future reader should hit BEFORE
+re-proposing the Auto-compact toggle, because the toggle existed, did nothing, and
+was deleted rather than wired.
+
+It is a LIVE key, unlike the compaction object beside it. resolveDisableAutoCompaction
+reads it from three inputs — the session call's own _meta, the initialize _meta, and
+KAS's persisted session metadata — and freezes the answer until the next session
+load. It is invisible to the census only because its two reads spell the receiver
+sessionSettings and initializeSettings while the census regex was anchored on
+parsed2; that regex is generalised now, so the key appears in the census as a
+declared row rather than as a finding.
+
+WHY NOT SEND IT. Its ON state contradicts a documented vibekit invariant. The
+composer is deliberately never disabled on a full context, and static-src's
+context-ui.ts records why: kiro-cli compacts on the next turn, so refusing the send
+told the user about a problem they could do nothing about. Disabling auto-compaction
+makes that problem real — the turn fails on overflow, with KAS's own message saying
+to compact manually and retry.
+
+THREE PREREQUISITES, all absent, and they are the actual cost of the feature:
+
+  1. This row, sending {"enabled": true} on the session door. The resolver reads
+     .enabled, so a bare true resolves undefined.
+  2. A ContextWindowExceededError arm in internal/command's promptFailureClass.
+     Today that error arrives as an unmapped -32603, fails isAuthShaped and
+     isValidationShaped, classifies classTransient, and is RETRIED TWICE before the
+     user is told anything.
+  3. A compact affordance in the UI. _kiro/session/compact is fully wired
+     (internal/command/compact.go) and reachable only by typing /compact — no
+     button, no menu row, no palette entry.
+
+Wiring 1 without 2 and 3 turns a recoverable full context into a failed turn with
+no way out but a slash command nobody documented.`,
+	},
+	{
+		key:      "compaction",
 		door:     doorConnection,
 		resolver: resolverSetting,
 		send:     false,
-		because: `WITHHELD, and withholding is also kiro-cli's OWN default, so this row
-changes nothing on the wire. It exists to record the decision and what to watch.
+		because: `WITHHELD because there is nothing to send TO. KAS declares the object in
+its own settings schema — CompactionSettingSchema, with excludePercent and
+excludeMessages — validates it, and reads neither member anywhere. Measured on the
+stock 2.19.2 bundle: excludePercent has exactly one occurrence, its own
+declaration, and the object itself has zero reads in all three of KAS's reader
+shapes (isSettingEnabled, isFeatureEnabled, and a .data.<key> resolver).
 
-kiro-cli 2.19.1 added a memory subsystem: a model-facing memory tool over a
-JSONL store under the user's home, plus a scope-filtered index injected into msg0
-at session creation. This key is the client's answer to it.
+This row is here because the ABSENCE of a record is what let two Settings controls
+survive a capability audit. vibekit shipped "Keep last N exchanges" and "Context
+buffer (%)" writing kiro-cli's compaction.excludeMessages and
+compaction.excludeContextWindowPercent, and the context ring drew its compaction
+threshold from the second one — a wedge positioned by a number that governs
+nothing. Both fields and the wedge are gone. A row saying "declared upstream with
+zero readers, so there is nothing to send and nothing to withhold" is the honest
+record, and it keeps unclaimed.txt meaningful by claiming the key.
 
-THE DEFAULT, measured three ways. kiro-cli's TUI maps its own setting
-memory.enabled onto this key inside a loop that assigns only when the stored
-value is a boolean, so it sends the key ONLY when the user set one explicitly and
-omits it entirely otherwise. And that setting is not reachable: asking kiro-cli
-for memory.enabled answers "is not a valid setting", and it is absent from the
-settings-all listing. So upstream's default is an ABSENT key, which is exactly
-what this row produces.
+Six sibling keys are in the same state and share this row's reasoning rather than
+getting one each: thinking, tangentMode, todoList, checkpoint, _subagent and
+_delegate are all declared in KAS's schema with zero readers. Two of them had
+vibekit toggles (chat.enableCheckpoint, chat.enableTodoList) and those toggles are
+deleted; _subagent's live counterpart is subagentOrchestration, which this table
+already sends, so behaviour there is correct today.`,
+	},
+	{
+		key:      "userMemoryOptIn",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		value:    map[string]any{enabledMember: false},
+		send:     true,
+		because: `SENT AS A VETO, unconditionally, and it is the one row here whose value
+is false. It refuses kiro-cli's memory subsystem for every session vibekit
+starts. Ungated on purpose: there is no vibekit setting behind it, because the
+only state worth having is off.
 
-WHY NOT A VIBEKIT SETTING, today. A three-state control (follow / on / off) was
-built and reverted, because every state is inert: the subsystem is
-client-UNREACHABLE rather than merely dark. The experiment value comes from
-featureConfig.get, whose registry is [env, experiment] with the "client"
-precedence seat declared and never constructed, and neither memory key appears in
-ENV_FEATURE_VARIABLES. No client key and no environment variable can turn it on,
-so an On option would do nothing, and a shipped control that does nothing teaches
-a reader to distrust the rest of the panel.
+WHY IT IS SENT NOW, when the 2.19.1 row withheld it. That row named two watch
+conditions and said the veto "is what to reach for if a watch condition below
+fires". One fired. On 2.19.1 neither memory key appeared in
+ENV_FEATURE_VARIABLES, which is what made the subsystem client-unreachable and
+the veto pointless; on 2.19.2 the map carries
+AB_MEMORY_EXTERNAL -> KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED, and the env provider
+parses that variable to a real boolean, so the gate is now reachable and one
+environment variable turns memory on.
 
-The one state with a future is OFF. KAS reads this key into a TRI-STATE, testing
-hasOwnProperty before isSettingEnabled, and its gate vetoes only on an explicit
-false. So absent means "no opinion, let the experiment decide" while
-present-and-false is a refusal that survives a backend ramp. That veto is what to
-reach for if a watch condition below fires; it buys nothing while the feature
-cannot start.
+WHY THE ENVIRONMENT VARIABLE IS NOT A SUFFICIENT KILL SWITCH, which is the fact
+that makes this row load-bearing rather than belt-and-braces. resolveMemoryEnabled
+reads AB_MEMORY_INTERNAL first and only falls through to AB_MEMORY_EXTERNAL when
+the internal arm reads "disabled". AB_MEMORY_INTERNAL is NOT in
+ENV_FEATURE_VARIABLES, so an AWS-side ramp of the internal arm makes the ternary
+never consult the external key and no value of the variable can reach the
+decision. Setting it to "false" would look like a kill switch and would not be
+one. This key is the only lever that vetoes BOTH arms, so the two are not
+redundant mechanism: each covers a case the other cannot.
 
-WATCH, and the first two would bite silently. A "client" provider appearing in
-buildFeatureConfigRegistry, or either memory key appearing in
-ENV_FEATURE_VARIABLES: both make the gate reachable, and neither is in a census
-regex, so the census will not report them. A backend ramp of
-memory_external_enabled needs no upstream release at all, and with no row sending
-false the first symptom would be a memory block appearing in prompts.
+THE VALUE MUST BE EXACTLY THIS SHAPE. KAS reads the key as a TRI-STATE — it tests
+hasOwnProperty(settings,"userMemoryOptIn") and only then calls isSettingEnabled —
+and its gate refuses on an explicit false alone. isSettingEnabled returns
+val.enabled unchecked, so an EMPTY object yields undefined, which is not false and
+does NOT veto. That is the inverse of the trap every other settings row here
+guards against, and it is why the golden asserts these literal bytes rather than
+the key's presence.
 
-WHY IT WOULD BE DECLINED ANYWAY on this deployment, so the watch has its answer
-ready. vibekit has ONE home directory and no authentication, so one store is
-global and a user-preference entry written in one person's chat lands in
-everyone's msg0. That store is affirmatively unreachable through vibekit's own
-file surface, since internal/filebrowse deny-lists the home tree as credentials,
-so a model would write entries no user can read or delete. Scoping collapses
-here: the resident-scope resolver over the primary workspace path yields the
-single bucket "workspace", and the repo resolver starts its walk at the parent
-directory, so every repo under /workspace shares one scope and the feature's
-headline scope-resident injection does not function. And the index is frozen at
-session creation for a bridge that lives as long as its tab.
+WHY MEMORY IS DECLINED RATHER THAN OFFERED, and this argument does not expire when
+upstream fixes a defect. Memory's own retention policy asks the model to record
+architecture decisions and their rationale, non-obvious mechanisms, gotchas, and
+user preferences and corrections. That is this project's steering corpus in
+different words, and against it memory loses review, routing, version control,
+discoverability and bounds, while its one genuine addition is automatic capture by
+an unreviewed writer whose own prompt admits there is no dedup. Curation over
+capture is a standing decision here.
 
-If this is ever sent as a veto the value must be exactly the enabled member set
-false: isSettingEnabled reads that member unchecked, so an empty object yields
-undefined, which is not false and does NOT veto. That is the inverse of the trap
-every other settings row here guards against.`,
+Three deployment facts make it worse, and the second is vibekit's own to fix. The
+store is affirmatively unreachable through vibekit's file surface, since
+internal/filebrowse deny-lists the home tree as credentials, so a model would
+write entries no user can read or delete. Scoping collapses: residency is computed
+from ONE workspace path and vibekit sends a single cwd for every chat, so every
+repo under /workspace shares one bucket and the feature's headline
+scope-resident injection does not function. And there is NO cleanup mechanism
+upstream, so the store grows without bound.
+
+Do not plant a .git in /workspace to fix the scoping. Residency resolves from one
+path, so whatever remote that .git names becomes a single repo tag for every
+session; RepoResolver stops at the first .git walking up, so it never sees the
+clones below; a .git with no parseable remote yields nothing at all; and making
+the mount a repo changes git's behaviour for every agent command run outside a
+clone. The real fix is a per-chat working directory, which is a design rather than
+an edit.
+
+WATCH. A "client" provider appearing in buildFeatureConfigRegistry would let the
+settings bridge supply the experiment value directly; neither memory key is in a
+census regex, so the census will not report it. This row's veto survives that and
+every backend ramp, so the watch is now informational rather than urgent.`,
 	},
 	{
 		key:      "memoryEnable",
 		door:     doorConnection,
 		resolver: resolverSetting,
 		send:     false,
-		because: `WITHHELD, and unlike its sibling userMemoryOptIn it must not be sent
-even as false, because this key is read at TWO sites and only one of them is the
-memory gate.
+		because: `WITHHELD, and unlike its sibling userMemoryOptIn — which vibekit now
+SENDS as a veto — this key must not be sent in either direction, because it is
+read at two sites and only one of them is about the memory gate.
 
-Site one is the memory channel fallback: resolveMemoryEnabled treats
+Site one IS the memory gate: resolveMemoryEnabled takes
 isSettingEnabled(settings,"memoryEnable") as an isInsiderChannel substitute "for
-older CLI nightly builds". That path is inert here, since eligibility needs the
-experiment value to be the string "insider" and its default is false.
+older CLI nightly builds". So the settings bridge does reach the gate here, which
+an earlier version of this row denied. It reaches the ELIGIBILITY term through
+nothing, though: eligibility needs the experiment value to be "all", or "insider"
+with this flag, and the internal arm defaults to "disabled" while the external one
+defaults to false. Sending it can therefore only turn memory ON, in the one
+configuration where AWS has shipped the insider arm.
 
-Site two is the reason for this row. The key is ALSO read through
-isFeatureEnabled("memoryEnable"), feeding resolveRemoteToolAllowlist, where for
-a kiro-cli client it appends the remote searchMemories tool. So sending it
-allowlists a remote memory-search tool while the local store stays dark — a
-half-on state with no upside: an allowlisted tool over a subsystem this
-deployment vetoes.
+Site two is the reason to withhold it whatever site one does. The key is ALSO read
+through isFeatureEnabled("memoryEnable"), which feeds resolveRemoteToolAllowlist,
+and for a kiro-cli client that pushes the remote searchMemories tool into the
+allowlist. So sending it hands the model a remote memory-search tool over a store
+this deployment vetoes — a half-on state with no upside.
 
-Withholding is sufficient and correct at both sites: absent resolves false
-through isSettingEnabled and through the bridged isFeatureEnabled provider
-alike. The veto that actually matters is userMemoryOptIn's, and it is a
-different key.`,
+Withholding is sufficient at both sites: absent resolves false through
+isSettingEnabled and through the bridged isFeatureEnabled provider alike. The veto
+that matters is userMemoryOptIn's, and it is a different key.`,
 	},
 	{
 		key:      "streamingShellContent",

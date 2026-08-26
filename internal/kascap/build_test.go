@@ -18,10 +18,19 @@ const (
 	updateGoldenCmd      = "UPDATE_GOLDEN=1 go test ./internal/kascap/ -run 'TestInitializeDeclaresExactly|TestSessionDoorDeclaresExactly'"
 )
 
-// spawnMatrix is the COMPLETE set of runtime inputs to either projection. Spawn
-// has two boolean fields, so four rows is exhaustive, and exhaustive is what
-// makes a golden a contract rather than a sample: a change to how either gate
-// is applied cannot hide in an untested combination.
+// spawnMatrix is the COMPLETE set of runtime inputs to either projection, and
+// exhaustive is what makes a golden a contract rather than a sample: a change to
+// how a gate is applied cannot hide in an untested combination.
+//
+// It is exhaustive over the two ORIGINAL booleans and representative over the
+// three gates added since, rather than the 32-line cross product five gates would
+// give. The reasoning is that the added gates are INDEPENDENT of the first two —
+// each keys on its own Spawn field and writes its own wire key — so a full
+// product would add 25 lines that differ from a line already here by exactly one
+// key. What each added gate does need is BOTH of its states plus one line where it
+// coexists with the originals, and that is what the rows below give it. A gate
+// whose value interacted with another's would break that argument and earn its
+// product.
 //
 // The slice order IS the goldens' line order. Reordering it rewrites both
 // fixtures without changing any payload.
@@ -33,6 +42,42 @@ var spawnMatrix = []struct {
 	{"secret storage only", Spawn{SecretStorage: true}},
 	{"hooks only", Spawn{Hooks: true}},
 	{"both gates on", Spawn{SecretStorage: true, Hooks: true}},
+	// Presets are the third gate, and BOTH of its states need a line here. An
+	// empty set withholds the policyPreset key entirely, which is the Custom
+	// profile's whole implementation and the one payload shape where a missing key
+	// is the correct wire — so the four cases above double as its fixture. A
+	// non-empty set is the ordinary case every named profile produces, and the
+	// multi-id line is what would catch the key being flattened to a bare string
+	// or truncated to its first entry, neither of which errors on the wire.
+	{"one preset", Spawn{Presets: []string{"read-workspace"}}},
+	{"several presets", Spawn{Presets: []string{"read-workspace", "read-only-shell", "read-all"}}},
+	{"presets with both gates", Spawn{
+		SecretStorage: true, Hooks: true,
+		Presets: []string{"allow-all"},
+	}},
+	// ToolSearch and Knowledge gate three keys between them and they gate DIFFERENTLY,
+	// which is the whole reason both need their own lines rather than one combined row.
+	//
+	// ToolSearch is PRESENCE-gated: off withholds settings.toolSearch entirely,
+	// because absent already resolves false at isSettingEnabled. Every line above
+	// is therefore its off fixture, and the line below is the only place the key
+	// appears at all.
+	//
+	// Knowledge is VALUE-gated across TWO keys — the knowledge capability, whose
+	// resolver compares `=== true`, and settings.knowledge, read through
+	// isSettingEnabled. So its off state is a payload shape rather than an absence,
+	// and the lines above are that shape: `"knowledge":false` beside
+	// `"knowledge":{"enabled":false}`. The line below is its on state, and it is
+	// what would catch the pair drifting apart — one key flipping without the other
+	// is the exact defect that shipped a knowledge UI over a store the agent had no
+	// tool to query.
+	{"tool search on", Spawn{ToolSearch: true}},
+	{"knowledge on", Spawn{Knowledge: true}},
+	{"every gate on", Spawn{
+		SecretStorage: true, Hooks: true,
+		Presets:    []string{"read-workspace"},
+		ToolSearch: true, Knowledge: true,
+	}},
 }
 
 // renderMatrix marshals one projection across the whole spawn matrix, one

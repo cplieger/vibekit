@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ type fakeBridge struct {
 	blockOn      map[string]chan struct{}
 	sessionID    string
 	modelID      string
+	effort       string
 	currentMode  string
 	servedModels []string
 	sessionTitle string
@@ -46,8 +48,12 @@ type fakeBridge struct {
 	notifsOnStart []*vibekit.RPCResponse
 	mu            sync.Mutex
 	responds      int
-	stopped       bool
-	started       bool
+	// setModelFailures makes the next N SetModel calls fail. The switch-by-restart
+	// fallback is only reachable when the fast path fails, so a test that wants it
+	// arms this with 1.
+	setModelFailures int
+	stopped          bool
+	started          bool
 }
 
 func newFakeBridge() *fakeBridge {
@@ -248,10 +254,34 @@ func (b *fakeBridge) ServedModels() []string {
 
 func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, "session/set_config_option")
+	// setModelFailures makes the first N swaps fail, which is the only way to reach
+	// the switch-by-restart fallback: the fast path is what has to fail for the
+	// restart to run at all, and the RETRY on the reopened session is the behaviour
+	// under test.
+	if b.setModelFailures > 0 {
+		b.setModelFailures--
+		return errors.New("fake: model swap refused")
+	}
 	b.modelID = modelID
+	return nil
+}
+
+func (b *fakeBridge) EnsureEffort(_ context.Context, level string) error {
+	b.mu.Lock()
+	b.effort = level
 	b.calls = append(b.calls, "session/set_config_option")
 	b.mu.Unlock()
 	return nil
+}
+
+// lastEffort reports the level the last SetEffort applied, for the model-switch
+// re-assert tests. Empty means SetEffort was never called.
+func (b *fakeBridge) lastEffort() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.effort
 }
 
 func (b *fakeBridge) NotifCh() <-chan *vibekit.RPCResponse { return b.notifCh }

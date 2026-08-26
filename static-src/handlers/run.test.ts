@@ -10,16 +10,26 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-vi.mock("../run-view.js", () => ({ refreshRunView: vi.fn() }));
+vi.mock("../run-store.js", () => ({ invalidateRun: vi.fn(), noteRunChat: vi.fn() }));
+vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
+// The proactive sub-tab opener. Its own rules (nest under the launching chat, do
+// not activate, do not stop the run on close) are run-view's; what this suite pins
+// is WHICH events reach it and with what.
+vi.mock("../run-view.js", () => ({ openRunSubTab: vi.fn() }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 
 import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
-import { refreshRunView } from "../run-view.js";
+import { invalidateRun, noteRunChat } from "../run-store.js";
+import { trackRun } from "../run-dots.js";
+import { openRunSubTab } from "../run-view.js";
 import { info, success, error } from "../toast.js";
 
-const runView = vi.mocked(refreshRunView);
+const invalidate = vi.mocked(invalidateRun);
+const noteChat = vi.mocked(noteRunChat);
+const track = vi.mocked(trackRun);
+const openSubTab = vi.mocked(openRunSubTab);
 const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
@@ -39,7 +49,10 @@ onBus(BUS_RUNS_CHANGED, () => {
 });
 
 beforeEach(() => {
-  runView.mockClear();
+  invalidate.mockClear();
+  noteChat.mockClear();
+  track.mockClear();
+  openSubTab.mockClear();
   toastInfo.mockClear();
   toastSuccess.mockClear();
   toastError.mockClear();
@@ -59,12 +72,58 @@ const _keys: readonly (keyof SSEPayloads)[] = ["run_started", "run_progress", "r
 void _keys;
 
 describe("run SSE handlers", () => {
-  it("re-reads the run on every one of the three events", () => {
+  it("invalidates the run store on every one of the three events", () => {
     const order: RunEvent[] = ["run_started", "run_progress", "run_finished"];
     for (const [i, type] of order.entries()) {
       send(type, { workflow_id: "wf_1", kind: "node_start", status: "completed", name: "x" });
-      expect(runView).toHaveBeenCalledTimes(i + 1);
-      expect(runView).toHaveBeenLastCalledWith("wf_1");
+      expect(invalidate).toHaveBeenCalledTimes(i + 1);
+      expect(invalidate).toHaveBeenLastCalledWith("wf_1");
+    }
+  });
+
+  // Every run's tab carries a dot now, agent-launched included, so every event
+  // tracks the run. The origin no longer decides — a chat's own dot cannot cover a
+  // run that outlives its turn.
+  it("tracks the run for its dot on every event", () => {
+    const order: RunEvent[] = ["run_started", "run_progress", "run_finished"];
+    for (const [i, type] of order.entries()) {
+      send(type, { workflow_id: "wf_1", kind: "node_start", status: "completed" });
+      expect(track).toHaveBeenCalledTimes(i + 1);
+      expect(track).toHaveBeenLastCalledWith("wf_1");
+    }
+  });
+
+  // A run is initiated in a turn and then outlives it, so its tab has to appear
+  // without anyone going to look for it. The launching chat id comes off the
+  // envelope, which is what makes the tab a sub-tab of the right conversation.
+  it("opens the run's sub-tab proactively, under the chat that launched it", () => {
+    send("run_started", { workflow_id: "wf_1", name: "publish" });
+    expect(openSubTab).toHaveBeenCalledWith("wf_1", "publish", "c1");
+  });
+
+  // `run_started` is not replayed to a client that connects mid-run, so the
+  // progress frames are the only door left for a run already going.
+  it("also opens it from a progress frame, for a client that joined mid-run", () => {
+    send("run_progress", { workflow_id: "wf_2", kind: "node_start" });
+    expect(openSubTab).toHaveBeenCalledWith("wf_2", "Workflow run", "c1");
+  });
+
+  // A tab appearing at the moment work ENDS is noise: there is nothing live to
+  // watch, and History is the door to a finished run.
+  it("never opens one on the finish frame", () => {
+    send("run_finished", { workflow_id: "wf_3", status: "completed" });
+    expect(openSubTab).not.toHaveBeenCalled();
+  });
+
+  // Recorded on EVERY event including the finish, because it is what a later
+  // re-open nests under: a reader who closed the automatic tab and then clicks the
+  // run in its transcript should land beside the same conversation.
+  it("records the launching chat on every event, the finish included", () => {
+    const order: RunEvent[] = ["run_started", "run_progress", "run_finished"];
+    for (const [i, type] of order.entries()) {
+      send(type, { workflow_id: "wf_4", kind: "node_start", status: "completed" });
+      expect(noteChat).toHaveBeenCalledTimes(i + 1);
+      expect(noteChat).toHaveBeenLastCalledWith("wf_4", "c1");
     }
   });
 
@@ -83,9 +142,9 @@ describe("run SSE handlers", () => {
     expect(listRefetches).toBe(0);
   });
 
-  it("passes the workflow id through so a view showing another run ignores it", () => {
+  it("passes the workflow id through so a surface showing another run ignores it", () => {
     send("run_progress", { workflow_id: "wf_other", kind: "node_start" });
-    expect(runView).toHaveBeenCalledWith("wf_other");
+    expect(invalidate).toHaveBeenCalledWith("wf_other");
   });
 });
 

@@ -7,6 +7,14 @@
 //   streaming → stop icon (pulse), click cancels the turn
 //   error     → alert icon, tooltip names the failure, click RETRIES
 //
+// THE ERROR FACE MEANS "THERE IS NOTHING TO SEND TO", NOT "THE LAST SEND
+// FAILED". Two states reach it and both are about reachability: the SSE stream is
+// down, or kiro-cli could not be spawned for this chat. Every ordinary failure —
+// a 429 throttle, a 5xx, a capacity refusal, a timeout, a refused model switch —
+// goes to a bottom-right toast (failure-notice.ts) and to the turn's own
+// transcript divider instead. An alert icon on the control whose job is to send
+// reads as "this chat is dead", which was false for all of them.
+//
 // NOTHING HERE DISABLES THE COMPOSER, and that is the whole point of the
 // module. The retired fourth state (`blocked`) set `disabled` on the button AND
 // the textarea, and every failure routed to it: a 429 throttle, a 5xx, a dead
@@ -22,14 +30,11 @@
 // (the stream and the command POST are different connections, the POST usually
 // still lands, and the reconnect replay catches the transcript up). A full
 // context does not (kiro-cli compacts on the next turn). What a real failure
-// earns is the error surface, not a lock.
+// earns is a report, not a lock.
 //
 // There is no `queued` state either: a prompt typed during a turn is a steer,
 // sent straight away, so nothing waits on the button. Steers awaiting the agent
 // show on the chip row (pending-steers.ts).
-//
-// The send button IS the error surface. Whenever something failed, the button
-// says what via icon + tooltip. No inline error cards, no toasts.
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";

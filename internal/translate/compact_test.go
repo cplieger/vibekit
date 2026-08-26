@@ -80,7 +80,7 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 			deps, events, store := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, ""), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, ""), FrameAttribution{})
 
 			if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(msgs) != 0 {
 				t.Errorf("EventCompactFailed messages = %d, want 0 (cancel is benign)", len(msgs))
@@ -109,7 +109,7 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
 	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompacted)
 	if len(msgs) != 1 {
@@ -138,7 +138,7 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
 
 	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed)
 	if len(msgs) != 1 {
@@ -166,7 +166,7 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "running", ""), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "running", ""), FrameAttribution{})
 
 	if n := countCompactionStarted(events); n != 1 {
 		t.Errorf("compaction_started broadcasts = %d, want 1", n)
@@ -203,7 +203,7 @@ func TestHandleV3Summarization_CompactedAppendSpeaksOnlyOnFailure(t *testing.T) 
 			deps.store = &recStore{appendErr: tc.appendErr}
 			tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
 			got := strings.Contains(logs.String(), `msg="compaction: append event"`)
 			if got != tc.wantLogged {
@@ -235,7 +235,7 @@ func TestHandleV3Summarization_FailedEventAppendSpeaksOnlyOnFailure(t *testing.T
 			deps.store = &recStore{appendErr: tc.appendErr}
 			tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
 
 			got := strings.Contains(logs.String(), `msg="compaction: append failed event"`)
 			if got != tc.wantLogged {

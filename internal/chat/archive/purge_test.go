@@ -697,3 +697,164 @@ func TestPurge_PassSummaryReportsWhatThePassDid(t *testing.T) {
 		t.Errorf("purge summary = %q, want no error summary: nothing failed in this pass", got)
 	}
 }
+
+// The draft exemption, and it is the other half of a decision made in the store
+// rather than a second rule. Store.SetDraft deliberately does not stamp
+// UpdatedAt — a 600ms autosave would push the purge cutoff out a whole window
+// per keystroke — so the age test structurally cannot see a chat someone is
+// typing in. Without this, a paragraph typed into a month-old chat looks exactly
+// as abandoned as one nobody has touched, right up to the moment the reaper takes
+// both, and the draft is the only copy of the words.
+func TestPurge_NeverPurgesAChatHoldingADraft(t *testing.T) {
+	cases := map[string]struct {
+		draft     string
+		wantKept  bool
+		wantReaps []string
+	}{
+		"a chat with an unsent draft is defended": {
+			draft:     "half a question I have not sent yet",
+			wantKept:  true,
+			wantReaps: nil,
+		},
+		// The exemption is exactly the non-empty draft, not "has a draft field".
+		// An empty draft is how a sent or abandoned message clears, so treating
+		// it as work in progress would make every chat that ever had one
+		// permanent.
+		"an empty draft defends nothing": {
+			draft:     "",
+			wantKept:  false,
+			wantReaps: []string{"aged"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var rec purgeRecorder
+			svc, store, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
+			p := writeAgedChat(t, dir, "aged", 72*time.Hour)
+			// The draft reaches the purge decision through the store's Load, which
+			// is the one read purgeReferenceTime already makes.
+			store.loadResult = &vibekit.Chat{ID: "aged", Name: "C", Draft: tc.draft}
+
+			svc.Purge(t.Context(), 24*time.Hour)
+
+			if got := exists(t, p); got != tc.wantKept {
+				t.Errorf("chat survived = %v, want %v (draft %q)", got, tc.wantKept, tc.draft)
+			}
+			if got := rec.sorted(); !slices.Equal(got, tc.wantReaps) {
+				t.Errorf("onPurge fired for %v, want %v", got, tc.wantReaps)
+			}
+		})
+	}
+}
+
+// The exemption covers the DRAFT and deliberately not the attachments beside it:
+// an attachment is a path to a file that lives on disk in its own right, so
+// purging the chat loses a reference, while a draft is the only copy of the text.
+func TestPurge_StagedAttachmentsAloneDoNotDefendAChat(t *testing.T) {
+	var rec purgeRecorder
+	svc, store, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
+	p := writeAgedChat(t, dir, "aged", 72*time.Hour)
+	store.loadResult = &vibekit.Chat{ID: "aged", Name: "C", Attachments: []string{"docs/spec.pdf"}}
+
+	svc.Purge(t.Context(), 24*time.Hour)
+
+	if exists(t, p) {
+		t.Error("a chat holding only staged attachments survived; the file it names is still on disk")
+	}
+	if got := rec.sorted(); !slices.Equal(got, []string{"aged"}) {
+		t.Errorf("onPurge fired for %v, want [aged]", got)
+	}
+}
+
+// An unreadable chat file reports no draft, which is the safe direction: a chat
+// the store cannot decode has no draft anyone could recover, so defending it
+// would keep a corrupt file forever. The fake's Load fails by default, so this is
+// that path.
+func TestPurge_AnUnreadableChatIsNotDefendedByADraft(t *testing.T) {
+	svc, _, dir := newPurgeTestService(t)
+	p := writeAgedChat(t, dir, "corrupt", 72*time.Hour)
+
+	svc.Purge(t.Context(), 24*time.Hour)
+
+	if exists(t, p) {
+		t.Error("an unreadable expired chat survived; a load failure must not read as a draft")
+	}
+}
+
+// The OPEN-TAB exemption, retention's second predicate and the one the tab
+// collection made possible. It answers the case the draft predicate misses: a
+// reader who is READING an old chat rather than typing into it leaves no trace
+// the age test can see, because reading stamps nothing at all.
+//
+// It makes retention OPT-OUT for a chat left open forever, which is accepted —
+// that is the honest reading of "in use", and the alternative is closing a tab
+// under someone to satisfy a timer.
+func TestPurge_NeverPurgesAChatWithAnOpenTab(t *testing.T) {
+	cases := map[string]struct {
+		open      map[string]bool
+		wantKept  bool
+		wantReaps []string
+	}{
+		"a chat on the strip is defended however old": {
+			open:      map[string]bool{"aged": true},
+			wantKept:  true,
+			wantReaps: nil,
+		},
+		"a chat whose tab was closed is not": {
+			open:      map[string]bool{"someone-else": true},
+			wantKept:  false,
+			wantReaps: []string{"aged"},
+		},
+		"no tabs open at all defends nothing": {
+			open:      nil,
+			wantKept:  false,
+			wantReaps: []string{"aged"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var rec purgeRecorder
+			svc, _, dir := newPurgeTestService(t,
+				WithOnPurge(rec.recordPurge),
+				WithOpenTabs(func(id vibekit.ChatID) bool { return tc.open[string(id)] }))
+			p := writeAgedChat(t, dir, "aged", 72*time.Hour)
+
+			svc.Purge(t.Context(), 24*time.Hour)
+
+			if got := exists(t, p); got != tc.wantKept {
+				t.Errorf("chat survived = %v, want %v (open tabs %v)", got, tc.wantKept, tc.open)
+			}
+			if got := rec.sorted(); !slices.Equal(got, tc.wantReaps) {
+				t.Errorf("onPurge fired for %v, want %v", got, tc.wantReaps)
+			}
+		})
+	}
+}
+
+// The two exemptions are INDEPENDENT: either one alone defends a chat, which is
+// what "an open tab OR a non-empty draft" means. A test that only ever set both
+// would pass with the predicates ANDed.
+func TestPurge_TheOpenTabAndDraftExemptionsAreIndependent(t *testing.T) {
+	var rec purgeRecorder
+	svc, store, dir := newPurgeTestService(t,
+		WithOnPurge(rec.recordPurge),
+		WithOpenTabs(func(id vibekit.ChatID) bool { return id == "open-no-draft" }))
+	openNoDraft := writeAgedChat(t, dir, "open-no-draft", 72*time.Hour)
+	draftNoTab := writeAgedChat(t, dir, "draft-no-tab", 72*time.Hour)
+	// One loadResult serves both entries; only the drafting one needs it non-empty,
+	// so the open-tab chat is defended by its tab alone — the tab predicate runs
+	// before the record is even read.
+	store.loadResult = &vibekit.Chat{ID: "draft-no-tab", Name: "C", Draft: "unsent"}
+
+	svc.Purge(t.Context(), 24*time.Hour)
+
+	if !exists(t, openNoDraft) {
+		t.Error("a chat with an open tab and no draft was purged; the tab alone must defend it")
+	}
+	if !exists(t, draftNoTab) {
+		t.Error("a chat with a draft and no open tab was purged; the draft alone must defend it")
+	}
+	if got := rec.sorted(); len(got) != 0 {
+		t.Errorf("onPurge fired for %v, want nothing", got)
+	}
+}

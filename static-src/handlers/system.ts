@@ -10,8 +10,8 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
-import { syncSettings } from "../settings.js";
-import { restoreLastModel } from "../session-context.js";
+import { adoptThemeFromSettings, syncSettings } from "../settings.js";
+import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { setWorkspaceRoot } from "../workspace.js";
 import {
   getSessions,
@@ -26,10 +26,7 @@ import {
 import { dropDecisions } from "../decision-dock.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
-import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
-import { applyRemote as applyRemoteUIState } from "../ui-state.js";
-import { closeTab, hasTab, getOpenTabIDs, isEditorTabID } from "../tabs.js";
 
 // The handshake states the workspace root. It is the only way the client learns
 // where the workspace is, and every relative agent path needs it to become
@@ -43,16 +40,6 @@ onSSE("connected", (_chatID, p) => {
   }
 });
 
-onSSE("ui_state_changed", (_chatID, p) => {
-  // The arrangement is server-owned, so another device's tab open, close,
-  // reorder or pin arrives here. `applyRemote` folds it in, ignores this
-  // device's own echo (comparing the synced half, so a tab just dragged does
-  // not snap back), and notifies subscribers only when something really
-  // changed. It carries the STATE rather than being an invalidation, so no
-  // refetch is needed and every device learns the revision to write next.
-  applyRemoteUIState(p);
-});
-
 onSSE("settings_updated", () => {
   // Reconcile our cache from the server's view. Use restoreLastModel
   // (cache-only) rather than setLastModel — setLastModel calls
@@ -62,8 +49,15 @@ onSSE("settings_updated", () => {
     if (s.last_model !== undefined) {
       restoreLastModel(s.last_model);
     }
+    if (s.last_effort !== undefined) {
+      restoreLastEffort(s.last_effort);
+    }
+    // A theme chosen on ANOTHER device lands here, which is the behaviour the
+    // retired whole-document arrangement broadcast used to carry. Safe against a
+    // loop from both sides: syncSettings has just seeded the write tracker from
+    // this very payload, and the adopt path suppresses the write-back anyway.
+    adoptThemeFromSettings(s);
   });
-  refreshCompactionThreshold();
   void refreshRetention();
 });
 
@@ -114,21 +108,15 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     // chat so the switch isn't stranded behind a stuck ".pending" pill.
     drainModelSwitchQueue(s.id);
   }
-  void loadList().then(() => {
-    // Reconcile tabs: close any chat/plan tab whose session no longer
-    // exists on the server. During a gap the server may have deleted
-    // chats (user action on another device, retention cleanup, rewind
-    // discard) and we missed the chat_deleted SSE.
-    const sessionIDs = new Set(getSessions().map((s) => s.id));
-    // Walk open tabs via the tabs module (avoids DOM scraping).
-    for (const id of getOpenTabIDs().filter(
-      (id) => id !== "" && !id.startsWith("__") && !isEditorTabID(id),
-    )) {
-      if (!sessionIDs.has(id) && hasTab(id)) {
-        closeTab(id);
-      }
-    }
-  });
+  // There is no tab reconcile here any more, and its absence is the point. This
+  // loop used to close any chat tab whose session had left GET /api/chats —
+  // membership by set difference, over two collections fetched separately, which
+  // is the shape that closed tabs nobody closed. The tab set is its own
+  // server-owned collection now, so a gap is answered by re-reading THAT
+  // collection (app.ts wires `transport:gap` to `listTabs`), and a chat the
+  // server deleted has already had its tabs closed by the membership
+  // coordinator.
+  void loadList();
   const id = getActiveId();
   if (id !== "") {
     void loadMessages(id);

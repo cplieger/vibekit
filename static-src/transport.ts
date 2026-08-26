@@ -25,8 +25,9 @@
 //     where iOS killed the stream while the tab was in the background.
 // ---------------------------------------------------------------------------
 
-import type { ServerEvent, ConnectedPayload, ConnectionStatus } from "./types.js";
-import { setLastError, setSSEStatus } from "./send-state.js";
+import type { ServerEvent, ConnectedPayload, ConnectionStatus, TabKind } from "./types.js";
+import { setSSEStatus } from "./send-state.js";
+import { reportFailure } from "./failure-notice.js";
 import { emitBus, BUS_TRANSPORT_GAP, lookupSSEDecoder } from "./bus.js";
 import {
   registerCleanup,
@@ -100,7 +101,36 @@ export type TypedCommand =
   | { type: "set_mode"; chat_id: string; payload: { mode_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
-  | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } };
+  | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } }
+  // The three CREATING commands, and they are the only members here with NO
+  // `chat_id`: the server mints the chat id and returns it, so there is nothing
+  // for the envelope to address. That absence is the wire contract of stage 1b,
+  // which is why it is spelled in the type rather than left to a runtime default.
+  //
+  // `op_id` correlates every attempt of ONE create gesture so a repeat resolves to
+  // the chat the first attempt made. It is NOT the idempotency token — that is the
+  // header, per-dispatch, in a 5-minute cache; this one has to survive a retry the
+  // user makes minutes later. See command/create_ledger.go.
+  | { type: "create_chat"; payload: { op_id: string; name?: string; model?: string } }
+  | { type: "resume_session"; payload: { op_id: string; session_id: string; name: string } }
+  | { type: "fork_chat"; payload: { op_id: string; parent_chat_id: string; title?: string } }
+  // The four TAB mutations, and they have no `chat_id` for a reason of their own:
+  // the open-tab set is workspace-global, so a tab command addresses a tab or a
+  // whole arrangement, never a conversation. A chat TAB names its chat in `ref`,
+  // which is a subject field rather than an envelope one — the envelope's chat id
+  // routes an event to a chat's topic, and `tabs_changed` is broadcast to every
+  // client with no topic at all.
+  //
+  // Every one carries `op_id`, echoed back on the frame so a client can tell its
+  // own committed mutation from another device's. That is its only job here: no
+  // TTL, no cache, no 409 branch, and no authority over what is open.
+  | {
+      type: "open_tab";
+      payload: { kind: TabKind; op_id: string; ref?: string; parent?: string; owns?: boolean };
+    }
+  | { type: "close_tab"; payload: { id: string; op_id: string } }
+  | { type: "reorder_tabs"; payload: { order: string[]; op_id: string } }
+  | { type: "pin_tab"; payload: { id: string; pinned: boolean; op_id: string } };
 
 const TRANSPORT_ERROR_CODES = {
   TIMEOUT: "timeout",
@@ -108,7 +138,7 @@ const TRANSPORT_ERROR_CODES = {
   NETWORK: "network",
 } as const;
 
-interface SendResult {
+export interface SendResult {
   ok: boolean;
   /** HTTP status. 0 for non-HTTP failures (timeout, network). */
   status: number;
@@ -116,6 +146,18 @@ interface SendResult {
   error?: string;
   /** Structured error code for non-HTTP failures. */
   code?: string;
+  /** The success body, undecoded. Present only when the response parsed as JSON.
+   *
+   *  Almost every command answers `{"ok":true}` and its caller reads nothing, so
+   *  this stayed unread for a long time. The creating commands are what need it:
+   *  `create_chat`, `fork_chat` and `resume_session` MINT the chat id server-side
+   *  now, so the response is the only place the caller can learn the id of the
+   *  thing it just asked for. The alternative was waiting for the `chat_created`
+   *  SSE frame, which is the identity-the-caller-cannot-address problem inverted.
+   *
+   *  Undecoded on purpose: this module owns the transport, and which wire shape a
+   *  given command answers with is the action's business. */
+  body?: unknown;
 }
 
 interface SendOptions {
@@ -123,11 +165,15 @@ interface SendOptions {
   signal?: AbortSignal;
   /** Timeout in ms. Defaults to 15 minutes. */
   timeoutMs?: number;
-  /** When true (default), failures call setLastError() so the prompt
-   *  send button shows its error face with the reason as the tooltip. The
-   *  action framework adapter (transportAction) passes false because
-   *  it owns the error surface via toast — letting both fire produces
-   *  duplicate user feedback for one failure. */
+  /** When true (default), a failure is reported to the user through
+   *  failure-notice.ts (a bottom-right toast naming the reason). The action
+   *  framework adapter (transportAction) passes false because it owns the error
+   *  surface via its own toast — letting both fire produces duplicate user
+   *  feedback for one failure.
+   *
+   *  It no longer touches the send button: an attempt that failed is not a claim
+   *  that the agent is unreachable, and that button now says only the latter. See
+   *  send-state.ts. */
   reportSendState?: boolean;
 }
 
@@ -141,6 +187,17 @@ interface SendOptions {
 function idempotencyKeyOf(cmd: TypedCommand | Command): string | undefined {
   const v = (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD];
   return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/** The chat a command is addressed to, or "" when it addresses none.
+ *
+ *  A helper rather than three `cmd.chat_id ?? ""` reads, because since the
+ *  creating commands lost their `chat_id` the union genuinely has members without
+ *  the field and each read would need its own narrowing. "" is what the envelope
+ *  carries for them, and it is also what `reportFailure` treats as workspace-wide,
+ *  which is correct: a failed create belongs to no chat. */
+function chatIDOf(cmd: TypedCommand | Command): string {
+  return "chat_id" in cmd ? (cmd.chat_id ?? "") : "";
 }
 
 /** Generate a client-side request id (also used as a message id). */
@@ -160,6 +217,22 @@ export function newRequestID(): string {
  *  about to be sent. */
 export function newMessageID(): string {
   return newRequestID().replace("r-", "m-");
+}
+
+/** Generate a correlation id for ONE create gesture, so every attempt of it
+ *  resolves to the same chat.
+ *
+ *  Distinct from `newRequestID()`'s idempotency role, which is per-DISPATCH and
+ *  lives in a 5-minute cache. This one has to survive a retry the user makes
+ *  minutes later from the failure toast, which is why the server keys its own
+ *  ledger on it (command/create_ledger.go).
+ *
+ *  MINT IT AT THE DISPATCH SITE, never inside an action's `run()`: the framework
+ *  re-invokes `run()` per retry attempt, so an id minted there would be fresh on
+ *  every attempt and defeat its own purpose. The `op-` prefix keeps it inside
+ *  ids.ValidIdent, which is what the command boundary gates it with. */
+export function newOpID(): string {
+  return newRequestID().replace("r-", "op-");
 }
 
 interface GapInfo {
@@ -536,13 +609,20 @@ class TransportController {
         signal: combined,
         body: JSON.stringify({
           type: cmd.type,
-          chat_id: cmd.chat_id ?? "",
+          chat_id: chatIDOf(cmd),
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           payload: "payload" in cmd && cmd.payload != null ? cmd.payload : {},
         }),
       });
       if (r.ok) {
-        return { ok: true, status: r.status };
+        // A command whose body is not JSON is still a success — the status is what
+        // says so, and only the creating commands read a body at all. Parsed here
+        // rather than by each caller so there is one place the response is read.
+        try {
+          return { ok: true, status: r.status, body: await r.json() };
+        } catch {
+          return { ok: true, status: r.status };
+        }
       }
 
       let errMsg = `HTTP ${String(r.status)}`;
@@ -554,13 +634,13 @@ class TransportController {
       } catch {
         /* non-JSON */
       }
-      // 409 is a queue signal — never reported via setLastError.
+      // 409 is a queue signal — never reported as a failure.
       // Otherwise honour the caller's reportSendState preference
       // (defaults to true for legacy direct callers; transportAction
       // sets it false to avoid double-feedback with its toast).
       const reportSendState = opts?.reportSendState ?? true;
       if (r.status !== 409 && reportSendState) {
-        setLastError(errMsg);
+        reportFailure(chatIDOf(cmd), errMsg);
       }
       return { ok: false, status: r.status, error: errMsg };
     } catch (e: unknown) {
@@ -579,7 +659,7 @@ class TransportController {
       }
       const reportSendState = opts?.reportSendState ?? true;
       if (reportSendState) {
-        setLastError(msg);
+        reportFailure(chatIDOf(cmd), msg);
       }
       return { ok: false, status: 0, error: msg, code };
     } finally {

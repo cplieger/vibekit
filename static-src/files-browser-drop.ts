@@ -5,7 +5,7 @@
 
 import { $ } from "./dom.js";
 import { type FileEntry, joinPath } from "./files-shared.js";
-import { attachPathToActiveChat } from "./chat.js";
+import { attachPathsToActiveChat } from "./chat.js";
 import { installDropZone } from "./drop-zone.js";
 import { upload } from "./actions/files.js";
 import { screenUploads } from "./upload-policy.js";
@@ -74,9 +74,10 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
         {
           onSuccess: (paths) => {
             ctx.reload();
-            for (const p of paths) {
-              attachPathToActiveChat(p);
-            }
+            // DETACHED: an upload callback, with nothing after it that reads the
+            // chat. One call for the batch, not one per path — see
+            // attachPathsToActiveChat.
+            void attachPathsToActiveChat(paths);
           },
         },
       );

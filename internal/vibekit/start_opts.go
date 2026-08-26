@@ -72,6 +72,23 @@ type StartOpts struct {
 	Effort      string
 	AgentEngine string
 	Mode        string
+	// Presets are the KAS policy-preset ids this session opens with, resolved
+	// from the active security profile (policyfile.Profile). They ride
+	// _meta.kiro.policyPreset on BOTH session/new and session/load, because KAS
+	// re-reads them on each and persists neither.
+	//
+	// EMPTY is a real value, not an omission: it is the Custom profile, where the
+	// permissions files are the whole policy, and it withholds the wire key
+	// entirely rather than sending an empty array.
+	//
+	// It is a per-SESSION field rather than a live one because KAS offers no way
+	// to change a running session's policy — there is no set_config_option id for
+	// it and no client-callable setter — so a profile change reaches a chat when
+	// its session next starts or loads, which is the intended path rather than a
+	// gap. Set on the utility bridge too, since that
+	// is the session answering GET /api/permissions, and the profile's own rules
+	// are only readable there.
+	Presets []string
 	// ExtraArgs are operator-supplied kiro-cli launch flags
 	// (VIBEKIT_KIRO_ACP_ARGS), already filtered, appended after the args
 	// vibekit derives itself. Set on CHAT bridges only — never on the utility
@@ -112,11 +129,35 @@ type StartOpts struct {
 	// Set on BOTH chat bridges and the utility bridge: the capability rides the
 	// shared initialize, so whoever declares it must be able to answer.
 	SecretStorage bool
+	// ToolSearch and Knowledge are the two user settings that have to reach the
+	// AGENT, and they land on `_meta.kiro.settings.{toolSearch,knowledge}` through
+	// kascap's gates rather than on kiro-cli's own settings file.
+	//
+	// Both were kiro-cli settings until 2026-08, written through
+	// /api/kiro-settings as `toolSearch.enabled` and `chat.enableKnowledge`. That
+	// endpoint reaches the TUI and the index builder; measured against the stock
+	// 2.19.2 bundle, it reaches no running chat, because KAS's ACP path reads no
+	// kiro-cli setting at all. So each control kept its meaning and changed door.
+	//
+	// Resolved per SPAWN from the settings file (internal/agent's kasSettings), so
+	// a flip reaches the next bridge. Neither is a live switch: KAS resolves both
+	// at session creation and freezes them for the session's life, which is what
+	// the UI hint has to say.
+	//
+	// Knowledge gates BOTH knowledge rows — the `knowledge` capability that puts
+	// the index listing in msg0 and the `knowledge` setting that makes KAS build
+	// the Knowledge tool. Gating only one reproduces the defect that made the
+	// third key necessary in the first place: a UI over a store the agent cannot
+	// query, or a listing of bases it has no tool to read. It does NOT reach
+	// `_kiro/knowledge`, whose handler consults neither key, so the REST surface
+	// and its panel keep working with the switch off.
+	ToolSearch bool
+	Knowledge  bool
 }
 
 // There is no ACPBridge interface here, and no ACPBridgeFactory. The subprocess
 // contract is declared at its consumer (internal/agent) at seven widths, because
-// the runtime asks for wildly different things at different sites: 14 methods for a
+// the runtime asks for wildly different things at different sites: 15 methods for a
 // per-chat bridge that starts, prompts, model-switches and stops, 6 for the
 // utility session, 7 for the metadata persist, 2 for a lease, 1 each for the
 // parameter builders and the idle culler. *bridge.Bridge satisfies the widest.

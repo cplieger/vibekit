@@ -26,8 +26,10 @@ let diffResult: DiffResult = {
 };
 
 vi.mock("./tabs.js", () => ({
-  openEditorView: vi.fn(),
-  editorTabID: (path: string) => `editor:${path}`,
+  openEditorView: vi.fn(() => Promise.resolve()),
+  // `editorTabID` is gone with the `editor:<path>` id convention: ids are opaque
+  // and server-minted, and this is the one lookup from a path to one.
+  tabIdFor: () => "",
   getActiveTabId: () => "",
   setTabDirty: vi.fn(),
 }));
@@ -36,6 +38,10 @@ vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./editor-conflict.js", () => ({
   abortSuggestion: vi.fn(),
   clearSuggestionState: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./editor-modes.js", () => ({ restoreUI: vi.fn() }));
 vi.mock("./editor-ui.js", () => ({
@@ -45,7 +51,6 @@ vi.mock("./editor-ui.js", () => ({
   pendingLines: new Map<string, number>(),
   clearAgentLineCache: vi.fn(),
 }));
-vi.mock("./ui-state.js", () => ({ save: vi.fn(), load: () => ({ editor_files: [] }) }));
 vi.mock("./actions/editor.js", () => ({
   loadDiff: {
     dispatch: () => ({

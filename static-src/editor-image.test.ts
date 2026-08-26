@@ -11,7 +11,7 @@
 // specification.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { surfaces, apiGet } = vi.hoisted(() => ({
+const { surfaces, apiGet, tabs } = vi.hoisted(() => ({
   surfaces: {
     editorHighlight: document.createElement("pre"),
     editorCode: document.createElement("code"),
@@ -28,6 +28,20 @@ const { surfaces, apiGet } = vi.hoisted(() => ({
     editorDiffBtn: document.createElement("button"),
   },
   apiGet: vi.fn(),
+  /** The projection's own tab bookkeeping, minimal and OPAQUE.
+   *
+   *  Ids are server-minted, so this mints one per path and hands it back through
+   *  `tabIdFor` — a test that composed `editor:<path>` would be reaching a row by a
+   *  route the app cannot. The activation hook is the FACTORY's, so the open calls
+   *  it through the same registration the composition root uses rather than through
+   *  a callback argument that no longer exists. */
+  tabs: {
+    active: "",
+    minted: new Map<string, string>(),
+    show: (_path: string) => {
+      /* pointed at the real activateFile below */
+    },
+  },
 }));
 
 vi.mock("./dom.js", () => ({ $: surfaces }));
@@ -40,7 +54,7 @@ vi.mock("./highlight.js", () => ({
   normalizeLang: undefined,
   highlight: (s: string) => s,
 }));
-vi.mock("./store.js", () => ({ getActiveId: () => "" }));
+vi.mock("./store.js", () => ({ getActiveId: () => "", get: vi.fn(() => undefined) }));
 // The read route. Nothing in this file may reach it — the assertion is that it
 // stays uncalled for an image.
 vi.mock("./api-client.js", () => ({ apiGet }));
@@ -52,6 +66,17 @@ vi.mock("./actions/editor.js", () => ({
   suggestResolution: undefined,
   fetchAgentLines: { cancel: () => undefined, dispatch: () => Promise.resolve(null) },
   loadDiff: { dispatch: () => ({ outcome: Promise.resolve({ status: "cancelled" }) }) },
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./editor-scroll.js", () => ({
   scrollToEditorLine: () => undefined,
@@ -64,20 +89,33 @@ vi.mock("./tabs.js", () => ({
   // these, so no path under test changes behavior.
   setGitTab: undefined,
   toggleGitView: undefined,
-  openEditorView: (_p: string, onShow: () => void) => {
-    onShow();
+  // A round trip that ENDS in the tab's activation hook, which is what a real open
+  // does: the frame paints the row, `openTab` activates it, and the factory's
+  // `onShow` is `activateFile`. The editor's own fallback then correctly does
+  // nothing, because the tab was not already active.
+  openEditorView: (path: string) => {
+    let id = tabs.minted.get(path);
+    if (id === undefined) {
+      id = `tb_${String(tabs.minted.size + 1).padStart(3, "0")}`;
+      tabs.minted.set(path, id);
+    }
+    if (tabs.active !== id) {
+      tabs.active = id;
+      tabs.show(path);
+    }
+    return Promise.resolve();
   },
-  // No tab is active before the open, so onShow fires and `open` skips its
-  // already-active fallback — one activation, which is what a real first open is.
-  getActiveTabId: () => "",
-  editorTabID: (path: string) => `editor:${path}`,
+  getActiveTabId: () => tabs.active,
+  tabIdFor: (_kind: string, ref = "") => tabs.minted.get(ref) ?? "",
   setTabDirty: () => undefined,
 }));
 vi.mock("./router.js", () => ({ pushRoute: () => undefined }));
-vi.mock("./ui-state.js", () => ({ save: () => undefined }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: () => undefined }));
 
-import { openFile } from "./editor-openers.js";
+import { activateFile, openFile } from "./editor-openers.js";
+
+// The registration the composition root performs.
+tabs.show = activateFile;
 import { fileStates } from "./editor-types.js";
 import { isViewableImage } from "./file-extensions.js";
 
@@ -93,6 +131,10 @@ beforeEach(() => {
   apiGet.mockReset();
   apiGet.mockResolvedValue({ content: "" });
   fileStates.clear();
+  // Ids are minted per open, so the bookkeeping resets with the file states or the
+  // second case would find the first case's tab already active.
+  tabs.active = "";
+  tabs.minted.clear();
   for (const el of Object.values(surfaces)) {
     el.className = "";
     el.replaceChildren();

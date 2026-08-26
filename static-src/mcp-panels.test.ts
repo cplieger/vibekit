@@ -14,6 +14,10 @@ vi.mock("./dom.js", () => ({
 }));
 vi.mock("./api-client.js", () => ({
   apiGet: async () => null,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./modals.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this

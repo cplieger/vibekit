@@ -45,6 +45,12 @@ const storeGet = vi.fn((_id: string): unknown => undefined);
 vi.mock("./store.js", () => ({ get: storeGet }));
 vi.mock("./roles.js", () => ({
   labelForMode: (id: string) => (id === "vibe" ? "Default" : id),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
@@ -56,11 +62,15 @@ vi.mock("./actions/chat-search.js", () => ({
   searchChats: { dispatch: searchDispatch, cancel: vi.fn() },
 }));
 vi.mock("./run-view.js", () => ({ openRunView }));
-const toggleHistoryView = vi.fn((onShow: () => void) => {
-  onShow();
-});
-const hasTab = vi.fn((_id: string) => false);
-vi.mock("./tabs.js", () => ({ toggleHistoryView, hasTab, closeTab }));
+// The toggle takes NO callback any more: `mount` and `teardown` are what the tab
+// factory reaches through this module's own lazy-imported `loadHistoryView` /
+// `teardownHistoryView`, so every door into the page gets one behaviour. It only
+// has to resolve here; the suites below mount the page themselves.
+const toggleHistoryView = vi.fn(() => Promise.resolve());
+// `hasTab` is keyed by `(kind, ref)`: ids are opaque and server-minted, so a
+// chat id is no longer a tab id and the predicate takes the subject instead.
+const hasTab = vi.fn((_kind: string, _ref?: string) => false);
+vi.mock("./tabs.js", () => ({ toggleHistoryView, hasTab }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   skeletonTiming: () => ({ cancel: vi.fn() }),
 }));
@@ -114,10 +124,13 @@ const runAt = (status: string) => ({ ...runRow, status });
 async function render(payload: unknown): Promise<HTMLElement> {
   document.body.innerHTML = `<div id="history-table"></div>`;
   dispatch.mockResolvedValue(payload);
-  const { showHistoryView } = (await import(
+  // `loadHistoryView` rather than `showHistoryView`: the latter toggles the TAB,
+  // which is a round trip that paints nothing here, while the page's own loader is
+  // what every door reaches through the tab factory's lazy import.
+  const { loadHistoryView } = (await import(
     /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
   )) as typeof ModHistory;
-  showHistoryView();
+  loadHistoryView();
   await vi.waitFor(() => {
     if (document.querySelectorAll("#history-table [data-key]").length === 0) {
       throw new Error("not rendered");
@@ -132,9 +145,6 @@ describe("history: previous chats and runs", () => {
     vi.resetModules();
     bootSeq++;
     hasTab.mockReturnValue(false);
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   it("merges chats and runs into ONE list, newest first", async () => {
@@ -172,21 +182,35 @@ describe("history: previous chats and runs", () => {
   });
 
   it("routes a run to the read-only run view, never to a chat", async () => {
+    // Third and last argument: the parent chat to nest the run's tab under, empty
+    // here because the fixture has no `parent_chat_id`. Whether the RUN is
+    // PARENTLESS is deliberately not passed — that is the run's own fact and the
+    // composition root resolves it from the run store, because a chat-parented run
+    // reviewed while its chat's tab is closed has an empty subject Parent without
+    // being parentless.
     const c = await render({ sessions: [chatRow], runs: [runRow] });
     (c.querySelector('[data-key="r:wf_1"]') as HTMLElement).click();
-    // The third argument is the parentless flag: this fixture has no
-    // parent_chat_id, so its page may offer Retry.
-    expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", true);
+    expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", "");
     expect(openPreviousSession).not.toHaveBeenCalled();
+  });
+
+  it("hands over the launching chat so an agent-launched run nests under it", async () => {
+    const parented = { ...runRow, parent_chat_id: "c-launcher" };
+    const c = await render({ sessions: [], runs: [parented] });
+    (c.querySelector('[data-key="r:wf_1"]') as HTMLElement).click();
+    // The chat id is what makes the run's tab a sub-tab of the conversation that
+    // started it; `openRunView` resolves it to a TAB id, because a chat id is no
+    // longer one.
+    expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", "c-launcher");
   });
 
   it("offers a Retry on load failure instead of an empty state", async () => {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue(null);
-    const { showHistoryView } = (await import(
+    const { loadHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
     )) as typeof ModHistory;
-    showHistoryView();
+    loadHistoryView();
     await vi.waitFor(() => {
       if (document.querySelector(".history-error") === null) {
         throw new Error("no error state");
@@ -206,10 +230,10 @@ describe("history: previous chats and runs", () => {
   it("says so when the workspace has nothing", async () => {
     document.body.innerHTML = `<div id="history-table"></div>`;
     dispatch.mockResolvedValue({ sessions: [], runs: [] });
-    const { showHistoryView } = (await import(
+    const { loadHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
     )) as typeof ModHistory;
-    showHistoryView();
+    loadHistoryView();
     await vi.waitFor(() => {
       const t = document.getElementById("history-table")?.textContent ?? "";
       if (!t.includes("No previous sessions")) {
@@ -235,19 +259,16 @@ describe("history: chats already open in a tab here", () => {
     vi.resetModules();
     bootSeq++;
     hasTab.mockReturnValue(false);
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   it("drops a tagged session whose chat is open here", async () => {
-    hasTab.mockImplementation((id: string) => id === "c-existing");
+    hasTab.mockImplementation((_kind: string, ref?: string) => ref === "c-existing");
     const c = await render({ sessions: [chatRow, ownedRow], runs: [] });
     expect(c.querySelector('[data-key="s:sess_owned"]')).toBeNull();
     // Only that row goes. The rest of the list is untouched.
     expect(c.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
     expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
-    expect(hasTab).toHaveBeenCalledWith("c-existing");
+    expect(hasTab).toHaveBeenCalledWith("chat", "c-existing");
   });
 
   it("keeps a tagged session whose chat is NOT open here", async () => {
@@ -282,9 +303,6 @@ describe("history: a run's outcome is a glyph, not a word", () => {
     vi.resetModules();
     bootSeq++;
     hasTab.mockReturnValue(false);
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   const settled = [
@@ -371,9 +389,6 @@ describe("history: an overrun reads differently from a cancel", () => {
     vi.resetModules();
     bootSeq++;
     hasTab.mockReturnValue(false);
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   it("says a wall-clock overrun stopped the run", async () => {
@@ -469,9 +484,6 @@ describe("history: the tab-restore loader", () => {
     vi.resetModules();
     bootSeq++;
     hasTab.mockReturnValue(false);
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   async function restore(): Promise<HTMLElement> {
@@ -569,10 +581,13 @@ async function search(
   document.body.innerHTML = `<div id="history-view"><div id="history-table"></div></div>`;
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
-  const { showHistoryView } = (await import(
+  // `loadHistoryView` rather than `showHistoryView`: the latter toggles the TAB,
+  // which is a round trip that paints nothing here, while the page's own loader is
+  // what every door reaches through the tab factory's lazy import.
+  const { loadHistoryView } = (await import(
     /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
   )) as typeof ModHistory;
-  showHistoryView();
+  loadHistoryView();
   const find = await openFind();
 
   const input = document.getElementById("hist-search-input") as HTMLInputElement;
@@ -601,9 +616,6 @@ describe("history: cross-chat search", () => {
     vi.resetModules();
     bootSeq++;
     hasTab.mockReturnValue(false);
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   it("renders matching CHATS with their best line", async () => {
@@ -744,9 +756,6 @@ describe("history: the per-row delete", () => {
     confirmMock.mockResolvedValue(true);
     deleteChatDispatch.mockResolvedValue({ ok: true });
     deleteRunDispatch.mockResolvedValue({ ok: true });
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   it("gives every row a delete button, chats and runs alike", async () => {
@@ -759,15 +768,18 @@ describe("history: the per-row delete", () => {
     }
   });
 
-  it("deletes a conversation through the chat-delete command and closes its tab", async () => {
+  it("deletes a conversation through the chat-delete command and closes no tab itself", async () => {
     const c = await render({ sessions: [ownedRow], runs: [] });
     (c.querySelector("[data-history-delete]") as HTMLElement).click();
     await vi.waitFor(() => {
       expect(deleteChatDispatch).toHaveBeenCalledWith("c-existing");
     });
     // delete_chat is the ONE path that also reaps the chat's KAS session chain,
-    // which is what makes this delete reach the underlying files.
-    expect(closeTab).toHaveBeenCalledWith("c-existing", { skipOnClose: true });
+    // which is what makes this delete reach the underlying files. The TAB is the
+    // membership coordinator's: it closes every tab for a deleted chat under the
+    // same lock that removed the record and emits the removal, so a `close_tab`
+    // from here would be a second close for a tab the server has already dropped.
+    expect(closeTab).not.toHaveBeenCalled();
     expect(deleteRunDispatch).not.toHaveBeenCalled();
   });
 
@@ -808,15 +820,21 @@ describe("history: the per-row delete", () => {
     expect(closeTab).not.toHaveBeenCalled();
   });
 
-  it("leaves the tab open when the delete failed", async () => {
-    // The action returns null on a non-2xx, and closing the tab then would hide a
-    // chat the server still holds.
+  it("leaves the row in place when the delete failed", async () => {
+    // The action returns null on a non-2xx, and the row's own subject is what
+    // survives: a failed delete must not refresh the list, because a refresh is
+    // what would take the row away for a chat the server still holds. The TAB is
+    // not this module's concern any more — the server closes tabs for a chat it
+    // actually deleted.
     deleteChatDispatch.mockResolvedValue(null as never);
     const c = await render({ sessions: [ownedRow], runs: [] });
+    const before = dispatch.mock.calls.length;
     (c.querySelector("[data-history-delete]") as HTMLElement).click();
     await vi.waitFor(() => {
       expect(deleteChatDispatch).toHaveBeenCalled();
     });
+    expect(c.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
+    expect(dispatch.mock.calls).toHaveLength(before);
     expect(closeTab).not.toHaveBeenCalled();
   });
 });
@@ -839,9 +857,6 @@ describe("history: the row's facts line", () => {
     bootSeq++;
     hasTab.mockReturnValue(false);
     storeGet.mockReturnValue(undefined);
-    toggleHistoryView.mockImplementation((onShow: () => void) => {
-      onShow();
-    });
   });
 
   it("states model, mode, turns, messages and credits from the chat record", async () => {

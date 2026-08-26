@@ -27,6 +27,7 @@
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { openChange, openChangeSet } from "../navigate.js";
+import { formatElapsed } from "../strings.js";
 import type { FileChange } from "../types.js";
 import type { TurnOutcome } from "../turns.js";
 
@@ -274,13 +275,4 @@ function setFilesOpen(footer: HTMLElement, on: boolean): void {
   if (summary !== null && !summary.disabled) {
     summary.setAttribute("aria-expanded", on ? "true" : "false");
   }
-}
-
-function formatElapsed(ms: number): string {
-  if (ms >= 60_000) {
-    const m = Math.floor(ms / 60_000);
-    const s = Math.floor((ms % 60_000) / 1000);
-    return `${String(m)}m ${String(s)}s`;
-  }
-  return `${(ms / 1000).toFixed(1)}s`;
 }

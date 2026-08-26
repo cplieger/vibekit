@@ -101,6 +101,21 @@ type policyProvider interface {
 	PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error)
 }
 
+// policyReloader recycles the session whose policy presets a profile change
+// invalidated, so GET /api/permissions stops describing the previous profile.
+//
+// Its OWN 1-method contract rather than a third method on policyProvider, which is
+// deliberately read-only: this one mutates process state, and folding it in would
+// make that contract's comment false. *agent.Runtime satisfies it.
+//
+// Only the utility session, which is the one this package reads the policy through.
+// A chat's presets ride its session door, so a chat picks up a new profile when its
+// session next starts or loads — KAS exposes no way to change a live session's
+// policy, so there is nothing to call for those.
+type policyReloader interface {
+	RestartUtilitySession()
+}
+
 // utilityPrompter is AI-backed text generation for the two endpoints this
 // package serves with it: explain-an-error and explain-a-diff. *agent.Runtime
 // satisfies it over the long-lived utility bridge.

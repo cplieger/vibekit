@@ -37,6 +37,11 @@ type Service struct {
 	// isLive reports whether a chat is in active use (a running bridge). A
 	// live chat is never purged, however old — see purgeOne.
 	isLive func(chatID vibekit.ChatID) bool
+	// hasOpenTab reports whether a chat has an open TAB. The second exemption,
+	// and a different fact from isLive: a reader can have a chat open on the strip
+	// with no bridge running, which is precisely the reader the age test cannot
+	// see. See purgeOne for what it costs.
+	hasOpenTab func(chatID vibekit.ChatID) bool
 }
 
 // New creates an archive Service backed by the given StoreAccess.
@@ -59,6 +64,30 @@ type Option func(*Service)
 // Injected because this package cannot see the runtime that owns bridges.
 func WithLiveChats(fn func(chatID vibekit.ChatID) bool) Option {
 	return func(s *Service) { s.isLive = fn }
+}
+
+// WithOpenTabs registers the predicate that reports whether a chat has an OPEN
+// TAB. A chat with one is exempt from purging regardless of age.
+//
+// The second of the two exemptions the retention design owes, and the one the
+// server could not answer until the tab set became a modelled collection: before
+// it, "which tabs are open" was a string list inside a preferences document that
+// validated nothing against reality.
+//
+// It answers the case the draft predicate misses. A reader who is READING an old
+// chat rather than typing into it leaves no trace the age test can see —
+// Store.SetDraft deliberately does not stamp UpdatedAt, and simply having the
+// chat open stamps nothing at all — so before this the tab vanished under the
+// cursor, on every device at once.
+//
+// THIS MAKES RETENTION OPT-OUT for a chat left open forever, and that is
+// ACCEPTED. It is the honest reading of "in use": it is what a reader expects of
+// a tab they deliberately kept, and the alternative is closing a tab under
+// someone to satisfy a timer.
+//
+// Injected because this package cannot see the tab store.
+func WithOpenTabs(fn func(chatID vibekit.ChatID) bool) Option {
+	return func(s *Service) { s.hasOpenTab = fn }
 }
 
 // WithOnPurge registers a callback fired after a chat is purged.

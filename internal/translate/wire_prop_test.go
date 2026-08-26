@@ -61,6 +61,11 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 			orig := ACPToolCallUpdateWire{
 				ToolCallID: rapid.StringMatching(`[a-z0-9]{4,12}`).Draw(rt, "id"),
 				Status:     "completed",
+				// Set explicitly, like ACPToolCallWire's RawInput above, because a
+				// nil json.RawMessage marshals to `null` and decodes back as the
+				// four bytes `null` rather than nil — DeepEqual would fail on a
+				// field neither side got wrong.
+				RawOutput: json.RawMessage(`{}`),
 			}
 
 			data, err := json.Marshal(orig)

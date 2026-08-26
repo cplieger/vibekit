@@ -16,7 +16,17 @@ export type ErrorAction =
   | { kind: "sign-in"; label: string };
 
 export interface ErrorRoute {
-  surface: "banner" | "send-error";
+  /** Where this error is reported.
+   *
+   *  - `banner`: persistent, per-chat, inside the chat view. The turn is NOT
+   *    ended — a banner means something else is wrong while the work runs on.
+   *  - `toast`: bottom-right, transient, paired with the turn's own transcript
+   *    divider (the server writes the same reason there). This is where a FAILED
+   *    ATTEMPT goes: the send did not land, and the next one may well.
+   *  - `agent-down`: the send button's alert face. Reserved for "there is no
+   *    agent to send to", never for a failed attempt — see send-state.ts.
+   */
+  surface: "banner" | "toast" | "agent-down";
   level: BannerLevel;
   dismissible: boolean;
   action?: ErrorAction;
@@ -46,26 +56,32 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   mode_not_applied: { surface: "banner", level: "warning", dismissible: true },
   // kiro-cli could not vend a KAS access token, so the agent runtime is running
   // unauthenticated: the session opened and every service-backed surface behind
-  // it will fail. A banner rather than a send-error because it is not this send
-  // that is broken, and not dismissible because nothing else on screen says the
-  // runtime is signed out. The CTA is the login modal: the only action that fixes
-  // it is signing in, and there is no Settings control for that.
+  // it will fail. A banner rather than a toast because it is not one send that is
+  // broken, and not dismissible because nothing else on screen says the runtime
+  // is signed out. The CTA is the login modal: the only action that fixes it is
+  // signing in, and there is no Settings control for that.
   auth_token_unavailable: {
     surface: "banner",
     level: "error",
     dismissible: false,
     action: { kind: "sign-in", label: "Sign in" },
   },
-  switch_failed: { surface: "send-error", level: "error", dismissible: false },
-  // The pick was refused before it reached the wire, so the send that carried it
-  // is what failed. Same surface as switch_failed, which is the other half of
-  // choosing a model.
-  model_not_served: { surface: "send-error", level: "error", dismissible: false },
-  bridge_start_failed: { surface: "send-error", level: "error", dismissible: false },
-  prompt_failed: { surface: "send-error", level: "error", dismissible: false },
-  // Empty-turn recovery failed to respawn the session or to resend the prompt.
-  // Routed explicitly rather than left to the unknown-code fallthrough, which
-  // reaches setLastError with no level and no banner: this is the one error whose
-  // meaning is "the automatic repair did not work", so the user has to see it.
-  recovery_failed: { surface: "send-error", level: "error", dismissible: false },
+  // The four failed-attempt codes. Each one ends the turn and each one leaves a
+  // promptable chat behind, which is precisely why none of them reaches the send
+  // button: the composer's next Send is the retry.
+  //
+  // `prompt_failed` is the throttle / 5xx / capacity family and the reason this
+  // whole routing changed. `recovery_failed` is empty-turn recovery giving up,
+  // routed explicitly rather than left to the unknown-code fallthrough because it
+  // is the one error whose meaning is "the automatic repair did not work".
+  // `switch_failed` and `model_not_served` are the two halves of choosing a model,
+  // refused before the wire and on it.
+  prompt_failed: { surface: "toast", level: "error", dismissible: false },
+  recovery_failed: { surface: "toast", level: "error", dismissible: false },
+  switch_failed: { surface: "toast", level: "error", dismissible: false },
+  model_not_served: { surface: "toast", level: "error", dismissible: false },
+  // The ONE code that earns the send button's alert face: kiro-cli could not be
+  // spawned, so this chat has no ACP connection behind it. Every other failure
+  // here happened to a live agent.
+  bridge_start_failed: { surface: "agent-down", level: "error", dismissible: false },
 };

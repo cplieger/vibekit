@@ -13,6 +13,10 @@ vi.mock("../api-client.js", () => ({
 
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  // Reached through tabs.ts -> tabs-sync.ts, whose `GET /api/tabs` is the only
+  // read in the projection. Nothing here lists tabs; the name has to exist for
+  // real-ESM linking.
+  apiGetTyped: vi.fn(),
 }));
 import * as toast from "../toast.js";
 
@@ -101,20 +105,19 @@ describe("setKiroSetting", () => {
   it("PUTs to /api/kiro-settings with key/value body", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const input = document.createElement("input");
-    input.type = "text";
-    input.value = "new-val";
+    input.type = "checkbox";
+    input.checked = true;
 
     const { setKiroSetting } = await import("./settings.js");
     await setKiroSetting.dispatch({
-      key: "compaction",
-      value: "new-val",
+      key: "telemetry.enabled",
+      value: "true",
       input,
-      previousValue: "old-val",
     });
 
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/kiro-settings");
-    expect(JSON.parse(opts.body as string)).toEqual({ key: "compaction", value: "new-val" });
+    expect(JSON.parse(opts.body as string)).toEqual({ key: "telemetry.enabled", value: "true" });
   });
 });
 

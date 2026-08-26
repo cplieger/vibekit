@@ -22,11 +22,16 @@ import { describeStatus } from "./git-types.js";
 import { activeSession } from "./store.js";
 import type { Session } from "./types.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import * as uiState from "./ui-state.js";
+// The browser's path is a WORKSPACE preference, so it rides config.json with
+// the theme rather than a per-device blob: a second device opening the browser
+// should land where this one was looking. patchSettings debounces and dedups, so
+// a walk through four directories costs one round trip and a repeat of the same
+// path costs none.
+import { patchSettings } from "./persist.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { pushRoute } from "./router.js";
-import { attachPathToActiveChat } from "./chat.js";
+import { attachPathsToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
 import { initFilesSearch, resetFilesSearch } from "./files-search.js";
 import { screenUploads } from "./upload-policy.js";
@@ -78,7 +83,7 @@ const state = new FileBrowserState();
 
 export function initFileBrowser(): void {
   $.filesBtn.addEventListener("click", () => {
-    toggleFilesView(loadDir, resetFileBrowser);
+    void toggleFilesView();
   });
   $.fbBack.addEventListener("click", goBack);
   $.fbForward.addEventListener("click", goForward);
@@ -137,7 +142,7 @@ export function initFileBrowser(): void {
     // gesture later, so the leak was reported as inherited search state rather
     // than as a tab that closed itself.
     activateBrowser: () => {
-      showFilesView(loadDir, resetFileBrowser);
+      void showFilesView();
     },
   });
 
@@ -193,7 +198,7 @@ export function initFileBrowser(): void {
   });
 }
 
-/** True while currentPath came from a restore (persisted ui-state or a
+/** True while currentPath came from a restore (the persisted fb_path or a
  *  /files deep link) and has not yet loaded successfully. A stale
  *  restored path — one outside the granted browse roots (e.g. saved
  *  before the allow-list conversion, or a revoked VIBEKIT_BROWSE_ROOTS
@@ -221,10 +226,14 @@ function resetFileBrowser(): void {
   // skip fresh mounts in reconcile. A fresh mount every open keeps the
   // entry animation deterministic; entries are refetched on every open.
   $.fbList.replaceChildren();
-  uiState.save({ fb_path: "" });
+  void patchSettings({ fb_path: "" });
 }
 
-export { loadDir as loadFileBrowser };
+// `resetFileBrowser` is exported for the tab factory (tab-materialize.ts), which
+// has to be able to describe a files tab's close for EVERY door rather than only
+// the two inside this module. It stays the module's own function; the export just
+// makes the behaviour reachable from the one place that must name it once.
+export { loadDir as loadFileBrowser, resetFileBrowser };
 
 // --- Path input ---
 
@@ -252,7 +261,7 @@ function loadDir(): void {
       if (pendingRestore && state.currentPath !== ".") {
         pendingRestore = false;
         state.reset();
-        uiState.save({ fb_path: "" });
+        void patchSettings({ fb_path: "" });
         updateNavButtons();
         loadDir();
         return;
@@ -317,7 +326,7 @@ function showError(msg: string): void {
 
 function navigate(path: string): void {
   state.navigate(path);
-  uiState.save({ fb_path: path });
+  void patchSettings({ fb_path: path });
   pushRoute({ kind: "files", path });
   updateNavButtons();
   loadWithTransition();
@@ -327,7 +336,7 @@ function goBack(): void {
   if (!state.goBack()) {
     return;
   }
-  uiState.save({ fb_path: state.currentPath });
+  void patchSettings({ fb_path: state.currentPath });
   pushRoute({ kind: "files", path: state.currentPath });
   updateNavButtons();
   loadWithTransition();
@@ -337,7 +346,7 @@ function goForward(): void {
   if (!state.goForward()) {
     return;
   }
-  uiState.save({ fb_path: state.currentPath });
+  void patchSettings({ fb_path: state.currentPath });
   pushRoute({ kind: "files", path: state.currentPath });
   updateNavButtons();
   loadWithTransition();
@@ -690,9 +699,11 @@ function addSelectedToChat(): void {
   }
   // Directory attachments are plain paths like anywhere else — the chat
   // input doesn't care whether it's a file or folder, both are text.
-  for (const name of state.selected) {
-    attachPathToActiveChat(joinPath(state.currentPath, name));
-  }
+  //
+  // DETACHED: a toolbar click with nothing after it that reads the chat.
+  void attachPathsToActiveChat(
+    [...state.selected].map((name) => joinPath(state.currentPath, name)),
+  );
 }
 
 function renameSelected(): void {
@@ -870,9 +881,8 @@ function uploadViaDialog(): void {
       {
         onSuccess: (paths) => {
           loadDir();
-          for (const p of paths) {
-            attachPathToActiveChat(p);
-          }
+          // DETACHED: an upload callback with nothing after it that reads the chat.
+          void attachPathsToActiveChat(paths);
         },
       },
     );

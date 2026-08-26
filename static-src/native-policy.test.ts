@@ -31,6 +31,10 @@ vi.mock("./bus.js", () => ({
     mocks.sseHandlers.set(type, fn);
     return () => mocks.sseHandlers.delete(type);
   },
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  apiGetTyped: vi.fn(),
 }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
@@ -39,6 +43,7 @@ vi.mock("./actions/index.js", () => ({
 vi.mock("./actions/permissions.js", () => ({
   editNativeRule: { name: "permissions.edit_native_rule", dispatch: mocks.editDispatch },
   explainPolicy: { name: "permissions.explain", dispatch: mocks.explainDispatch },
+  setSecurityProfile: { name: "permissions.set_profile", dispatch: vi.fn() },
 }));
 
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
@@ -85,6 +90,10 @@ const sampleView: PolicyView = {
   // so the switch is out of scope for these tests. permissions-relax.test.ts
   // owns it.
   relax_capabilities: [],
+  // The picker is out of scope here (no profile DOM in this fixture);
+  // permissions-profile.test.ts owns it. Guarded so the table renders unlocked.
+  profiles: [{ id: "guarded", presets: ["read-workspace"] }],
+  profile: "guarded",
   rules: [
     {
       capability: "fs_write",

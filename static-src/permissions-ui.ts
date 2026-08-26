@@ -4,7 +4,7 @@
 // Two controllers live here:
 //
 //   - PermissionsUIController — vibekit's own complementary controls,
-//     each wired to its settings.json field and re-rendered on change:
+//     each wired to its config.json field and re-rendered on change:
 //       * supervised_default  boolean
 //       * agent_ignore_files  string[]
 //   - NativePolicyController — the native (Cedar) policy VIEW + editor,
@@ -21,11 +21,11 @@ import { maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./chip.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { editNativeRule, explainPolicy } from "./actions/permissions.js";
+import { editNativeRule, explainPolicy, setSecurityProfile } from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
 import { onSSE } from "./bus.js";
 import { confirm } from "./confirm.js";
-import type { PolicyView, PolicyRule } from "./types.js";
+import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
 import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
@@ -160,6 +160,59 @@ function splitGlobs(raw: string): string[] {
     .filter((s) => s !== "");
 }
 
+/** The Custom profile's id, and the one id the client must know by name: it is the
+ *  state the table becomes editable in, which is a UI fact rather than a policy one.
+ *  Every other profile is rendered from whatever the server sent. */
+const CUSTOM_PROFILE = "custom";
+
+/** The loosest profile's id, needed only to decide which selection earns the extra
+ *  confirm. The ladder's ORDER is the server's, so this is a hint the picker checks
+ *  rather than a policy it enforces — the server would grant the same set either
+ *  way, and a rename upstream costs the extra confirm rather than correctness. */
+const LOOSEST_PROFILE_HINT = "unrestricted";
+
+/** Human labels, keyed by profile id. Prose for a person, so it lives on the client
+ *  rather than travelling with the ladder; an id the client has no label for falls
+ *  back to the id, which is ugly but true. */
+function profileLabel(id: string): string {
+  switch (id) {
+    case "guarded":
+      return "Guarded";
+    case "read-only":
+      return "Read-only";
+    case "trusted":
+      return "Trusted";
+    case "unrestricted":
+      return "Unrestricted";
+    case CUSTOM_PROFILE:
+      return "Custom";
+    default:
+      return id;
+  }
+}
+
+/** What each profile actually grants, in the terms a reader decides on.
+ *
+ *  Read-only names where it reaches on purpose. It grants reads OUTSIDE the
+ *  workspace, so an SSH key or a sibling project is readable without a prompt, and
+ *  a description that said only "reads" would be hiding the part that matters. */
+function profileDescription(id: string): string {
+  switch (id) {
+    case "guarded":
+      return "Reads files in this workspace. Everything else asks.";
+    case "read-only":
+      return "Also reads any file on this machine, including outside the workspace, runs read-only commands, and reaches the web. Every change asks.";
+    case "trusted":
+      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean.";
+    case "unrestricted":
+      return "Never asks, including before installing a power. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
+    case CUSTOM_PROFILE:
+      return "Your own rules, edited in the table below. Nothing is granted that you do not add.";
+    default:
+      return "";
+  }
+}
+
 function shortSource(src: string): string {
   if (src === "") {
     return "";
@@ -171,19 +224,22 @@ function shortSource(src: string): string {
 class NativePolicyController {
   private writable = new Set<string>();
   private ctrl: AbortController | null = null;
-  /** The relaxation's membership, straight from the policy view. Never a local
-   *  constant: the set decides what one click grants, and policyfile is where
-   *  the capability vocabulary and the exclusion reasons live. */
-  private relaxCaps: string[] = [];
-  /** Suppresses the relaxation checkbox's change handler while a render writes
-   *  its state, so painting the read-back cannot look like a user click. */
-  private paintingRelax = false;
-  /** A partial-write report, carried across the refetch that follows it. It has
-   *  to live here rather than being written straight to the DOM: every switch
-   *  ends in a reload, and the reload repaints this same line — so a note
-   *  written before it would be erased by the very render meant to show what
-   *  landed. */
-  private relaxNote = "";
+  /** The profile ladder and the id in force, both straight from the policy view.
+   *  Never local constants: the ladder decides what one click grants, and
+   *  policyfile owns it.
+   *
+   *  activeProfile is the SERVER's answer rather than the picker's selection, so a
+   *  selection that failed leaves the picker showing what is actually in force. */
+  private profiles: SecurityProfile[] = [];
+  private activeProfile = "";
+  /** A transient line under the picker: the outcome of a selection, or a note that
+   *  Custom is empty. Carried across the refetch a selection ends in, because that
+   *  refetch repaints this same line. */
+  private profileNote = "";
+  private profileNoteIsError = false;
+  /** The rules the last completed read-back reported, kept so the picker's own line
+   *  can be repainted without spending another request on the bridge. */
+  private lastRules: PolicyRule[] = [];
 
   init(): void {
     const addBtn = maybeEl<HTMLButtonElement>("native-rule-add");
@@ -193,12 +249,8 @@ class NativePolicyController {
     addBtn.addEventListener("click", () => {
       void this.addRule();
     });
-    const relaxBox = maybeEl<HTMLInputElement>("workspace-relax-checkbox");
-    relaxBox?.addEventListener("change", () => {
-      if (this.paintingRelax) {
-        return;
-      }
-      void this.setRelaxed(relaxBox.checked, relaxBox);
+    maybeEl<HTMLButtonElement>("security-profile-customize")?.addEventListener("click", () => {
+      void this.customize();
     });
     maybeEl<HTMLButtonElement>("native-explain-run")?.addEventListener("click", () => {
       void this.runExplain();
@@ -247,8 +299,15 @@ class NativePolicyController {
     if (signal.aborted || data === null) {
       return;
     }
+    // A completed read-back supersedes any note a past selection left. Without
+    // this, a failure message outlived the thing it described and got repainted by
+    // every later refetch, including ones triggered by another device.
+    this.profileNote = "";
+    this.profileNoteIsError = false;
     this.writable = new Set(data.writable_scopes);
-    this.relaxCaps = data.relax_capabilities;
+    this.profiles = data.profiles;
+    this.activeProfile = data.profile;
+    this.lastRules = data.rules;
     this.populateCapabilities(data.capabilities);
     if (data.available) {
       this.showStatus("", false);
@@ -259,118 +318,191 @@ class NativePolicyController {
       );
     }
     this.render(data.rules);
-    this.renderRelaxState(data.rules);
+    this.renderProfiles();
+    // AFTER render(), which rebuilds the rows this locks: locking first would
+    // disable controls that are about to be replaced by fresh, enabled ones.
+    this.renderProfileState(data.rules);
   }
 
-  // --- The workspace relaxation switch ---------------------------------------
+  // --- The security profile --------------------------------------------------
   //
-  // One switch, N rules, and it has to be N: policyRuleBody carries exactly one
-  // capability and Upsert is deliberately discrete-rule (no auto-merge into a
-  // match array), which is what makes each rule individually removable from the
-  // Active policy list above. There is no batch op on the wire and adding one
-  // would trade that reversibility for a single round trip.
+  // The profile is the policy. Selecting one replaces both writable permissions
+  // files with that profile's rules server-side, so the table below describes what
+  // is in force rather than competing with it, and outside Custom the table is
+  // read-only for that reason: with a profile in charge, a hand-edit would be a
+  // second writer of one posture and the first thing to disagree with the picker.
   //
-  // Scope is always workspace. Per-chat is unexpressible — policyfile defines
-  // exactly two writable scopes, user and workspace — and user scope would leak
-  // the grant into every other workspace on the box.
+  // Two doors into Custom and they differ in where the table starts. Customize
+  // materialises the profile in force as a baseline to tweak; picking Custom from
+  // the list starts blank. Both go through one endpoint, distinguished by `seed`.
 
-  /** Is this rule one the relaxation wrote? Bare (no globs), allow, workspace,
-   *  and a member of the set. The glob check is what keeps a hand-authored
-   *  `fs_write allow match:src/**` from reading as the relaxation being on. */
-  private isRelaxRule(r: PolicyRule): boolean {
-    return (
-      r.scope === "workspace" &&
-      r.effect === "allow" &&
-      (r.match ?? []).length === 0 &&
-      (r.exclude ?? []).length === 0 &&
-      this.relaxCaps.includes(r.capability)
-    );
-  }
-
-  /** Paint the switch from the rules the server just reported, and say what is
-   *  actually on rather than rounding a partial state to a boolean. A partial
-   *  set is a real state — an interrupted write, a rule removed by hand from the
-   *  list above — so the box goes indeterminate and the status line names the
-   *  count. Reporting it as simply off would invite a click that then tries to
-   *  write rules that already exist. */
-  private renderRelaxState(rules: PolicyRule[]): void {
-    const box = maybeEl<HTMLInputElement>("workspace-relax-checkbox");
-    if (box === null) {
+  /** Render the picker. One radio per profile, its own description under the label,
+   *  because what separates two of them is a sentence rather than a word.
+   *
+   *  Rebuilt on every load rather than reconciled: five rows with no state of their
+   *  own beyond `checked`, so a keyed reconcile would be machinery for nothing. */
+  private renderProfiles(): void {
+    const host = maybeEl("security-profile-list");
+    if (host === null) {
       return;
     }
-    const total = this.relaxCaps.length;
-    const present = new Set(rules.filter((r) => this.isRelaxRule(r)).map((r) => r.capability));
-    const n = present.size;
-    this.paintingRelax = true;
-    box.checked = total > 0 && n === total;
-    box.indeterminate = n > 0 && n < total;
-    this.paintingRelax = false;
-    const status = maybeEl("workspace-relax-status");
+    const rows = this.profiles.map((p, i) => {
+      const input = el("input", { type: "radio", className: "" }) as HTMLInputElement;
+      input.type = "radio";
+      input.name = "security-profile";
+      input.value = p.id;
+      input.checked = p.id === this.activeProfile;
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          void this.selectProfile(p.id);
+        }
+      });
+      const row = el("label", { className: "perm-mode profile-row" }, input);
+      // The loosest rung is last in the ladder, and the ladder's ORDER is the
+      // server's. Deriving "loosest" from the position rather than from the id is
+      // what keeps this from hardcoding a profile name the server owns.
+      if (i === this.profiles.length - 1 - 1) {
+        row.classList.add("profile-row-loosest");
+      }
+      row.append(el("span", {}, profileLabel(p.id)));
+      row.append(el("p", { className: "section-hint profile-desc" }, profileDescription(p.id)));
+      return row;
+    });
+    host.replaceChildren(...rows);
+  }
+
+  /** Paint the Customize button and the status line, and lock the table outside
+   *  Custom.
+   *
+   *  The button is present only on a named profile, because on Custom you are
+   *  already there and a control that does nothing teaches a reader to distrust
+   *  every other one. */
+  private renderProfileState(rules: PolicyRule[]): void {
+    const custom = this.activeProfile === CUSTOM_PROFILE;
+    maybeEl("security-profile-customize")?.classList.toggle("hidden", custom);
+    this.lockPolicyTable(!custom);
+    const status = maybeEl("security-profile-status");
     if (status === null) {
       return;
     }
-    let text = "";
-    if (n === total && total > 0) {
-      text = `On. ${String(total)} capabilities allowed without asking: ${this.relaxCaps.join(", ")}.`;
-    } else if (n > 0) {
-      const missing = this.relaxCaps.filter((c) => !present.has(c));
+    let text = this.profileNote;
+    if (text === "" && custom && rules.filter((r) => this.writable.has(r.scope)).length === 0) {
+      // An empty Custom policy is not a neutral state and the picker has to say so:
+      // Custom sends no presets, so with no rules of its own the agent asks before
+      // it may even read a file. Saying nothing here would leave that to be
+      // discovered one prompt at a time.
       text =
-        `Partly on: ${String(n)} of ${String(total)} allowed. Still asking for ${missing.join(", ")}. ` +
-        `Switch on to add the rest, or off to remove all ${String(n)}.`;
-    }
-    if (this.relaxNote !== "") {
-      text = text === "" ? this.relaxNote : `${this.relaxNote} ${text}`;
+        "Custom, with no rules. Every capability asks, including reading a file. " +
+        "Add rules below, or pick a profile to start from one.";
     }
     status.textContent = text;
     status.classList.toggle("hidden", text === "");
-    status.classList.toggle("native-policy-status-error", this.relaxNote !== "");
+    status.classList.toggle("native-policy-status-error", this.profileNoteIsError);
   }
 
-  /** Turn the relaxation on or off. Switching ON widens what the agent may do,
-   *  so it takes the same confirm the effect editor uses before a widening
-   *  change; switching OFF narrows and needs none, matching removeRule (which
-   *  confirms only for a deny). Rolls the box back on cancel or on a write that
-   *  landed nothing, and reports a partial result rather than claiming success:
-   *  each rule is its own atomic file write, so the SET is not atomic. */
-  private async setRelaxed(on: boolean, box: HTMLInputElement): Promise<void> {
-    const caps = this.relaxCaps;
-    if (caps.length === 0) {
+  /** Disable every editing affordance in the Active policy table.
+   *
+   *  Genuinely disabled rather than only dimmed: a `pointer-events: none` would
+   *  leave the controls in the tab order and reachable by keyboard, which is the
+   *  version of this that looks locked and is not. */
+  private lockPolicyTable(locked: boolean): void {
+    maybeEl("native-policy-section")?.classList.toggle("native-policy-locked", locked);
+    const scope = maybeEl("native-policy-section");
+    if (scope === null) {
       return;
     }
-    // A fresh attempt supersedes the last one's report.
-    this.relaxNote = "";
-    if (on) {
+    for (const control of scope.querySelectorAll<
+      HTMLInputElement | HTMLButtonElement | HTMLSelectElement
+    >(
+      "#native-policy-list select, #native-policy-list button, [data-rule-form='add'] input, [data-rule-form='add'] select, [data-rule-form='add'] button",
+    )) {
+      control.disabled = locked;
+    }
+  }
+
+  /** Select a profile. Replaces the policy, so a Custom set the user authored is
+   *  lost and the confirm says exactly that before anything is written.
+   *
+   *  Reverting the radio on cancel is not enough on its own — the paint comes from
+   *  the server either way — but it stops the picker showing a selection that never
+   *  happened for the duration of the round trip. */
+  private async selectProfile(id: string): Promise<void> {
+    if (id === this.activeProfile) {
+      return;
+    }
+    this.profileNote = "";
+    this.profileNoteIsError = false;
+    const leavingCustom = this.activeProfile === CUSTOM_PROFILE;
+    const editable = this.lastRules.filter((r) => this.writable.has(r.scope)).length;
+    if (leavingCustom && editable > 0) {
       const ok = await confirm(
-        `Allow ${String(caps.length)} capabilities in this workspace without asking (${caps.join(", ")})? ` +
-          `That WIDENS what the agent is allowed to do, in every chat here, until you switch it back off.`,
-        "Widen workspace policy",
+        `Switch to ${profileLabel(id)}? Your ${String(editable)} custom ` +
+          `${editable === 1 ? "rule" : "rules"} will be DELETED and replaced by that profile's own. ` +
+          `To keep them, cancel and copy them somewhere first.`,
+        "Replace my rules",
+        "destructive",
       );
       if (!ok) {
         void this.load();
         return;
       }
     }
-    box.disabled = true;
-    let failed = 0;
-    for (const capability of caps) {
-      const res = await editNativeRule.dispatch(
-        on
-          ? { op: "add", scope: "workspace", capability, effect: "allow", confirm: true }
-          : { op: "remove", scope: "workspace", capability, effect: "allow", confirm: true },
-      );
+    if (id === LOOSEST_PROFILE_HINT && !(await this.confirmLoosest())) {
+      void this.load();
+      return;
+    }
+    await this.applyProfile(id, false);
+  }
+
+  /** The extra confirm the loosest profile earns. It is the one that grants
+   *  `power`, so a power installed afterwards runs its author's code at this
+   *  privilege with nothing asking, and it is also the one whose name invites a
+   *  click. It states what it cannot do as well, because a profile that says it
+   *  allows everything and then prompts reads as broken rather than as bounded. */
+  private confirmLoosest(): Promise<boolean> {
+    return confirm(
+      `Allow every capability without asking? This includes "power", so a power you ` +
+        `install runs its author's code at your privilege with no prompt. It does NOT ` +
+        `silence every prompt: Kiro still refuses writes to its own settings ` +
+        `directories and still asks before writing .git, .kiro/agents, .kiro/hooks ` +
+        `and .vscode.`,
+      "Allow everything",
+      "destructive",
+    );
+  }
+
+  /** Copy the profile in force into the editable table and switch to Custom. The
+   *  starting-point door, as opposed to the blank one. */
+  private async customize(): Promise<void> {
+    this.profileNote = "";
+    this.profileNoteIsError = false;
+    await this.applyProfile(CUSTOM_PROFILE, true);
+  }
+
+  /** One writer for both doors. The button is disabled for the round trip so a
+   *  second selection cannot interleave with the file replacement this one is
+   *  performing. */
+  private async applyProfile(id: string, seed: boolean): Promise<void> {
+    const btn = maybeEl<HTMLButtonElement>("security-profile-customize");
+    if (btn !== null) {
+      btn.disabled = true;
+    }
+    try {
+      const res = await setSecurityProfile.dispatch({ profile: id, seed });
+      // Repaint from the server FIRST, so the picker shows what is actually in
+      // force, then write the failure over it. The other order loses the message:
+      // load() clears the note by design, so a note set before it never survives.
+      await this.load();
       if (res === null || res.error !== undefined) {
-        failed++;
+        this.profileNote = res?.error ?? "The profile was not changed.";
+        this.profileNoteIsError = true;
+        this.renderProfileState(this.lastRules);
+      }
+    } finally {
+      if (btn !== null) {
+        btn.disabled = false;
       }
     }
-    box.disabled = false;
-    if (failed > 0) {
-      this.relaxNote =
-        `${String(caps.length - failed)} of ${String(caps.length)} rules ${on ? "written" : "removed"}; ` +
-        `${String(failed)} failed.`;
-    }
-    // Repaint from the server either way: the read-back is the only honest
-    // report of what landed, and the note above rides that same render.
-    void this.load();
   }
 
   private populateCapabilities(caps: string[]): void {

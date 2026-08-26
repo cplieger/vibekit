@@ -299,6 +299,52 @@ export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDot
   return "idle";
 }
 
+/** The same dot vocabulary for a PARENTLESS run: one launched from the Workflows
+ *  tab or by the scheduler, which owns a `run:<workflowId>` tab and no chat.
+ *
+ *  Its own function rather than a branch inside `tabStatusFor` because the inputs
+ *  share not one field: a run has no `Session`, no `thinking`, no `agent_status`
+ *  and no `turn_*` latch. What it shares is the OUTPUT vocabulary and the
+ *  precedence, which is why it lives here, next to its sibling, instead of in the
+ *  run handler that calls it.
+ *
+ *  An AGENT-launched run deliberately gets nothing from this: it is parented on
+ *  its launching chat's session, so that chat's own dot already reads `working`
+ *  while the launching turn runs and `input` when a step raises an ask. A second
+ *  dot for the same work would double-count it in a strip whose whole job is
+ *  saying how many things are happening.
+ *
+ *  `pendingAsk` is passed for the same reason it is above, and it means the same
+ *  thing: `decision-dock.ts` imports this module, so the read has to happen at the
+ *  call site. A run's asks are keyed two ways (`run_id` on the payload, or the
+ *  synthetic `run:<workflowId>` chat id), and the dock already joins both.
+ *
+ *  `paused` maps to `waiting` rather than `done`: a paused run is not finished, it
+ *  is stopped waiting for a person, which is exactly what `waiting` means for a
+ *  chat. `cancelled` is `done` rather than `failed` because the user asked for it,
+ *  matching `toastCompletion`'s levels in handlers/run.ts. An unrecognised
+ *  terminal status is `done` rather than `idle`: it is still an ending, and the
+ *  toast names it verbatim. */
+export function runStatusFor(status: string | undefined, pendingAsk = false): TabDotState {
+  if (pendingAsk) {
+    return "input";
+  }
+  switch (status) {
+    case undefined:
+    case "":
+      return "";
+    case "running":
+      return "working";
+    case "paused":
+      return "waiting";
+    case "failed":
+    case "aborted":
+      return "failed";
+    default:
+      return "done";
+  }
+}
+
 /** Record the agent-declared activity status/description for a chat
  *  (chat_status SSE, sourced from the KAS focus_update channel). Empty
  *  strings clear the respective field. */
@@ -467,25 +513,6 @@ function getMsgIndex(sessionID: string, messages: Message[]): Map<string, number
   return mi;
 }
 
-/** Mark a chat as existing only in this tab's memory (see Session.ghost).
- *
- *  Called by the one site that mints a client-side chat id. Not folded into
- *  upsertHeader: that function's whole contract is a SERVER-authoritative
- *  re-sync, and the seeding path borrows it to lay down the first row. */
-export function markGhostChat(id: string): void {
-  const s = get(id);
-  if (s === undefined || s.ghost === true) {
-    return;
-  }
-  sessions.update(id, (cur) => ({ ...cur, ghost: true }));
-}
-
-/** Whether the server has yet to acknowledge this chat. False for a chat it has
- *  never heard of either — an id with no row is nothing to ask about. */
-export function isGhostChat(id: string): boolean {
-  return get(id)?.ghost === true;
-}
-
 // --- SSE-driven mutations ---
 export function upsertHeader(h: ChatHeader): void {
   const existing = get(h.id);
@@ -521,9 +548,6 @@ export function upsertHeader(h: ChatHeader): void {
         usage: h.usage,
         message_count: Math.max(s.message_count, h.message_count),
       };
-      // A server frame naming this chat is the acknowledgement the ghost mark was
-      // waiting for: the record exists, so it can be asked about.
-      delete next.ghost;
       if (h.compaction_watermark !== undefined) {
         next.compaction_watermark = h.compaction_watermark;
       } else {

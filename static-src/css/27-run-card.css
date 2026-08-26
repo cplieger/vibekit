@@ -1,0 +1,523 @@
+/* ==========================================================================
+   The workflow run card — a run's home in the transcript.
+
+   Every rule is scoped under `.run-card`. That is not defensiveness: the
+   /run/{id} page already owns a `.run-*` vocabulary in 18-pages.css
+   (`.run-status`, `.run-tree`, `.run-node-*`, `.run-output`), and two different
+   components sharing a class name is how one page's tweak silently restyles
+   another. The one genuine collision was renamed on the TS side to `.run-state`.
+
+   The card is the DEEPEST nesting in the transcript, three boxes down: a turn
+   card holds it, it holds a step row, and the step row holds real tool cards.
+   So the radius ladder is spent all the way down — --r-lg at the card, --r at a
+   step, --r-sm inside — and each level's inline padding is what keeps the
+   concentric rule (`child-radius = parent-radius - parent-padding`, web.md).
+   Uncapped and unindented, like every other evidence block (see .tool-call).
+   ========================================================================== */
+
+.run-card {
+  background: var(--c-bg-secondary);
+  border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
+
+  /* An accent rail on the leading edge, matching the delegated-work card: both
+     are "work that is not this agent's own", and a reader should not have to
+     learn two vocabularies for that. Wider here because the run OWNS the
+     delegates inside it. */
+  border-inline-start: 0.25rem solid var(--c-accent);
+  border-radius: var(--r-lg);
+  font-size: var(--fs-base);
+  overflow: hidden;
+  flex-shrink: 0;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+}
+
+/* The outcome tint travels on the RAIL, so a scan down the transcript answers
+   "did that run work" with no reading. Shape carries it too — the header glyph
+   and every step's badge — because tint alone is one channel (WCAG 1.4.1). */
+.run-card[data-status="completed"] {
+  border-inline-start-color: var(--c-green);
+}
+
+.run-card[data-status="failed"] {
+  border-inline-start-color: var(--c-red);
+}
+
+.run-card[data-status="aborted"] {
+  border-inline-start-color: var(--c-yellow);
+}
+
+.run-card[data-status="paused"] {
+  border-inline-start-color: var(--c-blue);
+}
+
+/* --------------------------------------------------------------------------
+   Head — identity and verdict
+   -------------------------------------------------------------------------- */
+
+.run-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.run-head:hover {
+  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+}
+
+.run-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--c-accent);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.run-card[data-status="completed"] .run-icon {
+  color: var(--c-green);
+}
+
+.run-card[data-status="failed"] .run-icon {
+  color: var(--c-red);
+}
+
+.run-name {
+  color: var(--c-accent);
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* The meta group takes the leftover width and ends at the chevron, so the run's
+   name keeps its own space and the counters ellipsize before it does. */
+.run-head-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+
+  /* The clock and the step counter both change under the reader's eye once a
+     second; proportional digits would make the row twitch as glyph widths
+     change. */
+  font-variant-numeric: tabular-nums;
+}
+
+.run-state {
+  text-transform: lowercase;
+}
+
+.run-card[data-status="failed"] .run-state {
+  color: var(--c-red);
+}
+
+.run-card[data-status="paused"] .run-state {
+  color: var(--c-blue);
+}
+
+.run-count,
+.run-clock {
+  white-space: nowrap;
+}
+
+.run-toggle {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+
+  /* A control's label, not a hint (see --c-text-control in 01-tokens.css).
+     No background/border reset: this is a span, not a button. */
+  color: var(--c-text-control);
+  padding: 0 var(--sp-1);
+}
+
+.run-card:not(.collapsed) .run-toggle > .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+/* --------------------------------------------------------------------------
+   Spine — the whole plan in one row
+   -------------------------------------------------------------------------- */
+
+/* One pip per leaf, in plan order: the answer to "how far through is this"
+   without opening anything, and the only region that shows the steps a run has
+   NOT reached yet. Sits outside the disclosure so a collapsed card still has it.
+   flex-wrap because a twenty-step run must not push the card wide. */
+.run-spine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 var(--sp-3) var(--sp-2);
+}
+
+.run-pip {
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  /* Pending is HOLLOW, which is the same not-yet-started vocabulary the idle tab
+     dot uses; a filled grey pip would read as a finished step. */
+  border: 1px solid var(--c-text-tertiary);
+}
+
+.run-pip[data-status="running"] {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  animation: vk-breathe 1.6s var(--ease-standard) infinite;
+}
+
+.run-pip[data-status="ok"] {
+  background: var(--c-green);
+  border-color: var(--c-green);
+}
+
+.run-pip[data-status="fail"] {
+  background: var(--c-red);
+  border-color: var(--c-red);
+}
+
+.run-pip[data-status="warn"] {
+  background: var(--c-yellow);
+  border-color: var(--c-yellow);
+}
+
+/* Skipped is a hollow DASH rather than a circle: a branch that never ran is not
+   a step in any state, and shape is what says so without a legend. */
+.run-pip[data-status="skipped"] {
+  border-radius: 0;
+  block-size: 1px;
+  border: 0;
+  background: var(--c-text-tertiary);
+  align-self: center;
+}
+
+/* --------------------------------------------------------------------------
+   Alert — what the run needs from a person
+   -------------------------------------------------------------------------- */
+
+.run-alert {
+  margin: 0 var(--sp-3) var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  border-inline-start: 0.1875rem solid var(--c-border);
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-secondary);
+}
+
+.run-alert[data-kind="paused"] {
+  border-inline-start-color: var(--c-blue);
+  background: color-mix(in srgb, var(--c-blue) 8%, transparent);
+  color: var(--c-text-primary);
+}
+
+.run-alert[data-kind="failed"] {
+  border-inline-start-color: var(--c-red);
+  background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  color: var(--c-text-primary);
+}
+
+/* --------------------------------------------------------------------------
+   Body — the step rows
+   -------------------------------------------------------------------------- */
+
+/* The disclosure region. Its padding lives here rather than on the card so the
+   region collapses to a true zero height (the same reason the git panel's
+   collapsible sections put padding on an inner wrapper). */
+.run-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-3) var(--sp-3);
+  min-width: 0;
+  overflow: hidden;
+  transition: height var(--dur-standard) var(--ease-standard);
+}
+
+.run-body[aria-hidden="true"] {
+  padding-block-end: 0;
+}
+
+.run-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.run-step {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* An OPEN step is the one the reader is inside, so it earns a visible outline —
+   and it needs one: `--c-border` is a 16% wash off the ink, which disappears
+   against the body's own surface once the row is tall. Measured on the dark
+   theme, a five-step card with one row open read as that row having no box at
+   all, so a probe reporting identical widths disagreed with the eye.
+   Deliberately BEFORE the status rules: a running or failed border says more
+   than "this one is open", and both score (0,2,0) so source order decides. */
+.run-step:not(.collapsed) {
+  border-color: color-mix(in srgb, var(--c-text-primary) 28%, transparent);
+}
+
+/* A step that needs reading is the one a scan must find, so failure gets a rail
+   of its own. Everything else stays quiet: twenty green rails would be noise. */
+.run-step[data-status="fail"] {
+  border-color: color-mix(in srgb, var(--c-red) 45%, var(--c-border));
+}
+
+.run-step[data-status="running"] {
+  border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
+}
+
+/* A step that never ran recedes rather than disappearing: the reader still needs
+   to know it is in the plan, which is exactly what the spine cannot say once the
+   card is open. */
+.run-step[data-status="pending"],
+.run-step[data-status="skipped"] {
+  opacity: 0.6;
+}
+
+.run-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  min-height: var(--btn-h);
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.run-step-head:hover {
+  background: var(--c-hover);
+}
+
+/* The glyph is a TEXT badge (a check, a cross, a warning triangle, an en dash),
+   which is what keeps outcome a shape rather than only a tint. Fixed width so
+   every row's name starts on one x whatever glyph it carries. */
+.run-step-glyph {
+  flex-shrink: 0;
+  inline-size: 1rem;
+  text-align: center;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  color: var(--c-text-tertiary);
+}
+
+.run-step[data-status="ok"] .run-step-glyph {
+  color: var(--c-green);
+}
+
+.run-step[data-status="fail"] .run-step-glyph {
+  color: var(--c-red);
+}
+
+.run-step[data-status="warn"] .run-step-glyph {
+  color: var(--c-yellow);
+}
+
+/* Running has no badge character, so the spinner IS the glyph — the same
+   motion-means-in-flight axis the tab dot and the tool card use. */
+.run-step[data-status="running"] .run-step-glyph::before {
+  content: "";
+  display: block;
+  inline-size: 0.75rem;
+  block-size: 0.75rem;
+  margin: 0 auto;
+  border: 0.125rem solid var(--c-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: vk-spin 0.6s linear infinite;
+}
+
+.run-step-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Agent, model, iteration, branch, retries, failure reason — the facts KAS
+   reports per step, in one line that ellipsizes rather than wrapping, because a
+   step row that grows to two lines makes a ten-step run unscannable. */
+.run-step-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+.run-step-dur {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-step-toggle {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+
+  /* A control's label, not a hint (see --c-text-control in 01-tokens.css).
+     No background/border reset: this is a span, not a button. */
+  color: var(--c-text-control);
+  padding: 0 var(--sp-1);
+}
+
+.run-step:not(.collapsed) .run-step-toggle > .disclosure-chevron {
+  --chev-turn: 0deg;
+}
+
+/* A step's captured output is its RESULT, so it sits on the collapsed row rather
+   than behind the disclosure with its working transcript — the same rule the
+   delegated-work card's footer follows. Two lines, then it clamps: the full text
+   is on the run page. */
+.run-step-capture {
+  padding: 0 var(--sp-2) var(--sp-2) calc(var(--sp-2) + 1rem + var(--sp-2));
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The step's own transcript, rendered by the same block dispatcher as the main
+   one. Its gap matches the delegated-work card's body for the same reason: this
+   is a nested context, and a nested context compresses. */
+.run-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+
+  /* Matches the open row's own border rather than the hairline `--c-border`, so
+     the seam between a step's identity and its transcript is as legible as the
+     box around them. */
+  border-block-start: 1px solid color-mix(in srgb, var(--c-text-primary) 28%, transparent);
+  min-width: 0;
+  overflow: hidden;
+  transition: height var(--dur-standard) var(--ease-standard);
+}
+
+.run-step-body[aria-hidden="true"] {
+  padding-block: 0;
+  border-block-start: none;
+}
+
+/* --------------------------------------------------------------------------
+   Outputs — what the run produced
+   -------------------------------------------------------------------------- */
+
+/* Artifacts and captured outputs merged into one key/value list: KAS keeps them
+   apart because they are produced differently, but to a reader they are the same
+   question. A two-column grid rather than a dl's default block flow so the values
+   line up and a long one wraps under itself instead of pushing the keys. */
+.run-outputs {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-3);
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2) var(--sp-2) 0;
+  border-block-start: 1px solid var(--c-border);
+  font-size: var(--fs-xs);
+}
+
+.run-output-key {
+  font-family: var(--font-mono);
+  color: var(--c-text-secondary);
+  white-space: nowrap;
+}
+
+.run-output-val {
+  margin: 0;
+  min-width: 0;
+  color: var(--c-text-primary);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------------------
+   Foot — the outcome, and the way out
+   -------------------------------------------------------------------------- */
+
+/* Tinted like the turn card's own footer, so the run reads as bracketed the same
+   way a turn does. Outside the disclosure: a collapsed card still states its
+   result, which is the rule the delegated-work card's footer established. */
+.run-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-1) var(--sp-3);
+  border-block-start: 1px solid var(--c-border);
+  background: var(--c-bg-tertiary);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-ledger {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+  color: var(--c-text-secondary);
+  text-decoration: none;
+
+  /* 24px minimum hit target on a row whose text is 11px (web.md hit targets);
+     the padding is what supplies it rather than a taller row. */
+  min-height: 1.5rem;
+  padding-inline: var(--sp-1);
+  border-radius: var(--r-sm);
+  transition:
+    color var(--dur-micro),
+    background var(--dur-micro) var(--ease-standard);
+}
+
+.run-open:hover {
+  color: var(--c-text-primary);
+  background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
+}
+
+.run-open-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}

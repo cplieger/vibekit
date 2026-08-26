@@ -53,6 +53,8 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		// usable when no bridge can answer (which is exactly when a user is
 		// most likely to be editing rules by hand).
 		RelaxCapabilities: policyfile.RelaxCapabilities(),
+		Profiles:          securityProfileCatalog(),
+		Profile:           s.activeProfile(r.Context()),
 		Available:         true,
 	}
 	if s.policy != nil {

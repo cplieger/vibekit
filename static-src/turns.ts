@@ -139,7 +139,33 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
  *  a refusal or a safety block has finished badly whatever the session flag
  *  says, and the flag can legitimately still be true (the next turn's stream
  *  has already opened) — trusting it over the marker would repaint a failure
- *  as in-progress. */
+ *  as in-progress.
+ *
+ *  PROPOSAL, not a defect, and left open on purpose: a FAILED TOOL CALL does not
+ *  fail its turn. The three sources above are a refusal, `compaction_failed` and
+ *  `infra_safety_blocked`; nothing here reads tool status, so a turn whose only
+ *  problem is a command that exited non-zero renders `completed`, with the failure
+ *  visible only inside the expanded card. The rail marker is green.
+ *
+ *  Three things to weigh before changing it, and the first is a product question
+ *  rather than an implementation one. An agent that runs a failing command, reads
+ *  the error and succeeds on the retry has NOT failed its turn, so "any failed
+ *  tool" is the wrong rule and the right one needs a definition nobody has written
+ *  (the last tool? one whose failure ended the turn? a tool the agent did not
+ *  follow up?). Second, the rule exists in Go AND TypeScript — the server derives
+ *  it session-wide for the timeline rail, this function derives the in-flight turn
+ *  no fetched summary can know — and both halves are pinned by ONE shared fixture,
+ *  `internal/chat/testdata/turn_outcomes.json`, read by Go's
+ *  `TestTurnOutcomeContract` (internal/chat/turns_test.go) and by
+ *  `turns.node.test.ts`. So it is a cross-language contract change, landing in one
+ *  commit or not at all. Third, it was found while tracing something else and is
+ *  not part of any kiro-cli release, so it has never been scheduled.
+ *
+ *  What is NOT wrong today: a failed tool is not silent. `messages-tools.ts`
+ *  auto-expands a failed card and adds an explain button, `tool-card.ts` gives it a
+ *  distinct fail badge, and a tool GROUP holding a failure refuses to auto-collapse
+ *  and re-opens itself if it was already shut. The gap is the turn-level summary
+ *  and the rail, not the evidence. */
 function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
   let interrupted = false;
   for (const m of t.body) {
@@ -157,6 +183,29 @@ function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
     return "interrupted";
   }
   return isLive ? "running" : "completed";
+}
+
+/** Every workflow run a turn launched, from its body's tool calls.
+ *
+ *  A launch is the only tool call carrying a `workflow_id` (the server decodes it
+ *  off the invocation's `rawOutput`), so this is exact rather than a heuristic. Its
+ *  one consumer is the fold rule: a turn holding a run that is still going must not
+ *  fold, and the turn's own outcome cannot answer that because `run_workflow`
+ *  returns as soon as the run is created, so the turn completes long before the run
+ *  does. Returns the ids rather than a boolean because only the caller can say
+ *  whether a run is still live — that answer lives in `run-store.ts`, which this
+ *  DOM-free projection must not import. */
+export function turnRunIDs(t: Turn): string[] {
+  const out: string[] = [];
+  for (const m of t.body) {
+    for (const tc of m.tool_calls ?? []) {
+      const id = tc.workflow_id ?? "";
+      if (id !== "" && !out.includes(id)) {
+        out.push(id);
+      }
+    }
+  }
+  return out;
 }
 
 /** Sum a turn's ledger across its assistant messages. */

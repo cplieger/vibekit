@@ -56,6 +56,18 @@ export function error(message: string, retry?: ToastRetry): () => void {
   );
 }
 
+/** Show an error toast carrying an ACTION button that is a convenience rather
+ *  than the only way to take it, so it keeps the ordinary 12s timeout.
+ *
+ *  `error(message, retry)` above goes sticky on purpose: a retry offered nowhere
+ *  else must not time out unanswered. That reasoning does not reach a button whose
+ *  destination is reachable another way — failure-notice.ts's "Open chat", whose
+ *  chat is one click away in the tab strip regardless — and a sticky notice per
+ *  background failure is exactly the stack the 12s default exists to prevent. */
+export function errorWithAction(message: string, action: ToastRetry): () => void {
+  return toast.show(message, { level: "error", duration: ERROR_DURATION_MS, retry: action });
+}
+
 /** Show a toast with explicit level + duration. Use durationMs=0 for a sticky
  *  toast that requires manual dismissal. Pass undefined to use vibekit's level
  *  default (4s for info/success, 12s for error — see error() above). */

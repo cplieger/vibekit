@@ -14,6 +14,10 @@ vi.mock("./actions/chat.js", () => ({
 vi.mock("./transport.js", () => ({
   send: vi.fn(),
   newMessageID: vi.fn(() => "m-test-123"),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  newOpID: vi.fn(() => "op-test"),
 }));
 
 vi.mock("./session-context.js", () => ({

@@ -182,19 +182,28 @@ function modeOption(entry: PickerMode, currentMode: string): HTMLButtonElement {
 }
 
 function selectMode(modeID: string): void {
-  let active = getActive();
-  if (active === undefined) {
-    // No active chat → create one, then switch it. createSession sets the
-    // new chat active synchronously.
-    createSession();
-    active = getActive();
-    if (active === undefined) {
+  const active = getActive();
+  if (active !== undefined) {
+    dispatchMode(active.id, modeID);
+    return;
+  }
+  // No active chat, so one has to be created first — and the id is the SERVER's
+  // now, so this cannot be read back synchronously. It used to be
+  // `createSession(); active = getActive();`, which worked only because the mint
+  // was local. Detaching with a `void` and reading `getActive()` on the next line
+  // would send set_mode to whatever chat happened to be active before, or to
+  // nothing at all on a first-ever visit — the exact failure a bare `void` hides.
+  void createSession().then((id) => {
+    if (id === "") {
       return;
     }
-  }
-  const chatID = active.id;
-  // No tab write here any more: a chat tab's leading element is its activity
-  // dot, not a mode glyph, so the only optimistic surface is the pill — which
-  // the action's own update flips, confirmed by the server's mode_changed.
+    dispatchMode(id, modeID);
+  });
+}
+
+/** Send the pick. No tab write: a chat tab's leading element is its activity dot,
+ *  not a mode glyph, so the only optimistic surface is the pill — which the
+ *  action's own update flips, confirmed by the server's mode_changed. */
+function dispatchMode(chatID: string, modeID: string): void {
   void setMode.dispatch({ chatID, modeID });
 }

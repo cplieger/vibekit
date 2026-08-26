@@ -29,10 +29,12 @@ vi.mock("./tabs.js", () => ({
   setSettingsTab: undefined,
   toggleGitView: undefined,
   toggleSettingsView: undefined,
+  // Reached through run-view.js → run-dots.js, the parentless-run tab dot.
+  hasTab: undefined,
+  tabIdFor: undefined,
+  setTabStatus: undefined,
   setDocsTab: vi.fn(),
-  toggleDocsView: vi.fn((_tab: string, onShow: () => void) => {
-    onShow();
-  }),
+  toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("./bus.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
@@ -341,6 +343,8 @@ interface HookLike {
   trigger?: string;
   command?: string;
   prompt?: string;
+  matcher?: string;
+  matcher_warning?: string;
 }
 
 function wsHook(over: Partial<HookLike> = {}): HookLike {
@@ -431,6 +435,67 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
     const badge = row.querySelector(".docs-badge-disabled");
     expect(badge?.textContent).toBe("disabled");
     expect(badge?.getAttribute("data-tooltip")).toBe("its command is empty");
+  });
+
+  it("renders the matcher beside the trigger", () => {
+    // A trigger says WHEN and its matcher says WHICH; the row used to show only
+    // the first half, so a hook scoped to one tool looked identical to one scoped
+    // to none.
+    //
+    // The two badges have DIFFERENT sources and that is not incidental: the
+    // trigger comes from the docs scan (the file's own front matter), while the
+    // matcher can only come from the joined endpoint row — vibekit's own hook
+    // parser is matcher-blind, so the scan has no matcher to report. The fixture
+    // sets both sides for that reason.
+    _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher: "fsWrite" })]);
+    const row = _renderRowForTest(wsHookDoc({ trigger: "PreToolUse" }));
+    expect(row.querySelector(".docs-badge-trigger")?.textContent).toBe("PreToolUse");
+    const matcher = row.querySelector(".docs-badge-matcher");
+    expect(matcher?.textContent).toBe("fsWrite");
+    // A <code> element, because the content is a regex read character for
+    // character rather than a label.
+    expect(matcher?.tagName).toBe("CODE");
+  });
+
+  it("badges a hook that runs on every tool call", () => {
+    // The server computes this; the client must not derive it, because a second
+    // trigger-to-subject table could disagree with the Go one.
+    _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher_warning: "missing_tool_matcher" })]);
+    const row = _renderRowForTest(wsHookDoc());
+    const badge = row.querySelector(".docs-badge-warn");
+    expect(badge?.textContent).toBe("every tool");
+    expect(badge?.getAttribute("data-tooltip")).toContain("EVERY tool call");
+  });
+
+  it("badges a matcher that governs nothing", () => {
+    _setHooksForTest([wsHook({ trigger: "SessionStart", matcher_warning: "ineffective" })]);
+    const row = _renderRowForTest(wsHookDoc());
+    expect(row.querySelector(".docs-badge-warn")?.textContent).toBe("no effect");
+  });
+
+  it("renders no warning badge for a value it does not recognise", () => {
+    // The field is a server-side enum, so a vibekit build older than the server
+    // that added a third value has to stay quiet rather than paint a blank chip.
+    _setHooksForTest([wsHook({ matcher_warning: "someFutureDefect" })]);
+    const row = _renderRowForTest(wsHookDoc());
+    expect(row.querySelector(".docs-badge-warn")).toBeNull();
+  });
+
+  it("repaints when only the matcher or its warning changed", () => {
+    // The reconcile key is the row's path plus name, neither of which moves when a
+    // matcher is edited on disk, so without both fields in the row signature the
+    // badge would show the state it mounted with forever.
+    _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher: "fsWrite" })]);
+    const row = _renderRowForTest(wsHookDoc());
+    const first = row.getAttribute("data-sig");
+
+    _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher: "fsAppend" })]);
+    const second = _renderRowForTest(wsHookDoc()).getAttribute("data-sig");
+    expect(second).not.toBe(first);
+
+    _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher_warning: "missing_tool_matcher" })]);
+    const third = _renderRowForTest(wsHookDoc()).getAttribute("data-sig");
+    expect(third).not.toBe(second);
   });
 
   it("keeps a workspace hook's open surface and its delete", () => {
@@ -743,16 +808,13 @@ describe("the Hooks tab: staying current", () => {
     const { apiGet, apiGetTyped } = await import("./api-client.js");
     vi.mocked(apiGet).mockResolvedValue({ docs: [] });
     vi.mocked(apiGetTyped).mockResolvedValue({ hooks: [] });
-    const { toggleDocsView } = await import("./tabs.js");
-    // onShow is optional on tabs.ts's real toggleDocsView — a restored tab is
-    // reopened without one — so the stub calls it only when the caller passed it.
-    vi.mocked(toggleDocsView).mockImplementation((_tab, onShow) => {
-      onShow?.();
-    });
-
     const { onSSE } = await import("./bus.js");
-    const { showDocsView } = await import("./docs.js");
-    showDocsView("hooks");
+    // `loadDocsView` rather than `showDocsView`: the latter only TOGGLES the tab,
+    // which is a round trip that loads nothing, while the page's own loader is what
+    // every door reaches through the tab factory's lazy import. It takes no
+    // callback — a tab's behaviour cannot depend on who opened it.
+    const { loadDocsView } = await import("./docs.js");
+    loadDocsView("hooks");
     sseHandlers = new Map(vi.mocked(onSSE).mock.calls.map((c) => [c[0], c[1] as () => void]));
   });
 

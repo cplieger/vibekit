@@ -5,12 +5,18 @@ vi.mock("../toast.js", () => ({
   info: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  errorWithAction: vi.fn(),
   showToast: vi.fn(),
 }));
 
 vi.mock("../api-client.js", () => ({
   API_TIMEOUT_MS: 30_000,
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection reaches
+  // `apiGetTyped` for `GET /api/tabs` and other modules in this graph import
+  // `apiGet`. Nothing here calls either.
+  apiGet: vi.fn(),
+  apiGetTyped: vi.fn(),
 }));
 
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";

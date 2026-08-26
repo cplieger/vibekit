@@ -59,20 +59,15 @@ func TestSafeKiroSetting(t *testing.T) {
 		key  string
 		want string
 	}{
-		// Original settings
-		{"chat.enableCheckpoint", "chat.enableCheckpoint"},
-		{"chat.enableTodoList", "chat.enableTodoList"},
+		// Allowed: every one has a kiro-cli-SIDE role, which is the whole
+		// membership test now that KAS's ACP path is known to read no kiro-cli
+		// setting at all.
 		{"chat.enableKnowledge", "chat.enableKnowledge"},
 		{"telemetry.enabled", "telemetry.enabled"},
-		// New settings (Wave 1 items 15, 16)
 		{"chat.enableSubagent", "chat.enableSubagent"},
 		{"chat.enablePromptHints", "chat.enablePromptHints"},
-		{"chat.disableAutoCompaction", "chat.disableAutoCompaction"},
 		{"hooks.showStatus", "hooks.showStatus"},
-		{"compaction.excludeContextWindowPercent", "compaction.excludeContextWindowPercent"},
-		{"compaction.excludeMessages", "compaction.excludeMessages"},
-		// kiro-cli 2.1+: load MCP tools on demand via tool_search.
-		{"toolSearch.enabled", "toolSearch.enabled"},
+		{"chat.disableInheritingDefaultResources", "chat.disableInheritingDefaultResources"},
 		// Rejected settings
 		{"chat.defaultModel", ""},
 		{"api.timeout", ""},
@@ -81,6 +76,24 @@ func TestSafeKiroSetting(t *testing.T) {
 		// prompt line (which vibekit never renders) and is absent from
 		// kiro-cli 2.12; vibekit reads context usage from usage_update.
 		{"chat.enableContextUsageIndicator", ""},
+		// Removed 2026-08 on a measurement of the stock 2.19.2 bundle, and the
+		// two groups are rejected for DIFFERENT reasons — which is why they are
+		// listed apart rather than folded into one comment.
+		//
+		// Zero readers upstream, so no door could have carried them: the
+		// `checkpoint` and `todoList` settings KAS declares are never read, and
+		// neither is the `compaction` object these two numeric keys write into.
+		{"chat.enableCheckpoint", ""},
+		{"chat.enableTodoList", ""},
+		{"compaction.excludeContextWindowPercent", ""},
+		{"compaction.excludeMessages", ""},
+		// Live readers upstream, but not through THIS endpoint. `toolSearch`
+		// moved to kascap's `_meta.kiro.settings` door, which is the one that
+		// reaches its reader. `disableAutoCompaction` is read as well and is
+		// still withheld, because its ON state makes a context overflow fail the
+		// turn — see internal/kascap/table.go for the three prerequisites.
+		{"toolSearch.enabled", ""},
+		{"chat.disableAutoCompaction", ""},
 	}
 	for _, tt := range tests {
 		got := safeKiroSetting(tt.key)

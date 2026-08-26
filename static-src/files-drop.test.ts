@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_UPLOAD_FILES, MAX_UPLOAD_TOTAL_BYTES, UPLOADS_DIR } from "./upload-policy.js";
 
 const dispatch = vi.fn();
-const attachPathToActiveChat = vi.fn();
+const attachPathsToActiveChat = vi.fn();
 const toastError = vi.fn();
 
 vi.mock("./actions/files.js", () => ({
@@ -24,7 +24,7 @@ vi.mock("./actions/files.js", () => ({
     return Array.isArray(uploaded) ? (uploaded as string[]) : [];
   },
 }));
-vi.mock("./chat.js", () => ({ attachPathToActiveChat }));
+vi.mock("./chat.js", () => ({ attachPathsToActiveChat }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
 
 /** The minimum composer DOM initChatAttach touches. */
@@ -86,7 +86,11 @@ describe("the composer's upload target", () => {
       onSuccess: (paths: string[]) => void;
     };
     opts.onSuccess([`${UPLOADS_DIR}/a.txt`, `${UPLOADS_DIR}/b.txt`]);
-    expect(attachPathToActiveChat.mock.calls.flat()).toEqual([
+    // ONE call carrying the batch, not one per path: the ensure-a-chat step has to
+    // happen once, or a drop onto an empty workspace creates a chat per file (see
+    // chat.ts attachPathsToActiveChat).
+    expect(attachPathsToActiveChat).toHaveBeenCalledTimes(1);
+    expect(attachPathsToActiveChat).toHaveBeenCalledWith([
       `${UPLOADS_DIR}/a.txt`,
       `${UPLOADS_DIR}/b.txt`,
     ]);
@@ -104,7 +108,7 @@ describe("the composer's upload target", () => {
       message: "1 of 2 uploaded, then big.zip failed: upload too large",
       cause: { uploaded: [`${UPLOADS_DIR}/a.txt`] },
     });
-    expect(attachPathToActiveChat).toHaveBeenCalledWith(`${UPLOADS_DIR}/a.txt`);
+    expect(attachPathsToActiveChat).toHaveBeenCalledWith([`${UPLOADS_DIR}/a.txt`]);
   });
 
   it("attaches nothing when the failure carries no partial batch", async () => {
@@ -113,7 +117,7 @@ describe("the composer's upload target", () => {
       onError: (err: { message: string; cause?: unknown }) => void;
     };
     opts.onError({ message: "Upload failed" });
-    expect(attachPathToActiveChat).not.toHaveBeenCalled();
+    expect(attachPathsToActiveChat).toHaveBeenCalledWith([]);
   });
 });
 

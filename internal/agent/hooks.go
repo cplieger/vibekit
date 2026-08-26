@@ -127,14 +127,33 @@ type kasHookResult struct {
 // (internal/filebrowse sensitive paths), so the client renders it without an
 // open affordance.
 type hookInfo struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Trigger        string `json:"trigger"`
-	ActionType     string `json:"action_type"` // runCommand | askAgent
-	Scope          string `json:"scope"`       // workspace | global
-	Command        string `json:"command,omitempty"`
-	Prompt         string `json:"prompt,omitempty"`
-	Matcher        string `json:"matcher,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Trigger    string `json:"trigger"`
+	ActionType string `json:"action_type"` // runCommand | askAgent
+	Scope      string `json:"scope"`       // workspace | global
+	Command    string `json:"command,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	Matcher    string `json:"matcher,omitempty"`
+	// MatcherWarning is a DERIVED field: what is wrong with this hook's
+	// trigger-and-matcher pairing, or empty when nothing is. Two values, both from
+	// vibekit.ClassifyHookMatcher — `missing_tool_matcher` for a PreToolUse or
+	// PostToolUse hook with no matcher (it therefore runs on every tool call) and
+	// `ineffective` for a matcher on a trigger that has nothing to match on.
+	//
+	// Computed SERVER-side so the trigger-to-subject table lives once
+	// (internal/vibekit). A TypeScript copy would be a second table that can
+	// disagree with the Go one about a trigger's subject, and the subject is the
+	// whole basis of the judgement.
+	//
+	// `ineffective` appears here even though create_hook REFUSES that pairing at
+	// the boundary, and the overlap is deliberate rather than redundant: the two
+	// surfaces cover different populations. The refusal covers what vibekit writes;
+	// this field covers what it READS, and a hook file can be hand-written, copied
+	// from a blog post, or written by another tool sharing the workspace. For that
+	// population this row is the only place the mistake is visible at all, since
+	// upstream keeps the same finding in its own log.
+	MatcherWarning string `json:"matcher_warning,omitempty"`
 	FilePath       string `json:"file_path,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
 	Enabled        bool   `json:"enabled"`
@@ -234,6 +253,7 @@ func (st *Settings) toHookInfo(k *kasHook) hookInfo {
 		ActionType:     k.Action.Type,
 		Scope:          scope,
 		Matcher:        k.Meta.Matcher,
+		MatcherWarning: string(vibekit.ClassifyHookMatcher(k.Meta.Trigger, k.Meta.Matcher)),
 		FilePath:       path,
 		DisabledReason: k.Meta.DisabledReason,
 		Enabled:        k.Meta.Enabled,

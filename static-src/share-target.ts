@@ -10,7 +10,7 @@ import { $ } from "./dom.js";
 import { setComposerValue } from "./composer-value.js";
 import { createPlannerSession } from "./chat.js";
 
-export function applyShareTarget(): void {
+export async function applyShareTarget(): Promise<void> {
   const params = new URLSearchParams(location.search);
 
   const sharedText = params.get("prompt");
@@ -24,7 +24,13 @@ export function applyShareTarget(): void {
   }
 
   if (params.get("agent") === "planner") {
-    createPlannerSession();
+    // AWAITED, which is why this function became async: boot calls
+    // applyShareTarget() and then applyInitialRoute(), which resolves the URL
+    // against the tab strip. The planner tab has to be in it by then, and its id
+    // is the server's now, so the wait is real. `shareWillCreate` also suppressed
+    // boot's own starter chat on this path, so detaching would leave
+    // applyInitialRoute() looking at an empty strip.
+    await createPlannerSession();
   }
 
   // Strip query string so the URL doesn't keep the share data on reload.

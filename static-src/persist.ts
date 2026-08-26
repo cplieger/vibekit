@@ -11,6 +11,16 @@ import { registerCleanup } from "./actions/index.js";
 
 export interface AppSettings {
   last_model?: string;
+  /** The reasoning-effort level the user picked last, anywhere. The twin of
+   *  last_model and used the same way: a NEW chat opens on it instead of on the
+   *  current model's default tier.
+   *
+   *  A seed, never a store. The level still lives on the chat record
+   *  (Session.effort) and this is only consulted when a chat has chosen nothing,
+   *  so two chats can still disagree. Reconciled against the current model's own
+   *  tier list before it is marked, because a level the new model does not offer
+   *  would be a tier the service rejects. */
+  last_effort?: string;
   notifications_enabled?: boolean;
   notify_agent_finished?: boolean;
   /** CI on a pull request the connected identity opened turned green or red.
@@ -32,7 +42,9 @@ export interface AppSettings {
   // There is no model_effort. Reasoning effort is per-chat, on the chat record
   // beside model, mode and supervised (Session.effort); it used to be one global
   // setting shaped {last_model, effort}, so two chats could not disagree and
-  // switching models discarded the previous model's level.
+  // switching models discarded the previous model's level. last_effort above is
+  // not that key returning: it carries only the MEMORY of the last pick, as a
+  // bare level with per-chat storage intact.
   /** Chat retention, owned end to end by vibekit (kiro-cli's own
    *  cleanup.periodDays is pinned to 0/never). Encoding: -1 = forever
    *  (close keeps the chat, never purged — "backups"), 0 = off (delete on
@@ -40,6 +52,39 @@ export interface AppSettings {
    *  chat, purged after N). There is no archive directory: "archived" is
    *  computed from the chat's age against the window. */
   chat_retention_days?: number;
+  /** Whether the agent gets the knowledge feature: the list of indexed bases in
+   *  its system prompt and KAS's own knowledge search tool. Defaults TRUE, which
+   *  is why the server sends it in GET /api/settings rather than leaving it
+   *  absent — an unset key read as the zero value would render this switch off
+   *  while the feature was on. It does not gate the knowledge PANEL, which reads
+   *  the store through an RPC that consults neither key. */
+  knowledge_enabled?: boolean;
+  /** Whether a session ships KAS's tool_search tool instead of every MCP tool's
+   *  full description. Defaults false, matching kiro-cli's own default.
+   *
+   *  Both of these are vibekit settings that reach the AGENT: internal/agent
+   *  resolves each at spawn time into the _meta.kiro.settings keys KAS reads.
+   *  They were kiro-cli settings until 2026-08, and that door reaches no running
+   *  chat. Neither is live — KAS freezes both at session creation. */
+  tool_search_enabled?: boolean;
+  /** The theme choice: "dark", "light" or "system". Absent means nothing was
+   *  chosen, which resolves to the OS preference.
+   *
+   *  Server-owned since the workspace arrangement was modelled: it used to be a
+   *  field in `ui-state.json`, and it is a workspace preference rather than
+   *  anything about tabs, so it came here when that document went. "system" is a
+   *  real stored CHOICE — the user asked to follow the OS — and dropping it is
+   *  what once made Auto unreachable after a single toggle click.
+   *
+   *  ALSO cached in this browser's localStorage, which is not a second source of
+   *  truth: the inline pre-paint snippet has to pick a theme before any fetch
+   *  resolves. `settings.ts` owns that cache's policy; the server always wins
+   *  after the settings load. */
+  theme?: string;
+  /** The file browser's last directory. Server-owned for the arrangement's
+   *  reason: it is where this WORKSPACE was being browsed, so a second device
+   *  should open there too. Empty lists the granted mounts. */
+  fb_path?: string;
 }
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;

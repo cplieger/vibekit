@@ -359,24 +359,6 @@
       stroke 0.4s;
   }
 
-  /* The reserve moves once, when the setting loads, and it moves in two
-     properties: the rotation places its start and the dash pattern sets its
-     extent. Both are written by status.ts.
-
-     Its COLOUR is here rather than a `stroke="var(…)"` presentation attribute in
-     index.html, unlike the disc and the pie beside it. Two reasons, and the
-     second is the load-bearing one: a colour belongs in the stylesheet, and
-     css-tokens.node.test.ts's orphan check reads var() out of the CSS and out of the
-     TS — not out of the HTML — so a token whose only reader is a markup
-     attribute registers as declared-and-unused. --c-border and --c-green get
-     away with it only because they have many other readers. */
-  & [id="context-ring-wedge"] {
-    stroke: var(--c-reserve);
-    transition:
-      transform 0.3s,
-      stroke-dasharray 0.3s;
-  }
-
   & [id="context-label"] {
     font-family: var(--font-mono);
     font-size: 0.625rem;

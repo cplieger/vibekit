@@ -12,7 +12,7 @@
 
 import { el } from "@cplieger/reactive";
 import { upload, partialUploadOf } from "./actions/files.js";
-import { attachPathToActiveChat } from "./chat.js";
+import { attachPathsToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { installDropZone } from "./drop-zone.js";
@@ -62,16 +62,13 @@ export function initChatAttach(): void {
       { files: screened.files, targetDir: UPLOADS_DIR },
       {
         onSuccess: (paths) => {
-          for (const p of paths) {
-            attachPathToActiveChat(p);
-          }
+          // DETACHED: an upload callback with nothing after it that reads the chat.
+          void attachPathsToActiveChat(paths);
         },
         onError: (err) => {
           // A partial batch is not rolled back, so attach what landed. The
           // action's own toast already names the failure.
-          for (const p of partialUploadOf(err.cause)) {
-            attachPathToActiveChat(p);
-          }
+          void attachPathsToActiveChat(partialUploadOf(err.cause));
         },
       },
     );

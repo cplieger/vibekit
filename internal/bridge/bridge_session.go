@@ -117,10 +117,64 @@ func (b *Bridge) withSessionMeta(params map[string]any) map[string]any {
 	return params
 }
 
+// withSessionChoices adds this chat's composer choices to the session door's
+// _meta.kiro block: the model to start ON and the reasoning-effort level to start
+// AT. session/new only, because a resumed session already carries both in KAS's
+// own metadata.
+//
+// This is the one-trip door, and it replaced two follow-up
+// session/set_config_option calls. Probed on kiro-cli 2.19.1 / KAS 0.48.0:
+// session/new with `_meta.kiro.{modelId,effortLevel}` returns a session already on
+// claude-opus-5 at max, the config_option_update agrees, and KAS persists BOTH
+// into its own session.json, so a later session/load restores them. The launch
+// flags are still not an option — `--model` and `--effort` are refused alongside
+// `--agent-engine=v3` with `error: the following arguments are not supported`,
+// re-probed on the same build.
+//
+// Setting the model here rather than afterwards is what fixes a silent loss, not
+// just two round trips. The `auto` model has NO effort tiers (`hasEffort:false`),
+// so KAS builds no effortLevel option for it and `setSessionConfigOption` drops
+// any level sent while a session sits there — measured: the call returns success,
+// the option stays absent, and session.json persists `effortLevel: null`. A
+// session/new starts on `auto`, so a chat whose model vibekit could not send (never
+// picked, or withheld by the entitlement gate) had its level thrown away, and
+// KAS's own first-prompt model pin then set that model's DEFAULT tier. Here the
+// model is chosen before the session exists, so the window never opens.
+//
+// Keyed into the SAME _meta.kiro map the capability table builds rather than a
+// second _meta block, because KAS reads one object; a second would replace the
+// first and take the whole door's declarations with it.
+func (b *Bridge) withSessionChoices(params map[string]any, opts *vibekit.StartOpts) map[string]any {
+	choices := make(map[string]any, 2)
+	if opts.Model != "" && opts.Model != vibekit.ModelAuto {
+		choices[metaKeyModelID] = opts.Model
+	}
+	if opts.Effort != "" && vibekit.EffortLevel(opts.Effort).Valid() {
+		choices[metaKeyEffortLevel] = opts.Effort
+	}
+	if len(choices) == 0 {
+		return params
+	}
+	meta, ok := params["_meta"].(map[string]any)
+	if !ok {
+		meta = make(map[string]any, 1)
+		params["_meta"] = meta
+	}
+	kiro, ok := meta[metaKeyKiro].(map[string]any)
+	if !ok {
+		kiro = make(map[string]any, len(choices))
+		meta[metaKeyKiro] = kiro
+	}
+	for k, v := range choices {
+		kiro[k] = v
+	}
+	return params
+}
+
 func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error {
-	resp, err := b.Call(ctx, methodSessionNew, b.withSessionMeta(map[string]any{
+	resp, err := b.Call(ctx, methodSessionNew, b.withSessionChoices(b.withSessionMeta(map[string]any{
 		"cwd": b.workDir, "mcpServers": []any{},
-	}))
+	}), opts))
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
 	}
@@ -143,6 +197,11 @@ func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error 
 	// workspace agent-as-mode) switch to it now — session/set_mode is
 	// legal on a just-created, idle session (verified on the wire).
 	b.applyInitialMode(ctx, sid, current, opts.Mode)
+	// The model and the level rode _meta.kiro above, so both of these are
+	// REPAIRS: each compares what the result reported against what was asked for
+	// and calls only on a mismatch. In the happy path that is zero round trips,
+	// and a build that ignores the meta keys still converges instead of running a
+	// chat on the wrong model at the wrong tier.
 	b.applyInitialModel(ctx, opts.Model)
 	b.applyInitialEffort(ctx, sid, opts.Effort)
 	b.applySupervised(ctx, sid, opts.Supervised)
@@ -179,22 +238,24 @@ func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
 	}
 }
 
-// applyInitialEffort sets the reasoning effort on a freshly-created session,
-// for the same reason applyInitialModel exists: `--effort` is refused with
-// `--agent-engine=v3` too, and it appeared in the same rejection line.
+// applyInitialEffort applies the chat's reasoning-effort level to a
+// freshly-created or resumed session, for the same reason applyInitialModel
+// exists: `--effort` is refused with `--agent-engine=v3` too, and it appeared in
+// the same rejection line (re-probed on 2.19.1: `error: the following arguments
+// are not supported with --agent-engine=v3: --model, --effort`).
 //
-// An invalid level is dropped rather than sent. The value reaches the wire
-// either way, so validating here keeps a bad settings value from turning into
-// a failed config-option call on the session-creation path.
+// A repair, not the mechanism, and EnsureEffort is what makes it one. session/new
+// carries the level in _meta.kiro and its result reports the level back, so a
+// match costs nothing. A resumed session always asserts: KAS's session/load result
+// carries no effortLevel option at all, so the bridge knows no level and the chat
+// record is what vibekit has.
+//
+// This wrapper exists for the log line. Every other caller of EnsureEffort is
+// reporting a failure to somebody; on the session-creation path there is nobody to
+// report to, and refusing to open a chat over an effort preference would be worse
+// than opening it at the service's own level.
 func (b *Bridge) applyInitialEffort(ctx context.Context, sessionID, effort string) {
-	if effort == "" || !vibekit.EffortLevel(effort).Valid() {
-		return
-	}
-	if _, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
-		vibekit.KeySessionID: sessionID,
-		keyConfigID:          vibekit.ConfigOptionEffort,
-		keyConfigValue:       effort,
-	}); err != nil {
+	if err := b.EnsureEffort(ctx, effort); err != nil {
 		slog.Warn("apply initial reasoning effort",
 			"effort", effort, "session_id", sessionID, "error", err)
 	}
@@ -245,13 +306,39 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 	b.mu.Unlock()
 }
 
-func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string) error {
+func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error {
 	resp, err := b.Call(ctx, methodSessionLoad, b.withSessionMeta(map[string]any{
-		vibekit.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": []any{},
+		vibekit.KeySessionID: opts.SessionID, "cwd": b.workDir, "mcpServers": []any{},
 	}))
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)
 	}
+	b.adoptLoadedSession(opts.SessionID, opts.Model, resp)
+	b.mu.Lock()
+	sid := string(b.sessionID)
+	b.mu.Unlock()
+
+	// Re-assert the chat's reasoning-effort level on a resumed session, and ONLY
+	// that. Every other session option is KAS's to own on a load — tryLoadSession
+	// copies the mode, the mode list, the model list and the title back onto the
+	// chat record, so the two agree afterwards. Effort has no such reconciliation:
+	// Chat.Effort is the user's CHOICE and nothing overwrites it (Chat.EffortActive
+	// is the separate mirror of what the session reports running at), so a resumed
+	// session that lost the level would answer at something else while the record
+	// and the pill both kept saying max, forever.
+	//
+	// The model is deliberately NOT re-asserted here. It has the reconciliation
+	// effort lacks, and opts.Model on this path is a display fallback for a result
+	// that names no model rather than a value to assert.
+	b.applyInitialEffort(ctx, sid, opts.Effort)
+	return nil
+}
+
+// adoptLoadedSession copies a session/load result onto the bridge, falling back
+// to the requested model when the result is absent or unparseable. Split out of
+// loadSession so the lock is released before the post-load config-option calls,
+// which take it themselves.
+func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *vibekit.RPCResponse) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.sessionID = vibekit.SessionID(acpSessionID)
@@ -260,7 +347,7 @@ func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel st
 		parseErr := json.Unmarshal(resp.Result, &result)
 		if parseErr == nil {
 			b.applySessionResultLocked(result, fallbackModel)
-			return nil
+			return
 		}
 		slog.Warn("session/load: unparseable result, using fallback",
 			"error", parseErr, "result_len", len(resp.Result))
@@ -268,7 +355,6 @@ func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel st
 	if b.modelID == "" {
 		b.modelID = vibekit.ModelID(fallbackModel)
 	}
-	return nil
 }
 
 // applySessionResultLocked copies the ACP session response into the
@@ -323,7 +409,39 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 //     display list would refuse a deprecated model the account can still use,
 //     turning a working session into a client-side refusal — which is worse than
 //     the defect the check exists to prevent.
+//
+// applyEffortConfigOptionLocked records the reasoning-effort level the session
+// reports running at, from the `effortLevel` option's currentValue. MUST be
+// called with b.mu held.
+//
+// This exists so applyInitialEffort can be a repair rather than an unconditional
+// call: session/new now carries the level in _meta.kiro and the result reports it
+// back, so the common case is a match and no second round trip.
+//
+// An ABSENT option means the level is genuinely unknown, not that it is empty, so
+// the previous value stands. KAS omits the option entirely for a model with no
+// tiers (`auto`), and its session/load result omits it too — probed on 2.19.1,
+// where the load result carries neither the model nor the effort option and the
+// real state arrives on the config_option_update notification afterwards. Both
+// cases must leave a resumed bridge asserting the chat's level rather than
+// concluding it already matches.
+func (b *Bridge) applyEffortConfigOptionLocked(opts []sessionConfigOption) {
+	for i := range opts {
+		opt := &opts[i]
+		if opt.ID != vibekit.ConfigOptionEffort {
+			continue
+		}
+		var current string
+		_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
+		if current != "" {
+			b.effortLevel = current
+		}
+		return
+	}
+}
+
 func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
+	b.applyEffortConfigOptionLocked(opts)
 	for i := range opts {
 		opt := &opts[i]
 		if opt.ID != vibekit.ConfigOptionModel {

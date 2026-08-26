@@ -359,26 +359,6 @@
      * exactly this job and is already sized at 4.5:1. */
     --c-dot-idle: color-mix(in oklch, var(--c-text-primary) 51%, transparent);
 
-    /* The context ring's compaction RESERVE — the slice of the scale the app
-     * keeps back so auto-compaction has room to work. One rung deeper than the
-     * disc it sits in (--c-border's 16%), so the reserve reads as a region of
-     * the same track rather than as a second track.
-     *
-     * 49%, MEASURED like --c-dot-idle above and by the same method: the smallest
-     * 1%-step fraction clearing WCAG 1.4.11's 3:1 against the disc in BOTH
-     * themes, with light binding at 3.020:1 (dark has 4.369:1 to spare). Its
-     * closeness to the dot's 51% is arithmetic coincidence — a different
-     * backdrop reached almost the same answer — not a shared value, and the two
-     * must not be folded together: one is a tab's idle ring on a sidebar row.
-     *
-     * ACHROMATIC on purpose, and this is the whole reason it is not simply
-     * --c-yellow. The pie that grows into this slice cycles green -> yellow ->
-     * red, so a yellow reserve sits beside a yellow pie for the entire 70-90%
-     * band — precisely the band where the reader needs to see how much room is
-     * left. A wash cannot collide with a hue, and it inverts per theme for
-     * free. */
-    --c-reserve: color-mix(in oklch, var(--c-text-primary) 49%, transparent);
-
     /* ---- Elevation ------------------------------------------------------- *
      * A FIRST LAYER for every floating surface's shadow, not a replacement for
      * one. A black shadow can only darken, and against the new near-black base

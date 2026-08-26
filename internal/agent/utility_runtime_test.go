@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -388,6 +389,49 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 			t.Errorf("result = %v, want the source's token map", rb.response.result)
 		}
 	})
+}
+
+// TestForward_RoutesPolicyNotifications pins that the utility session hands
+// _kiro/policy/{changed,error} to its hook instead of dropping them.
+//
+// The utility session's notifications bypass the main dispatch table, so this
+// routing is the ONLY path a policy reload has to the client when no chat bridge
+// is alive — and Settings -> Permissions is exactly the surface someone uses with
+// no chat open. Without it, vibekit wrote permissions.yaml, KAS rebuilt from its
+// own file watcher ~0.5s later, and nothing told the panel: the switch it had
+// just been clicked on painted itself back off from the pre-write read and stayed
+// wrong until the page was reloaded.
+func TestForward_RoutesPolicyNotifications(t *testing.T) {
+	notifCh := make(chan *vibekit.RPCResponse, 2)
+	responseCh := make(chan utilityChunkPayload, 4)
+	done := make(chan struct{})
+
+	var mu sync.Mutex
+	var seen []string
+	us := &utilitySession{hooks: utilitySessionHooks{
+		onPolicyNotification: func(msg *vibekit.RPCResponse) {
+			mu.Lock()
+			defer mu.Unlock()
+			seen = append(seen, msg.Method)
+		},
+	}}
+
+	go us.forward(nil, notifCh, responseCh, done)
+	notifCh <- &vibekit.RPCResponse{Method: methodV3PolicyChanged}
+	notifCh <- &vibekit.RPCResponse{Method: methodV3PolicyError}
+	close(notifCh)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("forward did not exit after notifCh closed")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{methodV3PolicyChanged, methodV3PolicyError}
+	if !slices.Equal(seen, want) {
+		t.Errorf("hook saw %v, want %v", seen, want)
+	}
 }
 
 // TestForwardChunk_NonBlockingDropsWhenFull verifies forwardChunk never

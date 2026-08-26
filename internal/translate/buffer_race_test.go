@@ -45,8 +45,8 @@ func TestHandlersDoNotRaceBufferSnapshot(t *testing.T) {
 	// The per-chat dispatch loop: every handler that writes the buffer.
 	wg.Go(func() {
 		for range iterations {
-			tr.HandleToolCall(ctx, chatID, toolCall, "")
-			tr.HandleToolCallUpdate(ctx, chatID, toolUpdate, "")
+			tr.HandleToolCall(ctx, chatID, toolCall, FrameAttribution{})
+			tr.HandleToolCallUpdate(ctx, chatID, toolUpdate, FrameAttribution{})
 			tr.HandleAssistantChunk(ctx, chatID, textChunk, false)
 			tr.HandleAssistantChunk(ctx, chatID, thoughtChunk, true)
 			FlushSteerCarry(buf)

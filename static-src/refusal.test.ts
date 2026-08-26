@@ -11,6 +11,12 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 vi.mock("./store.js", () => ({ getActive: vi.fn() }));
 vi.mock("./actions/chat.js", () => ({
   switchModel: { dispatch: vi.fn() },
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  get: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 import { getActive } from "./store.js";

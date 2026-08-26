@@ -1,51 +1,36 @@
 // ---------------------------------------------------------------------------
-// Theme toggle (light / dark / system). The preference is persisted per-device inside
-// the `vibekit.ui-state` localStorage blob (managed by ui-state.ts) and applied
-// to <html data-theme="…"> so the CSS in 01-tokens.css can key off it.
+// Theme toggle (light / dark / system). The controller is
+// @cplieger/ui-primitives' createTheme: it owns the resolve-and-apply lifecycle
+// and the OS-preference follow, and it applies the resolved choice to
+// <html data-theme="…"> so the CSS in 01-tokens.css can key off it.
 //
-// The controller is @cplieger/ui-primitives' createTheme: it owns the
-// resolve-and-apply lifecycle and the OS-preference follow, while vibekit
-// supplies a storage adapter that keeps the preference inside its existing
-// ui-state blob (read-modify-write of the `theme` field; sibling fields — tab
-// order, active view, shell state — are left untouched).
+// WHERE THE PREFERENCE LIVES IS NOT THIS MODULE'S BUSINESS, and that is the
+// point of taking the storage adapter as a parameter. The value is a
+// workspace preference in config.json, mirrored by a localStorage paint cache
+// the pre-paint snippet reads; both halves and the policy joining them live in
+// settings.ts, which already imports this module — so reaching back for them
+// here would be an import cycle, and the parameter is what makes the direction
+// explicit rather than accidental.
 //
 // THREE states, and the third is not decoration: with a 2-state toggle the OS
 // preference became unreachable the moment the user clicked once, because
 // "follow the OS" was only ever the value of an UNSET field. The library models
 // this properly (set("system"), cycle() as light -> dark -> system, an unset
-// field resolving to "system"), so the fix is to use what it already has. The
+// value resolving to "system"), so the fix is to use what it already has. The
 // storage type had to carry "system" too, or the choice round-tripped to null.
 //
 // The button shows the CHOICE, not the resolved theme. Showing the resolved one
 // would make Auto indistinguishable from whichever concrete theme it landed on,
 // which is the whole point of having the third state visible.
-//
-// requires @cplieger/ui-primitives >= 2.1.0 (createTheme storage adapter +
-// themeInitSnippetFromJSON); verified locally via node_modules overlay until
-// released.
 // ---------------------------------------------------------------------------
 
-import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { createTheme } from "@cplieger/ui-primitives/theme";
 import type { ThemeController, ThemeStorage } from "@cplieger/ui-primitives/theme";
-
-type ThemeChoice = "dark" | "light" | "system";
-
-// Persistence adapter: the theme preference lives in the `theme` field of the
-// vibekit.ui-state blob, NOT a bare localStorage key. get() returns that field
-// ("dark" | "light" | "system" | null); set() does a read-modify-write via
-// uiState.save() so every sibling field is preserved. A null field (never
-// chosen) reads as "unset" → createTheme treats it as "system" and resolves the
-// OS preference, matching the pre-paint anti-FOUC snippet in index.html (which
-// already accepted "system" before this module wrote one).
-const uiStateThemeStorage: ThemeStorage = {
-  get: () => uiState.load().theme,
-  set: (value) => {
-    uiState.save({ theme: value === "light" || value === "system" ? value : "dark" });
-  },
-};
+// The vocabulary is declared where the paint cache stores it, so the two
+// cannot drift; a type import couples nothing at runtime.
+import type { ThemeChoice } from "./device-view.js";
 
 let controller: ThemeController | null = null;
 
@@ -143,11 +128,16 @@ function updateIcon(): void {
 }
 
 /** Create the theme controller (applies the persisted / OS theme immediately)
- *  and wire up the toggle button. Call once during UI init. */
-export function initThemeToggle(): void {
+ *  and wire up the toggle button. Call once during UI init.
+ *
+ *  `storage` is where the choice is read and written; see the header for why it
+ *  arrives as an argument. The library still needs `storageKey` for its
+ *  cross-tab `storage` event filter, which is why the key is passed alongside
+ *  an adapter that does not use it to address anything. */
+export function initThemeToggle(storage: ThemeStorage): void {
   controller = createTheme({
     storageKey: LS_UI_STATE_KEY,
-    storage: uiStateThemeStorage,
+    storage,
     attribute: "data-theme",
     // The resolved theme drives the <html> attribute (the library's job); the
     // icon follows the CHOICE, read back from the controller.
@@ -164,4 +154,15 @@ export function initThemeToggle(): void {
   $.themeBtn.addEventListener("click", () => {
     controller?.cycle();
   });
+}
+
+/** Apply a choice the SERVER reported: repaint the page and move the toggle.
+ *
+ *  There is one write verb on the controller and it means "the user chose this",
+ *  so the caller is the one that has to stop the value going back out as a write
+ *  — see settings.ts's adopt guard. Kept here rather than reaching for the
+ *  controller from settings.ts, because the controller is this module's and a
+ *  second holder of it is a second thing that can apply a theme. */
+export function applyThemeChoice(choice: ThemeChoice): void {
+  controller?.set(choice);
 }

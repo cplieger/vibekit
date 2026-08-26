@@ -76,7 +76,7 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 		"title":        "readFile",
 		"kind":         "read",
 		"status":       "in_progress",
-	}), "")
+	}), FrameAttribution{})
 
 	found := false
 	for _, evt := range *events {
@@ -104,14 +104,14 @@ func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 		"title":        "readFile",
 		"kind":         "read",
 		"status":       "in_progress",
-	}), "")
+	}), FrameAttribution{})
 	*events = nil
 
 	// Update tool call status
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"tool_call_id": "tc1",
 		"status":       "completed",
-	}), "")
+	}), FrameAttribution{})
 
 	found := false
 	for _, evt := range *events {

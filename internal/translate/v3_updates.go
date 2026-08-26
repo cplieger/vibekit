@@ -140,7 +140,7 @@ const meteringUnitCredit = "credit"
 // on the chat that launched and paid for it. A step frame is now allowed
 // through for its metering only; see persistTurnSummary's owner argument for
 // why the turn counters are not the step's to move.
-func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string) {
+func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
 		return
@@ -154,8 +154,15 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 	if t.handleSteeringUpdate(ctx, chatID, &u) {
 		return
 	}
-	step := u.Meta.Kiro.Workflow != nil && u.Meta.Kiro.Workflow.WorkflowID != ""
-	if subSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
+	// A STEP's frame is identified by its SESSION, never by this payload.
+	// `_meta.kiro.workflow` marks a step's CONTENT frames and never reaches a
+	// session_info_update: KAS's buildSessionInfoUpdate composes `_meta.kiro`
+	// from `legacyFields(update)` plus the update object and merges no
+	// `promptMeta`. Reading the block here was therefore always nil, so every
+	// step's metering was counted as one of this chat's own turns — see
+	// FrameAttribution for the measurement.
+	step := attr.Step
+	if attr.SubSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
 		return
 	}
 	// Agent focus updates (title / description / status) ride here as
@@ -177,9 +184,11 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime, step)
 		return
 	}
-	// Context usage. usage_update is the primary v3 channel (HandleUsageUpdate),
-	// but the context_usage session_info_update kind mirrors it, so honour
-	// both — whichever arrives keeps the ring fresh.
+	// Context usage. This sub-kind is the channel that actually arrives: the
+	// standalone usage_update frame HandleUsageUpdate decodes is never emitted by
+	// any KAS build vibekit has run against, so the handler is a fallback rather
+	// than the primary and this mirror is what keeps the ring fresh. Both are
+	// honoured because either would be correct if it came.
 	pct := u.Meta.Kiro.ContextUsage.UsagePercentage
 	if pct == nil {
 		pct = u.Meta.Kiro.UsagePercentage
@@ -319,12 +328,17 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 	}
 }
 
-// usageUpdate is the v3 usage_update payload — the primary context-window
-// usage channel. size is the context window (tokens), used is tokens
-// consumed (the ring wants a 0-100 percentage); cost carries the credit
-// spend ({amount, currency}), which v2 sourced from _kiro.dev/metadata's
-// metering. cost is nullish upstream, so it is a pointer — absent cost
-// leaves the stored credits untouched.
+// usageUpdate is the v3 usage_update payload. size is the context window
+// (tokens), used is tokens consumed (the ring wants a 0-100 percentage); cost
+// carries the credit spend ({amount, currency}), which v2 sourced from
+// _kiro.dev/metadata's metering. cost is nullish upstream, so it is a pointer —
+// absent cost leaves the stored credits untouched.
+//
+// It used to be described as "the primary context-window usage channel" and it is
+// not: the frame has no emit site in any KAS build vibekit has run against (the
+// header of this file records the measurement), so the live channel is the
+// context_usage session_info_update sub-kind and this decoder is the fallback for
+// a frame that would be correct if it ever came.
 type usageUpdate struct {
 	Cost *struct {
 		Amount float64 `json:"amount"`
