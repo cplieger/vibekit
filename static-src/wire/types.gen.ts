@@ -139,10 +139,17 @@ export interface Attachment {
 
 /**
  * Block is one entry in an assistant message's chronological content
- * array. Position in Message.Blocks IS the order in which the agent
- * emitted the block — text → tool → text → tool, etc. — so the client
- * renders them inline as they happened rather than concatenating all
- * text into one bubble at the top with tools dumped below.
+ * array. Within ONE agent's stream, position in Message.Blocks IS the
+ * order that agent emitted the block — text → tool → text → tool, etc.
+ * — so the client renders them inline as they happened rather than
+ * concatenating all text into one bubble at the top with tools dumped
+ * below.
+ * //
+ * ACROSS streams the position is NOT a global chronology, because a
+ * parent and its delegates share one array: internal/buffer extends the
+ * newest block of the delta's OWN subtask, so a parent delta arriving
+ * after a delegate opened a block lands BEHIND that delegate's block.
+ * Order is per AgentSubtaskID; Content is what carries arrival order.
  * //
  * Replay-compatible: messages persisted before this field existed have
  * Blocks=nil. Renderers fall back to the legacy Content + ToolCalls
@@ -727,9 +734,11 @@ export interface Message {
  * land on different fields client-side (Message.Reasoning vs Content).
  * BlockIndex addresses the chronological content block this delta
  * belongs to (Anthropic's content_block_delta.index): consecutive text
- * chunks share an index; a tool_call between text segments bumps the
- * next text chunk to a new index. Clients use this to accumulate
- * deltas into the right block in Message.Blocks.
+ * chunks of one subtask share an index; a tool_call between text segments
+ * of that subtask bumps the next text chunk to a new index, while an
+ * interleaved OTHER subtask does not — so an index may go BACKWARDS
+ * mid-turn. Clients accumulate by index rather than assuming the newest
+ * one, which is what makes a non-monotonic index harmless.
  */
 export interface MessageChunkPayload {
   /**
