@@ -18,6 +18,7 @@
 // Only the I/O edges are mocked (apiGet, the action dispatches, confirm). The real
 // DOM, the real render and the real read-back logic run.
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import indexHtml from "../static/index.html?raw";
 import type { PolicyView, PolicyRule } from "./types.js";
 
 type SSEFn = (chatID: string, payload?: unknown) => void;
@@ -119,6 +120,20 @@ function customizeBtn(): HTMLButtonElement {
 }
 function statusText(): string {
   return byId("security-profile-status").textContent ?? "";
+}
+/** The description rendered under one profile's radio. Read out of the DOM rather
+ *  than imported, because profileDescription is module-private and what a reader
+ *  actually sees is the rendered row. */
+function descriptionFor(id: string): string {
+  return radioFor(id).closest("label")?.querySelector(".profile-desc")?.textContent ?? "";
+}
+/** The Security-profile section's hint, straight out of the shipped markup. Read
+ *  from static/index.html rather than a fixture because the copy IS part of the
+ *  deliverable here: a hint describing a mechanism the server no longer has is the
+ *  class of defect this change exists to remove. */
+function securityProfileHint(): string {
+  const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+  return doc.querySelector("#security-profile-section .section-hint")?.textContent ?? "";
 }
 function ruleRemoveButtons(): HTMLButtonElement[] {
   return [...byId("native-policy-list").querySelectorAll<HTMLButtonElement>("button")];
@@ -238,20 +253,26 @@ describe("selecting a profile", () => {
     expect(profileCalls()).toEqual([{ profile: "custom", seed: false }]);
   });
 
-  // Selecting a profile replaces the policy, so hand-authored rules are deleted.
-  // Doing that without saying so is the one destructive surprise this screen can
-  // produce, and the count is in the message because "your rules" is not something
-  // a reader can check against the table while a modal covers it.
-  it("confirms before replacing rules the user authored", async () => {
+  // The server MERGES rather than replaces, so hand-authored rules SURVIVE the
+  // switch and keep applying beside the new profile. That is the surprise worth a
+  // confirm now — a grant outliving the posture change that was supposed to narrow
+  // it — and the count is in the message because "your rules" is not something a
+  // reader can check against the table while a modal covers it. It used to say
+  // DELETED, which the merge made false; a confirm that describes the wrong outcome
+  // is worse than none.
+  it("warns that rules the user authored survive the switch and keep applying", async () => {
     await mount(view("custom", [userRule("shell"), userRule("fs_write")]));
     await pick("trusted");
 
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
     const [message, label, variant] = mocks.confirm.mock.calls[0] ?? [];
-    expect(message).toContain("2 custom rules");
-    expect(message).toContain("DELETED");
+    expect(message).toContain("2 custom rules STAY");
+    expect(message).toContain("keep applying");
     expect(message).toContain("Trusted");
-    expect(label).toBe("Replace my rules");
+    expect(message).not.toContain("DELETED");
+    expect(label).toBe("Switch anyway");
+    // Still destructive styling: a grant persisting past a posture change is the
+    // security surprise that styling is for.
     expect(variant).toBe("destructive");
     expect(profileCalls()).toEqual([{ profile: "trusted", seed: false }]);
   });
@@ -359,6 +380,56 @@ describe("the table outside Custom", () => {
     for (const b of buttons) {
       expect(b.disabled).toBe(true);
     }
+  });
+});
+
+describe("what a profile description promises", () => {
+  // A profile has two halves and they reach different places. Its presets ride the
+  // session door and cover only the sessions vibekit opens; Kiro creates a workflow
+  // step's session itself, so a preset never arrives there. Only the loosest rung
+  // also writes a durable user-scope rule, which is the half a step session reads —
+  // so it is the only one that may claim step coverage, and it has to disclose the
+  // durability it is buying that coverage with.
+  it("names the durable user-scope rule and the step coverage on the loosest rung", async () => {
+    await mount(view("guarded"));
+    const desc = descriptionFor("unrestricted");
+    expect(desc).toContain("durable");
+    expect(desc).toContain("user permissions file");
+    expect(desc).toContain("workflow steps");
+    expect(desc).toContain("every Kiro client on this machine");
+  });
+
+  // The inverse of the same defect: a rung that quietly under-delivers. Each of
+  // these sends presets and writes no file rule, so a workflow step gets none of
+  // what the description promises unless the description says so.
+  it("says a workflow step still asks on every rung that writes no rule", async () => {
+    await mount(view("guarded"));
+    for (const id of ["guarded", "read-only", "trusted"]) {
+      expect(descriptionFor(id)).toContain("workflow step still asks");
+    }
+  });
+
+  it("claims no durable rule on any rung that does not write one", async () => {
+    await mount(view("guarded"));
+    for (const id of ["guarded", "read-only", "trusted", "custom"]) {
+      expect(descriptionFor(id)).not.toContain("durable");
+    }
+  });
+});
+
+describe("the Security profile section hint", () => {
+  it("states the durable rule, the step coverage and that the user's rules are kept", () => {
+    const hint = securityProfileHint();
+    expect(hint).toContain("durable rule to your user permissions file");
+    expect(hint).toContain("workflow steps");
+    expect(hint).toContain("never deleted");
+  });
+
+  // The hint used to say a selection "replaces the rules below with its own", which
+  // the merge made false in the direction that matters: a reader would expect their
+  // own rules to be gone and they are not.
+  it("no longer claims a selection replaces the rules below", () => {
+    expect(securityProfileHint()).not.toContain("replaces the rules below");
   });
 });
 

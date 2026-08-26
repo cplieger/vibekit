@@ -176,27 +176,31 @@ function buildToolPermissionCard(
   return card;
 }
 
-/** A pointer to the workspace relaxation, for the reader who is tired of being
+/** A pointer to the security profile picker, for the reader who is tired of being
  *  asked. Its own row BELOW the answer buttons, deliberately not among them.
  *
  *  It NAVIGATES and nothing else — the click opens Settings and flashes the
- *  switch, which the user then has to turn on and confirm there. That is the
- *  whole reason it is a link and not a control: the relaxation is
- *  Settings-only, so answering a prompt must never be a path that widens the
- *  policy as a side effect. A "grant this capability" button here would be
- *  exactly that path.
+ *  picker, which the user then has to select in and confirm there. That is the
+ *  whole reason it is a link and not a control: the profile is Settings-only, so
+ *  answering a prompt must never be a path that widens the policy as a side
+ *  effect. A "grant this capability" button here would be exactly that path.
+ *
+ *  It aims at `security-profile-list` because that is the control that exists. It
+ *  used to aim at `workspace-relax-checkbox`, which the profile picker replaced —
+ *  and highlightControl is quiet on an unknown id, so the link opened the panel and
+ *  silently highlighted nothing.
  *
  *  A mode switch gets none of this: it grants no capability, so the policy panel
  *  has nothing to say about it. */
 function buildPolicyPointer(): HTMLElement {
   const link = el("button", { type: "button", className: "approval-policy-link" }, "Settings");
   link.addEventListener("click", () => {
-    openSetting("permissions", "workspace-relax-checkbox");
+    openSetting("permissions", "security-profile-list");
   });
   return el(
     "div",
     { className: "approval-policy-pointer" },
-    "Asked too often? Widen the workspace policy in ",
+    "Asked too often? Pick a looser security profile in ",
     link,
     ".",
   );

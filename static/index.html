@@ -510,7 +510,7 @@
 
             <div class="page-section" id="security-profile-section">
               <h3 class="section-title">Security profile</h3>
-              <p class="section-hint">How much the agent may do here without asking. The profile is the policy: selecting one replaces the rules below with its own, so the table describes what is in force rather than competing with it. It applies to every chat and every workflow run, and a change reaches a chat when that chat's session next starts.</p>
+              <p class="section-hint">How much the agent may do here without asking. The profile is the policy: selecting one writes its own rules below and removes the previous profile's, so the table describes what is in force rather than competing with it. The loosest profile also writes a <strong>durable rule to your user permissions file</strong>, which is what lets it cover workflow steps as well &mdash; it survives a restart and applies to every Kiro client on this machine. Rules <em>you</em> added are never deleted: they stay in the table and keep applying alongside the profile. A change reaches a chat when that chat's session next starts.</p>
               <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
               <div class="profile-actions">
                 <button id="security-profile-customize" class="btn btn-small hidden" type="button">Customize</button>
