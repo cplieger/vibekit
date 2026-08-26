@@ -134,18 +134,18 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	// The overwrite this replaced never read them, so an unparseable hand-edited
 	// file was destroyed silently; this adopts policyRuleAdd's refusal instead. And
 	// the same read is the snapshot a failed write is put back from.
-	snap, err := snapshotPolicyFiles(roots)
+	snap, badScope, err := snapshotPolicyFiles(roots)
 	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
+		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(
+			"the existing "+badScope+"-scope permissions file could not be read; edit it manually"))
 		return
 	}
 	if err := writeProfilePolicy(r.Context(), roots, userRules); err != nil {
-		failProfileSelection(r.Context(), w, roots, snap, err)
+		s.failProfileSelection(r.Context(), w, roots, snap, err)
 		return
 	}
 	if err := s.persistProfile(r.Context(), profile.ID); err != nil {
-		failProfileSelection(r.Context(), w, roots, snap, err)
+		s.failProfileSelection(r.Context(), w, roots, snap, err)
 		return
 	}
 	// The presets ride the session door, so the sessions already running still
@@ -226,20 +226,31 @@ func writableScopes() []string {
 // snapshotPolicyFiles reads both writable files so a failed selection can be put
 // back. A parse error propagates: the caller refuses the request rather than
 // overwriting a file vibekit could not understand.
-func snapshotPolicyFiles(roots policyfile.Roots) (policySnapshot, error) {
+//
+// The middle result is the scope whose file could not be read, and it is
+// meaningful ONLY when the error is non-nil. It exists because this reads TWO
+// files where policyRuleAdd's identically-worded refusal reads one, so the message
+// left the user to guess which of them to go and fix. The cause and the resolved
+// PATH go to the log instead of the response: Load fails for a FIFO at the name,
+// an oversize file, a symlink at the final component, a multi-document YAML and
+// ordinary I/O, none of which the user can tell apart from the message, and a
+// filesystem path in an HTTP error body is a detail no client has a use for.
+func snapshotPolicyFiles(roots policyfile.Roots) (policySnapshot, string, error) {
 	snap := make(policySnapshot, len(writableScopes()))
 	for _, scope := range writableScopes() {
 		path, err := policyfile.PathFor(scope, roots)
 		if err != nil {
-			return nil, err
+			return nil, scope, err
 		}
 		f, err := policyfile.Load(path)
 		if err != nil {
-			return nil, err
+			slog.Warn("a writable permissions file could not be read, so the profile selection was refused",
+				"scope", scope, "path", path, "error", err)
+			return nil, scope, err
 		}
 		snap[scope] = f.Rules
 	}
-	return snap, nil
+	return snap, "", nil
 }
 
 // writeProfilePolicy makes userRules the profile's contribution to the user file
@@ -247,11 +258,21 @@ func snapshotPolicyFiles(roots policyfile.Roots) (policySnapshot, error) {
 // every hand-authored rule in both.
 //
 // Only the user file receives content, and that is the fix rather than a
-// simplification: user scope is the only scope KAS evaluates for a session it
-// created itself, which every workflow step's session is. The workspace file gets
-// the removal half so a rule the previous release's relaxation wrote there cannot
-// outlive the profile that replaced it, and so a leftover workspace rule cannot
-// widen or narrow the posture with nothing on screen saying so.
+// simplification. What was MEASURED (2026-08-26, kiro-cli 2.19.2, two states of
+// this container) is that a USER-scope file rule is evaluated for a session KAS
+// created itself — which every workflow step's session is — while a session preset
+// is not: 145 step-session asks with `rules: []`, zero with one user-scope shell
+// allow. Do NOT restate that as "user scope is the only scope KAS evaluates for
+// such a session": workspace scope was never measured, and KAS loads both files
+// process-wide and resolves by restrictiveness regardless of scope, so a
+// hand-authored workspace allow may well reach a step session too. The reason the
+// workspace file receives no CONTENT is one-writer-of-one-posture, not
+// unreachability — a second file granting the same posture is a second thing to
+// keep in step with the picker, and it buys no precision when one instance is one
+// HOME and one workspace root. It still gets the removal half, so a rule the
+// previous release's relaxation wrote there cannot outlive the profile that
+// replaced it, and a leftover workspace rule cannot widen or narrow the posture
+// with nothing on screen saying so.
 func writeProfilePolicy(ctx context.Context, roots policyfile.Roots, userRules []policyfile.Rule) error {
 	for _, scope := range writableScopes() {
 		path, err := policyfile.PathFor(scope, roots)
@@ -301,13 +322,33 @@ func restorePolicyFiles(ctx context.Context, roots policyfile.Roots, snap policy
 // touched: put them back, then report. Never a 200 — the files and config.json
 // would then name different postures, which is exactly what the write order and
 // this restore exist to prevent.
-func failProfileSelection(ctx context.Context, w http.ResponseWriter, roots policyfile.Roots,
+//
+// A restore that itself FAILS is the one path that leaves a file granting a
+// posture config.json does not name, so it broadcasts permissions_changed on the
+// way out. That is not decoration: the Active-policy table reads the live policy,
+// so the refetch is what makes it show the rules that are actually in force and
+// visibly disagree with the picker beside it, instead of that disagreement waiting
+// on KAS's own reload notification to happen to arrive.
+//
+// ErrTooManyRules is separated from the generic 500 because it is not vibekit
+// failing: it is the user's own file at the 512-rule cap, a condition they caused
+// and can fix, and the sibling rule endpoint already answers 400 for it. Folding
+// it into an internal error made every profile selection report a bug in vibekit
+// for a full file.
+func (s *Server) failProfileSelection(ctx context.Context, w http.ResponseWriter, roots policyfile.Roots,
 	snap policySnapshot, cause error,
 ) {
 	if err := restorePolicyFiles(ctx, roots, snap); err != nil {
+		s.agent.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPermissionsChanged, "",
+			vibekit.PermissionsChangedPayload{Status: "failed"}))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
 			"the profile could not be applied and the previous rules could not be put back; "+
 				"inspect permissions.yaml under ~/.kiro/settings and ~/.kiro/workspace-roots"))
+		return
+	}
+	if errors.Is(cause, policyfile.ErrTooManyRules) {
+		httpreply.BadRequest(w,
+			"the permissions file is at its rule limit; remove a rule from the table and try again")
 		return
 	}
 	httpreply.InternalError(w, cause)

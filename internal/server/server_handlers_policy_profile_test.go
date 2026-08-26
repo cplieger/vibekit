@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/policyfile"
@@ -103,12 +104,21 @@ func ruleCapabilities(rules []policyfile.Rule) []string {
 	return out
 }
 
-// TestPolicyProfile_NamedSelectionClearsBothFiles is the profile's central claim:
-// selecting one means what it says. A rule left standing in either writable file
-// would widen or narrow the profile with nothing on screen saying so, and the
-// workspace file matters as much as the user one because the previous release's
-// checkbox wrote there — so the first selection is also its own migration.
-func TestPolicyProfile_NamedSelectionClearsBothFiles(t *testing.T) {
+// TestPolicyProfile_NamedSelectionRemovesProfileOwnedRules is the narrowing claim:
+// selecting a restrictive rung takes the profile mechanism's OWN rules out of both
+// writable files, so a grant the loosest rung wrote cannot outlive the switch away
+// from it. The staged rule is a bare `all: allow`, which is byte-identical both to
+// what that rung writes and to what the previous release's relaxation checkbox
+// wrote at workspace scope — so the first selection is also its own migration, and
+// the workspace file matters here as much as the user one.
+//
+// It claims nothing about HAND-AUTHORED rules, which survive a selection;
+// TestPolicyProfile_KeepsHandAuthoredUserRules is that half. This case used to
+// assert "a named profile must be the whole policy", the blanket overwrite the
+// merge decision removed — a claim that would have passed equally under the
+// behaviour this change replaced, and one a later reader could have cited to
+// restore it.
+func TestPolicyProfile_NamedSelectionRemovesProfileOwnedRules(t *testing.T) {
 	s, eng, reload, userPath, wsPath := profileFixture(t, nil)
 	for _, path := range []string{userPath, wsPath} {
 		if err := policyfile.Save(t.Context(), path, &policyfile.File{Rules: []policyfile.Rule{
@@ -124,7 +134,8 @@ func TestPolicyProfile_NamedSelectionClearsBothFiles(t *testing.T) {
 
 	for _, path := range []string{userPath, wsPath} {
 		if got := loadRules(t, path); len(got) != 0 {
-			t.Errorf("%s still holds %v; a named profile must be the whole policy", path, got)
+			t.Errorf("%s still holds %v after selecting %q; a selection must remove the rules the "+
+				"profile mechanism itself writes", path, got, policyfile.ProfileTrusted)
 		}
 	}
 	var persisted string
@@ -351,6 +362,101 @@ func TestPolicyProfile_PersistFailureRestoresTheFiles(t *testing.T) {
 	}
 	if reload.restarts != 0 {
 		t.Errorf("utility restarts = %d; a selection that failed must not recycle a session", reload.restarts)
+	}
+}
+
+// TestPolicyProfile_WorkspaceWriteFailureRestoresTheUserFile is the failure the
+// compensating restore exists for, and the only one where it prevents a durable
+// OVER-GRANT: the user file has already taken the loosest rung's bare allow rules
+// by the time the workspace write fails, so without the restore that grant stays on
+// disk — surviving a restart and reaching every ACP client on this HOME — while
+// config.json still names the old profile.
+//
+// The injection is a DANGLING SYMLINK where the workspace-roots hash directory
+// would go. Fixture-only, no production seam, and asymmetric in exactly the way
+// this path needs: Load resolves it as a path COMPONENT and gets ENOENT, which is
+// the ordinary "no rules yet" answer, so the snapshot succeeds and the request
+// reaches the write; Save's directory creation then finds the name taken by a
+// non-directory and fails. It is also uid-independent, unlike a mode on that
+// directory, which root ignores.
+//
+// The workspace RESTORE fails for the same reason the write did, so this covers the
+// restore-failure answer as well: the specific 500 naming both files, and the
+// broadcast that makes the Active-policy table refetch instead of waiting for KAS's
+// own reload notification to expose the divergence.
+func TestPolicyProfile_WorkspaceWriteFailureRestoresTheUserFile(t *testing.T) {
+	s, eng, reload, userPath, wsPath := profileFixture(t, nil)
+	staged := []policyfile.Rule{{Capability: "shell", Effect: policyfile.EffectAllow}}
+	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: staged}); err != nil {
+		t.Fatalf("Setup: stage the user file: %v", err)
+	}
+	hashDir := filepath.Dir(wsPath)
+	if err := os.MkdirAll(filepath.Dir(hashDir), 0o700); err != nil {
+		t.Fatalf("Setup: stage workspace-roots: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "no-such-target"), hashDir); err != nil {
+		t.Fatalf("Setup: stage the dangling symlink: %v", err)
+	}
+
+	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileUnrestricted})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("could not be put back")) {
+		t.Errorf("body = %s, want the restore-failure message naming both files", rec.Body)
+	}
+	if got := ruleCapabilities(loadRules(t, userPath)); !slices.Equal(got, []string{"shell"}) {
+		t.Errorf("the user file holds %v after a failed workspace write, want the staged shell rule back; "+
+			"the loosest rung's grant would otherwise outlive the selection that failed", got)
+	}
+	var persisted string
+	if settings.FieldInto(t.Context(), s.configDir, settings.KeySecurityProfile, &persisted) && persisted != "" {
+		t.Errorf("persisted %q for a selection that failed", persisted)
+	}
+	if reload.restarts != 0 {
+		t.Errorf("utility restarts = %d; a selection that failed must not recycle a session", reload.restarts)
+	}
+	var sawPermissions bool
+	for _, e := range eng.events {
+		if e.Type == vibekit.EventPermissionsChanged {
+			sawPermissions = true
+		}
+	}
+	if !sawPermissions {
+		t.Error("no permissions_changed broadcast on the restore-failure path; the Active-policy table " +
+			"would keep describing a posture the file no longer holds until KAS's own reload arrived")
+	}
+}
+
+// TestPolicyProfile_AFullUserFileIsTheCallersProblem pins the STATUS, because the
+// status is the whole content of this fix: a user file at the rule cap is a
+// condition the user created in their own file and can fix from the table, and the
+// sibling rule endpoint has always answered 400 for it. Answered as a 500 it read
+// as vibekit being broken, for every profile selection, until they found the log.
+func TestPolicyProfile_AFullUserFileIsTheCallersProblem(t *testing.T) {
+	s, _, reload, userPath, _ := profileFixture(t, nil)
+	// Hand-authored, so none of them is profile-owned and the removal pass keeps
+	// every one: the file is still full when the incoming rules are upserted.
+	full := make([]policyfile.Rule, 0, 512)
+	for i := range 512 {
+		full = append(full, policyfile.Rule{
+			Capability: "cap-" + strconv.Itoa(i), Effect: policyfile.EffectAsk,
+		})
+	}
+	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: full}); err != nil {
+		t.Fatalf("Setup: stage a full user file: %v", err)
+	}
+
+	rec := postProfile(t, s, profileBody{Profile: policyfile.ProfileUnrestricted})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a file at the rule cap, body %s", rec.Code, rec.Body)
+	}
+	if got := loadRules(t, userPath); len(got) != len(full) {
+		t.Errorf("the user file holds %d rules after the refusal, want the staged %d back",
+			len(got), len(full))
+	}
+	if reload.restarts != 0 {
+		t.Errorf("utility restarts = %d; a refused selection must not recycle a session", reload.restarts)
 	}
 }
 
