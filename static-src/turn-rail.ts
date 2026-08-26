@@ -29,7 +29,7 @@
 
 import { el } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
-import { jumpTo } from "./scroll.js";
+import { jumpTo, scrollableBy } from "./scroll.js";
 import { turnAnchorID, type TurnOutcome } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 
@@ -87,6 +87,34 @@ let zoom: { from: number; to: number } | undefined;
 let observer: IntersectionObserver | undefined;
 /** Turn numbers whose jump is waiting on a fetch, so the marker can say so. */
 const pending = new Set<number>();
+
+/** How far the transcript must be able to scroll before the rail appears.
+ *
+ *  The rail is a NAVIGATOR, so it has nothing to offer a conversation the reader
+ *  can already see whole: on a one-turn chat it was a column of one digit beside
+ *  a transcript with nowhere to go. A threshold rather than a bare `> 0` because
+ *  a transcript overflowing by a few pixels is not one anybody navigates, and
+ *  because a scrollable-by-2px transcript would otherwise flip the rail on and
+ *  off as its own content settles.
+ *
+ *  This is the rail's POLICY and lives here; scroll.ts only measures. The number
+ *  matching BOTTOM_TOLERANCE_PX is a coincidence of scale, not a shared decision
+ *  — do not collapse the two. */
+const MIN_SCROLL_PX = 100;
+
+/** Whether there is enough transcript to navigate.
+ *
+ *  Read live at every render rather than cached from a paint, because the answer
+ *  changes on window resize too and the rail's own ResizeObserver is what catches
+ *  that — a flag written by the transcript's paint path would be stale exactly
+ *  when the viewport is what moved. */
+function navigable(): boolean {
+  return scrollableBy() > MIN_SCROLL_PX;
+}
+
+/** The navigability the last render was built from, so a paint that flips it can
+ *  re-render and the overwhelming majority that do not cost one comparison. */
+let renderedNavigable = false;
 
 /** Mount the rail into the transcript's positioned outer wrapper. Idempotent. */
 export function mountTurnRail(host: HTMLElement): void {
@@ -160,6 +188,7 @@ export function resetTurnRail(): void {
   summaries = [];
   currentN = 0;
   zoom = undefined;
+  renderedNavigable = false;
   pending.clear();
   observer?.disconnect();
   observer = undefined;
@@ -170,6 +199,14 @@ export function resetTurnRail(): void {
  *  Called after each transcript paint; cheap because it re-observes the same
  *  elements rather than rebuilding anything. */
 export function observeTurns(cards: Iterable<HTMLElement>): void {
+  // Content just changed, so the transcript may have crossed the navigable
+  // threshold in either direction. The IntersectionObserver below cannot cover
+  // this: it renders only when the turn IN VIEW changes, and a streaming turn
+  // grows the transcript past the threshold without ever changing that — so the
+  // rail would stay hidden until the reader happened to scroll.
+  if (navigable() !== renderedNavigable) {
+    render();
+  }
   if (typeof IntersectionObserver !== "function") {
     return;
   }
@@ -312,7 +349,10 @@ function render(): void {
     return;
   }
   root.dataset["zoomed"] = zoom === undefined ? "" : "on";
-  if (summaries.length === 0) {
+  renderedNavigable = navigable();
+  // No rows means no rail: `.turn-rail:empty` hides the element, which takes the
+  // axis line with it, so an unnavigable transcript needs no second mechanism.
+  if (summaries.length === 0 || !renderedNavigable) {
     root.replaceChildren();
     return;
   }

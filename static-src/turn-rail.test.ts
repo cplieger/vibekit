@@ -10,9 +10,20 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 
 // scroll.ts self-initialises a singleton against #messages at import time, and
-// the rail imports it to park the reader on jump. Neither is under test
-// here, so stub it rather than staging the whole chat DOM.
-vi.mock("./scroll.js", () => ({ jumpTo: vi.fn() }));
+// the rail imports it to park the reader on jump and to ask how far the
+// transcript can scroll. Neither is under test here, so stub it rather than
+// staging the whole chat DOM.
+//
+// `scrollable.by` is the transcript's scroll room. It has to come through
+// vi.hoisted: the factory below is hoisted above these declarations, so a plain
+// const would be a ReferenceError inside it. The default is comfortably
+// navigable, because every case outside the visibility block is about the index
+// rather than about whether the rail is worth showing.
+const { scrollable } = vi.hoisted(() => ({ scrollable: { by: 500 } }));
+vi.mock("./scroll.js", () => ({
+  jumpTo: vi.fn(),
+  scrollableBy: () => scrollable.by,
+}));
 // The session-wide index is the rail's own fetch; the lifecycle cases below
 // decide what it does with the answer, not how it asks.
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn() }));
@@ -22,6 +33,7 @@ import {
   ROW_PITCH_PX,
   mountTurnRail,
   loadTurnRail,
+  observeTurns,
   pointTurnRail,
   refreshTurnRail,
   resetTurnRail,
@@ -237,6 +249,7 @@ describe("which chat the rail belongs to", () => {
   });
 
   beforeEach(() => {
+    scrollable.by = 500;
     resetTurnRail();
   });
 
@@ -323,5 +336,109 @@ describe("which chat the rail belongs to", () => {
     await refreshTurnRail("c-a");
 
     expect(markers()).toEqual(["1"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// When the rail is worth existing
+// ---------------------------------------------------------------------------
+
+// The rail is a NAVIGATOR, so it has nothing to offer a transcript the reader can
+// already see whole — on a one-turn chat it was a column of one digit beside a
+// conversation with nowhere to go. These cases pin the gate in both directions,
+// including the one the IntersectionObserver structurally cannot cover.
+describe("the rail only appears once the transcript can be scrolled", () => {
+  const host = document.createElement("div");
+
+  beforeAll(() => {
+    document.body.appendChild(host);
+    // Idempotent, and the rail is a module singleton: if a block above already
+    // mounted it, this is a no-op and the element is in THAT host. So resolve it
+    // from the document rather than from `host`, which keeps this block correct
+    // both in file order and on its own under a `-t` filter.
+    mountTurnRail(host);
+  });
+
+  beforeEach(() => {
+    scrollable.by = 500;
+    resetTurnRail();
+  });
+
+  function rail(): HTMLElement {
+    const el = document.querySelector<HTMLElement>(".turn-rail");
+    if (el === null) {
+      throw new Error("rail not mounted");
+    }
+    return el;
+  }
+
+  function markers(): string[] {
+    return [...rail().querySelectorAll(".rail-marker")].map((b) => b.textContent ?? "");
+  }
+
+  it("stays empty for a transcript that fits, however many turns it holds", async () => {
+    scrollable.by = 0;
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
+
+    await loadTurnRail("c-short");
+
+    // Empty rather than hidden by a class: `.turn-rail:empty` is what removes the
+    // element, and that takes the axis line with it.
+    expect(markers()).toEqual([]);
+    expect(rail().children.length).toBe(0);
+  });
+
+  it("appears once a paint takes the transcript past the threshold", async () => {
+    scrollable.by = 0;
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-grows");
+    expect(markers()).toEqual([]);
+
+    // The transcript grew — a streaming turn, or a page of history landing. This
+    // is the case the IntersectionObserver cannot see: the turn IN VIEW has not
+    // changed, so only observeTurns' own check re-renders here.
+    scrollable.by = 500;
+    observeTurns([]);
+
+    expect(markers()).toEqual(["1", "2"]);
+  });
+
+  it("goes away again when the transcript stops being scrollable", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-shrinks");
+    expect(markers()).toEqual(["1", "2"]);
+
+    // A window the reader just made taller, or turns folding away.
+    scrollable.by = 0;
+    observeTurns([]);
+
+    expect(markers()).toEqual([]);
+  });
+
+  it("wants real scroll room, not one stray pixel", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
+
+    // A transcript overflowing by a hair is not one anybody navigates, and
+    // treating it as navigable would flip the rail on and off as its own content
+    // settles.
+    scrollable.by = 1;
+    await loadTurnRail("c-hair");
+    expect(markers()).toEqual([]);
+
+    scrollable.by = 101;
+    observeTurns([]);
+    expect(markers()).toEqual(["1"]);
+  });
+
+  it("re-renders only when the answer actually changed", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-stable");
+    const first = rail().querySelector(".rail-marker");
+
+    // Same navigability, so the paint must not rebuild the rows: a rebuild per
+    // streamed chunk would discard the node under the reader's pointer.
+    observeTurns([]);
+
+    expect(rail().querySelector(".rail-marker")).toBe(first);
   });
 });
