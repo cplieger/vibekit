@@ -400,6 +400,19 @@ class ScrollController {
     this.maybeLoadMore(true);
   }
 
+  /** How far the transcript can scroll: content height minus viewport height, 0
+   *  when it fits.
+   *
+   *  A pure MEASUREMENT with no threshold applied, because the only caller that
+   *  wants one (the turn rail, deciding whether it is worth existing) has a
+   *  different question from this module's own bottom-detection tolerance. Two
+   *  unrelated decisions that happen to want similar numbers must not share a
+   *  constant — see BOTTOM_TOLERANCE_PX, which is about what counts as AT the
+   *  bottom, not about whether there is a bottom to reach. */
+  scrollableBy(): number {
+    return Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
+  }
+
   /** Hand the scroller to a different chat, or to no chat at all.
    *
    *  Every line here is mechanism- or order-sensitive, and each one was a way the
@@ -637,6 +650,11 @@ function getInstance(): ScrollController {
 /** Deferred DOM access — safe to import before DOMContentLoaded. */
 export function getScrollEl(): HTMLElement {
   return getInstance().scrollEl;
+}
+
+/** How far the transcript can scroll, in px; 0 when it fits its viewport. */
+export function scrollableBy(): number {
+  return getInstance().scrollableBy();
 }
 
 export function setUserScrolledUp(v: boolean): void {
