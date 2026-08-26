@@ -1,0 +1,177 @@
+{
+  "_comment": [
+    "vibekit's BUNDLED TOOLS: the tools this product ships with because it",
+    "needs them, plus the ones it recommends for a good experience.",
+    "",
+    "These are not a layer over the tool catalog. The catalog is a",
+    "REFERENCE -- every tool the mise and aqua registries can express,",
+    "translated, with no opinion about which ones matter -- and this file",
+    "is the bundle vibekit is shipping out of it. Each entry declares which",
+    "of the two it is:",
+    "",
+    "  essential: true   NECESSARY. A vibekit feature stops working without",
+    "                    it (gh/glab/tea back the Sources tab, node runs",
+    "                    npx-based MCP servers, uv runs the Python ones).",
+    "                    The engine refuses to delete the row and the UI",
+    "                    offers no delete control. Disabling is still",
+    "                    allowed, which is the escape hatch.",
+    "  featured: true    RECOMMENDED. Surfaced first in the Add-tool modal",
+    "                    as the starter set, and removable like anything",
+    "                    else.",
+    "",
+    "The engine applies this to EVERY catalog it loads (baked, cached,",
+    "fetched), so a bundled tool survives a catalog refresh, and",
+    "`toolcatalog verify -overlay` gates the same set at image build.",
+    "",
+    "An entry with no source names a tool the registries already carry and",
+    "adds only what vibekit knows about it: whether it is necessary or",
+    "recommended, and the copy the UI shows. An entry WITH a source is a",
+    "tool no registry carries, so the bundle has to define it outright.",
+    "",
+    "A bare \"aqua:owner/repo\" source is the one thing that cannot appear",
+    "here: resolving it needs an aqua-registry checkout, which exists at",
+    "catalog COMPILE time and not at runtime. Everything here is either",
+    "sourceless, a release: source (whose version is resolved from the",
+    "forge on every update) or a manual: install script.",
+    "",
+    "upstream: {...} is read by cplieger/.github's Renovate customManager",
+    "to bump a hand-pinned version. Only a manual entry needs one -- a",
+    "release: entry resolves its own latest tag, which is why glab, clangd",
+    "and kotlin-language-server carry no pin at all.",
+    "",
+    "Manual install commands run under bash with VERSION, VERSION_NOPFX",
+    "(leading v stripped), BIN, TOOLS, OPT and the ARCH_*_OR_* variables in",
+    "the environment (value = left side on amd64, right side on arm64)."
+  ],
+  "entries": {
+    "node": {
+      "featured": true,
+      "essential": true,
+      "description": "Node.js runtime. Required for npx-based MCP servers and npm-installed language servers."
+    },
+    "go": {
+      "featured": true,
+      "description": "Go toolchain. Required for go-installed tools and full gopls analysis."
+    },
+    "uv": {
+      "featured": true,
+      "essential": true,
+      "description": "Python package runner (uv). Provides uvx for Python MCP servers and installs pip-sourced tools."
+    },
+    "github-cli": {
+      "featured": true,
+      "essential": true,
+      "description": "GitHub CLI. Installed automatically when you connect a GitHub account in Sources."
+    },
+    "glab": {
+      "featured": true,
+      "essential": true,
+      "description": "GitLab CLI. Installed automatically when you connect a GitLab account in Sources."
+    },
+    "yq": {
+      "featured": true,
+      "description": "YAML/JSON/XML processor."
+    },
+    "golangci-lint": {
+      "featured": true,
+      "description": "Go linter aggregator."
+    },
+    "shellcheck": {
+      "featured": true
+    },
+    "ripgrep": {
+      "featured": true
+    },
+    "rust-analyzer": {
+      "featured": true,
+      "lsp": true
+    },
+    "tea": {
+      "source": "manual",
+      "version": "v0.15.1",
+      "upstream": {
+        "datasource": "gitea-releases",
+        "depName": "gitea/tea",
+        "registryUrl": "https://gitea.com"
+      },
+      "featured": true,
+      "essential": true,
+      "description": "Gitea/Codeberg CLI. Installed automatically when you connect a Gitea account in Sources.",
+      "install": "curl -fsSL -o \"${BIN}/tea\" \"https://dl.gitea.com/tea/${VERSION_NOPFX}/tea-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}\" && chmod 755 \"${BIN}/tea\"",
+      "probe": "tea"
+    },
+    "typescript": {
+      "source": "npm:typescript",
+      "description": "TypeScript compiler. Required by typescript-language-server."
+    },
+    "typescript-language-server": {
+      "source": "npm:typescript-language-server",
+      "featured": true,
+      "lsp": true,
+      "requires": [
+        "typescript"
+      ],
+      "description": "TypeScript/JavaScript LSP."
+    },
+    "pyright": {
+      "source": "npm:pyright",
+      "featured": true,
+      "lsp": true,
+      "description": "Python LSP (Pyright)."
+    },
+    "gopls": {
+      "source": "go:golang.org/x/tools/gopls",
+      "featured": true,
+      "lsp": true,
+      "description": "Go LSP."
+    },
+    "clangd": {
+      "source": "release:github/clangd/clangd",
+      "featured": true,
+      "lsp": true,
+      "description": "C/C++ LSP (~160 MB). Reads compile_commands.json from your workspace. Upstream ships x86_64 builds only \u2014 not available on arm64 hosts.",
+      "probe": "clangd"
+    },
+    "rust": {
+      "source": "manual",
+      "version": "stable",
+      "featured": true,
+      "description": "Rust toolchain (rustup + rustc + cargo, minimal profile). Required for cargo-installed tools and full rust-analyzer analysis.",
+      "install": "curl -fsSL https://sh.rustup.rs | RUSTUP_HOME=\"${OPT}/rustup\" CARGO_HOME=\"${OPT}/cargo\" sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && for b in cargo rustc rustup; do ln -sf \"${OPT}/cargo/bin/$b\" \"${BIN}/$b\"; done",
+      "probe": "cargo"
+    },
+    "java": {
+      "source": "manual",
+      "version": "jdk-21.0.9+10",
+      "upstream": {
+        "datasource": "github-releases",
+        "depName": "adoptium/temurin21-binaries",
+        "versioning": "regex:^jdk-(?<major>\\d+)(?:\\.(?<minor>\\d+))?(?:\\.(?<patch>\\d+))?\\+(?<build>\\d+)(?:\\.(?<revision>\\d+))?$"
+      },
+      "featured": true,
+      "description": "OpenJDK 21 JRE (Eclipse Temurin). Required by jdtls and kotlin-language-server; shared between them.",
+      "install": "safe_tag=$(printf '%s' \"${VERSION}\" | sed 's/+/%2B/g') && rel=$(printf '%s' \"${VERSION}\" | sed 's/jdk-//;s/+/_/') && curl -fsSL \"https://github.com/adoptium/temurin21-binaries/releases/download/${safe_tag}/OpenJDK21U-jre_${ARCH_X86_64_OR_AARCH64}_linux_hotspot_${rel}.tar.gz\" | tar -xz -C \"${OPT}\" --strip-components=1 && ln -sf \"${OPT}/bin/java\" \"${BIN}/java\" && ln -sf \"${OPT}/bin/keytool\" \"${BIN}/keytool\"",
+      "probe": "java"
+    },
+    "jdtls": {
+      "source": "manual",
+      "version": "1.40.0",
+      "lsp": true,
+      "requires": [
+        "java"
+      ],
+      "description": "Java LSP (Eclipse JDT language server). Requires the java runtime.",
+      "install": "mkdir -p \"${OPT}/dist\" && curl -fsSL https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar -xz -C \"${OPT}/dist\" && printf '#!/bin/sh\\nexec \"%s/opt/java/bin/java\" -jar \"%s\"/dist/plugins/org.eclipse.equinox.launcher_*.jar -configuration \"%s/dist/config_linux\" -data \"${HOME}/.cache/jdtls-workspace\" \"$@\"\\n' \"${TOOLS}\" \"${OPT}\" \"${OPT}\" > \"${BIN}/jdtls\" && chmod 755 \"${BIN}/jdtls\"",
+      "probe": "jdtls"
+    },
+    "kotlin-language-server": {
+      "source": "release:github/fwcd/kotlin-language-server",
+      "lsp": true,
+      "requires": [
+        "java"
+      ],
+      "description": "Kotlin LSP. Requires the java runtime (shared with jdtls).",
+      "probe": "kotlin-language-server"
+    }
+  }
+}

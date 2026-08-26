@@ -214,7 +214,7 @@ Every knob, the ones detailed above included. A malformed duration warns and fal
 | `VIBEKIT_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a fetched catalog replaces it. | `/opt/vibekit/tool-catalog.json` |
 | `VIBEKIT_TOOL_CATALOG_URL` | Where catalog refreshes fetch from; point it at a fork or mirror to leave the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
 | `VIBEKIT_TOOL_CATALOG_REFRESH` | Catalog refresh cadence (Go duration, clamped to 1h-30d); `off` or `0` disables the schedule and keeps the manual refresh. | `24h` |
-| `VIBEKIT_TOOL_CATALOG_OVERLAY` | Image-internal display-patch overlay applied to every loaded catalog. An explicit path that does not resolve warns and is skipped. | `/opt/vibekit/catalog-overlays.json` |
+| `VIBEKIT_BUNDLED_TOOLS` | Image-internal file naming the tools vibekit bundles — the ones it needs and the ones it recommends — merged over every loaded catalog. A path that does not resolve warns and is skipped, which leaves the seeded language servers unresolvable. | `/opt/vibekit/bundled-tools.json` |
 | `VAPID_SUBJECT` | Contact URI embedded in the Web Push (VAPID) keys used for chat notifications. | `mailto:vibekit@noreply.invalid` |
 | `VIBEKIT_AUTH_LOGIN_URL_TIMEOUT` | How long to wait for `kiro-cli login` to print the sign-in URL. | `10s` |
 | `VIBEKIT_AUTH_LOGIN_TIMEOUT` | Wall-clock timeout for a whole login attempt, device-flow confirmation included. | `16m` |

@@ -40,10 +40,12 @@ type Config struct {
 	// ToolCatalogURL is the published catalog the engine refreshes
 	// from at boot and on the ToolCatalogRefresh schedule.
 	ToolCatalogURL string
-	// ToolCatalogOverlays are display-patch overlay files the engine
-	// re-applies to every loaded catalog (the vibekit UI copy for
-	// Sources/MCP tool rows). Missing files are dropped at wiring time
-	// (bare `go run` outside the image).
+	// ToolCatalogOverlays are the bundled-tools files the engine
+	// re-applies to every loaded catalog: the tools vibekit needs to
+	// function and the ones it recommends, plus the UI copy for them. The
+	// published catalog is a general reference and carries none of it. A
+	// missing file is warned about and dropped, never fatal (see
+	// bundledToolsFiles).
 	ToolCatalogOverlays []string
 	// ToolCatalogRequire lists the tool names a fetched catalog must
 	// resolve before it replaces the current one — the embedded
@@ -125,7 +127,7 @@ func ConfigFromEnv() Config {
 			toolbelt.RefreshEnv(envx.String("VIBEKIT_TOOL_CATALOG_REFRESH")),
 			"VIBEKIT_TOOL_CATALOG_REFRESH",
 		),
-		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
+		ToolCatalogOverlays: bundledToolsFiles(os.Getenv("VIBEKIT_BUNDLED_TOOLS")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
 		TrustedInstallUIDs:  parseTrustedInstallUIDs(os.Getenv("TRUSTED_INSTALL_UIDS")),
 		HostPolicy:          parseAllowedHosts(os.Getenv("ALLOWED_HOSTS")),
@@ -136,22 +138,31 @@ func ConfigFromEnv() Config {
 	}
 }
 
-// defaultCatalogOverlay is the image path of vibekit's display-patch
-// overlay file (shipped by the Dockerfile beside the binary).
-const defaultCatalogOverlay = "/opt/vibekit/catalog-overlays.json"
+// defaultBundledTools is the image path of vibekit's bundled-tools file
+// (shipped by the Dockerfile beside the binary).
+const defaultBundledTools = "/opt/vibekit/bundled-tools.json"
 
-// overlayFiles resolves the catalog-overlay list. The DEFAULT image
-// path missing is expected outside the container (bare `go run`), so it
-// is dropped silently; an EXPLICITLY configured path that does not
-// resolve is an operator mistake and warns loudly instead of silently
-// running overlay-less.
-func overlayFiles(explicit string) []string {
-	path := filepath.Clean(cmp.Or(explicit, defaultCatalogOverlay))
+// bundledToolsFiles resolves the bundled-tools list.
+//
+// A missing file WARNS either way now, where a missing default used to be
+// dropped silently. That silence was correct while the file held display
+// copy: running without it cost a few descriptions. It is not correct any
+// more. The published catalog is a general reference carrying none of this
+// product's tools, so this file is the only place gopls, typescript,
+// typescript-language-server and pyright exist — and DefaultSeed names all
+// four. Without it, every seeded template fails at enable time and nothing
+// in the log connects that to an absent file.
+//
+// It stays non-fatal, because a bare `go run` outside the container is a
+// legitimate way to work on everything else in the app, and invariant 6
+// says the boot path must not police what it can report instead.
+func bundledToolsFiles(explicit string) []string {
+	path := filepath.Clean(cmp.Or(explicit, defaultBundledTools))
 	if _, err := os.Stat(path); err != nil {
-		if explicit != "" {
-			slog.Warn("config: VIBEKIT_TOOL_CATALOG_OVERLAY does not resolve; running without catalog overlays",
-				"path", path, "error", err)
-		}
+		slog.Warn("config: bundled tools file does not resolve; the seeded language servers "+
+			"will not resolve at enable time",
+			"path", path, "explicit", explicit != "",
+			"env", "VIBEKIT_BUNDLED_TOOLS", "error", err)
 		return nil
 	}
 	return []string{path}

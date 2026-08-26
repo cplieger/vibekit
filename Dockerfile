@@ -48,7 +48,7 @@ COPY . ./
 # the runtime engine refreshes it at boot and on a schedule
 # (VIBEKIT_TOOL_CATALOG_REFRESH), so this baked copy only serves a
 # container that has never reached the publisher. vibekit's
-# catalog-overlays.json (display-copy patches) is no longer compiled in:
+# bundled-tools.json (this app's own tools) is not compiled in:
 # the engine re-applies it to EVERY loaded catalog (baked, cached,
 # fetched), so it ships beside the binary instead. The verify pass
 # re-gates whatever the fetch returned: every required-tools.txt name
@@ -67,7 +67,8 @@ ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/do
 # Runs with GOPROXY=off, so it cannot reach for the network at all.
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
     GOFLAGS=-mod=readonly GOPROXY=off go tool toolcatalog \
-      verify -catalog /tmp/tool-catalog.json -require required-tools.txt
+      verify -catalog /tmp/tool-catalog.json -require required-tools.txt \
+      -overlay bundled-tools.json
 
 # Fetch @cplieger/actions TS source from npm registry. The lib publishes
 # TS only (no precompiled JS) — same pattern as @cplieger/reactive and
@@ -336,7 +337,7 @@ COPY --from=builder /app /app
 # hides /opt, so users never see these.
 COPY --chmod=755 entrypoint.sh /opt/vibekit/entrypoint.sh
 COPY --from=builder /tmp/tool-catalog.json /opt/vibekit/tool-catalog.json
-COPY catalog-overlays.json /opt/vibekit/catalog-overlays.json
+COPY bundled-tools.json /opt/vibekit/bundled-tools.json
 
 WORKDIR /workspace
 EXPOSE 9847
