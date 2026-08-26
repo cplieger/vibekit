@@ -9,9 +9,44 @@ import { withAsyncFeedback } from "./async-button.js";
 import { bindLoadingState } from "./actions/index.js";
 import { commit as commitAction, generateCommitMessage } from "./actions/git-changes.js";
 import { el } from "@cplieger/reactive";
+import { isSafeURL } from "./url-safety.js";
 import type { GitRepoStatus } from "./git-types.js";
 
 type RepoStatus = GitRepoStatus;
+
+/** The host a server-derived commit-URL prefix points at, or "" when there is
+ *  no usable prefix. Doubles as the render gate below — no host, no link — and
+ *  as the belt-and-braces scheme guard over a value the server built out of a
+ *  repository's own origin remote, which is config we do not control. */
+function commitLinkHost(prefix: string): string {
+  if (prefix === "" || !isSafeURL(prefix)) {
+    return "";
+  }
+  return new URL(prefix).host;
+}
+
+/** The commit hash: a link to its page on `host` when the server derived one,
+ *  else the plain selectable text it has always been. The accessible name says
+ *  where the link goes, because the hash alone does not. */
+function renderSha(sha: string, prefix: string, host: string): HTMLElement {
+  const code = el("code", { className: "git-recent-commits-sha" }, sha);
+  if (host === "") {
+    return code;
+  }
+  const label = `Open commit ${sha} on ${host}`;
+  return el(
+    "a",
+    {
+      className: "git-recent-commits-sha-link",
+      href: prefix + sha,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      "aria-label": label,
+      "data-tooltip": label,
+    },
+    code,
+  );
+}
 
 /** Dependencies injected from git-changes-tab module state. */
 export interface CommitDeps {
@@ -38,10 +73,12 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
       return;
     }
     loaded = true;
-    void apiGet<{ entries?: string[]; remote?: string; behind?: number }>(
-      `/api/git/log?repo=${encodeURIComponent(r.repo)}`,
-      deps.diffAbort?.signal,
-    ).then((data) => {
+    void apiGet<{
+      entries?: string[];
+      remote?: string;
+      behind?: number;
+      commit_url_prefix?: string;
+    }>(`/api/git/log?repo=${encodeURIComponent(r.repo)}`, deps.diffAbort?.signal).then((data) => {
       if (deps.diffAbort?.signal.aborted) {
         return;
       }
@@ -55,13 +92,15 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
         return;
       }
       body.replaceChildren();
+      const prefix = data.commit_url_prefix ?? "";
+      const host = commitLinkHost(prefix);
       const list = el("ul", { className: "git-recent-commits-list" });
       for (const line of entries.slice(0, 20)) {
         const li = el("li", { className: "git-recent-commits-row" });
         // line shape: "<sha> <subject>"
         const sp = line.indexOf(" ");
         if (sp > 0) {
-          li.appendChild(el("code", { className: "git-recent-commits-sha" }, line.slice(0, sp)));
+          li.appendChild(renderSha(line.slice(0, sp), prefix, host));
           li.appendChild(
             el("span", { className: "git-recent-commits-subject" }, line.slice(sp + 1)),
           );

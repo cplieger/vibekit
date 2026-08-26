@@ -3776,3 +3776,39 @@ func TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
 			"repolink", got, wantLink)
 	}
 }
+
+// handleLog carries the forge commit-URL prefix so the client can link each
+// hash without deriving a web location itself, and carries an empty one when
+// the repo has no origin — the client renders a plain hash then.
+func TestHandleLog_CommitURLPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		origin string
+		want   string
+	}{
+		{name: "github_origin", origin: "https://github.com/foo/bar.git", want: "https://github.com/foo/bar/commit/"},
+		{name: "gitlab_origin", origin: "git@gitlab.com:foo/bar.git", want: "https://gitlab.com/foo/bar/-/commit/"},
+		{name: "no_origin", origin: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			skipNoGit(t)
+			dir := t.TempDir()
+			initFixtureRepo(t, dir)
+			if tt.origin != "" {
+				runGit(t, dir, "remote", "add", "origin", tt.origin)
+			}
+			rec := httptest.NewRecorder()
+			NewHandler(dir).handleLog(rec, httptest.NewRequest(http.MethodGet, "/api/git/log", nil))
+			var resp struct {
+				CommitURLPrefix string `json:"commit_url_prefix"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("Setup: unmarshal handleLog body %q: %v", rec.Body.String(), err)
+			}
+			if resp.CommitURLPrefix != tt.want {
+				t.Errorf("handleLog(origin=%q) commit_url_prefix = %q, want %q", tt.origin, resp.CommitURLPrefix, tt.want)
+			}
+		})
+	}
+}

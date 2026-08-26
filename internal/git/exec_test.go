@@ -376,3 +376,82 @@ func TestDefaultTimeouts_budgetsEachOperationClass(t *testing.T) {
 		})
 	}
 }
+
+// splitRemote returns the host and the normalized repository path from one
+// parse, for both remote spellings this surface accepts. The ".git" suffix and
+// the surrounding slashes are the forge's business, not the clone URL's.
+func TestSplitRemote_normalizesHostAndPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		in       string
+		wantHost string
+		wantPath string
+		wantOK   bool
+	}{
+		{name: "https_dot_git", in: "https://github.com/foo/bar.git", wantHost: "github.com", wantPath: "foo/bar", wantOK: true},
+		{name: "https_no_suffix", in: "https://codeberg.org/foo/bar", wantHost: "codeberg.org", wantPath: "foo/bar", wantOK: true},
+		{name: "https_trailing_slash", in: "https://github.com/foo/bar/", wantHost: "github.com", wantPath: "foo/bar", wantOK: true},
+		{name: "scp_style", in: "git@github.com:foo/bar.git", wantHost: "github.com", wantPath: "foo/bar", wantOK: true},
+		{name: "ssh_scheme", in: "ssh://git@gitlab.com/foo/bar.git", wantHost: "gitlab.com", wantPath: "foo/bar", wantOK: true},
+		{name: "nested_group", in: "https://gitlab.com/grp/sub/bar.git", wantHost: "gitlab.com", wantPath: "grp/sub/bar", wantOK: true},
+		{name: "host_only", in: "https://github.com", wantHost: "github.com", wantPath: "", wantOK: true},
+		{name: "empty", in: "", wantHost: "", wantPath: "", wantOK: false},
+		{name: "whitespace_only", in: "   ", wantHost: "", wantPath: "", wantOK: false},
+		{name: "unparseable", in: "http://ho\x00st.com", wantHost: "", wantPath: "", wantOK: false},
+		{name: "ext_helper", in: "ext::sh -c payload", wantHost: "", wantPath: "", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			host, repoPath, ok := splitRemote(tt.in)
+			if host != tt.wantHost || repoPath != tt.wantPath || ok != tt.wantOK {
+				t.Errorf("splitRemote(%q) = (%q, %q, %t), want (%q, %q, %t)",
+					tt.in, host, repoPath, ok, tt.wantHost, tt.wantPath, tt.wantOK)
+			}
+		})
+	}
+}
+
+// commitURLPrefix builds the forge location a commit hash appends to, or ""
+// when it cannot build a well-formed https URL. GitLab's extra "/-/" segment
+// is the one shape difference, and it is classified off the host the way
+// prRefShape classifies the same two families.
+func TestCommitURLPrefix_perForgeShapeElseEmpty(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "github_https", in: "https://github.com/foo/bar.git", want: "https://github.com/foo/bar/commit/"},
+		{name: "github_scp", in: "git@github.com:foo/bar.git", want: "https://github.com/foo/bar/commit/"},
+		{name: "gitea_no_suffix", in: "https://codeberg.org/foo/bar", want: "https://codeberg.org/foo/bar/commit/"},
+		{name: "gitlab_ssh", in: "ssh://git@gitlab.com/foo/bar.git", want: "https://gitlab.com/foo/bar/-/commit/"},
+		{name: "self_hosted_gitlab", in: "https://gitlab.example.com/grp/sub/bar.git", want: "https://gitlab.example.com/grp/sub/bar/-/commit/"},
+		// An http remote still yields an https page: the forge web UI is not
+		// the transport, and no forge serves its pages over cleartext.
+		{name: "http_remote_upgrades", in: "http://gitea.internal/foo/bar.git", want: "https://gitea.internal/foo/bar/commit/"},
+		// Credentials live in the userinfo segment, which neither parse keeps.
+		{name: "userinfo_dropped", in: "https://user:tok@github.com/foo/bar.git", want: "https://github.com/foo/bar/commit/"},
+		{name: "no_remote", in: "", want: ""},
+		{name: "host_only", in: "https://github.com", want: ""},
+		{name: "host_with_trailing_slash", in: "https://github.com/", want: ""},
+		{name: "ext_helper", in: "ext::sh -c payload", want: ""},
+		// sanitizeHost admits a space; url.Parse does not, so the round-trip
+		// check is what refuses this rather than the host filter.
+		{name: "space_in_host", in: "git@ev il.com:foo/bar.git", want: ""},
+		// A "#" or "?" in the path would truncate the href so the link pointed
+		// somewhere other than the commit.
+		{name: "fragment_in_path", in: "git@github.com:foo/bar#x.git", want: ""},
+		{name: "query_in_path", in: "git@github.com:foo/bar?x.git", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := commitURLPrefix(tt.in); got != tt.want {
+				t.Errorf("commitURLPrefix(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

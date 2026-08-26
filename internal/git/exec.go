@@ -299,6 +299,41 @@ func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// splitRemote extracts the host and repository path from an https or
+// scp-style git remote URL. The path is normalized to the forge's own
+// spelling of a repository: no leading or trailing slash, no ".git".
+//
+//	https://github.com/foo/bar.git     → github.com, foo/bar
+//	git@github.com:foo/bar.git         → github.com, foo/bar
+//	ssh://git@gitlab.com/grp/sub/bar   → gitlab.com, grp/sub/bar
+//
+// Both halves come from ONE parse deliberately: a caller building a web URL
+// needs them to describe the same remote, and two independent parses can
+// disagree about which branch a given string took.
+//
+// ok is false for a shape neither parseSCPStyle nor url.Parse recognises and
+// for a host sanitizeHost rejects. repoPath may still be empty when ok is
+// true (a remote naming only a host), so a caller that needs it checks.
+func splitRemote(raw string) (host, repoPath string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	h, p, scp := parseSCPStyle(raw)
+	if !scp {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "", "", false
+		}
+		h, p = u.Hostname(), u.Path
+	}
+	h = sanitizeHost(h)
+	if h == "" {
+		return "", "", false
+	}
+	return h, strings.TrimSuffix(strings.Trim(p, "/"), ".git"), true
+}
+
 // parseRemoteHost extracts the host segment from an https or scp-style
 // git remote URL. Returns "" for unrecognised shapes.
 //
@@ -308,18 +343,45 @@ func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
 //
 // Rejects ext:: remote-helper prefixes as a defense-in-depth measure.
 func parseRemoteHost(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	host, _, _ := splitRemote(raw)
+	return host
+}
+
+// commitURLPrefix derives the forge web location a commit hash appends to,
+// from a repository's origin remote. The result always ends in "/", so a
+// caller builds a commit link by appending the hash and nothing else.
+//
+//	https://github.com/foo/bar.git     → https://github.com/foo/bar/commit/
+//	git@github.com:foo/bar.git         → https://github.com/foo/bar/commit/
+//	ssh://git@gitlab.com/foo/bar.git   → https://gitlab.com/foo/bar/-/commit/
+//
+// Returns "" when no https location can be derived: no remote, a shape
+// splitRemote does not recognise, no repository path, or a result that is not
+// a well-formed https URL. The client renders a plain hash then, which is the
+// honest answer — a guess is a link to the wrong page.
+func commitURLPrefix(remote string) string {
+	host, repoPath, ok := splitRemote(remote)
+	if !ok || repoPath == "" {
 		return ""
 	}
-	if h, _, ok := parseSCPStyle(raw); ok {
-		return sanitizeHost(h)
+	// GitLab nests every repository page under a "/-/" separator, so a group
+	// path can never be read as a page name. Classified the way prRefShape
+	// classifies the same two families; keep the two in step rather than
+	// growing a second host table.
+	shape := "/commit/"
+	if strings.Contains(host, "gitlab") {
+		shape = "/-/commit/"
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
+	prefix := "https://" + host + "/" + repoPath + shape
+	// Round-trip what is about to be handed to a browser. sanitizeHost admits
+	// characters url.Parse refuses in a host, and a path carrying "?" or "#"
+	// would silently truncate the link so it pointed somewhere other than the
+	// commit — a wrong link is worse than no link.
+	u, err := url.Parse(prefix)
+	if err != nil || u.Scheme != "https" || u.Host != host || u.RawQuery != "" || u.Fragment != "" {
 		return ""
 	}
-	return sanitizeHost(u.Hostname())
+	return prefix
 }
 
 // cloneDirName derives the directory `git clone <url>` creates, mirroring

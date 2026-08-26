@@ -615,6 +615,20 @@
   flex-shrink: 0;
 }
 
+/* The hash is a link to its commit page whenever the server could derive one
+ * from the repo's origin remote; it stays plain text when it could not, so
+ * this rule may match no element in a given row. */
+.git-recent-commits-sha-link {
+  flex-shrink: 0;
+  text-decoration: none;
+  border-radius: var(--r-sm);
+}
+
+.git-recent-commits-sha-link:hover .git-recent-commits-sha,
+.git-recent-commits-sha-link:focus-visible .git-recent-commits-sha {
+  text-decoration: underline;
+}
+
 .git-recent-commits-subject {
   color: var(--c-text-secondary);
   overflow: hidden;
