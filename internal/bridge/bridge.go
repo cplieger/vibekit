@@ -152,6 +152,12 @@ type Bridge struct {
 	// changed in between.
 	toolSearch bool
 	knowledge  bool
+	// memory gates the `userMemoryOptIn` row's VALUE (never its presence) and
+	// contributes KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED to the child environment.
+	// Immutable after Start for the same reason as its siblings, plus one of its
+	// own: the environment is fixed when the subprocess starts, so nothing could
+	// carry a later flip into a running session even if KAS re-read the gate.
+	memory bool
 }
 
 // Option configures a Bridge at construction time.
@@ -364,6 +370,7 @@ func (b *Bridge) spawn() kascap.Spawn {
 		Presets:       b.presets,
 		ToolSearch:    b.toolSearch,
 		Knowledge:     b.knowledge,
+		Memory:        b.memory,
 	}
 }
 

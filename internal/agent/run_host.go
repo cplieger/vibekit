@@ -160,6 +160,7 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 		Presets:    securityPresets(cctx, rs.lifecycle.configDir),
 		ToolSearch: toolSearchEnabled(cctx, rs.lifecycle.configDir),
 		Knowledge:  knowledgeEnabled(cctx, rs.lifecycle.configDir),
+		Memory:     memoryEnabled(cctx, rs.lifecycle.configDir),
 	}); sErr != nil {
 		return "", "", fmt.Errorf("run bridge start: %w", sErr)
 	}
@@ -364,6 +365,7 @@ func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
 		Presets:    securityPresets(cctx, rs.lifecycle.configDir),
 		ToolSearch: toolSearchEnabled(cctx, rs.lifecycle.configDir),
 		Knowledge:  knowledgeEnabled(cctx, rs.lifecycle.configDir),
+		Memory:     memoryEnabled(cctx, rs.lifecycle.configDir),
 	}); err != nil {
 		return fmt.Errorf("retry bridge start: %w", err)
 	}

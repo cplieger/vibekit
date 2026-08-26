@@ -68,3 +68,24 @@ func knowledgeEnabled(ctx context.Context, configDir string) bool {
 	}
 	return b
 }
+
+// memoryEnabled reports whether a session opts into kiro-cli's memory subsystem:
+// the `userMemoryOptIn` row's value and the child environment's
+// KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED.
+//
+// Defaults OFF, and unlike knowledgeEnabled the zero value IS the answer, so this
+// needs no entry in settings.Default(). Memory is a feature vibekit has never had,
+// so an absent key means nobody asked for it — and off is not a quiet state here:
+// it still SENDS the veto, because an absent key reads as "let the experiment
+// decide" and that is what an AWS-side ramp flips silently.
+//
+// Per spawn like its siblings, and doubly not live: the gate is frozen at session
+// creation AND the environment is fixed when the subprocess starts, so a flip
+// reaches new chats only.
+func memoryEnabled(ctx context.Context, configDir string) bool {
+	var b bool
+	if !settings.FieldInto(ctx, configDir, settings.KeyMemoryEnabled, &b) {
+		return false
+	}
+	return b
+}

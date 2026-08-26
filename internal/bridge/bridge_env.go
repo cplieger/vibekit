@@ -35,7 +35,10 @@
 
 package bridge
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // EnvAllowVar is the operator override: a comma-separated list of names to pass
 // through anyway. Exported because composition reads it (this package reads no
@@ -147,4 +150,34 @@ func screenBridgeEnv(inherited, extra []string, allowed map[string]struct{}) (en
 		env = append(env, kv)
 	}
 	return append(env, extra...), dropped
+}
+
+// MemoryEnvVar is kiro-cli's env override for the external memory A/B arm. It is
+// exported so a test can assert on the name the bridge actually sets rather than
+// restating the literal.
+const MemoryEnvVar = "KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED"
+
+// memoryEnv is the memory subsystem's half of the switch that does not ride the
+// wire, appended to a bridge's environment AFTER screenBridgeEnv so it wins over
+// anything inherited or overlaid.
+//
+// It is set in BOTH states rather than only when on, and that asymmetry with the
+// other spawn fields is the point: kiro-cli's env provider parses this to a real
+// boolean and the registry comment says it overrides "in both directions", so an
+// explicit "false" holds the external arm shut against a backend ramp of that arm
+// while an absent variable leaves it to the experiment.
+//
+// It is NOT a kill switch on its own and must never be described as one.
+// resolveMemoryEnabled reads AB_MEMORY_INTERNAL first and only consults the
+// external arm when the internal one reads "disabled", and AB_MEMORY_INTERNAL has
+// no entry in ENV_FEATURE_VARIABLES — so a ramp of the internal arm bypasses this
+// variable entirely. The `userMemoryOptIn` row is what closes that case; this is
+// what opens the feature at all. Neither alone is sufficient, which is why one
+// setting drives both.
+//
+// Deliberately not routed through the credential screen: this name is vibekit's
+// own, not something inherited from the server environment, so screening it would
+// only give an operator a way to shadow the veto's other half.
+func memoryEnv(on bool) []string {
+	return []string{MemoryEnvVar + "=" + strconv.FormatBool(on)}
 }
