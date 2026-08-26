@@ -17,13 +17,12 @@
 
 .run-card {
   background: var(--c-bg-secondary);
-  border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
 
-  /* An accent rail on the leading edge, matching the delegated-work card: both
-     are "work that is not this agent's own", and a reader should not have to
-     learn two vocabularies for that. Wider here because the run OWNS the
-     delegates inside it. */
-  border-inline-start: 0.25rem solid var(--c-accent);
+  /* No leading rail. The box, its tinted border and the header glyph already say
+     "work that is not this agent's own"; a 0.25rem accent edge on top of them was
+     a fourth channel saying the same thing, and it read as decoration rather than
+     as state (user call, 2026-08). The outcome tint moved to this border. */
+  border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
   border-radius: var(--r-lg);
   font-size: var(--fs-base);
   overflow: hidden;
@@ -31,23 +30,25 @@
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
 }
 
-/* The outcome tint travels on the RAIL, so a scan down the transcript answers
-   "did that run work" with no reading. Shape carries it too — the header glyph
-   and every step's badge — because tint alone is one channel (WCAG 1.4.1). */
+/* The outcome tint travels on the whole BORDER, so a scan down the transcript
+   still answers "did that run work" with no reading. Shape carries it too — the
+   header glyph and every step's badge — because tint alone is one channel
+   (WCAG 1.4.1). Colour-mixed at the same 35% the resting border uses: a full
+   1px --c-red hairline around a tall card reads as an alert box. */
 .run-card[data-status="completed"] {
-  border-inline-start-color: var(--c-green);
+  border-color: color-mix(in srgb, var(--c-green) 35%, transparent);
 }
 
 .run-card[data-status="failed"] {
-  border-inline-start-color: var(--c-red);
+  border-color: color-mix(in srgb, var(--c-red) 35%, transparent);
 }
 
 .run-card[data-status="aborted"] {
-  border-inline-start-color: var(--c-yellow);
+  border-color: color-mix(in srgb, var(--c-yellow) 35%, transparent);
 }
 
 .run-card[data-status="paused"] {
-  border-inline-start-color: var(--c-blue);
+  border-color: color-mix(in srgb, var(--c-blue) 35%, transparent);
 }
 
 /* --------------------------------------------------------------------------
@@ -206,25 +207,29 @@
    Alert — what the run needs from a person
    -------------------------------------------------------------------------- */
 
+/* The state is carried by the WASH plus the lifted ink, not by a
+   state-coloured edge. The edge said the same thing the wash behind it already
+   says — the decision `.pill-status-content` records in `15-input.css`, where a
+   2px status-coloured left border went for being a second rendering of the dot
+   two pixels away, in the one channel the card uses for its own edge. The
+   non-colour channel is the alert's own text: `fundamentals/run-card.ts` writes
+   the state into `alert.textContent`, on a `role="status"` live region. */
 .run-alert {
   margin: 0 var(--sp-3) var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
   font-size: var(--fs-sm);
   line-height: 1.5;
-  border-inline-start: 0.1875rem solid var(--c-border);
   background: var(--c-bg-tertiary);
   color: var(--c-text-secondary);
 }
 
 .run-alert[data-kind="paused"] {
-  border-inline-start-color: var(--c-blue);
   background: color-mix(in srgb, var(--c-blue) 8%, transparent);
   color: var(--c-text-primary);
 }
 
 .run-alert[data-kind="failed"] {
-  border-inline-start-color: var(--c-red);
   background: color-mix(in srgb, var(--c-red) 8%, transparent);
   color: var(--c-text-primary);
 }
@@ -425,7 +430,22 @@
   border-block-start: 1px solid color-mix(in srgb, var(--c-text-primary) 28%, transparent);
   min-width: 0;
   overflow: hidden;
-  transition: height var(--dur-standard) var(--ease-standard);
+  transition:
+    height var(--dur-standard) var(--ease-standard),
+    content-visibility var(--dur-standard) allow-discrete;
+}
+
+/* Lazy rendering of a closed step row. Same three choices, same reasoning, and
+ * the reasoning is written out once beside `.subagent-body` in 14-tools.css:
+ * `hidden` rather than `auto` so search and `scrollHeight` are untouched, keyed
+ * on the row's `.collapsed` rather than this element's `aria-hidden` so the
+ * controller's `scrollHeight` read still sees a laid-out box, and no
+ * `contain-intrinsic-size` because the inline height already pins it to 0.
+ *
+ * A run's steps are where this pays most: the card mounts OPEN and every step row
+ * mounts closed, so a finished workflow is a stack of collapsed transcripts. */
+.run-step.collapsed > .run-step-body {
+  content-visibility: hidden;
 }
 
 .run-step-body[aria-hidden="true"] {

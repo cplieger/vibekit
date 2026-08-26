@@ -95,8 +95,27 @@
      background today, so the difference shows only through a focus ring or any
      future fill; the honest value costs nothing. */
   border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
-  padding: var(--sp-3) var(--sp-4) var(--sp-1);
+
+  /* THE BOX'S RESTING HEIGHT, and the source of its vertical padding. One line
+     of text is CENTRED in this height, and every line after it adds exactly one
+     line-height with the padding unchanged — so the air above the text and the
+     air below it down to the divider the pill row draws are equal at every line
+     count. `1lh` is this element's own line-height, so the derivation follows
+     the type scale instead of restating it.
+     It was `var(--sp-3) var(--sp-4) var(--sp-1)`: 12px above the text and 4px
+     below it. `min-height` hid most of that at rest, because a single line is
+     shorter than the box and the slack lands UNDER the text — measured 12.00px
+     above against 8.40px below, close enough to read as intentional. At two
+     lines the slack is gone and the ratio is 12.00 against 3.99, which is the
+     reported defect: the second line sits on the divider.
+     `min-height` is now what the padding is derived FROM rather than a floor
+     fighting it, so the natural single-line height IS 2.5rem and the resting
+     box did not change size. */
+  --composer-rest-h: 2.5rem;
+
+  padding: calc((var(--composer-rest-h) - 1lh) / 2) var(--sp-4);
   font-size: var(--fs-md);
+  line-height: 1.4;
   font-family: var(--font-sans);
   resize: none;
   /* A fixed CEILING, not a height: `field-sizing: content` keeps the box at its
@@ -105,8 +124,7 @@
      the box needs no manual sizing when it already tracks what is typed. */
   max-height: 12.5rem;
   field-sizing: content;
-  min-height: 2.5rem;
-  line-height: 1.4;
+  min-height: var(--composer-rest-h);
   appearance: none;
   touch-action: manipulation;
   outline: none;

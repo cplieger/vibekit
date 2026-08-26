@@ -50,28 +50,12 @@
   font-weight: var(--fw-medium);
 }
 
-/* Permission dialog variant for ACP switch_mode requests. kiro-cli
-   uses this kind for "I'm ready to leave plan mode" / mode swap
-   confirmations; we hint the user that this is different from a
-   normal tool approval. */
-.tool-approval.mode-switch {
-  border-left: 3px solid var(--c-accent);
-}
-
-.tool-approval.mode-switch .approval-origin {
-  color: var(--c-accent);
-  font-style: italic;
-}
-
-/* Subagent permission: accent left border + "for subagent X" subtitle. */
-.tool-approval.subagent-permission {
-  border-left: 3px solid var(--c-yellow);
-}
-
-.tool-approval.subagent-permission .approval-origin {
-  color: var(--c-yellow);
-  font-style: italic;
-}
+/* No `.tool-approval` variant rules for the switch_mode and subagent asks: the
+   permission ask is a `.dock-card` (`permission.ts` emits `dock-card
+   dock-permission` and adds `mode-switch` to THAT node), so a `.tool-approval`
+   ancestor matches nothing — see the same note in `14-tools.css`. They are not
+   re-targeted at `.dock-card.mode-switch` either: `26-dock.css` already gives
+   every dock card an accent ring and overrides permission cards to amber. */
 
 /* ---------------------------------------------------------------------------
    Wave 1: Animations + reasoning blocks + tool duration
