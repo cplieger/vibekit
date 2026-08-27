@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   jobsDispatch: vi.fn(),
   catalogInfoDispatch: vi.fn(),
   refreshCatalogDispatch: vi.fn(),
+  cancelJobDispatch: vi.fn(),
   ensureDispatch: vi.fn(),
   openModal: vi.fn(),
   closeModal: vi.fn(),
@@ -46,11 +47,6 @@ vi.mock("./actions/index.js", () => ({
   bindLoadingState: vi.fn(() => vi.fn()),
 }));
 vi.mock("./actions/tools.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  cancelToolJob: undefined,
   loadTools: { dispatch: mocks.loadDispatch, cancel: mocks.loadCancel },
   createTool: { dispatch: mocks.createDispatch },
   installTool: { dispatch: mocks.installDispatch },
@@ -61,6 +57,7 @@ vi.mock("./actions/tools.js", () => ({
   getToolsJobs: { dispatch: mocks.jobsDispatch },
   getCatalogInfo: { dispatch: mocks.catalogInfoDispatch },
   refreshCatalog: { dispatch: mocks.refreshCatalogDispatch },
+  cancelToolJob: { dispatch: mocks.cancelJobDispatch },
   ensureTool: { dispatch: mocks.ensureDispatch },
 }));
 vi.mock("./bus.js", () => ({
@@ -86,23 +83,33 @@ function mountToolsDOM(): void {
     return e;
   };
   add("button", "tool-add-btn");
-  add("button", "tool-update-btn");
+  // The two job-owning pills carry their authored face here, because JobPill
+  // CAPTURES it from the markup to restore when the job settles: an empty
+  // fixture button would test the busy face against nothing to go back to.
+  // Mirrors static/index.html — glyph, then label span, then aria-label.
+  addPill("tool-update-btn", "Update all", "Update all tools");
   add("button", "tool-cancel-btn");
-  add("button", "tool-catalog-refresh-btn");
+  addPill("tool-catalog-refresh-btn", "Refresh catalog", "Refresh the tool catalog");
   add("p", "tool-catalog-meta").classList.add("hidden");
   add("div", "tool-update-output");
   add("div", "tools-list");
   add("div", "tool-modal");
   add("input", "tool-search");
   add("div", "tool-search-results");
-  add("button", "tool-manual-toggle");
-  add("div", "tool-manual-form").classList.add("hidden");
-  add("input", "tool-manual-name");
-  add("input", "tool-manual-version");
-  add("input", "tool-manual-install");
-  add("input", "tool-manual-uninstall");
-  add("input", "tool-manual-probe");
-  add("button", "tool-manual-add");
+}
+
+function addPill(id: string, label: string, aria: string): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.id = id;
+  btn.type = "button";
+  btn.className = "action-pill";
+  btn.setAttribute("aria-label", aria);
+  btn.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"));
+  const span = document.createElement("span");
+  span.textContent = label;
+  btn.appendChild(span);
+  document.body.appendChild(btn);
+  return btn;
 }
 
 function tool(overrides: Partial<ToolInfo> & { name: string }): ToolInfo {
@@ -119,13 +126,17 @@ function listWith(tools: ToolInfo[], job?: Job): Inventory {
   return { tools, system: [{ name: "git", installed: true }], ...(job ? { job } : {}) };
 }
 
-function initWith(data: Inventory): void {
+function seedLoad(data: Inventory): void {
   mocks.loadDispatch.mockImplementation(
     (_args: undefined, opts?: { onSuccess?: (d: Inventory) => void }) => {
       opts?.onSuccess?.(data);
       return Promise.resolve(data);
     },
   );
+}
+
+function initWith(data: Inventory): void {
+  seedLoad(data);
   initTools();
   loadToolsList();
 }
@@ -340,40 +351,62 @@ describe("add modal", () => {
     expect(mocks.closeModal).toHaveBeenCalledTimes(1);
   });
 
-  it("submits the manual form with only filled optional fields", async () => {
+  // Two blocks rather than one merged list, because the same name can be one
+  // version in the catalog and another in the distro. A merged list would have
+  // to pick one and hide a real choice, so both rows carry their own version.
+  it("splits catalog and apt hits into two blocks, each row carrying its version", async () => {
     initWith(listWith([]));
-    mocks.searchDispatch.mockResolvedValue({ results: [] });
-    mocks.createDispatch.mockResolvedValue({ job: { id: "tj-4" } });
-
-    byId<HTMLButtonElement>("tool-add-btn").click();
-    await flush();
-    byId<HTMLButtonElement>("tool-manual-toggle").click();
-    expect(byId("tool-manual-form").classList.contains("hidden")).toBe(false);
-
-    byId<HTMLInputElement>("tool-manual-name").value = "mytool";
-    byId<HTMLInputElement>("tool-manual-version").value = "1.0.0";
-    byId<HTMLInputElement>("tool-manual-install").value = 'curl x > "$BIN/mytool"';
-    byId<HTMLButtonElement>("tool-manual-add").click();
-    await flush();
-
-    expect(mocks.createDispatch).toHaveBeenCalledWith({
-      name: "mytool",
-      source: "manual",
-      version: "1.0.0",
-      install: 'curl x > "$BIN/mytool"',
+    mocks.searchDispatch.mockResolvedValue({
+      results: [
+        { name: "jq", source: "aqua:jqlang/jq", version: "1.8.1", description: "json" },
+        { name: "jq", source: "apt:jq", version: "1.7.1-3", apt: true, description: "distro json" },
+      ],
+      apt_available: true,
     });
-  });
-
-  it("does not submit an incomplete manual form", async () => {
-    initWith(listWith([]));
-    mocks.searchDispatch.mockResolvedValue({ results: [] });
     byId<HTMLButtonElement>("tool-add-btn").click();
     await flush();
-    byId<HTMLInputElement>("tool-manual-name").value = "mytool";
-    byId<HTMLButtonElement>("tool-manual-add").click();
-    await flush();
-    expect(mocks.createDispatch).not.toHaveBeenCalled();
+
+    const text = byId("tool-search-results").textContent ?? "";
+    expect(text).toContain("Catalog");
+    expect(text).toContain("Debian packages");
+    // Both versions present: that is the whole reason the split exists.
+    expect(text).toContain("1.8.1");
+    expect(text).toContain("1.7.1-3");
   });
+
+  // An apt row is not a catalog entry, so the engine has no source to hydrate
+  // from and the request must carry it. A catalog row omits it, which is what
+  // lets the engine resolve the source it published.
+  it("sends the source for an apt hit and omits it for a catalog hit", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "sl", source: "apt:sl", version: "5.02-1", apt: true }],
+      apt_available: true,
+    });
+    mocks.createDispatch.mockResolvedValue({ job: { id: "tj-9" } });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+
+    byId("tool-search-results").querySelector<HTMLButtonElement>("button")?.click();
+    await flush();
+    expect(mocks.createDispatch).toHaveBeenCalledWith({ name: "sl", source: "apt:sl" });
+  });
+
+  // With apt unavailable the engine returns no Debian hits at all, so silence
+  // would leave a reader unable to tell "no such package" from "this container
+  // cannot install one".
+  it("says why Debian packages are missing when apt is unavailable", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+
+    const text = byId("tool-search-results").textContent ?? "";
+    expect(text).toContain("apt needs root");
+    // The shell is always the fallback, stated on every result set.
+    expect(text).toContain("Install it in the shell");
+  });
+
 });
 
 describe("job following over SSE", () => {
@@ -416,8 +449,25 @@ describe("job following over SSE", () => {
   });
 });
 
-describe("catalog refresh UI", () => {
-  it("clicking Refresh catalog dispatches tools.refresh_catalog and a live job disables the button", () => {
+describe("a job-owning pill becomes its own cancel control", () => {
+  const live = (id: string, kind: string): unknown => ({
+    job: { id, kind, state: "running", created_at: 1 },
+  });
+  const settled = (id: string, kind: string): unknown => ({
+    job: { id, kind, state: "done", created_at: 1 },
+  });
+
+  function faceOf(id: string): { label: string; aria: string; tip: string; busy: boolean } {
+    const btn = byId<HTMLButtonElement>(id);
+    return {
+      label: btn.querySelector("span")?.textContent ?? "",
+      aria: btn.getAttribute("aria-label") ?? "",
+      tip: btn.getAttribute("data-tooltip") ?? "",
+      busy: btn.classList.contains("is-busy"),
+    };
+  }
+
+  it("Refresh catalog launches, turns into a spinning Cancel, cancels, and comes back", () => {
     mountToolsDOM();
     initTools();
     const btn = byId<HTMLButtonElement>("tool-catalog-refresh-btn");
@@ -426,12 +476,121 @@ describe("catalog refresh UI", () => {
 
     const sse = mocks.sseHandlers.get("tool_job_changed");
     expect(sse).toBeDefined();
-    sse?.("", { job: { id: "tj-1", kind: "catalog-refresh", state: "running", created_at: 1 } });
-    expect(btn.disabled).toBe(true);
-    sse?.("", { job: { id: "tj-1", kind: "catalog-refresh", state: "done", created_at: 1 } });
+    sse?.("", live("tj-1", "catalog-refresh"));
+
+    expect(faceOf("tool-catalog-refresh-btn")).toEqual({
+      label: "Cancel",
+      aria: "Cancel the running catalog refresh",
+      // The visible word stays short so the pill does not resize its row; the
+      // full meaning reaches a pointer and a screen reader instead.
+      tip: "Cancel the running catalog refresh",
+      busy: true,
+    });
+    // Clickable, not disabled: the busy face IS the cancel affordance.
     expect(btn.disabled).toBe(false);
+    expect(btn.querySelector(".icon-spinner")).not.toBeNull();
+    // No second Cancel pill beside it, which is the whole point.
+    expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(true);
+
+    btn.click();
+    expect(mocks.cancelJobDispatch).toHaveBeenCalledWith({ id: "tj-1" });
+    expect(faceOf("tool-catalog-refresh-btn").label).toBe("Cancelling…");
+    // A second click does not re-send a cancel already on the wire.
+    btn.click();
+    expect(mocks.cancelJobDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshCatalogDispatch).toHaveBeenCalledTimes(1);
+
+    sse?.("", settled("tj-1", "catalog-refresh"));
+    expect(faceOf("tool-catalog-refresh-btn")).toEqual({
+      label: "Refresh catalog",
+      aria: "Refresh the tool catalog",
+      // Dropped, not left pointing at work that has finished.
+      tip: "",
+      busy: false,
+    });
+    btn.click();
+    expect(mocks.refreshCatalogDispatch).toHaveBeenCalledTimes(2);
   });
 
+  it("Update all carries the cancel for an update job, per-tool updates included", () => {
+    mountToolsDOM();
+    initTools();
+    const sse = mocks.sseHandlers.get("tool_job_changed");
+
+    sse?.("", { job: { id: "tj-2", kind: "update", names: ["gh"], state: "running" } });
+    expect(faceOf("tool-update-btn")).toEqual({
+      label: "Cancel",
+      aria: "Cancel the running update",
+      tip: "Cancel the running update",
+      busy: true,
+    });
+    // The sibling pill is untouched: one kind, one owner.
+    expect(faceOf("tool-catalog-refresh-btn").busy).toBe(false);
+    expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(true);
+
+    byId<HTMLButtonElement>("tool-update-btn").click();
+    expect(mocks.cancelJobDispatch).toHaveBeenCalledWith({ id: "tj-2" });
+    expect(mocks.updateDispatch).not.toHaveBeenCalled();
+
+    sse?.("", { job: { id: "tj-2", kind: "update", names: ["gh"], state: "cancelled" } });
+    expect(faceOf("tool-update-btn").label).toBe("Update all");
+  });
+
+  it("falls back to the shared Cancel pill for a job no pill owns", () => {
+    mountToolsDOM();
+    initTools();
+    const sse = mocks.sseHandlers.get("tool_job_changed");
+
+    sse?.("", live("tj-3", "install"));
+    expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(false);
+    expect(faceOf("tool-update-btn").busy).toBe(false);
+    expect(faceOf("tool-catalog-refresh-btn").busy).toBe(false);
+
+    byId<HTMLButtonElement>("tool-cancel-btn").click();
+    expect(mocks.cancelJobDispatch).toHaveBeenCalledWith({ id: "tj-3" });
+
+    sse?.("", settled("tj-3", "install"));
+    expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(true);
+    // A settled job is not cancellable: the follow target outlives it, the
+    // live-job reference does not.
+    byId<HTMLButtonElement>("tool-cancel-btn").click();
+    expect(mocks.cancelJobDispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("seeds the busy face from a job already running when the panel opens", () => {
+    mocks.jobsDispatch.mockResolvedValue(null);
+    initWith(
+      listWith([tool({ name: "gh" })], {
+        id: "tj-boot",
+        kind: "update",
+        state: "running",
+        created_at: 1,
+      }),
+    );
+    expect(faceOf("tool-update-btn").busy).toBe(true);
+  });
+
+  it("lets the stream outrank a snapshot that names a job it already finished", () => {
+    // Inventory.job is a snapshot and loadToolsList runs once per job event, so a
+    // GET issued while a job was queued can resolve after the event that finished
+    // it. Adopting it would strand the pill on Cancel forever.
+    mountToolsDOM();
+    initTools();
+    mocks.sseHandlers.get("tool_job_changed")?.("", settled("tj-4", "update"));
+    seedLoad(
+      listWith([tool({ name: "gh" })], {
+        id: "tj-4",
+        kind: "update",
+        state: "running",
+        created_at: 1,
+      }),
+    );
+    loadToolsList();
+    expect(faceOf("tool-update-btn").busy).toBe(false);
+  });
+});
+
+describe("catalog refresh UI", () => {
   it("renders the freshness line with catalog age and the failure suffix", async () => {
     mountToolsDOM();
     initTools();
@@ -502,10 +661,10 @@ describe("tools list keys", () => {
 
   it("emits verbatim components for ordinary tool rows", () => {
     initWith(listWith([tool({ name: "gh", latest: "2.97.0", pin: true })]));
-    // Ten components: marker, name, version, latest, installed, installing,
-    // pin, disabled, dependents, error-state.
-    expect(keyFor("gh")).toBe("tool:gh:1.0.0:2.97.0:true:false:true:false::ok");
-    expect(split(keyFor("gh"))).toHaveLength(10);
+    // Twelve components: marker, name, version, latest, installed, installing,
+    // pin, disabled, dependents, checksum, essential, error-state.
+    expect(keyFor("gh")).toBe("tool:gh:1.0.0:2.97.0:true:false:true:false:::false:ok");
+    expect(split(keyFor("gh"))).toHaveLength(12);
   });
 
   it("keys the dependents set so a pre-flight cannot read a stale row", () => {
@@ -525,7 +684,7 @@ describe("tools list keys", () => {
 
   it("escapes a component that carries the separator instead of shifting the split", () => {
     // A colon in a version string would have added a component under the old
-    // array-join; escaped, the key still splits into exactly ten.
+    // array-join; escaped, the key still splits into exactly twelve.
     initWith(listWith([tool({ name: "odd", version: "1.0:beta" })]));
     const key = keyFor("odd");
     expect(key).toContain("1.0\\:beta");
@@ -539,6 +698,8 @@ describe("tools list keys", () => {
       "false",
       "false",
       "",
+      "",
+      "false",
       "ok",
     ]);
   });
@@ -549,5 +710,95 @@ describe("tools list keys", () => {
     initWith(listWith([tool({ name: "a", version: "1.0.0:2.0.0" }), tool({ name: "b" })]));
     expect(keyFor("a")).not.toBe(keyFor("b"));
     expect(split(keyFor("a"))[2]).toBe("1.0.0:2.0.0");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pre-bundled rows, and the honesty chips.
+// ---------------------------------------------------------------------------
+
+describe("pre-bundled tools", () => {
+  function labels(): string[] {
+    return [...document.querySelectorAll<HTMLElement>("#tools-list .list-group-label")].map(
+      (e) => e.textContent ?? "",
+    );
+  }
+
+  it("groups an essential entry ahead of the ones the user added, labelling both", () => {
+    initWith(listWith([tool({ name: "ripgrep" }), tool({ name: "gh", essential: true })]));
+    expect(labels()).toEqual([
+      "pre-bundled, kept current by the catalog",
+      "added by you",
+      "built into the image",
+    ]);
+    const names = [...document.querySelectorAll<HTMLElement>("#tools-list .list-row-name")].map(
+      (e) => e.textContent ?? "",
+    );
+    // gh is second in the inventory and first on screen.
+    expect(names.slice(0, 2)).toEqual(["gh", "ripgrep"]);
+  });
+
+  it("labels nothing when nothing is essential", () => {
+    initWith(listWith([tool({ name: "ripgrep" })]));
+    expect(labels()).toEqual(["built into the image"]);
+  });
+
+  it("offers no remove control on an essential row, but keeps the switch", () => {
+    initWith(listWith([tool({ name: "gh", essential: true })]));
+    const row = rowFor("gh");
+    expect(row?.querySelector('[aria-label="Remove gh"]')).toBeNull();
+    expect(row?.querySelector(".tool-toggle")).not.toBeNull();
+    // The box is reserved so the switch column does not step between groups,
+    // and the ghost is out of the accessibility tree.
+    const ghost = row?.querySelector(".list-row-btn-ghost");
+    expect(ghost).not.toBeNull();
+    expect(ghost?.getAttribute("aria-hidden")).toBe("true");
+    expect(ghost?.tagName).toBe("SPAN");
+  });
+
+  it("keeps the remove control on a row the user added", () => {
+    initWith(listWith([tool({ name: "ripgrep" })]));
+    const row = rowFor("ripgrep");
+    expect(row?.querySelector('[aria-label="Remove ripgrep"]')).not.toBeNull();
+    expect(row?.querySelector(".list-row-btn-ghost")).toBeNull();
+  });
+});
+
+describe("row honesty chips", () => {
+  function chips(name: string): string[] {
+    return [...(rowFor(name)?.querySelectorAll<HTMLElement>(".tool-source-chip") ?? [])].map(
+      (e) => e.textContent ?? "",
+    );
+  }
+
+  it("chips an apt row, and reads the source rather than the checksum", () => {
+    initWith(listWith([tool({ name: "gcc", source: "apt:gcc" })]));
+    expect(chips("gcc")).toEqual(["apt"]);
+  });
+
+  it("chips a hand-installed row, replacing updateOne's silence", () => {
+    initWith(listWith([tool({ name: "codeql", source: "manual" })]));
+    expect(chips("codeql")).toEqual(["self-managed"]);
+  });
+
+  it("chips an unverified download and says nothing about a verified one", () => {
+    initWith(
+      listWith([
+        tool({ name: "node", checksum: "unverified" }),
+        tool({ name: "ripgrep", checksum: "verified" }),
+      ]),
+    );
+    expect(chips("node")).toEqual(["no checksum"]);
+    expect(chips("ripgrep")).toEqual([]);
+  });
+
+  it("says nothing for a package-manager source, which reports no checksum at all", () => {
+    initWith(listWith([tool({ name: "prettier", source: "npm:prettier" })]));
+    expect(chips("prettier")).toEqual([]);
+  });
+
+  it("keeps the LSP badge alongside an honesty chip", () => {
+    initWith(listWith([tool({ name: "gopls", lsp: true, checksum: "unverified" })]));
+    expect(chips("gopls")).toEqual(["LSP", "no checksum"]);
   });
 });

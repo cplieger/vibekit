@@ -7,12 +7,14 @@
 // SSE events (the output panel is a live follower that survives
 // reloads via GET /api/tools/jobs). The add flow is search-first: the
 // catalog (compiled from the mise + aqua registries) is the browse
-// surface, with a manual-command escape hatch.
+// surface. There is no manual-command escape hatch: a form asking a reader to
+// author an install script is the shell with worse ergonomics, and the shell is
+// one click away. A closing note on every result set says so instead.
 // ---------------------------------------------------------------------------
 
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_PIN, ICON_PIN_FILLED, ICON_TRASH } from "./icons.js";
+import { ICON_PIN, ICON_PIN_FILLED, ICON_SPINNER, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import {
   loadTools,
@@ -34,7 +36,6 @@ import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import { reconcile } from "./reconcile.js";
 import type { CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
 
@@ -57,6 +58,127 @@ type ListEntry =
   | { kind: "tool"; tool: ToolInfo }
   | { kind: "system"; name: string; installed: boolean };
 
+// The two toolbelt job kinds a reader launches from a named pill. The other
+// four — install, uninstall, disable, reconcile — are launched from a tool row
+// or by the server itself, so they are the residual case in `pillOwns` and are
+// never named here.
+const JOB_UPDATE = "update";
+const JOB_CATALOG_REFRESH = "catalog-refresh";
+
+/** Whether a job is still queued or running. One predicate, because every
+ *  control's face and the output panel's headline read the same answer. */
+function jobIsLive(job: Job): boolean {
+  return job.state === "queued" || job.state === "running";
+}
+
+/** Whether the pill that launched a job carries its cancel. Two kinds have a
+ *  named pill of their own; every other kind is launched from a tool row
+ *  (install, uninstall, disable) or by the server (the boot reconcile), so its
+ *  only cancel control is the shared Cancel pill. Exhaustive over toolbelt's six
+ *  kinds: two named, four residual.
+ *
+ *  A per-tool Update rides the Update-all pill deliberately. It is the same kind
+ *  of work, and splitting on `names.length` would leave that pill sitting idle
+ *  through an update while a nameless Cancel appeared beside it — the shape this
+ *  whole control replaced. */
+function pillOwns(kind: string): boolean {
+  return kind === JOB_UPDATE || kind === JOB_CATALOG_REFRESH;
+}
+
+interface JobPillSpec {
+  /** What a click does while no job of this pill's kind is live. */
+  start: () => void;
+  /** What a click does while one is. */
+  cancel: () => void;
+  /** The busy face's accessible name. The visible label is just "Cancel"; a
+   *  screen reader gets the whole "Cancel the running update", because out of
+   *  the row's context a bare "Cancel" says nothing about what it stops. */
+  busyAria: string;
+}
+
+/** An action pill that owns one job kind: it launches the work, and while that
+ *  work is live it BECOMES the control that stops it — spinner for the glyph,
+ *  "Cancel" for the label, one click to cancel.
+ *
+ *  Same shape as the composer's send button (`prompt-input.ts`: Send while idle,
+ *  a stop square mid-turn) and for the same reason — the control that started
+ *  the work is where a reader looks to stop it. It replaced a fourth pill that
+ *  un-hid beside these three whenever ANY job was live, which cost two things:
+ *  the launching pill showed no sign that its own work was running, and a bare
+ *  "Cancel" sat next to three neighbours with nothing saying which it belonged
+ *  to.
+ *
+ *  The idle face is CAPTURED from the authored markup rather than rebuilt here,
+ *  so index.html stays the one place a pill's glyph and label are written.
+ *
+ *  Nothing here sets `disabled`. The busy face IS the cancel control, so
+ *  disabling it would remove the affordance it exists to offer; the only guard
+ *  is `requested`, which stops a second click re-sending a cancel already on the
+ *  wire. That also subsumes the `disabled` the catalog-refresh pill used to
+ *  carry for the whole life of its job: the engine's queue would accept a
+ *  duplicate refresh, and a pill whose click CANCELS cannot enqueue one. */
+class JobPill {
+  private readonly idleFace: readonly Node[];
+  private readonly idleAria: string;
+  private busy = false;
+  private requested = false;
+
+  constructor(
+    private readonly btn: HTMLButtonElement,
+    private readonly spec: JobPillSpec,
+  ) {
+    this.idleFace = [...btn.childNodes].map((n) => n.cloneNode(true));
+    this.idleAria = btn.getAttribute("aria-label") ?? "";
+    btn.addEventListener("click", () => {
+      this.onClick();
+    });
+  }
+
+  /** Follow the live job. Idempotent: the SSE reports one event per state
+   *  transition and several of them describe the same live job. */
+  setBusy(busy: boolean): void {
+    if (busy === this.busy) {
+      return;
+    }
+    this.busy = busy;
+    this.requested = false;
+    this.paint();
+  }
+
+  private onClick(): void {
+    if (!this.busy) {
+      this.spec.start();
+      return;
+    }
+    if (this.requested) {
+      return;
+    }
+    this.requested = true;
+    this.paint();
+    this.spec.cancel();
+  }
+
+  private paint(): void {
+    if (!this.busy) {
+      this.btn.replaceChildren(...this.idleFace.map((n) => n.cloneNode(true)));
+      this.btn.setAttribute("aria-label", this.idleAria);
+      this.btn.removeAttribute("data-tooltip");
+      this.btn.classList.remove("is-busy");
+      return;
+    }
+    const label = this.requested ? "Cancelling…" : "Cancel";
+    const full = this.requested ? label : this.spec.busyAria;
+    this.btn.replaceChildren(iconEl(ICON_SPINNER), el("span", null, label));
+    // The visible label stays one word so the pill does not resize the row it
+    // sits in; the full "Cancel the running update" reaches a screen reader as
+    // the accessible name and a pointer as the tooltip. Same split the send
+    // button uses for its own stop face.
+    this.btn.setAttribute("aria-label", full);
+    this.btn.setAttribute("data-tooltip", full);
+    this.btn.classList.add("is-busy");
+  }
+}
+
 // Modal form fields owned by this module (feature-local ids).
 const f = {
   get cancel(): HTMLButtonElement {
@@ -74,30 +196,6 @@ const f = {
   get results(): HTMLDivElement {
     return byId("tool-search-results");
   },
-  get manualToggle(): HTMLButtonElement {
-    return byId("tool-manual-toggle");
-  },
-  get manualForm(): HTMLElement {
-    return byId("tool-manual-form");
-  },
-  get manualName(): HTMLInputElement {
-    return byId("tool-manual-name");
-  },
-  get manualVersion(): HTMLInputElement {
-    return byId("tool-manual-version");
-  },
-  get manualInstall(): HTMLInputElement {
-    return byId("tool-manual-install");
-  },
-  get manualUninstall(): HTMLInputElement {
-    return byId("tool-manual-uninstall");
-  },
-  get manualProbe(): HTMLInputElement {
-    return byId("tool-manual-probe");
-  },
-  get manualAdd(): HTMLButtonElement {
-    return byId("tool-manual-add");
-  },
 };
 
 class ToolsManager {
@@ -105,8 +203,12 @@ class ToolsManager {
   private output: RollingOutput | null = null;
   /** Job id the output panel is currently following. */
   private followedJob = "";
+  /** The job the SSE last reported queued or running, null when nothing is.
+   *  Decides which of the three controls carries its cancel. */
+  private live: Job | null = null;
+  private updatePill: JobPill | null = null;
+  private refreshPill: JobPill | null = null;
   private unsubscribes: (() => void)[] = [];
-  private manualFormCtl: DisclosureController | null = null;
 
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
@@ -115,22 +217,43 @@ class ToolsManager {
 
   init(): void {
     this.output = new RollingOutput($.toolUpdateOutput, "git-output-modal");
+    // Wiring a panel resets what it believes is running: it learns that from the
+    // seed in loadToolsList or from the first SSE event, never from last time.
+    // One wiring per page load, so this is a no-op in production.
+    //
+    // The pills below CAPTURE their idle face from the live DOM, so a second
+    // init() over a strip that is currently showing a Cancel face would adopt
+    // that as the face to restore. Re-mount the markup before re-wiring, or keep
+    // init() to once.
+    this.live = null;
+    this.followedJob = "";
 
     $.toolAddBtn.addEventListener("click", () => {
       this.openAddModal();
     });
-    $.toolUpdateBtn.addEventListener("click", () => {
-      void updateTools.dispatch(undefined);
+    this.updatePill = new JobPill($.toolUpdateBtn, {
+      start: () => {
+        void updateTools.dispatch(undefined);
+      },
+      cancel: () => {
+        this.cancelLiveJob();
+      },
+      busyAria: "Cancel the running update",
     });
     bindLoadingState("tools.update", $.toolUpdateBtn);
-    f.catalogRefresh.addEventListener("click", () => {
-      void refreshCatalog.dispatch(undefined);
+    this.refreshPill = new JobPill(f.catalogRefresh, {
+      start: () => {
+        void refreshCatalog.dispatch(undefined);
+      },
+      cancel: () => {
+        this.cancelLiveJob();
+      },
+      busyAria: "Cancel the running catalog refresh",
     });
     bindLoadingState("tools.refresh_catalog", f.catalogRefresh);
+    // The residual Cancel pill, for a job kind no pill above owns.
     f.cancel.addEventListener("click", () => {
-      if (this.followedJob !== "") {
-        void cancelToolJob.dispatch({ id: this.followedJob });
-      }
+      this.cancelLiveJob();
     });
 
     // Live job following: state transitions re-render the list (rows
@@ -143,16 +266,15 @@ class ToolsManager {
         if (job === undefined) {
           return;
         }
+        // The SSE stream is ordered, so its account of what is running is never
+        // stale: this is the authoritative writer for the control faces, and the
+        // inventory only ever SEEDS them.
+        const live = jobIsLive(job);
+        this.setLive(live ? job : null);
         this.followJob(job);
         // loadToolsList refetches the catalog meta line too, so a
         // settling catalog-refresh job needs no extra fetch here.
         this.loadToolsList();
-        if (job.kind === "catalog-refresh") {
-          // One catalog refresh at a time: the queue would happily
-          // accept a duplicate, so disable the button while one is
-          // queued or running.
-          f.catalogRefresh.disabled = job.state === "queued" || job.state === "running";
-        }
       }),
       onSSE("tool_job_output", (_chat, payload) => {
         if (payload.job_id !== this.followedJob || this.output === null) {
@@ -164,21 +286,11 @@ class ToolsManager {
       }),
     );
 
-    // Add-modal wiring: debounced catalog search + manual escape hatch.
+    // Add-modal wiring: a debounced search over the catalog and apt.
     const runSearch = debounce(() => {
       void this.renderSearch(f.search.value);
     }, 200);
     f.search.addEventListener("input", runSearch);
-    // The manual-command escape hatch is a standard trigger disclosure: the
-    // primitive owns aria-expanded/aria-controls, activation, and the
-    // animated aria-hidden/inert collapse (the old code toggled the hidden
-    // class + ARIA by hand). Normalize away the authored hidden class first.
-    f.manualForm.classList.remove("hidden");
-    this.manualFormCtl = createDisclosure(f.manualToggle, f.manualForm, { open: false });
-    f.manualAdd.addEventListener("click", () => {
-      void this.submitManual();
-    });
-    bindLoadingState("tools.create", f.manualAdd);
   }
 
   dispose(): void {
@@ -189,23 +301,62 @@ class ToolsManager {
   }
 
   /** Point the output panel at a job: reset on a new id, headline the
-   *  terminal state, refresh the follow target, and toggle the Cancel
-   *  affordance with the job's liveness. */
+   *  terminal state, refresh the follow target. */
   private followJob(job: Job): void {
     if (this.output === null) {
       return;
     }
-    const live = job.state === "queued" || job.state === "running";
-    f.cancel.classList.toggle("hidden", !live);
     if (job.id !== this.followedJob) {
       this.followedJob = job.id;
       this.output.clear();
       this.output.append(jobHeadline(job));
       return;
     }
-    if (!live) {
+    if (!jobIsLive(job)) {
       this.output.append(jobHeadline(job));
     }
+  }
+
+  /** THE writer for the three controls a live job decides, because the ownership
+   *  rule has to be asked the same way by the pill that turns into Cancel and by
+   *  the pill that hides. Answering it in two places is how they disagree. */
+  private setLive(job: Job | null): void {
+    this.live = job;
+    const kind = job?.kind ?? "";
+    this.updatePill?.setBusy(kind === JOB_UPDATE);
+    this.refreshPill?.setBusy(kind === JOB_CATALOG_REFRESH);
+    f.cancel.classList.toggle("hidden", job === null || pillOwns(kind));
+  }
+
+  /** Give the inventory ONE chance to report a job that started before this
+   *  module was wired. The panel is lazily initialized, so a boot reconcile or an
+   *  install a feature banner triggered can already be running when the SSE
+   *  handlers register, and nothing replays those events.
+   *
+   *  On the way IN only, and `followedJob` is the test for that: it is set by the
+   *  first job this panel hears about from any source, so a non-empty one means
+   *  the stream has already spoken and outranks a snapshot. That ordering is the
+   *  whole point — `Inventory.job` is a snapshot while the SSE is a stream, and
+   *  `loadToolsList` runs once per job event, so a GET issued while a job was
+   *  queued can resolve after the event that finished it. Adopting that answer
+   *  would strand a pill on its Cancel face with nothing left to cancel. */
+  private seedLiveJob(job: Job | undefined): void {
+    if (this.followedJob !== "" || job === undefined || !jobIsLive(job)) {
+      return;
+    }
+    this.setLive(job);
+  }
+
+  /** Cancel whatever is running. All three controls route here: the engine's
+   *  queue is single-flight, so "the live job" is unambiguous. Read from `live`
+   *  rather than from the output panel's follow target, which outlives the job it
+   *  points at — cancelling a settled job is a request with no subject. */
+  private cancelLiveJob(): void {
+    const id = this.live?.id;
+    if (id === undefined) {
+      return;
+    }
+    void cancelToolJob.dispatch({ id });
   }
 
   loadToolsList(): void {
@@ -214,6 +365,7 @@ class ToolsManager {
       onSuccess: (d) => {
         this.data = d;
         this.renderToolsList();
+        this.seedLiveJob(d.job);
         // A job already running when the panel opens (boot sync, or a
         // reload mid-install): seed the output panel with its tail.
         if (d.job !== undefined && d.job.id !== this.followedJob) {
@@ -267,8 +419,30 @@ class ToolsManager {
       return;
     }
 
+    // THREE groups, and the first two are one list split by ONE fact the
+    // engine reports: `essential`. A pre-bundled tool is not an extra layered
+    // over the catalog — it IS a catalog entry, installed and updated by the
+    // same machinery as any other, which this app declares as necessary for it
+    // to work properly. So it sits in its own group rather than in a second
+    // mechanism, and the engine refuses to remove it (ErrEssential), which is
+    // why its row carries no bin (`toolActions`). Disable stays available: that
+    // is the honest escape hatch, and it does not lose the entry.
+    //
+    // Labels appear only when the split is real. With nothing essential the
+    // list is one unlabelled group, exactly as before.
     const flat: ListEntry[] = [];
-    for (const t of d.tools) {
+    const essential = d.tools.filter((t) => t.essential === true);
+    const chosen = d.tools.filter((t) => t.essential !== true);
+    if (essential.length > 0) {
+      flat.push({ kind: "label", label: "pre-bundled, kept current by the catalog" });
+      for (const t of essential) {
+        flat.push({ kind: "tool", tool: t });
+      }
+      if (chosen.length > 0) {
+        flat.push({ kind: "label", label: "added by you" });
+      }
+    }
+    for (const t of chosen) {
       flat.push({ kind: "tool", tool: t });
     }
     const system = d.system.filter((s) => s.installed);
@@ -337,6 +511,13 @@ class ToolsManager {
               // touching any other field here, so the set has to be in the
               // key or the pre-flight asks its question from a stale answer.
               (e.tool.dependents ?? []).join(","),
+              // Both drive chips rather than text, so a change to either has to
+              // remount the row. `installed` covers the usual checksum
+              // transition (empty until something is installed), but a reinstall
+              // onto a definition that gained a checksum source moves it with
+              // every other field unchanged.
+              e.tool.checksum ?? "",
+              String(e.tool.essential ?? false),
               e.tool.last_error === undefined || e.tool.last_error === "" ? "ok" : "err",
             );
         }
@@ -369,18 +550,12 @@ class ToolsManager {
 
   private renderToolRow(t: ToolInfo): HTMLDivElement {
     const name = el("span", { className: "list-row-name", title: t.description ?? "" }, t.name);
+    const chips = rowChips(t);
     const row = el(
       "div",
       { className: "list-row" },
       stateDot(t),
-      t.lsp === true
-        ? el(
-            "span",
-            { className: "tool-name-wrap" },
-            name,
-            el("span", { className: "tool-source-chip" }, "LSP"),
-          )
-        : name,
+      chips.length > 0 ? el("span", { className: "tool-name-wrap" }, name, ...chips) : name,
       el("span", { className: "list-row-meta" }, metaText(t)),
     ) as HTMLDivElement;
     if (t.disabled === true) {
@@ -466,7 +641,6 @@ class ToolsManager {
       toggleInput,
       el("span", { className: "toggle-slider" }),
     );
-    actions.append(toggle);
 
     const pinned = t.pin ?? false;
     const pinBtn = el(
@@ -487,19 +661,60 @@ class ToolsManager {
       void this.togglePin(t.name, !pinned);
     });
 
-    const delBtn = el(
-      "button",
-      { className: "list-row-btn", "data-tooltip": "Remove", "aria-label": `Remove ${t.name}` },
-      iconEl(ICON_TRASH),
-    );
-    delBtn.addEventListener("click", () => {
-      void this.runDelete(t);
-    });
-
-    if (disabled) {
-      actions.append(delBtn);
+    // No bin on a pre-bundled row: the engine refuses the removal
+    // (ErrEssential), so offering the control would only produce a 409 the
+    // reader cannot act on. The switch above is the escape hatch — it
+    // uninstalls the footprint and keeps the entry.
+    const trailing: HTMLElement[] = [];
+    if (t.essential !== true) {
+      const delBtn = el(
+        "button",
+        { className: "list-row-btn", "data-tooltip": "Remove", "aria-label": `Remove ${t.name}` },
+        iconEl(ICON_TRASH),
+      );
+      delBtn.addEventListener("click", () => {
+        void this.runDelete(t);
+      });
+      trailing.push(delBtn as HTMLElement);
     } else {
-      actions.append(pinBtn, delBtn);
+      // A GHOST bin, reserving the box the real one would occupy. The
+      // alignment rule below depends on the widths to the RIGHT of the switch
+      // being fixed, and a pre-bundled row that simply dropped the control
+      // would slide its switch 26px right — the same stepping column the pin's
+      // position exists to prevent, with the step now falling between the two
+      // groups. Reserving the icon's own box rather than a hardcoded width
+      // keeps the two in lockstep. `visibility: hidden` and not `display: none`
+      // for the space; `aria-hidden` and a non-button element so nothing
+      // reaches the accessibility tree or the tab order.
+      trailing.push(
+        el(
+          "span",
+          { className: "list-row-btn list-row-btn-ghost", "aria-hidden": "true" },
+          iconEl(ICON_TRASH),
+        ) as HTMLElement,
+      );
+    }
+
+    // THE TRAILING ORDER IS ONE STATEMENT BECAUSE IT IS AN ALIGNMENT RULE.
+    // `.list-row-actions` is right-aligned (`margin-inline-start: auto`), so an
+    // element's x is decided by the widths to its RIGHT — which means only the
+    // controls that appear on EVERY row may sit to the right of a control whose
+    // column has to read as a column. The pin is conditional (a disabled entry
+    // has no version to pin), and it used to sit between the switch and the bin,
+    // so the switch landed 28px further right on every disabled row and the
+    // column of switches visibly stepped in and out. With the pin to its LEFT,
+    // the only thing right of the switch is the bin, which is unconditional, so
+    // the switch column is fixed. The Install/Update button inherits the
+    // variance instead, which costs nothing: it is on a minority of rows and its
+    // three labels are three different widths, so it never formed a column.
+    // It also groups better — Update and Pin are both about the version.
+    //
+    // `trailing` is that unconditional slot: the bin on a row that can be
+    // removed, a same-sized ghost on one that cannot.
+    if (disabled) {
+      actions.append(toggle, ...trailing);
+    } else {
+      actions.append(pinBtn, toggle, ...trailing);
     }
     return actions;
   }
@@ -599,41 +814,87 @@ class ToolsManager {
 
   private openAddModal(): void {
     f.search.value = "";
-    this.manualFormCtl?.close();
-    f.manualName.value = "";
-    f.manualVersion.value = "";
-    f.manualInstall.value = "";
-    f.manualUninstall.value = "";
-    f.manualProbe.value = "";
     openModal($.toolModal);
     void this.renderSearch("");
     f.search.focus();
   }
 
-  /** Render catalog hits (empty query = the featured starter set). */
+  /** Render the search: catalog entries first, then Debian packages.
+   *
+   *  TWO blocks rather than one merged list, because the same name can appear
+   *  in both at DIFFERENT versions -- the catalog tracks upstream releases and
+   *  apt tracks the distro's candidate -- and a merged list would have to pick
+   *  one, hiding a real choice. Each row carries its own version and source, so
+   *  the two are comparable rather than conflated.
+   *
+   *  Uninstallable entries are never requested: the engine hides them unless a
+   *  caller opts in with `unavailable=1`, and this client deliberately does not.
+   *  A row that cannot be installed is noise in an install picker; the shell
+   *  note below is the honest answer for anything absent. */
   private async renderSearch(query: string): Promise<void> {
-    const d = await searchTools.dispatch({ q: query.trim() });
+    const q = query.trim();
+    const d = await searchTools.dispatch({ q });
     const box = f.results;
     box.replaceChildren();
     if (d === null) {
       box.appendChild(el("div", { className: "list-empty" }, "Catalog unavailable"));
       return;
     }
-    if (d.results.length === 0) {
+    const catalog = d.results.filter((h) => h.apt !== true);
+    const apt = d.results.filter((h) => h.apt === true);
+
+    if (catalog.length === 0 && apt.length === 0) {
       box.appendChild(
         el(
           "div",
           { className: "list-empty" },
-          query.trim() === ""
-            ? "Everything featured is already installed. Search the catalog by name."
-            : `No catalog match for "${query.trim()}" — use “Custom install command” below.`,
+          q === ""
+            ? "Everything featured is already installed. Search by name."
+            : `Nothing matches "${q}".`,
         ),
       );
+      box.appendChild(this.shellNote(d.apt_available));
       return;
     }
-    for (const hit of d.results) {
-      box.appendChild(this.renderSearchHit(hit));
+
+    if (catalog.length > 0) {
+      box.appendChild(el("div", { className: "tool-block-head" }, "Catalog"));
+      for (const hit of catalog) box.appendChild(this.renderSearchHit(hit));
     }
+    if (apt.length > 0) {
+      box.appendChild(
+        el(
+          "div",
+          { className: "tool-block-head" },
+          "Debian packages",
+          // Stated on the block rather than per row: an apt package is not
+          // version-managed by the engine and dies with the container layer
+          // unless the entry is kept, which is a property of the whole group.
+          el("span", { className: "tool-block-note" }, "installed with apt, on this container"),
+        ),
+      );
+      for (const hit of apt) box.appendChild(this.renderSearchHit(hit));
+    }
+    box.appendChild(this.shellNote(d.apt_available));
+  }
+
+  /** The closing note. Present on EVERY result set, including a full one:
+   *  the catalog is large but finite, and a reader who cannot find their tool
+   *  needs to know the shell is the answer rather than concluding the tool is
+   *  unavailable. */
+  private shellNote(aptAvailable: boolean): HTMLElement {
+    const parts: string[] = [
+      "Not listed? Install it in the shell — anything you can run there works. ",
+      "The engine only manages what it installed.",
+    ];
+    // Said explicitly rather than left as an absent block. With apt
+    // unavailable the engine returns no Debian hits at all, so a reader
+    // searching for a package sees nothing and cannot tell "no such package"
+    // from "this container cannot install one".
+    if (!aptAvailable) {
+      parts.push(" Debian packages are not searchable here: apt needs root and this container has none.");
+    }
+    return el("div", { className: "tool-shell-note" }, ...parts);
   }
 
   private renderSearchHit(hit: SearchHit): HTMLElement {
@@ -645,8 +906,21 @@ class ToolsManager {
     addBtn.addEventListener("click", () => {
       addBtn.disabled = true;
       addBtn.textContent = "Queued…";
-      void this.submitCatalogAdd({ name: hit.name });
+      // An apt hit is not a catalog entry, so the engine has no source to
+      // hydrate from and the request has to carry it. A catalog hit omits it,
+      // which is what lets the engine resolve the source it published.
+      void this.submitCatalogAdd(
+        hit.apt === true ? { name: hit.name, source: hit.source } : { name: hit.name },
+      );
     });
+    const chips: HTMLElement[] = [sourceChip(hit.source)];
+    // The version rides its own chip because it is the reason both blocks
+    // exist: the same name can be one release in the catalog and another in
+    // the distro, and a reader choosing between them needs both numbers.
+    if (hit.version !== undefined && hit.version !== "") {
+      chips.push(el("span", { className: "tool-source-chip" }, hit.version));
+    }
+    if (hit.lsp === true) chips.push(el("span", { className: "tool-source-chip" }, "LSP"));
     return el(
       "div",
       { className: "list-row tool-hit" },
@@ -657,8 +931,7 @@ class ToolsManager {
           "div",
           { className: "tool-hit-title" },
           el("span", { className: "list-row-name" }, hit.name),
-          sourceChip(hit.source),
-          ...(hit.lsp === true ? [el("span", { className: "tool-source-chip" }, "LSP")] : []),
+          ...chips,
         ),
         el("span", { className: "tool-hit-desc" }, hit.description ?? ""),
       ),
@@ -674,25 +947,6 @@ class ToolsManager {
     } else {
       void this.renderSearch(f.search.value);
     }
-  }
-
-  private async submitManual(): Promise<void> {
-    const name = f.manualName.value.trim();
-    const version = f.manualVersion.value.trim();
-    const install = f.manualInstall.value.trim();
-    if (name === "" || version === "" || install === "") {
-      return;
-    }
-    const req: CreateToolRequest = { name, source: "manual", version, install };
-    const uninstall = f.manualUninstall.value.trim();
-    if (uninstall !== "") {
-      req.uninstall = uninstall;
-    }
-    const probe = f.manualProbe.value.trim();
-    if (probe !== "") {
-      req.probe = probe;
-    }
-    await this.submitCatalogAdd(req);
   }
 }
 
@@ -806,6 +1060,68 @@ function sourceChip(source: string): HTMLElement {
   const kind = source.split(":", 1)[0] ?? source;
   const label = kind === "aqua" ? "binary" : kind;
   return el("span", { className: "tool-source-chip" }, label);
+}
+
+/** The chips a TABLE row carries, at most two: the LSP badge, and one honesty
+ *  chip naming a weaker guarantee than the normal case.
+ *
+ *  Exactly one honesty chip, because the three conditions are mutually
+ *  exclusive by construction and each one supersedes the question the next
+ *  would ask. An apt package is Debian's, verified by the distro archive and
+ *  reinstalled from it at every boot, so its integrity story is the distro's
+ *  rather than the engine's. A self-managed entry was installed by hand, so the
+ *  engine neither verified it nor updates it — that chip replaces a silence, as
+ *  `updateOne` returns early for a manual source without emitting anything, and
+ *  such an entry is otherwise frozen forever with no indication.
+ *
+ *  Everything else reads ONE fact: whether verification actually happened
+ *  (`ToolInfo.Checksum`), never the source kind. Of the catalog's aqua entries
+ *  402 declare a checksum and 252 do not, `node` and `go` among them, so a
+ *  per-source table would be wrong for either group. A package-manager source
+ *  (npm, pip, cargo, go) reports no checksum at all and earns no chip: the
+ *  package manager owns verification there, and a chip on every one of those
+ *  rows would say nothing. */
+function rowChips(t: ToolInfo): HTMLElement[] {
+  const chips: HTMLElement[] = [];
+  if (t.lsp === true) {
+    chips.push(el("span", { className: "tool-source-chip" }, "LSP"));
+  }
+  const kind = (t.source ?? "").split(":", 1)[0] ?? "";
+  if (kind === "apt") {
+    chips.push(
+      el(
+        "span",
+        {
+          className: "tool-source-chip",
+          "data-tooltip": "A Debian package. Reinstalled at every boot, at whatever version apt offers then.",
+        },
+        "apt",
+      ),
+    );
+  } else if (kind === "manual") {
+    chips.push(
+      el(
+        "span",
+        {
+          className: "tool-source-chip",
+          "data-tooltip": "Installed by hand. The engine does not update it.",
+        },
+        "self-managed",
+      ),
+    );
+  } else if (t.checksum === "unverified") {
+    chips.push(
+      el(
+        "span",
+        {
+          className: "tool-source-chip",
+          "data-tooltip": "The definition declares no checksum, so the download was not verified against one.",
+        },
+        "no checksum",
+      ),
+    );
+  }
+  return chips;
 }
 
 function jobHeadline(job: Job): string {
