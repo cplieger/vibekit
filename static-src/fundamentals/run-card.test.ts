@@ -14,7 +14,7 @@ function step(nodeId: string, status: RunNode["status"]): RunNode {
   return { nodeId, type: "step", status };
 }
 
-function runOf(status: RunState["status"], ...children: RunNode[]): RunState {
+function runOf(status: NonNullable<RunState["status"]>, ...children: RunNode[]): RunState {
   return {
     workflowId: "wf_1",
     status,

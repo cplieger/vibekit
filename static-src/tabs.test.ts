@@ -159,6 +159,7 @@ interface Openers {
   editorShow: Mock<TabOpeners["editor"]["show"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
+  subagentShow: Mock<TabOpeners["subagent"]["show"]>;
 }
 
 let openers: Openers;
@@ -170,18 +171,23 @@ function registerOpeners(): void {
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
+    subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
   };
   registerTabOpeners({
     chat: { show: openers.chatShow, close: openers.chatClose, dot: () => "" },
     editor: { show: openers.editorShow, close: openers.editorClose },
     run: { show: openers.runShow },
+    subagent: { show: openers.subagentShow },
   });
 }
 
 // --- Openers the cases below drive ---
 
 /** Open a chat tab for `ref`. Awaited, because the row lands with the frame. */
-function openChat(ref: string, opts: { activate?: boolean; parent?: string } = {}): Promise<void> {
+function openChat(
+  ref: string,
+  opts: { activate?: boolean; parent?: string; owns?: boolean } = {},
+): Promise<void> {
   return openTab({ kind: "chat", ref, ...opts });
 }
 

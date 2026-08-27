@@ -76,6 +76,7 @@ interface Spies {
   editorShow: Mock<TabOpeners["editor"]["show"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
+  subagentShow: Mock<TabOpeners["subagent"]["show"]>;
 }
 
 let spies: Spies;
@@ -88,11 +89,13 @@ function register(dot: TabDotStatus | "" = ""): void {
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
+    subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
   };
   const openers: TabOpeners = {
     chat: { show: spies.chatShow, close: spies.chatClose, dot: spies.chatDot },
     editor: { show: spies.editorShow, close: spies.editorClose },
     run: { show: spies.runShow },
+    subagent: { show: spies.subagentShow },
   };
   registerTabOpeners(openers);
 }

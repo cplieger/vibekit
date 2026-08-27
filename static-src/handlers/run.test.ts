@@ -69,16 +69,21 @@ beforeEach(() => {
   listRefetches = 0;
 });
 
-type RunEvent = "run_started" | "run_progress" | "run_finished";
+type RunEvent = "run_started" | "run_progress" | "run_finished" | "run_step";
 
 function send(type: RunEvent, payload: Record<string, unknown>): void {
   dispatch({ type, chat_id: "c1", payload });
 }
 
-// The three run events really are keys of the typed SSE surface, so a rename on
+// The four run events really are keys of the typed SSE surface, so a rename on
 // the Go side that regenerates the wire types breaks this file rather than
 // silently unsubscribing the handlers.
-const _keys: readonly (keyof SSEPayloads)[] = ["run_started", "run_progress", "run_finished"];
+const _keys: readonly (keyof SSEPayloads)[] = [
+  "run_started",
+  "run_progress",
+  "run_finished",
+  "run_step",
+];
 void _keys;
 
 describe("run SSE handlers", () => {

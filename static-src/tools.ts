@@ -701,7 +701,7 @@ class ToolsManager {
       delBtn.addEventListener("click", () => {
         void this.runDelete(t);
       });
-      trailing.push(delBtn as HTMLElement);
+      trailing.push(delBtn);
     } else {
       // A GHOST bin, reserving the box the real one would occupy. The
       // alignment rule below depends on the widths to the RIGHT of the switch
@@ -717,7 +717,7 @@ class ToolsManager {
           "span",
           { className: "list-row-btn list-row-btn-ghost", "aria-hidden": "true" },
           iconEl(ICON_TRASH),
-        ) as HTMLElement,
+        ),
       );
     }
 
@@ -885,7 +885,9 @@ class ToolsManager {
 
     if (catalog.length > 0) {
       box.appendChild(el("div", { className: "tool-block-head" }, "Catalog"));
-      for (const hit of catalog) box.appendChild(this.renderSearchHit(hit));
+      for (const hit of catalog) {
+        box.appendChild(this.renderSearchHit(hit));
+      }
     }
     if (apt.length > 0) {
       box.appendChild(
@@ -899,7 +901,9 @@ class ToolsManager {
           el("span", { className: "tool-block-note" }, "installed with apt, on this container"),
         ),
       );
-      for (const hit of apt) box.appendChild(this.renderSearchHit(hit));
+      for (const hit of apt) {
+        box.appendChild(this.renderSearchHit(hit));
+      }
     }
     box.appendChild(this.shellNote(d.apt_available));
   }
@@ -918,7 +922,9 @@ class ToolsManager {
     // searching for a package sees nothing and cannot tell "no such package"
     // from "this container cannot install one".
     if (!aptAvailable) {
-      parts.push(" Debian packages are not searchable here: apt needs root and this container has none.");
+      parts.push(
+        " Debian packages are not searchable here: apt needs root and this container has none.",
+      );
     }
     return el("div", { className: "tool-shell-note" }, ...parts);
   }
@@ -946,7 +952,9 @@ class ToolsManager {
     if (hit.version !== undefined && hit.version !== "") {
       chips.push(el("span", { className: "tool-source-chip" }, hit.version));
     }
-    if (hit.lsp === true) chips.push(el("span", { className: "tool-source-chip" }, "LSP"));
+    if (hit.lsp === true) {
+      chips.push(el("span", { className: "tool-source-chip" }, "LSP"));
+    }
     return el(
       "div",
       { className: "list-row tool-hit" },
@@ -1141,7 +1149,8 @@ function rowChips(t: ToolInfo): HTMLElement[] {
         "span",
         {
           className: "tool-source-chip",
-          "data-tooltip": "A Debian package. Reinstalled at every boot, at whatever version apt offers then.",
+          "data-tooltip":
+            "A Debian package. Reinstalled at every boot, at whatever version apt offers then.",
         },
         "apt",
       ),
@@ -1163,7 +1172,8 @@ function rowChips(t: ToolInfo): HTMLElement[] {
         "span",
         {
           className: "tool-source-chip",
-          "data-tooltip": "The definition declares no checksum, so the download was not verified against one.",
+          "data-tooltip":
+            "The definition declares no checksum, so the download was not verified against one.",
         },
         "no checksum",
       ),
