@@ -934,6 +934,8 @@ export const decodeSearchHit: Decoder<SearchHit> = (v) => {
   if (version !== undefined) out.version = version;
   const reason = o["reason"] === null ? undefined : optStr(o, "reason", "$.search_hit");
   if (reason !== undefined) out.reason = reason;
+  const match = o["match"] === null ? undefined : optStr(o, "match", "$.search_hit");
+  if (match !== undefined) out.match = match;
   const featured = o["featured"] === null ? undefined : optBool(o, "featured", "$.search_hit");
   if (featured !== undefined) out.featured = featured;
   const lsp = o["lsp"] === null ? undefined : optBool(o, "lsp", "$.search_hit");
