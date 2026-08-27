@@ -312,7 +312,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	t.Run("a run that left the paused state inside the backoff is not resumed", func(t *testing.T) {
 		fastHeal(t)
 		h, br := seed(t, transient)
-		br.callResults[methodKiroWorkflowInspect] = inspectReply(t, "wf_1", "aborted", transient)
+		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "aborted", transient))
 		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrame(t, "wf_1", transient))
 		time.Sleep(50 * time.Millisecond)

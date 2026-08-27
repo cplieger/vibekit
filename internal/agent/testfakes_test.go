@@ -197,6 +197,26 @@ func (b *fakeBridge) callLog() []string {
 	return out
 }
 
+// setCallResult re-arms one method's canned reply under the fake's own mutex.
+//
+// Needed rather than assigning into callResults directly, because a test that
+// has already opened a bridge shares this fake with a LIVE goroutine: OpenBridge
+// spawns tryLoadSession, which reaches resumeInterruptedRuns and calls back into
+// Call, and Call reads every one of these maps under b.mu. An unguarded write
+// from the test goroutine is then a genuine data race, and the detector reported
+// it as one.
+//
+// Assigning the whole map before OpenBridge stays fine and is what the seed
+// helpers do; this is for re-arming a reply AFTER the bridge is running.
+func (b *fakeBridge) setCallResult(method string, res json.RawMessage) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.callResults == nil {
+		b.callResults = map[string]json.RawMessage{}
+	}
+	b.callResults[method] = res
+}
+
 // lastCall is the most recent Call's method, or "".
 func (b *fakeBridge) lastCall() string {
 	b.mu.Lock()
