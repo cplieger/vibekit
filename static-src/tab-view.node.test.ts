@@ -10,15 +10,16 @@ import { describe, it, expect } from "vitest";
 import { TAB_VIEWS, TAB_ICONS } from "./tab-view.js";
 import type { TabKind } from "./types.js";
 
-// The eight kinds, written out. This list is NOT the gate — the gate is the
+// The nine kinds, written out. This list is NOT the gate — the gate is the
 // `Readonly<Record<TabKind, string>>` annotation on both tables, which is a
-// compile error the moment a ninth kind is added to the Go const block and
+// compile error the moment a kind is added to the Go const block and
 // regenerated. What the list buys is the other direction: a table that grows an
 // entry the wire does not know, and a table that disagrees with its sibling.
 const KINDS: readonly TabKind[] = [
   "chat",
   "editor",
   "run",
+  "subagent",
   "settings",
   "git",
   "files",

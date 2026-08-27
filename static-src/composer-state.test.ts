@@ -34,6 +34,8 @@ import {
   flushComposerDraft,
   saveComposerState,
   restoreComposerState,
+  retargetComposer,
+  restoreFailedSend,
   seedComposerState,
   adoptRemoteComposerState,
   dropComposerState,
@@ -128,6 +130,50 @@ describe("draft text across a chat switch", () => {
     saveComposerState();
     restoreComposerState("c2");
     expect(input().value).toBe("unrelated thought");
+  });
+
+  // The reported bug, and the one case the save-then-restore pair could not
+  // reach: THREE call sites move the store's active chat without an activation
+  // behind them, and two of them then await a tab round trip. For the length of
+  // that await the box still belonged to the previous chat, so a keystroke went
+  // into ITS entry and was flushed to the server as ITS draft.
+  //
+  // Both halves of what the user sees are in this one case: the text vanishes
+  // out of the box when the activation finally repaints it, and it is sitting in
+  // the previous chat the next time that chat is opened.
+  describe("a chat that becomes active before its tab does", () => {
+    it("files a keystroke in the window under the NEW chat", () => {
+      restoreComposerState("c1");
+      type("half a question about auth");
+
+      // createSession: setActive(new) → retargetComposer(new) → await the tab.
+      retargetComposer("c2");
+      type("the new chat's first line");
+
+      // The activation lands and repaints. It must find the text still there.
+      saveComposerState();
+      restoreComposerState("c2");
+      expect(input().value).toBe("the new chat's first line");
+
+      // And the chat the user left must be untouched by any of it.
+      saveComposerState();
+      restoreComposerState("c1");
+      expect(input().value).toBe("half a question about auth");
+    });
+
+    it("persists the window's text under the new chat, not the old one", () => {
+      restoreComposerState("c1");
+      type("half a question about auth");
+      mockDispatch.mockClear();
+
+      retargetComposer("c2");
+      type("the new chat's first line");
+
+      expect(mockDispatch).toHaveBeenLastCalledWith({
+        chatID: "c2",
+        text: "the new chat's first line",
+      });
+    });
   });
 
   it("empties the box for a chat with no draft rather than leaving it alone", () => {
@@ -281,6 +327,64 @@ describe("adopting the server's draft (the reload case)", () => {
     input().value = "c2 live text";
     seedComposerState("c1");
     expect(input().value).toBe("c2 live text");
+  });
+});
+
+// The other half of what submit.ts does on a refused send. The version this
+// replaced wrote the shared box with no chat argument at all, while the
+// attachment half beside it was already chat-scoped.
+describe("restoring a send that the server refused", () => {
+  it("puts the text back when the failing chat is the one on screen", () => {
+    restoreComposerState("c1");
+    restoreFailedSend("c1", "the refused message");
+    expect(input().value).toBe("the refused message");
+  });
+
+  it("parks it under the failing chat when the reader has moved on", () => {
+    restoreComposerState("c1");
+    saveComposerState();
+    restoreComposerState("c2");
+
+    restoreFailedSend("c1", "the refused message");
+    // The visible conversation is untouched: it never sent this.
+    expect(input().value).toBe("");
+
+    saveComposerState();
+    restoreComposerState("c1");
+    expect(input().value).toBe("the refused message");
+  });
+
+  it("persists it under the failing chat, so a reload keeps it", () => {
+    restoreComposerState("c2");
+    mockDispatch.mockClear();
+    restoreFailedSend("c1", "the refused message");
+    expect(mockDispatch).toHaveBeenLastCalledWith({
+      chatID: "c1",
+      text: "the refused message",
+    });
+  });
+
+  it("loses to a draft the user has started since the send", () => {
+    restoreComposerState("c1");
+    type("already typing the next thing");
+    restoreFailedSend("c1", "the refused message");
+    expect(input().value).toBe("already typing the next thing");
+  });
+
+  it("leaves a non-empty box alone even with no recorded draft", () => {
+    // ArrowUp puts a previously sent prompt in the box through a write that emits
+    // no `input` event, so the box can hold history while the draft is empty.
+    restoreComposerState("c1");
+    input().value = "a prompt recalled from history";
+    restoreFailedSend("c1", "the refused message");
+    expect(input().value).toBe("a prompt recalled from history");
+  });
+
+  it("ignores an empty chat id and empty text", () => {
+    restoreComposerState("c1");
+    restoreFailedSend("", "the refused message");
+    restoreFailedSend("c1", "");
+    expect(input().value).toBe("");
   });
 });
 

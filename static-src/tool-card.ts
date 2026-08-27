@@ -9,7 +9,8 @@
 // it into a tool group or equivalent container.
 // ---------------------------------------------------------------------------
 
-import type { ToolStatus, ToolLocation, ToolDiff, TextSpan } from "./types.js";
+import type { ToolStatus, TextSpan } from "./types.js";
+import type { BuildToolCardOpts } from "./tool-card-opts.js";
 import { escText, windowOutput, windowSpans } from "./strings.js";
 import { renderOutput } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
@@ -33,31 +34,9 @@ import {
   isToolDone,
   type ToolRenderInfo,
 } from "./tool-schema.js";
-import type { ToolDenial, ToolDisclosed } from "./types.js";
+import type { ToolDenial } from "./types.js";
 import { trackInProgress } from "./tool-group.js";
 import { el } from "@cplieger/reactive";
-
-export interface BuildToolCardOpts {
-  id: string;
-  title: string;
-  kind: string;
-  status: ToolStatus;
-  input?: Record<string, unknown>;
-  output?: string;
-  /** Style spans for `output`, parsed server-side. Empty for output with no
-   *  escape sequences, which is nearly all of it. */
-  outputSpans?: TextSpan[];
-  locations?: ToolLocation[];
-  diffs?: ToolDiff[];
-  /** Live mode: show spinner + start timestamp + show-raw-input block +
-   *  expand-on-fail. Replay mode: omit those since the call has settled. */
-  live: boolean;
-  /** KAS's `_meta.kiro.disclosedContext`: the skill or steering document a
-   *  `disclose_context` call loaded. */
-  disclosed?: ToolDisclosed | undefined;
-  /** KAS's `_meta.kiro.policyDenial`: the rule that refused this call. */
-  denial?: ToolDenial | undefined;
-}
 
 /** Build a tool-call element. Does not append it to the DOM. */
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
@@ -267,9 +246,18 @@ type OutcomeState = "ok" | "fail" | "warn" | "denied" | "running";
 
 /** Paint a card's outcome onto its glyph, and give the card an accessible name.
  *
- *  ONE writer for the whole vocabulary, which is the point: the outcome used to
- *  be written in four places (here, the update path, the subagent block, and the
- *  group header) and each spelled it slightly differently.
+ *  ONE writer for the CARD vocabulary, and two sites deliberately outside it, so
+ *  do not read the count as three. Callers: this builder, the tool-card update
+ *  path (`messages-tools.ts`), and a History run row (`history.ts`). The two that
+ *  paint an outcome without coming through here are `tool-group.ts`
+ *  paintGroupOutcome, which writes a group header's verdict as text and needs no
+ *  badge, and `fundamentals/subagent-block.ts` applyIcon, which hand-rolls both
+ *  the tint classes and a `.tool-outcome-badge` of its own. That second one is
+ *  what the "one writer" claim this comment used to make was hiding, and the copy
+ *  cost it both channels until 2026-08-26: its badge host lacked the `.tool-icon`
+ *  class, so the mark had no containing block (it painted ~190px away at the
+ *  header's edge) and the `is-*` classes matched no rule. Route a new site through
+ *  this function rather than copying a block, or it inherits that class of defect.
  *
  *  Tint alone would fail WCAG 1.4.1 — a green and a red glyph of identical shape
  *  are one channel — so a settled card also carries a SHAPE: a small check or

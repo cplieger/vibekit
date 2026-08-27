@@ -34,6 +34,25 @@ vi.mock("./confirm.js", () => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
+// forge-auth.ts reads the forge list through the shared store now
+// (forge-store.ts) rather than with an apiGetTyped call of its own — three
+// modules used to fetch /api/forges independently. Route the store's read back
+// through the mocked client so every case below still drives the payload with
+// mockResolvedValueOnce, in the same order: the forge list first, then the repo
+// and local-clone reads forge-auth still owns.
+vi.mock("./forge-store.js", async () => {
+  const { apiGetTyped } = await import("./api-client.js");
+  const forgeRead = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
+  return {
+    refreshForges: forgeRead,
+    ensureForges: forgeRead,
+    initForgeStore: vi.fn(),
+    onForgeChange: vi.fn(() => () => undefined),
+    currentForges: vi.fn(() => []),
+    oauthByKind: vi.fn(() => ({})),
+    forgeLoadFailed: vi.fn(() => false),
+  };
+});
 // The add-pane tests click [data-forge-add], which runs gateAddPaneOnCLI →
 // getToolsStatus.dispatch(). That action fetches directly through the actions
 // framework (bypassing the mocked api-client), so without this mock the probe

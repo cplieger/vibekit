@@ -36,6 +36,19 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_AGENT: "",
+  // roles.ts is in this graph now (tab-materialize.ts derives a delegate tab's
+  // label from it), and Browser Mode links for real rather than reading
+  // properties off a namespace object, so every name it imports has to be here.
+  ICON_TAB_PLAN: "",
+  ICON_TAB_SPEC: "",
+  ICON_TAB_QUICK_SPEC: "",
+  ICON_TAB_BUG: "",
+  ICON_TAB_AUTONOMOUS: "",
+  ICON_SUBAGENT_INTROSPECT: "",
+  ICON_SUBAGENT_GATHERER: "",
+  ICON_SUBAGENT_TASK: "",
+  ICON_SUBAGENT_CREATOR: "",
   ICON_TAB_EDITOR: "",
   ICON_TAB_HISTORY: "",
   ICON_TAB_DOCS: "",

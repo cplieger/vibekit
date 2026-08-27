@@ -29,12 +29,13 @@
 import { apiGetTyped, apiPost, CancellableSlot } from "./api-client.js";
 import type { Decoder } from "./validators.js";
 import { asObject, decodeArray } from "./validators.js";
-import { decodeConfiguredForge, decodeRepo } from "./wire/decoders.gen.js";
+import { decodeRepo } from "./wire/decoders.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_EXTERNAL, ICON_PLUS_16 } from "./icons.js";
 import type { ConfiguredForge, ForgeKind, Repo } from "./wire/types.gen.js";
 import { DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.js";
 import { signOut } from "./actions/forge.js";
+import { refreshForges, type ForgesListResponse } from "./forge-store.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { signal, effect, el } from "@cplieger/reactive";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
@@ -55,12 +56,6 @@ import {
   type ReposRenderDeps,
 } from "./forge-auth-repos-render.js";
 
-interface ForgesListResponse {
-  forges: ConfiguredForge[];
-  kinds: ForgeKind[];
-  oauth?: Partial<Record<ForgeKind, boolean>>;
-}
-
 interface RepoListResponse {
   repos: Repo[];
 }
@@ -69,36 +64,6 @@ interface LocalReposResponse {
 }
 
 // --- Response decoders ------------------------------------------------
-
-const FORGE_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
-
-const decodeForgesListResponse: Decoder<ForgesListResponse> = (v) => {
-  const o = asObject(v, "$.forges_list");
-  const out: ForgesListResponse = {
-    forges: decodeArray(o["forges"], decodeConfiguredForge, "$.forges_list.forges"),
-    kinds: decodeArray(
-      o["kinds"],
-      (el) => {
-        if (typeof el !== "string" || !(FORGE_KINDS as readonly string[]).includes(el)) {
-          throw new TypeError(`expected ForgeKind, got ${JSON.stringify(el)}`);
-        }
-        return el as ForgeKind;
-      },
-      "$.forges_list.kinds",
-    ),
-  };
-  if (o["oauth"] !== undefined) {
-    const oauthObj = asObject(o["oauth"], "$.forges_list.oauth");
-    const partial: Partial<Record<ForgeKind, boolean>> = {};
-    for (const [k, val] of Object.entries(oauthObj)) {
-      if ((FORGE_KINDS as readonly string[]).includes(k) && typeof val === "boolean") {
-        partial[k as ForgeKind] = val;
-      }
-    }
-    out.oauth = partial;
-  }
-  return out;
-};
 
 const decodeRepoListResponse: Decoder<RepoListResponse> = (v) => {
   const o = asObject(v, "$.repo_list");
@@ -257,7 +222,12 @@ export async function renderForgesPanel(
   const myGen = ++renderGen;
   const signal = panelSlot.start();
 
-  const data = await apiGetTyped("/api/forges", decodeForgesListResponse, signal);
+  // Through the shared store rather than this module's own fetch: a sign-in or a
+  // sign-out has to reach the sidebar badge and the PRs tab too, which a private
+  // copy could never do. It carries no signal, deliberately — see forge-store.ts:
+  // one consumer navigating away must not abort a fetch two others await. The
+  // guards below are what make a stale answer harmless here.
+  const data = await refreshForges();
   if (signal.aborted || myGen !== renderGen) {
     return;
   }
@@ -345,7 +315,7 @@ async function revalidateInBackground(ids: string[]): Promise<void> {
   if (signal.aborted) {
     return;
   }
-  const data = await apiGetTyped("/api/forges", decodeForgesListResponse, signal);
+  const data = await refreshForges();
   if (signal.aborted) {
     return;
   }

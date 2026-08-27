@@ -28,7 +28,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/settings"
@@ -72,15 +71,6 @@ const logMsgRunOverran = "scheduled run still going when its next slot came due;
 // happened AND what to do, because the row is where they will look first.
 const outcomeOverran = "failed: still running when its next slot came due, so it was cancelled — " +
 	"give the schedule a longer interval, or make the workflow finish inside it"
-
-// workflowIDOf recovers a workflow id from its synthetic chat id. Empty for a
-// chat id that does not name a run.
-func workflowIDOf(chatID vibekit.ChatID) string {
-	if !isRunChat(chatID) {
-		return ""
-	}
-	return strings.TrimPrefix(string(chatID), runChatPrefix)
-}
 
 // permissionWithUnattendedFloor wraps the ordinary permission handler.
 //

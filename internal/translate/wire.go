@@ -9,7 +9,6 @@ package translate
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -248,10 +247,7 @@ func (w *ACPWorkflowMeta) SubtaskID() string {
 	if w == nil || w.WorkflowID == "" {
 		return ""
 	}
-	if len(w.NodePath) > 0 {
-		return "wf:" + w.WorkflowID + ":" + strings.Join(w.NodePath, "/")
-	}
-	return "wf:" + w.WorkflowID + ":" + w.NodeID
+	return "wf:" + w.WorkflowID + ":" + runNodePath(w)
 }
 
 // ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed

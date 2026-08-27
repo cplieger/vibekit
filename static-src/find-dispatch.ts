@@ -83,7 +83,10 @@ type FindDestination =
  * The `none` members are a decision, not a gap. Settings has four panels and its
  * own deep-link-to-one-control mechanism (`settings-highlight.ts`, which records
  * why it refused a search box: the ids the panels already carry ARE the index). A
- * run view is one run's node tree, read top to bottom.
+ * run view is one run's node tree, read top to bottom. A subagent page is one
+ * delegate's transcript with no pagination behind it, so the browser's own Ctrl-F
+ * over the rendered page already answers everything a panel could — unlike the
+ * conversation's find, which exists because the store holds only a window of it.
  */
 const DESTINATION: Readonly<Record<TabKind, FindDestination>> = {
   chat: "transcript",
@@ -93,6 +96,7 @@ const DESTINATION: Readonly<Record<TabKind, FindDestination>> = {
   history: "page",
   git: "page",
   run: "none",
+  subagent: "none",
   settings: "none",
 };
 

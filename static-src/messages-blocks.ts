@@ -27,6 +27,23 @@
 // closes it, so those really are contiguous runs.) The subagent's tool cards /
 // reasoning / text render inside its card exactly as they do at the top level.
 // There is no separate legacy path and no text-preview fold.
+//
+// A PIPELINE (the `orchestrate_subagent` tool) nests, and it is the one delegate
+// relationship the wire states outright. KAS emits three kinds of tool call for
+// one pipeline: the `Orchestrate Sub-agent` driver with NO subtask of its own,
+// then per stage a `Sub-agent: <name>` invocation carrying a fresh subtask uuid,
+// then that stage's own work under the same uuid. The stage's tool-call ID is
+// `invoke_subagent_<orchestrateToolCallId>_stage_<stageName>`, so the stage names
+// its parent and `indexPipelines` reads the join straight off it — no wire field
+// was added. The driver becomes the PIPELINE box's header and each stage's box is
+// appended into that box's body, which is the same one-invocation-hosts-N-children
+// shape the run card uses for workflow steps.
+//
+// Before that join the two rendered as flat siblings with no relation the DOM
+// could express, and both spun: the driver as an ordinary tool card at 0.8s, the
+// stage box at 0.6s, so two rings beat against each other for one delegated task.
+// The pipeline box is therefore built with the `container` activity variant, which
+// keeps its glyph and shows activity dots only while it is collapsed.
 // ---------------------------------------------------------------------------
 
 import type { Message, Block, ToolCall, PlanStatus, FileChange, SteerMark } from "./types.js";
@@ -44,7 +61,11 @@ import { isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
 import { buildAssistantBubble, type AssistantBubble } from "./fundamentals/text-bubble.js";
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
-import { buildSubagentBlock, type SubagentView } from "./fundamentals/subagent-block.js";
+import {
+  buildSubagentBlock,
+  type SubagentOpener,
+  type SubagentView,
+} from "./fundamentals/subagent-block.js";
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { toolSpec } from "./messages-tools.js";
@@ -54,11 +75,14 @@ import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group
 // Re-exported so messages.ts can inject it into messages-tools' status-flip
 // path (initToolCallbacks) — the same header renderer the block dispatcher uses.
 export { refreshGroupHeader };
-import { humanName } from "./strings.js";
-import { iconForSubagent } from "./roles.js";
+import { iconForSubagent, isSubagentInvocation, subagentLabel, subagentName } from "./roles.js";
+import { ICON_TAB_RUN } from "./icons.js";
 import { buildRunCard, type RunCardView } from "./fundamentals/run-card.js";
 import { invalidateRun, runState, forgetRun } from "./run-store.js";
+import { runPendingAsks } from "./decision-dock.js";
 import { hasTab } from "./tabs.js";
+import { getActiveId } from "./store.js";
+import { buildPath } from "./router.js";
 
 // ---------------------------------------------------------------------------
 // Callbacks injected by messages.ts (kept there so avatar markup + the
@@ -139,6 +163,18 @@ interface MsgRender {
   blockText: Map<number, (full: string) => void>;
   /** subtask id → its SubagentBlock view. */
   subagents: Map<string, SubagentView>;
+  /** orchestrate tool-call id → the PIPELINE box that call opened. Keyed by the
+   *  invocation, not by a subtask, because the orchestrate call has none of its
+   *  own — the stages do. Same shape as `runs` below and for the same reason:
+   *  one box holds every stage of one pipeline. */
+  pipelines: Map<string, SubagentView>;
+  /** stage subtask id → the orchestrate tool-call id that owns it. Built by
+   *  `indexPipelines` from the message's tool calls, which is what lets a stage's
+   *  TEXT block (carrying only the bare subtask uuid) find its pipeline. */
+  stagePipeline: Map<string, string>;
+  /** orchestrate tool-call id → its stage subtask ids, in first-seen order. The
+   *  pipeline footer's ledger sums over these. */
+  pipelineStages: Map<string, string[]>;
   /** workflow id → the run card that invocation opened. Keyed by RUN, not by
    *  subtask, because one card holds every step of one run — the step rows inside
    *  it are keyed by node path (see `runContainerFor`). */
@@ -158,6 +194,21 @@ interface MsgRender {
    *  ledger (commands, reads, changed files). The INVOCATION call is not a
    *  member — it is the box itself. */
   subagentMembers: Map<string, Set<string>>;
+  /** Whether this render lives OUTSIDE the transcript.
+   *
+   *  One render does: the subagent page, which renders one delegate's blocks on
+   *  its own tab. Two things change for it, and both are correctness rather than
+   *  tidiness.
+   *
+   *  Turn-lifetime cleanups go into `disposers` instead of messages.ts's registry,
+   *  because messages.ts has never heard of this render and would never fire them
+   *  — the page owns its own unmount.
+   *
+   *  And a cleanup must not CLEAR a shared per-tool signal. The page and the
+   *  transcript render the same `ToolCall` ids, so whichever surface unmounted
+   *  first would drop the signal the other is still reading, quietly demoting it
+   *  to the full-repaint fallback. */
+  detached: boolean;
   /** Every mounted bubble handle (for finalize end()). */
   bubbles: AssistantBubble[];
   /** The one bubble currently carrying the streaming caret, or null. The caret
@@ -191,6 +242,17 @@ export function buildAssistantBody(
   live: boolean,
   marks: readonly SteerMark[] = [],
 ): void {
+  buildBody(wrap, m, live, false, marks);
+  mountPlan(wrap, m);
+}
+
+function buildBody(
+  wrap: HTMLElement,
+  m: Message,
+  live: boolean,
+  detached: boolean,
+  marks: readonly SteerMark[] = [],
+): void {
   const blocksEl = el("div", { className: "assistant-blocks" });
   wrap.appendChild(blocksEl);
   const st: MsgRender = {
@@ -198,9 +260,13 @@ export function buildAssistantBody(
     rendered: 0,
     blockText: new Map(),
     subagents: new Map(),
+    pipelines: new Map(),
+    stagePipeline: new Map(),
+    pipelineStages: new Map(),
     runs: new Map(),
     disposers: [],
     subagentMembers: new Map(),
+    detached,
     bubbles: [],
     liveBubble: null,
     reasonings: [],
@@ -210,8 +276,36 @@ export function buildAssistantBody(
   };
   renders.set(m.id, st);
   const blocks = m.blocks ?? [];
+  indexPipelines(st, m);
   renderRange(st, m, 0, blocks.length, live, marks);
-  mountPlan(wrap, m);
+}
+
+/** Where a mount's turn-lifetime cleanup goes.
+ *
+ *  A transcript render hands it to messages.ts, which disposes at TURN END as
+ *  well as on unmount. A DETACHED render keeps it, because messages.ts does not
+ *  know the render exists — and because a detached cleanup that cleared a shared
+ *  signal would reach into the transcript's own live cards.
+ *
+ *  A detached render also creates no PER-BLOCK signal (see mountText): its message
+ *  id is synthetic, so `ensureBlockTextSig` would mint a key `store.appendChunk`
+ *  never writes, and a bubble subscribed to it would sit frozen while the real
+ *  block streamed. The page subscribes to the REAL keys instead and pushes the
+ *  text in through `syncMountedText`, which is the same fallback a mis-judged
+ *  live block already relies on. */
+function pushLifetimeEffect(st: MsgRender, msgId: string, cleanup: () => void): void {
+  if (st.detached) {
+    st.disposers.push(cleanup);
+    return;
+  }
+  cbs.pushStreamingEffect(msgId, cleanup);
+}
+
+/** Clear a per-tool signal, unless this render shares it with the transcript. */
+function releaseToolSig(st: MsgRender, toolID: string): void {
+  if (!st.detached) {
+    clearToolCallSig(toolID);
+  }
 }
 
 /** Incrementally sync the assistant body: mount newly-arrived blocks and steer
@@ -222,13 +316,29 @@ export function updateAssistantBody(
   streaming: boolean,
   marks: readonly SteerMark[] = [],
 ): void {
+  updateBody(wrap, m, streaming, false, marks);
+  mountPlan(wrap, m);
+}
+
+function updateBody(
+  wrap: HTMLElement,
+  m: Message,
+  streaming: boolean,
+  detached: boolean,
+  marks: readonly SteerMark[] = [],
+): void {
   const st = renders.get(m.id);
   if (st === undefined) {
     // Should not happen (build runs first), but stay self-healing.
-    buildAssistantBody(wrap, m, streaming, marks);
+    buildBody(wrap, m, streaming, detached, marks);
     return;
   }
   const blocks = m.blocks ?? [];
+  // Ahead of the render, and on EVERY pass rather than only when blocks arrive: a
+  // stage's blocks can reach the dispatcher before its own invocation tool call is
+  // in the store (out-of-order SSE), and this index is the only thing that knows
+  // which pipeline a stage belongs to.
+  indexPipelines(st, m);
   if (blocks.length > st.rendered) {
     renderRange(st, m, st.rendered, blocks.length, streaming, marks);
   }
@@ -239,7 +349,6 @@ export function updateAssistantBody(
   // `st.steerNotes` is what makes that harmless.
   flushSteerNotes(st, marks, m.id, blocks.length);
   syncMountedText(st, m);
-  mountPlan(wrap, m);
 }
 
 /** Bring every mounted block up to the store's current text for that block.
@@ -308,6 +417,63 @@ export function resetBlockRenders(): void {
     disposeAll(st);
   }
   renders.clear();
+}
+
+// ---------------------------------------------------------------------------
+// The DETACHED render: one delegate's blocks, on its own page
+// ---------------------------------------------------------------------------
+
+/** The render id a detached body is keyed under.
+ *
+ *  Derived rather than the bare message id, because `renders` is one map and the
+ *  transcript is already holding an entry for that message: a shared key would
+ *  make whichever surface mounted second clobber the other's render state, and
+ *  then dispose the wrong one. */
+function detachedID(messageID: string, subtask: string): string {
+  return `${messageID}#${subtask}`;
+}
+
+/** Render one delegate's own transcript into `host`, as the main agent's.
+ *
+ *  `m` is a SYNTHETIC message the caller assembled (subagent-slice.ts): the
+ *  delegate's blocks with their `agent_subtask_id` cleared, its tool calls, and a
+ *  derived id. Clearing the attribution is what makes this a transcript rather
+ *  than a card — `containerFor` routes by that field, so a block still carrying it
+ *  would rebuild the collapsed box this page exists to open.
+ *
+ *  Everything else is the transcript's: real tool cards, real diffs, real
+ *  reasoning traces, streaming markdown. That reuse is the whole point of the
+ *  page, and it is why this lives here rather than in the view — `renders`, the
+ *  dispatcher and the disposal rules are this module's, and a second renderer
+ *  beside them would drift. */
+export function buildDetachedBody(
+  host: HTMLElement,
+  m: Message,
+  subtask: string,
+  live: boolean,
+): void {
+  buildBody(host, { ...m, id: detachedID(m.id, subtask) }, live, true);
+}
+
+/** Append newly-arrived blocks and bring mounted ones up to the store's text. */
+export function updateDetachedBody(
+  host: HTMLElement,
+  m: Message,
+  subtask: string,
+  live: boolean,
+): void {
+  updateBody(host, { ...m, id: detachedID(m.id, subtask) }, live, true);
+}
+
+/** Flush every markdown stream and seal every reasoning trace. */
+export function finalizeDetachedBody(messageID: string, subtask: string): void {
+  finalizeAssistantBody(detachedID(messageID, subtask));
+}
+
+/** Drop a detached render. The page's own unmount, and the only thing that fires
+ *  its disposers — messages.ts never sees this id. */
+export function disposeDetachedBody(messageID: string, subtask: string): void {
+  disposeAssistantBody(detachedID(messageID, subtask));
 }
 
 /** Run and clear a render's message-lifetime cleanups. Idempotent: both dispose
@@ -421,7 +587,14 @@ function sealLiveBubble(st: MsgRender): void {
  *  Three destinations, and the middle one is the reason this is not a two-line
  *  function. A step's subtask id is `wf:<workflowId>:<nodePath>`, so it names TWO
  *  containers: the run, and the step within it. Resolving both is what puts a
- *  step's work inside the invocation that launched it rather than beside it. */
+ *  step's work inside the invocation that launched it rather than beside it.
+ *
+ *  A PIPELINE STAGE is the same two-level shape reached a different way. Its
+ *  subtask id is a bare uuid that names nothing, so the pair comes from
+ *  `st.stagePipeline` (see `indexPipelines`): the pipeline, and the stage's own
+ *  box within it. Without that lookup a stage box is appended to `blocksEl` as a
+ *  FLAT SIBLING of the orchestrate call that started it, which is what put two
+ *  unrelated boxes with two beating spinners on screen for one delegated task. */
 function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
   const subtask = block.agent_subtask_id ?? "";
   if (subtask === "") {
@@ -433,12 +606,89 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
   }
   let sa = st.subagents.get(subtask);
   if (sa === undefined) {
-    sa = buildSubagentBlock("Subagent", live ? "in_progress" : "completed");
+    sa = buildSubagentBlock("Subagent", live ? "in_progress" : "completed", {
+      ...subagentOpenerFor(st, subtask),
+    });
     sa.root.dataset["subtask"] = subtask;
     st.subagents.set(subtask, sa);
-    st.blocksEl.appendChild(sa.root);
+    stageHostFor(st, subtask, live).appendChild(sa.root);
   }
   return sa.body;
+}
+
+/** The delegate card's footer link, or nothing.
+ *
+ *  Injected here rather than imported by the card, so `fundamentals/` keeps
+ *  pointing only downward — and the opener is lazy for the reason the run card's
+ *  is: `subagent-view.ts` reaches the whole page and the transcript must not carry
+ *  it.
+ *
+ *  A DETACHED render gets no link at all. It IS the page, so a nested delegate's
+ *  link would point at a sibling page this one cannot route to without knowing its
+ *  chat, and a control that does nothing teaches a reader to distrust the others —
+ *  the same rule that keeps the run card's link out of `full`.
+ *
+ *  The chat id is read from the store at BUILD time, and that is sound because the
+ *  transcript only ever renders the active chat: `paint()` reads `getActive()`, and
+ *  a chat switch disposes every render before the next one mounts. It is not
+ *  carried on the render, because a second copy of "which chat is this" is a second
+ *  thing that can disagree with the store. */
+function subagentOpenerFor(st: MsgRender, subtask: string): { open?: SubagentOpener } {
+  if (st.detached) {
+    return {};
+  }
+  const chatID = getActiveId();
+  if (chatID === "" || subtask === "") {
+    return {};
+  }
+  return {
+    open: {
+      href: buildPath({ kind: "subagent", chat: chatID, id: subtask }),
+      open: () => {
+        void import("./subagent-view.js")
+          .then(({ openSubagentView }) => {
+            openSubagentView(chatID, subtask);
+          })
+          .catch(() => {
+            /* noop: the link degrades to its href on the next click */
+          });
+      },
+    },
+  };
+}
+
+/** Where a stage's own box goes: its pipeline's body when the stage belongs to
+ *  one, otherwise the top level. Creating the pipeline box here is what makes the
+ *  two arrival orders equivalent — the orchestrate call and its first stage race
+ *  on the wire, and after a refresh the orchestrate call is persisted while the
+ *  stage's blocks are not. Whichever arrives first builds the box; the other
+ *  finds it. Same contract as `runCardFor`. */
+function stageHostFor(st: MsgRender, subtask: string, live: boolean): HTMLElement {
+  const pipelineID = st.stagePipeline.get(subtask);
+  if (pipelineID === undefined) {
+    return st.blocksEl;
+  }
+  return pipelineBoxFor(st, pipelineID, live).body;
+}
+
+/** Get or build the PIPELINE box for one orchestrate tool call.
+ *
+ *  The `container` activity variant is the whole point: its stages carry the
+ *  spinners, so this card keeps its identity glyph and shows activity dots only
+ *  while it is collapsed. See fundamentals/subagent-block.ts SubagentActivity. */
+function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): SubagentView {
+  const existing = st.pipelines.get(pipelineID);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const box = buildSubagentBlock("Pipeline", live ? "in_progress" : "completed", {
+    activity: "container",
+  });
+  box.setIcon(ICON_TAB_RUN);
+  box.root.dataset["pipeline"] = pipelineID;
+  st.pipelines.set(pipelineID, box);
+  st.blocksEl.appendChild(box.root);
+  return box;
 }
 
 /** The step row inside the run card, creating the card when the invocation has
@@ -477,7 +727,12 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
   st.runs.set(workflowID, card);
   st.blocksEl.appendChild(card.root);
   const stop = effect(() => {
-    card.render(runState(workflowID));
+    // Two inputs on different clocks, which is why they arrive together rather than
+    // through two calls: `inspect` says what the run's steps are doing, and the dock
+    // says which of them is blocked on a person. The run's status cannot carry the
+    // second — KAS blocks the asking step's turn and leaves the run `running` — and
+    // both reads are signal-backed, so this one effect repaints on either.
+    card.render(runState(workflowID), runPendingAsks(workflowID));
   });
   st.disposers.push(() => {
     stop();
@@ -592,6 +847,17 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
         bindRunCard(st, runID, tc);
         return;
       }
+      // A PIPELINE LAUNCH becomes the pipeline's box, not a tool row. Like the
+      // workflow launch above it sits in the parent agent's own block stream with
+      // no subtask of its own, so this branch is ahead of the subtask checks; and
+      // like it, a box already built by a stage whose frame arrived first is FOUND
+      // rather than replaced.
+      if (subtask === "" && isPipelineInvocation(tc)) {
+        sealReasoning(st, container);
+        closeToolGroup(st, container);
+        bindPipeline(st, m.id, tc, live);
+        return;
+      }
       // The subagent invocation becomes the SubagentBlock's header, not a card.
       if (subtask !== "" && isSubagentInvocation(tc)) {
         const sa = st.subagents.get(subtask);
@@ -612,7 +878,7 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
       if (isTodoTool(tc)) {
         sealReasoning(st, container);
         closeToolGroup(st, container);
-        mountTodo(m.id, container, tc);
+        mountTodo(st, m.id, container, tc);
         return;
       }
       sealReasoning(st, container);
@@ -652,12 +918,12 @@ function mountText(
   } else {
     container.appendChild(bubble.root);
   }
-  if (live) {
+  if (live && !st.detached) {
     const sig = ensureBlockTextSig(msgId, i, initial);
     const cleanup = effect(() => {
       bubble.setText(sig.value);
     });
-    cbs.pushStreamingEffect(msgId, cleanup);
+    pushLifetimeEffect(st, msgId, cleanup);
   }
 }
 
@@ -680,12 +946,12 @@ function mountThinking(
   });
   st.openReasoning.set(container, view);
   container.appendChild(view.root);
-  if (live) {
+  if (live && !st.detached) {
     const sig = ensureBlockThinkingSig(msgId, i, initial);
     const cleanup = effect(() => {
       view.setText(sig.value);
     });
-    cbs.pushStreamingEffect(msgId, cleanup);
+    pushLifetimeEffect(st, msgId, cleanup);
   }
 }
 
@@ -701,7 +967,7 @@ function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): voi
   }
 }
 
-function mountTodo(msgId: string, container: HTMLElement, tc: ToolCall): void {
+function mountTodo(st: MsgRender, msgId: string, container: HTMLElement, tc: ToolCall): void {
   const list = buildTodoList(parseTodoItems(tc));
   list.dataset["toolId"] = tc.id;
   container.appendChild(list);
@@ -715,10 +981,78 @@ function mountTodo(msgId: string, container: HTMLElement, tc: ToolCall): void {
     updateTodoList(list, parseTodoItems(next));
     last = next;
   });
-  cbs.pushStreamingEffect(msgId, () => {
+  pushLifetimeEffect(st, msgId, () => {
     cleanup();
-    clearToolCallSig(tc.id);
+    releaseToolSig(st, tc.id);
   });
+}
+
+/** Wire the PIPELINE invocation tool's status and label onto its box header, and
+ *  the box's footer ledger onto every stage's members.
+ *
+ *  Deliberately not folded into `bindSubagent`: the label comes from the stage
+ *  COUNT rather than a subagent name, the icon is fixed, and the ledger sums
+ *  across stages instead of over one subtask's members. */
+function bindPipeline(st: MsgRender, msgId: string, tc: ToolCall, live: boolean): void {
+  const box = pipelineBoxFor(st, tc.id, live);
+  box.setName(pipelineLabel(tc));
+  box.setStatus(tc.status);
+  box.setSummary(pipelineSummary(st, tc));
+  const sig = ensureToolCallSig(tc.id, tc);
+  let last = tc;
+  const cleanup = effect(() => {
+    const next = sig.value;
+    if (next === last) {
+      return;
+    }
+    if (next.status !== last.status) {
+      box.setStatus(next.status);
+    }
+    const label = pipelineLabel(next);
+    if (label !== pipelineLabel(last)) {
+      box.setName(label);
+    }
+    box.setSummary(pipelineSummary(st, next));
+    last = next;
+  });
+  pushLifetimeEffect(st, msgId, () => {
+    cleanup();
+    releaseToolSig(st, tc.id);
+  });
+}
+
+/** The pipeline's ledger: every stage's members, summed.
+ *
+ *  The pipeline's own tool call owns the outcome and the wall-clock; the counts
+ *  and the changed files belong to the stages that did the work, so this walks
+ *  them. Changed files merge BY PATH rather than adding counts, matching the turn
+ *  ledger's rule — two stages that touched one file each report that file's own
+ *  totals, and adding them would double-count it. */
+function pipelineSummary(st: MsgRender, invocation: ToolCall): TurnSummaryData {
+  let commands = 0;
+  let reads = 0;
+  const changed: Record<string, FileChange> = {};
+  for (const subtask of st.pipelineStages.get(invocation.id) ?? []) {
+    const stage = subagentSummary(st, subtask, invocation);
+    commands += stage.commands ?? 0;
+    reads += stage.reads ?? 0;
+    for (const [path, ch] of Object.entries(stage.changedFiles ?? {})) {
+      const cur = changed[path] ?? { lines_added: 0, lines_removed: 0 };
+      changed[path] = {
+        lines_added: cur.lines_added + ch.lines_added,
+        lines_removed: cur.lines_removed + ch.lines_removed,
+      };
+    }
+  }
+  const out: TurnSummaryData = { commands, reads, changedFiles: changed };
+  if (!isToolActive(invocation.status)) {
+    out.outcome = invocation.status === "failed" ? "failed" : "completed";
+    const elapsed = invocation.duration_ms ?? 0;
+    if (elapsed > 0) {
+      out.elapsedMs = elapsed;
+    }
+  }
+  return out;
 }
 
 /** Wire the subagent invocation tool's status/name/icon onto its block header,
@@ -756,9 +1090,9 @@ function bindSubagent(
     sa.setSummary(subagentSummary(st, subtask, next));
     last = next;
   });
-  cbs.pushStreamingEffect(msgId, () => {
+  pushLifetimeEffect(st, msgId, () => {
     cleanup();
-    clearToolCallSig(tc.id);
+    releaseToolSig(st, tc.id);
   });
 }
 
@@ -897,50 +1231,105 @@ function workflowInvocation(tc: ToolCall): string {
   return tc.workflow_id ?? "";
 }
 
-/** The tool call that OPENS a subagent (vs. one of its nested tool calls).
- *  Matched by title only — the nested calls share the same agent_subtask_id
- *  but never carry these invocation titles. */
-function isSubagentInvocation(tc: ToolCall): boolean {
-  const t = tc.title;
-  return (
-    t === "invokeSubAgent" ||
-    t === "invoke_sub_agent" ||
-    t === "Orchestrate Sub-agent" ||
-    t === "Sub-agent execution" ||
-    t.startsWith("Sub-agent:")
-  );
+/** The prefix KAS puts on a PIPELINE STAGE's tool-call id. The full shape is
+ *  `invoke_subagent_<orchestrateToolCallId>_stage_<stageName>`, which is the
+ *  parent pointer this renderer needs and the reason no wire change was required:
+ *  the stage names its pipeline in its own id, exactly as a workflow step names
+ *  its run in `wf:<workflowId>:<nodePath>`. */
+const STAGE_PREFIX = "invoke_subagent_";
+const STAGE_SEP = "_stage_";
+
+/** The orchestrate tool-call id a stage belongs to, or "" when the id is not
+ *  stage-shaped (a plain `invoke_sub_agent` call has no pipeline).
+ *
+ *  `indexOf` for the separator, because only the RIGHT half can contain one: an
+ *  orchestrate tool-call id is machine-minted and a stage NAME is author-supplied,
+ *  so the FIRST occurrence is the seam and a stage called `run_stage_two` still
+ *  resolves to its own driver. This read `lastIndexOf` and named that exact case as
+ *  the reason for it, which is the spelling that breaks it — corrected 2026-08-26
+ *  alongside `subagent-slice.ts`'s copy, which is pinned against the same literals.
+ *  Latent rather than live: measured over the 65 distinct stage ids on the volume,
+ *  every driver half is a `toolu_bdrk_*` id and none carries two separators, so no
+ *  stage had yet been named in a way that tripped it. One that was would have
+ *  resolved to a driver that does not exist and rendered as a flat sibling of its own
+ *  pipeline. An empty half on either side returns "" and the stage renders at the top
+ *  level, which is the pre-existing behaviour rather than a lost block. */
+function stagePipelineID(tc: ToolCall): string {
+  const id = tc.id;
+  if (!id.startsWith(STAGE_PREFIX)) {
+    return "";
+  }
+  const rest = id.slice(STAGE_PREFIX.length);
+  const sep = rest.indexOf(STAGE_SEP);
+  if (sep <= 0 || sep + STAGE_SEP.length >= rest.length) {
+    return "";
+  }
+  return rest.slice(0, sep);
 }
 
-function subagentLabel(tc: ToolCall): string {
-  const title = tc.title;
-  if (title.startsWith("Sub-agent:")) {
-    const name = title.slice("Sub-agent:".length).trim();
-    if (name !== "") {
-      return name;
+/** The tool call that STARTS a subagent-orchestration pipeline. */
+function isPipelineInvocation(tc: ToolCall): boolean {
+  return tc.title === "Orchestrate Sub-agent";
+}
+
+/** Learn which pipeline each stage subtask belongs to, from the message's tool
+ *  calls alone.
+ *
+ *  This is the join, and it is done from the TOOL CALL ARRAY rather than from the
+ *  frames precisely so it has no ordering dependency: a stage's text block carries
+ *  only a bare subtask uuid, which names nothing, while the stage's invocation
+ *  carries both that uuid and its pipeline's id. Scanning the whole array means a
+ *  stage whose text arrived before its invocation is still placed correctly on the
+ *  next pass, so the two arrival orders agree.
+ *
+ *  Idempotent and append-only: it runs on every render pass, and a stage keeps the
+ *  pipeline it was first seen under. */
+function indexPipelines(st: MsgRender, m: Message): void {
+  for (const tc of m.tool_calls ?? []) {
+    const subtask = tc.agent_subtask_id ?? "";
+    if (subtask === "") {
+      continue;
+    }
+    const pipelineID = stagePipelineID(tc);
+    if (pipelineID === "" || st.stagePipeline.has(subtask)) {
+      continue;
+    }
+    st.stagePipeline.set(subtask, pipelineID);
+    const stages = st.pipelineStages.get(pipelineID);
+    if (stages === undefined) {
+      st.pipelineStages.set(pipelineID, [subtask]);
+    } else {
+      stages.push(subtask);
     }
   }
-  const nm = subagentName(tc);
-  if (nm !== "") {
-    return humanName(nm);
-  }
-  if (title !== "" && title !== "invokeSubAgent" && title !== "invoke_sub_agent") {
-    return title;
-  }
-  return "Subagent";
 }
 
-/** The raw subagent id from the invocation tool's input (e.g. "introspect",
- *  "context-gatherer"), or "" when the input carries none. Keys the header
- *  icon (roles.ts iconForSubagent); subagentLabel humanizes the same value. */
-function subagentName(tc: ToolCall): string {
+/** The pipeline box's header label: its stage count, which is the one fact worth
+ *  reading on a collapsed box. The count comes from the invocation's own declared
+ *  `stages` when it has them and otherwise from the stages seen so far, so a
+ *  pipeline still names itself honestly while it is being discovered. The `task`
+ *  field is deliberately not used — it is a paragraph of prose, and this is a
+ *  one-line header that ellipsizes. */
+function pipelineLabel(tc: ToolCall): string {
+  const n = declaredStageCount(tc);
+  if (n === 1) {
+    return "Pipeline · 1 stage";
+  }
+  if (n > 1) {
+    return `Pipeline · ${String(n)} stages`;
+  }
+  return "Pipeline";
+}
+
+function declaredStageCount(tc: ToolCall): number {
   const input = tc.input;
   if (input !== undefined && input !== null && typeof input === "object") {
-    const nm = (input as Record<string, unknown>)["name"];
-    if (typeof nm === "string") {
-      return nm;
+    const stages = (input as Record<string, unknown>)["stages"];
+    if (Array.isArray(stages)) {
+      return stages.length;
     }
   }
-  return "";
+  return 0;
 }
 
 /** kiro-cli's todo tracker surfaces as a `todo_list` tool call. Match the tool

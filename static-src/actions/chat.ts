@@ -28,6 +28,7 @@ import type {
 import { decodeChatHeader } from "../wire/decoders.gen.js";
 import {
   get,
+  hasMessage,
   setThinking,
   setSupervisedMode,
   removeChat,
@@ -222,8 +223,18 @@ export const setSupervised = transportAction<
  *      user-transparent. A toast every 600ms of typing would be the loudest
  *      thing in the UI, and a failed draft save costs nothing the user can act
  *      on: the live textarea still holds the text and the next keystroke retries.
- *    - `scope` per chat so dispatches serialize, which is what removes the need
- *      for a generation counter to stop an older save landing after a newer one.
+ *    - `scope` per COMPOSER rather than per chat, which is not a detail. The
+ *      scope exists to serialize draft writes against EACH OTHER, so an older save
+ *      cannot land after a newer one — it does not need to serialize them against
+ *      a prompt. `chat.send_prompt` carries `chat:<id>`, and its POST is held open
+ *      for the whole turn (completion is SSE-anchored, so the reply is the turn's
+ *      end), so sharing that scope queued the CLEAR this composer schedules on
+ *      send behind the very turn the send started. The server's own clear in
+ *      CmdPrompt covered the record, but for the length of a long turn no client
+ *      could learn the draft was spent, and a reload put the sent message back in
+ *      the box. Attachments share this scope on purpose: the two write one frame
+ *      (`draft_changed` carries both fields), so letting them interleave would let
+ *      each broadcast a stale copy of the other's half.
  *    - no optimism, because there is nothing to render: the composer IS the
  *      view of this value.
  *
@@ -232,7 +243,7 @@ export const setSupervised = transportAction<
 export const setDraft = transportAction<{ chatID: string; text: string }>({
   name: "chat.set_draft",
   networkMode: "always",
-  scope: ({ chatID }) => `chat:${chatID}`,
+  scope: ({ chatID }) => `composer:${chatID}`,
   command: ({ chatID, text }) => ({
     type: "set_draft",
     chat_id: chatID,
@@ -247,9 +258,11 @@ export const setDraft = transportAction<{ chatID: string; text: string }>({
 /** Persist the workspace paths staged beside a chat's draft and not yet sent.
  *
  *  The DRAFT'S TWIN, so every property above holds here for the same reason and
- *  the two are deliberately configured identically: same 600ms cadence, same
- *  per-chat scope so dispatches serialize, same silence in both directions, and
- *  no retry because the next debounce supersedes whatever this one carried.
+ *  the two are deliberately configured identically: same 600ms cadence, the SAME
+ *  `composer:<id>` scope, same silence in both directions, and no retry because
+ *  the next debounce supersedes whatever this one carried. Sharing the scope with
+ *  the draft rather than taking one of its own is what keeps the two halves of one
+ *  `draft_changed` frame from interleaving.
  *
  *  Until this existed the pill row was memory-only, so attaching three files and
  *  reloading lost them while the half-written sentence describing them came back.
@@ -261,7 +274,7 @@ export const setDraft = transportAction<{ chatID: string; text: string }>({
 export const setAttachments = transportAction<{ chatID: string; paths: string[] }>({
   name: "chat.set_attachments",
   networkMode: "always",
-  scope: ({ chatID }) => `chat:${chatID}`,
+  scope: ({ chatID }) => `composer:${chatID}`,
   command: ({ chatID, paths }) => ({
     type: "set_attachments",
     chat_id: chatID,
@@ -628,8 +641,7 @@ const PROMPT_ECHO_GRACE_MS = 2000;
  *  message id is in the store — proof the prompt was accepted AND that
  *  SSE is delivering, which outranks a dead POST connection. */
 function promptEchoArrived(chatID: string, messageID: string): boolean {
-  const s = get(chatID);
-  return s?.messages.some((m) => m.id === messageID) ?? false;
+  return hasMessage(chatID, messageID);
 }
 
 /** Check for the prompt echo, allowing one grace window. */

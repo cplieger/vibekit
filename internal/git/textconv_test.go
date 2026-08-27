@@ -1,9 +1,6 @@
 package git
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,36 +42,6 @@ func writeRepoFile(t *testing.T, dir, rel, body string) {
 	}
 }
 
-// fileDiffBody drives the real handler and returns the diff it served.
-func fileDiffBody(t *testing.T, workDir, repo, path string) string {
-	t.Helper()
-	h := NewHandler(workDir)
-	req := httptest.NewRequest(http.MethodGet, "/api/git/file-diff?repo="+repo+"&path="+path, nil)
-	rec := httptest.NewRecorder()
-	h.handleFileDiff(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		Diff string `json:"diff"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	return resp.Diff
-}
-
-// repoUnder makes workDir/name and returns it, matching how the handler resolves
-// a repo out of the work directory.
-func repoUnder(t *testing.T, workDir, name string) string {
-	t.Helper()
-	dir := filepath.Join(workDir, name)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		t.Fatalf("mkdir %s: %v", name, err)
-	}
-	return dir
-}
-
 // The fixture's own proof, and it must hold for the tests below to mean
 // anything: without --no-textconv, git really does execute the repo's command
 // and its output really does reach the caller. A green pair of "the marker is
@@ -109,46 +76,10 @@ func TestTextconv_FixtureIsArmed(t *testing.T) {
 	}
 }
 
-// The file-diff handler is the click that renders a changed file in the git
-// panel, and it is the one an untrusted repo reaches by being opened.
-func TestHandleFileDiff_DoesNotRunARepoTextconvDriver(t *testing.T) {
-	workDir := t.TempDir()
-	armTextconv(t, repoUnder(t, workDir, "untrusted"))
-
-	diff := fileDiffBody(t, workDir, "untrusted", "changed.txt")
-	if strings.Contains(diff, textconvMarker) {
-		t.Errorf("the repo's textconv driver ran:\n%s", diff)
-	}
-	// The real diff must still be there: --no-textconv suppresses the driver,
-	// not the comparison, and a handler that returned nothing would also pass
-	// the assertion above.
-	if !strings.Contains(diff, "working line") {
-		t.Errorf("diff lost its content:\n%s", diff)
-	}
-}
-
-// An UNTRACKED file takes the --no-index fallback, and that path is the least
-// obvious one: "outside the index" does not mean outside the attributes, which
-// git reads from the working tree either way.
-func TestHandleFileDiff_UntrackedFallbackDoesNotRunTextconv(t *testing.T) {
-	workDir := t.TempDir()
-	repoDir := repoUnder(t, workDir, "untrusted")
-	initFixtureRepo(t, repoDir)
-	writeRepoFile(t, repoDir, ".gitattributes", "fresh.txt diff=leak\n")
-	runGit(t, repoDir, "config", "diff.leak.textconv", textconvDriver)
-	writeRepoFile(t, repoDir, "fresh.txt", "never committed\n")
-
-	diff := fileDiffBody(t, workDir, "untrusted", "fresh.txt")
-	if strings.Contains(diff, textconvMarker) {
-		t.Errorf("the --no-index fallback ran the repo's textconv driver:\n%s", diff)
-	}
-	if !strings.Contains(diff, "never committed") {
-		t.Errorf("untracked diff lost its content:\n%s", diff)
-	}
-}
-
-// gitShowCmd is the blob read behind the editor's diff-vs-HEAD pane. It accepts
-// the diff option set (`--textconv` demonstrably enables the driver, see
+// gitShowCmd is the blob read behind the editor's diff-vs-HEAD pane, and since
+// the git panel's inline drawer was replaced by that same pane it is the ONLY
+// call site an untrusted repo reaches by being opened. It accepts the diff option
+// set (`--textconv` demonstrably enables the driver, see
 // TestTextconv_FixtureIsArmed), so pinning the safe value there keeps the raw
 // read a stated property of this call rather than a default it inherits.
 func TestGitShowCmd_ReturnsTheRawBlobNotTextconvOutput(t *testing.T) {

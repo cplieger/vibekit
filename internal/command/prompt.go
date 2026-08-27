@@ -232,6 +232,7 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 		// The text just left the composer, so the draft holding it is spent.
 		// Cleared HERE rather than only by the client's own set_draft: if that
 		// POST is lost, a reload would put the sent message back in the box.
+		hadComposer := c.Draft != "" || len(c.Attachments) > 0
 		c.Draft = ""
 		// Same argument for the files that went with it: the pill row emptied on
 		// send, so a lost set_attachments would otherwise bring three already-sent
@@ -246,6 +247,20 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 			c.Name = name
 		}
 		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg))
+		// And SAY that the composer was cleared. CmdSetDraft is not the only writer
+		// of this field, so it cannot be the only emitter of the frame: without
+		// this, the clear above was silent and every other client — and this one
+		// after a reload — kept serving the text that was already sent. The client's
+		// own clearing set_draft is not a substitute, because it can be superseded
+		// or lost, which is the whole reason the clear is duplicated here.
+		//
+		// Guarded, so the frame keeps meaning "something changed" (broadcastComposer
+		// treats nil as no-change for the same reason): a prompt sent with an empty
+		// composer is the common case and has nothing to announce.
+		if hadComposer {
+			cleared := c.Composer()
+			broadcastComposer(ctx, bus, chatID, &cleared)
+		}
 		return true
 	})
 	return err

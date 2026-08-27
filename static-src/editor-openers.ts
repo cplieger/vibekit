@@ -222,16 +222,18 @@ export async function fetchGitDiffSources(
   if (!fileStates.has(state.path)) {
     return;
   }
-  const { oldContent, newContent, error, baseLabel } = result;
+  const { oldContent, newContent, error, baseLabel, workingLabel } = result;
   state.mode.value = {
     kind: "diff",
     diffSource: {
       ...m.diffSource,
-      // The base pane's caption is whatever the load FOUND there, not the ref
-      // that was asked for: a file git owns no revision of gets "not in git"
-      // rather than an empty pane captioned "HEAD", which would claim HEAD holds
-      // the file and holds it empty.
+      // Both captions are whatever the load FOUND there, not what was asked for:
+      // a file git owns no revision of gets "not in git" rather than an empty pane
+      // captioned "HEAD", which would claim HEAD holds the file and holds it
+      // empty, and a file that is gone from the working tree gets "deleted"
+      // rather than an empty pane captioned "working tree".
       oldLabel: baseLabel,
+      newLabel: workingLabel,
       oldContent,
       newContent,
     },

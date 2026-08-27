@@ -302,8 +302,52 @@
     var(--shadow-ambient),
     0 8px 24px oklch(0% 0 none / 30%);
   max-height: 60vh;
-  min-width: 220px;
+  /* The floor, not the width: the panel is content-sized and createPopover
+   * writes the same number as an inline min-width (matchAnchorWidth), so the
+   * two must agree. 340 is what it takes to READ a suggested name — the create
+   * field then shows ~27 monospace characters against the ~21 the row's own
+   * intrinsic width gave, which clipped `feat/scratch-dir-ignore` mid-word the
+   * moment the suggestion landed. A 40-character name (the prompt's own cap)
+   * still scrolls; that costs a panel ~430px wide hanging off a small chip,
+   * which is worse than a field that scrolls. */
+  min-width: 340px;
   font-size: var(--fs-sm);
+}
+
+/* A text field carrying a leading glyph. Both of this popover's inputs use it,
+ * so the filter and the create box read as one family. The icon is a real
+ * sibling node (git-branch-switcher.ts branchField) rather than a background
+ * image: it inherits currentColor, and this app's CSP forbids nothing here but
+ * a data URL would still need editing in two places to change one colour. */
+.git-branch-field {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.git-branch-field > svg {
+  position: absolute;
+  inset-inline-start: var(--sp-2);
+  inset-block: 0;
+  margin-block: auto;
+  width: 14px;
+  height: 14px;
+  color: var(--c-text-tertiary);
+  /* The glyph sits over the input's own box, so it would otherwise eat the
+   * click that focuses the field it labels. */
+  pointer-events: none;
+}
+
+/* min-height is what makes the field the same height as the buttons beside it
+ * (--btn-h is .btn-small's floor, and .tool-form-input has none of its own, so
+ * the pair used to sit 32 against 36). Same rule and same reason as
+ * .mcp-search-row's. The leading padding reserves the glyph's column. */
+.git-branch-field > .tool-form-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--btn-h);
+  padding-inline-start: calc(var(--sp-2) + 14px + var(--sp-2));
 }
 
 .git-branch-popover-list {
@@ -316,6 +360,13 @@
   border-radius: var(--r);
   background: var(--c-bg-secondary);
   max-height: 18rem;
+}
+
+/* An empty menu is now a real state (loading, and a filter that matches
+ * nothing — the text moved to the status line below it), and its border plus
+ * background would otherwise paint a bare 2px strip above that text. */
+.git-branch-popover-list:empty {
+  display: none;
 }
 
 .git-branch-popover-row {
@@ -338,19 +389,31 @@
 /* .git-branch-popover-row.current: 70-selection.css. It was the only selected
  * state in the app carrying font-weight, which reflows the row it marks. */
 
+/* Loading / empty / failure text, beside the branch menu rather than inside it
+ * (git-branch-switcher.ts says why). `:empty` collapses it so a populated list
+ * pays no space for a line with nothing in it. */
+.git-branch-popover-status {
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.git-branch-popover-status:empty {
+  display: none;
+}
+
 .git-branch-popover-create {
   display: flex;
-  gap: var(--sp-1);
-  align-items: center;
+  gap: var(--sp-2);
+  /* stretch, not center: the field's own min-height sets the row height and
+   * the buttons then match it exactly. Centering left the input floating 2px
+   * clear of the button tops and bottoms. */
+  align-items: stretch;
 }
 
-.git-branch-popover-create-input {
-  width: 100%;
-  flex: 1 1 auto;
-}
-
-/* The ✨ suggest button stays compact beside the create input. */
-.git-branch-popover-suggest {
+/* The two actions stay square beside the field, whatever the field wants. */
+.git-branch-popover-suggest,
+.git-branch-popover-go {
   flex: 0 0 auto;
 }
 
@@ -416,7 +479,67 @@
   flex: 1;
 }
 
-/* File rows under each repo section */
+/* File rows under each repo section, in one group per side of the index.
+ *
+ * The groups stack with the section's own gap; each is a heading plus its
+ * own bordered list, so the heading reads as owning the rows beneath it. */
+.git-file-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.git-file-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* The heading carries three things: what this group is, how many files
+ * are in it, and the bulk actions that act on exactly those files. It is
+ * NOT a disclosure — the group is short and the repo section above it is
+ * already collapsible, so a second nested toggle would cost a click to
+ * reach a list that is usually four rows. */
+.git-file-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 1.5rem;
+}
+
+.git-file-group-label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-text-secondary);
+}
+
+.git-file-group-count {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Unlike the per-row actions below, these stay visible: a group action is
+ * the primary way to move a whole side of the index, and hiding it until
+ * hover is what made "unstage everything" feel like it did not exist. */
+.git-file-group-actions {
+  display: flex;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+/* The staged group's label takes the accent so the two headings are
+ * separable at a glance without either being alarming. */
+.git-file-group-staged .git-file-group-label {
+  color: color-mix(in srgb, var(--c-teal) 70%, var(--c-text-primary));
+}
+
 .git-repo-section-body .git-file-list {
   list-style: none;
   margin: 0;
@@ -453,78 +576,47 @@
   background: var(--c-bg-secondary);
 }
 
-.git-repo-section-body .git-file-row.staged > .git-file-row-top {
-  background: color-mix(in srgb, var(--c-teal) 6%, var(--c-bg-primary));
-}
+/* No `.staged` row tint. It was `color-mix(in srgb, var(--c-teal) 6%,
+ * var(--c-bg-primary))` and it was the ONLY marker of staged-ness on the
+ * row: measured 1.09:1 against its own background in dark and 1.03:1 in
+ * light, under the >= 1.25:1 floor 01-tokens.css states for a step on its
+ * own ramp and far under WCAG 1.4.11's 3:1 for a state boundary. Its
+ * (0,4,0) specificity also beat the (0,3,0) hover rule above, so a staged
+ * row was the one row in the list that did not respond to hover while
+ * still being clickable. Staged-ness is a group heading now
+ * (.git-file-group-head), which is a count and a word rather than a wash
+ * nobody could see. Do not reintroduce a per-row tint for it. */
 
-/* Inline diff drawer */
-/* The drawer is a uip-disclosure-region (animated height + aria-hidden/inert
- * when collapsed); this rule is skin + the internal scroll. The overflow
- * re-declaration wins the cascade over the region's overflow: hidden, so the
- * collapsed chrome rule below restores clipping (and drops the border, which
- * would otherwise paint at height 0). */
-.git-file-diff {
-  border-block-start: 1px solid var(--c-border);
-  background: var(--c-bg-primary);
-  font-size: var(--fs-xs);
-  max-height: 26rem;
-  overflow: auto;
-}
-
-.git-file-diff[aria-hidden="true"] {
-  border-block-start: none;
-  overflow: hidden;
-}
-
-.git-file-diff-pre {
-  margin: 0;
-  padding: var(--sp-2) var(--sp-3);
-  font-family: var(--font-mono);
-  white-space: pre;
-  line-height: 1.4;
-}
-
-.git-diff-line {
-  display: block;
-  padding: 0 var(--sp-1);
-}
-
-.git-diff-line-add {
-  background: color-mix(in srgb, var(--c-green) 12%, transparent);
-  color: color-mix(in srgb, var(--c-green) 80%, var(--c-text-primary));
-}
-
-.git-diff-line-del {
-  background: color-mix(in srgb, var(--c-red) 12%, transparent);
-  color: color-mix(in srgb, var(--c-red) 80%, var(--c-text-primary));
-}
-
-.git-diff-line-hunk {
-  color: var(--c-text-tertiary);
-  font-weight: 600;
-}
-
-.git-diff-line-meta {
-  color: var(--c-text-tertiary);
-}
-
-/* The status label is a WORD ("Untracked", "Modified"), not git's raw status
- * letter — see git-changes-tab.ts, which renders `f.display` and falls back to
- * a letter only when the server left it empty. So the box sizes to its content
- * with a floor, never a fixed width: an 18px box held ~54px of text with no
- * overflow rule, and `text-align: center` (inherited from a duplicate rule
- * authored for the letter) spilled it over the filename on BOTH sides. */
+/* The status cell is a fixed-width single LETTER, coloured from the app's
+ * shared `git-st-*` vocabulary (14-tools.css) — the same emitter the file
+ * browser uses, so one file's change reads identically in both views.
+ *
+ * It used to print the status WORD ("Untracked", "Modified") and size to
+ * that content with an 18px floor. Two costs. The column width then
+ * varied per row, so every filename in the list started at a different x
+ * where the reader scans, worst on a mixed list holding a 1-character
+ * fallback and a 9-character "Untracked". And the word carried no colour,
+ * making this the one changed-file surface in the app with no status hue.
+ * The word is now the tooltip and the accessible name, so nothing is
+ * lost. Fixed width, not min-width, and centred — the historical bug the
+ * previous comment recorded was a `text-align: center` inside an 18px box
+ * holding ~54px of TEXT, which cannot recur with one character in it. */
 .git-file-status {
-  display: inline-block;
-  min-width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
   flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
-  color: var(--c-text-tertiary);
   white-space: nowrap;
 }
 
+/* A real <button>: the filename opens the file's diff in an editor tab. The UA
+ * chrome is reset the same way .tool-disclosure resets it, and `text-align:
+ * start` is load-bearing — a button centres its text, which would un-anchor the
+ * path from the status word beside it. */
 .git-file-path {
   flex: 1;
   min-width: 0;
@@ -533,6 +625,47 @@
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.git-file-path:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+/* Where a rename or copy came from. Secondary to the current path, so it
+ * shrinks first and ellipsises rather than pushing the filename out; the
+ * full origin is in the tooltip. */
+.git-file-orig {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* Why one path is listed in both groups. A chip rather than a tint,
+ * because the fact needs a word: the row is correct git semantics that
+ * reads as a duplicate without one. */
+.git-file-partial {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--c-warning) 40%, var(--c-border));
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--c-warning) 12%, transparent);
+  color: color-mix(in srgb, var(--c-warning) 80%, var(--c-text-primary));
+  font-size: var(--fs-xs);
+  white-space: nowrap;
 }
 
 .git-file-actions {
@@ -543,7 +676,13 @@
   transition: opacity var(--dur-micro);
 }
 
-.git-repo-section-body .git-file-row:hover .git-file-actions {
+/* Hover reveals for a pointer; :focus-within reveals for a keyboard.
+ * Without the second half the actions stayed at opacity 0 while holding
+ * focus, so tabbing through a file list moved the caret onto Stage and
+ * Discard buttons that could not be seen — an invisible focus target, and
+ * on a destructive control (WCAG 2.4.7). */
+.git-repo-section-body .git-file-row:hover .git-file-actions,
+.git-repo-section-body .git-file-row:focus-within .git-file-actions {
   opacity: 1;
 }
 
@@ -638,6 +777,47 @@
   min-width: 0;
 }
 
+/* PRs tab — loading placeholder.
+ *
+ * The mount is empty until every request in the fan-out has landed, so this
+ * stands in for the per-repo sections the paint will build. Geometry mirrors a
+ * real section header (forge icon, repo name, count) because the placeholder's
+ * job is to reserve the shape the content takes, not to draw attention. */
+.git-pr-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+
+.git-pr-skel-label {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.git-pr-skel-section {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.git-pr-skel-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* `.skeleton` (30-utilities.css) supplies the fill, the radius and the shimmer;
+ * these are heights only, matching the text they stand in for. */
+.git-pr-skel-name {
+  height: 0.85rem;
+}
+
+.git-pr-skel-meta {
+  height: 0.7rem;
+}
+
 /* PRs tab — per-repo PR list */
 .git-pr-list {
   list-style: none;
@@ -648,42 +828,38 @@
   gap: var(--sp-1);
 }
 
+/* Two lines of text on the left, one action cluster spanning both on the
+   right. The title OWNS its line — the chips moved down to the sub line, so a
+   long title ellipsises against the action column rather than against a stack
+   of badges. `--fs-sm` is the row's base, matching `.list-row` in 18-pages.css,
+   the app's other primary row label. */
 .git-pr-row {
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-3);
   background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
   display: grid;
   grid-template-columns: 1fr auto;
-  grid-template-areas: "meta actions" "sub actions";
+  grid-template-areas: "title actions" "sub actions";
   gap: 2px var(--sp-3);
-}
-
-.git-pr-row-meta {
-  grid-area: meta;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
 }
 
 .git-pr-row-number {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-accent);
-  text-decoration: none;
+  margin-inline-end: var(--sp-2);
 }
 
-.git-pr-row-number:hover {
-  text-decoration: underline;
-}
-
+/* The number rides inside this element, so this is the row's ONE link: one
+   href, one tab stop, one hover underline. */
 .git-pr-row-title {
+  grid-area: title;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
   min-width: 0;
   color: var(--c-text-primary);
   text-decoration: none;
@@ -723,10 +899,25 @@ a.git-pr-row-title:hover {
   border-color: color-mix(in oklch, var(--c-yellow), transparent 60%);
 }
 
+/* Chips first, then the authorship read-out. It wraps, because a PR can carry
+   three chips and a long branch pair and the honest answer at that width is a
+   second line rather than a clipped one. */
 .git-pr-row-sub {
   grid-area: sub;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px var(--sp-2);
+  min-width: 0;
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
+}
+
+.git-pr-row-sub-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .git-pr-row-actions {
@@ -734,6 +925,48 @@ a.git-pr-row-title:hover {
   display: flex;
   gap: var(--sp-1);
   align-items: center;
+}
+
+/* The PRs tab's labelled buttons take the 2rem control baseline the Permissions
+   rule form already uses (`.rule-form .rf-submit`, 17-settings.css), not
+   `--btn-h`. At 36px a Merge button was 90% of the height of the action cluster
+   it sits in and the + New PR pill was 84% of its section header — measured, and
+   it read as the row's subject rather than as its action. */
+.git-repo-section-header-row > .btn-small,
+.git-pr-row-actions .btn-small {
+  block-size: 2rem;
+  min-height: 2rem;
+}
+
+/* 48rem is where 50-mobile.css bumps `--btn-h` to 2.75rem, so the compact
+   baseline is dropped at exactly that width: below it these are touch targets
+   and owe the 44px floor, not a desktop control size. Two 44px buttons do not
+   fit beside a title on a phone, so the row restacks to one column and the
+   cluster gets its own line rather than squeezing the title to nothing. */
+@media (width <= 48rem) {
+  .git-repo-section-header-row > .btn-small,
+  .git-pr-row-actions .btn-small {
+    block-size: var(--btn-h);
+    min-height: var(--btn-h);
+  }
+
+  /* A 44px touch target in a header whose own height is a 43px toggle leaves
+     the pill wall-to-wall (measured: 0px above, 1px below). The inset goes on
+     the BUTTON rather than as padding on the header, so the toggle's hover fill
+     still reaches the section's top edge. */
+  .git-repo-section-header-row > .btn-small {
+    margin-block: var(--sp-1);
+  }
+
+  .git-pr-row {
+    grid-template-columns: 1fr;
+    grid-template-areas: "title" "sub" "actions";
+    gap: var(--sp-2);
+  }
+
+  .git-pr-row-actions {
+    flex-wrap: wrap;
+  }
 }
 
 /* Sources tab: bare mount, the rest of the layout comes from

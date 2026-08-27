@@ -12,12 +12,16 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../run-store.js", () => ({ invalidateRun: vi.fn(), noteRunChat: vi.fn() }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-// The proactive sub-tab opener and its counterpart, the completion auto-close.
-// Their own rules (nest under the launching chat, do not activate, do not stop the
-// run on close; close only an automatic tab, only on a clean ending, never the tab
-// on screen) are run-view's; what this suite pins is WHICH events reach them and
-// with what.
-vi.mock("../run-view.js", () => ({ openRunSubTab: vi.fn(), autoCloseRunSubTab: vi.fn() }));
+// The proactive sub-tab opener, the completion auto-close, and the live step
+// transcript. Their own rules (nest under the launching chat, do not activate, do
+// not stop the run on close; close only an automatic tab, only on a clean ending,
+// never the tab on screen) are run-view's; what this suite pins is WHICH events
+// reach them and with what.
+vi.mock("../run-view.js", () => ({
+  openRunSubTab: vi.fn(),
+  autoCloseRunSubTab: vi.fn(),
+  applyRunStep: vi.fn(),
+}));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 
 import "./run.js";
@@ -25,7 +29,7 @@ import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
 import { invalidateRun, noteRunChat } from "../run-store.js";
 import { trackRun } from "../run-dots.js";
-import { openRunSubTab, autoCloseRunSubTab } from "../run-view.js";
+import { openRunSubTab, autoCloseRunSubTab, applyRunStep } from "../run-view.js";
 import { info, success, error } from "../toast.js";
 
 const invalidate = vi.mocked(invalidateRun);
@@ -33,6 +37,7 @@ const noteChat = vi.mocked(noteRunChat);
 const track = vi.mocked(trackRun);
 const openSubTab = vi.mocked(openRunSubTab);
 const autoClose = vi.mocked(autoCloseRunSubTab);
+const stepFrames = vi.mocked(applyRunStep);
 const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
@@ -57,6 +62,7 @@ beforeEach(() => {
   track.mockClear();
   openSubTab.mockClear();
   autoClose.mockClear();
+  stepFrames.mockClear();
   toastInfo.mockClear();
   toastSuccess.mockClear();
   toastError.mockClear();
@@ -284,5 +290,25 @@ describe("run toasts", () => {
       send("run_progress", { workflow_id: "wf_prog", kind });
     }
     expect(toasts()).toEqual([]);
+  });
+
+  // `run_step` is the one run frame whose PAYLOAD is read rather than used as a
+  // signal to refetch — a step's transcript is not in `inspect` and no endpoint
+  // serves it, so there is nothing to invalidate. Both halves of that are asserted
+  // here, because either one alone would leave the surface wrong: a refetch
+  // instead of a hand-off would show none of the content, and a hand-off plus a
+  // refetch would put a request on the wire for every delta of every step.
+  it("hands a step frame to the view and refetches nothing", () => {
+    send("run_step", {
+      workflow_id: "wf_live",
+      node_path: "seq/coder",
+      kind: "text",
+      delta: "working",
+    });
+    expect(stepFrames).toHaveBeenCalledTimes(1);
+    expect(stepFrames.mock.calls[0]?.[0]?.node_path).toBe("seq/coder");
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(toasts()).toEqual([]);
+    expect(listRefetches).toBe(0);
   });
 });

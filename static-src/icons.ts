@@ -67,7 +67,19 @@ export const ICON_X =
 export const ICON_PLAY = svg(14, '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg(16, '<path d="M6 9l6 6 6-6"/>');
 export const ICON_CHEVRON_UP = svg(16, '<path d="M18 15l-6-6-6 6"/>');
-export const ICON_SEND = svg(16, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>'); // Busy-state spinner rendered INTO the send button. Uses xmlns so it
+export const ICON_SEND = svg(16, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
+export const ICON_SEND_14 = svg(14, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
+// The AI-generate glyph (Lucide "sparkles"), for every button that asks a model
+// to fill a field: the commit box's message button and the branch popover's
+// name suggestion. It replaced a literal ✨ in both, because the branch
+// popover's row puts it directly beside a stroke-drawn send arrow and an emoji
+// renders from a colour font at its own weight and baseline.
+export const ICON_SPARKLE = svg(
+  14,
+  '<path d="m12 3-1.9 5.8a2 2 0 01-1.3 1.3L3 12l5.8 1.9a2 2 0 011.3 1.3L12 21l1.9-5.8a2 2 0 011.3-1.3L21 12l-5.8-1.9a2 2 0 01-1.3-1.3z"/>' +
+    '<path d="M5 3v4M3 5h4M19 17v4M17 19h4"/>',
+);
+// Busy-state spinner rendered INTO the send button. Uses xmlns so it
 // renders correctly when injected via innerHTML. CSS `.icon-spinner`
 // drives the rotation; we keep a single SVG circle here so the arc
 // geometry is deterministic regardless of browser font metrics.
@@ -301,7 +313,7 @@ export function toolIcon(kind: ToolKind, title: string): string {
 //
 // Two groups that share a prefix and no longer share a consumer. The per-KIND
 // glyphs (settings, git, editor, files, history, docs, run) are `tab-view.ts`'s
-// `TAB_ICONS` map, keyed by the generated `TabKind` so a ninth kind fails the
+// `TAB_ICONS` map, keyed by the generated `TabKind` so a new kind fails the
 // type gate. The per-MODE ones (chat, plan, spec, quick-spec, bug, autonomous,
 // agent) are `roles.ts` `iconForMode`, which now feeds the prompt bar's mode
 // pill and its picker ONLY: a chat tab's leading element is its activity dot,
@@ -380,10 +392,14 @@ export const ICON_TAB_AUTONOMOUS = svg(
   '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
 );
 export const ICON_TAB_SETTINGS = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>`;
-export const ICON_TAB_GIT = svg(
+// The git-branch glyph (Lucide "git-branch"), under two names for the two
+// jobs it does: the git TAB's icon, and the leading glyph of the branch popover's
+// create field. One path, so the two can never drift apart.
+export const ICON_GIT_BRANCH = svg(
   14,
   '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
 );
+export const ICON_TAB_GIT = ICON_GIT_BRANCH;
 export const ICON_TAB_EDITOR = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
 export const ICON_TAB_FILES = svg(
   14,

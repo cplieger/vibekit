@@ -4,6 +4,7 @@
 // URL scheme:
 //   /                             default chat (last active, or empty state)
 //   /chat/{id}                    specific conversation
+//   /chat/{id}/subagent/{taskId}  one subagent execution of that conversation
 //   /git                          git panel (Changes tab — canonical)
 //   /git/{tab}                    git panel sub-tab (prs | sources; changes omits the segment)
 //   /files[/{path}]               file browser at path (omit for workspace root)
@@ -79,6 +80,21 @@ interface RouteRun {
   kind: "run";
   id: string;
 }
+/** One SUBAGENT execution, read on its own page.
+ *
+ *  Two fields, and the chat is not decoration. Nothing indexes an
+ *  `agent_subtask_id` to a chat — there is no subagent endpoint and no cross-chat
+ *  subtask index — so `/subagent/{id}` alone would be unresolvable on a cold
+ *  load, unlike `/run/{id}`, which `GET /api/runs/{id}` answers from nothing. The
+ *  path nests under the conversation for the same reason the tab nests under it:
+ *  a delegate belongs to the turn that dispatched it. */
+interface RouteSubagent {
+  kind: "subagent";
+  /** The chat whose transcript holds this delegate's blocks. */
+  chat: string;
+  /** The delegate's `agent_subtask_id`. */
+  id: string;
+}
 interface RouteSettings {
   kind: "settings";
   tab: SettingsTab;
@@ -92,6 +108,7 @@ export type Route =
   | RouteHistory
   | RouteDocs
   | RouteRun
+  | RouteSubagent
   | RouteSettings;
 
 // --- Parse current URL into a Route ---
@@ -136,10 +153,21 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
 
     case "chat": {
       const id = safeDecode(segments[1] ?? "");
-      if (id !== "") {
-        return { kind: "chat", id };
+      if (id === "") {
+        break;
       }
-      break;
+      // /chat/{id}/subagent/{subtaskId} — a delegate of this conversation, read
+      // on its own page. Checked before the plain chat route returns, because a
+      // longer path under `chat` is a different location rather than a suffix to
+      // ignore; an unrecognised third segment falls through to the chat itself,
+      // which is the nearest thing that does exist.
+      if (segments[2] === "subagent") {
+        const subtask = safeDecode(segments.slice(3).join("/"));
+        if (subtask !== "") {
+          return { kind: "subagent", chat: id, id: subtask };
+        }
+      }
+      return { kind: "chat", id };
     }
 
     case "files": {
@@ -238,6 +266,8 @@ export function buildPath(route: Route): string {
       return route.tab === "steering" ? "/docs" : `/docs/${route.tab}`;
     case "run":
       return `/run/${encodeURIComponent(route.id)}`;
+    case "subagent":
+      return `/chat/${encodeURIComponent(route.chat)}/subagent/${encodeURIComponent(route.id)}`;
     case "files":
       return route.path === "." || route.path === ""
         ? "/files"

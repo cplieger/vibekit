@@ -30,7 +30,12 @@ vi.mock("./tool-group.js", () => ({
   formatDuration: vi.fn(() => ""),
   untrackInProgress: vi.fn(),
 }));
-vi.mock("./tool-schema.js", () => ({ isToolDone: vi.fn(() => false) }));
+vi.mock("./tool-schema.js", () => ({
+  isToolDone: vi.fn(() => false),
+  // Present-but-undefined, same reason as the mocks above: another module in
+  // this graph imports the name and no path under test calls it.
+  isToolActive: undefined,
+}));
 
 // A card double that does the ONE thing these tests depend on the real builder
 // doing: render `opts.output` into the output region at BUILD time, through the

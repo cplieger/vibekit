@@ -233,6 +233,10 @@
                   <!-- icons.ts ICON_MODEL, prepended by model-switcher.ts's
                        init(). Same `d` as the picker heading's 20px copy. -->
                   <span id="ctx-model-pill">auto</span>
+                  <!-- The reasoning tier, written by status.ts and shown only
+                       when the chat departs from the model's own default tier.
+                       Its own span so the model name above ellipsizes first. -->
+                  <span id="ctx-effort-pill" class="pill-model-effort hidden"></span>
                 </button>
                 <span id="model-switch-list" class="pill-expand-content pill-model-list hidden"></span>
               </span>
@@ -475,6 +479,14 @@
               <h3 class="section-title">Tools &amp; runtimes</h3>
               <p class="section-hint">Runtimes, language servers, and CLIs installed on demand from a catalog of ~700 tools (or your own install command). Installs run in the background and stream their output here; the pin icon freezes a tool at its current version. Everything lands on the persistent volume, not the image.</p>
               <div class="section-actions-row">
+                <!-- Update all and Refresh catalog each OWN a job kind: while
+                     their work is live the pill itself becomes the control that
+                     cancels it, spinner and all (tools.ts `JobPill`, which reads
+                     the idle glyph and label straight off this markup — so this
+                     is still the one place either is written). The Cancel pill
+                     below is the residual case: a job launched from a tool row
+                     (install, remove, disable) or by the server's own boot
+                     reconcile has no pill of its own to turn into. -->
                 <div class="action-bar action-bar-inline">
                   <button type="button" id="tool-update-btn" class="action-pill" aria-label="Update all tools">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
@@ -885,7 +897,14 @@
         <div class="page-content">
           <h2 class="page-title">Workflow run</h2>
           <p class="section-hint">Live runs update as they progress; a step's questions appear below.</p>
-          <div id="run-body" class="list-container"></div>
+          <!-- Deliberately NOT a .list-container. That class is a hairline row
+               rack: it paints a border-coloured BACKGROUND so its 1px gaps read
+               as row separators, and carries no padding because every child is a
+               .list-row supplying its own surface and inset. This body holds
+               sections (a summary, a tree, output blocks), none of which paints a
+               surface, so the separator tint became the panel's background flush
+               to the border — a grey box with no padding. -->
+          <div id="run-body"></div>
         </div>
         <!-- The run tab's bottom bar: the decision region, above the content it
              is about, same as the chat's. No composer — there is nobody to type
@@ -893,6 +912,19 @@
              than a composer feature. -->
         <div class="run-bottom-bar bottom-bar">
           <div id="run-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
+        </div>
+      </div>
+
+      <!-- One SUBAGENT execution, read on its own page. The content is the shared
+           exec view (static-src/exec-view/), the same surface the run tab uses, so
+           this holds no header of its own — buildExecPage draws the identity row,
+           the timeline, the tree and the detail pane. No composer and no decision
+           dock: a delegate takes its instructions from the agent that dispatched
+           it, and its permission asks are queued under the launching chat, so both
+           would be controls for something this page cannot address. -->
+      <div id="subagent-view" class="hidden" data-tab-view>
+        <div class="page-content">
+          <div id="subagent-body"></div>
         </div>
       </div>
 
@@ -953,32 +985,9 @@
     <div class="tool-form">
       <label class="tool-form-label">Search the catalog
         <input id="tool-search" class="tool-form-input" type="search" placeholder="ripgrep, terraform, pyright…" autocomplete="off">
-        <span class="tool-form-hint">Runtimes, language servers, and CLIs from the mise + aqua registries. Versions resolve to the latest release; the pin icon freezes them afterwards.</span>
+        <span class="tool-form-hint">Runtimes, language servers and CLIs from the mise + aqua registries, plus this container&rsquo;s Debian packages. Versions resolve to the latest release; the pin icon freezes them afterwards.</span>
       </label>
-      <div id="tool-search-results" class="list-container tool-search-results" role="listbox" aria-label="Catalog results"></div>
-      <button type="button" id="tool-manual-toggle" class="btn-small tool-manual-toggle" aria-expanded="false">Custom install command…</button>
-      <div id="tool-manual-form" class="tool-manual-form hidden">
-        <label class="tool-form-label">Name <input id="tool-manual-name" class="tool-form-input" type="text" placeholder="e.g. mytool"></label>
-        <label class="tool-form-label">Version
-          <input id="tool-manual-version" class="tool-form-input" type="text" placeholder="e.g. 1.2.0">
-          <span class="tool-form-hint">A label for tracking; exposed as $VERSION to the command.</span>
-        </label>
-        <label class="tool-form-label">Install command
-          <input id="tool-manual-install" class="tool-form-input" type="text" placeholder='curl -fsSL … | tar -xz -C "$BIN"'>
-          <span class="tool-form-hint">Runs under bash with $VERSION, $BIN (PATH dir), $OPT (this tool's dir), $TOOLS and ARCH_* variables. Put the binary in $BIN.</span>
-        </label>
-        <label class="tool-form-label">Uninstall command
-          <input id="tool-manual-uninstall" class="tool-form-input" type="text" placeholder="optional cleanup override">
-        </label>
-        <label class="tool-form-label">Probe binary
-          <input id="tool-manual-probe" class="tool-form-input" type="text" placeholder="defaults to the tool name">
-          <span class="tool-form-hint">The $BIN entry whose presence marks the tool installed.</span>
-        </label>
-        <button type="button" id="tool-manual-add" class="btn-save">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          Add &amp; install
-        </button>
-      </div>
+      <div id="tool-search-results" class="list-container tool-search-results" role="listbox" aria-label="Search results"></div>
     </div>
   </div>
 
@@ -991,9 +1000,10 @@
       </button>
     </div>
     <nav id="mcp-modal-tabs" class="mcp-modal-tabs" role="tablist" aria-label="Add integration method">
-      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="remote">Remote URL</button>
-      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="npm">npm package</button>
-      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="raw">Paste JSON</button>
+      <button type="button" class="mcp-modal-tab active" role="tab" aria-selected="true" data-mcp-mode="search">Search registry</button>
+      <button type="button" class="mcp-modal-tab" role="tab" aria-selected="false" data-mcp-mode="remote">Remote URL</button>
+      <button type="button" class="mcp-modal-tab" role="tab" aria-selected="false" data-mcp-mode="npm">npm package</button>
+      <button type="button" class="mcp-modal-tab" role="tab" aria-selected="false" data-mcp-mode="raw">Paste JSON</button>
     </nav>
 
     <!-- Search panel: queries the official MCP registry via proxy -->

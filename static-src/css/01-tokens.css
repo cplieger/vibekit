@@ -586,6 +586,16 @@
     --sp-5: 1.25rem;
     --sidebar-w: 16.25rem;
     --content-max-w: 50rem;
+
+    /* The measure for a page whose content is MACHINE OUTPUT rather than prose:
+       the run review and the subagent page, which hold node trees, tool cards,
+       diffs and captured reports. `--content-max-w` is a reading measure for a
+       conversation and left 240px of dead gutter each side of a 1440 desktop here,
+       protecting content that is not read like prose. Bounded rather than removed
+       because a step row puts its duration at `margin-inline-start: auto`, so an
+       uncapped page floats that number arbitrarily far from the name it belongs
+       to. */
+    --run-page-max-w: 68rem;
     --btn-h: 2.25rem;
     --input-h: 2.375rem;
 

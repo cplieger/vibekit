@@ -198,15 +198,19 @@ export const createPR = apiAction<CreatePRArgs, { number?: number; error?: strin
   error: false,
 });
 
-/** Refresh all PRs across connected forges. */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const refreshPRs = defineAction<void, void>({
+/** Refresh all PRs across connected forges.
+ *
+ *  `force` bypasses the server's listing cache. It is a real argument rather
+ *  than a second action because dedupe is keyed per action: two spellings would
+ *  let a tab-activation refresh and a button press run the fan-out twice. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
+export const refreshPRs = defineAction<{ force: boolean }, void>({
   name: "git.refresh_prs",
   dedupe: true,
-  run: async (_args, signal) => {
+  run: async (args, signal) => {
     const { refreshPRs } = await import("../git-prs-tab.js");
     try {
-      await refreshPRs(signal);
+      await refreshPRs(signal, args.force);
     } catch (e) {
       if (signal.aborted) {
         throw new ActionError("cancelled", { code: "cancelled", cause: e });

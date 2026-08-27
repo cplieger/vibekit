@@ -75,6 +75,18 @@ func isRunChat(chatID vibekit.ChatID) bool {
 	return strings.HasPrefix(string(chatID), runChatPrefix)
 }
 
+// workflowIDOf recovers the run a bridge hosts from its synthetic chat id.
+//
+// The bridge hosts exactly ONE run, so its identity is known before any frame is
+// decoded — which is what lets a step's content be addressed to a run without
+// trusting the frame to name it. Empty for anything that is not a run chat id.
+func workflowIDOf(chatID vibekit.ChatID) string {
+	if !isRunChat(chatID) {
+		return ""
+	}
+	return strings.TrimPrefix(string(chatID), runChatPrefix)
+}
+
 // launchTimeout bounds the launch handshake (process start + initialize +
 // session/new + new + invoke). Generous because a first launch may unpack a
 // KAS runtime tree (~240 MB) before the process answers.
@@ -605,11 +617,18 @@ func (rs *Runs) control(ctx context.Context, workflowID, method, logLabel string
 //   - workflow LIFECYCLE frames go to the run translate handlers with an
 //     EMPTY chat id (workspace-global): a parentless run is not owned by any
 //     chat, and the client routes these by workflow id, not topic.
-//   - session/update is DROPPED. A step's content on a CHAT's bridge feeds
-//     that chat's transcript (attributed, see translate); here there is no
-//     transcript — the run tab renders from `inspect` refetches — and buffering
-//     into the synthetic id would open a phantom assistant message on a chat
-//     that must never exist.
+//   - session/update is PROJECTED, not dropped, and not into a transcript.
+//     A step's content on a CHAT's bridge feeds that chat's transcript
+//     (attributed, see translate); here there is no transcript, and opening a
+//     buffer under the synthetic id would create the phantom assistant message
+//     on a chat that must never exist. So the frames go out as run-scoped
+//     `run_step` events instead, straight to the clients watching this run, and
+//     the run card renders them into the step rows it already has. See
+//     translate/workflow_step_content.go — including which kinds it declines.
+//     They were DROPPED until 2026-08, which left exactly the runs whose only
+//     surface is the run tab as the ones whose steps could not be watched: the
+//     tab had a step's captured output once it finished and nothing at all while
+//     it worked.
 func (rt *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if msg.ID != nil {
 		rt.dispatchRequest(ctx, chatID, msg)
@@ -625,6 +644,7 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vib
 		return
 	}
 	if msg.Method == vibekit.MethodSessionUpdate {
+		rt.translator.HandleRunStepFrame(ctx, workflowIDOf(chatID), msg.Params)
 		return
 	}
 	slog.Debug("run bridge: unhandled notification", "method", msg.Method, "chat_id", chatID)

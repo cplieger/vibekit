@@ -10,6 +10,8 @@ import { bindLoadingState } from "./actions/index.js";
 import { commit as commitAction, generateCommitMessage } from "./actions/git-changes.js";
 import { el } from "@cplieger/reactive";
 import { isSafeURL } from "./url-safety.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_SPARKLE } from "./icons.js";
 import type { GitRepoStatus } from "./git-types.js";
 
 type RepoStatus = GitRepoStatus;
@@ -116,8 +118,18 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
   return wrap;
 }
 
-/** Render the commit message textarea + AI generate + Commit button. */
-export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
+/** Render the commit message textarea + AI generate + Commit button.
+ *
+ *  `stagedCount` is the number of staged FILES, and the Commit button
+ *  names it. The button used to read a bare "Commit" sitting below the
+ *  whole file list, so the one control that writes history said nothing
+ *  about what it was about to write — and since the index is the
+ *  selection, nothing else on the row did either. */
+export function renderCommitArea(
+  r: RepoStatus,
+  deps: CommitDeps,
+  stagedCount: number,
+): HTMLElement {
   const wrap = el("div", { className: "git-commit-area" });
 
   const ta = el("textarea", {
@@ -142,7 +154,8 @@ export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
       className: "btn-small",
       "data-tooltip": "Generate commit message from staged changes",
     },
-    "✨ AI message",
+    iconEl(ICON_SPARKLE),
+    "AI message",
   ) as HTMLButtonElement;
   ai.addEventListener("click", () => {
     void withAsyncFeedback(ai, async () => {
@@ -165,7 +178,7 @@ export function renderCommitArea(r: RepoStatus, deps: CommitDeps): HTMLElement {
   const commit = el(
     "button",
     { type: "button", className: "btn-small btn-primary" },
-    "Commit",
+    `Commit ${String(stagedCount)} file${stagedCount === 1 ? "" : "s"}`,
   ) as HTMLButtonElement;
   commit.addEventListener("click", () => {
     void withAsyncFeedback(commit, async () => {

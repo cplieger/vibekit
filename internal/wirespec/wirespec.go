@@ -127,6 +127,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.RunStartedPayload](),
 	wiregen.TypeRef[vibekit.RunProgressPayload](),
 	wiregen.TypeRef[vibekit.RunFinishedPayload](),
+	wiregen.TypeRef[vibekit.RunStepPayload](),
 	wiregen.TypeRef[vibekit.ToolJobChangedPayload](),
 	wiregen.TypeRef[vibekit.ToolJobOutputPayload](),
 	wiregen.TypeRef[vibekit.TerminalCreatedPayload](),
@@ -158,10 +159,10 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"DecisionKind":     {},
 	"SettledBy":        {},
 	"AlwaysAllowBlock": {},
-	// TabKind is registered so the eight kinds have exactly ONE definition
+	// TabKind is registered so the nine kinds have exactly ONE definition
 	// across both languages: the const block in internal/vibekit/domain_tabs.go,
 	// discovered here and emitted as the TypeScript union. It was a hand-written
-	// union in tabs.ts derived from the TAB_VIEWS keys, which meant a ninth kind
+	// union in tabs.ts derived from the TAB_VIEWS keys, which meant a new kind
 	// added server-side reached a client switch with no case for it and no build
 	// error anywhere — and the client's factory over a subject is TOTAL by
 	// contract, so that is precisely the failure the type has to prevent. With
@@ -219,6 +220,7 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "run_started", TypeName: "RunStartedPayload"},
 	{EventType: "run_progress", TypeName: "RunProgressPayload"},
 	{EventType: "run_finished", TypeName: "RunFinishedPayload"},
+	{EventType: "run_step", TypeName: "RunStepPayload"},
 	{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 	{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
 	{EventType: "tool_call", TypeName: "ToolCallPayload"},

@@ -4,12 +4,22 @@ import { el } from "@cplieger/reactive";
 // Skeleton loading placeholders for perceived performance.
 // ---------------------------------------------------------------------------
 
+/** The transcript placeholder's element id. The renderer drops it by this id
+ *  when real turns land, so the placeholder and the conversation can never share
+ *  the container. */
+export const CHAT_SKELETON_ID = "chat-skeleton";
+
 /** Build a skeleton message group simulating a chat conversation. */
 export function chatSkeleton(): HTMLDivElement {
   const wrap = el("div", {
     className: "skeleton-msg-group",
     "aria-hidden": "true",
   }) as HTMLDivElement;
+  // Carries its id from here rather than from the caller (unlike
+  // `load-more-skeleton`, which scroll.ts stamps) because TWO modules address it:
+  // chat.ts mounts it and messages.ts drops it the moment real turns land. A
+  // literal in both would be a coupling that can drift silently.
+  wrap.id = CHAT_SKELETON_ID;
   // Simulate: user message, tool calls, assistant reply.
   const patterns: { side: "left" | "right"; widths: string[]; isTool?: boolean }[] = [
     { side: "right", widths: ["60%"] },

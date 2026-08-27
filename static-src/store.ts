@@ -159,6 +159,22 @@ export function get(id: string): Session | undefined {
   return sessions.get(id);
 }
 
+/** Whether `chatID`'s transcript already holds `messageID`.
+ *
+ *  The ACCEPTANCE test for a prompt this client sent, and the reason it is a
+ *  store question rather than a caller's loop: `CmdPrompt` persists the user row
+ *  and broadcasts it BEFORE the ACP call, and nothing rolls that back, so an echo
+ *  of our own message id is proof the server took the prompt whatever the POST
+ *  went on to answer. Two callers rest on that — the dead-POST rescue in
+ *  actions/chat.ts and the failed-send restore in submit.ts.
+ *
+ *  A linear scan, deliberately not `msgIndex`: that index is a lookup cache with
+ *  its own rebuild points, and a read this rare does not earn a dependency on
+ *  when it was last refreshed. */
+export function hasMessage(chatID: string, messageID: string): boolean {
+  return sessions.get(chatID)?.messages.some((m) => m.id === messageID) ?? false;
+}
+
 export function setSessions(v: Session[]): void {
   sessions.setAll(v);
   msgIndex.clear();
@@ -861,6 +877,10 @@ export function removeChat(id: string): void {
   batch(() => {
     sessions.remove(id);
     msgIndex.delete(id);
+    // The two per-chat side tables keyed outside the session object. Both doc
+    // comments already say "or chat removed"; this is where that becomes true.
+    clearSnapshotSeq(id);
+    clearLiveTurnMessage(id);
     if (wasActive) {
       const remaining = order.filter((x) => x !== id);
       activeId.value = remaining[0] ?? "";
@@ -1000,8 +1020,16 @@ function ingestMessage(chatID: string, incoming: Message): void {
 }
 
 /** message_appended → merge path (was a dedup no-op that dropped the final
- *  sanitized message). */
+ *  sanitized message).
+ *
+ *  It is also the PERSIST echo: the server writes the chat file before it
+ *  broadcasts this, so an id arriving here is no longer the client's only copy
+ *  and stops being the in-flight turn. That makes the `turn_ended` clear below
+ *  belt-and-braces rather than the mechanism. */
 export function appendMessage(chatID: string, msg: Message): void {
+  if (liveTurnMessage(chatID) === msg.id) {
+    clearLiveTurnMessage(chatID);
+  }
   ingestMessage(chatID, msg);
 }
 
@@ -1166,6 +1194,45 @@ function isPadBlock(b: Block): boolean {
   return b.text === undefined && b.thinking === undefined && b.tool_call_id === undefined;
 }
 
+/** The assistant message a chat's CURRENT turn is streaming into, while the
+ *  server still holds it in memory and nowhere else.
+ *
+ *  The server accumulates a turn in an in-memory buffer and appends it to the
+ *  chat file once, at turn_ended, so `GET /api/chats/{id}` cannot carry it and
+ *  the client's copy is the only one there is. `loadMessages` replaces the array
+ *  with that page, so it has to know WHICH local message the page is entitled to
+ *  omit — and POSITION cannot answer that, which is what this map exists for.
+ *  The agent persists messages DURING a turn (every plan update, a compaction or
+ *  safety event, the cancel badge), and each of them lands after the streaming
+ *  reply locally while sitting inside the page, so a rule of "keep everything
+ *  after the newest id the page carries" steps past the reply and the replace
+ *  deletes it. One plan update was enough.
+ *
+ *  One entry per chat, because the server keeps one buffer per chat. Set by all
+ *  three ways an unpersisted message enters the store — message_created, a chunk
+ *  that beat it, and a reconnect's turn_state — and cleared the moment the server
+ *  echoes the same id as persisted (message_appended), at turn end, and with the
+ *  chat. */
+const liveTurnMsgIDs = new Map<string, string>();
+
+/** Record the message id a chat's in-flight turn is accumulating into. */
+export function noteLiveTurnMessage(chatID: string, messageID: string): void {
+  if (messageID === "") {
+    return;
+  }
+  liveTurnMsgIDs.set(chatID, messageID);
+}
+
+/** Drop the in-flight marker (turn persisted or finished, or chat removed). */
+export function clearLiveTurnMessage(chatID: string): void {
+  liveTurnMsgIDs.delete(chatID);
+}
+
+/** The id of the chat's unpersisted in-flight assistant message, if any. */
+export function liveTurnMessage(chatID: string): string | undefined {
+  return liveTurnMsgIDs.get(chatID);
+}
+
 export function appendChunk(
   chatID: string,
   messageID: string,
@@ -1197,6 +1264,11 @@ export function appendChunk(
     s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
     isNew = true;
+    // A chunk that beat its own message_created. This is one of the three doors
+    // an unpersisted message comes through, so it marks the turn like the other
+    // two — otherwise a refetch in that window has no way to tell this message
+    // from one the server deliberately omitted.
+    noteLiveTurnMessage(chatID, messageID);
   }
   let refusalStamped = false;
   if (refusal !== undefined && msg.refusal === undefined) {

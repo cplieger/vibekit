@@ -33,106 +33,13 @@ import { reconcile } from "./reconcile.js";
 import { el, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_MODEL } from "./icons.js";
-import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
+import { effortLabel, effortVocabulary, modelHasEffort, sameLevels } from "./effort.js";
+import type { ModelInfo, SessionEffortLevel } from "./types.js";
 
-/** Canonical effort levels with display labels. The FALLBACK vocabulary and the
- *  label table, not the authority.
- *
- *  The authority is the `effortLevel` config option's own choices, which arrive
- *  per session (`Session.effort_levels`) and pre-session (the config template,
- *  cached below). Read off kiro-cli 2.18.0: its TUI builds the same picker from
- *  that option and refuses the command when the list is empty, and there is NO
- *  per-model tier list on the wire — the model choice carries only
- *  `defaultEffortLevel`. This list therefore renders when no catalog has landed
- *  yet, and the id→label map names an id whose catalog entry has no name. */
-const EFFORT_LEVELS = [
-  { id: "low", label: "low" },
-  { id: "medium", label: "medium" },
-  { id: "high", label: "high" },
-  { id: "xhigh", label: "x-high" },
-  { id: "max", label: "max" },
-] as const;
-
-/** The pre-session effort vocabulary from GET /api/config-template: the tiers a
- *  fresh session would offer and the level it would run at. A chat with no bridge
- *  has no session catalog, and this is the only evidence available then. Written
- *  once at boot by app.ts. */
-let catalogEfforts: readonly SessionEffortLevel[] = [];
-let catalogEffortActive = "";
-
-export function setCatalogEfforts(levels: readonly SessionEffortLevel[], active: string): void {
-  catalogEfforts = levels;
-  catalogEffortActive = active;
-}
-
-/** The label for an effort tier: the catalog's own name when it has one, else the
- *  house table (so `xhigh` stays "x-high"), else the id verbatim — hiding a tier
- *  the model offers is worse than an unstyled name. */
-function effortLabel(level: SessionEffortLevel): string {
-  if (level.name !== undefined && level.name !== "") {
-    return level.name;
-  }
-  return EFFORT_LEVELS.find((l) => l.id === level.id)?.label ?? level.id;
-}
-
-/** The tiers to render and the tier that is live, for the active chat.
- *
- *  Levels: the session's own catalog, else the pre-session template's, else the
- *  canonical five (nothing has landed yet — a control with no tiers would be a
- *  worse answer than a stale one).
- *
- *  Live tier, highest first: the chat's own choice, so a click marks instantly
- *  through the optimistic store write; then the level the session reports
- *  running at; then the level the user last picked anywhere (`last_effort`),
- *  which is what a NEW chat opens on and what the server independently resolves
- *  into StartOpts.Effort, so the two agree about a session before it exists; then
- *  the current model's own default, which is all that is left when nobody has
- *  ever picked.
- *
- *  The chat's choice and the seed are both reconciled against `levels`; the model
- *  default is not, being in its own list by construction. A tier list is per
- *  model, so a chosen or remembered `max` on a model that stops at `high` is a
- *  level the service rejects, and marking it would claim the session runs at a
- *  tier it cannot reach. Falling through to what the session REPORTS is the honest
- *  answer, and the choice stays on the record for a model that offers it again. */
-function effortVocabulary(
-  session: Session | undefined,
-  models: readonly ModelInfo[],
-): { levels: readonly SessionEffortLevel[]; active: string } {
-  const fromSession = session?.effort_levels ?? [];
-  const levels =
-    fromSession.length > 0
-      ? fromSession
-      : catalogEfforts.length > 0
-        ? catalogEfforts
-        : EFFORT_LEVELS.map((l) => ({ id: l.id, name: l.label }));
-  const modelDefault =
-    models.find((m) => m.model_id === session?.model)?.default_effort_level ?? "";
-  const chosen = ifOffered(session?.effort ?? "", levels);
-  const seeded = ifOffered(getLastEffort(), levels);
-  const active =
-    chosen !== ""
-      ? chosen
-      : (session?.effort_active ?? "") !== ""
-        ? (session?.effort_active ?? "")
-        : seeded !== ""
-          ? seeded
-          : modelDefault !== ""
-            ? modelDefault
-            : catalogEffortActive;
-  return { levels, active };
-}
-
-/** `level` when the current model offers it, else "" — the reconciliation both a
- *  chosen and a remembered level go through. */
-function ifOffered(level: string, levels: readonly SessionEffortLevel[]): string {
-  return level !== "" && levels.some((l) => l.id === level) ? level : "";
-}
-
-/** Whether two tier lists are the same sequence — the rebuild test. */
-function sameLevels(a: readonly SessionEffortLevel[], b: readonly SessionEffortLevel[]): boolean {
-  return a.length === b.length && a.every((l, i) => l.id === b[i]?.id && l.name === b[i].name);
-}
+// The effort vocabulary — which tiers exist, which one is live, and which one is
+// the model's own default — lives in effort.ts, because the model PILL names the
+// live tier too (context-ui.ts) and a second copy of the resolution order is a
+// second thing that can disagree with the session.
 
 // There is no exported EffortLevel type. Its one consumer was AppSettings'
 // `model_effort` field, which is gone: effort is a per-chat string on the chat
@@ -175,24 +82,8 @@ const setEffortAction = transportAction<{ chatID: string; level: string }, { pre
   error: "Couldn't set reasoning effort",
 });
 
-/** Model-aware effort gating. KAS advertises a per-model effort capability in
- *  the config catalog (config_option_update `_meta.kiro.hasEffort`). When the
- *  server plumbs it onto the catalog entries, gate the effort row on the CURRENT
- *  model's capability; when it isn't plumbed at all (no entry carries it), fall
- *  back to showing the row so a working control is never silently hidden. */
-function currentModelHasEffort(models: readonly ModelInfo[], modelID: string): boolean {
-  let plumbed = false;
-  let current = false;
-  for (const m of models) {
-    if (m.has_effort !== undefined) {
-      plumbed = true;
-      if (m.model_id === modelID) {
-        current = m.has_effort;
-      }
-    }
-  }
-  return plumbed ? current : true;
-}
+/** Model-aware effort gating lives in effort.ts (`modelHasEffort`), because the
+ *  pill needs the same verdict: a model with no tiers has no tier to name. */
 
 type QueueState =
   | { status: "idle" }
@@ -246,8 +137,8 @@ class ModelSwitchController {
 
     // Effort section: shown only when the current model advertises reasoning
     // effort (KAS `hasEffort`). Falls back to showing it when the catalog
-    // doesn't carry the capability at all (see currentModelHasEffort).
-    if (currentModelHasEffort(getCachedModels(), current)) {
+    // doesn't carry the capability at all (see effort.ts modelHasEffort).
+    if (modelHasEffort(getCachedModels(), current)) {
       this.ensureEffortRow(list);
     } else {
       this.removeEffortRow();
@@ -316,7 +207,7 @@ class ModelSwitchController {
    *  which is also what makes the row correct after a tab switch rather than
    *  showing whichever chat was open when the page loaded. */
   private ensureEffortRow(list: HTMLElement): void {
-    const { levels, active } = effortVocabulary(getActive(), getCachedModels());
+    const { levels, active } = effortVocabulary(getActive(), getCachedModels(), getLastEffort());
     this.effortActive = active;
     if (this.effortRow === null) {
       this.effortRow = el("div", {
@@ -333,7 +224,11 @@ class ModelSwitchController {
         // Reading activeSession is what makes this per-chat: a tab switch or an
         // optimistic set_effort write re-resolves instead of carrying the previous
         // value over.
-        this.effortActive = effortVocabulary(activeSession.value, getCachedModels()).active;
+        this.effortActive = effortVocabulary(
+          activeSession.value,
+          getCachedModels(),
+          getLastEffort(),
+        ).active;
         this.syncEffortActive();
       });
     }

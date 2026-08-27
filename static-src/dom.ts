@@ -142,6 +142,12 @@ class Elements {
   get ctxModelPill(): HTMLElement {
     return byId("ctx-model-pill");
   }
+  /** The reasoning tier beside the model name on the model pill. Its own element
+   *  so the model name keeps the ellipsis and the tier is never the half that
+   *  gets clipped; `.hidden` when the chat runs at the model's default. */
+  get ctxEffortPill(): HTMLElement {
+    return byId("ctx-effort-pill");
+  }
   get ctxTokens(): HTMLElement {
     return byId("ctx-tokens");
   }

@@ -36,7 +36,8 @@ import {
   ICON_SUBAGENT_TASK,
   ICON_SUBAGENT_CREATOR,
 } from "./icons.js";
-import type { SessionMode } from "./types.js";
+import type { SessionMode, ToolCall } from "./types.js";
+import { humanName } from "./strings.js";
 
 /** The engine-default mode id. kiro-cli v3's session/new starts here; a
  *  chat with an empty current_mode_id is in this mode. Labelled "Default". */
@@ -230,6 +231,70 @@ export function iconForSubagent(name: string): string {
       return ICON_TAB_AGENT;
   }
 }
+
+/** The tool call that OPENS a subagent (vs. one of its nested tool calls).
+ *  Matched by title only — the nested calls share the same agent_subtask_id
+ *  but never carry these invocation titles.
+ *
+ *  `Orchestrate Sub-agent` is deliberately NOT in this list; it is the PIPELINE
+ *  driver's title (messages-blocks.ts `isPipelineInvocation`), and one title with
+ *  two owners is the overlap that makes a classification unpredictable. It was
+ *  here on the assumption that a pipeline launch carries a subtask id, and it
+ *  never has: measured across 36 live chat files, every one of those calls has
+ *  `agent_subtask_id` null, so this arm could not fire.
+ *
+ *  Here rather than in messages-blocks.ts because THREE surfaces now ask it: the
+ *  transcript's dispatcher, the tab factory (which needs a delegate's label for a
+ *  restored tab), and the subagent page. That module reaches the whole transcript
+ *  stack, so the two that are not it could not import from it. */
+export function isSubagentInvocation(tc: ToolCall): boolean {
+  const t = tc.title;
+  return (
+    t === "invokeSubAgent" ||
+    t === "invoke_sub_agent" ||
+    t === "Sub-agent execution" ||
+    t.startsWith("Sub-agent:")
+  );
+}
+
+/** The raw subagent id from the invocation tool's input (e.g. "introspect",
+ *  "context-gatherer"), or "" when the input carries none. Keys the header
+ *  icon (iconForSubagent above); subagentLabel humanizes the same value. */
+export function subagentName(tc: ToolCall): string {
+  const input = tc.input;
+  if (input !== undefined && input !== null && typeof input === "object") {
+    const nm = (input as Record<string, unknown>)["name"];
+    if (typeof nm === "string") {
+      return nm;
+    }
+  }
+  return "";
+}
+
+/** A delegate's display name: the invocation's own `Sub-agent: <name>` title
+ *  first, then its declared id humanized, then whatever title it carries. */
+export function subagentLabel(tc: ToolCall): string {
+  const title = tc.title;
+  if (title.startsWith("Sub-agent:")) {
+    const name = title.slice("Sub-agent:".length).trim();
+    if (name !== "") {
+      return name;
+    }
+  }
+  const nm = subagentName(tc);
+  if (nm !== "") {
+    return humanName(nm);
+  }
+  if (title !== "" && title !== "invokeSubAgent" && title !== "invoke_sub_agent") {
+    return title;
+  }
+  return FALLBACK_SUBAGENT_NAME;
+}
+
+/** What a delegate with no invocation tool call in the store reads as. Exported
+ *  because the tab factory falls back to it for a restored tab whose chat has not
+ *  been fetched yet, and the two must agree or a tab renames itself on load. */
+export const FALLBACK_SUBAGENT_NAME = "Subagent";
 
 /** Display form of a mode's name, for names that are really identifiers.
  *

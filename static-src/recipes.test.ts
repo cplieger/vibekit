@@ -70,7 +70,7 @@ vi.mock("./actions/runs.js", () => ({
     }),
   },
 }));
-vi.mock("./run-view.js", () => ({ openLiveRunView: vi.fn() }));
+vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
 // The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove
 // reaches /api/settings through the actions transport (which the api-client mock
 // does not cover), fire-and-forget, so the request was still open when the window
@@ -86,7 +86,7 @@ vi.mock("./actions/schedules.js", () => ({
 }));
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
-import { openLiveRunView } from "./run-view.js";
+import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
 import type { RecipesResponse, WorkflowRunRow, ResumableSessionRow } from "./types.js";
 
@@ -127,7 +127,7 @@ function buttonFor(panel: HTMLElement, source: string): HTMLButtonElement | null
 beforeEach(() => {
   document.body.replaceChildren();
   dispatched.length = 0;
-  vi.mocked(openLiveRunView).mockClear();
+  vi.mocked(openRunView).mockClear();
   vi.mocked(launchRun.dispatch).mockClear();
   vi.mocked(cancelRun.dispatch).mockClear();
   recipesReply = { recipes: [] };
@@ -158,7 +158,7 @@ describe("the Run ⇄ Cancel row", () => {
     expect(buttonFor(panel, "bundled://goal")?.textContent).toBe("Run");
   });
 
-  it("launches an input-less recipe on click and opens the OWNED run tab", async () => {
+  it("launches an input-less recipe on click and opens its run tab", async () => {
     recipesReply = { recipes: [recipe("goal")] };
     const panel = await render();
 
@@ -167,7 +167,7 @@ describe("the Run ⇄ Cancel row", () => {
       source: "bundled://goal",
       inputs: {},
     });
-    expect(vi.mocked(openLiveRunView)).toHaveBeenCalledWith("wf_new", "goal");
+    expect(vi.mocked(openRunView)).toHaveBeenCalledWith("wf_new", "goal");
   });
 
   it("cancels the LIVE run on click, whoever launched it", async () => {
@@ -382,22 +382,29 @@ describe("the muted classes are gone rather than defined", () => {
   });
 
   it("gives every former use site a component rule that carries its ink", () => {
-    const pages = loadCSS("18-pages.css");
-    for (const sel of [".run-id", ".run-output-empty"]) {
-      expect(/color:\s*var\(--c-text-tertiary\)/.test(ruleBody(pages, sel))).toBe(true);
-    }
+    // `.run-id` and `.run-output-empty` were this page's own; the page renders the
+    // run CARD now, so their equivalents live with the component. Both are still
+    // tertiary ink — that is what the muted-class sweep is checking — they are just
+    // in the stylesheet that owns the element.
+    expect(
+      /color:\s*var\(--c-text-tertiary\)/.test(
+        ruleBody(loadCSS("27-run-card.css"), ".run-output-val-empty"),
+      ),
+    ).toBe(true);
+    // The run PAGE's own note moved to the exec view, which is a different component
+    // with its own vocabulary — the page renders a delegated-execution view now rather
+    // than a variant of the transcript's card.
+    expect(
+      /color:\s*var\(--c-text-tertiary\)/.test(
+        ruleBody(loadCSS("31-exec-view.css"), ".ev-d-empty"),
+      ),
+    ).toBe(true);
     // The History search note moved with its box: the page search boxes are one
     // popup now (24-find.css `.page-find`), so `.hist-search-note` is gone and
     // `.page-find-note` carries the ink for all four of them.
     expect(
       /color:\s*var\(--c-text-tertiary\)/.test(ruleBody(loadCSS("24-find.css"), ".page-find-note")),
     ).toBe(true);
-    // The agent name does the same job as the type beside it, so it joined that
-    // rule instead of getting one of its own.
-    const node = ruleContaining(pages, ".run-node-agent", "top");
-    expect(node.selector).toContain(".run-node-type");
-    expect(/color:\s*var\(--c-text-tertiary\)/.test(node.body)).toBe(true);
-
     expect(
       /color:\s*var\(--c-text-tertiary\)/.test(
         ruleBody(loadCSS("19-files.css"), ".fb-search-note"),

@@ -77,6 +77,20 @@ export interface RunState {
 export interface RunInspect {
   workflowId: string;
   state?: RunState;
+  /** KAS's node PLAN, forwarded verbatim by `GET /api/runs/{id}`.
+   *
+   *  `unknown` on purpose: this is the one part of the reply the client walks
+   *  structurally rather than reading named fields off, and typing it as a shape
+   *  would be a second representation of a structure vibekit does not own — the
+   *  same reason `state` is passed through rather than re-modelled.
+   *  `run-exec-source.ts` narrows it at the point of use.
+   *
+   *  It had ZERO readers until the exec view. Its only content the state tree
+   *  lacks is a repeat's `maxIterations` / `onMaxIterations` / `stopCondition`, so
+   *  a loop's bound and its exit condition were on the wire and had never been on
+   *  screen. `update` appends to it, which is why it is refetched with the state
+   *  rather than read once. */
+  nodePlan?: unknown;
 }
 
 /** Per-run signals, created on demand. A signal per run rather than one version
@@ -91,6 +105,15 @@ const cells = new Map<string, Signal<RunState | undefined>>();
  *  matters is the one AFTER the last of them. */
 const inFlight = new Set<string>();
 const stale = new Set<string>();
+
+/** Per-run node plans, beside the signal rather than inside it.
+ *
+ *  Not a signal of its own: a plan is static for a run's life apart from an
+ *  `update` append, and it is only ever read in the same pass as the state that
+ *  woke the reader — so a second signal would fire a second render for a value
+ *  nobody can observe changing on its own. Kept in step with the cells by
+ *  `fetchRun` and dropped by `forgetRun`. */
+const plans = new Map<string, unknown>();
 
 function cell(workflowID: string): Signal<RunState | undefined> {
   let c = cells.get(workflowID);
@@ -132,6 +155,14 @@ async function fetchRun(workflowID: string): Promise<void> {
   try {
     const d = await apiGet<RunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
     if (d?.state !== undefined) {
+      // The plan BEFORE the state, because the state assignment is what wakes
+      // every reader: a subscriber that re-rendered between the two would draw a
+      // repeat's bound from the previous plan.
+      if (d.nodePlan === undefined) {
+        plans.delete(workflowID);
+      } else {
+        plans.set(workflowID, d.nodePlan);
+      }
       cell(workflowID).value = d.state;
     }
   } finally {
@@ -157,7 +188,17 @@ async function fetchRun(workflowID: string): Promise<void> {
 export function forgetRun(workflowID: string): void {
   cells.delete(workflowID);
   stale.delete(workflowID);
+  plans.delete(workflowID);
   launchedBy.delete(workflowID);
+}
+
+/** A run's node plan, read WITHOUT subscribing.
+ *
+ *  Untracked deliberately: its only reader is the exec-view adapter, which runs
+ *  inside a pass the state signal already woke, so a tracked read would add a
+ *  dependency that can never fire independently. */
+export function runPlan(workflowID: string): unknown {
+  return plans.get(workflowID);
 }
 
 /** Which chat's agent launched a run, learned from the SSE envelope.

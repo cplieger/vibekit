@@ -31,6 +31,19 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_AGENT: "",
+  // roles.ts is in this graph now (tab-materialize.ts derives a delegate tab's
+  // label from it), and Browser Mode links for real rather than reading
+  // properties off a namespace object, so every name it imports has to be here.
+  ICON_TAB_PLAN: "",
+  ICON_TAB_SPEC: "",
+  ICON_TAB_QUICK_SPEC: "",
+  ICON_TAB_BUG: "",
+  ICON_TAB_AUTONOMOUS: "",
+  ICON_SUBAGENT_INTROSPECT: "",
+  ICON_SUBAGENT_GATHERER: "",
+  ICON_SUBAGENT_TASK: "",
+  ICON_SUBAGENT_CREATOR: "",
   ICON_TAB_EDITOR: "",
   ICON_TAB_HISTORY: "",
   ICON_TAB_DOCS: "",
@@ -106,6 +119,7 @@ import {
   renameTab,
   hasTab,
   tabIdFor,
+  tabIdForRoute,
   getActiveTabId,
   getActiveTabKind,
   setOnEmpty,
@@ -145,7 +159,6 @@ interface Openers {
   editorShow: Mock<TabOpeners["editor"]["show"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
-  runCancel: Mock<TabOpeners["run"]["cancel"]>;
 }
 
 let openers: Openers;
@@ -157,12 +170,11 @@ function registerOpeners(): void {
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
-    runCancel: vi.fn<TabOpeners["run"]["cancel"]>(),
   };
   registerTabOpeners({
     chat: { show: openers.chatShow, close: openers.chatClose, dot: () => "" },
     editor: { show: openers.editorShow, close: openers.editorClose },
-    run: { show: openers.runShow, cancel: openers.runCancel },
+    run: { show: openers.runShow },
   });
 }
 
@@ -633,6 +645,61 @@ describe("hasTab", () => {
   });
 });
 
+// What a BACK or FORWARD press asks before it applies a route. A history entry
+// names a location this browser WAS at, which is not the same thing as a location
+// that still exists — so an entry answering "" is a closed tab, and app.ts
+// redirects instead of opening one. Before the question existed, applying such an
+// entry re-opened the tab: a reader pressing back watched a tab they had closed
+// come back, and the server-owned collection broadcast it to every other device.
+describe("tabIdForRoute", () => {
+  it("resolves the route a tab carries to that tab's id", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    expect(tabIdForRoute({ kind: "chat", id: "a" })).toBe(chatID("a"));
+  });
+
+  it("answers '' once that tab is closed", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    const id = chatID("a");
+    await closeTab(id);
+    expect(tabIdForRoute({ kind: "chat", id: "a" })).toBe("");
+    // And the neighbour that took over is still resolvable, so the redirect has
+    // somewhere honest to land.
+    expect(tabIdForRoute({ kind: "chat", id: "b" })).toBe(chatID("b"));
+  });
+
+  // The route kind is `file` and the tab kind is `editor`: the one place the two
+  // vocabularies differ, and the one this lookup exists to stop a caller
+  // re-deriving.
+  it("resolves /file/{path} to the editor tab holding that path", async () => {
+    expect.assertions(2);
+    await openEditorView("src/a.ts");
+    expect(tabIdForRoute({ kind: "file", path: "src/a.ts" })).toBe(tabIdFor("editor", "src/a.ts"));
+    expect(tabIdForRoute({ kind: "file", path: "src/b.ts" })).toBe("");
+  });
+
+  // A singleton's sub-position is not part of its identity, so a deep link into a
+  // sub-tab of an OPEN singleton resolves to it. Answering "" here would redirect
+  // every back press onto /settings/tools away from a Settings tab sitting right
+  // there.
+  it("ignores a singleton's sub-position", async () => {
+    expect.assertions(2);
+    expect(tabIdForRoute({ kind: "settings", tab: "tools" })).toBe("");
+    await openTab({ kind: "settings" });
+    expect(tabIdForRoute({ kind: "settings", tab: "tools" })).toBe(tabIdFor("settings"));
+  });
+
+  // "/" names no chat, so it resolves to nothing even with chats open. That is
+  // what sends a back press onto "/" through the redirect, which canonicalizes it
+  // to whatever is on screen — the same thing applyInitialRoute does on load.
+  it("answers '' for the default route", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    expect(tabIdForRoute({ kind: "chat", id: "" })).toBe("");
+  });
+});
+
 describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", () => {
   async function renderTabs(...refs: string[]): Promise<HTMLElement[]> {
     await openChats(...refs);
@@ -836,32 +903,91 @@ describe("sub-tabs", () => {
     expect(hasTab("chat", "c")).toBe(false);
   });
 
-  // `owns: false` is the VIEW case: dismissing a view must not kill the work it
-  // was watching. It is a subject fact rather than a property of the kind — a
-  // launcher-owned run and a run REVIEW share (kind, ref) and differ only here.
+  // The exit ANIMATION is chosen from what the departing row is, and the choice
+  // has to be made when the row is already out of the projection — which is why
+  // the parent id rides the element. The CSS behind the two classes lives in
+  // 10-shell-app.css; what is pinned here is which one each case gets.
+  describe("the exit animation", () => {
+    // A sub-tab folds back UP into the row it hangs off, because that is where
+    // its work came from and where the reader's attention should land. The
+    // sideways swipe it used to share with a top-level tab also reset the indent
+    // on its first frame, so the row jumped a full 1rem wider before it left.
+    it("merges a child up into a parent that stays", async () => {
+      expect.assertions(2);
+      await openChat("p");
+      await openChild("c", "p");
+      const child = chatID("c");
+      await paint();
+      await closeTab(child);
+      await paint();
+      const row = rows().find((r) => r.dataset["tabId"] === child);
+      expect(row?.classList.contains("exiting")).toBe(true);
+      expect(row?.classList.contains("exiting-merge")).toBe(true);
+    });
+
+    // A child cannot merge into a row that is leaving too, so the whole subtree
+    // takes the parent's own exit and the group reads as one block departing
+    // rather than as N children folding into a vanishing target.
+    it("sends a closed parent's children out with it, not into it", async () => {
+      expect.assertions(6);
+      await openChat("p");
+      await openChild("c1", "p");
+      await openChild("c2", "p");
+      const ids = [chatID("p"), chatID("c1"), chatID("c2")];
+      await paint();
+      await closeTab(ids[0] ?? "");
+      await paint();
+      for (const id of ids) {
+        const row = rows().find((r) => r.dataset["tabId"] === id);
+        expect(row?.classList.contains("exiting")).toBe(true);
+        expect(row?.classList.contains("exiting-merge")).toBe(false);
+      }
+    });
+
+    // An ORPHAN carries a parent its strip does not hold, so it renders indented
+    // with nothing above it to merge into. The survivor-set test answers that for
+    // free: the parent is not open, so the row takes the sideways exit.
+    it("swipes an orphan out rather than merging it into nothing", async () => {
+      expect.assertions(2);
+      await openTab({ kind: "chat", ref: "orphan", parent: "tb_missing" });
+      const id = chatID("orphan");
+      await paint();
+      await closeTab(id);
+      await paint();
+      const row = rows().find((r) => r.dataset["tabId"] === id);
+      expect(row?.classList.contains("exiting")).toBe(true);
+      expect(row?.classList.contains("exiting-merge")).toBe(false);
+    });
+  });
+
+  // `owns: false` is the VIEW case: dismissing a view must not kill the work it was
+  // watching. Asserted on a CHAT, which is the kind that still has an ownership axis —
+  // a side conversation owns its bridge while a tab watching another chat's work does
+  // not. It used to be asserted on a run tab, and cannot be any more: a run tab is
+  // always a view now (user decision, 2026-08), so it has no owning case to compare
+  // against.
   it("does not tear down a tab that owns nothing", async () => {
     expect.assertions(2);
-    await openRunTab("wf-1", "A run", { owns: false });
-    await closeTab(tabIdFor("run", "wf-1"));
-    expect(hasTab("run", "wf-1")).toBe(false);
-    expect(openers.runCancel).not.toHaveBeenCalled();
+    await openChat("watch", { owns: false });
+    await closeTab(chatID("watch"));
+    expect(hasTab("chat", "watch")).toBe(false);
+    expect(openers.chatClose).not.toHaveBeenCalled();
   });
 
   it("tears down an owning tab", async () => {
     expect.assertions(2);
-    await openRunTab("wf-1", "A run", { owns: true });
-    await closeTab(tabIdFor("run", "wf-1"));
-    expect(hasTab("run", "wf-1")).toBe(false);
-    expect(openers.runCancel).toHaveBeenCalledTimes(1);
+    await openChat("mine");
+    await closeTab(chatID("mine"));
+    expect(hasTab("chat", "mine")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledTimes(1);
   });
 
-  it("still removes an owns:false child when its parent closes", async () => {
-    expect.assertions(2);
+  it("still removes a view child when its parent closes", async () => {
+    expect.assertions(1);
     await openChat("p");
-    await openRunTab("wf-1", "A view", { parent: chatID("p"), owns: false });
+    await openRunTab("wf-1", "A view", { parent: chatID("p") });
     await closeTab(chatID("p"));
     expect(hasTab("run", "wf-1")).toBe(false);
-    expect(openers.runCancel).not.toHaveBeenCalled();
   });
 
   // A cascade reaches every DESCENDANT, not just the direct children, and an
@@ -876,10 +1002,12 @@ describe("sub-tabs", () => {
     await openChat("p");
     await openChild("c", "p");
     await openChild("gc", "c");
-    await openRunTab("wf-view", "A view", { parent: chatID("p"), owns: false });
+    await openRunTab("wf-view", "A view", { parent: chatID("p") });
     await closeTab(chatID("p"));
     expect(order).toEqual(["gc", "c", "p"]);
-    expect(openers.runCancel).not.toHaveBeenCalled();
+    // The run sub-tab went with the cascade and tore nothing down, which is what a
+    // view child is: removed with its parent, never a teardown of its own.
+    expect(hasTab("run", "wf-view")).toBe(false);
     for (const ref of ["p", "c", "gc"]) {
       expect(hasTab("chat", ref)).toBe(false);
     }

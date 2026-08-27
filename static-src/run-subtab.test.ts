@@ -31,6 +31,13 @@ const m = {
 };
 
 vi.mock("./tabs.js", () => ({
+  // Present-but-inert: the run tab renders the run CARD now, whose markdown
+  // bubble reaches the linkifier and through it the editor openers, so these
+  // names are imported somewhere in this graph. No case here opens a file.
+  getActiveTabId: vi.fn(() => ""),
+  openEditorView: vi.fn(),
+  setTabDirty: vi.fn(),
+  toggleGitView: vi.fn(),
   // `(kind, ref)` in, opaque id out — and "" for "no tab". The fake answers with
   // the readable id the assertions name.
   tabIdFor: vi.fn((kind: string, ref: string) =>
@@ -56,6 +63,9 @@ vi.mock("./tabs.js", () => ({
 }));
 
 vi.mock("./decision-dock.js", () => ({
+  // The card's second input beside `inspect`: which step is blocked on a person,
+  // which no node status can say. None is here.
+  runPendingAsks: vi.fn(() => ({ count: 0, nodes: new Set<string>(), label: "" })),
   mountRunDecisionDock: vi.fn(),
   rerenderDocks: vi.fn(),
   hasPendingDecision: vi.fn(() => false),
@@ -65,6 +75,20 @@ vi.mock("./run-store.js", () => ({
   invalidateRun: vi.fn(),
   runState: vi.fn(() => undefined),
   runChatID: vi.fn((id: string) => m.launchedBy.get(id) ?? ""),
+  // The rest are the run CARD's, which the tab renders now instead of hand-rolling
+  // a node tree. Every derived question about a run is a FUNCTION over the cached
+  // state rather than a field stored beside it (see run-store.ts), so a card that
+  // renders nothing still links against all of them. This suite paints no state —
+  // `runState` answers undefined — so each one is inert.
+  elapsedMs: vi.fn(() => 0),
+  // The node PLAN, which the exec view is the first reader of: a repeat's bound and
+  // stop condition come from there rather than from the state tree.
+  runPlan: vi.fn(() => undefined),
+  leafNodes: vi.fn(() => []),
+  nodePathOf: vi.fn(() => []),
+  runCounters: vi.fn(() => ({ total: 0, done: 0, failed: 0, current: 0 })),
+  runElapsedMs: vi.fn(() => 0),
+  runIsLive: vi.fn(() => false),
 }));
 
 vi.mock("./run-dots.js", () => ({ refreshRunDots: vi.fn(), trackRun: vi.fn() }));
@@ -74,7 +98,7 @@ vi.mock("./actions/runs.js", () => {
   return { cancelRun: stub, pauseRun: stub, resumeRun: stub, retryRun: stub };
 });
 
-const { openRunSubTab, openRunView, openLiveRunView, autoCloseRunSubTab } =
+const { openRunSubTab, openRunView, autoCloseRunSubTab } =
   await import("./run-view.js");
 
 beforeEach(() => {
@@ -274,12 +298,14 @@ describe("the completion auto-close", () => {
     expect(m.closed).toEqual([]);
   });
 
-  // A launcher-owned tab's × CANCELS, so it must be unreachable from here even
-  // though a finished run's cancel would be a no-op.
-  it("leaves a launcher-owned tab alone", () => {
+  // The Workflows tab's Run button goes through the same door as every other
+  // manual one now — `openLiveRunView` is gone, and with it the `owns: true` tab
+  // whose × cancelled — so a launched run's tab is claimed by the reader exactly
+  // like a re-opened one and this function cannot reach it either.
+  it("leaves a launched run's own tab alone", () => {
     m.tabs.add("c-1");
     openRunSubTab("wf_ac6", "publish-pr", "c-1");
-    openLiveRunView("wf_ac6", "publish-pr");
+    openRunView("wf_ac6", "publish-pr");
     autoCloseRunSubTab("wf_ac6", "completed");
     expect(m.closed).toEqual([]);
   });

@@ -12,6 +12,7 @@ import { TAB_ICONS } from "./tab-view.js";
 import {
   materializeTab,
   registerTabOpeners,
+  subjectForRoute,
   _resetTabOpenersForTest,
   type TabOpeners,
 } from "./tab-materialize.js";
@@ -75,7 +76,6 @@ interface Spies {
   editorShow: Mock<TabOpeners["editor"]["show"]>;
   editorClose: Mock<TabOpeners["editor"]["close"]>;
   runShow: Mock<TabOpeners["run"]["show"]>;
-  runCancel: Mock<TabOpeners["run"]["cancel"]>;
 }
 
 let spies: Spies;
@@ -88,12 +88,11 @@ function register(dot: TabDotStatus | "" = ""): void {
     editorShow: vi.fn<TabOpeners["editor"]["show"]>(),
     editorClose: vi.fn<TabOpeners["editor"]["close"]>(),
     runShow: vi.fn<TabOpeners["run"]["show"]>(),
-    runCancel: vi.fn<TabOpeners["run"]["cancel"]>(),
   };
   const openers: TabOpeners = {
     chat: { show: spies.chatShow, close: spies.chatClose, dot: spies.chatDot },
     editor: { show: spies.editorShow, close: spies.editorClose },
-    run: { show: spies.runShow, cancel: spies.runCancel },
+    run: { show: spies.runShow },
   };
   registerTabOpeners(openers);
 }
@@ -103,20 +102,6 @@ beforeEach(() => {
   vi.mocked(get).mockReturnValue(undefined);
   vi.mocked(peekRunState).mockReturnValue(undefined);
 });
-
-/** Everything about a spec that is not a callback, so two specs can be compared
- *  for "identical apart from behaviour". */
-function shapeOf(spec: TabViewSpec): Record<string, unknown> {
-  return {
-    name: spec.name,
-    icon: spec.icon,
-    view: spec.view,
-    route: spec.route,
-    owns: spec.owns,
-    parentId: spec.parentId,
-    dotStatus: spec.dotStatus,
-  };
-}
 
 // --- Totality ---
 
@@ -157,16 +142,31 @@ describe("materializeTab is total over the eight kinds", () => {
     expect(spec.route).toEqual(route);
   });
 
-  // The rule this asserts is narrow and load-bearing: `owns` is copied from the
-  // SUBJECT for every kind, never inferred from the kind. Inferring it is exactly
-  // the mistake that makes a run REVIEW cancel the run it is only watching, and
-  // asserting it per kind is what stops a future case hardcoding `owns: true`
-  // because "a chat always owns its bridge".
-  it.each(CASES)("$kind takes owns from the subject, not from the kind", ({ kind, ref }) => {
-    register();
-    expect(materializeTab(subject({ kind, ref, owns: true })).owns).toBe(true);
-    expect(materializeTab(subject({ kind, ref, owns: false })).owns).toBe(false);
-  });
+  // `owns` is copied from the SUBJECT for every kind, never inferred from the kind,
+  // which is what stops a future case hardcoding `owns: true` because "a chat always
+  // owns its bridge".
+  //
+  // RUN and SUBAGENT are the two exceptions and they are hardcoded FALSE on purpose:
+  // both are subpage VIEWS of work owned elsewhere (user decision, 2026-08), so their
+  // × closes a view and stops nothing. Asserting the exception here is what stops it
+  // being re-derived as a subject field — see the run case below.
+  it.each(CASES.filter((c) => c.kind !== "run" && c.kind !== "subagent"))(
+    "$kind takes owns from the subject, not from the kind",
+    ({ kind, ref }) => {
+      register();
+      expect(materializeTab(subject({ kind, ref, owns: true })).owns).toBe(true);
+      expect(materializeTab(subject({ kind, ref, owns: false })).owns).toBe(false);
+    },
+  );
+
+  it.each(CASES.filter((c) => c.kind === "run" || c.kind === "subagent"))(
+    "$kind is a VIEW whatever the subject claims",
+    ({ kind, ref }) => {
+      register();
+      expect(materializeTab(subject({ kind, ref, owns: true })).owns).toBe(false);
+      expect(materializeTab(subject({ kind, ref, owns: false })).owns).toBe(false);
+    },
+  );
 
   it.each(CASES)("$kind names the tab", ({ kind, ref }) => {
     register();
@@ -174,39 +174,34 @@ describe("materializeTab is total over the eight kinds", () => {
   });
 });
 
-// --- The run case, both ways ---
+// --- The run case ---
 
-describe("an owned run and a review of the same run", () => {
-  const OWNED = subject({ kind: "run", ref: "wf-7", owns: true });
-  const REVIEW = subject({ kind: "run", ref: "wf-7", owns: false });
-
-  it("differ in owns and in nothing else describable", () => {
+// ONE shape, whatever door opened it. There used to be two — an owned tab whose ×
+// cancelled the run and a review whose × did not — and these cases pinned the
+// difference. The difference is gone (user decision, 2026-08): the subpage view is
+// universal across a parentless workflow, a chat-triggered workflow and a subagent
+// expansion, and a × that means "close this" on one door and "destroy the work" on
+// another is a gesture a reader cannot learn.
+//
+// What replaces the assertion is its inverse: a run tab NEVER carries a teardown, so
+// no door can be given one by setting a subject field.
+describe("a run tab is always a view", () => {
+  it("carries no teardown, whatever the subject says", () => {
     register();
-    const owned = materializeTab(OWNED);
-    const review = materializeTab(REVIEW);
-    expect(shapeOf(owned)).toEqual({ ...shapeOf(review), owns: true });
+    for (const owns of [true, false]) {
+      const spec = materializeTab(subject({ kind: "run", ref: "wf-7", owns }));
+      expect("onClose" in spec).toBe(false);
+      expect(spec.owns).toBe(false);
+    }
   });
 
-  it("differ in the CONSEQUENCE of owns: only the owned one cancels on close", () => {
+  it("shows the run and tells the view nothing about authority", () => {
     register();
-    const owned = materializeTab(OWNED);
-    const review = materializeTab(REVIEW);
-    // A review carries no teardown at all rather than one the store would skip:
-    // dismissing a view has nothing to tear down, and the absent field says so.
-    expect("onClose" in review).toBe(false);
-    owned.onClose?.();
-    expect(spies.runCancel).toHaveBeenCalledWith("wf-7");
-    expect(spies.runCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("show the same run, and tell the view which authority it has", () => {
-    register();
-    materializeTab(OWNED).onShow?.();
-    materializeTab(REVIEW).onShow?.();
-    expect(spies.runShow.mock.calls).toEqual([
-      ["wf-7", true],
-      ["wf-7", false],
-    ]);
+    materializeTab(subject({ kind: "run", ref: "wf-7", owns: true })).onShow?.();
+    materializeTab(subject({ kind: "run", ref: "wf-7", owns: false })).onShow?.();
+    // ONE argument. The view derives what it may offer from the RUN — its status and
+    // whether it is parentless — rather than from which door was used.
+    expect(spies.runShow.mock.calls).toEqual([["wf-7"], ["wf-7"]]);
   });
 });
 
@@ -374,6 +369,41 @@ describe("names", () => {
   ] as const)("names the %s singleton", (kind, name) => {
     register();
     expect(materializeTab(subject({ kind })).name).toBe(name);
+  });
+});
+
+// --- The route inverse ---
+
+describe("subjectForRoute inverts the factory's route", () => {
+  // A real inverse property, not a table read back: the two directions are
+  // written independently in the same file, so a mapping that sends /run/{id} to
+  // the wrong kind fails here. It is also what catches the one place the two
+  // vocabularies differ — the route kind is `file` and the tab kind is `editor`.
+  it.each(CASES)("$kind round-trips through its route", ({ kind, ref }) => {
+    register();
+    const route = materializeTab(subject({ kind, ref })).route;
+    expect(subjectForRoute(route)).toEqual({ kind, ref });
+  });
+
+  // The OTHER direction deliberately does not round-trip. A singleton's route
+  // carries a sub-position and its subject carries none, which is what makes
+  // /settings/tools and /settings name one tab: the sub-position is corrected
+  // after activation, by applyRoute.
+  it.each([
+    [{ kind: "settings", tab: "tools" } as Route, "settings"],
+    [{ kind: "git", tab: "prs" } as Route, "git"],
+    [{ kind: "docs", tab: "hooks" } as Route, "docs"],
+    [{ kind: "files", path: "a/b" } as Route, "files"],
+  ])("drops a singleton's sub-position: %o", (route, kind) => {
+    expect(subjectForRoute(route)).toEqual({ kind, ref: "" });
+  });
+
+  // The default "/" route names no chat, so it resolves to a subject nothing can
+  // match — an empty ref belongs to a singleton. That answer is what makes the
+  // back/forward guard redirect "/" to whatever is on screen rather than looking
+  // for a chat tab with no id.
+  it("answers an unmatchable subject for the default chat route", () => {
+    expect(subjectForRoute({ kind: "chat", id: "" })).toEqual({ kind: "chat", ref: "" });
   });
 });
 

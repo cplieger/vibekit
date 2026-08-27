@@ -178,6 +178,32 @@ export function restoreComposerState(chatID: string): void {
   restoreAttachments(chatID);
 }
 
+/** Point the composer at `chatID`, parking whatever it was holding first.
+ *
+ *  The save-and-restore pair as ONE call, for the places that move the store's
+ *  active chat WITHOUT going through `activateChatView`. There are three, and
+ *  each left a window in which `getActiveId()` named the new chat while this
+ *  module still named the old one: `createSession` and `openTangentChat` set the
+ *  active chat and then AWAIT a tab round trip before the activation runs, and
+ *  `removeChat` reassigns it to `remaining[0]` with no activation at all.
+ *
+ *  A keystroke in that window is filed under the chat the user just left, which
+ *  is both halves of one reported bug. The text disappears out of the box when
+ *  the activation finally repaints it from the new chat's empty entry, and it
+ *  comes back the next time the PREVIOUS chat is opened — after `saveComposerState`
+ *  has flushed it to the server as that chat's draft, so it survives a reload
+ *  too. Retargeting here rather than at the activation is what makes the box the
+ *  new chat's from the moment the store agrees, so the same keystroke is filed
+ *  under the chat that will receive it and the later activation repaints the same
+ *  value it already holds.
+ *
+ *  Idempotent, which is what lets it run ahead of an activation that will do the
+ *  same thing: a restore reads the map, and the map is what every write lands in. */
+export function retargetComposer(chatID: string): void {
+  saveComposerState();
+  restoreComposerState(chatID);
+}
+
 /** Adopt the server's stored composer state for `chatID`, once its record has
  *  loaded: the draft AND the attachments staged beside it, because they are one
  *  composer and a reload that restored the sentence without the files it describes
@@ -200,6 +226,40 @@ export function seedComposerState(chatID: string): void {
     return;
   }
   if ($.promptInput.value === "") {
+    $.promptInput.value = text;
+  }
+}
+
+/** Put a failed send's text back where the user left it, under the chat that
+ *  sent it.
+ *
+ *  Lives here rather than in prompt-input.ts because the answer to "put it back"
+ *  is per-chat, and the per-chat map is here. The version it replaces wrote the
+ *  shared box unconditionally, so a prompt that failed after the reader had moved
+ *  on landed in whatever conversation was on screen — and the announced `input`
+ *  event then recorded it as THAT chat's draft and flushed it to the server. The
+ *  attachment half of the same restore has always been chat-scoped
+ *  (`addAttachmentTo`), which is what made the text half's omission visible.
+ *
+ *  Two things lose to a live draft, for the reason the seed loses to one: the send
+ *  is asynchronous, so the user may already be typing the next message. A recorded
+ *  draft wins outright, and the BOX is only written when it is empty — those are
+ *  different tests because the textarea is a display surface (ArrowUp puts history
+ *  in it without touching the map), so a history preview must not be overwritten
+ *  even though the draft behind it is empty.
+ *
+ *  Persisted like a keystroke, not just parked: without the save a reload loses
+ *  text the user can see sitting in the box. */
+export function restoreFailedSend(chatID: string, text: string): void {
+  if (chatID === "" || text === "") {
+    return;
+  }
+  if ((drafts.get(chatID) ?? "") !== "") {
+    return;
+  }
+  drafts.set(chatID, text);
+  debouncedSave?.({ chatID, text });
+  if (chatID === liveChatID && $.promptInput.value === "") {
     $.promptInput.value = text;
   }
 }

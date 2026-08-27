@@ -16,6 +16,7 @@ import {
   setThinking,
   setAgentStatus,
   setSnapshotSeq,
+  noteLiveTurnMessage,
 } from "../store.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
@@ -41,6 +42,12 @@ onSSE("message_created", (chatID, m) => {
   }
   // message_created starts a new assistant bubble; upsert so future chunks
   // target the right ID. Content is empty until chunks arrive.
+  //
+  // It is also the point the server starts a buffer nothing has persisted, so
+  // the store records which id that is. A refetch replaces the array with the
+  // chat file's page, and this marker is the only thing that tells this message
+  // from one the page left out on purpose.
+  noteLiveTurnMessage(chatID, m.id);
   upsertMessage(chatID, m);
 });
 
@@ -76,6 +83,9 @@ onSSE("turn_state", (chatID, p) => {
   const msg = p.message;
   if (msg !== undefined && msg.id !== "") {
     setSnapshotSeq(chatID, msg.id, p.chunk_seq ?? 0);
+    // The snapshot IS the server's unflushed buffer, so this id is unpersisted
+    // by construction — the third door, and the one a reload comes through.
+    noteLiveTurnMessage(chatID, msg.id);
     upsertMessage(chatID, msg);
   }
   if (p.status !== undefined && p.status !== "") {

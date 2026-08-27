@@ -19,6 +19,7 @@ import { preserveGitScroll } from "./git-scroll.js";
 import { stage, discard, pull, push, stash, stashPop, unstage } from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
+import { openChange } from "./navigate.js";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
@@ -48,7 +49,14 @@ class CancelledError extends Error {
 // --- Wire types ---
 
 import type { GitFileEntry as FileEntry, GitRepoStatus as RepoStatus } from "./git-types.js";
-import { statusLetter, describeStatus, stashableCount } from "./git-types.js";
+import {
+  statusLetter,
+  describeStatus,
+  stashableCount,
+  changedPathCount,
+  distinctPaths,
+  partiallyStagedPaths,
+} from "./git-types.js";
 
 interface StatusAllResponse {
   repos: RepoStatus[];
@@ -61,9 +69,8 @@ let lastStatusAll: RepoStatus[] = [];
 let filterText = "";
 let refreshGeneration = 0;
 let refreshAbort: AbortController | null = null;
-/** Long-lived abort controller for diff/log fetches — only aborted on
- *  tab teardown, NOT on every repaint. Individual diff fetches create
- *  their own per-fetch controllers with a timeout. */
+/** Long-lived abort controller for the recent-commits log fetch — only
+ *  aborted on tab teardown, NOT on every repaint. */
 const diffAbortCtrl = new AbortController();
 registerCleanup(() => {
   refreshAbort?.abort();
@@ -87,9 +94,6 @@ const discardPendingRepos = new Set<string>();
 // Bug 3: Track user-toggled collapse state (repos the user manually collapsed).
 const userCollapsedRepos = new Set<string>();
 const userExpandedRepos = new Set<string>();
-
-// Bug 4: Track expanded inline diff paths across re-renders.
-const expandedDiffPaths = new Set<string>();
 
 // Per-paint cleanup: unbind functions from bindLoadingState calls.
 let bindingCleanups: (() => void)[] = [];
@@ -250,17 +254,6 @@ function paintInner(): void {
 
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
-  // Build per-repo path index for finer pruning of expandedDiffPaths.
-  // Without this, renamed/deleted files leave stale `repo\0path` keys
-  // behind that grow the Set unboundedly over edit cycles.
-  const activePathsByRepo = new Map<string, Set<string>>();
-  for (const r of lastStatusAll) {
-    const paths = new Set<string>();
-    for (const f of r.files) {
-      paths.add(f.path);
-    }
-    activePathsByRepo.set(r.repo, paths);
-  }
   for (const k of userCollapsedRepos) {
     if (!activeRepos.has(k)) {
       userCollapsedRepos.delete(k);
@@ -274,31 +267,6 @@ function paintInner(): void {
   for (const k of commitMessages.keys()) {
     if (!activeRepos.has(k)) {
       commitMessages.delete(k);
-    }
-  }
-  for (const k of expandedDiffPaths) {
-    const nulIdx = k.indexOf("\0");
-    if (nulIdx === -1) {
-      expandedDiffPaths.delete(k);
-      continue;
-    }
-    const repo = k.slice(0, nulIdx);
-    const path = k.slice(nulIdx + 1);
-    const repoPaths = activePathsByRepo.get(repo);
-    if (!repoPaths?.has(path)) {
-      expandedDiffPaths.delete(k);
-    }
-  }
-  // Cap expandedDiffPaths to prevent unbounded growth over long sessions.
-  if (expandedDiffPaths.size > 200) {
-    const excess = expandedDiffPaths.size - 200;
-    const iter = expandedDiffPaths.values();
-    for (let i = 0; i < excess; i++) {
-      const next = iter.next();
-      if (next.done === true) {
-        break;
-      }
-      expandedDiffPaths.delete(next.value);
     }
   }
 
@@ -319,19 +287,12 @@ function paintInner(): void {
     return;
   }
 
-  // Filter file entries by path (we keep the section if any file
-  // matches OR if the search is empty).
-  const visibleRepos: RepoStatus[] = [];
-  for (const r of lastStatusAll) {
-    if (filterText !== "") {
-      const repoMatches = r.repo.toLowerCase().includes(filterText);
-      const anyFileMatches = r.files.some((f) => f.path.toLowerCase().includes(filterText));
-      if (!repoMatches && !anyFileMatches) {
-        continue;
-      }
-    }
-    visibleRepos.push(r);
-  }
+  // Which repos survive the filter, and which of their files. ONE predicate,
+  // read here to build the reconcile list and again in renderRepoSection to
+  // build the rows — it used to be written twice, and the two copies disagreed:
+  // this one kept a repo whose NAME matched, that one then applied the path
+  // filter regardless and emptied it.
+  const visibleRepos = lastStatusAll.filter((r) => filteredFilesFor(r) !== null);
 
   // Drop any prior non-keyed empty-state placeholder before reconciling.
   for (const child of [...root.children]) {
@@ -401,16 +362,31 @@ function paintError(msg: string): void {
   root.replaceChildren(el("div", { className: "git-multirepo-error" }, msg));
 }
 
+/** The files of `r` the current filter admits, or null when the filter
+ *  excludes the repo entirely.
+ *
+ *  The whole filter rule, in one place, because it has two readers: paint
+ *  builds the reconcile list from it and renderRepoSection builds the rows.
+ *
+ *  A REPO-NAME match admits every file in it. Naming a repo is a request to
+ *  see that repo, and applying the path filter underneath it emptied the
+ *  section instead: a repo whose changed paths did not happen to repeat the
+ *  repo name rendered "No paths match the filter." under its own heading.
+ *
+ *  An admitted repo always yields a non-empty file list OR is genuinely
+ *  clean, which is what makes "no paths match" unreachable and lets
+ *  renderRepoSection's empty case be the honest one ("Clean."). */
+function filteredFilesFor(r: RepoStatus): FileEntry[] | null {
+  if (filterText === "" || r.repo.toLowerCase().includes(filterText)) {
+    return r.files;
+  }
+  const hits = r.files.filter((f) => f.path.toLowerCase().includes(filterText));
+  return hits.length > 0 ? hits : null;
+}
+
 function renderRepoSection(r: RepoStatus): HTMLElement | null {
-  // Apply filter: keep section if (a) filter empty, (b) repo name
-  // matches, or (c) any file path matches.
-  const filteredFiles =
-    filterText === "" ? r.files : r.files.filter((f) => f.path.toLowerCase().includes(filterText));
-  if (
-    filterText !== "" &&
-    filteredFiles.length === 0 &&
-    !r.repo.toLowerCase().includes(filterText)
-  ) {
+  const filteredFiles = filteredFilesFor(r);
+  if (filteredFiles === null) {
     return null;
   }
   // Hide clean repos by default unless filter is active or repo
@@ -507,19 +483,27 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     inner.appendChild(renderOpenPRHint(r));
   }
 
-  // File list (staged first, then unstaged)
-  if (filteredFiles.length === 0 && !r.has_dirty) {
+  // The file list, in one group per side of the index.
+  //
+  // An empty list here means the repo is CLEAN, never "the filter hid
+  // everything": filteredFilesFor returns null rather than an empty array in
+  // that case, and paint drops the section before it gets here. So there is
+  // one empty state and it is the true one. (A "No paths match the filter."
+  // row used to sit beside it, reachable only through the filter bug the
+  // predicate above fixes.)
+  if (filteredFiles.length === 0) {
     inner.appendChild(el("div", { className: "git-repo-row-clean" }, "Clean."));
-  } else if (filteredFiles.length === 0) {
-    inner.appendChild(el("div", { className: "git-repo-row-empty" }, "No paths match the filter."));
   } else {
     inner.appendChild(renderFileList(r, filteredFiles));
   }
 
-  // Commit area (only if there are staged files)
-  const stagedCount = r.files.filter((f) => f.staged).length;
+  // Commit area, only when something is staged — the index IS the
+  // selection, so with nothing staged there is nothing to compose a
+  // message for. It gets the staged FILE count (not the entry count) so
+  // its button can name what it will commit.
+  const stagedCount = changedPathCount(r.files.filter((f) => f.staged));
   if (stagedCount > 0) {
-    inner.appendChild(renderCommitArea(r, commitDeps()));
+    inner.appendChild(renderCommitArea(r, commitDeps(), stagedCount));
   }
 
   // Recent commits sub-section (collapsed by default; expand → fetch).
@@ -553,85 +537,33 @@ function renderHeaderHTML(r: RepoStatus): string {
   `;
 }
 
+/** The repo's SYNC actions: pull, push, stash, pop.
+ *
+ *  Stage all and Discard all used to lead this bar and have moved onto
+ *  the file groups they act on (renderFileGroup), which is what lets
+ *  their counts be checked against a heading the reader can see. That
+ *  also retired the separator this function inserted between the two
+ *  clusters: with one cluster left there is nothing to separate, so the
+ *  insert, the trailing-separator cleanup and the `.action-bar-sep` rule
+ *  in 14-tools.css are all gone.
+ *
+ *  Every button stays state-gated (18-F2): an action the repo state
+ *  cannot service does not render, so there are no confirm-then-noop
+ *  paths and no "Already up to date" pulls. */
 function renderActionBar(r: RepoStatus): HTMLElement {
   const bar = el("div", { className: "git-repo-action-bar" });
 
-  const btn = (label: string, title: string, danger = false): HTMLButtonElement => {
+  const btn = (label: string, title: string): HTMLButtonElement => {
     return el(
       "button",
       {
         type: "button",
-        className: `btn-small${danger ? " btn-danger" : ""}`,
+        className: "btn-small",
         "data-tooltip": title,
       },
       label,
     ) as HTMLButtonElement;
   };
-
-  // State-gated rendering (18-F2), mirroring the existing Push/Pop
-  // pattern: an action the repo state can't service (Stage all on a
-  // fully-staged tree, Discard all on a clean repo, Pull when not
-  // behind, Stash with nothing tracked to stash) doesn't render at all —
-  // no confirm-then-noop paths, no "Already up to date" pulls.
-  const unstagedCount = r.files.filter((f) => !f.staged).length;
-  const dirtyCount = r.files.length; // has_dirty ⇔ dirtyCount > 0
-
-  if (unstagedCount > 0) {
-    const stageAllBtn = btn(`Stage all (${unstagedCount})`, "Stage every unstaged change");
-    stageAllBtn.addEventListener("click", () => {
-      // Non-empty by the unstagedCount > 0 render gate above.
-      const files = r.files.filter((f) => !f.staged).map((f) => f.path);
-      void withAsyncFeedback(stageAllBtn, async () => {
-        assertOk(await stage.dispatch({ repo: r.repo, files }));
-        await refreshChanges();
-      });
-    });
-    bar.appendChild(stageAllBtn);
-    bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageAllBtn));
-  }
-
-  if (dirtyCount > 0) {
-    const discardAllBtn = btn(
-      `Discard all (${dirtyCount})`,
-      "Throw away all uncommitted changes (irreversible)",
-      true,
-    );
-    discardAllBtn.addEventListener("click", () => {
-      // Bug 2: Module-level guard prevents concurrent discard-all per repo.
-      if (discardPendingRepos.has(r.repo)) {
-        return;
-      }
-      discardPendingRepos.add(r.repo);
-      void (async () => {
-        try {
-          const ok = await confirmDialog(
-            `Discard ${dirtyCount} uncommitted change${dirtyCount === 1 ? "" : "s"} in ${r.repo}? This cannot be undone.`,
-            "Discard",
-            "destructive",
-          );
-          if (!ok) {
-            return;
-          }
-          // Includes staged paths: the server resets them first, so
-          // "Discard all" genuinely discards everything (EX-2).
-          const files = r.files.map((f) => f.path);
-          await withAsyncFeedback(discardAllBtn, async () => {
-            assertOk(await discard.dispatch({ repo: r.repo, files }));
-            await refreshChanges();
-          });
-        } finally {
-          discardPendingRepos.delete(r.repo);
-        }
-      })();
-    });
-    bar.appendChild(discardAllBtn);
-    bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardAllBtn));
-  }
-
-  // Separator between file ops and sync ops — only when file ops rendered.
-  if (bar.childElementCount > 0) {
-    bar.appendChild(el("span", { className: "action-bar-sep", "aria-hidden": "true" }));
-  }
 
   if (r.behind > 0) {
     const pullBtn = btn(`Pull ↓${r.behind}`, "git pull --ff-only");
@@ -704,49 +636,275 @@ function renderActionBar(r: RepoStatus): HTMLElement {
     );
   }
 
-  // A separator with nothing after it — file ops rendered, but the state
-  // services no sync op (a tree whose only change is an untracked file, in
-  // sync, no stashes) — is dropped. `.action-bar-sep` paints a visible 1px
-  // tick, so a trailing one separates a cluster from nothing.
-  const tail = bar.lastElementChild;
-  if (tail?.classList.contains("action-bar-sep") === true) {
-    tail.remove();
-  }
-
   return bar;
 }
 
+/** The file list, split into a Staged group and a Changes group.
+ *
+ *  It used to be ONE flat list, sorted staged-first, whose only marker of
+ *  staged-ness was a 6% teal wash on the row: 1.09:1 against its own
+ *  background in dark and 1.03:1 in light, under the 1.25:1 floor
+ *  01-tokens.css declares for a step on its own ramp and well under
+ *  WCAG 1.4.11's 3:1 for a state boundary. With the status cell reading
+ *  "Modified" either way and the Unstage button hidden until hover, a
+ *  staged row and an unstaged one were indistinguishable at rest, and the
+ *  only dependable signal that anything was staged at all was the commit
+ *  box appearing further down the section.
+ *
+ *  So staged-ness moves to a HEADER, where it is a count and a word. Each
+ *  group also owns the bulk action that acts on exactly what its header
+ *  counts, which is what makes those counts checkable: "Discard all" on
+ *  the Changes header discards what "Changes (7)" names, and nothing
+ *  else. The repo action bar keeps the sync operations.
+ *
+ *  A group renders only when it has members, so an all-staged tree shows
+ *  one group rather than an empty second heading. */
 function renderFileList(r: RepoStatus, files: FileEntry[]): HTMLElement {
-  // Sort: staged first, then unstaged; within each group alphabetical.
-  const sorted = [...files].sort((a, b) => {
-    if (a.staged !== b.staged) {
-      return a.staged ? -1 : 1;
-    }
-    return a.path.localeCompare(b.path);
-  });
-  const list = el("ul", { className: "git-file-list" });
-  for (const f of sorted) {
-    list.appendChild(renderFileRow(r, f));
+  const wrap = el("div", { className: "git-file-groups" });
+  const partial = partiallyStagedPaths(files);
+  const staged = files.filter((f) => f.staged);
+  const unstaged = files.filter((f) => !f.staged);
+
+  if (staged.length > 0) {
+    wrap.appendChild(renderFileGroup(r, "staged", staged, partial));
   }
-  return list;
+  if (unstaged.length > 0) {
+    wrap.appendChild(renderFileGroup(r, "unstaged", unstaged, partial));
+  }
+  return wrap;
 }
 
-function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
-  const li = el("li", { className: `git-file-row${f.staged ? " staged" : ""}` });
+/** One group: a header stating what it holds and how many, its own bulk
+ *  actions, then its rows alphabetically. */
+function renderFileGroup(
+  r: RepoStatus,
+  kind: "staged" | "unstaged",
+  files: FileEntry[],
+  partial: ReadonlySet<string>,
+): HTMLElement {
+  const group = el("div", { className: `git-file-group git-file-group-${kind}` });
+  const count = changedPathCount(files);
+  const label = kind === "staged" ? "Staged" : "Changes";
 
-  // Top row: status + path + actions. The whole top row is the
-  // click target for toggling the inline diff.
+  const head = el("div", { className: "git-file-group-head" });
+  head.append(
+    el("span", { className: "git-file-group-label" }, label),
+    el(
+      "span",
+      { className: "git-file-group-count" },
+      `${String(count)} file${count === 1 ? "" : "s"}`,
+    ),
+  );
+
+  const actions = el("span", { className: "git-file-group-actions" });
+  for (const b of kind === "staged"
+    ? stagedGroupActions(r, files)
+    : unstagedGroupActions(r, files)) {
+    actions.appendChild(b);
+  }
+  head.appendChild(actions);
+  group.appendChild(head);
+
+  // The heading is a sibling <div>, so nothing connects it to the list for a
+  // screen reader: a row's own status cell reads "Status: Modified" on both
+  // sides of the index, so without this label the group is a purely visual
+  // distinction and staged-ness stays unannounced — which is the defect this
+  // whole rework is about, just for a different reader. The count rides the
+  // label so entering the list says how big it is.
+  const heading = `${label}, ${String(count)} file${count === 1 ? "" : "s"}`;
+  const list = el("ul", { className: "git-file-list", "aria-label": heading });
+  const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
+  for (const f of sorted) {
+    list.appendChild(renderFileRow(r, f, partial.has(f.path)));
+  }
+  group.appendChild(list);
+  return group;
+}
+
+/** Build one group-header button. */
+function groupBtn(label: string, title: string, danger = false): HTMLButtonElement {
+  return el(
+    "button",
+    {
+      type: "button",
+      className: `btn-small${danger ? " btn-danger" : ""}`,
+      "data-tooltip": title,
+    },
+    label,
+  ) as HTMLButtonElement;
+}
+
+/** The Staged group's bulk action: Unstage all.
+ *
+ *  New capability. Staging every file was one click ("Stage all") and
+ *  reversing it was N, one per row, with each row's Unstage button
+ *  hidden until hovered. */
+function stagedGroupActions(r: RepoStatus, files: FileEntry[]): HTMLButtonElement[] {
+  const paths = distinctPaths(files);
+  const b = groupBtn("Unstage all", "Move every staged change out of the index");
+  b.addEventListener("click", () => {
+    void withAsyncFeedback(b, async () => {
+      assertOk(await unstage.dispatch({ repo: r.repo, files: paths }));
+      await refreshChanges();
+    });
+  });
+  bindingCleanups.push(bindLoadingState(["git.unstage", "git.commit"], b));
+  return [b];
+}
+
+/** The Changes group's bulk actions: Stage all, then Discard all.
+ *
+ *  Both are scoped to THIS group, and that scope is the fix. Discard all
+ *  used to sit in the repo action bar and take every entry including the
+ *  staged ones, counted as `files.length` — so one file edited on both
+ *  sides of the index made a destructive confirm offer to discard "2
+ *  uncommitted changes", and that path went out twice in the payload.
+ *  A bulk action whose scope is invisible is one nobody can check before
+ *  pressing it. Discarding staged work too is Unstage all followed by
+ *  this, which is two clicks and shows its work. */
+function unstagedGroupActions(r: RepoStatus, files: FileEntry[]): HTMLButtonElement[] {
+  const paths = distinctPaths(files);
+  const count = paths.length;
+
+  const stageBtn = groupBtn("Stage all", "Add every change below to the index");
+  stageBtn.addEventListener("click", () => {
+    void withAsyncFeedback(stageBtn, async () => {
+      assertOk(await stage.dispatch({ repo: r.repo, files: paths }));
+      await refreshChanges();
+    });
+  });
+  bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageBtn));
+
+  const discardBtn = groupBtn("Discard all", "Throw away every change below (irreversible)", true);
+  discardBtn.addEventListener("click", () => {
+    // Module-level guard: a second click while the first confirm is open
+    // would dispatch two discards for one repo.
+    if (discardPendingRepos.has(r.repo)) {
+      return;
+    }
+    discardPendingRepos.add(r.repo);
+    void (async () => {
+      try {
+        // The scope is stated rather than implied. A reader who expects a
+        // clean tree afterwards has to be told the index is untouched,
+        // and this is the last moment to tell them.
+        const stagedCount = changedPathCount(r.files.filter((f) => f.staged));
+        const keeps =
+          stagedCount > 0
+            ? ` Your ${String(stagedCount)} staged file${stagedCount === 1 ? "" : "s"} stay${stagedCount === 1 ? "s" : ""} untouched.`
+            : "";
+        const ok = await confirmDialog(
+          `Discard ${String(count)} unstaged change${count === 1 ? "" : "s"} in ${r.repo}? This cannot be undone.${keeps}`,
+          "Discard",
+          "destructive",
+        );
+        if (!ok) {
+          return;
+        }
+        await withAsyncFeedback(discardBtn, async () => {
+          assertOk(await discard.dispatch({ repo: r.repo, files: paths }));
+          await refreshChanges();
+        });
+      } finally {
+        discardPendingRepos.delete(r.repo);
+      }
+    })();
+  });
+  bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardBtn));
+
+  return [stageBtn, discardBtn];
+}
+
+function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): HTMLElement {
+  const li = el("li", { className: "git-file-row" });
+
+  // Top row: status + path + actions. Clicking it opens the file's diff in its
+  // own editor tab.
   const top = el("div", { className: "git-file-row-top" });
 
+  // A fixed-width COLOURED LETTER, not the status word this cell used to
+  // print. Two reasons, and the first is measurable: "Untracked" is nine
+  // characters against "Modified"'s eight and "M"'s one, and the cell
+  // sized to its content, so every row's filename started at a different
+  // x and a twenty-file list had a ragged left edge where the reader
+  // scans. The second is that the app already HAS a per-letter palette
+  // (`git-st-*`, 14-tools.css) which the file browser emits and this
+  // panel did not, so the same change on the same file was a coloured
+  // letter in one view and a grey word in the other. The word is not
+  // lost: it is the tooltip and the accessible name, and `display` is
+  // preferred over the local table because the server owns the mapping.
+  const letter = statusLetter(f.status);
+  const word = f.display || describeStatus(f.status);
   const status = el(
     "span",
-    { className: "git-file-status", "data-tooltip": describeStatus(f.status) },
-    f.display || statusLetter(f.status),
+    {
+      className: `git-file-status git-st-${letter.toLowerCase()}`,
+      "data-tooltip": word,
+      "aria-label": `Status: ${word}`,
+    },
+    letter,
   );
   top.appendChild(status);
 
-  const path = el("span", { className: "git-file-path", "data-tooltip": f.path }, f.path);
+  // The filename IS the link to its own diff, which is the convention every
+  // other changed-file affordance in the app already follows (navigate.ts
+  // openChange, reached here and from a turn's ledger row, a tool card's
+  // filename and the file browser's status letter).
+  //
+  // A real <button> rather than a role on the row, which is what the inline
+  // drawer's disclosure trigger used to be: `role="button"` is
+  // Children-Presentational, so it flattened the Stage and Discard buttons
+  // beside it out of the accessibility tree. The row keeps a mouse handler
+  // below, so the wide click target survives without that cost.
+  const path = el(
+    "button",
+    {
+      type: "button",
+      className: "git-file-path",
+      "data-tooltip": f.path,
+      "aria-label": `Open diff for ${f.path}`,
+    },
+    f.path,
+  ) as HTMLButtonElement;
+  path.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    openFileDiff(r, f);
+  });
   top.appendChild(path);
+
+  // Where a rename or copy came FROM. The server parsed this field and
+  // threw it away, so a moved file rendered as "Renamed  path/to/new.ts"
+  // with no way to tell what had moved — the one status whose whole
+  // meaning is the pair of paths.
+  const orig = f.orig_path ?? "";
+  if (orig !== "") {
+    top.appendChild(
+      el(
+        "span",
+        {
+          className: "git-file-orig",
+          "data-tooltip": `${letter === "C" ? "Copied" : "Renamed"} from ${orig}`,
+        },
+        `\u2190 ${orig}`,
+      ),
+    );
+  }
+
+  // Why this path appears twice. Both of its rows carry the mark, so it
+  // reads as one file in two states rather than as a duplicate.
+  if (partiallyStaged) {
+    top.appendChild(
+      el(
+        "span",
+        {
+          className: "git-file-partial",
+          "data-tooltip":
+            "This file is staged AND changed again since. Each side is listed in its own group.",
+        },
+        "partially staged",
+      ),
+    );
+  }
 
   const actions = el("span", { className: "git-file-actions" });
 
@@ -809,99 +967,34 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   top.appendChild(actions);
   li.appendChild(top);
 
-  // Inline diff drawer (collapsed until toggled). Lazy-loaded; the collapse
-  // is a disclosure region wired below (after loadDiff is defined).
-  const diffDrawer = el("div", { className: "git-file-diff" });
-  li.appendChild(diffDrawer);
-
-  // Bug 4: Unique key for tracking expanded state across re-renders.
-  const diffKey = `${r.repo}\0${f.path}`;
-  let loadedDiff = false;
-
-  const loadDiff = (): void => {
-    loadedDiff = true;
-    diffDrawer.textContent = "Loading diff…";
-    const perFetch = new AbortController();
-    const signal = AbortSignal.any([perFetch.signal, AbortSignal.timeout(10_000)]);
-    void apiGet<{ diff?: string }>(
-      `/api/git/file-diff?repo=${encodeURIComponent(r.repo)}&path=${encodeURIComponent(f.path)}`,
-      signal,
-    ).then((data) => {
-      if (perFetch.signal.aborted) {
-        return;
-      }
-      if (data === null) {
-        diffDrawer.replaceChildren();
-        diffDrawer.appendChild(el("span", null, "Failed to load diff."));
-        const retryBtn = el("button", { type: "button", className: "btn-small" }, "Retry");
-        retryBtn.addEventListener("click", () => {
-          loadedDiff = false;
-          loadDiff();
-        });
-        diffDrawer.appendChild(retryBtn);
-        return;
-      }
-      const diff = data.diff ?? "";
-      if (diff.trim() === "") {
-        diffDrawer.textContent = "(no diff available — file may be binary or empty)";
-        return;
-      }
-      diffDrawer.replaceChildren();
-      const pre = el("pre", { className: "git-file-diff-pre" }, renderDiffWithColors(diff));
-      diffDrawer.appendChild(pre);
-    });
-  };
-
-  // The row is the disclosure trigger (the primitive gives it role=button,
-  // tabindex, Enter/Space, and aria-expanded — the old hidden-class click
-  // toggle was keyboard-unreachable and told AT nothing) and the drawer is
-  // the animated region (aria-hidden + inert when collapsed). The inner
-  // stage/discard buttons already stopPropagation, exactly like the repo
-  // sections' branch chip. Bug 4: expanded state restores from previous
-  // renders via `open`, and persists via onToggle.
-  createDisclosure(top, diffDrawer, {
-    open: expandedDiffPaths.has(diffKey),
-    onToggle: (open) => {
-      li.classList.toggle("expanded", open);
-      if (open) {
-        expandedDiffPaths.add(diffKey);
-        if (!loadedDiff) {
-          loadDiff();
-        }
-      } else {
-        expandedDiffPaths.delete(diffKey);
-      }
-    },
+  // The whole row stays a mouse target, exactly as the drawer's trigger was.
+  // Keyboard users reach the same action through the filename button above, and
+  // the Stage/Discard buttons already stopPropagation.
+  top.addEventListener("click", () => {
+    openFileDiff(r, f);
   });
-  if (expandedDiffPaths.has(diffKey)) {
-    // Initial open state is applied without an onToggle callback: mirror it.
-    li.classList.add("expanded");
-    loadDiff();
-  }
 
   return li;
 }
 
-/** Render a unified-diff string with simple +/- coloring. Splits on
- *  newlines and wraps each line in a span with a class derived from
- *  its first character. Hunk headers (@@) get their own class. */
-function renderDiffWithColors(diff: string): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  for (const line of diff.split("\n")) {
-    const span = el("span", { className: "git-diff-line" });
-    if (line.startsWith("+++") || line.startsWith("---")) {
-      span.classList.add("git-diff-line-meta");
-    } else if (line.startsWith("@@")) {
-      span.classList.add("git-diff-line-hunk");
-    } else if (line.startsWith("+")) {
-      span.classList.add("git-diff-line-add");
-    } else if (line.startsWith("-")) {
-      span.classList.add("git-diff-line-del");
-    }
-    span.textContent = line + "\n";
-    frag.appendChild(span);
-  }
-  return frag;
+/** Open one changed file's diff against HEAD, in its own editor tab.
+ *
+ *  The inline drawer this replaced rendered the raw unified-diff TEXT in a
+ *  `<pre>` inside the file list, so a line wider than that column was simply
+ *  clipped, in a surface with no room to scroll it: no line numbers, no
+ *  highlighting, and a hard 26rem ceiling. The editor's diff tab is the app's
+ *  existing answer for a changed file, and it was already the surface every
+ *  other changed-file click reached; the git panel was the one outlier.
+ *
+ *  Two conversions happen here and only here. The Changes tab holds REPO-relative
+ *  paths with one repo per section, while `openChange` takes the
+ *  workspace-relative form every other caller has, so the repo name is joined
+ *  back on — the workspace-root repo is named "." and owns paths with no prefix.
+ *  The repo is then deliberately NOT passed onward: the diff loader resolves the
+ *  owning repository from a workspace-relative path (internal/git `ownerOf`), so
+ *  one spelling serves both sides of its fetch. */
+function openFileDiff(r: RepoStatus, f: FileEntry): void {
+  openChange(r.repo === "." ? f.path : `${r.repo}/${f.path}`);
 }
 
 // --- Helpers ---

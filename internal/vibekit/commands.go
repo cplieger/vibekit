@@ -351,7 +351,7 @@ type SteerCommand struct {
 // that observable. Without it, a client that resolves on the event would wait
 // forever for a frame the server correctly never sends.
 type OpenTabCommand struct {
-	// Kind must be one of the eight (TabKind.Valid).
+	// Kind must be one of the nine (TabKind.Valid).
 	Kind TabKind `json:"kind"`
 	// Ref is required for every kind but a singleton, where it must be empty. A
 	// chat ref is validated as a chat id AND checked against the chat store,

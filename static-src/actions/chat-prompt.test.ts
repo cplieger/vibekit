@@ -30,6 +30,21 @@ const { mockGet } = vi.hoisted(() => ({
 vi.mock("../store.js", async () => ({
   ...(await import("../__test-helpers__/store-mock.js")).storeMock,
   get: mockGet,
+  hasMessage: () => false,
+  setThinking: vi.fn(),
+  setTurnFailed: vi.fn(),
+  setTurnDone: vi.fn(),
+  recordSteerQueued: vi.fn(),
+  setModel: vi.fn(),
+  setSupervisedMode: vi.fn(),
+  removeChat: vi.fn(),
+  reinsertSession: vi.fn(),
+  indexOfSession: () => 0,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 vi.mock("../api-client.js", () => ({

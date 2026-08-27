@@ -32,6 +32,21 @@ const storeMessages: { id: string }[] = [];
 vi.mock("../store.js", async () => ({
   ...(await import("../__test-helpers__/store-mock.js")).storeMock,
   get: () => ({ id: "c1", model: "m1", messages: storeMessages }),
+  // The echo predicate is the store's now, so the fake has to answer it from the
+  // same array the cases push into — that push IS the arriving message_appended.
+  hasMessage: (_chatID: string, id: string) => storeMessages.some((m) => m.id === id),
+  setThinking: vi.fn(),
+  setModel: vi.fn(),
+  setSupervisedMode: vi.fn(),
+  removeChat: vi.fn(),
+  reinsertSession: vi.fn(),
+  indexOfSession: () => 0,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and these names are imported somewhere in it. No case here calls
+  // them.
+  getActive: vi.fn(() => undefined),
+  getSessions: vi.fn(() => []),
+  tabStatusFor: vi.fn(() => ""),
 }));
 
 vi.mock("../failure-notice.js", () => ({

@@ -5,8 +5,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Message, Session } from "./types.js";
 
-const { sessions, mockApiGetTyped, mockSetSessions } = vi.hoisted(() => ({
+const { sessions, liveIDs, mockApiGetTyped, mockSetSessions } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
+  liveIDs: new Map<string, string>(),
   mockApiGetTyped: vi.fn(),
   mockSetSessions: vi.fn(),
 }));
@@ -22,6 +23,9 @@ vi.mock("./store.js", () => ({
   // Identity here — the block-synthesis path is covered by store.test.ts; these
   // tests assert pagination/dedupe by id.
   normalizeMessage: (m: Message) => m,
+  // The store's in-flight marker: which message id the chat's current turn is
+  // streaming into, and therefore which one the chat file cannot carry yet.
+  liveTurnMessage: (id: string) => liveIDs.get(id),
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened
   // this graph and these names are imported somewhere in it. No case here calls
   // them.
@@ -51,6 +55,7 @@ function seedSession(id: string, messages: Message[]): void {
 beforeEach(() => {
   vi.clearAllMocks();
   sessions.clear();
+  liveIDs.clear();
 });
 
 describe("loadList pruning", () => {
@@ -111,15 +116,15 @@ describe("loadMessages pagination dedupe", () => {
     expect(ids).toEqual(["m1", "m2", "m3"]);
   });
 
-  // The newest page REPLACES the persisted transcript but keeps the local TAIL:
-  // anything after the newest message the page carries, that the page does not
-  // have. The in-flight turn lives in the server's in-memory assistant buffer
-  // and is flushed to the chat file once, at turn_ended — so it is absent from
-  // this page while `turn_state` has already put it in the store. A blind
-  // whole-array replace therefore DELETED the reply the reader was watching,
-  // every time this ran mid-turn.
-  it("replaces the persisted page and keeps a local message the page does not carry", async () => {
+  // The newest page REPLACES the persisted transcript but keeps the in-flight
+  // turn: the server accumulates it in an in-memory buffer and appends it to the
+  // chat file once, at turn_ended, so it is absent from this page while
+  // `turn_state` has already put it in the store. A blind whole-array replace
+  // therefore DELETED the reply the reader was watching, every time this ran
+  // mid-turn.
+  it("replaces the persisted page and keeps the in-flight turn", async () => {
     seedSession("c1", [msg("streaming", 9)]);
+    liveIDs.set("c1", "streaming");
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 2 },
       messages: [msg("a", 1), msg("b", 2)],
@@ -131,15 +136,73 @@ describe("loadMessages pagination dedupe", () => {
     expect(ids).toEqual(["a", "b", "streaming"]);
   });
 
-  // The tail rule is deliberately blind to WHY a local message is missing from
-  // the page, because from here the two reasons look identical: it may be the
-  // in-flight turn the server has not flushed yet, or a turn a rewind removed.
-  // Rewind does not depend on this path to notice — CmdRewindChat truncates the
-  // client's own array when it lands, so by the time a page is fetched the
-  // message is already gone locally. What this pins is that a message present in
-  // BOTH is the page's business and is never duplicated.
+  // The reported bug, and the reason the boundary is a NAMED message rather than
+  // a position. The agent persists messages DURING a turn — HandlePlan appends
+  // one per plan update, and compaction, an infra-safety block and a cancel each
+  // append an event — so the newest id the page carries is routinely NEWER than
+  // the streaming reply. The old rule kept "everything after that id", which was
+  // nothing, and the replace dropped the reply: the reader switched tabs, came
+  // back to their own prompt above an empty turn body, and only a reload brought
+  // the output back, by which time the buffer had flushed to the file.
+  it("keeps the in-flight turn when the page carries a message persisted after it", async () => {
+    seedSession("c1", [msg("user", 1), msg("streaming", 2), msg("plan", 3)]);
+    liveIDs.set("c1", "streaming");
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      // What the chat file holds mid-turn: the prompt and the plan, not the reply.
+      messages: [msg("user", 1), msg("plan", 3)],
+      has_more: false,
+    });
+
+    await loadMessages("c1");
+    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
+    expect(ids).toEqual(["user", "plan", "streaming"]);
+  });
+
+  // The other side of the same marker: once the turn ends the server persists the
+  // reply, `message_appended` clears the marker, and the page is authoritative
+  // for it. A second copy kept here would double-render the turn.
+  it("drops the local copy once the page carries the finished turn", async () => {
+    seedSession("c1", [msg("user", 1), msg("reply", 2)]);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("user", 1), msg("reply", 2)],
+      has_more: false,
+    });
+
+    await loadMessages("c1");
+    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
+    expect(ids).toEqual(["user", "reply"]);
+  });
+
+  // A message the server persisted and broadcast while this request was in
+  // flight is newer than the answer being applied, so the answer cannot drop it.
+  // Nothing refetches on its own, so without this it would be missing from the
+  // transcript until the next tab switch.
+  it("keeps a message that arrived while the request was in flight", async () => {
+    seedSession("c1", [msg("a", 1)]);
+    mockApiGetTyped.mockImplementation(() => {
+      sessions.get("c1")?.messages.push(msg("raced", 2));
+      return Promise.resolve({
+        chat: { message_count: 1 },
+        messages: [msg("a", 1)],
+        has_more: false,
+      });
+    });
+
+    await loadMessages("c1");
+    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
+    expect(ids).toEqual(["a", "raced"]);
+  });
+
+  // The rule is deliberately blind to WHY the page omits the in-flight message,
+  // because from here the two reasons look identical: it may be the turn the
+  // server has not flushed yet, or a turn a rewind removed. What this pins is
+  // that a message present in BOTH is the page's business and is never
+  // duplicated.
   it("never duplicates a message the page also carries", async () => {
     seedSession("c1", [msg("a", 1), msg("b", 2)]);
+    liveIDs.set("c1", "b");
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 2 },
       messages: [msg("a", 1), msg("b", 2)],
@@ -152,10 +215,10 @@ describe("loadMessages pagination dedupe", () => {
   });
 
   it("keeps a scrolled-up window in order rather than re-appending it", async () => {
-    // The local array holds an older page ahead of the newest one. The anchor is
-    // the newest message the page carries ("c"), so nothing before it is treated
-    // as a tail and the older messages are simply dropped with the replace —
-    // which is what the pre-existing behaviour did and what keeps the order right.
+    // The local array holds an older page ahead of the newest one. Neither older
+    // message is the in-flight turn and both were present before the request, so
+    // they are dropped with the replace — which is what keeps the order right,
+    // and what pagination re-fetches.
     seedSession("c1", [msg("old1", 1), msg("old2", 2), msg("c", 3)]);
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 1 },

@@ -182,10 +182,23 @@
       animation: vk-slide-in-x var(--dur-micro) var(--ease-standard);
     }
 
+    /* Every departing row gets `.exiting` (it carries the inert state and the
+     * clip), and the ANIMATION is then chosen by what the row is. Top level, and
+     * a sub-tab whose parent is leaving with it, swipe out sideways — so a parent
+     * and its whole subtree read as one block departing. */
     &.exiting {
       animation: slide-out 0.18s ease-in forwards;
       pointer-events: none;
       overflow: hidden;
+    }
+
+    /* A sub-tab whose parent SURVIVES goes UP instead, back into the row it hangs
+     * off: that is where its work came from and where the reader's attention
+     * should land. renderDOM decides which of the two applies; an orphan (a
+     * sub-tab whose parent is not open here) falls to `.exiting` above, because
+     * there is no row on screen for it to merge into. */
+    &.exiting.exiting-merge {
+      animation: tab-merge-up var(--dur-standard) var(--ease-standard) forwards;
     }
 
     /* Inactive tabs stay FLAT — no chip, no border — and lift on hover, so the
@@ -257,15 +270,22 @@
   }
 
   @keyframes slide-out {
-    /* Collapse height + margins alongside the fade so sibling tabs slide
+    /* Collapse height + padding alongside the fade so sibling tabs slide
      up smoothly instead of jumping at animationend. Using max-height
      with a known upper bound lets the browser interpolate height even
-     though the computed height is "auto" at rest. */
+     though the computed height is "auto" at rest.
+
+     It does NOT touch `margin`, and that is load-bearing rather than an
+     omission. `.tab.tab-child` carries the sub-tab indent as
+     `margin-inline-start`, so the `margin: 0` this used to open with reset the
+     indent on frame one: the row jumped a full 1rem wider and left before it
+     swiped, which is exactly what a sub-tab close looked like. The vertical
+     margins the reset was written for are gone — `#tab-list` spaces its rows
+     with `gap` now — so there is nothing left for it to collapse. */
     0% {
       opacity: 1;
       transform: translateX(0);
       max-height: 3rem;
-      margin: 0;
       padding-block: var(--sp-2);
       border-width: 1px;
     }
@@ -274,7 +294,6 @@
       opacity: 0;
       transform: translateX(-0.75rem);
       max-height: 3rem;
-      margin: 0;
       padding-block: var(--sp-2);
     }
 
@@ -282,7 +301,35 @@
       opacity: 0;
       transform: translateX(-0.75rem);
       max-height: 0;
-      margin: 0;
+      padding-block: 0;
+      border-width: 0;
+    }
+  }
+
+  /* The sub-tab exit: lift into the parent while the row collapses under it, so
+     the strip below closes the gap from the first frame instead of waiting for a
+     fade to finish. The direction is the whole message — a tangent or a run
+     folding back into the conversation it came from.
+
+     TWO STOPS ONLY, deliberately. A timing function applies to each keyframe
+     INTERVAL separately, so a mid stop would ease `max-height` twice and stutter
+     the collapse at it. Anything worth a second curve belongs in a second
+     animation, not a third stop.
+
+     The indent is untouched here for the same reason it is untouched above. */
+  @keyframes tab-merge-up {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+      max-height: 3rem;
+      padding-block: var(--sp-2);
+      border-width: 1px;
+    }
+
+    to {
+      opacity: 0;
+      transform: translateY(-0.75rem);
+      max-height: 0;
       padding-block: 0;
       border-width: 0;
     }

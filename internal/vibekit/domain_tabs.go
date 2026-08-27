@@ -8,7 +8,7 @@ package vibekit
 // The set is EXHAUSTIVE and validated at the door — see Valid, and see
 // tabs.Store.Open, which refuses a kind it does not know. A subject carrying an
 // unknown kind is one no client can render: the strip builds its view spec from
-// a total per-kind factory, so a ninth value would reach a switch with no case
+// a total per-kind factory, so a tenth value would reach a switch with no case
 // for it on every connected device at once, and it would already be persisted by
 // then.
 //
@@ -19,7 +19,7 @@ package vibekit
 // kinds (ToolKind, PushKind, EventKind) carry too.
 type TabKind string
 
-// The eight tab kinds. Each string is the wire value AND the client's TabKind
+// The nine tab kinds. Each string is the wire value AND the client's TabKind
 // union member, so a rename here is a cross-language change.
 //
 // There is deliberately no "plan". The client's TabKind.plan was dead — nothing
@@ -27,10 +27,18 @@ type TabKind string
 // true — and it was deleted on 2026-08-25, so declaring it here would put a value
 // back on the wire that nothing opens. roles.ts's "plan" is a MODE id, a
 // different vocabulary that happens to share a word.
+//
+// "subagent" is a DELEGATE EXECUTION read on its own page, and its Ref is the
+// only composite one on this wire: `<chatID>/<agentSubtaskID>`. It has to be,
+// because nothing indexes a subtask id to a chat — there is no subagent endpoint
+// and no cross-chat subtask index — so a ref naming the subtask alone could not
+// be resolved on a cold load. A chat id cannot contain a slash (ids.ValidChatID),
+// so the split is unambiguous; the client owns the codec (tab-materialize.ts).
 const (
 	TabKindChat     TabKind = "chat"
 	TabKindEditor   TabKind = "editor"
 	TabKindRun      TabKind = "run"
+	TabKindSubagent TabKind = "subagent"
 	TabKindSettings TabKind = "settings"
 	TabKindGit      TabKind = "git"
 	TabKindFiles    TabKind = "files"
@@ -42,7 +50,7 @@ const (
 // always asks next: is this kind a SINGLETON, the one tab of its type, whose Ref
 // is therefore empty?
 //
-// ONE table rather than two, because two tables can disagree: a ninth kind added
+// ONE table rather than two, because two tables can disagree: a tenth kind added
 // to the valid set and forgotten in the singleton set would be a kind that is
 // accepted and then required to carry a ref it has no meaning for, which reaches
 // a reader as "Settings opens twice" rather than as an error.
@@ -50,6 +58,7 @@ var tabKinds = map[TabKind]bool{
 	TabKindChat:     false,
 	TabKindEditor:   false,
 	TabKindRun:      false,
+	TabKindSubagent: false,
 	TabKindSettings: true,
 	TabKindGit:      true,
 	TabKindFiles:    true,
@@ -57,7 +66,7 @@ var tabKinds = map[TabKind]bool{
 	TabKindDocs:     true,
 }
 
-// Valid reports whether k is one of the eight kinds. Used at the command
+// Valid reports whether k is one of the nine kinds. Used at the command
 // boundary and again inside the store, because a kind that reaches the persisted
 // set is a kind every client has to render.
 func (k TabKind) Valid() bool {
@@ -102,7 +111,8 @@ type TabSubject struct {
 	// Kind and Ref are the subject's identity: at most one tab exists per
 	// (Kind, Ref) pair, which is what makes an open idempotent.
 	Kind TabKind `json:"kind"`
-	// Ref is a chat id, an absolute path, or a run id — empty for a singleton.
+	// Ref is a chat id, an absolute path, a run id, or a subagent's
+	// `<chatID>/<agentSubtaskID>` pair — empty for a singleton.
 	// The store treats it as opaque text: whether it is a VALID chat id or a
 	// path inside a granted root is the command boundary's question, because
 	// that is where ids.ValidChatID and the file-browser roots live.
@@ -137,7 +147,7 @@ type TabSubject struct {
 // It carries no op_id and no idempotency key: those are the command envelope's,
 // and the store has no opinion about either.
 type OpenTab struct {
-	// Kind is required and must be one of the eight (see TabKind.Valid).
+	// Kind is required and must be one of the nine (see TabKind.Valid).
 	Kind TabKind `json:"kind"`
 	// Ref is required for every kind but a singleton, where it must be empty.
 	Ref string `json:"ref,omitempty"`

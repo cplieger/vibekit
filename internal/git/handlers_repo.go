@@ -95,49 +95,13 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string]any{"repos": repos})
 }
 
-// handleFileDiff returns the working-tree diff for a single file
-// against HEAD. Used by the Changes tab's inline diff viewer.
+// handleShow serves a file's CONTENT at a git ref — the base side of the
+// editor's diff-vs-HEAD pane, whose working-tree side comes from /api/file.
 //
-// Path validation mirrors handleShow: relative paths only, no
-// traversal, no leading `-`, no control bytes.
-func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
-	file := r.URL.Query().Get("path")
-	if file == "" {
-		httpreply.BadRequest(w, "path required")
-		return
-	}
-	if !validateFilePath(file) {
-		slog.Warn("git file-diff: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(file))
-		httpreply.BadRequest(w, "invalid path")
-		return
-	}
-	dir := h.repoDir(repoFromQuery(r))
-	if !IsRepo(r.Context(), dir) {
-		httpreply.BadRequest(w, msgNotAGitRepo)
-		return
-	}
-	// `git diff HEAD -- <path>` gives both staged and unstaged
-	// changes for the file in a single unified-diff output. Untracked
-	// files have no HEAD entry; fall back to `--no-index` against
-	// /dev/null, which renders the file as all-additions.
-	//
-	// --no-textconv on both: a repo's diff.<driver>.textconv is a command git
-	// runs to render a path it selected via .gitattributes. The --no-index
-	// call needs it just as much, and less obviously — "outside the index"
-	// does not mean outside the attributes, which are read from the working
-	// tree either way.
-	out, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", "HEAD", "--", file)
-	if err != nil || strings.TrimSpace(out) == "" {
-		// `--no-index` exits non-zero when there's a diff (not an
-		// error condition). Capture combined output regardless.
-		out2, _ := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--no-index", "--", "/dev/null", file)
-		if strings.TrimSpace(out2) != "" {
-			out = out2
-		}
-	}
-	webhttp.WriteJSON(w, map[string]string{"diff": out})
-}
-
+// There is no sibling handler serving a unified-diff TEXT for one file.
+// /api/git/file-diff was the git panel's inline drawer, and that drawer is gone:
+// a changed file opens in the editor's diff tab now, which reads both sides as
+// content (git-changes-tab.ts openFileDiff). Nothing else ever called it.
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	requested := r.URL.Query().Get("path")
 	if requested == "" {

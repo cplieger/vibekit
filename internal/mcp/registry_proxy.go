@@ -152,18 +152,26 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	body, cached, err := p.fetchSearch(r.Context(), q, limit)
 	if err != nil {
-		// Client walked away mid-fetch (tab close, navigation); no
-		// need to log a 502 or write a response. Keeping the Debug
-		// line so Loki still has a breadcrumb for "query was in
-		// flight when the client disconnected".
-		if errors.Is(err, context.Canceled) ||
-			errors.Is(err, context.DeadlineExceeded) {
-			slog.Debug("mcp: registry search cancelled",
-				"q", q, "limit", limit, "error", err)
+		// Only the REQUEST's own context can report that the client walked
+		// away (tab close, navigation). There is nobody left to answer, so
+		// that path writes no response and logs a Debug breadcrumb.
+		//
+		// The returned ERROR cannot report it, and reading it as if it
+		// could is what shipped as "the registry search is broken": our
+		// own fetch deadline and http.Client.Timeout both satisfy
+		// errors.Is(err, context.DeadlineExceeded), so a slow upstream
+		// took the walked-away branch, returned a bare 200 with no body,
+		// and logged nothing above Debug. The browser decodes an empty 200
+		// as an absent result and prints "Registry unreachable" with no
+		// server-side trace to find. Measured once on the live instance:
+		// status=200 duration_ms=10002, exactly registryTimeout.
+		if r.Context().Err() != nil {
+			slog.Debug("mcp: registry search abandoned by client",
+				"q", logsafe.Field(q), "limit", limit, "error", err)
 			return
 		}
 		slog.Warn("mcp: registry search failed",
-			"q", q, "limit", limit, "error", err)
+			"q", logsafe.Field(q), "limit", limit, "error", err)
 		// Return a generic sentinel to the browser; full detail is in
 		// the slog.Warn above. The error text can leak upstream
 		// operational signals ("refusing redirect to non-registry host

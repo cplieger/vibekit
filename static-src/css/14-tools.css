@@ -260,17 +260,74 @@
   overflow-wrap: anywhere;
 }
 
+/* THE BADGE OWNS A CORNER OUTSIDE THE GLYPH, NOT A CORNER OF IT.
+ *
+ * It used to be an 8px text glyph with padding — 8.3 x 9.6 CSS px, or 69% of the
+ * 14px icon's height — sitting 4px INSIDE the icon's right edge, so its opaque
+ * disc covered everything past (9.7, 6.8): the whole lower-right quadrant of
+ * every tool glyph. For `search` that quadrant IS the magnifier's handle, which
+ * runs from 9.71 to 12.66 CSS px, so a completed grep rendered as a bare ring
+ * with a tick beside it and the icon stopped saying "search" at all. Measured on
+ * the live transcript: 0 of the handle's 2.95px visible. The terminal glyph lost
+ * half its underscore the same way.
+ *
+ * The offsets are derived from that handle rather than chosen: a 7px badge
+ * pushed 6px out puts its inner corner at (13, 13), past the handle's far end,
+ * so nothing a glyph draws (they all stay inside viewBox 2..22, i.e. 1.2..12.8px)
+ * passes under it. Keep both offsets and the box size in step if either moves.
+ * The geometry is load-bearing rather than cosmetic, and dropping the background
+ * below does not replace it: with the old offsets the MARK'S OWN INK sits on the
+ * handle (measured: 256 of 5394 sampled points inside the handle's stroke, versus
+ * 0 now), so a transparent badge there crosses the handle with a second diagonal
+ * stroke in the same colour instead of erasing it. That collision is why the
+ * punch-out existed at all.
+ *
+ * The box is SIZED rather than left to the glyph's own metrics because the four
+ * badge characters are not one width: at font-size 0.5rem the check measured
+ * 8.3px and the no-entry sign 11.58px, which is 83% of the icon it decorates.
+ * A fixed box plus centring makes all four states the same object.
+ *
+ * NO BACKGROUND, and that follows from the geometry above. The old rule punched a
+ * `--c-bg-secondary` disc out of the card so the glyph could be read underneath
+ * it, which after the badge moved off the glyph buys nothing and costs one
+ * artefact. Measured over all 15 glyphs in the set with `isPointInStroke`: none
+ * paints inside the badge's box (four come within half a stroke of its corner and
+ * stop), so there is nothing left to punch out. And the disc named ONE surface
+ * while the badge appears on THREE — a tool card, a History run row, a subagent
+ * header — of which two repaint under it: `.list-row:hover` goes
+ * `--c-bg-tertiary` and `.subagent-header:hover` composites an 8% accent wash,
+ * and against either the disc showed as a circle in the wrong shade. A card is
+ * the only one that never changes, which is why this looked correct for as long
+ * as it did. Transparent gives the mark the same contrast against the same
+ * surface as the glyph it belongs to, verified at 3.43:1 or better on every
+ * surface and state in both themes. Restore a background only together with
+ * evidence that a glyph reaches under the mark.
+ *
+ * `.tool-group-icon` is NOT a badge site, despite sharing the `.tool-icon` class:
+ * `tool-group.ts` paints a group's verdict as the slot's own `textContent`, so a
+ * group header has no `.tool-outcome-badge` to position (measured live: 73 group
+ * headers, 0 badges). Nothing here reaches it.
+ *
+ * EVERY OFFSET ABOVE ASSUMES THE ICON IS THE BADGE'S CONTAINING BLOCK, which is
+ * what `.tool-icon`'s `position: relative` provides, so a badge host has to carry
+ * that class. `.subagent-icon` builds the same badge (subagent-block.ts applyIcon)
+ * and did not until 2026-08-26: the mark resolved against `.subagent-block` — a
+ * containing block only because its entry animation ends on a transform — and
+ * landed about 190px right of the glyph, at the header's own corner. It predated
+ * these offsets and survived them (they moved it from +189.7/+2.6 to +193/+8.8),
+ * so the mark had never been on that glyph. Fixed by adding `tool-icon` to the
+ * span, which also restores the tint its `is-*` classes select on. */
 .tool-outcome-badge {
   position: absolute;
-  inset-block-end: -0.15rem;
-  inset-inline-end: -0.25rem;
-  font-size: 0.5rem;
+  inset-block-end: -0.375rem;
+  inset-inline-end: -0.375rem;
+  display: grid;
+  place-items: center;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  font-size: 0.45rem;
   line-height: 1;
   font-weight: var(--fw-semibold);
-  /* Punched out of the card background so the glyph stays readable underneath. */
-  background: var(--c-bg-secondary);
-  border-radius: 50%;
-  padding: 0.05rem;
 }
 
 .tool-title {
@@ -310,7 +367,20 @@
    printing the literal enum value `completed` was the claim "Tool call
    completed", which restates nothing the row does not already say. */
 
-/* The group header wears the same glyph, tinted to the worst status inside. */
+/* THE GROUP HEADER CARRIES A VERDICT, NOT A GLYPH, and the distinction is worth
+   stating because the class list says otherwise. It shares `.tool-icon` for the
+   tint classes (`is-ok` / `is-fail` / `is-running`) and nothing else:
+   `tool-group.ts` paintGroupOutcome writes the check or cross as this slot's own
+   `textContent`, so there is no per-kind glyph here and no `.tool-outcome-badge`
+   to position (measured on a live transcript: 73 group headers, 0 badges). A
+   reader looking for the magnifier a collapsed group of twelve searches "should"
+   show will not find one; the summary text names the kind in words instead.
+
+   Hence the three declarations, all load-bearing for a TEXT slot rather than an
+   SVG one: the fixed width holds the label still when a running group's verdict
+   is the empty string, and the font-size and weight size the character. This
+   comment previously read "wears the same glyph" and sent at least one reader
+   hunting for an SVG that has never been built here. */
 .tool-group-icon {
   width: 0.85rem;
   font-size: 0.7rem;
@@ -538,7 +608,19 @@
 
 /* Identity glyph: an SVG per known bundled subagent (roles.ts
    iconForSubagent), hexagon fallback for custom ones. Accent-tinted to read
-   as part of the header identity next to .subagent-name. */
+   as part of the header identity next to .subagent-name, and that accent is
+   what a RUNNING delegate keeps; a settled one takes its outcome colour from
+   `.tool-icon.is-ok` / `.is-fail`.
+
+   THE ELEMENT ALSO CARRIES `.tool-icon`, and this rule must not fight it.
+   subagent-block.ts appends the same check/cross mark a tool card carries, so the
+   span needs that class twice over: for the `position: relative` the badge is
+   positioned against, and for the `.tool-icon.is-*` selectors the state classes
+   need. Both were missing until 2026-08-26 — the mark painted ~190px away at the
+   header's edge and the tint never applied. The declarations below that `.tool-icon`
+   also sets are kept rather than deleted so this rule still reads as a complete
+   description of the slot; it wins on `color` by source order, which is what keeps
+   a running delegate accent. */
 .subagent-icon {
   display: inline-flex;
   align-items: center;
@@ -670,17 +752,122 @@
   display: block;
 }
 
+/* THE PIPELINE BOX — the `container` activity variant (subagent-block.ts
+   SubagentActivity). Its body holds other delegate cards rather than a
+   transcript, so two things differ from a leaf.
+
+   Its busy indicator is three dots, and they appear ONLY while it is collapsed:
+   the same gate as the tail above, and for the same reason. Open, its stages are
+   on screen and each carries its own ring, so a fourth moving thing here would
+   claim to be a fifth piece of work. Closed, the stages are hidden and the dots
+   are the only thing that separates a pipeline still working from one that
+   finished. `.activity-dots` sets `inline-flex`, so the default has to be turned
+   off explicitly rather than left to the primitive. */
+.subagent-block .subagent-busy {
+  display: none;
+
+  /* Accent, matching the header's identity ink and the rings these dots stand in
+     for. `--c-text-tertiary` was tried first and measured invisible: on a collapsed
+     pipeline the dots are the ONLY signal that anything is still running, and a
+     tertiary grey on this card's accent-tinted fill reads as an artifact rather
+     than as motion. `.activity-dot` paints `currentcolor`, so one declaration here
+     inks all three. */
+  color: var(--c-accent);
+}
+
+.subagent-block.collapsed.running .subagent-busy {
+  display: inline-flex;
+}
+
+/* A stage sits one level in, and the outer rail is what already says "delegated",
+   so the inner card drops back to a plain border. Two identical accent rails
+   nested read as two peers that happen to overlap; one rail with a quieter box
+   inside it reads as containment. The background matches the body it sits in for
+   the same reason — a secondary fill on a secondary fill is a seam with no
+   meaning behind it. */
+.subagent-container > .subagent-body > .subagent-block {
+  border-inline-start-width: 1px;
+  border-color: var(--c-border);
+  background: transparent;
+}
+
 .subagent-tail-line {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The footer ledger is turn-footer.ts reused; only its seams differ here. It
-   sits OUTSIDE the disclosure, so a collapsed card still states its result. */
-.subagent-footer {
+/* The FOOT ROW: the ledger and the way to this delegate's own page, in the same
+   composition `.run-foot` uses (ledger first, the link right-aligned). It sits
+   OUTSIDE the disclosure, so a collapsed card still states its result and still
+   offers the link — which is what makes the affordance reachable in the card's
+   normal reading state rather than one click in.
+
+   Created eagerly by subagent-block.ts and invisible when empty, because the
+   ledger is withheld until there is something worth a row and a link that appeared
+   halfway through a run would be one the reader had already looked for. */
+.subagent-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+.subagent-foot:empty {
+  display: none;
+}
+
+/* The footer ledger is turn-footer.ts reused. Inside the foot row it gives up its
+   own seams — the row draws the border and the row is what the link is aligned
+   against — and grows to take the space the link does not.
+
+   Scoped by the parent rather than declared flat, deliberately: `.turn-footer` and
+   a bare `.subagent-footer` score the same specificity, so which one won would
+   depend on the CSS MANIFEST order between this file and 29-turns.css. Two classes
+   settles it wherever the files sit. */
+.subagent-foot > .subagent-footer {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border-block-start: none;
+  border-radius: 0;
   padding-inline: var(--sp-2);
+}
+
+/* The link to the delegate's page. Same geometry and the same hover as
+   `.run-open` in 27-run-card.css, because it is the same affordance on the same
+   kind of card and a reader should learn one control. */
+.subagent-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+  margin-inline-end: var(--sp-2);
+  color: var(--c-text-secondary);
+  text-decoration: none;
+
+  /* 24px minimum hit target on a row whose text is 11px (web.md hit targets);
+     the padding is what supplies it rather than a taller row. */
+  min-height: 1.5rem;
+  padding-inline: var(--sp-1);
+  border-radius: var(--r-sm);
+  transition:
+    color var(--dur-micro),
+    background var(--dur-micro) var(--ease-standard);
+}
+
+.subagent-open:hover {
+  color: var(--c-text-primary);
+  background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
+}
+
+.subagent-open-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 
 /* Nested prose fills the subagent body, and now it does so with no rule here.
@@ -883,21 +1070,6 @@
   padding-block-end: var(--sp-1);
 }
 
-/* Vertical hairline used inside an action bar between two semantic
- * groups (e.g. local-changes vs. sync). Used by git-changes-tab.ts
- * which appends a <span class="action-bar-sep" aria-hidden="true">
- * between the Stage all / Discard all cluster and the Pull / Stash
- * cluster. Without this rule the separator was an invisible empty
- * span. */
-.action-bar-sep {
-  display: inline-block;
-  width: 1px;
-  height: 1.25rem;
-  background: var(--c-border);
-  margin-inline: var(--sp-1);
-  flex-shrink: 0;
-}
-
 /* Shared button base for action-pill, btn, btn-save, btn-small */
 .action-pill,
 .btn,
@@ -950,6 +1122,28 @@
  * wider inline padding would make a 36px button oblong. */
 .action-pill:not(:has(> :not(svg))) {
   padding-inline: var(--sp-2);
+}
+
+/* A job-owning pill's ACTIVITY face: it launched the work and, while that work
+ * is live, it is also the control that stops it (tools.ts `JobPill` — spinner
+ * for the glyph, "Cancel" for the label). The accent is this file's own in-flight
+ * hue, shared with `.btn-loading::before` and `.tool-icon.is-running`, so the
+ * pill reads as the thing that is running rather than as something that failed.
+ *
+ * It must stay CLICKABLE, which is the whole difference from `.btn-loading`
+ * above: nothing here touches `pointer-events` or `opacity`, because a reader
+ * who wants to stop a ten-minute toolchain install has this pill and nothing
+ * else. The spinner is the only motion, and the global reduced-motion rule
+ * (40-a11y.css) stills it — leaving the accent and the word "Cancel", which are
+ * both channels that survive. */
+.action-pill.is-busy {
+  color: var(--c-accent);
+  border-color: var(--c-accent);
+}
+
+.action-pill.is-busy:hover {
+  background: color-mix(in srgb, var(--c-accent) 15%, transparent);
+  color: var(--c-accent);
 }
 
 .btn,
@@ -1069,6 +1263,20 @@
 
 .git-st-r {
   color: var(--c-blue);
+}
+
+/* A copy reads like a rename (content arriving from another path), so it
+   shares the rename hue. A typechange is a file replaced by a symlink or
+   the reverse — structural rather than a content edit — so it takes the
+   warning hue rather than Modified's yellow. Both letters previously had
+   no rule at all and inherited the surrounding grey, which made them the
+   only two statuses carrying no colour channel. */
+.git-st-c {
+  color: var(--c-blue);
+}
+
+.git-st-t {
+  color: var(--c-warning);
 }
 
 .git-st-u {

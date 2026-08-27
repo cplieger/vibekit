@@ -49,6 +49,19 @@ function liftOutput(parsed: unknown): GitCmdResult {
   return {};
 }
 
+/** Compose the message a failed /api/git envelope should carry: the kind, plus
+ *  the `detail` field when the server supplied one.
+ *
+ *  Without the detail the toast reads `Couldn't suggest a branch name:
+ *  generation_failed` — a machine discriminator and nothing a reader can act
+ *  on, while the server had already put the cause in the same body. The two
+ *  callers that pass an EMPTY detail do so deliberately (`no_staged_changes`,
+ *  `not_in_repo` say everything in their kind), so those keep rendering bare. */
+function errorMessage(data: { error: string }): string {
+  const detail = (data as { detail?: unknown }).detail;
+  return typeof detail === "string" && detail !== "" ? `${data.error}: ${detail}` : data.error;
+}
+
 /** Decode the /api/git 200-with-error envelope (apiAction's decode seam).
  *
  *  HTTP 200 + {"error": …} means the git subprocess failed; code "git"
@@ -59,7 +72,7 @@ function liftOutput(parsed: unknown): GitCmdResult {
 export function decodeGitResult(data: unknown): GitCmdResult {
   if (hasErrorString(data) && data.error !== "") {
     // HTTP 200 + {"error": …}: the git subprocess failed (18-F1).
-    throw new ActionError(data.error, { code: "git" });
+    throw new ActionError(errorMessage(data), { code: "git" });
   }
   return liftOutput(data);
 }

@@ -22,7 +22,7 @@ export type SettledBy = "user" | "unattended";
 
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal";
 
-export type TabKind = "chat" | "editor" | "run" | "settings" | "git" | "files" | "history" | "docs";
+export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs";
 
 export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
@@ -208,6 +208,14 @@ export interface CatalogInfo {
  */
   last_error?: string;
   entries: number;
+  /**
+ * Unavailable counts the entries the catalog knows about and cannot
+ * install. Beside Entries it is the operator's read on whether a
+ * registry bump changed what is reachable: a jump in this number with
+ * Entries falling is upstream moving tools onto a backend the
+ * compiler does not support.
+ */
+  unavailable: number;
   /**
  * FetchedAt is the last successful refresh (Unix milliseconds; 0
  * before the first).
@@ -543,6 +551,14 @@ export interface Inventory {
   job?: Job;
   tools: ToolInfo[];
   system: SystemTool[];
+  /**
+ * AptPackages are installed Debian packages with no manifest row: the
+ * ones a user or an agent installed themselves. Absent when apt is not
+ * this host's package manager, or when the enumeration failed — an
+ * inventory that cannot answer says nothing rather than reporting an
+ * empty box as a fact.
+ */
+  apt_packages?: unknown[];
 }
 
 /** Issue represents a forge issue. */
@@ -1185,6 +1201,29 @@ export interface RunStartedPayload {
 }
 
 /**
+ * RunStepPayload is the payload for type="run_step".
+ * //
+ * NodePath, not NodeID, and that is the same choice ACPWorkflowMeta.SubtaskID
+ * makes for the transcript: a repeat's iterations share a node id, so an id
+ * cannot address one execution and two passes of a loop body would write into
+ * each other's rows. Joined with "/" so it is the key the client already builds
+ * from `inspect`'s tree (`nodePathOf(...).join("/")`).
+ * //
+ * ToolCall is whole rather than a delta because there is no buffer at this end to
+ * fold into: a parentless run has no chat, so nothing accumulates its content.
+ * The translator holds the in-flight calls per run instead, bounded by the same
+ * `run_complete` that bounds the step-session registry, and sends the folded
+ * value. A client can therefore render the last frame it received and be right.
+ */
+export interface RunStepPayload {
+  tool_call?: ToolCall;
+  workflow_id: string;
+  node_path: string;
+  kind: string;
+  delta?: string;
+}
+
+/**
  * SafetyPropertiesPayload is the payload for type="safety_properties",
  * translated from the v3 (KAS) _kiro/safety/propertiesChanged notification.
  * Reason is the KAS PropertyChangeReason (formalized/toggled/expired). Same
@@ -1241,11 +1280,47 @@ export interface SearchHit {
   version?: string;
   featured?: boolean;
   lsp?: boolean;
+  /**
+ * Unavailable marks a hit the catalog knows about and cannot
+ * install, with Reason naming the registry backend that defeated the
+ * compiler. Such a hit is informational: a client must not offer an
+ * install for it, and the engine refuses one anyway.
+ * //
+ * Both fields are omitempty, so an installable hit serialises exactly
+ * as it did before this pair existed.
+ */
+  unavailable?: boolean;
+  reason?: string;
+  /**
+ * Apt marks a Debian package rather than a catalog entry. Version
+ * then carries the distro's candidate, which routinely differs from
+ * the catalog's version for the same tool, and the row's install lands
+ * in the container layer rather than on the persistent volume.
+ */
+  apt?: boolean;
 }
 
-/** SearchResponse is the search route's body. */
+/**
+ * SearchResponse is the search route's body. Results arrive in blocks,
+ * in this order: installable catalog entries, Debian packages, then,
+ * only when the caller asked for them, the catalog entries no install
+ * source exists for. Each block is capped independently by the engine, so
+ * a client renders them as sections without re-sorting and one corpus
+ * cannot crowd out another.
+ * //
+ * The third block is OPT-IN via `?unavailable=1`. Absent by default
+ * because a dialog offering things to install has no use for a row it
+ * cannot act on, while an agent reading this API does: it would rather be
+ * told a tool is known and why it cannot be installed than get an empty
+ * result and conclude the tool does not exist.
+ * //
+ * AptAvailable distinguishes "no Debian package matched" from "the
+ * package list could not be consulted", which look identical in an empty
+ * result and mean opposite things.
+ */
 export interface SearchResponse {
   results: SearchHit[];
+  apt_available: boolean;
 }
 
 /**
@@ -1456,7 +1531,8 @@ export interface TabSubject {
  */
   kind: TabKind;
   /**
- * Ref is a chat id, an absolute path, or a run id — empty for a singleton.
+ * Ref is a chat id, an absolute path, a run id, or a subagent's
+ * `<chatID>/<agentSubtaskID>` pair — empty for a singleton.
  * The store treats it as opaque text: whether it is a VALID chat id or a
  * path inside a granted root is the command boundary's question, because
  * that is where ids.ValidChatID and the file-browser roots live.
@@ -1820,6 +1896,21 @@ export interface ToolInfo {
   installed_version?: string;
   latest?: string;
   last_error?: string;
+  /**
+ * Checksum reports how the INSTALLED artifact's integrity was
+ * established, copied from ToolStatus.Checksum: "verified" when the
+ * definition declared a checksum source and the digest matched,
+ * "unverified" when it declared none. Empty means the question does
+ * not apply — the tool is not installed, or its source has no
+ * artifact to checksum (npm, pip, cargo, go, apt, manual), where the
+ * package manager or the distro archive owns verification.
+ * //
+ * A consumer showing a "no checksum" badge reads THIS, not the
+ * source kind: whether verification happened is a fact about the
+ * install that ran, and 252 of the catalog's aqua entries declare no
+ * checksum while the other 402 do.
+ */
+  checksum?: string;
   requires?: string[];
   /**
  * Dependents names the ENABLED entries that require this tool,
@@ -1837,6 +1928,13 @@ export interface ToolInfo {
   dependents?: string[];
   pin?: boolean;
   disabled?: boolean;
+  /**
+ * Essential marks a tool this application NEEDS: the engine
+ * refuses to remove it (ErrEssential), so a consumer renders it apart
+ * from the tools a user chose and offers no delete control. Disable
+ * remains available, which is the honest escape hatch.
+ */
+  essential?: boolean;
   /**
  * Lsp marks a language-server entry (catalog knowledge); consumers
  * use it for the no-LSP-enabled warning and UI badges.

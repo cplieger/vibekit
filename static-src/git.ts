@@ -128,7 +128,12 @@ export function initGitPanel(): void {
           void refreshChanges(true);
           break;
         case "prs":
-          void refreshPRs.dispatch(undefined);
+          // NOT the force the Changes tab passes above, and the asymmetry is the
+          // point. `?fetch=1` there runs a local `git fetch`, the only way to
+          // learn remote state at all. Here every row is already remote and the
+          // server caches the listings, so arriving at the tab should cost no
+          // subprocess when the answer is known. The refresh button forces.
+          void refreshPRs.dispatch({ force: false });
           break;
         case "sources":
           void refreshSources();
@@ -145,7 +150,7 @@ export function initGitPanel(): void {
         void refreshChanges(true);
         break;
       case "prs":
-        void refreshPRs.dispatch(undefined);
+        void refreshPRs.dispatch({ force: false });
         break;
       case "sources":
         void refreshSources();

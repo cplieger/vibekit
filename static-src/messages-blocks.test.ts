@@ -73,6 +73,9 @@ function render(blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): 
 /** The `.assistant-blocks` children, as a readable shape. */
 function shape(wrap: HTMLElement): string[] {
   return [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) => {
+    if (e.classList.contains("subagent-container")) {
+      return `pipeline(${String((e as HTMLElement).dataset["pipeline"])})`;
+    }
     if (e.classList.contains("subagent-block")) {
       return `card(${String((e as HTMLElement).dataset["subtask"])})`;
     }
@@ -261,6 +264,255 @@ describe("a workflow run's steps render inside the launch that started them", ()
     // AND the reconcile removes each row.
     disposeAssistantBody(lastMsgID);
     disposeAssistantBody(lastMsgID);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A PIPELINE is the fourth destination, and the only delegate relationship the
+// wire states outright. `orchestrate_subagent` produces three kinds of tool call:
+// an `Orchestrate Sub-agent` driver with NO subtask, then per stage a
+// `Sub-agent: <name>` invocation with a fresh subtask uuid, then that stage's own
+// work under the same uuid. The stage's tool-call ID embeds its driver's —
+// `invoke_subagent_<orchestrateId>_stage_<name>` — which is the parent pointer,
+// measured on 59 of the 60 stage calls in 36 live chat files (the exception is a
+// plain unorchestrated subagent, which has no parent).
+//
+// Before this join the driver and its stages rendered as flat siblings with no
+// relation the DOM could express, and BOTH spun: the driver as an ordinary tool
+// card at 0.8s, the stage box at 0.6s, so two rings beat against each other for
+// one delegated task. So these tests pin two things: the nesting, and that exactly
+// one level carries a ring.
+// ---------------------------------------------------------------------------
+
+describe("a pipeline's stages render inside the orchestrate call that started them", () => {
+  // EVERY TEST GETS ITS OWN DRIVER ID, and that is a requirement rather than
+  // tidiness: `store-signals.ts` `ensureToolCallSig` is `SignalMap.ensure`, which
+  // returns the signal already registered for an id and IGNORES the initial value.
+  // Nothing here disposes a render, so a reused id hands a later test the first
+  // test's tool call, and the bind effect then applies that stale status and input
+  // over the correct ones. Reusing "d1" cost four confusing failures.
+  const driver = (id: string, stages = 0, status = "completed"): ToolCall =>
+    ({
+      id,
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status,
+      input: stages > 0 ? { task: "do the thing", stages: Array.from({ length: stages }) } : {},
+    }) as unknown as ToolCall;
+
+  /** A stage invocation. Its id embeds its driver's, which IS the join. */
+  const stage = (driverID: string, name: string, subtask: string, status = "completed"): ToolCall =>
+    ({
+      id: stageID(driverID, name),
+      title: `Sub-agent: ${name}`,
+      kind: "other",
+      status,
+      agent_subtask_id: subtask,
+    }) as unknown as ToolCall;
+
+  const stageID = (driverID: string, name: string): string =>
+    `invoke_subagent_${driverID}_stage_${name}`;
+
+  /** A plain subagent invocation: no pipeline in its id, so nothing to nest under. */
+  const loneSubagent = (id: string, subtask: string, status = "completed"): ToolCall =>
+    ({
+      id,
+      title: "Sub-agent: general-task-execution",
+      kind: "other",
+      status,
+      agent_subtask_id: subtask,
+    }) as unknown as ToolCall;
+
+  const boxes = (wrap: HTMLElement): HTMLElement[] => [
+    ...wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .subagent-container"),
+  ];
+  const nested = (wrap: HTMLElement): string[] =>
+    [
+      ...wrap.querySelectorAll<HTMLElement>(
+        ".subagent-container > .subagent-body > .subagent-block",
+      ),
+    ].map((e) => e.dataset["subtask"] ?? "");
+  const nameOf = (e: Element | undefined): string =>
+    e?.querySelector(".subagent-name")?.textContent ?? "";
+
+  it("makes the orchestrate call the pipeline box, not a tool row", () => {
+    const wrap = render([toolUse("d-bare")], [driver("d-bare")]);
+    expect(boxes(wrap)).toHaveLength(1);
+    expect(boxes(wrap)[0]?.dataset["pipeline"]).toBe("d-bare");
+    // The point of the change: it is NOT also a tool card.
+    expect(wrap.querySelectorAll(".assistant-blocks > .tool-group")).toHaveLength(0);
+  });
+
+  it("puts a stage's box inside the pipeline's body, not beside it", () => {
+    const wrap = render(
+      [toolUse("d-one"), toolUse(stageID("d-one", "plan"), "u-one"), text("planning", "u-one")],
+      [driver("d-one", 1), stage("d-one", "plan", "u-one")],
+    );
+    // ONE top-level object for the whole pipeline, where there were two.
+    expect(shape(wrap)).toEqual(["pipeline(d-one)"]);
+    expect(nested(wrap)).toEqual(["u-one"]);
+    const body = wrap.querySelector(".subagent-container .subagent-block .subagent-body");
+    expect(body?.textContent).toContain("planning");
+  });
+
+  it("gives one pipeline its several stages, in first-seen order", () => {
+    const wrap = render(
+      [
+        toolUse("d-two"),
+        toolUse(stageID("d-two", "plan"), "u-two-a"),
+        toolUse(stageID("d-two", "code"), "u-two-b"),
+      ],
+      [driver("d-two", 2), stage("d-two", "plan", "u-two-a"), stage("d-two", "code", "u-two-b")],
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-two)"]);
+    expect(nested(wrap)).toEqual(["u-two-a", "u-two-b"]);
+  });
+
+  it("keeps two pipelines in two boxes", () => {
+    const wrap = render(
+      [
+        toolUse("d-p1"),
+        toolUse(stageID("d-p1", "plan"), "u-p1"),
+        toolUse("d-p2"),
+        toolUse(stageID("d-p2", "plan"), "u-p2"),
+      ],
+      [
+        driver("d-p1", 1),
+        stage("d-p1", "plan", "u-p1"),
+        driver("d-p2", 1),
+        stage("d-p2", "plan", "u-p2"),
+      ],
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-p1)", "pipeline(d-p2)"]);
+    expect(nested(wrap)).toEqual(["u-p1", "u-p2"]);
+  });
+
+  it("is order-independent: a stage arriving BEFORE its driver builds the same one box", () => {
+    const wrap = render(
+      [toolUse(stageID("d-rev", "plan"), "u-rev"), text("planning", "u-rev"), toolUse("d-rev")],
+      [driver("d-rev", 1), stage("d-rev", "plan", "u-rev")],
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-rev)"]);
+    expect(nested(wrap)).toEqual(["u-rev"]);
+    // The driver still names the box, so `bindPipeline` FOUND it rather than
+    // building a second one beside it.
+    expect(nameOf(boxes(wrap)[0])).toBe("Pipeline · 1 stage");
+  });
+
+  it("leaves a plain unorchestrated subagent at the top level", () => {
+    // No `invoke_subagent_<driver>_stage_<name>` id, so no parent to nest under.
+    // This is the shape of the one stage-less call in the live chat files.
+    const wrap = render(
+      [toolUse("tc-lone", "u-lone"), text("working", "u-lone")],
+      [loneSubagent("tc-lone", "u-lone")],
+    );
+    expect(boxes(wrap)).toHaveLength(0);
+    expect(shape(wrap)).toEqual(["card(u-lone)"]);
+  });
+
+  it("falls back to the top level for a malformed stage id rather than losing the block", () => {
+    // Prefix present, separator absent: not an id this client can split, and
+    // nesting it under a guessed parent would be worse than not nesting it.
+    const wrap = render(
+      [toolUse("invoke_subagent_d-bad", "u-bad"), text("orphan", "u-bad")],
+      [loneSubagent("invoke_subagent_d-bad", "u-bad")],
+    );
+    expect(boxes(wrap)).toHaveLength(0);
+    expect(shape(wrap)).toEqual(["card(u-bad)"]);
+    expect(wrap.querySelector(".subagent-block")?.textContent).toContain("orphan");
+  });
+
+  it("keeps the driver id whole when a stage NAME contains the separator", () => {
+    // `lastIndexOf`, not `indexOf`: a stage name is author-supplied, so a stage
+    // called `run_stage_two` must not cut the parent id short.
+    const wrap = render(
+      [toolUse("d-sep"), toolUse(stageID("d-sep", "run_stage_two"), "u-sep")],
+      [driver("d-sep", 1), stage("d-sep", "run_stage_two", "u-sep")],
+    );
+    expect(boxes(wrap)[0]?.dataset["pipeline"]).toBe("d-sep");
+    expect(nested(wrap)).toEqual(["u-sep"]);
+  });
+
+  it("names the box from the driver's own declared stage count", () => {
+    const wrap = render([toolUse("d-three")], [driver("d-three", 3)]);
+    expect(nameOf(boxes(wrap)[0])).toBe("Pipeline · 3 stages");
+  });
+
+  it("names it plainly when the driver declares no stages", () => {
+    const wrap = render([toolUse("d-none")], [driver("d-none")]);
+    expect(nameOf(boxes(wrap)[0])).toBe("Pipeline");
+  });
+
+  // -------------------------------------------------------------------------
+  // ONE RING PER PIPELINE, and it belongs to the stage. This is the half of the
+  // change a reader sees: before it, the driver's tool card spun at 0.8s and the
+  // stage box spun at 0.6s, side by side, for one delegated task.
+  // -------------------------------------------------------------------------
+
+  it("spins the STAGE and not the pipeline", () => {
+    const wrap = render(
+      [toolUse("d-spin"), toolUse(stageID("d-spin", "plan"), "u-spin")],
+      [driver("d-spin", 1, "in_progress"), stage("d-spin", "plan", "u-spin", "in_progress")],
+    );
+    const pipeline = boxes(wrap)[0];
+    const inner = wrap.querySelector<HTMLElement>(
+      ".subagent-container > .subagent-body > .subagent-block",
+    );
+    // Both are running, so before the container variant both carried a ring.
+    expect(pipeline?.classList.contains("running")).toBe(true);
+    expect(inner?.classList.contains("running")).toBe(true);
+
+    expect(inner?.querySelector(".subagent-spinner")).not.toBeNull();
+    expect(pipeline?.querySelector(":scope > .subagent-header > .subagent-spinner")).toBeNull();
+  });
+
+  it("keeps the pipeline's identity glyph while it runs, with no outcome mark yet", () => {
+    const wrap = render([toolUse("d-glyph")], [driver("d-glyph", 1, "in_progress")]);
+    const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
+    // A leaf empties this slot to become a ring; a container must not.
+    expect(icon?.querySelector("svg")).not.toBeNull();
+    expect(icon?.classList.contains("subagent-spinner")).toBe(false);
+    // No outcome yet, so no check and no cross.
+    expect(icon?.querySelector(".tool-outcome-badge")).toBeNull();
+  });
+
+  it("gives the pipeline its outcome mark once it settles", () => {
+    const wrap = render([toolUse("d-fail")], [driver("d-fail", 1, "failed")]);
+    const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
+    expect(icon?.classList.contains("is-fail")).toBe(true);
+    expect(icon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u2717");
+  });
+
+  it("carries activity dots, and a leaf carries none", () => {
+    const wrap = render([toolUse("d-dots")], [driver("d-dots", 1, "in_progress")]);
+    const pipeline = boxes(wrap)[0];
+    expect(
+      pipeline?.querySelector(".subagent-busy")?.querySelectorAll(".activity-dot"),
+    ).toHaveLength(3);
+    // The CSS gate is `.collapsed.running`, and collapsed-by-default is what
+    // makes them visible now.
+    expect(pipeline?.classList.contains("collapsed")).toBe(true);
+    expect(pipeline?.classList.contains("running")).toBe(true);
+
+    const leaf = render(
+      [toolUse("tc-leaf", "u-leaf")],
+      [loneSubagent("tc-leaf", "u-leaf", "in_progress")],
+    );
+    expect(leaf.querySelector(".subagent-busy")).toBeNull();
+  });
+
+  it("gives the pipeline no rolling tail, because its body holds cards not prose", () => {
+    // `blockLines` splits a child on the newlines its own text carries, and a
+    // stage card's DOM carries none — so a tail here would fold the whole stage
+    // into one line of glued words. The dots are its progress cue instead.
+    const wrap = render(
+      [toolUse("d-tail"), toolUse(stageID("d-tail", "plan"), "u-tail")],
+      [driver("d-tail", 1, "in_progress"), stage("d-tail", "plan", "u-tail", "in_progress")],
+    );
+    expect(boxes(wrap)[0]?.querySelector(":scope > .subagent-tail")).toBeNull();
+    // The stage keeps its own.
+    const inner = wrap.querySelector(".subagent-container > .subagent-body > .subagent-block");
+    expect(inner?.querySelector(":scope > .subagent-tail")).not.toBeNull();
   });
 });
 

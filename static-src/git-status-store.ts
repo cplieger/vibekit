@@ -83,8 +83,14 @@ let dirIndex = new Map<string, string>();
 
 /** Rollup precedence, worst first. A conflict is the most urgent thing a
  *  directory can contain and an untracked file the least, so a folder holding
- *  both reports the conflict. */
-const ROLLUP_ORDER: readonly string[] = ["U", "D", "M", "R", "A", "?"];
+ *  both reports the conflict.
+ *
+ *  It must list EVERY letter git emits, or the two the table missed fall to
+ *  the unknown-letter tail below and a directory holding only a copy or a
+ *  typechange reports whatever else it contains instead. 'T' sits with the
+ *  structural changes (a file replaced by a symlink), 'C' beside 'R' since
+ *  both describe content arriving from somewhere else. */
+const ROLLUP_ORDER: readonly string[] = ["U", "D", "T", "M", "R", "C", "A", "?"];
 
 function worse(a: string, b: string): string {
   if (a === "") {

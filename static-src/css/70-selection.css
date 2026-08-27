@@ -37,6 +37,8 @@
 .pill-model-item,
 .pill-role-item,
 .popup-item,
+.ev-row-main,
+.ev-tl-lane,
 .git-branch-popover-row {
   border: 1px solid transparent;
 }
@@ -86,6 +88,12 @@
 .turn-action-btn[aria-pressed="true"],
 .chat-find-case[aria-pressed="true"],
 .fb-search-case[aria-pressed="true"],
+/* The exec view's tree row and timeline lane. TWO surfaces for one selection, by
+   design: the tree and the timeline are the same navigation from different angles
+   and a reader clicking either must see the other agree, which is only true if both
+   speak this vocabulary. */
+.ev-row.ev-selected > .ev-row-main,
+.ev-tl-lane.ev-selected,
 .editor-find-case[aria-pressed="true"] {
   background: var(--c-selected-bg);
   border-color: var(--c-selected-border);
@@ -122,6 +130,8 @@
   .turn-action-btn[aria-pressed="true"]:hover,
   .chat-find-case[aria-pressed="true"]:hover,
   .fb-search-case[aria-pressed="true"]:hover,
+  .ev-row.ev-selected > .ev-row-main:hover,
+  .ev-tl-lane.ev-selected:hover,
   .editor-find-case[aria-pressed="true"]:hover,
 
   /* Keyboard focus, not decoration: `.pill-role-item`'s focus indicator IS a
@@ -203,7 +213,22 @@
 .fb-row.fb-row-selected .fb-icon,
 .fb-row.fb-row-selected .fb-meta,
 .repo-picker-row-selected .repo-picker-row-meta,
-.repo-picker-row-selected .repo-picker-row-age {
+.repo-picker-row-selected .repo-picker-row-age,
+
+/* The exec view's tree row and timeline lane. Every one of these children sets its
+   own `--c-text-tertiary`, so the fill's inherited ink never reaches them: axe
+   measured 2.76:1 on four nodes (`#8d91a7` on `#4c476e`) before this, which is
+   exactly the third-channel failure this block exists for.
+   `.ev-selected > .ev-row-main` and then a DESCENDANT is deliberate on two counts:
+   the child step stops a selected container repainting its whole subtree (the way
+   its state rules once repainted every descendant glyph), and `.ev-row-main` holds
+   no nested row — children live in `.ev-kids`, its sibling — so the descendant half
+   cannot reach past this row. It also keeps the selector inside the (0,4,3)
+   specificity cap this file is linted against. */
+.ev-selected > .ev-row-main .ev-sub,
+.ev-selected > .ev-row-main .ev-dur,
+.ev-tl-lane.ev-selected .ev-tl-name,
+.ev-tl-lane.ev-selected .ev-tl-dur {
   color: var(--c-selected-muted-fg);
 }
 

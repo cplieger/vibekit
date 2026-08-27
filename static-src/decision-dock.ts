@@ -37,6 +37,7 @@ import { buildPermissionCard } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
 import { info } from "./toast.js";
+import type { RunAsks } from "./fundamentals/run-card.js";
 import type {
   PermissionNeededPayload,
   ElicitationNeededPayload,
@@ -270,6 +271,66 @@ export function dropTurnDecisions(chatID: string): void {
 export function hasPendingDecision(chatID: string): boolean {
   void queueVersion.value;
   return (queues.get(chatID)?.length ?? 0) > 0;
+}
+
+/** What ONE workflow run is waiting on a person for.
+ *
+ *  The transcript's run card asks, so a step blocked on a permission stops looking
+ *  identical to a step doing work — the same masking `hasPendingDecision` above
+ *  closed for a background chat's tab dot, one level down. The run's own status
+ *  cannot answer it: KAS blocks the asking step's turn and leaves the run
+ *  `running`, so `inspect` reports nothing wrong.
+ *
+ *  Scans every queue rather than one, because a run's asks are keyed two ways and
+ *  the card knows only the run: an agent-launched run's ask sits under the LAUNCHING
+ *  CHAT's id with `run_id` stamped on the payload, a parentless one's under the
+ *  synthetic `run:<id>` chat id. Same join `mountRunDecisionDock` makes.
+ *
+ *  Reads `queueVersion.value` (not `.peek()`) for the reason above it: the caller is
+ *  the card's own render effect, and this read is what subscribes it to an ask
+ *  arriving or being answered. */
+export function runPendingAsks(workflowID: string): RunAsks {
+  void queueVersion.value;
+  const nodes = new Set<string>();
+  if (workflowID === "") {
+    return { count: 0, nodes, label: "" };
+  }
+  const runKey = `run:${workflowID}`;
+  let count = 0;
+  let label = "";
+  for (const q of queues.values()) {
+    for (const d of q) {
+      if (d.runID !== workflowID && d.chatID !== runKey) {
+        continue;
+      }
+      count++;
+      // Absent whenever the step-session registry never saw the asking
+      // sub-session, which is why the card takes the count separately: the run is
+      // blocked either way, only the ROW cannot be named.
+      const node = d.payload.node_id ?? "";
+      if (node !== "") {
+        nodes.add(node);
+      }
+      if (label === "") {
+        label = askLabel(d);
+      }
+    }
+  }
+  return { count, nodes, label };
+}
+
+/** One line naming what an ask wants. Per-kind and private, because the three
+ *  payload shapes are this module's business — the run card takes the sentence, not
+ *  a payload to read fields off. */
+function askLabel(d: Decision): string {
+  switch (d.kind) {
+    case "permission":
+      return d.payload.title ?? "";
+    case "elicitation":
+      return d.payload.message ?? "";
+    case "user_input":
+      return d.payload.question;
+  }
 }
 
 /** Retire a decision ANOTHER surface answered (`decision_settled`), and say who

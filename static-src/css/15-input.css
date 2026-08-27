@@ -401,6 +401,15 @@
     text-overflow: ellipsis;
   }
 
+  /* The reasoning tier never shrinks and never ellipsizes: it is one short word,
+   * it is present only when the chat departs from the model's default, and under
+   * width pressure the model name beside it is the half that can afford to lose
+   * characters. Dimmer than the name so the pill still reads name-first. */
+  & .pill-model-effort {
+    flex-shrink: 0;
+    color: var(--c-text-tertiary);
+  }
+
   &.switching {
     pointer-events: none;
   }

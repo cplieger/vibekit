@@ -125,8 +125,12 @@ export function buildToolGroupShell(): HTMLDivElement {
     // nothing and the affordance had to be discovered. It is present in both
     // states now and rotates, like every other disclosure in the app.
     chevronEl(),
-    // Same glyph slot as a member card, tinted by refreshGroupHeader to the
-    // worst status inside. One vocabulary, learned once.
+    // The header's verdict slot. It shares `.tool-icon` for the tint classes and
+    // NOT for the glyph: paintGroupOutcome writes the check or cross straight into
+    // this span's textContent, so a group header shows a verdict where a member
+    // card shows its per-kind glyph plus a corner badge. The comment here used to
+    // claim "same glyph slot as a member card", which is why the CSS rule carries
+    // a text slot's declarations and no reader could find the SVG.
     el("span", { className: "tool-group-icon tool-icon" }),
     el("span", { className: "tool-group-count" }),
   ) as HTMLDivElement;

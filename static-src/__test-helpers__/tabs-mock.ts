@@ -41,6 +41,7 @@ export function tabsMock(): Record<string, unknown> {
     setTabPinned: vi.fn(async () => {}),
     openEditorView: vi.fn(async () => {}),
     openRunTab: vi.fn(async () => {}),
+    openSubagentTab: vi.fn(async () => {}),
     toggleSettingsView: vi.fn(async () => {}),
     toggleGitView: vi.fn(async () => {}),
     toggleFilesView: vi.fn(async () => {}),
@@ -65,6 +66,7 @@ export function tabsMock(): Record<string, unknown> {
     // Readers, each answering "nothing".
     hasTab: vi.fn(() => false),
     tabIdFor: vi.fn(() => ""),
+    tabIdForRoute: vi.fn(() => ""),
     getActiveTabId: vi.fn(() => ""),
     getActiveTabRoute: vi.fn(() => null),
     getActiveTabKind: vi.fn(() => null),

@@ -24,7 +24,7 @@ const {
   mockAttachmentGeneration,
   mockTypedCommand,
   mockClearAgentDown,
-  mockRestorePromptText,
+  mockRestoreFailedSend,
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
   mockSteer: vi.fn(),
@@ -33,7 +33,7 @@ const {
   mockAttachmentGeneration: vi.fn(() => 0),
   mockTypedCommand: vi.fn(() => false),
   mockClearAgentDown: vi.fn(),
-  mockRestorePromptText: vi.fn(),
+  mockRestoreFailedSend: vi.fn(),
 }));
 
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
@@ -55,10 +55,10 @@ vi.mock("./send-state.js", () => ({
   setSSEStatus: undefined,
   clearAgentDown: mockClearAgentDown,
 }));
-vi.mock("./prompt-input.js", () => ({ restorePromptText: mockRestorePromptText }));
+vi.mock("./composer-state.js", () => ({ restoreFailedSend: mockRestoreFailedSend }));
 
 import { submitPrompt } from "./submit.js";
-import { setSessions, setActive, setThinking, steerCount } from "./store.js";
+import { setSessions, setActive, setThinking, steerCount, appendMessage } from "./store.js";
 import type { Session } from "./types.js";
 
 function makeSession(id: string): Session {
@@ -129,11 +129,58 @@ describe("submitPrompt on an idle chat", () => {
     mockSendPromptTo.mockResolvedValue("failed");
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
-    expect(mockRestorePromptText).toHaveBeenCalledWith("hello");
+    // Chat-scoped, not "the composer on screen": the send is asynchronous, so by
+    // the time a failure lands the reader may be in another conversation.
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
     // The generation the send took with it rides the restore, so a chat closed
     // while the request was in flight can refuse it.
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 7);
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "b.ts", 7);
+  });
+
+  // The user-visible bug: a prompt that was ACCEPTED and then lost its turn came
+  // back into the composer, which is indistinguishable from an Enter that never
+  // cleared the box. `CmdPrompt` persists and broadcasts the user row before the
+  // ACP call and nothing rolls it back, so the echo is already in the store by the
+  // time the turn dies and the POST answers 500.
+  describe("a prompt the server already accepted", () => {
+    /** Fail the send, but echo the user row first, the way the server does. */
+    function failAfterEcho(): void {
+      mockSendPromptTo.mockImplementation(
+        async (chatID: string, text: string, opts: { messageID: string }) => {
+          appendMessage(chatID, { id: opts.messageID, role: "user", content: text });
+          return "failed";
+        },
+      );
+    }
+
+    it("is not handed back to the composer", async () => {
+      resetStore("c1");
+      failAfterEcho();
+
+      expect(await submitPrompt("c1", "hello")).toBe("failed");
+      expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    });
+
+    it("does not get its attachments back either", async () => {
+      // They rode the accepted prompt, and the server records them on the message.
+      resetStore("c1");
+      mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
+      failAfterEcho();
+
+      await submitPrompt("c1", "hello");
+      expect(mockAddAttachmentTo).not.toHaveBeenCalled();
+    });
+
+    it("still reuses its message id, so a retype lands on the row it persisted", async () => {
+      resetStore("c1");
+      failAfterEcho();
+      await submitPrompt("c1", "hello");
+      const first = sentMessageID(0);
+
+      await submitPrompt("c1", "hello");
+      expect(sentMessageID(1)).toBe(first);
+    });
   });
 
   it("hands back the generation read BEFORE the send, not the one after it", async () => {
@@ -157,7 +204,7 @@ describe("submitPrompt on an idle chat", () => {
     mockSendPromptTo.mockResolvedValue("sent");
 
     await submitPrompt("c1", "hello");
-    expect(mockRestorePromptText).not.toHaveBeenCalled();
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
   });
 
   it("lets a typed command through without minting a send or a steer", async () => {
@@ -214,7 +261,7 @@ describe("submitPrompt during a turn", () => {
     mockSteer.mockResolvedValue(undefined);
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
-    expect(mockRestorePromptText).toHaveBeenCalledWith("hello");
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 0);
   });
 });
