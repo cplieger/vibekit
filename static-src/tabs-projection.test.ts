@@ -180,7 +180,11 @@ function registerOpeners(): void {
       show: (ref) => {
         record("run", ref);
       },
-      cancel: vi.fn(),
+    },
+    subagent: {
+      show: (chatID, subtaskID) => {
+        record("subagent", `${chatID}/${subtaskID}`);
+      },
     },
   });
 }

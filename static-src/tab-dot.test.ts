@@ -308,7 +308,8 @@ async function resetProjection(): Promise<void> {
       dot: (chatID: string) => seededDots.get(chatID) ?? "",
     },
     editor: { show: vi.fn(), close: vi.fn() },
-    run: { show: vi.fn(), cancel: vi.fn() },
+    run: { show: vi.fn() },
+    subagent: { show: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();

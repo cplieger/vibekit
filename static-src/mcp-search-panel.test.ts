@@ -103,7 +103,7 @@ function mountPanel(): { input: HTMLInputElement; results: HTMLDivElement } {
 
 function type(input: HTMLInputElement, value: string): void {
   input.value = value;
-  input.oninput?.(new Event("input"));
+  input.oninput?.(new InputEvent("input"));
 }
 
 beforeEach(() => {
@@ -148,7 +148,7 @@ describe("what the panel asks the registry for", () => {
     expect(flushed).toEqual([{ q: "notion" }]);
 
     (document.getElementById("mcp-search-btn") as HTMLButtonElement).onclick?.(
-      new MouseEvent("click"),
+      new PointerEvent("click"),
     );
     expect(flushed).toEqual([{ q: "notion" }, { q: "notion" }]);
   });

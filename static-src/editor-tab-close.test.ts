@@ -173,7 +173,8 @@ beforeEach(() => {
   registerTabOpeners({
     chat: { show: vi.fn(), close: vi.fn(), dot: () => "" },
     editor: { show: activateFile, close: closeEditorFile },
-    run: { show: vi.fn(), cancel: vi.fn() },
+    run: { show: vi.fn() },
+    subagent: { show: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();

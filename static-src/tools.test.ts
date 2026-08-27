@@ -406,7 +406,6 @@ describe("add modal", () => {
     // The shell is always the fallback, stated on every result set.
     expect(text).toContain("Install it in the shell");
   });
-
 });
 
 describe("job following over SSE", () => {
@@ -790,9 +789,9 @@ describe("unmanaged apt packages", () => {
         { name: "libc6-dev", version: "2.41-12" },
       ],
     });
-    const labels = [
-      ...document.querySelectorAll<HTMLElement>("#tools-list .list-group-label"),
-    ].map((e) => e.textContent ?? "");
+    const labels = [...document.querySelectorAll<HTMLElement>("#tools-list .list-group-label")].map(
+      (e) => e.textContent ?? "",
+    );
     expect(labels).toContain("installed with apt, outside the engine");
     expect(aptRows()).toEqual(["gcc", "libc6-dev"]);
 

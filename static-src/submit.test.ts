@@ -148,7 +148,7 @@ describe("submitPrompt on an idle chat", () => {
     function failAfterEcho(): void {
       mockSendPromptTo.mockImplementation(
         async (chatID: string, text: string, opts: { messageID: string }) => {
-          appendMessage(chatID, { id: opts.messageID, role: "user", content: text });
+          appendMessage(chatID, { id: opts.messageID, role: "user", content: text, ts: 1 });
           return "failed";
         },
       );

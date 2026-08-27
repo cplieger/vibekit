@@ -22,8 +22,8 @@ type gitFile struct {
 	Path     string `json:"path"`
 	Display  string `json:"display"`
 	Status   string `json:"status"`
-	Staged   bool   `json:"staged"`
 	OrigPath string `json:"orig_path,omitempty"`
+	Staged   bool   `json:"staged"`
 }
 
 // statusLabels covers every status character `git status --porcelain=v1`

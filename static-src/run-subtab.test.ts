@@ -34,7 +34,8 @@ vi.mock("./tabs.js", () => ({
   // Present-but-inert: the run tab renders the run CARD now, whose markdown
   // bubble reaches the linkifier and through it the editor openers, so these
   // names are imported somewhere in this graph. No case here opens a file.
-  getActiveTabId: vi.fn(() => ""),
+  // `getActiveTabId` is NOT inert here and is declared below, where the
+  // auto-close's never-the-tab-on-screen rule reads it.
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
   toggleGitView: vi.fn(),
@@ -98,8 +99,7 @@ vi.mock("./actions/runs.js", () => {
   return { cancelRun: stub, pauseRun: stub, resumeRun: stub, retryRun: stub };
 });
 
-const { openRunSubTab, openRunView, autoCloseRunSubTab } =
-  await import("./run-view.js");
+const { openRunSubTab, openRunView, autoCloseRunSubTab } = await import("./run-view.js");
 
 beforeEach(() => {
   m.opened.length = 0;
