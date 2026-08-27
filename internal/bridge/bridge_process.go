@@ -36,8 +36,10 @@ func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 		return errors.New("bridge: StartOpts.Lifetime is required: it bounds the kiro-cli subprocess, and every default for it is a subprocess nothing can cancel")
 	}
 	b.lifecycleCtx = opts.Lifetime
+	// The engine is NOT stored on the bridge: startProcess below takes it from
+	// opts and nothing else ever reads it. The field that used to hold it had no
+	// reader in any build, which `unused` cannot see because it was assigned.
 	// Immutable after Start; read lock-free by SetModel / initialize.
-	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
 	b.secretStorage = opts.SecretStorage
 	b.presets = opts.Presets

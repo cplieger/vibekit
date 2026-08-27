@@ -109,7 +109,6 @@ type Bridge struct {
 	sessionID    vibekit.SessionID
 	currentMode  string
 	sessionTitle string
-	agentEngine  string
 	// effortLevel is the reasoning-effort tier the session last REPORTED running
 	// at, read off the `effortLevel` config option's currentValue. Observed rather
 	// than requested, which is what makes applyInitialEffort a repair instead of an
@@ -118,7 +117,7 @@ type Bridge struct {
 	// unknown level must assert rather than assume a match.
 	effortLevel string
 	// extraArgs are the filtered operator launch flags for this spawn
-	// (StartOpts.ExtraArgs). Immutable after Start, like agentEngine.
+	// (StartOpts.ExtraArgs). Immutable after Start.
 	extraArgs []string
 	// extraEnv is appended to the inherited environment of the kiro-cli
 	// process this bridge starts. The install manager's active version
