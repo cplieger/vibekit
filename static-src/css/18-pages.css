@@ -408,12 +408,23 @@ h3.section-title {
   }
 }
 
-/* Toggle switch */
+/* Toggle switch. The three sizes are declared once here and every rule below
+   derives from them, because the track and the knob only read as a switch while
+   they agree — and a knob placed by a fixed top offset agrees at exactly one
+   track height and at no other. */
 .toggle {
+  --toggle-w: 2.25rem;
+  --toggle-h: 1.25rem;
+  --toggle-knob: 1rem;
+
+  /* Half the track's spare height, so the knob's inset is equal on all four
+     sides and the circle sits concentric inside the stadium's end cap. */
+  --toggle-inset: calc((var(--toggle-h) - var(--toggle-knob)) / 2);
+
   position: relative;
   display: inline-block;
-  width: 2.25rem;
-  height: 1.25rem;
+  inline-size: var(--toggle-w);
+  block-size: var(--toggle-h);
   flex-shrink: 0;
 
   & input {
@@ -424,9 +435,23 @@ h3.section-title {
   }
 }
 
+/* THE TRACK PAINTS AT ITS OWN DECLARED SIZE AND CENTRES INSIDE THE LABEL BOX.
+   It was a bare `inset: 0`, which made the painted switch exactly as large as
+   whatever its label measured — and `.tool-toggle` carries the 24px/44px
+   touch-target floor (61-mcp-tools.css), so the Settings → Tools rows painted a
+   36x24 track on desktop and a 44x44 SQUARE on a phone, each around a 16px knob
+   still pinned 2px from the top. Measured at 390px: 26px of empty track under
+   the knob, against 2px on every other switch in the app, and two switch
+   heights side by side on one page, since the MCP rows below the tool rows were
+   never in that list. A hit target and a painted shape are two different boxes.
+   The label owns the first (that floor is doing real work); this rule owns the
+   second. Do not put `inset: 0` back on its own. */
 .toggle-slider {
   position: absolute;
   inset: 0;
+  margin: auto;
+  inline-size: var(--toggle-w);
+  block-size: var(--toggle-h);
   cursor: pointer;
   background: var(--c-bg-tertiary);
 
@@ -438,10 +463,15 @@ h3.section-title {
   &::before {
     content: "";
     position: absolute;
-    left: 0.125rem;
-    top: 0.125rem;
-    width: 1rem;
-    height: 1rem;
+    inset-inline-start: var(--toggle-inset);
+
+    /* Centred by the same over-constrained auto margin as the track above, so
+       the knob follows the track's height instead of one hard-coded value.
+       `transform` stays free for the travel. */
+    inset-block: 0;
+    margin-block: auto;
+    inline-size: var(--toggle-knob);
+    block-size: var(--toggle-knob);
     border-radius: 50%;
     background: var(--c-text-tertiary);
     transition:
@@ -455,7 +485,9 @@ h3.section-title {
 }
 
 .toggle :where(input:checked) + .toggle-slider::before {
-  transform: translateX(1rem);
+  /* Travel is track width minus knob minus both insets, and both insets are the
+     track's spare height, so it reduces to width minus height: 36 − 20 = 16px. */
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
   background: var(--c-on-accent);
 }
 
@@ -604,6 +636,17 @@ h3.section-title {
     background: none;
     color: var(--c-text-tertiary);
   }
+}
+
+/* The ghost bin on a pre-bundled tool row: it reserves the box the real
+ * control occupies so the switch column stays fixed across the two groups.
+ * `visibility: hidden` and not `display: none` — the whole point is the space.
+ * It is a <span> carrying `aria-hidden`, so it is not in the tab order either;
+ * `pointer-events: none` keeps the hover tint of the row's real controls from
+ * being interrupted by an invisible target. */
+.list-row-btn-ghost {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* Template rows (disabled: true, never opted into): dimmed name + meta
@@ -783,26 +826,45 @@ h3.section-title {
   line-height: 1.4;
 }
 
-.tool-manual-toggle {
-  align-self: flex-start;
+/* Search-result block heads. The catalog and the host's Debian packages are
+ * two lists, not one: the same name can appear in both at different versions,
+ * so a merged list would have to pick one and hide a real choice. */
+.tool-block-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-1) var(--sp-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.tool-manual-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
+/* Not the first head: the second block needs separating from the rows above
+ * it, and the first sits directly under the search field already. */
+.tool-block-head:not(:first-child) {
   margin-block-start: var(--sp-2);
-  padding-block-start: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
 }
 
-/* Collapsed chrome (uip-disclosure-region): margins sit OUTSIDE the animated
- * height and padding/border still paint at height 0, so drop them while the
- * region is collapsed. */
-.tool-manual-form[aria-hidden="true"] {
-  margin-block-start: 0;
-  padding-block-start: 0;
-  border-block-start: none;
+.tool-block-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--c-text-tertiary);
+}
+
+/* The closing note, shown under EVERY result set including a full one: the
+ * catalog is large but finite, and a reader who cannot find their tool needs
+ * to know the shell is the answer rather than concluding it does not exist. */
+.tool-shell-note {
+  padding: var(--sp-3) var(--sp-1) var(--sp-1);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--c-text-tertiary);
+  border-block-start: 1px solid var(--c-border);
+  margin-block-start: var(--sp-2);
 }
 
 /* --- History rows: chats and workflow runs in one list -------------------- */
@@ -915,100 +977,105 @@ h3.section-title {
   margin-block-start: 0.1rem;
 }
 
-/* --- Read-only workflow run review --------------------------------------- */
+/* --- Workflow run review (the /run/{id} tab) ------------------------------ */
 
-.run-summary {
-  display: flex;
-  gap: var(--sp-3);
-  align-items: baseline;
-  margin-bottom: var(--sp-3);
-}
-.run-status {
-  font-weight: 600;
-  text-transform: capitalize;
+/* `#run-body` carries NO class, and that is deliberate. It held
+   `.list-container` — the hairline row rack, whose `background: var(--c-border)`
+   exists only to show through its 1px gaps and which carries no padding because
+   every child is a `.list-row` with its own surface and inset. Nothing here is a
+   row, so the separator tint became the panel's background flush to the border.
+
+   There is no per-element vocabulary left for this page either. It used to own
+   `.run-summary`, `.run-status`, `.run-id`, `.run-tree`, `.run-node*` and
+   `.run-output*` — a whole second rendering of a run, poorer than the transcript's
+   card in every respect and one of them a NAME COLLISION waiting to happen (see
+   fundamentals/run-card.ts on why its status pill had to be called `run-state`).
+   The page renders the card now, in its `full` detail mode, so the styling lives
+   with the component in 27-run-card.css and one tweak reaches both surfaces. */
+
+/* The run's verbs, above the card. Outside it because they act on the RUN while
+   the card renders the run's state, and a control inside a region that is rebuilt
+   when the tab retargets would be rebuilt with it. */
+.run-actions:not(:empty) {
+  margin-block-end: var(--sp-3);
 }
 
-/* The workflow id beside the status. Was authored as `text-muted text-sm`, two
-   classes this bundle never defined, so it rendered at primary ink and the same
-   size as the status it is meant to sit quietly behind. */
-.run-id {
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-sm);
-}
-.run-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin-bottom: var(--sp-4);
-}
-.run-node {
+.run-controls {
   display: flex;
   gap: var(--sp-2);
-  align-items: center;
-  padding: 0.2rem var(--sp-2);
-  font-size: var(--fs-sm);
-}
-/* A dot rather than an emoji or a glyph font: the status vocabulary is KAS's
-   and may grow, so an unknown status still renders as a neutral dot. */
-.run-node-dot {
-  flex: 0 0 auto;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--c-text-tertiary);
-}
-.run-node-completed .run-node-dot {
-  background: var(--c-green);
-}
-.run-node-failed .run-node-dot {
-  background: var(--c-danger);
-}
-.run-node-paused .run-node-dot {
-  background: var(--c-warning);
-}
-.run-node-running .run-node-dot {
-  background: var(--c-accent);
-}
-.run-node-id {
-  font-family: var(--font-mono);
-}
-/* Three secondary facts on a step row, one treatment. The agent name joined the
-   list rather than getting a rule of its own: it does the same job as the type
-   beside it, and it was carrying the undefined `text-muted text-sm` pair. */
-.run-node-type,
-.run-node-agent,
-.run-node-dur {
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-xs);
-}
-.run-node-dur {
-  margin-left: auto;
-}
-.run-output {
-  margin-bottom: var(--sp-3);
-}
-.run-output-node {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  margin-bottom: 0.2rem;
-}
-/* The "this step said nothing" line. It had no rule at all — its whole
-   appearance was the undefined `text-muted text-sm` pair — so an absent output
-   read as loudly as a real one. */
-.run-output-empty {
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-sm);
 }
 
-.run-output-body {
-  margin: 0;
-  padding: var(--sp-2);
-  background: var(--c-bg-secondary);
-  border-radius: var(--r-sm);
-  overflow-x: auto;
-  font-size: var(--fs-sm);
-  white-space: pre-wrap;
+/* --- The run tab's own layout ---------------------------------------------- */
+
+/* A COLUMN, so the page-content grows and the bottom bar stays pinned. The
+   `flex: 1` that lets the view claim the height in the first place lives in
+   16-login.css beside every other full-page view's — it was missing there, which
+   collapsed this wrapper to 32px. */
+[id="run-view"] {
+  display: flex;
+  flex-direction: column;
+}
+
+/* WIDER than the shared 50rem measure, and bounded rather than removed.
+   `--content-max-w` is a READING measure for a conversation, and this page is not
+   prose: it is a node tree, tool cards, diffs and captured reports, so 50rem left
+   240px of dead gutter on each side of a 1440 desktop while the content it was
+   protecting was machine output. The same argument deleted the 40.75rem cap inside
+   the transcript's turn card (29-turns.css). Bounded because a step row puts its
+   duration at `margin-inline-start: auto`, so an uncapped page floats that number
+   arbitrarily far from the name it belongs to. */
+[id="run-view"] .page-content {
+  max-width: var(--run-page-max-w);
+  flex: 1 1 0;
+  min-height: 0;
+
+  /* NOT the scroller. The card is a column that fills this box and its own body
+     scrolls, so the run's identity row and its outcome ledger stay on screen while
+     the steps move under them — which is the whole difference between a page and a
+     tall box. Two nested scrollports would also fight each other. */
+  overflow: hidden;
+}
+
+/* The run body is the page's growing region, so `#run-body` has to pass the
+   height through rather than sizing to content. */
+[id="run-body"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* --- The subagent page ---------------------------------------------------- */
+
+/* The same three rules the run page needs, and for the same reasons: a column so
+   the content grows, a machine-output measure rather than the prose one, and a
+   growing body that passes the height through to the exec page's own panes. The
+   page itself is the shared `.ev-page` (31-exec-view.css), so nothing about its
+   internals is repeated here.
+
+   No bottom bar, unlike the run page: a delegate's permission asks are queued
+   under its launching chat, so there is nothing for a dock here to answer. */
+[id="subagent-view"] {
+  display: flex;
+  flex-direction: column;
+}
+
+[id="subagent-view"] .page-content {
+  max-width: var(--run-page-max-w);
+  flex: 1 1 0;
+  min-height: 0;
+
+  /* NOT the scroller. The exec page is a column that fills this box and its detail
+     pane scrolls, so the delegate's identity row stays on screen while its
+     transcript moves under it. Two nested scrollports would fight. */
+  overflow: hidden;
+}
+
+[id="subagent-body"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 /* --- The run tab's bottom bar --------------------------------------------- */

@@ -121,7 +121,11 @@ func missingEvents(got []string, want ...string) []string {
 }
 
 // mustJSON marshals v or fails the test.
-func mustJSON(t *testing.T, v any) json.RawMessage {
+//
+// testing.TB rather than *testing.T so a benchmark can build the same wire
+// frames a test does. A benchmark that hand-rolls its own copy of a frame is
+// how the utility runtime's fixtures drifted off the real envelope.
+func mustJSON(t testing.TB, v any) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -132,16 +136,27 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 
 // newChunkMsg builds a session/update agent_message_chunk notification
 // with the given text payload.
-func newChunkMsg(t *testing.T, text string) *vibekit.RPCResponse {
-	t.Helper()
-	raw := mustJSON(t, map[string]any{
+//
+// The `update` nesting is the protocol, not a detail: KAS sends
+// {sessionId, update:{sessionUpdate, content}}. This is the ONE builder for
+// that frame in the package — tests, the fake bridge and the benchmark all go
+// through it — because four hand-rolled copies of it is how forwardChunk came
+// to read the kind off the outer object and drop every chunk while its own
+// tests stayed green.
+//
+// It takes no testing.TB, which is what lets the fake bridge's Call use it: the
+// payload is a closed literal of strings so the marshal cannot fail, and a
+// builder callable from a fake must not be able to end a test from another
+// goroutine (go-rulebook §7).
+func newChunkMsg(text string) *vibekit.RPCResponse {
+	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "agent_message_chunk",
 		"content":       map[string]any{"type": "text", "text": text},
 	})
-	return &vibekit.RPCResponse{
-		Method: "session/update",
-		Params: mustJSON(t, map[string]any{"update": raw}),
-	}
+	// json.RawMessage, not []byte: a []byte field marshals to a base64 STRING,
+	// which decodes as no frame at all.
+	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
+	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
 }
 
 // newToolCallMsg builds a session/update tool_call notification with the

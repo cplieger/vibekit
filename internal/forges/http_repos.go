@@ -19,9 +19,21 @@ type repoLister interface {
 	ListRepos(ctx context.Context) ([]Repo, error)
 }
 
+// providerFor resolves the forge and decides whether its listings may come from
+// the cache. `?refresh=1` means the reader pressed a refresh control and is
+// asking for the truth, mirroring `/api/git/status-all?fetch=1`, the same
+// distinction on the local-git side. Anything else reads through the cache, so
+// arriving at a view costs no subprocess when the answer is already known.
+func (h *HTTPHandler) providerFor(r *http.Request, id string) (ForgeOps, error) {
+	if r.URL.Query().Get("refresh") == "1" {
+		return h.manager.ProviderFresh(id)
+	}
+	return h.manager.Provider(id)
+}
+
 // handleRepos dispatches /api/forges/{id}/repos/* paths.
 func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
-	provider, err := h.manager.Provider(id)
+	provider, err := h.providerFor(r, id)
 	if err != nil {
 		httpreply.NotFound(w, err.Error())
 		return

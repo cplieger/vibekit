@@ -108,7 +108,7 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Start a turn: one chunk then end.
-	h.translateACPEvent("c1", newChunkMsg(t, "finished"))
+	h.translateACPEvent("c1", newChunkMsg("finished"))
 	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
@@ -283,7 +283,7 @@ func TestEmitTurnEnded_DifferentChatID(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	// Start a turn on a different chat ID to exercise the chatID parameter.
-	h.translateACPEvent("c2", newChunkMsg(t, "hello from c2"))
+	h.translateACPEvent("c2", newChunkMsg("hello from c2"))
 	h.EmitTurnEndedWithStats(t.Context(), "c2", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c2")

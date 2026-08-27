@@ -167,6 +167,59 @@ func TestRegistryProxy_Search_rejections(t *testing.T) {
 	}
 }
 
+// A SLOW upstream must surface as 502 with a Warn, never as the silent
+// walked-away path. Both http.Client.Timeout and fetchSearch's own
+// context.WithTimeout satisfy errors.Is(err, context.DeadlineExceeded), so
+// classifying the walk-away from the returned error caught an upstream
+// timeout too: the handler returned having written nothing, which net/http
+// sends as a bare 200 with an empty body. That reached the browser as a
+// successful decode of nothing and rendered "Registry unreachable" with no
+// server-side trace — measured live as status=200 duration_ms=10002.
+func TestRegistryProxy_Search_upstreamTimeoutIs502(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer upstream.Close()
+	_, mux := newProxyAgainst(t, upstream) // client Timeout is 2s
+
+	req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=slow", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502 on an upstream timeout (a bare 200 renders as an empty result)",
+			rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "registry unavailable") {
+		t.Errorf("body = %q, want 'registry unavailable'", rec.Body.String())
+	}
+}
+
+// The walked-away path stays silent, and the REQUEST's context is what
+// selects it: a client that is gone has nobody to read a 502.
+func TestRegistryProxy_Search_clientGoneWritesNothing(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("upstream should not be reached with a cancelled request context")
+	}))
+	defer upstream.Close()
+	_, mux := newProxyAgainst(t, upstream)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=gone", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Body.Len() != 0 {
+		t.Errorf("body = %q, want nothing written for a client that walked away", rec.Body.String())
+	}
+}
+
 func TestRegistryProxy_Search_limitClamping(t *testing.T) {
 	var seenLimit string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

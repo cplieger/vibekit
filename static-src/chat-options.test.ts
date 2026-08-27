@@ -16,7 +16,7 @@ import { uploadLimitHint } from "./upload-policy.js";
 const {
   openFilePicker,
   openTangentChat,
-  openLiveRunView,
+  openRunView,
   setSupervisedDispatch,
   launchDispatch,
   recipesDispatch,
@@ -28,7 +28,7 @@ const {
 } = vi.hoisted(() => ({
   openFilePicker: vi.fn(),
   openTangentChat: vi.fn(),
-  openLiveRunView: vi.fn(),
+  openRunView: vi.fn(),
   setSupervisedDispatch: vi.fn(),
   launchDispatch: vi.fn(),
   recipesDispatch: vi.fn(),
@@ -75,7 +75,7 @@ vi.mock("./store.js", () => ({
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker }));
 vi.mock("./chat.js", () => ({ openTangentChat }));
-vi.mock("./run-view.js", () => ({ openLiveRunView }));
+vi.mock("./run-view.js", () => ({ openRunView }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
 vi.mock("./actions/chat.js", () => ({ setSupervised: { dispatch: setSupervisedDispatch } }));
 vi.mock("./actions/runs.js", () => ({
@@ -438,7 +438,7 @@ describe("set a goal", () => {
     setGoal(card, "ship it", "5");
     expect(recipesDispatch).not.toHaveBeenCalled();
     expect(launchDispatch).not.toHaveBeenCalled();
-    expect(openLiveRunView).not.toHaveBeenCalled();
+    expect(openRunView).not.toHaveBeenCalled();
   });
 
   // The command goes through submit.ts, which is the one module allowed to decide

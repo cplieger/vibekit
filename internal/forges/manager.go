@@ -43,14 +43,20 @@ type Manager struct {
 	refreshSF singleflight.Group
 	probeSF   singleflight.Group
 	forges    map[string]*ConfiguredForge
-	ttl       time.Duration
-	mu        sync.RWMutex
+	// lists caches the two forge LISTING calls, which is a separate concern
+	// from the forge list this type is named for: that one is read off local CLI
+	// config, while a listing is a subprocess and an upstream API call. See
+	// list_cache.go.
+	lists *listCaches
+	ttl   time.Duration
+	mu    sync.RWMutex
 }
 
 // NewManager constructs a Manager.
 func NewManager() *Manager {
 	return &Manager{
 		forges: make(map[string]*ConfiguredForge),
+		lists:  newListCaches(),
 		ttl:    30 * time.Second,
 	}
 }
@@ -269,11 +275,15 @@ func (m *Manager) mergeForges(out map[string]*ConfiguredForge) {
 	m.cacheAt = time.Now()
 }
 
-// Invalidate clears the cache so the next List/Get reloads.
+// Invalidate clears the cache so the next List/Get reloads, and drops the
+// cached repo and PR listings with it: a connection change decides which
+// repositories are visible at all, so keeping them would serve one account's
+// listings after another has signed in.
 func (m *Manager) Invalidate() {
 	m.mu.Lock()
 	m.cacheAt = time.Time{}
 	m.mu.Unlock()
+	m.lists.clear()
 }
 
 // Probe runs a Whoami against the forge to verify auth still works
@@ -318,12 +328,30 @@ func (m *Manager) Probe(ctx context.Context, id string) error {
 	return nil
 }
 
-// Provider returns a ForgeOps for the given configured forge ID.
+// Provider returns a ForgeOps for the given configured forge ID, serving repo
+// and PR listings through the read-through cache (list_cache.go). Every other
+// operation reaches the forge directly.
 // Returns an error if the ID is unknown.
 func (m *Manager) Provider(id string) (ForgeOps, error) {
+	return m.provider(id, false)
+}
+
+// ProviderFresh is Provider with the listing cache bypassed: ListRepos and
+// ListPRs each reach the forge and replace what was cached. This is what an
+// explicit refresh control asks for, and the only way to close the window in
+// which a PR row shows a check verdict the forge has since changed.
+func (m *Manager) ProviderFresh(id string) (ForgeOps, error) {
+	return m.provider(id, true)
+}
+
+func (m *Manager) provider(id string, force bool) (ForgeOps, error) {
 	f := m.Get(id)
 	if f == nil {
 		return nil, fmt.Errorf("forges: unknown id %q", id)
 	}
-	return New(f.Kind, f.Host)
+	ops, err := New(f.Kind, f.Host)
+	if err != nil {
+		return nil, err
+	}
+	return cachedListings{ForgeOps: ops, caches: m.lists, forgeID: id, force: force}, nil
 }

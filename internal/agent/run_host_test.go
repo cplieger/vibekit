@@ -18,24 +18,35 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// bufferedEvent is one decoded SSE envelope. Payload stays RAW: most cases here
+// assert on the type and the topic only, and the two that read a field decode it
+// themselves rather than making every other case carry a shape.
+type bufferedEvent struct {
+	Type    string          `json:"type"`
+	ChatID  string          `json:"chat_id"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 // bufferedEvents decodes the SSE replay buffer back into typed envelopes, so a
 // dispatch test asserts on what a client would actually receive.
-func bufferedEvents(h *Runtime) []struct {
-	Type   string `json:"type"`
-	ChatID string `json:"chat_id"`
-} {
-	var out []struct {
-		Type   string `json:"type"`
-		ChatID string `json:"chat_id"`
-	}
+func bufferedEvents(h *Runtime) []bufferedEvent {
+	var out []bufferedEvent
 	for _, e := range h.bus.fanout.Buffered() {
-		var evt struct {
-			Type   string `json:"type"`
-			ChatID string `json:"chat_id"`
-		}
+		var evt bufferedEvent
 		if json.Unmarshal(e.Event.Data, &evt) == nil {
 			out = append(out, evt)
 		}
+	}
+	return out
+}
+
+// marshalPayload decodes an event payload's string fields, which is all the run
+// step cases assert on.
+func marshalPayload(t *testing.T, raw json.RawMessage) map[string]string {
+	t.Helper()
+	var out map[string]string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Setup: decoding the payload: %s", err)
 	}
 	return out
 }
@@ -86,11 +97,16 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	}
 }
 
-// TestRunDispatch_StepContentIsDropped pins that a step's session/update never
-// reaches the chunk handlers from a run bridge: there is no transcript here,
-// and buffering into the synthetic id would open a phantom assistant message on
-// a chat that must never exist.
-func TestRunDispatch_StepContentIsDropped(t *testing.T) {
+// TestRunDispatch_StepContentIsProjected pins the run bridge's content door.
+//
+// Two halves, and both are the point. The frame REACHES the client, as a
+// workspace-global `run_step` naming the node it came from — it used to be
+// dropped, which left exactly the runs whose only surface is the run tab as the
+// ones whose steps could not be watched. And it does NOT open an assistant
+// buffer for the synthetic chat id, because that would be the phantom chat
+// invariant 3 exists to prevent; the content goes straight to the run's watchers
+// instead of into a transcript.
+func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, _ := newTestHub()
 
@@ -99,22 +115,70 @@ func TestRunDispatch_StepContentIsDropped(t *testing.T) {
 		"update": map[string]any{
 			"sessionUpdate": "agent_message_chunk",
 			"content":       map[string]any{"type": "text", "text": "step says"},
+			"_meta": map[string]any{"kiro": map[string]any{"workflow": map[string]any{
+				"workflowId": "wf_1",
+				"nodeId":     "coder",
+				"nodePath":   []any{"seq", "coder"},
+				"type":       "step",
+			}}},
+		},
+	}))
+
+	events := bufferedEvents(h)
+	if len(events) != 1 {
+		t.Fatalf("a step chunk produced %d events, want 1: %+v", len(events), events)
+	}
+	if events[0].Type != string(vibekit.EventRunStep) {
+		t.Errorf("type = %q, want run_step", events[0].Type)
+	}
+	// Workspace-global, like the lifecycle frames beside it: a parentless run is
+	// owned by no chat, and the client routes by workflow id.
+	if events[0].ChatID != "" {
+		t.Errorf("chat_id = %q, want empty (workspace-global)", events[0].ChatID)
+	}
+	// The NODE PATH, not the node id: a repeat's iterations share an id, so an id
+	// cannot address one execution of a step.
+	payload := marshalPayload(t, events[0].Payload)
+	for field, want := range map[string]string{
+		"workflow_id": "wf_1",
+		"node_path":   "seq/coder",
+		"kind":        "text",
+		"delta":       "step says",
+	} {
+		if got := payload[field]; got != want {
+			t.Errorf("%s = %q, want %q", field, got, want)
+		}
+	}
+	// No transcript, which is the half the drop got right.
+	if h.bridge.assistantBufs.Get("run:wf_1") != nil {
+		t.Error("a step chunk opened an assistant buffer for the synthetic chat id")
+	}
+	// Still silent on the unhandled-notification line: that line is how a frame
+	// vibekit genuinely does not recognise gets noticed, and a step's content
+	// arriving on it would drown that out on every run.
+	const unhandled = "run bridge: unhandled notification"
+	if out := logs.String(); strings.Contains(out, `"msg":"`+unhandled+`"`) {
+		t.Errorf("a step's session/update was reported as %q: %s", unhandled, out)
+	}
+}
+
+// TestRunDispatch_UnmarkedStepContentIsDropped pins the one frame this door still
+// refuses: a `session/update` with no `_meta.kiro.workflow` block names no node,
+// so there is no step row to render it in. It is the run session's own bookkeeping
+// rather than a step's work.
+func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
+	h, _, _ := newTestHub()
+
+	h.dispatch(t.Context(), "run:wf_1", runNotif(vibekit.MethodSessionUpdate, map[string]any{
+		"sessionId": "sess_step",
+		"update": map[string]any{
+			"sessionUpdate": "agent_message_chunk",
+			"content":       map[string]any{"type": "text", "text": "unattributable"},
 		},
 	}))
 
 	if events := bufferedEvents(h); len(events) != 0 {
-		t.Fatalf("a step chunk on a run bridge produced %d events, want 0: %+v", len(events), events)
-	}
-	// And nothing opened an assistant buffer for the synthetic chat.
-	if h.bridge.assistantBufs.Get("run:wf_1") != nil {
-		t.Error("a step chunk opened an assistant buffer for the synthetic chat id")
-	}
-	// The drop is DELIBERATE, so it is silent. The unhandled-notification line is
-	// how a frame vibekit genuinely does not recognise gets noticed, and a step's
-	// content arriving on it would drown that out on every run.
-	const unhandled = "run bridge: unhandled notification"
-	if out := logs.String(); strings.Contains(out, `"msg":"`+unhandled+`"`) {
-		t.Errorf("a step's session/update was reported as %q: %s", unhandled, out)
+		t.Fatalf("an unattributed chunk produced %d events, want 0: %+v", len(events), events)
 	}
 }
 

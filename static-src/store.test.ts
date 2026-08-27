@@ -2620,3 +2620,60 @@ describe("repaints are gated on the active chat", () => {
     expect(get("orphan")?.messages[0]?.content).toBe("hello");
   });
 });
+
+// ---------------------------------------------------------------------------
+// The in-flight turn marker: which message id the chat file cannot carry yet.
+//
+// `loadMessages` replaces the array with the server's page, so it needs to know
+// which local message the page is entitled to omit. Position cannot answer it:
+// the agent persists messages DURING a turn (a plan update, a compaction or
+// safety event, the cancel badge), each landing after the streaming reply
+// locally while sitting inside the page — so a rule of "keep everything after
+// the newest id the page carries" dropped the reply and the reader saw their own
+// prompt above an empty turn body until a reload.
+// ---------------------------------------------------------------------------
+
+import { noteLiveTurnMessage, clearLiveTurnMessage, liveTurnMessage } from "./store.js";
+
+describe("the in-flight turn marker", () => {
+  it("is unset for a chat with no turn running", () => {
+    resetStore("chat-live0");
+    expect(liveTurnMessage("chat-live0")).toBeUndefined();
+  });
+
+  it("is set by a chunk that arrives before its own message_created", () => {
+    resetStore("chat-live1");
+    appendChunk("chat-live1", "m-early", "hello", false, 0, "");
+    expect(liveTurnMessage("chat-live1")).toBe("m-early");
+  });
+
+  it("is cleared by the persist echo of the same id, which is what message_appended is", () => {
+    resetStore("chat-live2");
+    noteLiveTurnMessage("chat-live2", "m-turn");
+    appendMessage("chat-live2", { id: "m-turn", role: "assistant", ts: 2, content: "done" });
+    expect(liveTurnMessage("chat-live2")).toBeUndefined();
+  });
+
+  it("survives a persisted message with a DIFFERENT id — the plan update that caused the bug", () => {
+    resetStore("chat-live3");
+    appendChunk("chat-live3", "m-turn", "streaming", false, 0, "");
+    appendMessage("chat-live3", { id: "m-plan", role: "assistant", ts: 3, content: "" });
+    expect(liveTurnMessage("chat-live3")).toBe("m-turn");
+  });
+
+  it("only tracks the chat it was recorded against", () => {
+    resetStore("chat-live4");
+    noteLiveTurnMessage("chat-live4", "m-a");
+    noteLiveTurnMessage("chat-live5", "m-b");
+    clearLiveTurnMessage("chat-live5");
+    expect(liveTurnMessage("chat-live4")).toBe("m-a");
+    expect(liveTurnMessage("chat-live5")).toBeUndefined();
+  });
+
+  it("goes with the chat", () => {
+    resetStore("chat-live6");
+    noteLiveTurnMessage("chat-live6", "m-turn");
+    removeChat("chat-live6");
+    expect(liveTurnMessage("chat-live6")).toBeUndefined();
+  });
+});

@@ -1056,141 +1056,18 @@
 
 /* Shell is the canonical empty state in 18-pages.css. */
 
-/* --- Pull request panel (inside the git view) --- */
-
-.git-pr-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  margin-block-start: var(--sp-3);
-}
-
-.git-pr-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-}
-
-.git-pr-placeholder {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px dashed var(--c-border);
-  border-radius: var(--r);
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-}
-
-.git-pr-placeholder-link {
-  flex-shrink: 0;
-  color: var(--c-accent);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.git-pr-placeholder-link:hover {
-  text-decoration: underline;
-}
-
-/* Shell is the canonical empty state in 18-pages.css. */
-
-.git-pr-skeleton {
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-}
-
-.git-pr-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-
-.git-pr-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-primary);
-}
-
-.git-pr-row-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex-wrap: wrap;
-}
-
-.git-pr-row-num {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-}
-
-.git-pr-row-title {
-  color: var(--c-text-primary);
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.git-pr-row-title:hover {
-  text-decoration: underline;
-  color: var(--c-accent);
-}
-
-.git-pr-row-meta {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-}
-
-.git-pr-row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-  padding-block-start: var(--sp-1);
-}
-
-.git-pr-merge-method {
-  min-height: var(--btn-h);
-  padding: 0 var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-primary);
-  font-size: var(--fs-xs);
-}
-
-.git-pr-badge {
-  font-size: var(--fs-xs);
-  padding: 1px var(--sp-2);
-  border-radius: var(--r-pill);
-  border: 1px solid var(--c-border);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-secondary);
-  font-variant-caps: all-small-caps;
-}
-
-.git-pr-badge-draft {
-  border-color: color-mix(in srgb, var(--c-text-tertiary) 35%, var(--c-border));
-}
-
-.git-pr-badge-ok {
-  border-color: color-mix(in srgb, var(--c-teal) 45%, var(--c-border));
-  color: color-mix(in srgb, var(--c-teal) 80%, var(--c-text-primary));
-}
-
-.git-pr-badge-error {
-  border-color: color-mix(in srgb, var(--c-danger) 45%, var(--c-border));
-  color: color-mix(in srgb, var(--c-danger) 85%, var(--c-text-primary));
-}
-
-.git-pr-badge-pending {
-  border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
-  color: color-mix(in srgb, var(--c-accent) 80%, var(--c-text-primary));
-}
+/* The single-repo pull-request PANEL that used to live here is gone with
+ * `pr-panel.ts`; the PRs tab is the multi-repo list in 22-git-multirepo.css.
+ * Its rules were deleted rather than left as dead weight because they were NOT
+ * inert: `.git-pr-list`, `.git-pr-row`, `.git-pr-row-title`, `.git-pr-row-meta`
+ * and `.git-pr-row-actions` are the live tab's class names too, so every
+ * property 22-git-multirepo.css did not redeclare still applied from here (this
+ * file loses ties to it by source order, not by having nothing to say). Three
+ * did, and all three were visible: `font-size: var(--fs-xs)` on
+ * `.git-pr-row-meta` rendered every PR title at 11px, the app's smallest step,
+ * and `flex-wrap: wrap` + `padding-block-start` on `.git-pr-row-actions` made
+ * the action cluster 4px taller than the buttons inside it. Do not add a
+ * `.git-pr-*` rule outside 22-git-multirepo.css. */
 
 /* PR creation dialog (two-stage edit → submit). */
 .pr-dialog {

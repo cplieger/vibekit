@@ -291,10 +291,14 @@ interface SearchRegistryArgs {
   q: string;
 }
 
+// No automatic retry, alone among the MCP actions. The registry refuses
+// connections after a burst, so `retryNetwork` + RETRY_STANDARD turned one slow
+// query into three attempts against the endpoint that was already refusing, and
+// made the user wait out every upstream timeout in series before the panel said
+// anything. The panel's own Retry button is the retry, and typing one more
+// character is the other one.
 export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
   name: "mcp.search_registry",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
   dedupe: (args) => args.q,
   request: ({ q }) => ({
     method: "GET",

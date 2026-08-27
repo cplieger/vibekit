@@ -87,7 +87,6 @@ export function initModal(args: InitArgs): void {
   const tabs = byId<HTMLDivElement>("mcp-modal-tabs");
   tabs.classList.toggle("hidden", session.editing.id !== "");
   for (const btn of tabs.querySelectorAll<HTMLButtonElement>(".mcp-modal-tab")) {
-    btn.classList.toggle("active", btn.dataset["mcpMode"] === args.mode);
     btn.onclick = (): void => {
       setMode(btn.dataset["mcpMode"] as AddMode, null);
     };
@@ -116,12 +115,23 @@ const PANEL_MODES: Readonly<Record<AddMode, (existing: Server | null) => void>> 
   },
 };
 
+// A `data-mcp-mode` attribute marks TWO different things — one panel and one tab
+// button per mode — so every selector over it has to say which. Both of these
+// were written as bare `[data-mcp-mode]` and both were wrong for it: the panel
+// loop below hid the tab BUTTONS (and, since `search` has no button, hid all of
+// them, leaving the bar as an empty 5px strip nothing could reopen), and the npm
+// panel's Node banner prepended itself into the npm tab button, which precedes
+// the panel in the document.
+const PANEL_SELECTOR = ".mcp-mode-panel[data-mcp-mode]";
+const TAB_SELECTOR = ".mcp-modal-tab[data-mcp-mode]";
+
 function setMode(mode: AddMode, existing: Server | null): void {
-  for (const panel of document.querySelectorAll<HTMLDivElement>("[data-mcp-mode]")) {
+  for (const panel of document.querySelectorAll<HTMLDivElement>(PANEL_SELECTOR)) {
     panel.classList.toggle("hidden", panel.dataset["mcpMode"] !== mode);
   }
-  for (const btn of document.querySelectorAll<HTMLButtonElement>(".mcp-modal-tab")) {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(TAB_SELECTOR)) {
     btn.classList.toggle("active", btn.dataset["mcpMode"] === mode);
+    btn.setAttribute("aria-selected", String(btn.dataset["mcpMode"] === mode));
   }
 
   PANEL_MODES[mode](existing);
@@ -323,7 +333,7 @@ function initNpmPanel(existing: Server | null): void {
 // install one-click. After a successful enable the banner removes
 // itself. Mirrors the Sources sub-tab's auto-install-on-intent flow.
 async function gateNpmPanelOnNode(): Promise<void> {
-  const panel = document.querySelector<HTMLDivElement>('[data-mcp-mode="npm"]');
+  const panel = document.querySelector<HTMLDivElement>('.mcp-mode-panel[data-mcp-mode="npm"]');
   if (panel === null) {
     return;
   }

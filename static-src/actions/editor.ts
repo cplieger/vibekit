@@ -13,6 +13,20 @@ import { routeForPath } from "../editor-types.js";
  *  failure cannot render as "this file is brand new". */
 const GIT_ERR_NOT_IN_REPO = "not_in_repo";
 
+/** `/api/file` statuses that are ANSWERS about a changed file rather than
+ *  failures to read one:
+ *
+ *    404  the working copy is gone. That IS the change — a deletion — and the
+ *         diff is every line of the base removed.
+ *    415  the file is binary (filebrowse sniffs for a NUL), so no text diff
+ *         exists and the base blob must not be rendered as if it were source.
+ *
+ *  Both are ordinary members of a `git status` list, which is why they are read
+ *  rather than collapsed: `apiGet` maps every non-2xx to null, so a click on a
+ *  deleted file reported "Could not read the working copy" and showed nothing. */
+const HTTP_NOT_FOUND = 404;
+const HTTP_BINARY = 415;
+
 /** Save the active editor file (PUT). Inline error surface in the editor pane;
  *  framework toast suppressed.
  *
@@ -113,26 +127,37 @@ export const fetchAgentLines = apiAction<
  *  the empty pane "HEAD" would assert that HEAD has it and is empty. That
  *  distinction is also why a missing base is NOT an error here — a file outside
  *  every repo renders correctly as an all-add diff, and only a real git failure
- *  earns the error surface. */
+ *  earns the error surface.
+ *
+ *  `workingLabel` is the same claim about the RIGHT pane, and it exists for the
+ *  same reason: an empty pane captioned "working tree" says the file is there and
+ *  empty, where "deleted" says it is gone. Each caller sets a placeholder before
+ *  the fetch so the pane has a caption while loading; both labels are overwritten
+ *  by what the load FOUND. */
 export const loadDiff = defineAction<
   { path: string; repo: string; ref: string },
-  { oldContent: string; newContent: string; error: string; baseLabel: string }
+  { oldContent: string; newContent: string; error: string; baseLabel: string; workingLabel: string }
 >({
   name: "editor.load_diff",
   retryable: retryNetwork,
   run: async ({ path, repo, ref }, signal) => {
-    const { apiGet } = await import("../api-client.js");
+    const { apiGet, apiGetOrError } = await import("../api-client.js");
     const { relToWorkspace } = await import("../workspace.js");
     const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";
     // With an explicit repo the caller already holds the repo-relative path; with
     // none, the server resolves the owner from a workspace-relative one.
     const gitPath = repo !== "" ? path : relToWorkspace(path);
+    // The working copy goes through apiGetOrError because two of its failure
+    // STATUSES are answers (see HTTP_NOT_FOUND / HTTP_BINARY above) and the
+    // collapsing helper cannot tell them from a dead request. The cost is that a
+    // genuine failure no longer logs a console line of its own; the ActionError
+    // below carries the same fact to the toast and the action log.
     const [oldD, newD] = await Promise.all([
       apiGet<{ content?: string; error?: string; detail?: string }>(
         `/api/git/show?path=${encodeURIComponent(gitPath)}&ref=${encodeURIComponent(ref)}${repoParam}`,
         signal,
       ),
-      apiGet<{ content?: string; error?: string }>(
+      apiGetOrError<{ content?: string; error?: string }>(
         `/api/file?path=${encodeURIComponent(path)}`,
         signal,
       ),
@@ -140,10 +165,12 @@ export const loadDiff = defineAction<
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
+    const deleted = newD.status === HTTP_NOT_FOUND;
+    const binary = newD.status === HTTP_BINARY;
     // Each side is named, because "one of them failed" is not something the
     // reader can act on. This reached users as a bare "Could not load base/new
     // revision" whichever side died and whatever the status was.
-    if (newD === null) {
+    if (!newD.ok && !deleted && !binary) {
       throw new ActionError(`Could not read the working copy of ${gitPath}`, { code: "network" });
     }
     if (oldD === null) {
@@ -157,9 +184,12 @@ export const loadDiff = defineAction<
     }
     return {
       oldContent: oldD.content ?? "",
-      newContent: newD.content ?? "",
-      error: newD.error ?? "",
+      newContent: newD.data?.content ?? "",
+      error: binary
+        ? `${gitPath} is a binary file — there is no text diff to show.`
+        : (newD.data?.error ?? ""),
       baseLabel: gitErr === GIT_ERR_NOT_IN_REPO ? "not in git" : ref,
+      workingLabel: deleted ? "deleted" : "working tree",
     };
   },
   error: "Could not load diff",

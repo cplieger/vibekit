@@ -22,9 +22,9 @@
 // ---------------------------------------------------------------------------
 
 import type { Route } from "./router.js";
-// The eight tab kinds have ONE definition and it is the Go const block in
+// The nine tab kinds have ONE definition and it is the Go const block in
 // internal/vibekit/domain_tabs.go, emitted here by wire-codegen as a registered
-// enum. Both tables below are typed as exhaustive records over it, so a ninth
+// enum. Both tables below are typed as exhaustive records over it, so a new
 // kind added server-side fails the client type gate here rather than reaching a
 // switch with no case for it on every connected device at once.
 import type { TabKind } from "./types.js";
@@ -34,6 +34,7 @@ import {
   ICON_TAB_GIT,
   ICON_TAB_FILES,
   ICON_TAB_RUN,
+  ICON_TAB_AGENT,
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
   ICON_TAB_DOCS,
@@ -44,7 +45,7 @@ import {
  *
  *  Typed as an exhaustive record over the WIRE's TabKind rather than as the
  *  thing that DEFINES the vocabulary, which is the reversal that matters: this
- *  table used to be the client's only enumeration of the eight kinds, so a ninth
+ *  table used to be the client's only enumeration of the kinds, so a new one
  *  added server-side reached a switch here with no case for it and no build
  *  error anywhere.
  *
@@ -61,6 +62,7 @@ export const TAB_VIEWS: Readonly<Record<TabKind, string>> = {
   history: "#history-view",
   docs: "#docs-view",
   run: "#run-view",
+  subagent: "#subagent-view",
 };
 
 /** The leading glyph each tab kind renders.
@@ -68,7 +70,12 @@ export const TAB_VIEWS: Readonly<Record<TabKind, string>> = {
  *  There is deliberately no per-tab override. One existed for exactly one
  *  purpose — a per-agent-role glyph on chat tabs — and a chat tab's leading
  *  element is the activity dot now, so the field had one producer feeding a slot
- *  that no longer renders one. */
+ *  that no longer renders one.
+ *
+ *  A `subagent` tab therefore takes the shared agent hexagon rather than the
+ *  per-known-subagent glyph its card carries (roles.ts `iconForSubagent`): the
+ *  strip has one glyph per KIND, and that is the same trade a chat tab already
+ *  makes for its mode. */
 export const TAB_ICONS: Readonly<Record<TabKind, string>> = {
   chat: ICON_TAB_CHAT,
   settings: ICON_TAB_SETTINGS,
@@ -78,6 +85,7 @@ export const TAB_ICONS: Readonly<Record<TabKind, string>> = {
   history: ICON_TAB_HISTORY,
   docs: ICON_TAB_DOCS,
   run: ICON_TAB_RUN,
+  subagent: ICON_TAB_AGENT,
 };
 
 /** The activity dot's states. Six come from a chat's live state (derived by

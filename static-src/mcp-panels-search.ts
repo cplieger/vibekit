@@ -40,14 +40,32 @@ export interface InstallField {
 
 // --- Module state ---
 
+/** Quiet window before a keystroke reaches the registry. The upstream refuses
+ *  connections after a burst (measured: ~16 requests in a few seconds, then
+ *  `Could not connect` for about a minute), and one request per typed PREFIX is
+ *  exactly that shape — each prefix is a distinct query, so neither the server's
+ *  60s cache nor the action's dedupe collapses any of it. */
+const DEBOUNCE_MS = 400;
+
+/** Shortest query that reaches the registry. A single letter matches most of the
+ *  index, so it costs a slow upstream round trip to answer nothing useful. */
+const MIN_QUERY_LEN = 2;
+
 let debouncedSearch: DebouncedDispatch<{ q: string }> | null = null;
 let searchUnsub: (() => void) | null = null;
 let retryBtnUnbind: (() => void) | null = null;
+let searchBtnUnbind: (() => void) | null = null;
+
+/** The newest query the user has asked for. Dispatches are not scoped, so a
+ *  slow answer for an abandoned prefix can land after a newer one; without this
+ *  the box shows results for a query the user has already typed past. */
+let wantedQuery = "";
 
 registerCleanup(() => {
   debouncedSearch?.cancel();
   searchUnsub?.();
   retryBtnUnbind?.();
+  searchBtnUnbind?.();
 });
 
 // --- Public API ---
@@ -64,8 +82,11 @@ export function cleanupSearch(): void {
   debouncedSearch?.cancel();
   retryBtnUnbind?.();
   retryBtnUnbind = null;
+  searchBtnUnbind?.();
+  searchBtnUnbind = null;
   searchUnsub?.();
   searchUnsub = null;
+  wantedQuery = "";
 }
 
 export function initSearchPanel(): void {
@@ -73,55 +94,78 @@ export function initSearchPanel(): void {
   const results = byId<HTMLDivElement>("mcp-search-results");
   const btn = byId<HTMLButtonElement>("mcp-search-btn");
   input.value = "";
+  wantedQuery = "";
   results.replaceChildren();
   input.focus();
 
   searchUnsub?.();
-  debouncedSearch = debouncedDispatch(searchRegistry, { wait: 200 });
+  debouncedSearch = debouncedDispatch(searchRegistry, { wait: DEBOUNCE_MS });
+
+  // The panel is re-initialised every time the modal opens on this mode, so the
+  // previous binding has to go or the button collects one per open.
+  searchBtnUnbind?.();
+  searchBtnUnbind = bindLoadingState("mcp.search_registry", btn);
 
   searchUnsub = subscribeToActions((inst) => {
     if (inst.name !== "mcp.search_registry") {
       return;
     }
-    if (inst.status === "success") {
+    const q = (inst.args as { q: string }).q;
+    if (q !== wantedQuery) {
+      return; // An abandoned prefix answering late.
+    }
+    if (inst.status === "pending") {
+      renderSearching(results);
+    } else if (inst.status === "success") {
       const d = inst.result as RegistrySearchResult | undefined;
-      const q = (inst.args as { q: string }).q;
       renderSearchResults(results, d, q);
     } else if (inst.status === "error") {
-      renderSearchError(results, (inst.args as { q: string }).q);
+      renderSearchError(results, q);
     }
   });
 
-  input.oninput = (): void => {
+  /** Schedule or fire a query, or clear the box when there is nothing to ask.
+   *  `immediate` is the Enter / button path, which skips the quiet window. */
+  const ask = (immediate: boolean): void => {
     const q = input.value.trim();
-    if (q === "") {
+    wantedQuery = q;
+    if (q.length < MIN_QUERY_LEN) {
       retryBtnUnbind?.();
       retryBtnUnbind = null;
       results.replaceChildren();
-      debouncedSearch!.cancel(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      debouncedSearch?.cancel();
       return;
     }
-    debouncedSearch!({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    if (immediate) {
+      void debouncedSearch?.flush({ q });
+      return;
+    }
+    debouncedSearch?.({ q });
+  };
+
+  input.oninput = (): void => {
+    ask(false);
   };
 
   input.onkeydown = (e: KeyboardEvent): void => {
     if (e.key === "Enter") {
       e.preventDefault();
-      const q = input.value.trim();
-      if (q === "") {
-        return;
-      }
-      void debouncedSearch!.flush({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      ask(true);
     }
   };
 
   btn.onclick = (): void => {
-    const q = input.value.trim();
-    if (q === "") {
-      return;
-    }
-    void debouncedSearch!.flush({ q }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    ask(true);
   };
+}
+
+/** The in-flight row. The registry answers in about a second when healthy and
+ *  can take ten when it is not, and the box used to sit empty for the whole
+ *  wait — which reads as "this does nothing" rather than "this is slow". */
+function renderSearching(results: HTMLDivElement): void {
+  retryBtnUnbind?.();
+  retryBtnUnbind = null;
+  results.replaceChildren(el("p", { className: "mcp-empty" }, "Searching the registry…"));
 }
 
 function renderSearchResults(
@@ -172,6 +216,9 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
   ) as HTMLButtonElement;
   retryBtnUnbind = bindLoadingState("mcp.search_registry", retryBtn);
   retryBtn.addEventListener("click", () => {
+    // Re-declare the intent: a failed query is not cached server-side, so this
+    // is a real re-fetch, and the subscription only renders the wanted query.
+    wantedQuery = q;
     void searchRegistry.dispatch({ q });
   });
   results.appendChild(retryBtn);

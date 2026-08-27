@@ -16,6 +16,7 @@ import {
   rebuildMsgIndex,
   emitMessages,
   normalizeMessage,
+  liveTurnMessage,
 } from "./store.js";
 
 // --- Inline decoders ---
@@ -157,6 +158,12 @@ export async function loadMessages(
   if (beforeID !== undefined) {
     params.set("before_id", beforeID);
   }
+  // The ids present BEFORE the request goes out. The server computes its answer
+  // from the chat file when the handler runs, so anything that arrives while the
+  // request is in flight is NEWER than that answer and the answer is not entitled
+  // to drop it — a plan or event message persisted and broadcast inside that
+  // window would otherwise vanish from the transcript until the next fetch.
+  const knownBefore = new Set((get(chatID)?.messages ?? []).map((m) => m.id));
   const d = await apiGetTyped(
     `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`,
     decodeChatGetResponseLocal,
@@ -188,25 +195,37 @@ export async function loadMessages(
     // Normalize replayed messages so legacy transcripts (persisted before the
     // blocks field) get synthesized blocks — the renderer is block-only.
     const fetched = d.messages.map(normalizeMessage);
-    // Then re-adopt the local TAIL. The in-flight turn lives in the server's
-    // in-memory assistant buffer and is flushed to the chat file once, at
-    // turn_ended — so it is absent from this page while `turn_state` has already
-    // put it in the store. A blind whole-array replace therefore DELETED the
-    // reply the reader was watching, every time this ran mid-turn: on the boot
-    // activation after a refresh, and on the gap handler's heal.
+    // Then re-adopt what this page CANNOT know about. A blind whole-array
+    // replace deleted the reply the reader was watching on every mid-turn
+    // refetch: a tab switch, the boot activation after a refresh, and the gap
+    // handler's own heal.
     //
-    // The anchor is the newest message the page DOES carry. Everything local
-    // after it that the page does not have is the tail; everything before it is
-    // the page's own business (which is what keeps a scrolled-up window from
-    // being re-appended out of order). A page whose last id is not local at all
-    // — the refresh case, where the only local message is the streaming one —
-    // anchors at 0 and keeps whatever the page omits.
+    // Exactly two things qualify, and neither is decided by position:
+    //
+    //  - The in-flight turn. The server accumulates it in an in-memory buffer
+    //    and appends it to the chat file once, at turn_ended, so the page cannot
+    //    carry it and the store's own marker is what names it. The rule this
+    //    replaces kept "everything after the newest id the page carries", and
+    //    that boundary is wrong because the agent persists messages DURING a
+    //    turn — every plan update, a compaction or safety event, the cancel
+    //    badge — each landing after the streaming reply locally while sitting
+    //    inside the page. One plan update stepped the boundary past the reply,
+    //    and the replace deleted it; the reader saw their own prompt with an
+    //    empty turn body until a reload, by which time the buffer had flushed.
+    //
+    //  - A message that arrived while the request was in flight, which is newer
+    //    than the answer being applied.
+    //
+    // Both go at the END, which is where the server puts the finished turn too:
+    // persistTurn appends it after anything persisted during it. Everything else
+    // the page omits is the page's own business — older history it deliberately
+    // left out, which re-appending would reorder.
     const fetchedIDs = new Set(fetched.map((m) => m.id));
-    const lastID = fetched.at(-1)?.id;
-    const anchor =
-      lastID === undefined ? 0 : session.messages.findIndex((m) => m.id === lastID) + 1;
-    const tail = session.messages.slice(anchor).filter((m) => !fetchedIDs.has(m.id));
-    session.messages = tail.length === 0 ? fetched : [...fetched, ...tail];
+    const liveID = liveTurnMessage(chatID);
+    const kept = session.messages.filter(
+      (m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)),
+    );
+    session.messages = kept.length === 0 ? fetched : [...fetched, ...kept];
   }
   session.message_count = d.chat.message_count;
   session.has_more = d.has_more;

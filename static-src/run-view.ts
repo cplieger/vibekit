@@ -1,38 +1,79 @@
 // ---------------------------------------------------------------------------
-// One workflow run: its node tree, its captured outputs, and its controls.
+// One workflow run: the WORKFLOW DOOR into the shared subpage view.
 //
-// Opened from the History list (a review) or from the Workflows tab (a live,
-// launcher-owned tab whose close cancels the run).
+// This module is wiring and nothing else: it folds KAS's `inspect` reply through
+// `run-exec-source.ts` into `exec-view/`'s model, hands that to `buildExecPage`, and
+// owns the three things only a workflow knows — which verbs the status offers, what
+// an empty step body means, and where a `run_step` frame renders. It draws no run UI
+// of its own.
 //
-// Two flavours, one difference that matters: an OWNED tab (the Workflows tab's
-// Run button) carries controls and its close cancels the run; a REVIEW (a History
-// row) carries neither. Pause and Resume are KAS's own verbs, Cancel is on both
-// live statuses, and a finished run offers none in either flavour.
+// Every door opens the same page: the Workflows tab's Run button, a History row, the
+// transcript card's footer link, a `/run/{id}` deep link, and the automatic sub-tab a
+// starting run offers its launching chat. There is no per-door flavour left — the
+// verbs are gated on the RUN (parentless or agent-parented, below) rather than on
+// which door was used, and no door's × stops anything.
 //
-// The flavour is the opener's, not the status's, and that is the whole design.
-// GET /api/sessions does not filter by status, so History genuinely lists running
-// and paused runs — but History is where finished work is READ. A tab that can
-// pause or cancel is a live surface, and the live surface is the Workflows tab.
-// An earlier revision let History's tabs carry controls because a live run there
-// was otherwise a dead end; the dead end is the honest answer, and the run is
-// reachable through the door that launched it.
+// There is no composer, because there is nobody to type to.
 //
-// So there is no composer, no input bar, and for a review no controls either,
-// because there is nobody to type to and nothing here owns the work.
+// THE VIEW SERVES THREE SUBJECTS and the code below is only one of the three doors
+// into it (user decision, 2026-08):
 //
-// The tree is rendered from KAS's own `state` shape, passed through verbatim by
-// GET /api/runs/{id}. vibekit deliberately does not re-model it: the
-// node plan is KAS's structure, and a second representation of it here would be
-// one more thing to keep in sync for no gain.
+//   a PARENTLESS workflow    launched from the Workflows tab or by the scheduler.
+//                            vibekit hosts its bridge, so the page carries the
+//                            status's verbs and its steps stream in through
+//                            `run_step`.
+//   a CHAT-TRIGGERED workflow  launched by an agent calling `run_workflow`. The
+//                            agent drives it on a bridge it holds, so the page
+//                            carries NO verbs and its steps stream into that
+//                            chat's transcript instead — which is what the detail
+//                            pane's note says rather than sitting blank.
+//   a SUBAGENT expansion     the same page over a delegate, reached when a reader
+//                            wants one out of the transcript's keyhole. Its own
+//                            adapter; nothing under `exec-view/` learns it exists.
+//
+// CLOSING NEVER STOPS THE WORK, for any of the three. `owns: false` at every door,
+// no `onClose` in the factory. A × that means "close this" on one door and "destroy
+// the work" on another is a gesture a reader cannot learn, and it was the only
+// destructive control in the app with no confirmation, on the smallest target in the
+// row. Stopping a run is the Cancel VERB. The launching chat's × still cancels its
+// runs, and that is a different gesture: it destroys the conversation.
+//
+// WHAT IT RENDERS IS `exec-view/`, the shared subpage view, through an adapter. This
+// page used to hand-roll its own node tree and output list, and that was a second,
+// poorer rendering of one state: it put 7 of the ~30 fields `inspect` carries on
+// screen, so a failed run showed a red dot and no reason while the card in a chat
+// named the failing step and quoted it, a running step showed no elapsed time, and a
+// captured report written in markdown showed its own asterisks in a `<pre>`.
+// `run_http.go` refuses to keep a second representation of KAS's state on the server
+// for exactly this reason; the client had one anyway.
+//
+// It does NOT render the transcript's run card. A card among a conversation's turns is
+// a glance and a page of its own is a review, so the card's short-lived `full` detail
+// mode is deleted: a flag that made one component mean two things was the wrong seam.
+// What the two share is `exec-view/status.ts` — one status vocabulary — and nothing
+// else.
+//
+// It also HOSTS THE LIVE STEP TRANSCRIPT, which is new. A parentless run's step
+// frames used to be dropped on the run bridge, so this tab could show what a step
+// produced and never how it got there; they now arrive as `run_step` events and
+// render into the card's step rows (run-step-blocks.ts). That content is live-only
+// — it belongs to a turn vibekit never prompted and so never finalizes — which is
+// why an empty step body on a FINISHED run says so rather than sitting blank.
 // ---------------------------------------------------------------------------
 
 import { el, effect } from "@cplieger/reactive";
 import { closeTab, getActiveTabId, openRunTab, tabIdFor } from "./tabs.js";
-import { mountRunDecisionDock, rerenderDocks } from "./decision-dock.js";
+import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
 import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
 import { RUN_CONTROLS, CONTROL_LABEL, type RunVerb } from "./run-controls.js";
-import { invalidateRun, runState, runChatID, type RunNode, type RunState } from "./run-store.js";
+import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
+import { inFlight, type ExecState } from "./exec-view/status.js";
+import type { ExecNode } from "./exec-view/model.js";
+import { runToExec } from "./run-exec-source.js";
+import type { RunStepStream } from "./run-step-blocks.js";
+import { invalidateRun, runState, runChatID, runPlan, type RunState } from "./run-store.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
+import type { RunStepPayload } from "./types.js";
 
 /** Verb → its action. Separate from run-controls.ts's table on purpose: that
  *  module is the pure RULE and must stay importable without the actions
@@ -44,21 +85,37 @@ const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }
   retry: retryRun,
 };
 
+/** The exec view's state back to the run status `RUN_CONTROLS` is keyed by.
+ *
+ *  `input` maps to `running`, which is the whole point of that state existing: a run
+ *  blocked on an unanswered ask IS still running, so it keeps the verbs a running
+ *  run has. `pending` and `skipped` have no run-level meaning and answer undefined,
+ *  which renders no control row rather than guessing one. */
+const EXEC_TO_WIRE: Partial<Record<ExecState, string>> = {
+  running: "running",
+  input: "running",
+  waiting: "paused",
+  ok: "completed",
+  fail: "failed",
+  warn: "aborted",
+};
+
 /** The run this view is currently showing, so an SSE invalidation knows whether
  *  it is about the run on screen. Cleared when the view loads a different one;
  *  a closed tab simply stops matching, because the next open reassigns it. */
 let shownRun = "";
 
-/** Whether the run on screen was opened as a live, owned tab.
+/** Whether the shown run was launched manually (no parent chat).
  *
- *  Controls render only for those. A run reached from History is a REVIEW even
- *  when the run is still moving: History is where finished work is read, and a
- *  tab you can act on belongs to the surface that launched the run. Set by the
- *  opener rather than derived from status, because the same `running` run is
- *  actionable through one door and a record through the other. */
-let shownRunOwned = false;
-/** Whether the shown run was launched manually (no parent chat). Only a
- *  parentless run offers Retry; a parented one is the agent's to recover. */
+ *  The ONE authority fact left. It gates the verbs that only make sense on a run
+ *  vibekit hosts itself: an agent-parented run's recovery is the agent's, on a bridge
+ *  it holds.
+ *
+ *  What used to sit beside it — `shownRunOwned`, "did this door own the run" — is
+ *  gone with the ×-cancels behaviour it existed for. Controls are no longer gated on
+ *  which door opened the tab, and that follows directly: with the × disarmed, a
+ *  History-opened tab denied Cancel would put a live run on screen with no way to
+ *  stop it. The verbs are the status's now, wherever the run is read from. */
 let shownRunParentless = false;
 
 /** Point the shared run view (one DOM element serves every run tab) at a run,
@@ -67,16 +124,15 @@ let shownRunParentless = false;
  *  re-mounting. */
 /** Point the run view at one run and mount its dock.
  *
- *  Exported for the tab factory (tab-materialize.ts): this is a run tab's
- *  `onShow`, and the factory has to name it without importing the three openers
- *  above, which build tabs. `parentless` is deliberately NOT derivable from a
- *  `TabSubject` — see this module's callers and the factory's header: it asks
- *  whether the RUN has a parent agent session, while a subject's `Parent` names
- *  the open tab this one nests under, and a chat-parented run reviewed while its
- *  chat's tab is closed has an empty Parent without being parentless. */
-export function showRun(workflowID: string, owned: boolean, parentless: boolean): void {
+ *  Exported for the tab factory (tab-materialize.ts): this is a run tab's `onShow`,
+ *  and the factory has to name it without importing the openers above, which build
+ *  tabs. `parentless` is deliberately NOT derivable from a `TabSubject` — see the
+ *  factory's header: it asks whether the RUN has a parent agent session, while a
+ *  subject's `Parent` names the open tab this one nests under, and a chat-parented run
+ *  reviewed while its chat's tab is closed has an empty Parent without being
+ *  parentless. */
+export function showRun(workflowID: string, parentless: boolean): void {
   shownRun = workflowID;
-  shownRunOwned = owned;
   shownRunParentless = parentless;
   const dock = document.getElementById("run-dock");
   if (dock !== null) {
@@ -107,20 +163,21 @@ function installViewEffect(): void {
   });
 }
 
-/** Open a run REVIEW: read-only, closing the tab closes nothing. The History
- *  page's row opens these.
+/** Open a run's tab on request — every MANUAL door: the Workflows tab's Run button,
+ *  a History row, the run card's footer link, a `/run/{id}` deep link.
  *
- *  Read-only even for a run that is still going. GET /api/sessions does not
- *  filter by status, so History does list running and paused runs, and an earlier
- *  revision let those carry controls on the reasoning that a live run in History
- *  was otherwise a dead end. That is the wrong trade: History is where finished
- *  work is read, and a tab that can pause or cancel is a live surface wearing a
- *  record's clothes. The live door is the Workflows tab.
+ *  NOT read-only, and that reversed with the close contract. History used to open a
+ *  review that carried no verbs, on the reasoning that reaching a live run's controls
+ *  was the launching tab's job and its × was the stop. With the × disarmed
+ *  (tab-materialize.ts) that leaves a live run readable from History with no way to
+ *  stop it, so `buildRunControls` gates on the RUN — parentless or not — and a
+ *  parentless run offers its status's verbs through every door. `GET /api/sessions`
+ *  does not filter by status, so History genuinely does list running and paused runs.
  *
- *  PARENTLESSNESS is no longer an argument here. `showRun`'s third parameter asks
+ *  PARENTLESSNESS is not an argument here either. `showRun`'s second parameter asks
  *  whether the RUN has a parent agent session, which is the run's own fact, and the
  *  composition root answers it from the run store when it wires the factory's
- *  opener — so a review and a restored tab agree instead of each door deciding.
+ *  opener — so a History row and a restored tab agree instead of each door deciding.
  *
  *  `parentChatID` nests it under the chat that launched it when that chat has a
  *  tab open, which is what makes a run reached from History land beside its own
@@ -129,12 +186,16 @@ function installViewEffect(): void {
  *  know it — the run card's "Open run" link, a `/run/{id}` deep link — the store's
  *  own record of which chat launched the run answers instead.
  *
- *  NO offer guard here, unlike `openRunSubTab`. This is the RE-OPEN path: a reader
- *  who closed the automatic tab and then clicked the run in its transcript is
- *  asking for it back, and refusing them would be the opposite of respecting the
- *  close. A parentless run, or one whose chat is not open, stays top-level —
- *  `insertRow` would fall back to top-level for an absent parent anyway, and
- *  asking first keeps the intent explicit rather than incidental. */
+ *  NO offer guard here, unlike `openRunSubTab`. This is the MANUAL path — the
+ *  Workflows tab's Run button, the run card's footer link, a `/run/{id}` deep link —
+ *  and a reader who closed the automatic tab and then asked for the run is asking for
+ *  it back; refusing them would be the opposite of respecting the close. A parentless
+ *  run, or one whose chat is not open, stays top-level: `insertRow` would fall back to
+ *  top-level for an absent parent anyway, and asking first keeps the intent explicit.
+ *
+ *  It absorbed `openLiveRunView`, which differed only in `owns: true`. With the ×
+ *  disarmed there was nothing left to distinguish, and a launcher-opened run is
+ *  parentless so it lands top-level through this door too. */
 export function openRunView(workflowID: string, name: string, parentChatID = ""): void {
   // From here on this tab is the READER's, so the completion auto-close leaves it
   // alone. Same reasoning as the offer guard, pointing the other way: a tab
@@ -268,26 +329,127 @@ export function autoCloseRunSubTab(workflowID: string, status: string): void {
   void closeTab(tabID);
 }
 
-/** Open a LAUNCHER-OWNED run tab: closing it CANCELS the run (user decision —
- *  the × means stop; a workflow that outlived its tab would spend credits and
- *  edit files with nothing on screen). The Workflows tab's Run button opens
- *  these. Cancel is fire-and-forget: the terminal run_complete tears the
- *  server-side bridge down, and the run_finished event settles every list. */
-export function openLiveRunView(workflowID: string, name: string): void {
-  // An owned tab is never auto-closed: its × cancels, so the auto-close must not
-  // be able to reach it even if this run somehow carried an automatic tab first.
-  autoOpened.delete(workflowID);
-  // `owns: true` is the whole difference from the review above, and it is a
-  // SUBJECT field now rather than a local spec choice — which is what lets the two
-  // coexist for one `(kind, ref)` on the wire. The × cancels through the factory's
-  // own onClose (tab-materialize.ts), so this door passes no callback: a launched
-  // run opened on one device and closed on another means stop either way.
-  void openRunTab(workflowID, name, { owns: true });
+/* `openLiveRunView` is DELETED, and it left no behaviour behind. Its whole
+   difference from `openRunView` was `owns: true` — the × cancels — and with a run tab
+   always a VIEW there is nothing left to distinguish: it nested nowhere the other
+   does not (a launcher-opened run is parentless, so `runChatID` answers "" and
+   `openRunView` goes top-level anyway). Two doors that behave identically are two
+   things to keep in step, so the Workflows tab's Run button opens `openRunView` like
+   every other door. */
+
+/** The page, built once and re-pointed. `exec-view/` knows nothing about
+ *  workflows: `run-exec-source.ts` folds KAS's reply into its model, so a subagent
+ *  tab is a second adapter into this same page rather than a second page. */
+let page: ExecPageView | undefined;
+let pageRun = "";
+
+/** The live step transcript, LAZILY loaded.
+ *
+ *  `run-step-blocks.ts` reaches the real tool card, and that module's graph runs
+ *  through the editor openers and the navigator into `chat.ts` — the whole
+ *  transcript stack. A run tab that statically imported it would pull all of that to
+ *  draw a tree, and it is only ever needed for a run being WATCHED: a review of a
+ *  finished run has no live content at all, because a step's working output is
+ *  streamed and never stored. The first `run_step` frame is the right moment to pay
+ *  for it, and frames arriving during the load are queued rather than dropped so the
+ *  beginning of a step's output is not the part that goes missing. */
+let steps: RunStepStream | undefined;
+let stepsLoading = false;
+const pendingSteps: RunStepPayload[] = [];
+
+/** Build the page into `#run-body`, replacing whatever was there. */
+function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
+  page?.dispose();
+  const built = buildExecPage({
+    emptyNote: stepEmptyNote,
+    controls: (run) => buildRunControls(run.id, run.state),
+  });
+  page = built;
+  pageRun = workflowID;
+  // Retargeting drops the previous run's stream with the DOM it wrote into. Its
+  // content is live-only either way, so there is nothing to carry over — and a
+  // stream still holding the old page's hosts would append into detached elements.
+  steps = undefined;
+  stepsLoading = false;
+  pendingSteps.length = 0;
+  container.replaceChildren(built.root);
+  return built;
+}
+
+/** What a node with a transcript host but nothing in it should say, and there are
+ *  three answers because they are three different facts a blank region states none
+ *  of:
+ *
+ *   - a CHAT-PARENTED run's steps never stream here at all. Their frames arrive on
+ *     the launching chat's connection and render in that chat's own run card, so
+ *     this tab holds the plan, the timings and the results while the working
+ *     transcript is one tab away. "Waiting" would be a lie that never resolves.
+ *   - a FINISHED parentless run has no transcript to show anyone: the content was
+ *     live-only, so opening the run afterwards has none of it.
+ *   - a LIVE parentless step simply has not spoken yet. */
+function stepEmptyNote(node: ExecNode): string {
+  if (!shownRunParentless) {
+    return "Launched by an agent, so this step's working output streams into that chat's transcript rather than here. This tab holds the plan, the timings and the captured output.";
+  }
+  if (inFlight(node.state)) {
+    return "Waiting for this step to produce output\u2026";
+  }
+  return "No live transcript. A step's working output is streamed while it runs and is never stored, so it is unavailable once the step has finished; anything it captured is above.";
+}
+
+/** Apply one `run_step` frame, if it is about the run on screen.
+ *
+ *  A frame for another run is DROPPED rather than buffered. The event is
+ *  workspace-global (a parentless run has no chat to address), so every client sees
+ *  every run's steps, and holding the ones for runs this tab is not showing would be
+ *  an unbounded buffer for content that is discarded on reload anyway. The cost is
+ *  that switching to a run mid-flight starts its transcript from that moment, which
+ *  is the same thing that happens when the tab is opened late. */
+export function applyRunStep(payload: RunStepPayload): void {
+  if (payload.workflow_id !== pageRun || page === undefined) {
+    return;
+  }
+  if (steps !== undefined) {
+    steps.apply(payload);
+    return;
+  }
+  pendingSteps.push(payload);
+  if (stepsLoading) {
+    return;
+  }
+  stepsLoading = true;
+  const forRun = pageRun;
+  void import("./run-step-blocks.js")
+    .then(({ createRunStepStream }) => {
+      // The tab may have retargeted during the load. Anything queued belonged to the
+      // run that is gone, so it is discarded with it rather than replayed into
+      // another run's rows.
+      if (pageRun !== forRun || page === undefined) {
+        pendingSteps.length = 0;
+        return;
+      }
+      const view = page;
+      const stream = createRunStepStream((nodePath) => view.bodyFor(nodePath));
+      steps = stream;
+      for (const queued of pendingSteps) {
+        stream.apply(queued);
+      }
+      pendingSteps.length = 0;
+    })
+    .catch(() => {
+      // The step transcript is an enhancement over a page that is already rendering
+      // the plan, the timings and the outputs, so a failed chunk load leaves a
+      // usable tab. Cleared so the next frame retries.
+      pendingSteps.length = 0;
+    })
+    .finally(() => {
+      stepsLoading = false;
+    });
 }
 
 /** Paint the view from a store value. `undefined` means the first fetch has not
- *  resolved, which is the ONLY case that shows a loading row: a refetch driven by
- *  an invalidation must not blank a run the reader is looking at, several times a
+ *  resolved, which is the ONLY case that shows a loading row: a refetch driven by an
+ *  invalidation must not blank a run the reader is looking at, several times a
  *  minute on a busy one. */
 function paint(workflowID: string, state: RunState | undefined): void {
   const container = document.getElementById("run-body");
@@ -302,84 +464,51 @@ function paint(workflowID: string, state: RunState | undefined): void {
   }
   // Nudge the tab dot. A run launched from the Workflows tab is painted by the
   // `run_started` frame that follows, but a tab restored on boot or opened from
-  // History lands on a run already going, and a PAUSED run emits no frames at all
-  // — so without this its dot would sit blank for as long as the pause lasts.
-  // Unconditional now that every run's tab carries a dot, not just a parentless
-  // one's. Both calls are needed: `trackRun` admits a run this client has seen no
-  // event for (a tab restored on boot), and `refreshRunDots` repaints one it
-  // already knows, where `trackRun` is a no-op.
+  // History lands on a run already going, and a PAUSED run emits no frames at all —
+  // so without this its dot would sit blank for as long as the pause lasts. Both
+  // calls are needed: `trackRun` admits a run this client has seen no event for, and
+  // `refreshRunDots` repaints one it already knows.
   trackRun(workflowID);
   refreshRunDots();
-  const parts: HTMLElement[] = [];
 
-  parts.push(
-    el(
-      "div",
-      { className: "run-summary" },
-      el("span", { className: "run-status" }, state.status ?? "unknown"),
-      el("span", { className: "run-id" }, state.workflowId),
-      buildRunControls(workflowID, state.status ?? ""),
-    ),
-  );
-
-  if (state.root !== undefined) {
-    parts.push(el("h3", { className: "section-title" }, "Steps"));
-    parts.push(el("div", { className: "run-tree" }, renderNode(state.root, 0)));
-  }
-
-  // Captured outputs are the point of reviewing a finished run: they are what
-  // the steps produced. An EMPTY one is RENDERED, not dropped, and that is the
-  // whole point of this block.
-  //
-  // A node gets a key only when it captured (KAS defaults captureOutput to true
-  // and omits the key when a step sets it false), and the captured value is that
-  // step's last assistant text. So an empty value is not "nothing to show": it
-  // says the step ran and finished without saying anything, which is the most
-  // diagnostic fact a finished run holds. Dropping it left the reader with no
-  // row at all and no way to tell that step from one that never ran.
-  const outputs = Object.entries(state.capturedOutputs ?? {});
-  if (outputs.length > 0) {
-    parts.push(el("h3", { className: "section-title" }, "Captured output"));
-    for (const [node, value] of outputs) {
-      parts.push(
-        el(
-          "div",
-          { className: "run-output" },
-          el("div", { className: "run-output-node" }, node),
-          value.trim() === ""
-            ? el(
-                "div",
-                { className: "run-output-empty" },
-                "Empty: this step's last assistant message carried no text.",
-              )
-            : el("pre", { className: "run-output-body" }, value),
-        ),
-      );
-    }
-  }
-
-  container.replaceChildren(...parts);
+  // Reused only while the page this module built is STILL MOUNTED in this container.
+  // The run id alone is not enough: `#run-body` is one shared element whose children
+  // any caller may have replaced, and a page cached against a detached container
+  // would leave the live one blank while every render went to DOM nobody can see.
+  const mounted = pageRun === workflowID && page?.root.parentElement === container;
+  const view = mounted && page !== undefined ? page : mountPage(container, workflowID);
+  // Two inputs on different clocks, the same pair the transcript's card takes:
+  // `inspect` says what the nodes are doing, and the dock says which of them is
+  // blocked on a person. The run's own status cannot carry the second — KAS blocks
+  // the asking step's turn and leaves the run `running` — and both reads are
+  // signal-backed, so the one effect this module installs repaints on either.
+  view.render(runToExec(workflowID, state, runPlan(workflowID), runPendingAsks(workflowID)));
 }
 
 /** The run's control row. Empty for an unknown status, which renders nothing
  *  rather than an empty container. */
-function buildRunControls(workflowID: string, status: string): HTMLElement | null {
-  let verbs = RUN_CONTROLS[status];
-  // Two different gates, because the two doors mean different things.
+function buildRunControls(workflowID: string, state: ExecState): HTMLElement | null {
+  // The verb table is keyed by KAS's own status words, and the page hands over the
+  // exec view's state — one vocabulary in, a different one out. Mapped here rather
+  // than by widening the table, because `run-controls.ts` is deliberately the pure
+  // rule over the WIRE's statuses and a second set of keys in it would make "which
+  // status is this" ambiguous at the one place that must not be.
+  const wire = EXEC_TO_WIRE[state];
+  let verbs = wire === undefined ? undefined : RUN_CONTROLS[wire];
+  // ONE gate now, and it is about the RUN rather than about the door.
   //
-  // An OWNED tab (the launcher's) carries the status's live verbs. A REVIEW
-  // (opened from History) carries none of them — reaching a live run's controls
-  // is the launching tab's job. But RETRY is not a live verb: it acts on a
-  // finished run, and History is exactly where a failed one is found, so a
-  // review offers retry and nothing else.
+  // The which-door gate is gone with the ×-cancels behaviour it belonged to: an owned
+  // tab used to carry the live verbs while a History-opened review carried only retry,
+  // on the reasoning that reaching a live run's controls was the launching tab's job
+  // and its × was the stop. With the × disarmed (tab-materialize.ts), that leaves a
+  // live run readable from History with no way to stop it — so the verbs are the
+  // status's wherever the run is read from.
   //
-  // Both are further gated on the run being PARENTLESS (user decision): an
-  // agent-parented run's recovery is the agent's own, on a bridge it holds.
-  if (verbs !== undefined && !shownRunOwned) {
-    verbs = verbs.filter((v) => v === "retry");
-  }
+  // PARENTLESSNESS still gates, and for its own unchanged reason: an agent-parented
+  // run is the agent's to drive, on a bridge it holds, so vibekit does not offer to
+  // pause, resume, cancel or retry it from a page.
   if (verbs !== undefined && !shownRunParentless) {
-    verbs = verbs.filter((v) => v !== "retry");
+    verbs = undefined;
   }
   // Empty is as good as absent: a completed run offers nothing, and an empty
   // control row would be a visible container with no purpose.
@@ -407,40 +536,4 @@ function buildRunControls(workflowID: string, status: string): HTMLElement | nul
     row.appendChild(btn);
   }
   return row;
-}
-
-/** Render one node and its children. Depth drives indentation only. */
-function renderNode(node: RunNode, depth: number): HTMLElement {
-  const label =
-    node.iteration === undefined ? node.nodeId : `${node.nodeId} #${String(node.iteration)}`;
-  const row = el(
-    "div",
-    { className: `run-node run-node-${node.status}` },
-    el("span", { className: "run-node-dot" }),
-    el("span", { className: "run-node-id" }, label),
-    el("span", { className: "run-node-type" }, node.type),
-    node.agentName !== undefined && node.agentName !== ""
-      ? el("span", { className: "run-node-agent" }, node.agentName)
-      : null,
-    el("span", { className: "run-node-dur" }, duration(node)),
-  );
-  row.style.paddingLeft = `calc(var(--sp-3) * ${String(depth)})`;
-
-  const wrap = el("div", {}, row);
-  for (const child of node.children ?? []) {
-    wrap.appendChild(renderNode(child, depth + 1));
-  }
-  return wrap;
-}
-
-/** Elapsed time for a node, blank when it never finished. */
-function duration(node: RunNode): string {
-  if (node.startedAt === undefined || node.endedAt === undefined) {
-    return "";
-  }
-  const ms = Date.parse(node.endedAt) - Date.parse(node.startedAt);
-  if (!Number.isFinite(ms) || ms < 0) {
-    return "";
-  }
-  return ms < 1000 ? `${String(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }

@@ -44,6 +44,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/secretstore"
+	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -338,7 +339,22 @@ func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]an
 }
 
 // utilityUpdateBase extracts the sessionUpdate kind discriminator.
-// Local to the utility runtime to avoid coupling to translate's wire types.
+//
+// It is decoded from the notification's `update` OBJECT, never from `params`.
+// A session/update's params are `{sessionId, update:{sessionUpdate, …}}`, so
+// reading the kind off params yields "" for every frame — which looks exactly
+// like a wire that never sends a chunk. That is what it was, and it made
+// UtilityPrompt return empty text for every ambient task (commit messages, PR
+// descriptions, branch names), each of which then reported its own failure:
+// `generation_failed` with "model returned no usable name" for a branch name,
+// an empty box for the other two. The unit tests fed the flat shape, so they
+// agreed with the bug rather than with KAS.
+//
+// translate.ACPSessionUpdateBase carries the same field at the same depth and
+// its doc comment records the same nesting trap one level in (`_meta.kiro.replay`
+// on the update, not on params). Nothing about this discriminator is the utility
+// runtime's own, so the envelope it rides in is translate's type rather than a
+// second copy here.
 type utilityUpdateBase struct {
 	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 }
@@ -403,16 +419,25 @@ func (us *utilitySession) sessionPresets(ctx context.Context) []string {
 // forwardChunk forwards an agent_message_chunk's text to responseCh, ignoring
 // every other notification. Split out of forward to keep it under the
 // cognitive-complexity gate.
+//
+// TWO decodes, because there are two levels: the outer envelope names the
+// session and wraps the frame, and the frame carries the kind and the content.
+// See utilityUpdateBase for what reading the inner fields off the outer object
+// cost.
 func forwardChunk(msg *vibekit.RPCResponse, responseCh chan<- utilityChunkPayload) {
 	if msg.Method != vibekit.MethodSessionUpdate || msg.Params == nil {
 		return
 	}
+	var env translate.ACPSessionUpdateEnvelope
+	if json.Unmarshal(msg.Params, &env) != nil || env.Update == nil {
+		return
+	}
 	var base utilityUpdateBase
-	if json.Unmarshal(msg.Params, &base) != nil || base.Kind != vibekit.ACPUpdateAgentChunk {
+	if json.Unmarshal(env.Update, &base) != nil || base.Kind != vibekit.ACPUpdateAgentChunk {
 		return
 	}
 	var chunk utilityChunkPayload
-	if json.Unmarshal(msg.Params, &chunk) == nil {
+	if json.Unmarshal(env.Update, &chunk) == nil {
 		// Non-blocking send: if responseCh (buffer 64) is full — a wedged
 		// or already-drained turn whose leftover chunks nobody reads — drop
 		// the chunk instead of blocking here forever. A blocked forward

@@ -1,12 +1,15 @@
 // ---------------------------------------------------------------------------
-// The base pane's caption.
+// The diff panes' captions.
 //
-// A diff's left pane makes a CLAIM about what it holds. When git owns no
-// revision of the file — a workspace file outside every repo, or a workspace root
-// that is not itself a repo — the pane is empty, and captioning it "HEAD" asserts
-// that HEAD has the file and that the file is empty there. The load reports which
-// it found (`internal/git.KindNotInRepo` vs a real failure), and the caption is
-// taken from the load rather than from the ref that was asked for.
+// A diff's pane makes a CLAIM about what it holds. When git owns no revision of
+// the file — a workspace file outside every repo, or a workspace root that is not
+// itself a repo — the left pane is empty, and captioning it "HEAD" asserts that
+// HEAD has the file and that the file is empty there. The RIGHT pane carries the
+// same problem in the other direction: a deleted file has no working copy, and an
+// empty pane captioned "working tree" says the file is there and empty. The load
+// reports what it found on each side (`internal/git.KindNotInRepo` vs a real
+// failure; a 404 from /api/file vs a real read failure), and both captions are
+// taken from the load rather than from what was asked for.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -16,6 +19,7 @@ interface DiffResult {
   newContent: string;
   error: string;
   baseLabel: string;
+  workingLabel: string;
 }
 
 let diffResult: DiffResult = {
@@ -23,6 +27,7 @@ let diffResult: DiffResult = {
   newContent: "",
   error: "",
   baseLabel: "HEAD",
+  workingLabel: "working tree",
 };
 
 vi.mock("./tabs.js", () => ({
@@ -96,6 +101,11 @@ function labelOf(state: ReturnType<typeof freshState>): string {
   return m.kind === "diff" ? m.diffSource.oldLabel : "";
 }
 
+function workingLabelOf(state: ReturnType<typeof freshState>): string {
+  const m = state.mode.value;
+  return m.kind === "diff" ? m.diffSource.newLabel : "";
+}
+
 beforeEach(() => {
   fileStates.clear();
 });
@@ -103,7 +113,13 @@ beforeEach(() => {
 describe("the base pane's caption", () => {
   it("says the ref when git holds a revision", async () => {
     expect.assertions(1);
-    diffResult = { oldContent: "old", newContent: "new", error: "", baseLabel: "HEAD" };
+    diffResult = {
+      oldContent: "old",
+      newContent: "new",
+      error: "",
+      baseLabel: "HEAD",
+      workingLabel: "working tree",
+    };
     const state = stageDiffState("HEAD");
     await fetchGitDiffSources(state, "", "HEAD");
     expect(labelOf(state)).toBe("HEAD");
@@ -111,7 +127,13 @@ describe("the base pane's caption", () => {
 
   it("says 'not in git' when no repo owns the file", async () => {
     expect.assertions(2);
-    diffResult = { oldContent: "", newContent: "new", error: "", baseLabel: "not in git" };
+    diffResult = {
+      oldContent: "",
+      newContent: "new",
+      error: "",
+      baseLabel: "not in git",
+      workingLabel: "working tree",
+    };
     const state = stageDiffState("HEAD");
     await fetchGitDiffSources(state, "", "HEAD");
     expect(labelOf(state)).toBe("not in git");
@@ -121,9 +143,51 @@ describe("the base pane's caption", () => {
 
   it("carries a non-HEAD ref through unchanged", async () => {
     expect.assertions(1);
-    diffResult = { oldContent: "old", newContent: "new", error: "", baseLabel: "origin/main" };
+    diffResult = {
+      oldContent: "old",
+      newContent: "new",
+      error: "",
+      baseLabel: "origin/main",
+      workingLabel: "working tree",
+    };
     const state = stageDiffState("origin/main");
     await fetchGitDiffSources(state, "", "origin/main");
     expect(labelOf(state)).toBe("origin/main");
+  });
+});
+
+describe("the working pane's caption", () => {
+  it("says 'working tree' for an ordinary change", async () => {
+    expect.assertions(1);
+    diffResult = {
+      oldContent: "old",
+      newContent: "new",
+      error: "",
+      baseLabel: "HEAD",
+      workingLabel: "working tree",
+    };
+    const state = stageDiffState("HEAD");
+    await fetchGitDiffSources(state, "", "HEAD");
+    expect(workingLabelOf(state)).toBe("working tree");
+  });
+
+  it("says 'deleted' when the working copy is gone", async () => {
+    // The placeholder the opener staged says "working tree", so the load has to
+    // overwrite it: an empty right pane under that caption claims the file is
+    // still there and empty.
+    expect.assertions(3);
+    diffResult = {
+      oldContent: "gone\n",
+      newContent: "",
+      error: "",
+      baseLabel: "HEAD",
+      workingLabel: "deleted",
+    };
+    const state = stageDiffState("HEAD");
+    await fetchGitDiffSources(state, "", "HEAD");
+    expect(workingLabelOf(state)).toBe("deleted");
+    expect(labelOf(state)).toBe("HEAD");
+    // An all-deletions diff is a correct rendering, not an error state.
+    expect(state.error).toBe("");
   });
 });

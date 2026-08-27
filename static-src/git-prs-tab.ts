@@ -33,6 +33,7 @@ import { checkChip, mergeBlockReason, supportsRerun, canArmAutoMerge } from "./g
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
+import { ensureForges } from "./forge-store.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
@@ -40,15 +41,13 @@ import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { iconEl } from "./icon-el.js";
 
 // --- Types ---
 
 import type { GitPR as PR, GitRepoGroup as RepoGroup } from "./git-types.js";
 
-interface ForgesListResponse {
-  forges: ConfiguredForge[];
-}
 interface RepoListResponse {
   repos: Repo[];
 }
@@ -101,21 +100,27 @@ export function initPRsTab(): void {
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
-      void refreshPRsAction.dispatch(undefined);
+      // force: pressing refresh means "get me the truth", so the server's
+      // listing cache is bypassed. This is also the only way to close the
+      // window in which a row shows a check verdict the forge has changed.
+      void refreshPRsAction.dispatch({ force: true });
     });
     bindLoadingState("git.refresh_prs", refreshBtn);
   }
 
   // Refetch on forge credential changes; PRs list depends on which
-  // forges are connected.
+  // forges are connected. No force: the server drops its cached listings when
+  // a connection changes, so the next read is live anyway.
   onSSE("forges_changed", () => {
-    void refreshPRsAction.dispatch(undefined);
+    void refreshPRsAction.dispatch({ force: false });
   });
 }
 
 /** Force a full PR refresh (parallel fan-out across all credentialled
- *  repos). Safe to call multiple times — only the latest result wins. */
-export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
+ *  repos). Safe to call multiple times — only the latest result wins.
+ *
+ *  `force` bypasses the server's listing cache; see loadPRGroups. */
+export async function refreshPRs(externalSignal?: AbortSignal, force = false): Promise<void> {
   const myGen = ++refreshGen;
   refreshController?.abort();
   refreshController = new AbortController();
@@ -132,9 +137,60 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
       { once: true },
     );
   }
-  const forgesRes = await apiGet<ForgesListResponse>("/api/forges", signal);
+
+  // The mount starts empty and paint() runs only once every request has landed,
+  // so the tab showed nothing at all for the whole fan-out — one request per
+  // repository, each a `gh pr list` subprocess server-side. The 24px refresh
+  // spinner was the only signal, far from where the reader is looking.
+  // The 150ms show delay keeps a warm refresh from flashing placeholders, and
+  // the signal suppresses the skeleton outright for a superseded refresh.
+  const root = document.getElementById("git-prs-mount");
+  const progress: FanoutProgress = { done: 0, total: 0, label: null };
+  const skeleton = skeletonTiming(() => showPRSkeleton(root, progress), { signal });
+
+  try {
+    const groups = await loadPRGroups(signal, progress, force);
+    // Bail if aborted, or if a newer refresh was started while we were fetching.
+    if (groups === null || myGen !== refreshGen) {
+      return;
+    }
+    skeleton.cancel();
+    setPRGroups(groups);
+    paint();
+  } catch (err) {
+    // The action's toast is transient and every empty state below describes a
+    // SUCCESSFUL fetch, so a failure has to say so in the pane or the reader is
+    // left with a blank one. Only the latest refresh may write it — a superseded
+    // one must not blank the newer paint.
+    if (myGen === refreshGen && root !== null) {
+      paintLoadError(root, err);
+    }
+    throw err;
+  } finally {
+    skeleton.cancel();
+  }
+}
+
+/** Fetch every connected forge's repos and each repo's open PRs, sorted for
+ *  paint. Returns null when the refresh was aborted or superseded mid-flight;
+ *  throws when the forge list itself could not be read.
+ *
+ *  `force` reaches the server as `?refresh=1`, which bypasses its listing cache
+ *  (internal/forges/list_cache.go). Only an explicit refresh sets it: arriving
+ *  at the tab should cost no subprocess when the answer is already known, while
+ *  someone pressing refresh is asking for the truth. */
+async function loadPRGroups(
+  signal: AbortSignal,
+  progress: FanoutProgress,
+  force: boolean,
+): Promise<RepoGroup[] | null> {
+  // The forge list comes from the shared store rather than a fetch of this
+  // module's own: three modules used to read /api/forges independently. The
+  // store's copy is at most one poll old and a connection change invalidates it
+  // through SSE, which is the same freshness the sidebar badge already trusts.
+  const forgesRes = await ensureForges();
   if (signal.aborted) {
-    return;
+    return null;
   }
   if (forgesRes === null) {
     throw new Error("Failed to load forges");
@@ -145,14 +201,15 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
   const tasks: { forge: ConfiguredForge; repo: Repo }[] = [];
   const repoResults = await Promise.all(
     forges.map((forge) =>
-      apiGet<RepoListResponse>(`/api/forges/${encodeURIComponent(forge.id)}/repos`, signal).then(
-        (res) => ({ forge, res }),
-      ),
+      apiGet<RepoListResponse>(
+        `/api/forges/${encodeURIComponent(forge.id)}/repos${force ? "?refresh=1" : ""}`,
+        signal,
+      ).then((res) => ({ forge, res })),
     ),
   );
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
   if (signal.aborted) {
-    return;
+    return null;
   }
   for (const { forge, res } of repoResults) {
     if (res === null) {
@@ -163,11 +220,14 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
     }
   }
 
+  progress.total = tasks.length;
+  repaintProgress(progress);
+
   const groups: RepoGroup[] = await Promise.all(
     tasks.map(async ({ forge, repo }) => {
       try {
         const res = await apiGet<PRListResponse>(
-          `/api/forges/${encodeURIComponent(forge.id)}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/prs?state=open`,
+          `/api/forges/${encodeURIComponent(forge.id)}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/prs?state=open${force ? "&refresh=1" : ""}`,
           signal,
         );
         return {
@@ -190,6 +250,9 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
           prs: [],
           error: err instanceof Error ? err.message : String(err),
         };
+      } finally {
+        progress.done += 1;
+        repaintProgress(progress);
       }
     }),
   );
@@ -202,13 +265,92 @@ export async function refreshPRs(externalSignal?: AbortSignal): Promise<void> {
     return a.full_name.localeCompare(b.full_name);
   });
 
-  // Bail if a newer refresh was started while we were fetching.
-  if (myGen !== refreshGen) {
-    return;
-  }
+  return groups;
+}
 
-  setPRGroups(groups);
-  paint();
+// --- Loading + failure states ---
+
+/** Per-refresh fan-out progress. The counter and the element it writes to belong
+ *  to the refresh rather than the module: the mount holds one skeleton at a time,
+ *  but a superseded refresh keeps settling its aborted requests after a newer one
+ *  has taken the mount, and module state would let those writes land on it. */
+interface FanoutProgress {
+  done: number;
+  total: number;
+  label: HTMLElement | null;
+}
+
+function progressText(p: FanoutProgress): string {
+  if (p.total === 0) {
+    return "Loading pull requests\u2026";
+  }
+  return `Loading pull requests\u2026 ${String(p.done)} of ${String(p.total)} repositories`;
+}
+
+function repaintProgress(p: FanoutProgress): void {
+  if (p.label !== null) {
+    p.label.textContent = progressText(p);
+  }
+}
+
+/** Placeholder sections while the fan-out is in flight. Skipped when the mount
+ *  already holds keyed rows, so a manual refresh never flashes placeholders over
+ *  real data. */
+function showPRSkeleton(root: HTMLElement | null, progress: FanoutProgress): () => void {
+  if (root === null) {
+    return () => {
+      /* no mount — nothing to tear down */
+    };
+  }
+  if (root.querySelector("[data-reconcile-key]") !== null) {
+    return () => {
+      /* already populated */
+    };
+  }
+  // aria-hidden because the mount is aria-live="polite": announcing placeholder
+  // bars, then a count that ticks once per repository, would be pure noise.
+  const wrap = el("div", { className: "git-pr-skeleton", "aria-hidden": "true" });
+  // The count is what separates a slow refresh from a wedged one. It renders
+  // whatever the fan-out has already reported, because the 150ms show delay means
+  // this can be built mid-flight.
+  const label = el("div", { className: "git-pr-skel-label" }, progressText(progress));
+  progress.label = label;
+  wrap.appendChild(label);
+  for (const width of ["45%", "32%", "58%"]) {
+    const section = el("div", { className: "git-repo-section git-pr-skel-section" });
+    section.append(
+      el("div", { className: "skeleton git-pr-skel-icon" }),
+      skelBar("git-pr-skel-name", width),
+      skelBar("git-pr-skel-meta", "4rem"),
+    );
+    wrap.appendChild(section);
+  }
+  root.replaceChildren(wrap);
+  return () => {
+    if (progress.label === label) {
+      progress.label = null;
+    }
+    wrap.remove();
+  };
+}
+
+function skelBar(className: string, width: string): HTMLElement {
+  const bar = el("div", { className: `skeleton ${className}` });
+  bar.style.width = width;
+  return bar;
+}
+
+function paintLoadError(root: HTMLElement, err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  root.replaceChildren(
+    el(
+      "div",
+      { className: "git-multirepo-error" },
+      `Couldn't load pull requests: ${msg}`,
+      el("br"),
+      "Use the refresh button above to try again.",
+    ),
+  );
 }
 
 // --- Render ---
@@ -293,7 +435,19 @@ function paintInner(): void {
   }
   reconcile(root, visible, {
     key: (g: RepoGroup) => g.full_name,
-    mount: (g: RepoGroup) => renderGroup(g),
+    // The mount builds the section CHROME only and fills the body through the
+    // same paintGroupBody the update path uses, so EVERY PR row in the DOM
+    // comes from the keyed reconcile below and carries its key. A mount that
+    // appended rows itself left them unkeyed, and reconcile builds its
+    // existing-children map from keyed children alone: the next paint could
+    // neither match nor remove them, so it appended a second full copy of the
+    // list after the first and the stale copy kept its own fetch's
+    // merge_blocked — the same list twice, the first with Merge disabled.
+    mount: (g: RepoGroup) => {
+      const section = renderGroup(g);
+      paintGroupBody(section, g);
+      return section;
+    },
     update: (section: HTMLElement, g: RepoGroup) => {
       paintGroupBody(section, g);
     },
@@ -366,6 +520,15 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   reconcile(list, filtered, {
     key: (pr: PR) => `${g.forge_id}:${pr.number}`,
     mount: (pr: PR) => renderPRRow(g, pr),
+    // A surviving row is repainted, or it keeps its first paint's state
+    // forever: merge_blocked is per-fetch (`checks_running` and `unknown`
+    // while the forge computes mergeability), so a PR whose checks went
+    // green would hold a disabled Merge button until its section remounted.
+    // The <li> carries no per-PR attributes, so replacing its children is
+    // the whole row — the same shape as the Changes tab's section update.
+    update: (row: HTMLElement, pr: PR) => {
+      row.replaceChildren(...Array.from(renderPRRow(g, pr).childNodes));
+    },
   });
 }
 
@@ -428,35 +591,14 @@ function renderGroup(g: RepoGroup): HTMLElement {
   // The dedicated toggle button is the trigger; the + New PR button is a
   // sibling that already stopPropagation()s, so it stays unaffected. Content
   // lives on the inner wrapper so its padding collapses with the height.
+  //
+  // The wrapper is left EMPTY here: paintGroupBody fills it, on the mount and
+  // on every later paint. An open disclosure settles to height:auto, so
+  // content added after this call grows the region normally.
   const body = el("div", { className: "git-repo-section-body" });
   const inner = el("div", { className: "git-repo-section-body-inner" });
   body.appendChild(inner);
   createDisclosure(toggle, body, { open: expandedDefault });
-
-  if (g.error !== undefined && g.error !== "") {
-    inner.appendChild(
-      el("div", { className: "git-repo-row-error" }, `Failed to load PRs: ${g.error}`),
-    );
-  } else if (g.prs.length === 0) {
-    inner.appendChild(
-      el(
-        "div",
-        { className: "git-repo-row-empty" },
-        `No open pull requests on ${kindTitle(g.forge_kind)}.`,
-      ),
-    );
-  } else {
-    const list = el("ul", { className: "git-pr-list" });
-    const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
-    const filtered =
-      filterText === "" || groupMatchesFilter
-        ? g.prs
-        : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
-    for (const pr of filtered) {
-      list.appendChild(renderPRRow(g, pr));
-    }
-    inner.appendChild(list);
-  }
 
   section.appendChild(body);
   return section;
@@ -465,30 +607,32 @@ function renderGroup(g: RepoGroup): HTMLElement {
 function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const li = el("li", { className: "git-pr-row" });
 
-  const meta = el("div", { className: "git-pr-row-meta" });
-
-  // Title + number share one click target — opens the PR on the
-  // forge in a new tab. Keeps the row reading like a link without
-  // a redundant "Open" button on the right.
+  // ONE identity element for the whole title line: the number and the title
+  // resolved to the same href, so two anchors meant two tab stops, two hover
+  // underlines and two tooltips for one destination. The number rides INSIDE
+  // the link as a span, which keeps its mono/accent treatment without being a
+  // second control.
   const hasURL = pr.url !== undefined && pr.url !== "";
-  const linkOrSpan = (cls: string, text: string): HTMLElement => {
-    if (hasURL) {
-      const a = el("a", { className: cls, target: "_blank", rel: "noreferrer" }, text);
-      a.setAttribute("href", pr.url!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
-      return a;
-    }
-    return el("span", { className: cls }, text);
-  };
-
-  const num = linkOrSpan("git-pr-row-number", `#${pr.number}`);
-  meta.appendChild(num);
-
-  const title = linkOrSpan("git-pr-row-title", pr.title);
+  const num = el("span", { className: "git-pr-row-number" }, `#${pr.number}`);
+  const title = hasURL
+    ? el("a", { className: "git-pr-row-title", target: "_blank", rel: "noreferrer" }, num, pr.title)
+    : el("span", { className: "git-pr-row-title" }, num, pr.title);
+  if (hasURL) {
+    title.setAttribute("href", pr.url!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  }
   title.setAttribute("data-tooltip", pr.title);
-  meta.appendChild(title);
+  li.appendChild(title);
+
+  // Sub line: the status chips lead it, the authorship read-out follows.
+  // The chips used to ride the TITLE line, where the title's flex:1 pushed
+  // them to the far edge of the text column and a long title ellipsised into
+  // them — so the row's most-read element was the one that lost width. Under
+  // the title they sit beside the other per-PR facts, and the title gets the
+  // whole line.
+  const sub = el("div", { className: "git-pr-row-sub" });
 
   if (pr.draft === true) {
-    meta.appendChild(el("span", { className: "git-pr-row-tag" }, "draft"));
+    sub.appendChild(el("span", { className: "git-pr-row-tag" }, "draft"));
   }
 
   // Check status rides the row because it arrives in the list call that
@@ -498,18 +642,15 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   if (chip !== null) {
     const chipEl = el("span", { className: `git-pr-row-tag ${chip.className}` }, chip.text);
     chipEl.setAttribute("data-tooltip", chip.tooltip);
-    meta.appendChild(chipEl);
+    sub.appendChild(chipEl);
   }
 
   if (pr.auto_merge_armed === true) {
     const armed = el("span", { className: "git-pr-row-tag git-pr-check-pending" }, "auto-merge");
     armed.setAttribute("data-tooltip", "The forge will merge this once its requirements are met.");
-    meta.appendChild(armed);
+    sub.appendChild(armed);
   }
 
-  li.appendChild(meta);
-
-  const sub = el("div", { className: "git-pr-row-sub" });
   const parts: string[] = [];
   if (pr.author !== undefined && pr.author !== "") {
     parts.push(`by @${pr.author}`);
@@ -520,7 +661,9 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   if (pr.source_branch !== "" && pr.target_branch !== "") {
     parts.push(`${pr.source_branch} → ${pr.target_branch}`);
   }
-  sub.textContent = parts.join(" · ");
+  if (parts.length > 0) {
+    sub.appendChild(el("span", { className: "git-pr-row-sub-text" }, parts.join(" · ")));
+  }
   li.appendChild(sub);
 
   // Actions

@@ -125,8 +125,9 @@
 [id="editor-view"],
 [id="files-view"],
 [id="history-view"],
-[id="docs-view"],
-[id="run-view"] {
+[id="run-view"],
+[id="subagent-view"],
+[id="docs-view"] {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -173,6 +174,10 @@
 
 /* #files-view, #editor-view and #run-view are deliberately absent: each pins an
    inner element as its scroller and keeps a toolbar or bar pinned outside it. */
+[id="subagent-view"] {
+  view-transition-name: subagent-view;
+}
+
 [id="settings-view"],
 [id="git-view"],
 [id="history-view"],

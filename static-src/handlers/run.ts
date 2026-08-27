@@ -38,7 +38,7 @@ import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
 import { info, success, error } from "../toast.js";
 import { invalidateRun, noteRunChat } from "../run-store.js";
 import { trackRun } from "../run-dots.js";
-import { autoCloseRunSubTab, openRunSubTab } from "../run-view.js";
+import { autoCloseRunSubTab, openRunSubTab, applyRunStep } from "../run-view.js";
 
 // ---------------------------------------------------------------------------
 // The signal half: an ephemeral toast at each end of a run.
@@ -142,6 +142,23 @@ onSSE("run_finished", (chatID, p) => {
   // over. Which tabs qualify is run-view.ts's — a tangent's sub-tab is
   // unreachable from there, and so is any run tab a reader opened themselves.
   autoCloseRunSubTab(p.workflow_id, p.status);
+});
+
+// A PARENTLESS run's step content, and the one run event that is not an
+// invalidation — there is nothing to invalidate, because a step's transcript is
+// not in `inspect` and no endpoint serves it. So this is the only frame whose
+// payload is READ rather than used as a signal to refetch.
+//
+// It reaches exactly one surface. The run tab holds the card whose step rows the
+// content belongs in, and it drops a frame naming a run it is not showing; the
+// event is workspace-global (a parentless run has no chat to address), so every
+// client receives every run's steps and the tab is what narrows that.
+//
+// A chat-parented run raises none of these: its steps travel as ordinary blocks on
+// the launching chat's connection and already reach that chat's transcript, keyed
+// by `_meta.kiro.workflow`. See internal/agent/run_host.go for the split.
+onSSE("run_step", (_chatID, p) => {
+  applyRunStep(p);
 });
 
 onSSE("run_progress", (chatID, p) => {

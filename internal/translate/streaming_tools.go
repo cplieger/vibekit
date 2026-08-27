@@ -54,21 +54,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	// double-render whatever the following update repeats.
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
 	diffs := content.diffs
-	call := vibekit.ToolCall{
-		ID:             tc.ToolCallID,
-		Title:          tc.Title,
-		Kind:           tc.Kind,
-		Status:         tc.Status,
-		Input:          tc.RawInput,
-		SubSessionID:   attr.SubSessionID,
-		AgentSubtaskID: subtask,
-		TerminalID:     content.terminalID,
-		Locations:      tc.Locations,
-		Diffs:          diffs,
-		Disclosed:      disclosedFrom(tc.Meta.Kiro.DisclosedContext),
-		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
-		Ts:             time.Now().UnixMilli(),
-	}
+	call := toolCallFromWire(&tc, subtask, attr.SubSessionID, content)
 	turn := buf.AppendToolCall(&call) + 1
 	// Anchor the tool in the chronological block array. Always a new
 	// block — back-to-back tool calls each get their own tool_use
@@ -85,6 +71,33 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelForKind(tc.Kind, tc.Title)}))
+}
+
+// toolCallFromWire builds the domain tool call a `tool_call` frame describes.
+//
+// Extracted so the CHAT path above and the run-bridge path (workflow_step_content.go)
+// decode one frame one way. A parentless run's steps run the same tools with the
+// same wire shape, and a second copy of this literal is a second place a field can
+// be forgotten — which is how a run card would end up with no diffs or no denial
+// notice while a chat's card had both.
+func toolCallFromWire(
+	tc *ACPToolCallWire, subtask, subSessionID string, content toolUpdateContent,
+) vibekit.ToolCall {
+	return vibekit.ToolCall{
+		ID:             tc.ToolCallID,
+		Title:          tc.Title,
+		Kind:           tc.Kind,
+		Status:         tc.Status,
+		Input:          tc.RawInput,
+		SubSessionID:   subSessionID,
+		AgentSubtaskID: subtask,
+		TerminalID:     content.terminalID,
+		Locations:      tc.Locations,
+		Diffs:          content.diffs,
+		Disclosed:      disclosedFrom(tc.Meta.Kiro.DisclosedContext),
+		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
+		Ts:             time.Now().UnixMilli(),
+	}
 }
 
 // HandleToolCallUpdate mutates an in-flight tool call's status and

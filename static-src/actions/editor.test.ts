@@ -138,49 +138,76 @@ describe("editor.suggest_resolution", () => {
 //
 // One spelling sent to both meant whichever endpoint disagreed returned null and
 // the whole diff failed with a message naming neither side.
+//
+// The two sides also go through DIFFERENT client helpers, which is why they are
+// mocked separately below: the working copy needs `apiGetOrError` because two of
+// its failure statuses are answers about a changed file (404 deleted, 415 binary)
+// rather than failures to read one.
 // ---------------------------------------------------------------------------
 describe("editor.load_diff", () => {
-  /** Answer each GET by URL prefix, so the two sides can differ per case. */
-  function answer(map: Record<string, unknown>): void {
+  const SHOW = "/api/git/show";
+  const FILE = "/api/file?";
+
+  /** Stage both sides. `show` is git's answer body (or null for unreachable);
+   *  `file` is the working copy's HTTP status plus its body, because the status
+   *  is what the action branches on. */
+  function answer(show: unknown, file: { status: number; data?: unknown }): void {
     vi.mocked(api.apiGet).mockImplementation((url: string) => {
-      for (const [prefix, body] of Object.entries(map)) {
-        if (url.startsWith(prefix)) {
-          return Promise.resolve(body);
-        }
+      if (!url.startsWith(SHOW)) {
+        throw new Error(`unexpected GET ${url}`);
       }
-      throw new Error(`unexpected GET ${url}`);
+      return Promise.resolve(show);
+    });
+    vi.mocked(api.apiGetOrError).mockImplementation((url: string) => {
+      if (!url.startsWith(FILE)) {
+        throw new Error(`unexpected GET ${url}`);
+      }
+      return Promise.resolve({
+        ok: file.status >= 200 && file.status < 300,
+        status: file.status,
+        data: file.data ?? null,
+        error: "",
+      });
     });
   }
 
-  const SHOW = "/api/git/show";
-  const FILE = "/api/file?";
+  const ok = (content: string): { status: number; data: unknown } => ({
+    status: 200,
+    data: { content },
+  });
+
+  /** Every URL either side was asked for. */
+  function urls(): string[] {
+    return [
+      ...vi.mocked(api.apiGet).mock.calls.map((c) => String(c[0])),
+      ...vi.mocked(api.apiGetOrError).mock.calls.map((c) => String(c[0])),
+    ];
+  }
 
   it("sends the workspace-relative path to git show and the absolute one to the file route", async () => {
     expect.assertions(2);
     setWorkspaceRoot("/workspace");
-    answer({ [SHOW]: { content: "base" }, [FILE]: { content: "work" } });
+    answer({ content: "base" }, ok("work"));
     const { loadDiff } = await import("./editor.js");
     await loadDiff.dispatch({ path: "/workspace/sub/a.go", repo: "", ref: "HEAD" }).outcome;
-    const urls = vi.mocked(api.apiGet).mock.calls.map((c) => String(c[0]));
-    expect(urls).toContain("/api/git/show?path=sub%2Fa.go&ref=HEAD");
-    expect(urls).toContain("/api/file?path=%2Fworkspace%2Fsub%2Fa.go");
+    expect(urls()).toContain("/api/git/show?path=sub%2Fa.go&ref=HEAD");
+    expect(urls()).toContain("/api/file?path=%2Fworkspace%2Fsub%2Fa.go");
   });
 
   it("passes the path through untouched when the caller names a repo", async () => {
     // With an explicit repo the caller already holds the repo-relative path.
     expect.assertions(1);
     setWorkspaceRoot("/workspace");
-    answer({ [SHOW]: { content: "base" }, [FILE]: { content: "work" } });
+    answer({ content: "base" }, ok("work"));
     const { loadDiff } = await import("./editor.js");
     await loadDiff.dispatch({ path: "static-src/a.ts", repo: "vibekit", ref: "HEAD" }).outcome;
-    const urls = vi.mocked(api.apiGet).mock.calls.map((c) => String(c[0]));
-    expect(urls).toContain("/api/git/show?path=static-src%2Fa.ts&ref=HEAD&repo=vibekit");
+    expect(urls()).toContain("/api/git/show?path=static-src%2Fa.ts&ref=HEAD&repo=vibekit");
   });
 
-  it("captions the base pane with the ref when git holds a revision", async () => {
-    expect.assertions(3);
+  it("captions both panes for an ordinary change", async () => {
+    expect.assertions(4);
     setWorkspaceRoot("/workspace");
-    answer({ [SHOW]: { content: "base" }, [FILE]: { content: "work" } });
+    answer({ content: "base" }, ok("work"));
     const { loadDiff } = await import("./editor.js");
     const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "HEAD" }).outcome;
     expect(o.status).toBe("success");
@@ -188,6 +215,7 @@ describe("editor.load_diff", () => {
       return;
     }
     expect(o.value.baseLabel).toBe("HEAD");
+    expect(o.value.workingLabel).toBe("working tree");
     expect(o.value.oldContent).toBe("base");
   });
 
@@ -197,7 +225,7 @@ describe("editor.load_diff", () => {
     // real git failure cannot render as "this file is brand new".
     expect.assertions(3);
     setWorkspaceRoot("/workspace");
-    answer({ [SHOW]: { error: "not_in_repo" }, [FILE]: { content: "work" } });
+    answer({ error: "not_in_repo" }, ok("work"));
     const { loadDiff } = await import("./editor.js");
     const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "HEAD" }).outcome;
     expect(o.status).toBe("success");
@@ -208,13 +236,43 @@ describe("editor.load_diff", () => {
     expect(o.value.newContent).toBe("work");
   });
 
+  it("renders a deleted file as an all-deletions diff captioned 'deleted'", async () => {
+    // A 404 from the file route is the CHANGE, not a failure to read it: the
+    // working copy is gone, so the diff is every line of the base removed. The
+    // git panel's changed-file list is full of these, and collapsing the status
+    // to null failed the whole diff for one.
+    expect.assertions(4);
+    setWorkspaceRoot("/workspace");
+    answer({ content: "gone\n" }, { status: 404 });
+    const { loadDiff } = await import("./editor.js");
+    const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "HEAD" }).outcome;
+    expect(o.status).toBe("success");
+    if (o.status !== "success") {
+      return;
+    }
+    expect(o.value.oldContent).toBe("gone\n");
+    expect(o.value.newContent).toBe("");
+    expect(o.value.workingLabel).toBe("deleted");
+  });
+
+  it("says a binary file has no text diff instead of rendering the blob", async () => {
+    expect.assertions(2);
+    setWorkspaceRoot("/workspace");
+    answer({ content: "\u0000\u0001" }, { status: 415 });
+    const { loadDiff } = await import("./editor.js");
+    const o = await loadDiff.dispatch({ path: "/workspace/logo.png", repo: "", ref: "HEAD" })
+      .outcome;
+    expect(o.status).toBe("success");
+    if (o.status !== "success") {
+      return;
+    }
+    expect(o.value.error).toContain("binary");
+  });
+
   it("fails on a real git error rather than rendering an all-add diff", async () => {
     expect.assertions(2);
     setWorkspaceRoot("/workspace");
-    answer({
-      [SHOW]: { error: "show_failed", detail: "fatal: bad object" },
-      [FILE]: { content: "work" },
-    });
+    answer({ error: "show_failed", detail: "fatal: bad object" }, ok("work"));
     const { loadDiff } = await import("./editor.js");
     const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "HEAD" }).outcome;
     expect(o.status).toBe("error");
@@ -225,9 +283,10 @@ describe("editor.load_diff", () => {
   });
 
   it("names the side that died, not 'base/new'", async () => {
+    // A 500 is a genuine read failure, unlike the 404 and 415 above.
     expect.assertions(2);
     setWorkspaceRoot("/workspace");
-    answer({ [SHOW]: { content: "base" }, [FILE]: null });
+    answer({ content: "base" }, { status: 500 });
     const { loadDiff } = await import("./editor.js");
     const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "HEAD" }).outcome;
     expect(o.status).toBe("error");
@@ -240,7 +299,7 @@ describe("editor.load_diff", () => {
   it("names the base side when git show is unreachable", async () => {
     expect.assertions(2);
     setWorkspaceRoot("/workspace");
-    answer({ [SHOW]: null, [FILE]: { content: "work" } });
+    answer(null, ok("work"));
     const { loadDiff } = await import("./editor.js");
     const o = await loadDiff.dispatch({ path: "/workspace/a.go", repo: "", ref: "HEAD" }).outcome;
     expect(o.status).toBe("error");

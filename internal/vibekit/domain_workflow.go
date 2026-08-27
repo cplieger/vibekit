@@ -10,7 +10,8 @@ package vibekit
 // representation of a structure vibekit does not own. GET /api/runs/{id} passes
 // KAS's `state` and `nodePlan` through verbatim for exactly that reason.
 //
-// THREE events, where an earlier design said six. Each of the three removals is
+// THREE INVALIDATION events, where an earlier design said six, plus one content
+// event added later for the runs no chat can carry. Each of the three removals is
 // measured, not a judgement call:
 //
 //   - `run_notify` (step narration) is dropped because there is no frame that
@@ -32,6 +33,12 @@ package vibekit
 // on that chat's bridge and `translateACPEvent` already knows the chat id. A run
 // started from the TUI arrives on no vibekit bridge at all and therefore receives
 // no live events — it is visible in the history inventory and nowhere else.
+//
+// `run_notify`'s reasoning above still holds and RunStepPayload does not weaken
+// it: there is still no step-NARRATION frame, because KAS emits no prose about a
+// step. What run_step carries is the step agent's OWN output, off the ordinary
+// `session/update` channel every other agent's content travels on, which is a
+// producer that does exist and was simply being discarded on run bridges.
 
 import "encoding/json"
 
@@ -115,6 +122,46 @@ type RunFinishedPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	Status     string `json:"status"`
 	Name       string `json:"name,omitempty"`
+}
+
+// RunStepKind discriminates what a run_step frame carries. Three members,
+// matching the three block kinds a transcript already renders, because a step's
+// content IS a transcript and inventing a fourth vocabulary for it would make a
+// reader learn the same thing twice.
+type RunStepKind string
+
+// The three run-step kinds.
+const (
+	// RunStepText is a delta of the step agent's own prose.
+	RunStepText RunStepKind = "text"
+	// RunStepThinking is a delta of its reasoning.
+	RunStepThinking RunStepKind = "thinking"
+	// RunStepTool is one tool call, whole. Sent on create AND on every update,
+	// folded server-side, so a client renders from the frame it holds rather than
+	// accumulating partials — the same rule the run lifecycle follows, applied to
+	// the one surface that has no endpoint to refetch.
+	RunStepTool RunStepKind = "tool"
+)
+
+// RunStepPayload is the payload for type="run_step".
+//
+// NodePath, not NodeID, and that is the same choice ACPWorkflowMeta.SubtaskID
+// makes for the transcript: a repeat's iterations share a node id, so an id
+// cannot address one execution and two passes of a loop body would write into
+// each other's rows. Joined with "/" so it is the key the client already builds
+// from `inspect`'s tree (`nodePathOf(...).join("/")`).
+//
+// ToolCall is whole rather than a delta because there is no buffer at this end to
+// fold into: a parentless run has no chat, so nothing accumulates its content.
+// The translator holds the in-flight calls per run instead, bounded by the same
+// `run_complete` that bounds the step-session registry, and sends the folded
+// value. A client can therefore render the last frame it received and be right.
+type RunStepPayload struct {
+	ToolCall   *ToolCall   `json:"tool_call,omitempty"`
+	WorkflowID string      `json:"workflow_id"`
+	NodePath   string      `json:"node_path"`
+	Kind       RunStepKind `json:"kind"`
+	Delta      string      `json:"delta,omitempty"`
 }
 
 // RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.

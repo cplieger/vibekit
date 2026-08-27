@@ -1,11 +1,16 @@
 /* ==========================================================================
-   The workflow run card — a run's home in the transcript.
+   The workflow run card — a run's home in the transcript AND the whole content
+   of the /run/{id} page. One component, two detail modes; the `full` variant at
+   the foot of this file is the page's.
 
-   Every rule is scoped under `.run-card`. That is not defensiveness: the
-   /run/{id} page already owns a `.run-*` vocabulary in 18-pages.css
-   (`.run-status`, `.run-tree`, `.run-node-*`, `.run-output`), and two different
-   components sharing a class name is how one page's tweak silently restyles
-   another. The one genuine collision was renamed on the TS side to `.run-state`.
+   Every rule is scoped under `.run-card`, which used to be a collision defence:
+   the /run/{id} page owned its own `.run-*` vocabulary in 18-pages.css
+   (`.run-status`, `.run-tree`, `.run-node-*`, `.run-output`) and two components
+   sharing a class name is how one page's tweak silently restyles another. Those
+   rules are GONE — the page renders this card now — so the scoping is ordinary
+   hygiene again rather than a guard. The one genuine collision it did catch is
+   still visible in the TS: the head's status pill is `.run-state`, not
+   `.run-status`, because the page had that name first.
 
    The card is the DEEPEST nesting in the transcript, three boxes down: a turn
    card holds it, it holds a step row, and the step row holds real tool cards.
@@ -51,6 +56,14 @@
   border-color: color-mix(in srgb, var(--c-blue) 35%, transparent);
 }
 
+/* An unanswered ask is the run's most actionable state and it is a SECOND axis,
+   not a status: KAS blocks the asking step's turn and leaves the run `running`, so
+   `data-status` still says running and would report nothing wrong. Yellow is the
+   app's wants-you ink (see --c-dot-input in 01-tokens.css). */
+.run-card[data-asking="true"] {
+  border-inline-start-color: var(--c-yellow);
+}
+
 /* --------------------------------------------------------------------------
    Head — identity and verdict
    -------------------------------------------------------------------------- */
@@ -64,6 +77,14 @@
   user-select: none;
   min-width: 0;
   transition: background var(--dur-micro) var(--ease-standard);
+
+  /* The gap to whatever follows lives HERE rather than on each follower, and that
+     is what the hover tint forces. `:hover` paints the head's own padding box, so
+     a follower supplying its own top padding still ends up flush against a
+     coloured edge the moment the pointer lands — which is exactly how the deleted
+     pip row read. One margin on the head is a gap no following region can lose,
+     and it collapses with the alert's own margin rather than adding to it. */
+  margin-block-end: var(--sp-2);
 }
 
 .run-head:hover {
@@ -125,6 +146,12 @@
   color: var(--c-blue);
 }
 
+/* Last, so it beats the two above: the run's status is not the thing to read while
+   somebody owes it an answer. */
+.run-card[data-asking="true"] .run-state {
+  color: var(--c-yellow);
+}
+
 .run-count,
 .run-clock {
   white-space: nowrap;
@@ -143,64 +170,6 @@
 
 .run-card:not(.collapsed) .run-toggle > .disclosure-chevron {
   --chev-turn: 0deg;
-}
-
-/* --------------------------------------------------------------------------
-   Spine — the whole plan in one row
-   -------------------------------------------------------------------------- */
-
-/* One pip per leaf, in plan order: the answer to "how far through is this"
-   without opening anything, and the only region that shows the steps a run has
-   NOT reached yet. Sits outside the disclosure so a collapsed card still has it.
-   flex-wrap because a twenty-step run must not push the card wide. */
-.run-spine {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0 var(--sp-3) var(--sp-2);
-}
-
-.run-pip {
-  inline-size: 0.5rem;
-  block-size: 0.5rem;
-  border-radius: 50%;
-  flex-shrink: 0;
-
-  /* Pending is HOLLOW, which is the same not-yet-started vocabulary the idle tab
-     dot uses; a filled grey pip would read as a finished step. */
-  border: 1px solid var(--c-text-tertiary);
-}
-
-.run-pip[data-status="running"] {
-  background: var(--c-accent);
-  border-color: var(--c-accent);
-  animation: vk-breathe 1.6s var(--ease-standard) infinite;
-}
-
-.run-pip[data-status="ok"] {
-  background: var(--c-green);
-  border-color: var(--c-green);
-}
-
-.run-pip[data-status="fail"] {
-  background: var(--c-red);
-  border-color: var(--c-red);
-}
-
-.run-pip[data-status="warn"] {
-  background: var(--c-yellow);
-  border-color: var(--c-yellow);
-}
-
-/* Skipped is a hollow DASH rather than a circle: a branch that never ran is not
-   a step in any state, and shape is what says so without a legend. */
-.run-pip[data-status="skipped"] {
-  border-radius: 0;
-  block-size: 1px;
-  border: 0;
-  background: var(--c-text-tertiary);
-  align-self: center;
 }
 
 /* --------------------------------------------------------------------------
@@ -231,6 +200,14 @@
 
 .run-alert[data-kind="failed"] {
   background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  color: var(--c-text-primary);
+}
+
+/* An unanswered ask. The one alert a click resolves, so it takes the wants-you ink
+   rather than the informational blue a pause gets. */
+.run-alert[data-kind="input"] {
+  border-inline-start-color: var(--c-yellow);
+  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
   color: var(--c-text-primary);
 }
 
@@ -291,6 +268,19 @@
   border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
 }
 
+/* A step waiting on a person is the other row a scan must find, and unlike a
+   failure it is still actionable — so it earns a rail too. Blue for a pause (KAS
+   stopped it and may resume on its own), yellow for an unanswered ask (nothing
+   moves until somebody clicks), which is the same pair the head's status word and
+   the alert use. */
+.run-step[data-status="waiting"] {
+  border-color: color-mix(in srgb, var(--c-blue) 45%, var(--c-border));
+}
+
+.run-step[data-status="input"] {
+  border-color: color-mix(in srgb, var(--c-yellow) 55%, var(--c-border));
+}
+
 /* A step that never ran recedes rather than disappearing: the reader still needs
    to know it is in the plan, which is exactly what the spine cannot say once the
    card is open. */
@@ -339,18 +329,39 @@
   color: var(--c-yellow);
 }
 
-/* Running has no badge character, so the spinner IS the glyph — the same
-   motion-means-in-flight axis the tab dot and the tool card use. */
-.run-step[data-status="running"] .run-step-glyph::before {
+/* An unanswered ask reads as a "?" rather than as another ring, because it is the
+   one step state a reader is meant to ACT on and a shape says that where a hue
+   cannot (WCAG 1.4.1 — the same reason every outcome here is a character). Still,
+   not animated: motion in this app means in flight, and a step waiting on a person
+   is not. */
+.run-step[data-status="input"] .run-step-glyph {
+  color: var(--c-yellow);
+  font-weight: var(--fw-semibold);
+}
+
+/* Running and waiting have no badge character, so the RING is the glyph — and the
+   two differ by MOTION, which is the axis the tab dot and the tool card already
+   use: a spinning gap means work is happening, a still ring means the step is open
+   and nothing is moving. `paused` used to render the spinner, which claimed
+   progress that was not there. */
+.run-step[data-status="running"] .run-step-glyph::before,
+.run-step[data-status="waiting"] .run-step-glyph::before {
   content: "";
   display: block;
   inline-size: 0.75rem;
   block-size: 0.75rem;
   margin: 0 auto;
   border: 0.125rem solid var(--c-accent);
-  border-top-color: transparent;
   border-radius: 50%;
+}
+
+.run-step[data-status="running"] .run-step-glyph::before {
+  border-top-color: transparent;
   animation: vk-spin 0.6s linear infinite;
+}
+
+.run-step[data-status="waiting"] .run-step-glyph::before {
+  border-color: var(--c-blue);
 }
 
 .run-step-name {
@@ -484,6 +495,17 @@
   font-family: var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A step that captured but said nothing. Rendered rather than dropped, because KAS
+   writes a key only for a step that CAPTURED — so an empty value is the step
+   reporting it finished silently, which is indistinguishable from "never ran" if the
+   row is omitted. Proportional and quiet: it is a sentence about the absence, not the
+   monospace output the row beside it holds. */
+.run-output-val-empty {
+  color: var(--c-text-tertiary);
+  font-family: inherit;
+  font-style: normal;
 }
 
 /* --------------------------------------------------------------------------

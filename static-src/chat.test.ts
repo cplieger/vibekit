@@ -122,6 +122,7 @@ vi.mock("./messages.js", () => ({
   // future test does exercise that path.
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),
+  fadeInTranscript: vi.fn(),
 }));
 vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
 // The composer's per-chat state owns real DOM (the textarea) and a debounced
@@ -130,6 +131,7 @@ vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
 vi.mock("./composer-state.js", () => ({
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
+  retargetComposer: vi.fn(),
   seedComposerState: vi.fn(),
   flushComposerDraft: vi.fn(),
   dropComposerState: vi.fn(),
@@ -178,9 +180,10 @@ import { addAttachment } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
 import { get, getSessions, removeChat, setActive, upsertHeader, clearTurnDone } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
-import { loadTurnRail, pointTurnRail, resetScrollState } from "./messages.js";
+import { loadTurnRail, pointTurnRail, resetScrollState, fadeInTranscript } from "./messages.js";
 import { seedComposerState } from "./composer-state.js";
 import { isRetentionEnabled } from "./retention.js";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 // `closeChat` is deliberately not imported: the command was retired, and the
 // process teardown a chat-tab close performs is `close_tab`'s, server-side.
 import { deleteChat } from "./actions/chat.js";
@@ -518,6 +521,73 @@ describe("the scroller on a chat switch", () => {
     activateChatView("c-1");
     expect(resetScrollState).toHaveBeenCalled();
     expect(pointTurnRail).toHaveBeenCalledWith("c-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The loading skeleton. It is a PLACEHOLDER, so the one thing it may never do is
+// paint beside the content it stands in for — and that is what every switch back
+// to a loaded chat looked like: setActive repaints the whole transcript
+// synchronously, then the refresh fetch armed a skeleton that appended a shimmer
+// underneath the real turns until the response landed.
+// ---------------------------------------------------------------------------
+
+describe("the transcript's loading skeleton", () => {
+  function chat(messages: unknown[]): never {
+    return {
+      id: "c-1",
+      model: "",
+      message_count: Math.max(messages.length, 1),
+      messages,
+      usage: { context_size: 0 },
+    } as never;
+  }
+
+  async function activate(): Promise<void> {
+    openPreviousSession({ chat_id: "c-1", session_id: "s1", title: "t", updated_at: 1 });
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-1");
+    });
+  }
+
+  it("is not armed for a chat whose transcript is already in the store", async () => {
+    vi.mocked(get).mockReturnValue(chat([{ id: "m1", role: "user" }]));
+    await activate();
+    expect(skeletonTiming).not.toHaveBeenCalled();
+  });
+
+  it("is armed for a chat with history the store has not fetched yet", async () => {
+    // message_count says the conversation exists, messages says nothing of it is
+    // here — the one state a placeholder is for.
+    vi.mocked(get).mockReturnValue(chat([]));
+    await activate();
+    expect(skeletonTiming).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fade the transcript in when no skeleton was painted", async () => {
+    // The fade exists to cover the swap OUT of a skeleton. A load that settles
+    // inside the show delay paints none, and fading then would put a flicker on
+    // an open that is instant today.
+    vi.mocked(get).mockReturnValue(chat([]));
+    await activate();
+    await vi.waitFor(() => {
+      expect(seedComposerState).toHaveBeenCalledWith("c-1");
+    });
+    expect(fadeInTranscript).not.toHaveBeenCalled();
+  });
+
+  it("fades the transcript in when a skeleton was painted", async () => {
+    // Drive the show callback the way the 150ms timer would, so the swap this
+    // covers is the real one rather than a flag set by the test.
+    vi.mocked(skeletonTiming).mockImplementationOnce((show) => {
+      show();
+      return { commit: vi.fn(), cancel: vi.fn() };
+    });
+    vi.mocked(get).mockReturnValue(chat([]));
+    await activate();
+    await vi.waitFor(() => {
+      expect(fadeInTranscript).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

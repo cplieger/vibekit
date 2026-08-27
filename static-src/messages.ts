@@ -28,6 +28,7 @@ import { getActive, getActiveId, messagesVersion, activeSession, steerMarks } fr
 import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
+import { CHAT_SKELETON_ID } from "./skeleton.js";
 import { $ } from "./dom.js";
 import { setComposerValue } from "./composer-value.js";
 import {
@@ -240,6 +241,21 @@ export function mountChatView(): void {
   });
 }
 
+/** Fade the whole transcript in once, for the swap out of a loading skeleton.
+ *
+ *  It reuses `data-chat-entry`, the transcript's own entry animation, rather than
+ *  introducing a second motion vocabulary for one transition; the attribute stays
+ *  this module's to write, which is why chat.ts calls in here instead of setting
+ *  it itself. Remove, reflow, re-add is what RESTARTS the animation — a second
+ *  call while the first is still running otherwise does nothing at all — and the
+ *  attribute is left in place afterwards because the animation's `both` fill
+ *  holds the element's ordinary state, so a stale one changes nothing. */
+export function fadeInTranscript(): void {
+  messagesEl.removeAttribute("data-chat-entry");
+  void messagesEl.offsetWidth;
+  messagesEl.setAttribute("data-chat-entry", "");
+}
+
 // ---------------------------------------------------------------------------
 // The follow model's two client-side obligations (§3.4).
 // ---------------------------------------------------------------------------
@@ -406,6 +422,21 @@ function paint(): void {
     }
   }
   const turns = projectTurns(session.messages, session.thinking);
+  // The placeholder and the conversation may never share this container, and the
+  // rule is enforced HERE because this is the line where content lands. Two
+  // reasons it cannot be left to the activation's continuation, which removes the
+  // skeleton one microtask later: reconcile inserts the newest turn AFTER any
+  // unkeyed sibling, so a skeleton still mounted at this point ends up sitting
+  // above the whole conversation rather than below it; and "no frame is painted
+  // between two microtasks" is a timing property of one call order, not an
+  // invariant of the renderer. Only when there is something to replace it with —
+  // an empty turn list is a chat still loading, which is what the placeholder is
+  // for. Unkeyed pagination furniture (`load-more-indicator`, the load-more
+  // skeleton) is deliberately untouched: that one is mounted BESIDE real turns on
+  // purpose.
+  if (turns.length > 0) {
+    document.getElementById(CHAT_SKELETON_ID)?.remove();
+  }
   reconcile(messagesEl, turns, turnSpec);
   // Tell the rail which cards exist so it can track the turn in view. Re-run per
   // paint because the set changes as pages load and turns arrive.

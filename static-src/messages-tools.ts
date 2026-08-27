@@ -22,6 +22,7 @@ import type { ReconcileSpec } from "./reconcile.js";
 import { maybeCollapseGroup, formatDuration, untrackInProgress } from "./tool-group.js";
 import { isToolDone, type ToolKind } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview, expandToolDetails, applyOutcome } from "./tool-card.js";
+import { toolCardOptsFor } from "./tool-card-opts.js";
 import { windowOutput, windowSpans } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
@@ -267,35 +268,7 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     // header, the nested tools → cards inside its body) is handled one level
     // up in messages-blocks.ts, keyed by agent_subtask_id, so this spec has no
     // subagent-specific branches.
-    const opts: Parameters<typeof buildToolCard>[0] = {
-      id: tc.id,
-      title: tc.title,
-      kind: tc.kind,
-      status: tc.status,
-      live: true,
-    };
-    const rawInput = tc.input as Record<string, unknown> | undefined;
-    if (rawInput !== undefined) {
-      opts.input = rawInput;
-    }
-    if (tc.output !== undefined) {
-      opts.output = tc.output;
-    }
-    if (tc.output_spans !== undefined && tc.output_spans.length > 0) {
-      opts.outputSpans = tc.output_spans;
-    }
-    if (tc.diffs !== undefined && tc.diffs.length > 0) {
-      opts.diffs = tc.diffs;
-    }
-    if (tc.locations !== undefined && tc.locations.length > 0) {
-      opts.locations = tc.locations;
-    }
-    if (tc.disclosed !== undefined) {
-      opts.disclosed = tc.disclosed;
-    }
-    if (tc.denial !== undefined) {
-      opts.denial = tc.denial;
-    }
+    const opts = toolCardOptsFor(tc, true);
     const card = buildToolCard(opts);
     toolEls.set(tc.id, card);
     // After buildToolCard, deliberately: the card is what a held chunk would be

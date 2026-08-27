@@ -134,7 +134,30 @@ type stepRegistry struct {
 	// stepTurnKey. Bounded by forgetRun, like the session map beside it.
 	turns   map[stepTurnKey]int
 	turnRun map[string]map[stepTurnKey]struct{}
-	mu      sync.RWMutex
+	// runTools holds the in-flight tool calls of a PARENTLESS run's steps, keyed
+	// by run then tool-call id. It exists because a `tool_call_update` has to fold
+	// into its `tool_call` and a run has no buffer to fold into: a chat's calls
+	// live in its assistant-message buffer, and a run deliberately has neither a
+	// message nor a chat (run_host.go). See workflow_step_content.go.
+	//
+	// Here rather than in a store of its own so it inherits this registry's BOUND:
+	// `forgetRun` already runs on the terminal `run_complete`, which is the same
+	// frame KAS's own notification bridge unsubscribes on, so a finished run's
+	// calls are dropped by the mechanism that drops its session map. A second
+	// store would have needed a second copy of that lifecycle to get right.
+	runTools map[string]map[string]runToolEntry
+	mu       sync.RWMutex
+}
+
+// runToolEntry is one accumulated tool call plus the step row it belongs to.
+//
+// The path is stored rather than re-derived because an UPDATE frame is not
+// guaranteed to carry the workflow meta the create carried — the chat path has the
+// same asymmetry, which is why its own update handler adopts the subtask id late —
+// so the address has to come from what the create recorded.
+type runToolEntry struct {
+	nodePath string
+	call     vibekit.ToolCall
 }
 
 // stepTurnKey is the ENFORCEMENT identity of a step instance: which run, and
@@ -161,11 +184,43 @@ type StepRef struct {
 
 func newStepRegistry() *stepRegistry {
 	return &stepRegistry{
-		byID:    make(map[string]StepRef),
-		byRun:   make(map[string]map[string]struct{}),
-		turns:   make(map[stepTurnKey]int),
-		turnRun: make(map[string]map[stepTurnKey]struct{}),
+		byID:     make(map[string]StepRef),
+		byRun:    make(map[string]map[string]struct{}),
+		turns:    make(map[stepTurnKey]int),
+		turnRun:  make(map[string]map[stepTurnKey]struct{}),
+		runTools: make(map[string]map[string]runToolEntry),
 	}
+}
+
+// recordRunTool stores a run step's tool call, replacing any earlier state for
+// the same id.
+func (s *stepRegistry) recordRunTool(workflowID, nodePath string, call *vibekit.ToolCall) {
+	if workflowID == "" || call.ID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byID := s.runTools[workflowID]
+	if byID == nil {
+		byID = make(map[string]runToolEntry)
+		s.runTools[workflowID] = byID
+	}
+	byID[call.ID] = runToolEntry{call: *call, nodePath: nodePath}
+}
+
+// runTool returns a COPY of a run step's accumulated tool call and the step row
+// it belongs to.
+//
+// A copy because the caller folds an update into it and then writes it back, so
+// handing out the stored value would mutate the map from outside its own lock.
+func (s *stepRegistry) runTool(workflowID, toolCallID string) (vibekit.ToolCall, string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.runTools[workflowID][toolCallID]
+	if !ok {
+		return vibekit.ToolCall{}, "", false
+	}
+	return entry.call, entry.nodePath, true
 }
 
 // countTurn records one tool call for a step instance and returns the new count.
@@ -248,6 +303,7 @@ func (s *stepRegistry) forgetRun(workflowID string) {
 		delete(s.turns, key)
 	}
 	delete(s.turnRun, workflowID)
+	delete(s.runTools, workflowID)
 }
 
 // RecordStepSession notes a step session learned from somewhere other than a

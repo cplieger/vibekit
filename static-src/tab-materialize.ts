@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // tab-materialize: the ONE place a TabSubject becomes a TabViewSpec.
 //
-// `materializeTab` is TOTAL over the eight tab kinds with no default branch, so
-// a ninth kind added to the Go const block is a compile error here rather than a
+// `materializeTab` is TOTAL over the nine tab kinds with no default branch, so
+// a tenth kind added to the Go const block is a compile error here rather than a
 // switch with no case for it on every connected device at once, already
 // persisted. That totality is the whole point: a subject arrives from the server
 // (a snapshot, an event, another device's open) and the strip has to be able to
@@ -18,8 +18,9 @@
 //
 // TWO THINGS A SUBJECT CANNOT SAY, both stated rather than papered over:
 //
-//   1. The display NAME. A chat's name lives in the chat store and a run's in
-//      the run store, so both are derived here — but a chat resumed from History
+//   1. The display NAME. A chat's name lives in the chat store, a run's in the
+//      run store, and a subagent's in the invocation tool call inside its chat's
+//      messages, so all three are derived here — but a chat resumed from History
 //      has no store row yet and a run has no state until its first inspect, and
 //      in both cases today's opener passes a name from a source this module
 //      cannot see (KAS's session-row title, a `run_started` payload's name, a
@@ -48,9 +49,12 @@
 // ---------------------------------------------------------------------------
 
 import type { TabKind, TabSubject } from "./types.js";
+import type { Route } from "./router.js";
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { get } from "./store.js";
 import { peekRunState } from "./run-store.js";
+import { FALLBACK_SUBAGENT_NAME, subagentLabel } from "./roles.js";
+import { findSubagentInvocation } from "./subagent-slice.js";
 
 // --- The injected half ---
 
@@ -71,21 +75,33 @@ export interface EditorTabOpener {
   close: (path: string) => void;
 }
 
-/** Run behaviour, from run-view.ts and actions/runs.ts.
+/** Run behaviour, from run-view.ts.
  *
- *  `show` takes `owns` because that is the one authority fact the subject holds:
- *  an owned tab carries the status's live verbs and a review carries none. It
- *  deliberately does NOT take parentlessness — see this file's header for why the
- *  subject cannot answer that. */
+ *  `show` takes the workflow id and nothing else. It used to take `owns`, because an
+ *  owned tab carried the status's live verbs and a review carried none — both halves
+ *  of that are gone: a run tab is always a VIEW now, and the control row is offered
+ *  wherever the run is stoppable rather than by which door opened the tab. There is
+ *  no `cancel` either; nothing closing a tab cancels a run. */
 export interface RunTabOpener {
-  show: (workflowID: string, owns: boolean) => void;
-  cancel: (workflowID: string) => void;
+  show: (workflowID: string) => void;
+}
+
+/** Subagent behaviour, from subagent-view.ts.
+ *
+ *  There is no `close` half, and its absence is the design rather than a gap. A
+ *  subagent tab is a READING SURFACE over blocks that live in the chat store: it
+ *  owns nothing, starts nothing and can stop nothing, so closing it has nothing
+ *  to tear down. Every such tab is opened with `owns: false` for the same reason,
+ *  which is what makes the missing hook unreachable rather than merely unused. */
+export interface SubagentTabOpener {
+  show: (chatID: string, subtaskID: string) => void;
 }
 
 export interface TabOpeners {
   readonly chat: ChatTabOpener;
   readonly editor: EditorTabOpener;
   readonly run: RunTabOpener;
+  readonly subagent: SubagentTabOpener;
 }
 
 let openers: TabOpeners | null = null;
@@ -164,6 +180,55 @@ function fileName(path: string): string {
   return path.split("/").pop() ?? path;
 }
 
+// --- The subagent ref codec ---
+
+/** The one composite ref on this wire: `<chatID>/<agentSubtaskID>`.
+ *
+ *  It has to be composite because nothing indexes a subtask id to a chat. A run
+ *  gets away with a bare id because `GET /api/runs/{id}` resolves one cold; a
+ *  delegate has no endpoint and no cross-chat index, so its blocks are only
+ *  findable through the chat that holds them.
+ *
+ *  A slash separator is safe rather than convenient: `ids.ValidChatID` admits no
+ *  slash, and the command boundary validates a chat ref with it, so the FIRST
+ *  slash is always the seam even when a subtask id carries more (a workflow
+ *  step's `wf:<id>:<a/b>` shape does, though a step never reaches this kind).
+ *
+ *  The codec lives here because this is the module that reads and writes what
+ *  every ref MEANS — the factory in one direction, `subjectForRoute` in the
+ *  other — so a second spelling elsewhere could disagree with it. */
+export function subagentRef(chatID: string, subtaskID: string): string {
+  return `${chatID}/${subtaskID}`;
+}
+
+/** Split a subagent ref back into its two halves. Both empty for a malformed
+ *  ref, which the factory renders as a page that says it cannot find the
+ *  delegate rather than as a thrown error on someone else's device: a ref
+ *  arrives from the persisted set, so a bad one has to be survivable. */
+export function parseSubagentRef(ref: string): { chatID: string; subtaskID: string } {
+  const cut = ref.indexOf("/");
+  if (cut <= 0 || cut === ref.length - 1) {
+    return { chatID: "", subtaskID: "" };
+  }
+  return { chatID: ref.slice(0, cut), subtaskID: ref.slice(cut + 1) };
+}
+
+/** A delegate's label, from the chat store's own record of its invocation.
+ *
+ *  Derived rather than carried, so a tab RESTORED on boot reads the same as one
+ *  the transcript's link opened. The scan is over one chat's resident messages
+ *  and runs once per materialization, not per render; a chat whose page has not
+ *  been fetched yet has no invocation to find and falls back, and the next
+ *  materialization (or the opener's own name) corrects it. */
+function subagentTabName(ref: string): string {
+  const { chatID, subtaskID } = parseSubagentRef(ref);
+  if (chatID === "") {
+    return FALLBACK_SUBAGENT_NAME;
+  }
+  const tc = findSubagentInvocation(get(chatID)?.messages ?? [], subtaskID);
+  return tc === undefined ? FALLBACK_SUBAGENT_NAME : subagentLabel(tc);
+}
+
 // --- Pass-through subject facts ---
 
 /** The sub-tab position, as the store spells it.
@@ -206,7 +271,7 @@ function lazily(load: Promise<unknown>): void {
 /** Produce the local half of a tab from the shared half.
  *
  *  Exhaustive over TabKind with NO default branch: every case returns, so a
- *  ninth kind makes the function fall off its end and `strictNullChecks` rejects
+ *  tenth kind makes the function fall off its end and `strictNullChecks` rejects
  *  it. Do not add a default — it would turn that compile error into a runtime
  *  one on every connected device.
  *
@@ -266,32 +331,51 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
     }
     case "run": {
       const workflowID = subject.ref;
-      // Read once and used twice, because the two uses are the same fact: the
-      // controls the view offers, and whether the × cancels.
-      const owns = subject.owns;
+      // A RUN TAB IS ALWAYS A VIEW: `owns: false`, no `onClose`, so dismissing it
+      // stops nothing (user decision, 2026-08, superseding the earlier split where
+      // the launcher's own tab cancelled on ×).
+      //
+      // The subpage view is universal — one component serves a workflow run and a
+      // subagent — and a × that means "close this" on one door and "destroy the
+      // work" on another is a gesture a reader cannot learn. It was also the only
+      // destructive control in the app with no confirmation, reachable by the
+      // smallest target on the row.
+      //
+      // The consequence is accepted rather than overlooked: a parentless run can now
+      // outlive every view of it. Stopping one is the CANCEL VERB, which is why the
+      // control row is no longer gated on which door opened the tab (run-view.ts) —
+      // with the × disarmed, gating Cancel would have made a live run reachable and
+      // unstoppable. The launching chat's × still cancels its runs, and that is a
+      // different gesture: it destroys the conversation, not a view of it.
       return {
         name: runName(workflowID),
         icon: TAB_ICONS.run,
         view: TAB_VIEWS.run,
         route: { kind: "run", id: workflowID },
-        owns,
+        owns: false,
         ...parentOf(subject),
         onShow: () => {
-          reg.run.show(workflowID, owns);
+          reg.run.show(workflowID);
         },
-        // A REVIEW gets no onClose at all rather than one the store would skip.
-        // closeTab already refuses to fire onClose when owns is false, so either
-        // spelling behaves the same — and the absent one says the honest thing:
-        // dismissing a view has nothing to tear down. An OWNED run's × means
-        // stop, because a workflow that outlived its only surface would spend
-        // credits and edit files with nothing on screen.
-        ...(owns
-          ? {
-              onClose: (): void => {
-                reg.run.cancel(workflowID);
-              },
-            }
-          : {}),
+      };
+    }
+    case "subagent": {
+      const { chatID, subtaskID } = parseSubagentRef(subject.ref);
+      return {
+        name: subagentTabName(subject.ref),
+        icon: TAB_ICONS.subagent,
+        view: TAB_VIEWS.subagent,
+        route: { kind: "subagent", chat: chatID, id: subtaskID },
+        owns: subject.owns,
+        ...parentOf(subject),
+        onShow: () => {
+          reg.subagent.show(chatID, subtaskID);
+        },
+        // No onClose, and unlike the run REVIEW's absence this one is
+        // unconditional: the page is a projection of blocks the chat store owns,
+        // so there is nothing a close could stop. Every door opens it with
+        // `owns: false`, which is what makes an owned subagent tab
+        // unrepresentable rather than merely unhandled.
       };
     }
     case "settings":
@@ -406,5 +490,52 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
           );
         },
       };
+  }
+}
+
+// --- The inverse ---
+
+/** The subject a URL route names: which tab kind, and which ref.
+ *
+ *  The exact inverse of the `route` each case above produces, and it lives beside
+ *  them for that reason — a new kind is ONE compile error covering both
+ *  directions rather than two files that can disagree about what `/run/{id}`
+ *  means. Total over the nine route kinds with no default branch, same rule as
+ *  the factory.
+ *
+ *  A singleton's route carries a sub-position (a settings tab, a browser path)
+ *  and its subject carries none, so that half is dropped: `/settings/tools` and
+ *  `/settings` name the same tab. That asymmetry is the design — the sub-position
+ *  is corrected AFTER the tab is activated, by applyRoute — so this direction
+ *  round-trips and the other deliberately does not.
+ *
+ *  Its consumer is app.ts's back/forward guard. A history entry may only ACTIVATE
+ *  a tab that is already open, so the projection is asked whether this route names
+ *  one before the route is applied at all. Without that question a back press onto
+ *  a closed tab's URL OPENED a fresh tab at it: the reader watched a tab they had
+ *  closed come back, and under the server-owned collection every other device had
+ *  to absorb it too. */
+export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
+  switch (route.kind) {
+    case "chat":
+      return { kind: "chat", ref: route.id };
+    // The one case where the two vocabularies differ: the route kind is `file`
+    // and the tab kind is `editor`.
+    case "file":
+      return { kind: "editor", ref: route.path };
+    case "run":
+      return { kind: "run", ref: route.id };
+    case "subagent":
+      return { kind: "subagent", ref: subagentRef(route.chat, route.id) };
+    case "settings":
+      return { kind: "settings", ref: "" };
+    case "git":
+      return { kind: "git", ref: "" };
+    case "files":
+      return { kind: "files", ref: "" };
+    case "history":
+      return { kind: "history", ref: "" };
+    case "docs":
+      return { kind: "docs", ref: "" };
   }
 }

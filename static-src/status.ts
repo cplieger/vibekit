@@ -25,6 +25,11 @@ interface ContextBarUpdate {
   turnCount: number;
   lastTurnMs: number;
   model: string;
+  /** The reasoning tier to name beside the model, or "" for the ordinary case.
+   *  Already resolved by context-ui.ts: empty means either the chat runs at the
+   *  model's own default or nothing knows what the default is. This module
+   *  renders it and decides nothing about it. */
+  effort?: string;
   metering?: MeteringItem[];
   msgCount?: number;
   toolCount?: number;
@@ -68,7 +73,27 @@ class ContextBarController {
     $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
 
     // Empty model = server-side default; label it "auto" rather than blank.
-    $.ctxModelPill.textContent = model === "" ? "auto" : humanName(model);
+    const modelLabel = model === "" ? "auto" : humanName(model);
+    $.ctxModelPill.textContent = modelLabel;
+
+    // The tier rides its OWN element, not the model label, for two reasons. The
+    // label is capped at 10rem with an ellipsis, so a concatenated tier is the
+    // half that gets clipped — and the tier is the exceptional information here,
+    // present only when the chat departs from the model's default. Hidden with
+    // the `.hidden` utility rather than emptied: `.pill` is a flex row with a
+    // gap, so an empty span would still pad the pill.
+    const effort = opts.effort ?? "";
+    $.ctxEffortPill.textContent = effort === "" ? "" : `· ${effort}`;
+    $.ctxEffortPill.classList.toggle("hidden", effort === "");
+    // The button's aria-label wins over its own text, so the current selection
+    // reaches assistive tech only from here. Spelled in words rather than with
+    // the separator, which a screen reader reads out.
+    $.switchModelBtn.setAttribute(
+      "aria-label",
+      effort === ""
+        ? `Switch model, currently ${modelLabel}`
+        : `Switch model, currently ${modelLabel} at ${effort} reasoning effort`,
+    );
     $.ctxTokens.textContent =
       contextSize > 0
         ? `${formatTokens(Math.round((contextSize * pct) / 100))} / ${formatTokens(contextSize)}`

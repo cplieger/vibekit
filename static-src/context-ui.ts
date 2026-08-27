@@ -20,6 +20,9 @@ import type { Session, MeteringItem } from "./types.js";
 import { updateContextBar } from "./status.js";
 import { getActiveId } from "./store.js";
 import { contextFull } from "./prompt-input.js";
+import { nonDefaultEffortLabel } from "./effort.js";
+import { getCachedModels } from "./picker.js";
+import { getLastEffort } from "./session-context.js";
 
 const CONTEXT_RESERVE_TOKENS = 16_000;
 const DEFAULT_CUTOFF_PCT = 95;
@@ -58,6 +61,14 @@ export function refreshContextUI(s: Session): void {
     turnCount: u.turn_count,
     lastTurnMs: u.last_turn_ms,
     model: s.model,
+    // The reasoning tier, and only when it departs from the model's own default
+    // (effort.ts owns that test, and the default is the catalog's per-model
+    // field rather than anything stored here). Resolved HERE rather than in
+    // status.ts so the renderer keeps writing what it is handed: this module
+    // already runs on every store emit, so the pill repaints when an optimistic
+    // set_effort write lands, when the session reports a new currentValue, and
+    // when a model switch changes which default applies.
+    effort: nonDefaultEffortLabel(s, getCachedModels(), getLastEffort()),
     metering,
     msgCount,
     toolCount,

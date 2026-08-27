@@ -132,23 +132,47 @@ func TestParseGitStatusOutput(t *testing.T) {
 		}},
 		// -z rename: the ` -> ` is dropped and the order is reversed, so
 		// the new (current) path comes first and the origin path is a
-		// second NUL field that must be consumed, not parsed.
-		{"rename keeps new path, consumes origin field", []byte("R  new.go\x00old.go\x00"), []gitFile{
-			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
+		// second NUL field. Path is the new one (what stage, discard and
+		// diff need); OrigPath carries where it came from, so the panel
+		// can say "new.go ← old.go" instead of dropping the origin on
+		// the floor as this parser used to.
+		{"rename keeps new path, carries origin", []byte("R  new.go\x00old.go\x00"), []gitFile{
+			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old.go"},
 		}},
+		// The worktree half of a staged rename describes an ordinary edit
+		// to the file at its NEW path, so it carries no origin: the move
+		// is the staged entry's fact, not this one's.
 		{"rename plus worktree modify emits two entries", []byte("RM renamed.go\x00orig.go\x00"), []gitFile{
-			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true},
+			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "orig.go"},
 			{Path: "renamed.go", Status: "M", Display: "Modified", Staged: false},
 		}},
-		{"copy consumes origin field", []byte("C  copy.go\x00src.go\x00"), []gitFile{
-			{Path: "copy.go", Status: "C", Display: "Copied", Staged: true},
+		{"copy carries origin", []byte("C  copy.go\x00src.go\x00"), []gitFile{
+			{Path: "copy.go", Status: "C", Display: "Copied", Staged: true, OrigPath: "src.go"},
+		}},
+		// A rename recorded only in the WORKTREE puts the R in the Y
+		// column, so the origin has to ride the unstaged entry there.
+		{"unstaged rename carries origin", []byte(" R new.go\x00old.go\x00"), []gitFile{
+			{Path: "new.go", Status: "R", Display: "Renamed", OrigPath: "old.go"},
+		}},
+		// A truncated tail must not read past the record slice: the
+		// origin is simply unknown, and the entry still renders.
+		{"rename with a missing origin field", []byte("R  new.go"), []gitFile{
+			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
+		}},
+		// 'T' (typechange) used to fall through statusLabel's default and
+		// render as "Unknown". Measured on git 2.x: `rm f && ln -s /tmp f`.
+		{"unstaged typechange", []byte(" T link.txt\x00"), []gitFile{
+			{Path: "link.txt", Status: "T", Display: "Typechange"},
+		}},
+		{"staged typechange", []byte("T  link.txt\x00"), []gitFile{
+			{Path: "link.txt", Status: "T", Display: "Typechange", Staged: true},
 		}},
 		// -z never quotes: non-ASCII bytes arrive verbatim as UTF-8.
 		{"non-ascii filename unquoted", []byte(" M café.txt\x00"), []gitFile{
 			{Path: "café.txt", Status: "M", Display: "Modified"},
 		}},
 		{"staged non-ascii rename", []byte("R  café-new.txt\x00café-old.txt\x00"), []gitFile{
-			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true},
+			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "café-old.txt"},
 		}},
 		// A literal " -> " inside a filename is no longer mistaken for a
 		// rename separator (the old newline parser split on it).
@@ -156,7 +180,7 @@ func TestParseGitStatusOutput(t *testing.T) {
 			{Path: "foo -> bar.txt", Status: "M", Display: "Modified"},
 		}},
 		{"rename of spaced paths", []byte("R  new name.txt\x00old name.txt\x00"), []gitFile{
-			{Path: "new name.txt", Status: "R", Display: "Renamed", Staged: true},
+			{Path: "new name.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old name.txt"},
 		}},
 		{"directory entry skipped", []byte("?? somedir/\x00?? real.txt\x00"), []gitFile{
 			{Path: "real.txt", Status: "?", Display: "Untracked"},

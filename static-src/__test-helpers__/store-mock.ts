@@ -48,6 +48,15 @@ export const storeMock = {
   removeChat: vi.fn(),
   upsertHeader: vi.fn(),
 
+  // The in-flight turn marker: which message id the chat file cannot carry yet.
+  // `hasMessage` is the acceptance test a failed send reads before handing text
+  // back to the composer, so it defaults to false — a suite that drives the
+  // rescue path overrides it from its own array.
+  hasMessage: vi.fn(() => false),
+  noteLiveTurnMessage: vi.fn(),
+  clearLiveTurnMessage: vi.fn(),
+  liveTurnMessage: vi.fn(() => undefined),
+
   isThinking: vi.fn(() => false),
   isEmptyChat: vi.fn(() => false),
   setThinking: vi.fn(),

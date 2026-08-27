@@ -611,7 +611,13 @@
 }
 
 .mcp-modal-tab {
-  flex: 1;
+  /* `flex-wrap: wrap` above only reaches a bar whose items have a base size to
+     exceed it with: under a bare `flex: 1` (basis 0) four segments always fit on
+     one line and shrink to ellipsis instead, which on the phone preset cut three
+     of the four labels ("Search re…", "Remote U…", "npm pack…"). An 8rem basis
+     wraps to two rows of two before any label is cut; `min-width: 0` stays as
+     the floor below that, so ellipsis is the last resort rather than the first. */
+  flex: 1 1 8rem;
   min-width: 0;
   padding: var(--sp-1) var(--sp-2);
   background: transparent;

@@ -91,9 +91,26 @@ const (
 	// EventRunStarted and the two below are the workflow-run lifecycle. Three,
 	// not six — see domain_workflow.go for what the other three would have been
 	// and why none of them can exist. All ride the launching chat's topic.
-	EventRunStarted       EventType = "run_started"
-	EventRunProgress      EventType = "run_progress"
-	EventRunFinished      EventType = "run_finished"
+	EventRunStarted  EventType = "run_started"
+	EventRunProgress EventType = "run_progress"
+	EventRunFinished EventType = "run_finished"
+	// EventRunStep is a PARENTLESS run's step content: one text delta, one
+	// reasoning delta, or one tool call. The fourth run event and the only one
+	// that is not an invalidation, because there is nothing to invalidate — a
+	// step's transcript is not in `inspect` and no endpoint serves it.
+	//
+	// It exists for the runs an agent did not launch. A chat-parented run's step
+	// frames arrive on that chat's bridge and reach its transcript already, keyed
+	// by ACPWorkflowMeta.SubtaskID; a manual or scheduled run has no chat, so its
+	// frames arrived on the run bridge and were dropped, which left the run tab
+	// with the step's captured output and nothing about how it got there.
+	//
+	// Workspace-global (empty chat id), like a parentless run's lifecycle frames,
+	// and EPHEMERAL: nothing persists it, so a reload loses it. That is the
+	// honest shape rather than a shortcoming — the content belongs to a turn
+	// vibekit never prompted and therefore never finalizes, and `capturedOutput`
+	// is the durable half.
+	EventRunStep          EventType = "run_step"
 	EventForgesChanged    EventType = "forges_changed"
 	EventGovernanceState  EventType = "governance_state"
 	EventHooksChanged     EventType = "hooks_changed"

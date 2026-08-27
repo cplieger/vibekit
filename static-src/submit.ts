@@ -36,10 +36,10 @@ import {
   attachmentGeneration,
   type AttachedFile,
 } from "./attachments.js";
-import { isThinking } from "./store.js";
+import { isThinking, hasMessage } from "./store.js";
 import { steerChat } from "./actions/chat.js";
 import { clearAgentDown } from "./send-state.js";
-import { restorePromptText } from "./prompt-input.js";
+import { restoreFailedSend } from "./composer-state.js";
 
 export type SubmitResult = "sent" | "steered" | "failed";
 
@@ -176,11 +176,28 @@ function withAttachmentPaths(text: string, attachments: readonly unknown[]): str
 
 /** Put a failed send back where the user left it and remember its id.
  *
- *  The text goes in the box and the attachment pills back on the row, because
- *  the prompt input clears itself the moment Send fires (it cannot know the
- *  outcome yet) and without this a throttled turn costs the message as well as
- *  the turn. The id is kept so the retry lands on the row the failed attempt
- *  already persisted rather than a second copy of it. */
+ *  Two gates, and the first is the one that made a sent prompt look unsent.
+ *
+ *  A prompt whose user row the server ALREADY PERSISTED is not handed back to the
+ *  composer. `CmdPrompt` appends and broadcasts that row before the ACP call and
+ *  nothing rolls it back, so a turn that dies afterwards — a network fault at the
+ *  model, a bridge exit, a cancelled context — leaves the message in the
+ *  transcript and its text in the box at the same time. On this instance 40 of
+ *  those POSTs answered 500 in three days, four of them inside 250ms, which is
+ *  indistinguishable from an Enter that never cleared the box. The turn's failure
+ *  is reported by the toast and the transcript's own divider; the composer is not
+ *  a second channel for it. The echo test is the same one the dead-POST rescue in
+ *  actions/chat.ts already trusts, applied to every failure rather than only to a
+ *  connection death.
+ *
+ *  The id is still recorded whatever the gate decides, because a retype-and-resend
+ *  must land on the row the failed attempt already persisted rather than a second
+ *  copy of it.
+ *
+ *  What survives the gate is a prompt the server never took (a 400, a 413, a dead
+ *  POST with no echo), and there the text and the attachment pills both go back —
+ *  the prompt input clears itself the moment Send fires, so without this a refused
+ *  send costs the message as well as the turn. */
 function recordFailure(
   chatID: string,
   text: string,
@@ -189,15 +206,15 @@ function recordFailure(
   attachGen: number,
 ): void {
   lastFailed = { chatID, text, messageID };
-  restorePromptText(text);
+  if (hasMessage(chatID, messageID)) {
+    return;
+  }
+  // Named chat, not "the composer on screen": the send is asynchronous, so by the
+  // time a failure lands the user may be looking at a different conversation.
+  restoreFailedSend(chatID, text);
   for (const a of attachments) {
     const path = (a as AttachedFile).path;
     if (typeof path === "string" && path !== "") {
-      // Named chat, not "the active one": the send is asynchronous and
-      // takeAttachments emptied the row when it started, so by the time a
-      // failure lands the user may be looking at a different conversation.
-      // addAttachment would hang these files off that one's prompt.
-      //
       // With the send's own generation, so a chat CLOSED in the meantime is not
       // handed its files back: the close forgot them on purpose, and a stash entry
       // written after it would reappear the next time the chat is opened.

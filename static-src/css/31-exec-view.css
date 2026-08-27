@@ -1,0 +1,854 @@
+/* ==========================================================================
+   The EXEC VIEW — a full tab for one delegated execution.
+
+   The `/run/{id}` page's skin, and the skin a subagent tab will reuse: every rule
+   is scoped under `.ev-page` with an `ev-` vocabulary, so it cannot collide with
+   the transcript run card's `.run-*` (the collision `27-run-card.css` records) nor
+   with anything a consumer adds.
+
+   It shares the app's LANGUAGE and not the transcript's LAYOUT. Tokens, the radius
+   ladder, the status hues, the still-vs-spinning ring, the tool card and the
+   markdown bubble are all the app's; the single capped column is not, because an
+   execution is a tree over time and a column can express neither nesting nor
+   concurrency.
+
+   The radius ladder, spent down the page per `web.md`'s concentric rule
+   (`child-radius = parent-radius - parent-padding`): a pane is `--r-lg` (12px)
+   with `--sp-3` inside it, a row or a bar inside that is `--r` (6px), and a chip
+   inside a row is `--r-sm` (4px).
+   ========================================================================== */
+
+.ev-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  gap: var(--sp-3);
+
+  /* A CONTAINER spaces its children and a child never spaces itself
+     (vibekit-ui.md): the gap above is the only vertical rhythm on this page, so no
+     region below carries a margin of its own. That rule exists because
+     `.msg-wrap` shipped without it and every block boundary in a turn measured
+     0.0px. */
+  container: exec-view / inline-size;
+}
+
+/* --------------------------------------------------------------------------
+   Header — identity, state, progress, controls, and what it was ASKED to do
+   -------------------------------------------------------------------------- */
+
+.ev-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ev-h-main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.ev-h-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: var(--c-accent);
+}
+
+/* The execution's OUTCOME tints its name, which is the page-scale version of the
+   run card's rail: one glance answers "did this work" before any reading. Shape
+   carries it too, on every node glyph below, so tint is never the only channel
+   (WCAG 1.4.1). */
+.ev-name {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ev-page[data-state="ok"] .ev-h-icon {
+  color: var(--c-green);
+}
+
+.ev-page[data-state="fail"] .ev-h-icon {
+  color: var(--c-danger);
+}
+
+.ev-page[data-state="warn"] .ev-h-icon,
+.ev-page[data-state="input"] .ev-h-icon,
+.ev-page[data-state="waiting"] .ev-h-icon {
+  color: var(--c-warning);
+}
+
+.ev-h-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.ev-h-state {
+  text-transform: capitalize;
+}
+
+.ev-h-progress,
+.ev-h-clock {
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-h-actions {
+  margin-inline-start: auto;
+  display: flex;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.ev-h-actions:empty {
+  display: none;
+}
+
+/* The INPUTS: what this execution was asked to do. On the wire since runs existed
+   and displayed nowhere in the app until now, which is why it earns a place in the
+   header rather than a fact buried in a pane — it is the question every other
+   number on the page is an answer about. */
+.ev-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 0.15rem var(--sp-3);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.ev-in-k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  white-space: nowrap;
+}
+
+.ev-in-v {
+  margin: 0;
+  min-width: 0;
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------------------
+   Alert — the only region that speaks about a person's involvement
+   -------------------------------------------------------------------------- */
+
+.ev-alert {
+  flex: 0 0 auto;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r);
+  border-inline-start: 0.1875rem solid var(--c-warning);
+  background: color-mix(in srgb, var(--c-warning) 10%, transparent);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+}
+
+.ev-alert[data-kind="failed"] {
+  border-inline-start-color: var(--c-danger);
+  background: color-mix(in srgb, var(--c-danger) 10%, transparent);
+}
+
+/* A deliberate stop is not a fault, so it takes the quiet treatment: the reader
+   did this on purpose and the row is a statement rather than a warning. */
+.ev-alert[data-kind="stopped"] {
+  border-inline-start-color: var(--c-border);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   Timeline — where the time went, and what overlapped
+   -------------------------------------------------------------------------- */
+
+.ev-tl {
+  flex: 0 0 auto;
+  max-block-size: 11rem;
+  overflow-y: auto;
+  padding: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border-radius: var(--r-lg);
+}
+
+.ev-tl[hidden] {
+  display: none;
+}
+
+.ev-tl-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-block-end: var(--sp-2);
+}
+
+.ev-tl-title {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.0313rem;
+  color: var(--c-text-tertiary);
+}
+
+/* The whole scale, as ONE number. A timeline this small earns no axis: a reader
+   wants the shape and the total, and ticks would be chrome competing with the bars
+   for the same 11rem. */
+.ev-tl-scale {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-tl-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.ev-tl-lane {
+  display: grid;
+  grid-template-columns: minmax(4rem, 9rem) minmax(0, 1fr) 3.5rem;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.125rem var(--sp-1);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
+
+  /* Interactions increase contrast (vibekit-ui.md), and selection outranks hover
+     so a pointer passing over the strip cannot mask which lane is chosen. */
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: -2px;
+  }
+}
+
+.ev-tl-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The track is the run's whole window; the bar is this node's slice of it. The
+   track carries a faint fill so an empty stretch still reads as time rather than
+   as nothing. */
+.ev-tl-track {
+  position: relative;
+  block-size: 0.5rem;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
+}
+
+.ev-tl-bar {
+  position: absolute;
+  inset-block: 0;
+  border-radius: var(--r-sm);
+  background: var(--c-accent);
+  min-inline-size: 0.125rem;
+}
+
+.ev-tl-lane[data-state="ok"] .ev-tl-bar {
+  background: var(--c-green);
+}
+
+.ev-tl-lane[data-state="fail"] .ev-tl-bar {
+  background: var(--c-danger);
+}
+
+.ev-tl-lane[data-state="warn"] .ev-tl-bar,
+.ev-tl-lane[data-state="input"] .ev-tl-bar {
+  background: var(--c-warning);
+}
+
+.ev-tl-lane[data-state="waiting"] .ev-tl-bar {
+  background: var(--c-blue);
+}
+
+.ev-tl-lane[data-state="skipped"] .ev-tl-bar {
+  background: var(--c-text-tertiary);
+}
+
+/* A running bar is the one that is still growing, and MOTION is this app's
+   in-flight axis — a slow shimmer along the bar rather than a spinner, because the
+   bar's own length is already the readout and a second moving thing beside it
+   would compete with it. */
+.ev-tl-lane[data-state="running"] .ev-tl-bar {
+  background: linear-gradient(
+    90deg,
+    var(--c-accent),
+    color-mix(in srgb, var(--c-accent) 45%, transparent)
+  );
+}
+
+.ev-tl-dur {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+/* --------------------------------------------------------------------------
+   Panes — the tree beside the detail
+   -------------------------------------------------------------------------- */
+
+.ev-panes {
+  flex: 1 1 0;
+
+  /* A FLOOR, not just `min-height: 0`. The panes are the primary content and the
+     results disclosure below them is a flex sibling, so opening a run with three
+     reports crushed the tree and the detail pane to ~90px — measured, and it made
+     the page unusable at the moment a reader was trying to read it. The floor is
+     what makes results borrow height from the timeline first and from nothing else. */
+  min-block-size: 16rem;
+  display: grid;
+  grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+  gap: var(--sp-3);
+}
+
+/* STACKED below the width where two panes each stop being usable, and keyed on the
+   PAGE's own container rather than the viewport, because the sidebar decides how
+   much width this tab gets — the same reason the transcript's timeline rail keys on
+   `chat-area`. Below it the tree keeps its own height and the detail grows, so a
+   reader scrolls the page once instead of two panes independently. */
+@container exec-view (width < 52rem) {
+  .ev-panes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .ev-pane-tree {
+    max-block-size: 14rem;
+  }
+}
+
+/* NO STRUCTURE, no tree pane: one root with no children is a single node, and a
+   pane holding one row is a row you cannot avoid clicking rather than navigation.
+   The detail takes the whole width, which is what a reader of a single delegate
+   wants — the page's whole point is that the thing being read gets the room. */
+.ev-panes.ev-panes-flat {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* The detail pane's own name row goes with the tree, and that is the same
+   degrade-by-content rule one step further. It exists to say WHICH node you
+   selected, which is feedback for a navigation; with no tree there is nothing to
+   navigate and nothing to feed back, and the page header two rows above already
+   carries that name, its state word and its clock. Measured on a single delegate,
+   where the two rows were character-for-character identical. */
+.ev-panes-flat .ev-d-head {
+  display: none;
+}
+
+.ev-pane[hidden] {
+  display: none;
+}
+
+.ev-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border-radius: var(--r-lg);
+}
+
+/* --------------------------------------------------------------------------
+   Tree — the structure, containers included
+   -------------------------------------------------------------------------- */
+
+.ev-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+}
+
+.ev-kids {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+}
+
+.ev-kids[hidden] {
+  display: none;
+}
+
+.ev-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+
+  /* The indent is the row's, from its own depth, so a nested container needs no
+     wrapper with padding — which is what keeps the reconcile an ordering pass over
+     flat elements rather than a tree of boxes to rebuild. */
+  padding-block: 0.1875rem;
+  padding-inline: calc(var(--sp-1) + var(--ev-depth, 0) * var(--sp-3)) var(--sp-1);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: -2px;
+  }
+}
+
+/* SELECTION lives in 70-selection.css, with every other selected surface in the
+   app. Not duplicated here, and not invented: that file is the app's one selected
+   treatment (fill + edge + ink, the three channels travelling together), it is LAST
+   in the MANIFEST so it can beat this file's `:hover` at equal specificity, and
+   `css-tokens.node.test.ts` fails a selected fill that arrives without its border
+   and ink. A local rule here would have been the tenth recipe that file exists to
+   collapse. What stays this file's job is reserving the edge, which it does on
+   `.ev-row-main` and `.ev-tl-lane` there so the border channel is a colour change
+   rather than a layout shift. */
+
+.ev-twist {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  inline-size: 1rem;
+  color: var(--c-text-control);
+  transition: transform var(--dur-micro) var(--ease-standard);
+}
+
+.ev-twist[hidden] {
+  /* Kept in layout as an EMPTY box rather than removed, so a leaf's glyph lines up
+     with its siblings' instead of shifting left by the twist's width. */
+  display: grid;
+  visibility: hidden;
+}
+
+.ev-collapsed > .ev-row-main > .ev-twist {
+  transform: rotate(-90deg);
+}
+
+/* The state glyph. Same eight-state vocabulary as the run card's, because it is the
+   same vocabulary module — a character for the five settled and asking states, a ring
+   for the two in-flight ones.
+
+   EVERY state rule below uses the child combinator, and that is load-bearing rather
+   than tidy. `.ev-kids` nests INSIDE `.ev-row`, so `.ev-row[data-state=x] .ev-state`
+   is a descendant selector that reaches every glyph in the subtree: measured on a
+   running `repeat`, both of its finished children rendered a spinning ring beside
+   their own check character, so a completed step read as still working. A container's
+   state is a roll-up of its children and must never repaint them. */
+.ev-state {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  inline-size: 1rem;
+  block-size: 1rem;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  color: var(--c-text-tertiary);
+}
+
+.ev-row[data-state="ok"] > .ev-row-main > .ev-state {
+  color: var(--c-green);
+}
+
+.ev-row[data-state="fail"] > .ev-row-main > .ev-state {
+  color: var(--c-danger);
+}
+
+.ev-row[data-state="warn"] > .ev-row-main > .ev-state,
+.ev-row[data-state="input"] > .ev-row-main > .ev-state {
+  color: var(--c-warning);
+}
+
+/* Running and waiting carry no character, so the RING is the glyph and the two
+   differ by MOTION — the axis the tab dot, the tool card and the run card all use.
+   A still ring is a node that is open with nothing moving; spinning is work. */
+.ev-row[data-state="running"] > .ev-row-main > .ev-state::before,
+.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {
+  content: "";
+  display: block;
+  inline-size: 0.6875rem;
+  block-size: 0.6875rem;
+  border: 0.125rem solid var(--c-accent);
+  border-radius: 50%;
+}
+
+.ev-row[data-state="running"] > .ev-row-main > .ev-state::before {
+  border-top-color: transparent;
+  animation: vk-spin 0.6s linear infinite;
+}
+
+.ev-row[data-state="waiting"] > .ev-row-main > .ev-state::before {
+  border-color: var(--c-blue);
+}
+
+/* A PENDING node gets a hollow ring, and that replaced an `opacity: 0.55` dim on the
+   whole row. Two things were wrong with the dim and axe found the second: it made
+   fade the ONLY channel for "not started" (colour-alone by another name), and it
+   dropped `--c-text-tertiary` to 3.5:1 against the pane, a serious contrast failure
+   on two nodes. A ring is a shape, it is the same primitive the two in-flight states
+   use, and it costs the text nothing.
+   Three rings, three meanings, one axis: hollow is not started, still is open with
+   nothing moving, spinning is work. */
+.ev-row[data-state="pending"] > .ev-row-main > .ev-state::before {
+  content: "";
+  display: block;
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border: 0.0938rem solid var(--c-text-tertiary);
+  border-radius: 50%;
+  opacity: 0.7;
+}
+
+/* The KIND glyph, which is what tells a loop from a branch without reading. A
+   sequence has none: plain top-to-bottom flow is the default, and a glyph on every
+   row would be decoration. */
+.ev-kind {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: var(--c-text-tertiary);
+}
+
+.ev-kind[hidden] {
+  display: none;
+}
+
+.ev-text {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.ev-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* A container's own fact — a repeat's bound, a parallel's join, a watch's
+   condition — read straight off `nodePlan`. One line that ellipsizes rather than
+   wrapping, because a row growing to two lines makes a twenty-node tree
+   unscannable. */
+.ev-sub {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ev-sub[hidden] {
+  display: none;
+}
+
+.ev-dur {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   Detail — one node, at full width
+   -------------------------------------------------------------------------- */
+
+.ev-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.ev-d-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.ev-d-title {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--c-text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  /* EXPLICIT, because `normal` is a per-font metric and this box clips.
+     `text-overflow: ellipsis` requires `overflow: hidden`, which makes the flex item's
+     height its line box — and the mono stack's `normal` resolved to 16px at a 14px
+     font, exactly the em box, so anything reaching below the baseline was cut. Measured
+     in the sidecar: a node labelled `review_gpt` rendered as `review gpt`, its
+     underscore invisible. The sans-font sibling `.ev-name` escapes it only by accident
+     (its `normal` is 22px at 16px), so this is not a rule that could be shared.
+     Underscores are common in a delegate's stage names (`review_gpt`, `perf_hotfix`)
+     and rare in a workflow's node ids, which is why the second consumer found it. */
+  line-height: 1.4;
+}
+
+.ev-d-meta {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+}
+
+.ev-d-state {
+  text-transform: capitalize;
+  color: var(--c-text-secondary);
+}
+
+.ev-detail[data-state="fail"] .ev-d-state {
+  color: var(--c-danger);
+}
+
+.ev-detail[data-state="ok"] .ev-d-state {
+  color: var(--c-green);
+}
+
+.ev-detail[data-state="input"] .ev-d-state,
+.ev-detail[data-state="warn"] .ev-d-state {
+  color: var(--c-warning);
+}
+
+.ev-d-dur {
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The identity facts. A two-column definition list so the values line up and a
+   long one wraps under itself rather than pushing the labels. */
+.ev-d-facts {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 0.15rem var(--sp-3);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.ev-d-facts[hidden] {
+  display: none;
+}
+
+.ev-d-k {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  white-space: nowrap;
+}
+
+.ev-d-v {
+  margin: 0;
+  min-width: 0;
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.ev-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+/* Above the output deliberately: the failure is WHY the output looks the way it
+   does, so a reader meets it first. */
+.ev-d-fail {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r);
+  border-inline-start: 0.1875rem solid var(--c-danger);
+  background: color-mix(in srgb, var(--c-danger) 10%, transparent);
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.ev-d-fail[hidden] {
+  display: none;
+}
+
+.ev-d-out {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.ev-d-out[hidden] {
+  display: none;
+}
+
+.ev-d-out-key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* The output renders through the transcript's own markdown bubble, so a captured
+   report reads as the assistant message it is. The bubble brings its own prose
+   skin; this only gives it a surface to sit on and the radius rung below the pane's. */
+.ev-d-out-body {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-bg-primary);
+  border-radius: var(--r);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.ev-d-out-empty {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.ev-d-bodies {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ev-d-bodies[hidden] {
+  display: none;
+}
+
+.ev-d-body {
+  display: flex;
+  flex-direction: column;
+
+  /* The same gap the transcript uses between blocks inside a message, so a step's
+     tool cards and prose are spaced the way they are in a chat — the container
+     spaces its children and no block spaces itself. */
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.ev-d-body[hidden] {
+  display: none;
+}
+
+.ev-d-empty {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.ev-d-empty[hidden] {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Results — what the execution produced, rolled up
+   -------------------------------------------------------------------------- */
+
+/* A DISCLOSURE at the foot, collapsed by default. A report is thousands of
+   characters and the panes above are what a live execution is watched through, so
+   shut it costs one row; open it is what a review of a finished one is for. */
+.ev-results {
+  flex: 0 0 auto;
+  background: var(--c-bg-secondary);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.ev-results[hidden] {
+  display: none;
+}
+
+.ev-r-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
+
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: -2px;
+  }
+}
+
+.ev-r-title {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.0313rem;
+  color: var(--c-text-tertiary);
+}
+
+.ev-r-count {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-r-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-3) var(--sp-3);
+
+  /* A PEEK with its own scrollport, deliberately small. This region is a roll-up —
+     "what did the run produce", as an index — and the place to READ one report at
+     length is the detail pane, where a node's own output has the full width and no
+     competition. Sizing it for reading is what took the panes' height away, so it is
+     sized for scanning instead and scrolls for the rest. */
+  max-block-size: 12rem;
+  overflow-y: auto;
+  transition: height var(--dur-standard) var(--ease-standard);
+}
+
+.ev-r-body[aria-hidden="true"] {
+  padding-block-end: 0;
+}
+
+.ev-r-key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  margin-block-start: var(--sp-2);
+}
+
+/* The radius rung below the region's own, per the concentric rule: `--r-lg` outside
+   with `--sp-3` of inline padding leaves `--r` here. */
+.ev-r-val {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-bg-primary);
+  border-radius: var(--r);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.ev-r-empty {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}

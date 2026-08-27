@@ -45,10 +45,10 @@ func TestTranslateACPEvent_SecondChunkReusesMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.translateACPEvent("c1", newChunkMsg(t, "one"))
+	h.translateACPEvent("c1", newChunkMsg("one"))
 	firstID := h.bridge.assistantBufs.GetOrInit("c1").MessageID
 
-	h.translateACPEvent("c1", newChunkMsg(t, "two"))
+	h.translateACPEvent("c1", newChunkMsg("two"))
 	secondID := h.bridge.assistantBufs.GetOrInit("c1").MessageID
 
 	if firstID != secondID {

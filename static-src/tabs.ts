@@ -48,7 +48,7 @@
 
 import { pushRoute } from "./router.js";
 import type { Route, SettingsTab, GitTab, DocsTab } from "./router.js";
-// The eight tab kinds have ONE definition and it is the Go const block in
+// The nine tab kinds have ONE definition and it is the Go const block in
 // internal/vibekit/domain_tabs.go, emitted here by wire-codegen as a registered
 // enum. It was a hand-written union derived from TAB_VIEWS' keys, which is two
 // enumerations of one vocabulary in two languages with nothing holding them
@@ -60,7 +60,7 @@ import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 // without reaching this module's document. This file owns the STORE and the DOM
 // that paints from them.
 import { TAB_ICONS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
-import { materializeTab } from "./tab-materialize.js";
+import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.js";
 import {
   registerTabsTarget,
   permute,
@@ -847,6 +847,22 @@ export function tabIdFor(kind: TabKind, ref = ""): string {
   return state.tabs.find((t) => t.subject.kind === kind && t.subject.ref === ref)?.subject.id ?? "";
 }
 
+/** The open tab's id for the subject a URL route names, or "" when none is open.
+ *
+ *  What a BACK or FORWARD press has to ask before it applies a route: a history
+ *  entry names a location this browser was at, which is not the same thing as a
+ *  location that still exists. Answering "" is the whole signal — the router
+ *  redirects rather than opening the tab the entry names.
+ *
+ *  Here rather than in app.ts because the projection is what knows, and both
+ *  halves of the answer already live in this module's neighbours: the route-to-
+ *  subject mapping is the factory's inverse (`subjectForRoute`) and the lookup is
+ *  `tabIdFor`. */
+export function tabIdForRoute(route: Route): string {
+  const { kind, ref } = subjectForRoute(route);
+  return tabIdFor(kind, ref);
+}
+
 export function getActiveTabId(): string {
   return state.active;
 }
@@ -939,10 +955,12 @@ function scheduleEmpty(): void {
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
-  // Longer than the closed row's exit animation (`.tab.exiting`, 0.18s in
-  // 10-shell-app.css) on purpose: the respawned tab's row must be built into an
-  // EMPTY strip, or its entry animation plays against the departing row and it
-  // lands beside it until that row collapses.
+  // Longer than the closed row's exit animation on purpose: the respawned tab's
+  // row must be built into an EMPTY strip, or its entry animation plays against
+  // the departing row and it lands beside it until that row collapses. 500ms
+  // clears the longer of the two exits in 10-shell-app.css (`.tab.exiting` at
+  // 0.18s, `.exiting-merge` at --dur-standard) — and the merge one cannot be the
+  // last row's anyway, since it requires a parent that is still open.
   internal.emptyTimer = setTimeout(() => {
     internal.emptyTimer = null;
     callbacks.onEmpty?.();
@@ -1116,10 +1134,24 @@ function renderDOM(): void {
 
   const activeIDs = new Set(state.tabs.map((t) => t.subject.id));
 
-  // Remove orphans with an exit animation.
+  // Remove orphans with an exit animation, and CHOOSE that animation from what
+  // the row is. A sub-tab whose parent survives merges UP into it
+  // (`.exiting-merge`); everything else swipes out sideways (`.exiting` alone),
+  // which is what makes a parent and its whole subtree read as one block leaving
+  // rather than as N children folding into a row that is departing too.
+  //
+  // The parent is read off the DOM rather than the store because the row has
+  // already left the projection by the time this runs — removal is what put it in
+  // this loop. `activeIDs` is the survivor set, so an orphan (a sub-tab whose
+  // parent is not open here) answers false and takes the sideways exit, correctly:
+  // there is no row on screen for it to merge into.
   for (const [id, node] of existing) {
     if (!activeIDs.has(id)) {
+      const parent = node.dataset["parentId"];
       node.classList.add("exiting");
+      if (parent !== undefined && activeIDs.has(parent)) {
+        node.classList.add("exiting-merge");
+      }
       node.addEventListener(
         "animationend",
         () => {
@@ -1174,6 +1206,15 @@ function renderDOM(): void {
     // soon as its frame lands.
     node.classList.toggle("tab-child", row.subject.parent !== "");
     node.classList.toggle("tab-pinned", row.subject.pinned);
+    // The parent id rides the row for ONE reader: the exit above, which has to
+    // know whether this row's parent is still open at a moment when the row is no
+    // longer in the projection to ask. Written beside the indent it belongs to, so
+    // the class and the attribute cannot come to disagree.
+    if (row.subject.parent === "") {
+      delete node.dataset["parentId"];
+    } else {
+      node.dataset["parentId"] = row.subject.parent;
+    }
     prev = node;
   }
 }
@@ -1538,6 +1579,40 @@ export async function openRunTab(
     ...(opts?.parent === undefined ? {} : { parent: opts.parent }),
     ...(opts?.owns === undefined ? {} : { owns: opts.owns }),
     ...(opts?.activate === undefined ? {} : { activate: opts.activate }),
+  });
+}
+
+/** Open (or focus) a SUBAGENT execution's own page.
+ *
+ *  Not a singleton and not offered automatically: a delegate lives and dies inside
+ *  the turn that dispatched it, so nothing here is the run tab's proactive offer.
+ *  The two reasons that offer exists both fail for a delegate — a run outlives its
+ *  turn and emits a progress frame per node, and neither is true of a subagent — so
+ *  this door only ever answers a reader who asked. Every caller is a click or a
+ *  deep link; no SSE handler may call it.
+ *
+ *  `owns: false` always, so the × dismisses a view. There is nothing else it could
+ *  be: the page is a projection of blocks the chat store owns, and closing it stops
+ *  neither the delegate nor the transcript's own card, which keeps streaming.
+ *
+ *  `parent` nests it under the launching chat's tab, which is what puts a delegate
+ *  beside the conversation that ran it rather than at the end of the strip. A chat
+ *  with no tab here promotes it to top level rather than refusing it, the same
+ *  fallback `insertRow` and the server's Open already apply.
+ *
+ *  It carries no NAME override: the factory derives the label from the invocation
+ *  tool call in the chat store, so a tab restored on boot and a tab opened from a
+ *  card's link read the same. */
+export async function openSubagentTab(chatID: string, subtaskID: string): Promise<void> {
+  if (chatID === "" || subtaskID === "") {
+    return;
+  }
+  const parent = tabIdFor("chat", chatID);
+  await openTab({
+    kind: "subagent",
+    ref: subagentRef(chatID, subtaskID),
+    ...(parent === "" ? {} : { parent }),
+    owns: false,
   });
 }
 

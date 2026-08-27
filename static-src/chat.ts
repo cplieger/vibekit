@@ -45,11 +45,13 @@ import {
   resetScrollState,
   loadTurnRail,
   pointTurnRail,
+  fadeInTranscript,
 } from "./messages.js";
 import { addAttachment } from "./attachments.js";
 import {
   saveComposerState,
   restoreComposerState,
+  retargetComposer,
   seedComposerState,
   flushComposerDraft,
   dropComposerState,
@@ -183,6 +185,13 @@ export function closeChatTab(id: string, { remote }: { remote: boolean }): void 
   // Local only: a close that kept the record kept its draft with it, and
   // reopening the chat seeds the text back from the server.
   dropComposerState(id);
+  // `removeChat` reassigns the store's active chat to `remaining[0]` on its own,
+  // with no activation behind it, so the composer would be left belonging to
+  // nothing while the store already pointed somewhere. `dropComposerState` clears
+  // the BOX for that case; this is the other half, the KEY — without it the next
+  // keystroke lands in no chat at all and is parked nowhere. Harmless when the
+  // strip activates a neighbour straight after, because a retarget is idempotent.
+  retargetComposer(getActiveId());
 }
 
 /** Permanently delete a chat (retention = 0, non-empty) on tab close — the
@@ -253,20 +262,34 @@ export function activateChatView(id: string): void {
     // predicate (picker.ts bindVisibility). Only the draft is this branch's.
     seedEmptyChatDraft(id);
   } else {
-    // Hydrate messages from the server, then render. Defer the skeleton by
-    // 150ms so a fast (cached) open never flashes it: skeletonTiming appends
-    // it only if the load is still running at 150ms, and the cancel() call on
-    // completion clears the pending timer and removes it if it was shown.
-    // (min-visible stays 0 — the skeleton shares the messages container.)
-    const skeleton = skeletonTiming(() => {
-      const skel = chatSkeleton();
-      $.messages.appendChild(skel);
-      return () => {
-        skel.remove();
-      };
-    });
+    // Hydrate messages from the server, then render.
+    //
+    // A SKELETON MAY ONLY PAINT OVER AN EMPTY TRANSCRIPT. It is a placeholder,
+    // and this chat's messages are already on screen whenever the store holds
+    // them: the repaint above runs synchronously off setActive, so a switch back
+    // to a loaded chat renders the whole conversation and THEN stacked a
+    // placeholder underneath it for the length of the refresh round trip. That
+    // was every tab switch — turns above, shimmer below, shimmer gone.
+    //
+    // On a cold transcript the paint is still deferred by 150ms, so a fast
+    // (cached) open never flashes it: skeletonTiming appends it only if the load
+    // is still running at 150ms, and the cancel() call on completion clears the
+    // pending timer and removes it if it was shown. (min-visible stays 0 — the
+    // skeleton shares the messages container.)
+    let skeletonPainted = false;
+    const skeleton =
+      session.messages.length > 0
+        ? null
+        : skeletonTiming(() => {
+            skeletonPainted = true;
+            const skel = chatSkeleton();
+            $.messages.appendChild(skel);
+            return () => {
+              skel.remove();
+            };
+          });
     void loadMessages(id).then((ok) => {
-      skeleton.cancel();
+      skeleton?.cancel();
       if (getActiveId() !== id || activationGen !== gen) {
         return;
       }
@@ -285,6 +308,16 @@ export function activateChatView(id: string): void {
         retry.appendChild(btn);
         $.messages.appendChild(retry);
         return;
+      }
+      // The turns that replace the placeholder fade in rather than cutting.
+      // loadMessages' own emitMessages paints synchronously, so they are already
+      // in the DOM by the time this runs — and no frame has gone to the screen
+      // between the two, which is why the swap is one transition rather than a
+      // flash of both. Only when a skeleton was actually painted: a fast open has
+      // nothing to transition from, and fading it would add a flicker to
+      // something that is instant today.
+      if (skeletonPainted) {
+        fadeInTranscript();
       }
       // The chat's record is in now, so its stored draft can be adopted. Only
       // matters when this device holds none for the chat — after a reload — and
@@ -434,6 +467,12 @@ export async function createSession(initialPrompt?: string): Promise<string> {
   seedChat(header);
   const id = header.id;
   setActive(id);
+  // The composer belongs to THIS chat from here, not from the activation below.
+  // `openChatTab` is a server round trip and the activation that retargets the
+  // composer is its `onShow`, so without this the box still belonged to the chat
+  // the user just left for the length of that trip — and anything typed into it
+  // was filed under that chat and flushed to the server as its draft.
+  retargetComposer(id);
   // AWAITED: the tab is a round trip now, and every caller of createSession
   // addresses the chat it produced — a detached open would let a caller push a
   // route or attach a file before the row exists.
@@ -497,6 +536,9 @@ export async function openTangentChat(parentChatID: string): Promise<void> {
   seedChat(header);
   const id = header.id;
   setActive(id);
+  // Same round-trip window as createSession's: the tangent is the active chat
+  // now, so the composer has to be its own before the await, not after.
+  retargetComposer(id);
   // The parent is resolved to its TAB, which is what a subject's `Parent` names.
   // A parent whose tab is not open here promotes the tangent to top level, the
   // same rule the strip applies to an orphan.

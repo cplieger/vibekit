@@ -24,7 +24,12 @@ vi.mock("./tool-group.js", () => ({
   formatDuration: vi.fn(() => ""),
   untrackInProgress: vi.fn(),
 }));
-vi.mock("./tool-schema.js", () => ({ isToolDone: vi.fn(() => false) }));
+vi.mock("./tool-schema.js", () => ({
+  isToolDone: vi.fn(() => false),
+  // Present-but-undefined, same reason as the mocks above: another module in
+  // this graph imports the name and no path under test calls it.
+  isToolActive: undefined,
+}));
 vi.mock("./tool-card.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading

@@ -56,6 +56,7 @@ import {
   dropDecisions,
   collapseSettledDecision,
   DOCK_PHASE_MS,
+  runPendingAsks,
   _resetForTest,
 } from "./decision-dock.js";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -422,6 +423,78 @@ describe("the run tab's dock", () => {
     shown = "wf_b";
     rerenderDocks();
     expect(runHost.classList.contains("hidden")).toBe(false);
+  });
+
+  // The transcript's run card reads this instead of mounting a dock: it has no
+  // surface to answer on, and what it needs is which STEP is blocked.
+  describe("runPendingAsks", () => {
+    it("joins both keyings and names the steps", () => {
+      pushDecision({
+        kind: "permission",
+        chatID: "run:wf_1",
+        requestID: 1,
+        payload: perm({ request_id: 1, node_id: "build", title: "Run git push" }),
+        submit: vi.fn(),
+      });
+      pushDecision({
+        kind: "permission",
+        chatID: "c1",
+        runID: "wf_1",
+        requestID: 2,
+        payload: perm({ request_id: 2, node_id: "test" }),
+        submit: vi.fn(),
+      });
+      const a = runPendingAsks("wf_1");
+      expect(a.count).toBe(2);
+      expect([...a.nodes].sort()).toEqual(["build", "test"]);
+      expect(a.label).toBe("Run git push");
+    });
+
+    it("counts an ask the wire could not attribute to a step", () => {
+      pushDecision({
+        kind: "permission",
+        chatID: "run:wf_1",
+        requestID: 3,
+        payload: perm({ request_id: 3 }),
+        submit: vi.fn(),
+      });
+      const a = runPendingAsks("wf_1");
+      expect(a.count).toBe(1);
+      expect(a.nodes.size).toBe(0);
+    });
+
+    it("ignores a chat's own ask and another run's", () => {
+      pushDecision({
+        kind: "permission",
+        chatID: "c1",
+        requestID: 4,
+        payload: perm({ request_id: 4, node_id: "build" }),
+        submit: vi.fn(),
+      });
+      pushDecision({
+        kind: "permission",
+        chatID: "run:wf_OTHER",
+        requestID: 5,
+        payload: perm({ request_id: 5 }),
+        submit: vi.fn(),
+      });
+      expect(runPendingAsks("wf_1").count).toBe(0);
+      expect(runPendingAsks("").count).toBe(0);
+    });
+
+    it("clears once the ask is answered", () => {
+      const host = mountRunHost(() => "wf_1");
+      pushDecision({
+        kind: "permission",
+        chatID: "run:wf_1",
+        requestID: 6,
+        payload: perm({ request_id: 6, node_id: "build" }),
+        submit: vi.fn(),
+      });
+      expect(runPendingAsks("wf_1").count).toBe(1);
+      host.querySelector<HTMLButtonElement>("button")?.click();
+      expect(runPendingAsks("wf_1").count).toBe(0);
+    });
   });
 
   it("lets the run tab answer an ask sitting BEHIND the chat's own head", () => {

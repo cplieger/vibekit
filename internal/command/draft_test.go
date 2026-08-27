@@ -183,6 +183,89 @@ func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 	}
 }
 
+// And SAYS so. CmdSetDraft is not the only writer of the field, so it cannot be
+// the only emitter of the frame. Without this the clear above was silent: every
+// other client kept its parked copy of text that had already been sent, and so
+// did this one after a reload, because the record's draft is what the single-chat
+// GET seeds the box from. The client's own clearing set_draft is not a substitute
+// for the same reason the clear above is not redundant — that POST can be lost or
+// superseded.
+func TestAppendUserMessage_AnnouncesTheClearedComposer(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEmptyChat(t, store, "c1")
+	if _, err := store.SetDraft(t.Context(), "c1", "the message about to be sent"); err != nil {
+		t.Fatalf("SetDraft: %v", err)
+	}
+	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
+	bus := &capturingBus{}
+
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+		Text:      "the message about to be sent",
+		MessageID: "m-1",
+	})
+	if err != nil {
+		t.Fatalf("appendUserMessage: %v", err)
+	}
+
+	frames := bus.draftFrames(t)
+	if len(frames) != 1 {
+		t.Fatalf("draft_changed frames = %d, want 1: the send cleared a draft", len(frames))
+	}
+	if frames[0].Text != "" {
+		t.Errorf("frame text = %q, want empty — the draft is spent", frames[0].Text)
+	}
+	if len(frames[0].Attachments) != 0 {
+		t.Errorf("frame attachments = %#v, want none", frames[0].Attachments)
+	}
+}
+
+// The staged files are the other half of the same composer, so clearing them
+// alone still earns the frame: a chat can hold attachments with no text.
+func TestAppendUserMessage_AnnouncesClearedAttachmentsWithNoDraft(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEmptyChat(t, store, "c1")
+	if _, err := store.SetAttachments(t.Context(), "c1", []string{"docs/spec.pdf"}); err != nil {
+		t.Fatalf("SetAttachments: %v", err)
+	}
+	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
+	bus := &capturingBus{}
+
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+		Text:        "have a look",
+		MessageID:   "m-1",
+		Attachments: []vibekit.Attachment{{Path: "docs/spec.pdf", Name: "spec.pdf"}},
+	})
+	if err != nil {
+		t.Fatalf("appendUserMessage: %v", err)
+	}
+
+	if frames := bus.draftFrames(t); len(frames) != 1 {
+		t.Fatalf("draft_changed frames = %d, want 1: the send cleared the staged files", len(frames))
+	}
+}
+
+// A prompt sent with an empty composer has nothing to announce, and that is the
+// common case — the same rule broadcastComposer applies to a write that changed
+// nothing, so the frame keeps meaning something changed.
+func TestAppendUserMessage_SaysNothingWhenTheComposerWasEmpty(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEmptyChat(t, store, "c1")
+	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
+	bus := &capturingBus{}
+
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+		Text:      "typed and sent without pausing",
+		MessageID: "m-1",
+	})
+	if err != nil {
+		t.Fatalf("appendUserMessage: %v", err)
+	}
+
+	if frames := bus.draftFrames(t); len(frames) != 0 {
+		t.Errorf("draft_changed frames = %#v, want none", frames)
+	}
+}
+
 // The attachments have to reach the RECORD, not only the outbound prompt.
 // BuildPromptBlocks consumes PromptCommand.Attachments on the way to KAS and
 // folds each one into a content block — a document becomes a `resource`, an image

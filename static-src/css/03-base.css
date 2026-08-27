@@ -195,18 +195,70 @@
   }
 }
 
-@keyframes vk-bounce-dot {
+/* The activity-dot wave: a travelling BRIGHTNESS, never a travelling size.
+ *
+ * It replaced `vk-bounce-dot`, whose one consumer was the dead `.thinking-dots`
+ * pair and which scaled each dot `scale(0)` -> `scale(1)` -> `scale(0)`. That is
+ * why it never shipped: a dot spends most of its cycle at zero size, so with three
+ * staggered dots the whole indicator is frequently absent, and a screenshot of a
+ * running pipeline caught nothing at all. An indicator whose job is "something in
+ * here is still working" may not read as empty at any instant.
+ *
+ * So the disc is always painted and only its opacity moves, which is the same
+ * choice `vk-dot-glow` above makes for the tab's working dot, for the same two
+ * reasons: it composites rather than repainting, and the thing being animated
+ * never leaves. Floor at 0.35 so a resting dot is visibly a dot.
+ *
+ * Phase-locked with vk-dot-glow / vk-dot-wave at 1.2s — change all three or none. */
+@keyframes vk-dot-pulse {
   0%,
-  80%,
   100% {
-    opacity: 0.5;
-    transform: scale(0);
+    opacity: 0.35;
   }
 
   40% {
     opacity: 1;
-    transform: scale(1);
   }
+}
+
+/* Activity dots — the app's ONE "something in here is working" indicator for a
+ * surface that is not itself the work. A ring says THIS is running; three dots
+ * say something inside is, which is the distinction a container needs: a box
+ * whose children each carry their own spinner must not add a fourth moving ring
+ * claiming to be a fifth piece of work. The consumer is the delegated-work
+ * card's container variant (see 14-tools.css `.subagent-busy`), shown only while
+ * that card is collapsed, because an open one shows the real spinners.
+ *
+ * Promoted here from a dead `.thinking-dots` pair in 61-mcp-tools.css (authored,
+ * never wired from TypeScript — a grep for either class returned CSS only). Two
+ * things changed on the way, both because the original had never been looked at in
+ * a browser: the stagger is EVEN (it was 0, 0.15s, `var(--dur-enter)` = 0.25s, an
+ * uneven wave caused by reaching for a duration token to spell a delay), and the
+ * dots pulse in opacity instead of scaling from zero (see vk-dot-pulse).
+ *
+ * Opacity only, so the dots composite. Size is fixed and the ink is the caller's
+ * `color`, which is what lets one rule serve a header slot and a row. */
+.activity-dots {
+  display: inline-flex;
+  gap: 0.2rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.activity-dot {
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-radius: 50%;
+  background: currentcolor;
+  animation: vk-dot-pulse 1.2s var(--ease-standard) infinite;
+}
+
+.activity-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.activity-dot:nth-child(3) {
+  animation-delay: 0.3s;
 }
 
 @keyframes vk-skeleton {

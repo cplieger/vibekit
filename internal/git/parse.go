@@ -13,15 +13,28 @@ import (
 // --- git status parsing ---
 
 // gitFile represents a single entry from `git status --porcelain=v1 -z`.
+//
+// OrigPath is set only on a rename or copy entry, carrying the path the
+// content came FROM. Every other field describes the path it is at now.
+// It is omitted from the JSON when empty, so an ordinary entry costs no
+// wire bytes for it.
 type gitFile struct {
-	Path    string `json:"path"`
-	Display string `json:"display"`
-	Status  string `json:"status"`
-	Staged  bool   `json:"staged"`
+	Path     string `json:"path"`
+	Display  string `json:"display"`
+	Status   string `json:"status"`
+	Staged   bool   `json:"staged"`
+	OrigPath string `json:"orig_path,omitempty"`
 }
 
+// statusLabels covers every status character `git status --porcelain=v1`
+// emits. 'T' (typechange — a regular file replaced by a symlink or the
+// reverse) was missing and therefore rendered as "Unknown": measured on
+// git 2.x, `rm f && ln -s /tmp f` reports " T f" unstaged and "T  f"
+// staged, so it is an ordinary status a working tree reaches, not a
+// hypothetical.
 var statusLabels = map[byte]string{
 	'M': "Modified",
+	'T': "Typechange",
 	'A': "Added",
 	'D': "Deleted",
 	'R': "Renamed",
@@ -57,10 +70,11 @@ func statusLabel(c byte) string {
 // each is `XY<space><path>` (a space still separates the 2-char status
 // from the path). For rename (R) and copy (C) entries the ` -> ` is
 // dropped and the field order is reversed, so the record spans two
-// NUL-terminated fields: `XY<space><new-path>` then `<orig-path>`. We
-// keep the new path (the entry's current location — what stage/discard/
-// diff all need) and consume the trailing orig field so it isn't
-// mis-parsed as its own record.
+// NUL-terminated fields: `XY<space><new-path>` then `<orig-path>`. The
+// new path is the entry's Path (its current location — what stage,
+// discard and diff all need) and the trailing field becomes OrigPath,
+// which also consumes it so it is not mis-parsed as its own record.
+// Measured: `git mv old.txt new.txt` reports `R  new.txt\x00old.txt\x00`.
 func parseGitStatusOutput(raw []byte) []gitFile {
 	records := strings.Split(string(raw), "\x00")
 	var files []gitFile
@@ -73,15 +87,21 @@ func parseGitStatusOutput(raw []byte) []gitFile {
 			continue
 		}
 		x, y, path := line[0], line[1], line[3:]
+		orig := ""
 		if isRenameOrCopy(x, y) {
 			// Rename/copy entries carry a second NUL field (the origin
-			// path); skip it so it isn't parsed as a standalone record.
+			// path); take it and skip it so it isn't parsed as a
+			// standalone record. A truncated tail leaves orig empty
+			// rather than reading past the slice.
+			if i+1 < len(records) {
+				orig = records[i+1]
+			}
 			i++
 		}
 		if strings.HasSuffix(path, "/") {
 			continue
 		}
-		files = appendStatusEntries(files, x, y, path)
+		files = appendStatusEntries(files, x, y, path, orig)
 	}
 	return files
 }
@@ -96,8 +116,15 @@ func isRenameOrCopy(x, y byte) bool {
 // appendStatusEntries appends the gitFile rows for one porcelain XY
 // status pair + path. A path that is BOTH staged (X) and changed in the
 // worktree (Y) yields two rows — one staged, one unstaged — so the git
-// panel can stage/discard each side independently.
-func appendStatusEntries(files []gitFile, x, y byte, path string) []gitFile {
+// panel can stage/discard each side independently. Any caller counting
+// CHANGED FILES therefore has to count distinct paths rather than
+// entries (git-types.ts changedPathCount is the client's).
+//
+// orig is the rename/copy origin path, empty for every other entry. It
+// rides only the row whose status letter is the R or C, because the
+// other side of a partially-staged rename describes an ordinary edit to
+// the file at its new path and did not come from anywhere.
+func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFile {
 	f := gitFile{Path: path}
 	switch {
 	case x == '?' && y == '?':
@@ -107,16 +134,26 @@ func appendStatusEntries(files []gitFile, x, y byte, path string) []gitFile {
 		f.Status = string(x)
 		f.Staged = true
 		f.Display = statusLabel(x)
+		if x == 'R' || x == 'C' {
+			f.OrigPath = orig
+		}
 	default:
 		f.Status = string(y)
 		f.Display = statusLabel(y)
+		if y == 'R' || y == 'C' {
+			f.OrigPath = orig
+		}
 	}
 	files = append(files, f)
 	if x != ' ' && x != '?' && y != ' ' && y != '?' {
-		files = append(files, gitFile{
+		second := gitFile{
 			Path: path, Status: string(y), Staged: false,
 			Display: statusLabel(y),
-		})
+		}
+		if y == 'R' || y == 'C' {
+			second.OrigPath = orig
+		}
+		files = append(files, second)
 	}
 	return files
 }

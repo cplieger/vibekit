@@ -15,6 +15,7 @@ import {
   setWorkingLabel,
   setTurnSummary,
   clearSnapshotSeq,
+  clearLiveTurnMessage,
   get,
   getActiveId,
   tabStatusFor,
@@ -88,6 +89,12 @@ onSSE("turn_ended", (chatID, p) => {
   // The turn's snapshot chunk-watermark (connect-time turn_state) is
   // finished business once the turn ends.
   clearSnapshotSeq(chatID);
+  // So is the in-flight marker. `message_appended` normally clears it first —
+  // the server persists the turn before it broadcasts either frame — so this is
+  // the backstop for a turn that ended without one (an abandoned turn, a dropped
+  // frame), where leaving the marker would make a later refetch keep a message
+  // the chat file already holds under a different shape.
+  clearLiveTurnMessage(chatID);
   // Every ask this TURN raised is over: each one blocks the turn, so a turn that
   // has ended is not waiting on one. Answered asks are already gone; what is left
   // is an abandoned queue (the user cancelled, and cmdCancel cleared the server's

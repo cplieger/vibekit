@@ -28,7 +28,7 @@ import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/schedules
 import { buildSchedulePicker, defaultSpec, summaryLine } from "./schedule-picker.js";
 import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import { createPopup } from "@cplieger/ui-primitives/popup";
-import { openLiveRunView } from "./run-view.js";
+import { openRunView } from "./run-view.js";
 import { loadSettings } from "./persist.js";
 import { toggleSettingsView } from "./tabs.js";
 import type { Recipe, WorkflowRunRow } from "./types.js";
@@ -490,7 +490,7 @@ function launch(r: Recipe, inputs: Record<string, string>): void {
         // corrects a failed launch the server accepted but KAS then refused.
         liveRuns.set(r.name, { workflow_id: d.workflow_id, name: d.name, updated_at: Date.now() });
         paint();
-        openLiveRunView(d.workflow_id, d.name);
+        openRunView(d.workflow_id, d.name);
       },
     },
   );

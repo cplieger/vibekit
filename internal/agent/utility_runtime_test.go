@@ -114,11 +114,7 @@ func TestDrainUtilityResponse_ChannelClose(t *testing.T) {
 
 func BenchmarkUtilityBridge_DrainResponse(b *testing.B) {
 	chunk := func(text string) *vibekit.RPCResponse {
-		params, _ := json.Marshal(map[string]any{
-			"sessionUpdate": "agent_message_chunk",
-			"content":       map[string]any{"type": "text", "text": text},
-		})
-		return &vibekit.RPCResponse{Method: "session/update", Params: params}
+		return newChunkMsg(text)
 	}
 
 	payload := "x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]" // 50 bytes
@@ -176,24 +172,26 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	errs := make([]error, goroutines)
 
 	// Feed chunks for each goroutine's prompt. Since calls serialize,
-	// each prompt drains the idle timer before the next starts.
+	// each prompt drains the idle timer before the next starts. The frames are
+	// built HERE, on the test's own goroutine: newChunkMsg can t.Fatalf, and a
+	// Fatal off the test goroutine ends the wrong one (go-rulebook §7).
+	frames := make([]*vibekit.RPCResponse, goroutines)
+	for i := range frames {
+		frames[i] = newChunkMsg(fmt.Sprintf("resp-%d", i))
+	}
 	go func() {
 		for i := range goroutines {
 			// Pace the feed so each chunk lands inside a live drain window
 			// rather than between two of them (the fixture, not a wait for an
 			// async effect: 20ms against drainResponse's 50ms idle debounce).
 			time.Sleep(20 * time.Millisecond)
-			params, _ := json.Marshal(map[string]any{
-				"sessionUpdate": "agent_message_chunk",
-				"content":       map[string]any{"type": "text", "text": fmt.Sprintf("resp-%d", i)},
-			})
 			freshBr.mu.Lock()
 			stopped := freshBr.stopped
 			freshBr.mu.Unlock()
 			if stopped {
 				return
 			}
-			freshBr.notifCh <- &vibekit.RPCResponse{Method: "session/update", Params: params}
+			freshBr.notifCh <- frames[i]
 		}
 	}()
 
@@ -434,6 +432,35 @@ func TestForward_RoutesPolicyNotifications(t *testing.T) {
 	}
 }
 
+// TestForwardChunk_ForwardsAssistantText is the positive half its sibling
+// below cannot supply: it pins that a real KAS frame reaches the channel with
+// its text intact. Without it, forwardChunk could reject every frame and the
+// whole file stayed green — which is what happened. The kind discriminator sits
+// on the `update` object, so a fixture that flattens it tests nothing.
+func TestForwardChunk_ForwardsAssistantText(t *testing.T) {
+	ch := make(chan utilityChunkPayload, 4)
+	forwardChunk(newChunkMsg("feat/branch-name"), ch)
+	select {
+	case got := <-ch:
+		if got.Content.Text != "feat/branch-name" {
+			t.Errorf("forwardChunk text = %q, want %q", got.Content.Text, "feat/branch-name")
+		}
+	default:
+		t.Fatal("forwardChunk forwarded nothing; an agent_message_chunk must reach responseCh")
+	}
+}
+
+// TestForwardChunk_IgnoresOtherKinds keeps the filter honest in the other
+// direction: only agent_message_chunk is assistant text, and a tool_call
+// forwarded as one would splice tool metadata into a generated commit message.
+func TestForwardChunk_IgnoresOtherKinds(t *testing.T) {
+	ch := make(chan utilityChunkPayload, 4)
+	forwardChunk(newToolCallMsg(t, "tc-1", "readFile", "pending"), ch)
+	if len(ch) != 0 {
+		t.Errorf("responseCh len = %d, want 0 (only agent_message_chunk is text)", len(ch))
+	}
+}
+
 // TestForwardChunk_NonBlockingDropsWhenFull verifies forwardChunk never
 // blocks on a full responseCh. A blocking send would park the forward
 // goroutine so it never observes notifCh closing, deadlocking reset()'s
@@ -443,13 +470,7 @@ func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
 	ch := make(chan utilityChunkPayload, 1)
 	ch <- utilityChunkPayload{}
 
-	msg := &vibekit.RPCResponse{
-		Method: vibekit.MethodSessionUpdate,
-		Params: mustJSON(t, map[string]any{
-			"sessionUpdate": "agent_message_chunk",
-			"content":       map[string]any{"type": "text", "text": "dropped"},
-		}),
-	}
+	msg := newChunkMsg("dropped")
 
 	done := make(chan struct{})
 	go func() {

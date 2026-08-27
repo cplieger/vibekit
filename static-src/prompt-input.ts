@@ -456,26 +456,6 @@ export function setSendState(next: SendState): void {
   instance.setSendState(next);
 }
 
-/** Put a failed send's text back in the box, so retrying is not retyping.
- *
- *  submit.ts calls this on its failure paths, beside the attachment restore it
- *  already did. Only writes into an EMPTY box: the send is asynchronous, so the
- *  user may already be typing the next thing, and their live draft outranks text
- *  they watched fail. */
-export function restorePromptText(text: string): void {
-  if (text === "") {
-    return;
-  }
-  const input = $.promptInput;
-  if (input.value !== "") {
-    return;
-  }
-  // Announced, not just assigned: the draft layer recorded "" when the submit
-  // cleared the box, and without the event a reload would lose text the user can
-  // see sitting there.
-  setComposerValue(text);
-}
-
 export function initPromptInput(onSubmit: Submit, onCancel: Cancel): void {
   instance.init(onSubmit, onCancel);
 }

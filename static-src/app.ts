@@ -52,7 +52,9 @@ import {
   openTab,
   setSettingsTab,
   setGitTab,
+  setDocsTab,
   markBootDone,
+  tabIdForRoute,
 } from "./tabs.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
@@ -66,8 +68,8 @@ import { initEditor } from "./editor-core.js";
 import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun } from "./run-view.js";
+import { showSubagent } from "./subagent-view.js";
 import { runChatID } from "./run-store.js";
-import { cancelRun } from "./actions/runs.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, restoreFileBrowser } from "./files.js";
@@ -99,7 +101,8 @@ import {
   closeChatTab,
   chatTabDot,
 } from "./chat.js";
-import { initModelSwitcher, applyLocalModel, setCatalogEfforts } from "./model-switcher.js";
+import { initModelSwitcher, applyLocalModel } from "./model-switcher.js";
+import { setCatalogEfforts } from "./effort.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
@@ -157,17 +160,20 @@ function init(): void {
     chat: { show: activateChatView, close: closeChatTab, dot: chatTabDot },
     editor: { show: activateFile, close: closeEditorFile },
     run: {
-      // `parentless` is the run's own fact, not the tab strip's, so it comes from
-      // the run store's record of which chat launched this run — the same
-      // fallback openRunView already uses to find a parent. A subject cannot
-      // answer it: see tab-materialize.ts's header.
-      show: (workflowID, owns) => {
-        showRun(workflowID, owns, runChatID(workflowID) === "");
-      },
-      cancel: (workflowID) => {
-        void cancelRun.dispatch(workflowID, { silent: true });
+      // `parentless` is the run's own fact, not the tab strip's, so it comes from the
+      // run store's record of which chat launched this run — the same fallback
+      // openRunView already uses to find a parent. A subject cannot answer it: see
+      // tab-materialize.ts's header.
+      //
+      // No `cancel` half any more, and none is reachable: a run tab is a VIEW, so its
+      // × stops nothing. Cancelling is the control row's verb.
+      show: (workflowID) => {
+        showRun(workflowID, runChatID(workflowID) === "");
       },
     },
+    // No close half for the same reason: a subagent page is a projection of blocks the
+    // chat store owns, so it starts nothing and can stop nothing.
+    subagent: { show: showSubagent },
   });
 
   setOnEmpty(() => {
@@ -654,6 +660,14 @@ async function fetchModelsFromREST(): Promise<void> {
   if (d.models.length > 0) {
     populatePickerModels(d.models.map(toModelInfo), "");
   }
+  // The model pill names a non-default reasoning tier, and it can only know
+  // which tier is default from the catalog this fetch just landed. Nothing else
+  // repaints the pill on this path (the per-session feed below has its own
+  // refresh), so without this the tier stays unnamed until the next store emit.
+  const active = getActive();
+  if (active !== undefined) {
+    refreshContextUI(active);
+  }
 }
 
 function fetchModelsFromSession(): void {
@@ -776,7 +790,36 @@ function setupInput(): void {
 // URL routing
 // ============================================================
 
-function applyRoute(route: Route): void {
+/** Where a route came from, because the two answer the "this names nothing that
+ *  is open" case differently.
+ *
+ *  A `deeplink` — a cold load, a bookmark, a link someone shared — MAY open what
+ *  it names: that is what a `/run/{id}` or `/file/{path}` URL is for. A `history`
+ *  entry may only ACTIVATE something already open, because it names a location
+ *  this browser was at rather than one that still exists. Closing a tab leaves its
+ *  URL an entry or more back (every activation pushes, and a close pushes the
+ *  neighbour's on top), and applying such an entry as a deep link re-opened the
+ *  tab: `file`, `run` and all five singletons opened unconditionally, so a reader
+ *  pressing back watched a tab they had closed reappear, and the server-owned
+ *  collection then broadcast it to every other device. */
+type RouteOrigin = "deeplink" | "history";
+
+function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): void {
+  // The back/forward guard. Ask the projection FIRST, because every branch below
+  // is an opener: each one either activates an existing tab or creates one, and
+  // from a Route alone they cannot be told apart.
+  //
+  // The redirect target is the ACTIVE TAB's route, so the URL ends up naming what
+  // is on screen — which is what the reader is looking at, since popstate changes
+  // no app state by itself. `replaceRoute` rather than `history.go(-1)`: skipping
+  // the entry would walk backwards through however many dead ones sit behind it
+  // and can leave the app entirely, while a replace consumes exactly the one
+  // location that no longer resolves. Same canonicalization applyInitialRoute
+  // does for "/".
+  if (origin === "history" && tabIdForRoute(route) === "") {
+    replaceRoute(getActiveTabRoute() ?? { kind: "chat", id: "" });
+    return;
+  }
   switch (route.kind) {
     case "chat":
       if (route.id !== "" && get(route.id) !== undefined) {
@@ -785,11 +828,23 @@ function applyRoute(route: Route): void {
         replaceRoute({ kind: "chat", id: getActiveId() });
       }
       break;
-    // The three singleton routes each open their tab and then CORRECT its
+    // The FIVE singleton routes each open their tab and then CORRECT its
     // sub-tab, and the correction is not a convenience: a singleton's `ref` is
     // empty, so a subject cannot carry a sub-tab and the factory has to build the
-    // canonical one. `setSettingsTab` / `setGitTab` are that channel and they stay
-    // synchronous, because the panel swap is local state the router owns.
+    // canonical one. `setSettingsTab` / `setGitTab` / `setDocsTab` are that channel
+    // and they stay synchronous, because the panel swap is local state the router
+    // owns.
+    //
+    // Every one of them goes through `openTab`, and NONE through the matching
+    // `toggle*View` helper, for the reason tab-materialize.ts states about the
+    // factory: a toggle CLOSES the tab when it is already active, so a router that
+    // toggled would DESTROY the tab the URL names. Measured on /docs and /history,
+    // which did reach the toggles: with the docs tab restored and active, a cold
+    // load of /docs/hooks closed it and landed on the active chat, alternating
+    // pass/fail run to run as the arrangement flipped — and a back press onto an
+    // open /docs entry closed it the same way. `openTab` is idempotent by subject,
+    // so it activates an open tab and opens a closed one, which is what a route
+    // means.
     //
     // None of them passes an onShow any more. The factory reaches each page's own
     // loader through a lazy import, so /settings reached from a deep link, from
@@ -820,22 +875,12 @@ function applyRoute(route: Route): void {
       openFile(route.path, route.line);
       break;
     case "docs":
-      void import("./docs.js")
-        .then(({ showDocsView }) => {
-          showDocsView(route.tab);
-        })
-        .catch(() => {
-          /* noop */
-        });
+      void openTab({ kind: "docs" }).then(() => {
+        setDocsTab(route.tab);
+      });
       break;
     case "history":
-      void import("./history.js")
-        .then(({ showHistoryView }) => {
-          showHistoryView();
-        })
-        .catch(() => {
-          /* noop */
-        });
+      void openTab({ kind: "history" });
       break;
     case "run":
       void import("./run-view.js")
@@ -846,6 +891,19 @@ function applyRoute(route: Route): void {
           // consults the run store for that, so a shared link lands beside the
           // conversation rather than at the end of the strip.
           openRunView(route.id, route.id);
+        })
+        .catch(() => {
+          /* noop */
+        });
+      break;
+    case "subagent":
+      // A delegate's page has nothing to fetch — its blocks are already in the
+      // chat store, or they are not resident and the page says so — so this is
+      // just the tab. `openSubagentView` is idempotent by subject: it activates an
+      // open tab and opens a closed one, which is what a route means.
+      void import("./subagent-view.js")
+        .then(({ openSubagentView }) => {
+          openSubagentView(route.chat, route.id);
         })
         .catch(() => {
           /* noop */
@@ -890,7 +948,7 @@ function applyInitialRoute(): void {
 }
 
 onPopState((route: Route) => {
-  applyRoute(route);
+  applyRoute(route, "history");
 });
 
 /** Redirect a bare keystroke to the composer, so a fresh chat can be typed into

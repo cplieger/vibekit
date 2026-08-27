@@ -52,6 +52,7 @@ import type {
   TerminalOutputPayload,
   TerminalExitedPayload,
   RunStartedPayload,
+  RunStepPayload,
   RunProgressPayload,
   RunFinishedPayload,
 } from "./types.js";
@@ -135,6 +136,7 @@ export interface SSEPayloads {
   readonly run_started: RunStartedPayload;
   readonly run_progress: RunProgressPayload;
   readonly run_finished: RunFinishedPayload;
+  readonly run_step: RunStepPayload;
 }
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined

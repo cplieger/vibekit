@@ -98,7 +98,8 @@ vi.mock("@cplieger/ui-primitives/roving-focus", () => ({
 }));
 
 import { activeSession } from "./store.js";
-import { initModelSwitcher, setCatalogEfforts } from "./model-switcher.js";
+import { initModelSwitcher } from "./model-switcher.js";
+import { setCatalogEfforts } from "./effort.js";
 
 /** A catalog entry carrying the model's own default tier. */
 function model(id: string, dflt?: string): ModelInfo {

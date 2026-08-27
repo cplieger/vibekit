@@ -152,11 +152,7 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 	// arrive after the caller's Call begins (the forward goroutine moves them
 	// to responseCh). notifCh is buffered, so this doesn't block.
 	for _, text := range chunks {
-		p, _ := json.Marshal(map[string]any{
-			"sessionUpdate": "agent_message_chunk",
-			"content":       map[string]any{"type": "text", "text": text},
-		})
-		b.notifCh <- &vibekit.RPCResponse{Method: "session/update", Params: p}
+		b.notifCh <- newChunkMsg(text)
 	}
 	return &vibekit.RPCResponse{Result: res}, nil
 }

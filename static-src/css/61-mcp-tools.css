@@ -61,36 +61,11 @@
    Wave 1: Animations + reasoning blocks + tool duration
    --------------------------------------------------------------------------- */
 
-/* Thinking indicator: three dots that scale in/out (from ASAI) */
-.thinking-dots {
-  display: inline-flex;
-  gap: 0.2rem;
-  align-items: center;
-}
-
-.thinking-dot {
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 50%;
-  background: var(--c-text-tertiary);
-  animation: vk-bounce-dot 1.2s infinite;
-}
-
-.thinking-dot:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.thinking-dot:nth-child(3) {
-  animation-delay: var(--dur-enter);
-}
-
-/* Contextual working label next to the thinking dots */
-.working-label {
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-  margin-left: 0.4rem;
-}
+/* The `.thinking-dots` / `.thinking-dot` pair and the `.working-label` beside it
+   were deleted in 2026-08: authored together, never wired from TypeScript (a grep
+   for all three returned CSS only). The dots are now `.activity-dots` in
+   03-base.css with a real consumer — the delegated-work card's collapsed busy
+   indicator. The label had no replacement because nothing wanted one. */
 
 /* Reasoning / thought blocks: the BLOCK and its summary are styled in
    13-messages.css (`.reasoning-block`, `.reasoning-summary`, `.reasoning-body`).
@@ -339,11 +314,12 @@
    Two DIFFERENT controls are named here and they are not the same object:
    `.tool-disclosure` is the transcript's chevron button and `.tool-toggle` is
    the Tools settings row switch. Until the chevron was renamed they shared one
-   class, which is how a `min-height` floor came to inflate a switch track sized
-   2.25rem by 1.25rem (measured 36x24 desktop, 44x44 on a phone) — the tall grey
-   pill a comment in 14-tools.css believes it deleted. Kept for now so the switch
-   still clears the floor; the design-correct answer is a hit-target pseudo on
-   the track, which needs a taller `.list-row` (32px today) to sit in. */
+   class, which is how this floor came to inflate a switch track sized 2.25rem by
+   1.25rem into a 36x24 pill on desktop and a 44x44 grey square on a phone.
+   `.tool-toggle` STAYS in the list, and that is now only a hit target: the
+   switch's painted track carries its own declared size and centres inside this
+   box (18-pages.css `.toggle-slider`), so growing the label no longer grows the
+   switch. */
 :where(
   .icon-btn,
   .shell-header-btn,
@@ -492,7 +468,13 @@
 }
 
 /* Disable animations when the chat tab is backgrounded so content
-   renders immediately when the user switches back. */
+   renders immediately when the user switches back. `[id="messages"]` is in the
+   list for itself, not for its children: the transcript container carries
+   `data-chat-entry` for one 200ms fade when a loading skeleton is swapped for
+   the real turns (messages.ts `fadeInTranscript`), and that animation starts at
+   opacity 0 — paused in a hidden tab, it would hold the whole conversation
+   invisible until the reader came back. */
+:where(html[data-tab-hidden]) [id="messages"],
 :where(html[data-tab-hidden]) [id="messages"] .msg-row,
 :where(html[data-tab-hidden]) [id="messages"] .tool-call,
 :where(html[data-tab-hidden]) [id="messages"] .tool-group,
