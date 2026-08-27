@@ -565,6 +565,71 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	}
 }
 
+// TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted pins the resume half of
+// the catalog contract: a fact the load result did not carry must not be written.
+//
+// A resumed bridge is freshly constructed, so it answers the zero value for
+// anything absent — and `session/load` omits the model catalog routinely, because
+// KAS resolves ListAvailableModels asynchronously (measured on kiro-cli 2.20.0).
+// Writing those zeros wiped the catalog the chat file had carried since its
+// previous session. The mode half is the one with no repair channel afterwards.
+func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
+	seededModes := []vibekit.SessionMode{{ID: "spec", Name: "Spec"}}
+	seededModels := []vibekit.SessionModel{{ID: "seeded-model", Name: "Seeded"}}
+
+	cases := map[string]struct {
+		mode       string
+		modes      []vibekit.SessionMode
+		models     []vibekit.SessionModel
+		wantMode   string
+		wantModes  []vibekit.SessionMode
+		wantModels []vibekit.SessionModel
+	}{
+		"a silent result changes nothing": {
+			mode: "", modes: nil, models: nil,
+			wantMode: "spec", wantModes: seededModes, wantModels: seededModels,
+		},
+		"an empty list is not an empty catalog": {
+			mode: "", modes: []vibekit.SessionMode{}, models: []vibekit.SessionModel{},
+			wantMode: "spec", wantModes: seededModes, wantModels: seededModels,
+		},
+		"what the result DOES carry is written": {
+			mode:  "vibe",
+			modes: []vibekit.SessionMode{{ID: "vibe", Name: "Default"}},
+			models: []vibekit.SessionModel{
+				{ID: "fresh-model", Name: "Fresh"},
+			},
+			wantMode:   "vibe",
+			wantModes:  []vibekit.SessionMode{{ID: "vibe", Name: "Default"}},
+			wantModels: []vibekit.SessionModel{{ID: "fresh-model", Name: "Fresh"}},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := &vibekit.Chat{
+				Name:            "A",
+				CurrentModeID:   "spec",
+				AvailableModes:  seededModes,
+				AvailableModels: seededModels,
+			}
+			br := &fakeBridge{currentMode: tc.mode, modes: tc.modes, models: tc.models}
+
+			applyLoadedSessionFacts(c, br, "")
+
+			if c.CurrentModeID != tc.wantMode {
+				t.Errorf("CurrentModeID = %q, want %q", c.CurrentModeID, tc.wantMode)
+			}
+			if !slices.Equal(c.AvailableModes, tc.wantModes) {
+				t.Errorf("AvailableModes = %v, want %v", c.AvailableModes, tc.wantModes)
+			}
+			if !slices.Equal(c.AvailableModels, tc.wantModels) {
+				t.Errorf("AvailableModels = %v, want %v", c.AvailableModels, tc.wantModels)
+			}
+		})
+	}
+}
+
 // TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the visibility
 // half of the mode contract, and the reason it is needed is subtle enough to state.
 //

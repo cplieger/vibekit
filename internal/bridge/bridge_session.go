@@ -71,7 +71,25 @@ type sessionCreated struct {
 	Modes     *sessionModes `json:"modes"`
 	SessionID string        `json:"sessionId"`
 	Meta      struct {
-		Title string `json:"title"`
+		// WorkflowsEnabled is KAS's RESOLVED answer for settings.workflows, and it
+		// is read for one reason: to notice the day the session door stops working.
+		//
+		// First in the struct because it is the pointer (govet fieldalignment), not
+		// because it is the more important member.
+		//
+		// A POINTER because absent and false are different states. A build that
+		// does not report the member at all says nothing, while `false` against a
+		// declared `true` is the failure — and that failure is silent by
+		// construction, which is why observing it is worth a field. The key reaches
+		// KAS only because KiroSessionMetaSchema ends in `.passthrough()`, a
+		// property of somebody else's schema; drop that and vibekit keeps sending
+		// the key, the send-side test keeps passing, the census keeps passing
+		// (resolveWorkflows still READS the key, it just is not there any more),
+		// and the agent silently loses its entire workflowChatTools array with no
+		// error, no log and no -32601. That is the exact defect the workflows row
+		// was created to fix, recurring undetectably.
+		WorkflowsEnabled *bool  `json:"workflowsEnabled"`
+		Title            string `json:"title"`
 	} `json:"_meta"`
 	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
@@ -387,10 +405,56 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 		}
 	}
 	b.sessionTitle = r.Meta.Title
+	b.reportWorkflowsDisagreement(r.Meta.WorkflowsEnabled)
 	b.applyModelConfigOptionLocked(r.ConfigOptions)
 	if b.modelID == "" {
 		b.modelID = vibekit.ModelID(fallbackModel)
 	}
+}
+
+// reportWorkflowsDisagreement logs when the session resolved settings.workflows
+// to something other than what this spawn declared.
+//
+// A log line and nothing more, deliberately. There is no repair available: KAS
+// resolves the setting at session creation and freezes it, so by the time the
+// result is in hand the tool array is already decided, and refusing the session
+// would take a working chat away over a capability the user may not be using.
+// What the line buys is that the failure has a name in the logs instead of
+// presenting as "the agent cannot run workflows any more".
+//
+// The declared side is read back off the BUILT door rather than from a second
+// copy of the rule, so it cannot drift from the table: the operator env override
+// (VIBEKIT_AGENT_WORKFLOWS=false) withholds the key, KAS resolves absent to
+// false, and both sides then agree on false with nothing logged — which is the
+// intended off state rather than a disagreement.
+//
+// MUST be called with b.mu held (spawn() reads fields immutable after Start).
+func (b *Bridge) reportWorkflowsDisagreement(resolved *bool) {
+	if resolved == nil {
+		return
+	}
+	declared := declaredSessionWorkflows(b.spawn())
+	if *resolved == declared {
+		return
+	}
+	slog.Warn("session resolved the workflows setting against what vibekit declared; "+
+		"the agent's workflow tools are not what this spawn asked for",
+		"declared", declared, "resolved", *resolved)
+}
+
+// declaredSessionWorkflows reports whether a spawn's session door carries
+// settings.workflows enabled, read out of the door kascap actually builds.
+func declaredSessionWorkflows(s kascap.Spawn) bool {
+	settings, ok := kascap.SessionMeta(s)["settings"].(map[string]any)
+	if !ok {
+		return false
+	}
+	wf, ok := settings["workflows"].(map[string]any)
+	if !ok {
+		return false
+	}
+	on, _ := wf["enabled"].(bool)
+	return on
 }
 
 // applyModelConfigOptionLocked sources the current model + catalog from
@@ -450,6 +514,19 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 		_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
 		if current != "" {
 			b.modelID = vibekit.ModelID(current)
+		}
+		// Same asymmetry the modes branch above spells out, and for the same
+		// reason: a `model` option carrying NO choices reports that the catalog is
+		// unknown, not that it is empty. An account with no models cannot run a
+		// turn at all, so an empty list is never more informative than the list
+		// already held — which is exactly the reading HandleConfigOptionUpdate
+		// applies on the notification channel, where `len(cat.models) == 0` returns
+		// early rather than writing. `currentValue` above is applied either way: it
+		// is a fact about which model is active and stands on its own.
+		if len(opt.Options) == 0 {
+			slog.Warn("session reported an empty model catalog; keeping the previous one",
+				"current_model", b.modelID)
+			return
 		}
 		mdls := make([]vibekit.SessionModel, 0, len(opt.Options))
 		served := make([]string, 0, len(opt.Options))
