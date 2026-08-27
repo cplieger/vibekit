@@ -29,9 +29,61 @@
 // `npx --no-install playwright install chromium`.
 //
 // Run: vitest --run (single pass) or vitest (watch mode)
-import { playwright } from "@vitest/browser-playwright";
+import { type PlaywrightBrowserProvider, playwright } from "@vitest/browser-playwright";
 import { configDefaults, defineConfig } from "vitest/config";
 import { resolve } from "node:path";
+
+// Hold Chromium's request interception permanently ON, so a hoisted `vi.mock`
+// cannot silently fail to apply.
+//
+// `vi.mock` in Browser Mode is served by a `context.route()` handler, and the
+// provider unroutes every one of a session's routes when a test file ends. The
+// route count therefore crosses ZERO between files, and Playwright drives
+// interception off the count: it emits CDP `Fetch.disable` then `Fetch.enable`
+// around every file that mocks. Chromium acks `Fetch.enable` BEFORE interception
+// is live, so a module request issued inside that window is served the REAL
+// module. The ES registry caches it for the rest of the file, so every test in
+// one random file dies in its own hook on
+// `vi.mocked(x).mockReset is not a function`. Chromium-only: Firefox and WebKit
+// do not use the CDP Fetch path.
+//
+// One never-matching anchor route per context keeps the count above zero, so the
+// toggle never fires again. Upstream is vitest-dev/vitest#8339 — open, root-
+// caused with CDP traces in the thread, and NOT fixed in 4.1.11 or on main, so
+// there is no version to wait for.
+//
+// Measured over this 233-file browser project: 69.6s without, 71.2s with. The
+// tradeoff is that interception stays active for files that mock nothing, which
+// is cheap here only because `fileParallelism: false` below means one session.
+function playwrightWithAlwaysOnInterception(...args: Parameters<typeof playwright>) {
+  const provider = playwright(...args);
+  return {
+    ...provider,
+    providerFactory(...factoryArgs: Parameters<typeof provider.providerFactory>) {
+      const instance = provider.providerFactory(...factoryArgs) as PlaywrightBrowserProvider;
+      // Per CONTEXT, not per session: `persistentContext` shares one context
+      // across sessions, and routing the same anchor twice would leave a second
+      // matcher behind for the run's lifetime.
+      const anchored = new WeakSet<object>();
+      const openPage = instance.openPage.bind(instance);
+      instance.openPage = async (sessionId, url, options) => {
+        await openPage(sessionId, url, options);
+        const context = instance.contexts.get(sessionId);
+        if (context && !anchored.has(context)) {
+          anchored.add(context);
+          await context.route(
+            () => false,
+            // Unreachable, because the predicate never matches. Deferring rather
+            // than an empty body means a request would still be answered if that
+            // ever stopped being true.
+            (route) => route.fallback(),
+          );
+        }
+      };
+      return instance;
+    },
+  };
+}
 
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
 
@@ -110,11 +162,15 @@ export default defineConfig({
           // under `vitest --run`; reproducible every time under Stryker, whose
           // four concurrent runners multiply the contention. The suite costs
           // ~57s serialized instead of ~17s.
+          //
+          // The anchor route in the provider above does NOT make this
+          // removable: that closes the zero-crossing that loses a mock, this
+          // one is duplicate matchers on the same URL (vitest-dev/vitest#10819).
           fileParallelism: false,
           browser: {
             enabled: true,
             headless: true,
-            provider: playwright({
+            provider: playwrightWithAlwaysOnInterception({
               launchOptions: {
                 channel: "chromium",
               },
@@ -161,25 +217,17 @@ export default defineConfig({
     // Fail fast on first suite error in CI; run all in watch mode.
     bail: process.env["CI"] ? 1 : 0,
 
-    // ONE retry in CI, and it exists for a single named upstream defect: the
-    // playwright provider's module mocker keeps its route bookkeeping on the
-    // shared browser CONTEXT keyed by `sessionId:moduleUrl`, and its async
-    // `register` / `clear` RPCs interleave across test FILES. `clear` walks a
-    // per-session id set that is never pruned, so a teardown landing after the
-    // next file has registered can `unroute` the predicate that file just
-    // installed. The real module is then served, `vi.mocked(x)` hands back the
-    // real function, and the test dies on `x.mockReturnValue is not a
-    // function`. It needs two files mocking the same URL, which is every file
-    // that touches ../api-client.js. Upstream discussion:
-    // https://github.com/vitest-dev/vitest/discussions/8602 (open; 4.1.11 is
-    // latest, so there is no version to bump to). Measured here at ~1 run in
-    // 25 after the browser-mode migration, and with `bail: 1` above it takes
-    // the whole suite with it.
+    // ONE retry in CI. It does NOT cover the interception race the anchor route
+    // above closes: that one links the real module for a whole FILE, so both
+    // attempts fail identically in the same hook and a retry never recovered it.
+    // What it still covers is the OTHER shared-context defect,
+    // `route.fulfill: Route is already handled!` (vitest-dev/vitest#10819, open),
+    // which `fileParallelism: false` reduces but has not eliminated — it was
+    // still seen in CI with parallelism already off.
     //
     // A retry does NOT hide a product flake: vitest reports a test that only
     // passed on the retry as `flaky` in its own summary line, so the signal
-    // survives while the gate stops blocking on someone else's race. Deleting
-    // this is correct the moment the upstream fix ships.
+    // survives while the gate stops blocking on someone else's race.
     //
     // Dropping the provider's `mocker` to fall back to vitest's server-side
     // interceptor was tried and rejected: it works, but it re-transforms the
