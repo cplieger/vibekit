@@ -30,7 +30,7 @@
 import { truncate } from "./strings.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunAsks } from "./fundamentals/run-card.js";
-import { stateOf, withAsk, inFlight, type ExecState } from "./exec-view/status.js";
+import { stateOf, withAsk, inFlight, type ExecState, type WireStatus } from "./exec-view/status.js";
 import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
 
 /** The per-node facts `nodePlan` carries that the state tree does not.
@@ -235,7 +235,12 @@ function toNode(
   const plan = plans.get(node.nodeId);
   const kind = kindOf(node.type);
   const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks));
-  const own = withAsk(stateOf(node.status), asks.nodes.has(node.nodeId));
+  // `node.status` is typed `string` on the wire so an upstream addition falls
+  // through `stateOf` rather than failing a decode; `WireStatus` is the set this
+  // adapter writes against, and naming it here is what keeps that claim checked
+  // instead of leaving it in a comment on the type.
+  const wire: WireStatus | (string & {}) = node.status;
+  const own = withAsk(stateOf(wire), asks.nodes.has(node.nodeId));
   const out: ExecNode = {
     path: path.join("/"),
     label: node.nodeId,
