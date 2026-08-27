@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 // fakeRun returns a runCommand seam that counts invocations and returns
@@ -244,6 +246,22 @@ func TestTokenResult_OmitsEmptyOptionalFields(t *testing.T) {
 			t.Errorf("missing key %s in %v", k, res2)
 		}
 	}
+	// The reply carries NO region, and that is the contract rather than an
+	// omission: KAS derives its region from segment 4 of the profileArn, matching
+	// kiro-cli's own resolution in endpoints.rs, so a region sent here would be a
+	// second answer to a question the ARN already settles — and the two can
+	// disagree. Pinned HERE rather than at the responder because this function
+	// decides the key set: respondKiroAccessToken forwards the map verbatim with
+	// nothing added, so a responder-level assertion would need kiroToken made an
+	// interface in production to reach a function that cannot add a key.
+	if len(res2) != 5 {
+		t.Errorf("result keys = %v, want exactly the five vend keys and no more", res2)
+	}
+	for _, d := range []*tokenData{d, d2} {
+		if _, ok := d.result()["region"]; ok {
+			t.Errorf("result = %v, must not carry a region: KAS derives it from the profileArn", d.result())
+		}
+	}
 }
 
 func TestToken_NoResolver(t *testing.T) {
@@ -299,6 +317,103 @@ func TestToken_NearExpiryReinvokes(t *testing.T) {
 	}
 }
 
+// A caller that was already waiting when the current token arrived adopts it
+// instead of spending a second invocation on the same answer.
+//
+// The sibling above pins the SEQUENTIAL near-expiry case, which must still
+// re-ask; this pins the concurrent one, which must not. Without it the mutex only
+// serializes: each caller in turn finds the cache inside the leeway window and
+// spends its own 30s-bounded subprocess on an answer the caller ahead of it
+// already has, with the lock held throughout, so every chat's auth callback
+// queues behind one question. N bridges spawning at once is the ordinary case
+// this package's doc comment describes.
+//
+// Driven by setting `fetched` rather than by racing goroutines, deliberately.
+// `arrived` is read as Token's first statement, so a test cannot observe or order
+// it from outside: a goroutine slow to start records an `arrived` AFTER the fetch
+// it was supposed to be waiting for, re-invokes correctly, and fails the
+// assertion for a reason that is not the code's. A first attempt at this test
+// raced exactly that way. What `fetched` in the future MEANS is "a caller that
+// arrived before the current token landed", which is the branch's whole input.
+func TestToken_ACallerAlreadyWaitingAdoptsTheFetchedToken(t *testing.T) {
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	// One minute of life: inside the 5-minute leeway, so the ordinary cache check
+	// cannot serve it and only the coalescing branch can.
+	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Minute).Format(time.RFC3339Nano)), nil)
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("seeding Token: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("seed invoked the CLI %d times, want 1", calls)
+	}
+
+	src.fetched = time.Now().Add(time.Minute)
+
+	res, err := src.Token(t.Context())
+	if err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("CLI invoked %d times, want 1: a caller that arrived before the fetch must adopt it", calls)
+	}
+	if res["accessToken"] != "tok-abc" {
+		t.Errorf("accessToken = %v, want the shared tok-abc", res["accessToken"])
+	}
+	if res["profileArn"] == nil {
+		t.Errorf("result = %v, want the profileArn carried to the adopting caller too", res)
+	}
+}
+
+// A HARD-EXPIRED token is re-asked however recently it arrived, so the
+// coalescing branch cannot hand a waiter something KAS will reject.
+func TestToken_AWaitingCallerNeverAdoptsAnExpiredToken(t *testing.T) {
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(-time.Minute).Format(time.RFC3339Nano)), nil)
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("seeding Token: %v", err)
+	}
+
+	src.fetched = time.Now().Add(time.Minute)
+
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("CLI invoked %d times, want 2 (an expired token is re-asked however fresh its arrival)", calls)
+	}
+}
+
+// A token whose expiry cannot be judged is never handed to a waiting caller
+// either, so adding the coalescing branch widened nothing.
+//
+// What ENFORCES that is `s.cached = nil` on the unparseable-expiry path, which
+// fails the branch's first condition — not the `fetched` reset beside it, which is
+// redundant while that holds (a mutation removing it survives, checked). The reset
+// stays because the three fields are one state, "no usable cache", and a later
+// relaxation of the nil check would otherwise inherit a stamp saying the absent
+// token was fresh. This test pins the PROPERTY; the comment names the guard so
+// nobody reads the assertion as covering the reset.
+func TestToken_UnjudgeableExpiryIsNotSharedWithWaiters(t *testing.T) {
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	src.runCommand = fakeRun(&calls, envelope("not-a-timestamp"), nil)
+
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	// Simulate a caller that arrived before that fetch landed. With the cache
+	// cleared there is nothing for it to adopt, so it must re-ask.
+	src.fetched = time.Now().Add(time.Hour)
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("second Token: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("CLI invoked %d times, want 2 (an unjudgeable token is shared with nobody)", calls)
+	}
+}
+
 func TestToken_UnparseableExpiryVendsButNeverCaches(t *testing.T) {
 	calls := 0
 	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
@@ -327,6 +442,97 @@ func TestToken_CLIFailureWrapped(t *testing.T) {
 	_, err := src.Token(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "get-kas-token") {
 		t.Fatalf("err = %v, want wrapped get-kas-token failure", err)
+	}
+}
+
+// A failure inside the near-expiry window vends the cached token rather than
+// reporting an auth failure, because that token is still valid.
+//
+// The window is not narrow in practice: the cache is read in exactly ONE place,
+// gated on more than reuseLeeway remaining, so for the last five minutes of every
+// token's life each callback re-invokes the CLI. Any blip there — a hiccup during
+// the CLI's own refresh, or cliTimeout firing — used to become a hard auth
+// failure: the sign-in banner, a failed turn on a session that was working, and
+// readiness flipping unready, while a token good for minutes sat in the struct.
+// It mirrors the reference host, which swallows a background refresh failure for
+// exactly this reason.
+func TestToken_TransientFailureVendsTheStillValidCache(t *testing.T) {
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	// One minute of life: inside the 5-minute leeway, so every call re-invokes.
+	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Minute).Format(time.RFC3339Nano)), nil)
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("seeding Token: %v", err)
+	}
+
+	for name, run := range map[string]func(context.Context, string, []string) ([]byte, error){
+		"the CLI failed":       fakeRun(&calls, "", errors.New("exit status 1")),
+		"its output was junk":  fakeRun(&calls, "kiro-cli: some human text", nil),
+		"it reported no login": fakeRun(&calls, `{"kind":"error","data":{"reason":"not logged in"}}`, nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			src.runCommand = run
+			res, err := src.Token(t.Context())
+			if err != nil {
+				t.Fatalf("Token returned %v, want the cached token vended instead", err)
+			}
+			if res["accessToken"] != "tok-abc" {
+				t.Errorf("accessToken = %v, want the cached tok-abc", res["accessToken"])
+			}
+			if res["profileArn"] == nil {
+				t.Errorf("result = %v, want the cached profileArn carried too: a token vended without it fails the first turn", res)
+			}
+		})
+	}
+}
+
+// A HARD-expired cache is not vended: there is nothing valid to fall back to, so
+// the failure is the honest answer. This is the other side of the guard, and
+// without it the fallback would hand KAS a token it has already rejected.
+func TestToken_TransientFailureWithAnExpiredCacheStillFails(t *testing.T) {
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(-time.Minute).Format(time.RFC3339Nano)), nil)
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("seeding Token: %v", err)
+	}
+
+	src.runCommand = fakeRun(&calls, "", errors.New("exit status 1"))
+	if _, err := src.Token(t.Context()); err == nil {
+		t.Fatal("Token returned nil error on a failure with an expired cache, want the failure reported")
+	}
+}
+
+// A token with no CodeWhisperer profile ARN is vended AND logged.
+//
+// Without the log this is a silent hard turn failure that reads as a service
+// outage: KAS derives its region from segment 4 of that ARN, so initialize and
+// session/new both succeed and the FIRST prompt dies with -32000
+// ModelRegistryUnavailableError, user-facing text "Kiro could not load the
+// available models. Please try again." — which invites retrying forever with
+// nothing in the logs pointing at the profile.
+func TestToken_WarnsWhenTheProfileArnIsMissing(t *testing.T) {
+	c := capture.Default(t)
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	src.runCommand = fakeRun(&calls, fmt.Sprintf(
+		`{"kind":"getKasToken","data":{"accessToken":"tok-abc","expiresAt":%q}}`,
+		time.Now().Add(time.Hour).Format(time.RFC3339Nano),
+	), nil)
+
+	res, err := src.Token(t.Context())
+	if err != nil {
+		t.Fatalf("Token returned %v, want the token vended anyway", err)
+	}
+	if res["accessToken"] != "tok-abc" {
+		t.Errorf("accessToken = %v, want it vended: the token is valid and refusing it would be worse", res["accessToken"])
+	}
+	if _, ok := res["profileArn"]; ok {
+		t.Errorf("result = %v, want no profileArn key at all rather than an empty one", res)
+	}
+	if c.CountExact("kiro-cli vended a token with no CodeWhisperer profile ARN; "+
+		"the model registry and account usage will fail for this session") == 0 {
+		t.Error("no warn logged for a token with no profile ARN; want the failure named rather than inferred")
 	}
 }
 

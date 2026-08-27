@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -171,7 +172,16 @@ type CLISource struct {
 
 	cached *tokenData
 	expiry time.Time
-	mu     sync.Mutex
+	// fetched is when the cached token came back from the CLI, and it is what
+	// makes a burst of bridge spawns cost ONE subprocess instead of N.
+	//
+	// The mutex alone does not do that. It serializes, so N callers run one at a
+	// time — but inside the reuseLeeway window the cache check fails for each of
+	// them in turn, so every one spends its own 30s-bounded invocation on an
+	// answer the caller ahead of it already has, with the lock held throughout.
+	// That is every chat's auth callback queued behind the same question.
+	fetched time.Time
+	mu      sync.Mutex
 }
 
 // NewCLISource builds a CLISource over the given binary resolver and
@@ -185,9 +195,26 @@ func NewCLISource(resolve func() string, env func() []string) *CLISource {
 // the CLI at most once per reuseLeeway window; concurrent callers share one
 // invocation via the mutex.
 func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
+	// Read BEFORE the lock, because the whole question below is whether this
+	// caller was already waiting when the token it is about to ask for arrived.
+	arrived := time.Now()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cached != nil && time.Until(s.expiry) > reuseLeeway {
+		return s.cached.result(), nil
+	}
+	// Inside the leeway window the CLI is re-asked, but only once per burst: a
+	// caller that arrived before the current token was fetched adopts it rather
+	// than spending a second subprocess on the same answer. Exact rather than a
+	// tuned coalescing window — it never serves a token fetched before the caller
+	// asked, so a caller that genuinely wants a newer one still gets one, which is
+	// what keeps the sequential near-expiry re-ask (its own test) intact.
+	//
+	// The expiry re-check is not redundant with it: this branch is reached only
+	// when the token is inside the leeway window, and a hard-expired one must be
+	// re-asked however recently it arrived.
+	if s.cached != nil && s.fetched.After(arrived) && time.Now().Before(s.expiry) {
 		return s.cached.result(), nil
 	}
 	if s.resolve == nil {
@@ -207,21 +234,65 @@ func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		// stdout is NOT echoed into the error: on success it holds the
 		// token, and a partial failure could still carry one.
-		return nil, fmt.Errorf("kiro-cli get-kas-token: %w", err)
+		return s.vendCachedOrFail(fmt.Errorf("kiro-cli get-kas-token: %w", err))
 	}
 	data, err := parseTokenEnvelope(out)
 	if err != nil {
-		return nil, err
+		return s.vendCachedOrFail(err)
+	}
+	if data.ProfileArn == "" {
+		// A hard turn failure that reads as a service outage, so it is logged
+		// rather than left to be inferred. KAS derives its region from segment 4
+		// of this ARN and feeds it to the service-client factory, so without it
+		// initialize and session/new both succeed and then the FIRST prompt dies
+		// with -32000 ModelRegistryUnavailableError, user-facing text "Kiro could
+		// not load the available models. Please try again." — which invites
+		// retrying forever. _kiro/account/getUsage fails the same way.
+		//
+		// Vended anyway rather than refused: the token is valid, KAS tolerates the
+		// absence on accounts where it can resolve a region another way, and
+		// turning a working session into a client-side refusal would be worse than
+		// the failure this warns about.
+		slog.Warn("kiro-cli vended a token with no CodeWhisperer profile ARN; "+
+			"the model registry and account usage will fail for this session",
+			"remedy", "kiro-cli login")
 	}
 	exp, tErr := time.Parse(time.RFC3339Nano, data.ExpiresAt)
 	if tErr != nil {
 		// Vend it anyway (KAS parses expiresAt itself) but never cache a
-		// token whose expiry we cannot judge.
-		s.cached, s.expiry = nil, time.Time{}
+		// token whose expiry we cannot judge. That also withdraws it from the
+		// coalescing branch above, which is right: a token nothing can judge must
+		// not be handed to a caller that did not ask for it.
+		s.cached, s.expiry, s.fetched = nil, time.Time{}, time.Time{}
 		return data.result(), nil
 	}
-	s.cached, s.expiry = data, exp
+	s.cached, s.expiry, s.fetched = data, exp, time.Now()
 	return data.result(), nil
+}
+
+// vendCachedOrFail answers a failed invocation with the cached token when that
+// token is still valid, and with the error otherwise. MUST be called with s.mu
+// held.
+//
+// The window this covers is the only one there is: the cache is read in exactly
+// one place, gated on more than reuseLeeway remaining, so between T-5min and T-0
+// every callback re-invokes the CLI and ANY blip there — a network hiccup during
+// the CLI's own refresh, or cliTimeout firing — used to become a hard auth
+// failure. The user saw the sign-in banner and a failed turn on a session that
+// was working, and readiness flipped unready, while a token good for up to five
+// more minutes sat in this struct.
+//
+// It mirrors the reference host's own contract: a background refresh failure is
+// logged and swallowed precisely because the cached token is still valid. The
+// cache is deliberately NOT cleared — the next callback retries the CLI, and
+// discarding a live credential to record a transient failure is the defect.
+func (s *CLISource) vendCachedOrFail(err error) (map[string]any, error) {
+	if s.cached != nil && time.Now().Before(s.expiry) {
+		slog.Warn("kiro-cli token refresh failed; vending the cached token, which is still valid",
+			"expires_in", time.Until(s.expiry).Round(time.Second), "error", err)
+		return s.cached.result(), nil
+	}
+	return nil, err
 }
 
 // result renders the callback reply map. Optional fields are omitted when
