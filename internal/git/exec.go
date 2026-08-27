@@ -256,18 +256,23 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		// .git/config.
 		"-c", "core.fsmonitor=",
 	}, args...)
-	// nolintlint is listed because gosec's verdict here is not stable, so its
-	// own unused-directive check cannot be trusted at this line. G702 is a
-	// G7xx TAINT rule, and the taint analysis does not terminate reliably on a
-	// package this shaped — many exec sites with variadic args (upstream
-	// securego/gosec#1608 reports it hanging outright on the same shape).
-	// Measured on golangci-lint 2.13.1: identical source, cache cleaned, gosec
-	// reported G702 on 6 of 8 runs and stayed silent on 2, and each silent run
-	// makes nolintlint fail the build for a directive that is required on every
-	// other run. Deleting the directive is not the fix; it just swaps which
-	// half of the coin flip goes red. G204 does not cover this site (the binary
-	// is the literal below, so the old AST rule never fires), which is why the
-	// suppression rests entirely on the unstable rule.
+	// The directive below suppresses the unused-directive check as well, because
+	// gosec's verdict at this line is not stable. G702 is a G7xx TAINT rule, and
+	// the taint analysis does not terminate reliably on a package shaped like
+	// this one — many exec sites with variadic args (upstream
+	// securego/gosec#1608 reports the same family hanging outright on the same
+	// shape). Measured on golangci-lint 2.13.1: identical source, cache cleaned,
+	// gosec reported G702 on 6 of 8 runs and stayed silent on 2, and each silent
+	// run fails the build for a directive the other six require. Deleting the
+	// directive is not the fix; it swaps which half of the coin flip goes red,
+	// because a reporting run then fails on the finding. G204 does not cover
+	// this site either — the binary is the literal below and the old AST rule
+	// only fires on a variable one — so the suppression rests entirely on the
+	// unstable rule.
+	//
+	// Do not open a comment line here with the token that names that check:
+	// gocritic's whyNoLint matches `// *nolint`, so a line whose prose starts
+	// with it is read as a second, explanation-less directive.
 	//nolint:gosec,nolintlint // G702: the subcommand is checked against allowedSubcommands above and the binary name is the literal "git"; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
 	cmd := exec.CommandContext(ctx, "git", hardenedArgs...)
 	cmd.Dir = dir
