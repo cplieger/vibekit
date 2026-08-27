@@ -142,7 +142,7 @@
     },
     "java": {
       "source": "manual",
-      "version": "jdk-21.0.9+10",
+      "version": "jdk-21.0.12+8",
       "upstream": {
         "datasource": "github-releases",
         "depName": "adoptium/temurin21-binaries",
