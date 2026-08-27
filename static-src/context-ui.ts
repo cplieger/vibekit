@@ -25,6 +25,14 @@ import { getCachedModels } from "./picker.js";
 import { getLastEffort } from "./session-context.js";
 
 const CONTEXT_RESERVE_TOKENS = 16_000;
+// Mirrors KAS's own `truncationThreshold`, which `session/load`'s `_meta` now
+// publishes as `contextUsage.truncationThreshold: 95` (measured on kiro-cli
+// 2.20.0). It is a fallback: the live cutoff is the reserve above, derived from
+// the model's real window, which survives a model with a much larger context
+// where a flat percentage leaves tens of thousands of tokens of slack. Recorded
+// as a mirror rather than consumed from the wire — the bridge does not decode
+// that `_meta`, and threading two numbers through the chat record to agree with
+// a constant that already agrees would buy nothing.
 const DEFAULT_CUTOFF_PCT = 95;
 
 // `contextFull` is declared in prompt-input.ts — the module that owns the send

@@ -433,10 +433,19 @@ type ACPSessionUpdateEnvelope struct {
 // object, not on `params` — reading it off params yields false for every
 // frame, which looks exactly like a wire that never sets it.
 //
-// Live frames leave it absent. Catalog frames that arrive during a load
-// (`available_commands_update`, `config_option_update`) are deliberately NOT
-// tagged: they carry the session's CURRENT state, not its history, so they
-// must keep reaching the live handlers.
+// Live frames leave it absent, and so does anything describing the session's
+// CURRENT state rather than its history — those must keep reaching the live
+// handlers during a load. That is the rule, stated as a rule rather than as the
+// list of members it had when the gate was written, because the list GROWS: it
+// was `available_commands_update` and `config_option_update`, and a 2.20.0
+// capture (13 of 23 frames tagged) added `_kiro/mcp/status`,
+// `_kiro/tools/didChange`, `_kiro/governance/state`, `_kiro/powers/items_changed`
+// and `_kiro/progressive_context/items_changed`. Those five are separate
+// JSON-RPC methods and never reach this struct, so the enumeration was not
+// wrong, only narrower than the property — and reading it as the property is
+// what invites the inverse gate. Do NOT replace this with "drop everything
+// during a load": that suppresses a notification family nobody listed, which is
+// exactly what a per-frame tag exists to avoid.
 type ACPSessionUpdateBase struct {
 	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 	Meta struct {

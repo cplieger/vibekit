@@ -123,7 +123,8 @@ func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]vib
 	// cwd scopes the answer to this workspace. Unscoped, the call returns
 	// every session on the box: 399 rows across 55 directories in the
 	// measurement, against 2 for the workspace. `sessionListScopes` advertises
-	// only "workspace", so this is the intended narrowing.
+	// ["workspace", "user"], and "user" IS that unscoped answer, so this is the
+	// intended narrowing rather than the only scope offered.
 	raw, err := u.session.rawCall(cctx, "session list call", vibekit.MethodSessionList,
 		callerParams(map[string]any{"cwd": rt.lifecycle.workDir}))
 	if err != nil {
