@@ -36,6 +36,8 @@ type fakeBridge struct {
 	effort       string
 	currentMode  string
 	servedModels []string
+	modes        []vibekit.SessionMode
+	models       []vibekit.SessionModel
 	sessionTitle string
 	calls        []string
 	// startOpts records the StartOpts of the most recent Start, so a test can
@@ -236,8 +238,20 @@ func (b *fakeBridge) SessionTitle() string {
 	return b.sessionTitle
 }
 
-func (b *fakeBridge) Modes() []vibekit.SessionMode   { return nil }
-func (b *fakeBridge) Models() []vibekit.SessionModel { return nil }
+// Modes and Models report what the fake session advertises. Nil by default,
+// which is what a FRESHLY constructed bridge answers for anything a session/load
+// result omitted — the shape applyLoadedSessionFacts has to survive.
+func (b *fakeBridge) Modes() []vibekit.SessionMode {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.modes
+}
+
+func (b *fakeBridge) Models() []vibekit.SessionModel {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.models
+}
 
 // ServedModels reports the ids this fake session advertises. Nil by default, which
 // vibekit.ModelServed reads as "entitlement unknowable" and allows — so a test that

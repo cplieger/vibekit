@@ -1813,6 +1813,118 @@ func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	}
 }
 
+// A session that resolves settings.workflows against what vibekit declared says
+// so in the log, because nothing else would.
+//
+// The session door works only because KiroSessionMetaSchema ends in
+// `.passthrough()`, which is somebody else's schema property. If it goes, vibekit
+// keeps sending the key and every send-side test keeps passing while the agent
+// loses its whole workflowChatTools array with no error and no -32601 — the exact
+// defect the workflows row exists to fix, recurring with no signal.
+func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
+	for name, tc := range map[string]struct {
+		result   string
+		wantWarn bool
+	}{
+		// The declared value is true by default (the row is send:true with no env
+		// override set), so a resolved false is the failure.
+		"resolved false against a declared true": {
+			result:   `{"sessionId":"s","_meta":{"workflowsEnabled":false}}`,
+			wantWarn: true,
+		},
+		"agreement is silent": {
+			result:   `{"sessionId":"s","_meta":{"workflowsEnabled":true}}`,
+			wantWarn: false,
+		},
+		// A build that does not report the member says nothing about it, and a
+		// warning there would fire on every session against every older KAS.
+		"an absent member is not a disagreement": {
+			result:   `{"sessionId":"s","_meta":{}}`,
+			wantWarn: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := capture.Default(t)
+			b := New("/nonexistent", "/work")
+			if err := runLoadSession(t, b, "fb-model",
+				&vibekit.RPCResponse{Result: json.RawMessage(tc.result)}); err != nil {
+				t.Fatalf("loadSession returned error: %v", err)
+			}
+			got := c.CountExact("session resolved the workflows setting against what vibekit declared; "+
+				"the agent's workflow tools are not what this spawn asked for") > 0
+			if got != tc.wantWarn {
+				t.Errorf("warn logged = %v, want %v", got, tc.wantWarn)
+			}
+		})
+	}
+}
+
+// A load result that omits the `model` option leaves the previous catalog
+// standing, and so does one that omits the `modes` block.
+//
+// This is the common case rather than an edge: KAS resolves ListAvailableModels
+// asynchronously, so a session/load result routinely carries `mode`, `autopilot`
+// and `contentCollection` with `model` ABSENT and the full catalog arrives on the
+// config_option_update notification afterwards (measured on kiro-cli 2.20.0). An
+// EXPIRED auth token produces the same shape from a different cause.
+//
+// applyModelConfigOptionLocked implements the keep by `continue`ing past every
+// other option id and never reaching its body, which is the kind of behaviour a
+// refactor removes without noticing — nothing pinned it before, and the layer
+// above (agent.tryLoadSession) was overwriting its result anyway.
+func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
+	b := New("/nonexistent", "/work")
+
+	// Seed the catalog the way a live session does, then resume.
+	seeded := &vibekit.RPCResponse{
+		Result: json.RawMessage(`{"sessionId":"acp-session-xyz",` +
+			`"modes":{"currentModeId":"vibe","availableModes":[{"id":"vibe","name":"Default"}]},` +
+			`"configOptions":[{"id":"model","currentValue":"seeded-model","options":[` +
+			`{"value":"seeded-model","name":"Seeded","description":"ok"},` +
+			`{"value":"gone-model","name":"Gone","description":"[Deprecated] retired"}]}]}`),
+	}
+	if _, err := runNewSession(t, b, &vibekit.StartOpts{}, seeded); err != nil {
+		t.Fatalf("seeding newSession returned error: %v", err)
+	}
+	if len(b.Models()) != 1 || len(b.ServedModels()) != 2 || len(b.Modes()) != 1 {
+		t.Fatalf("seed did not take: models=%v served=%v modes=%v", b.Models(), b.ServedModels(), b.Modes())
+	}
+
+	// Two resume shapes, because ABSENT and PRESENT-BUT-EMPTY are guarded by
+	// different code and only the first is reachable by deleting a gate: the
+	// modes block is guarded by `r.Modes != nil` when it is missing and by the
+	// length check when it arrives empty.
+	for name, result := range map[string]string{
+		// The measured 2.20.0 shape: three options, `model` absent, no modes block.
+		"no block at all": `{"sessionId":"acp-session-xyz","configOptions":[` +
+			`{"id":"mode","currentValue":"vibe"},` +
+			`{"id":"autopilot","currentValue":"on"},` +
+			`{"id":"contentCollection","currentValue":"on"}]}`,
+		// A block that reports no catalog rather than an empty catalog.
+		"empty block": `{"sessionId":"acp-session-xyz",` +
+			`"modes":{"currentModeId":"vibe","availableModes":[]},` +
+			`"configOptions":[{"id":"model","currentValue":"seeded-model","options":[]}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			resumed := &vibekit.RPCResponse{Result: json.RawMessage(result)}
+			if _, err := runLoadSessionOpts(t, b,
+				&vibekit.StartOpts{SessionID: "acp-session-xyz"}, resumed); err != nil {
+				t.Fatalf("loadSession returned error: %v", err)
+			}
+
+			if got := b.Models(); len(got) != 1 || got[0].ID != "seeded-model" {
+				t.Errorf("Models() = %v, want the seeded catalog kept (an absent option is not an empty one)", got)
+			}
+			if got := b.ServedModels(); len(got) != 2 {
+				t.Errorf("ServedModels() = %v, want the seeded served set kept: it gates entitlement, so emptying it refuses a model the account holds", got)
+			}
+			if got := b.Modes(); len(got) != 1 || got[0].ID != "vibe" {
+				t.Errorf("Modes() = %v, want the seeded mode list kept; nothing refreshes modes afterwards, so this loss is permanent for the session", got)
+			}
+		})
+	}
+}
+
 // A resumed session gets the chat's reasoning-effort level re-applied.
 //
 // Nothing reconciles Chat.Effort against what a loaded session reports (unlike

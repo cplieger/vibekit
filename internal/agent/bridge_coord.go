@@ -403,10 +403,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		if !ex {
 			return false
 		}
-		c.CurrentModeID = sb.bridge.CurrentMode()
-		c.AvailableModes = sb.bridge.Modes()
-		c.AvailableModels = sb.bridge.Models()
-		adoptKASTitle(c, title)
+		applyLoadedSessionFacts(c, sb.bridge, title)
 		return true
 	}); mErr != nil {
 		slog.Error("refresh session metadata", "chat_id", chatID, "error", mErr)
@@ -445,6 +442,52 @@ func adoptKASTitle(c *vibekit.Chat, title string) {
 		return
 	}
 	c.Name = title
+}
+
+// applyLoadedSessionFacts copies what a RESUMED session reported onto the chat
+// record, writing each field only when the load result actually carried it.
+//
+// The guard belongs here rather than one layer down. applySessionResultLocked
+// already implements keep-on-absent — an absent modes block or an absent `model`
+// config option leaves the previous list standing — but that keep is worth
+// nothing on a resume, because the bridge is FRESHLY constructed on this path
+// (spawnBridge returns early for a bridge that already existed), so every
+// accessor answers the zero value for whatever the result omitted. Writing those
+// zeros destroyed the catalog the chat file had carried since its previous
+// session: the guard existed and this layer overwrote its result.
+//
+// The result omits them routinely rather than exceptionally. Measured on
+// kiro-cli 2.20.0: `session/load` resolves ListAvailableModels asynchronously,
+// so reading the result as it arrives yields `mode`, `autopilot` and
+// `contentCollection` with `model` ABSENT, and the real catalog follows on the
+// config_option_update notification. An expired auth token produces the same
+// shape from a different cause.
+//
+// The two halves cost differently and the mode half is the worse one. Models
+// self-heal when a later config_option_update carries the full list, so there
+// the damage was a wiped record plus a race against the repair. Modes have NO
+// repair channel — HandleConfigOptionUpdate deliberately does not refresh them,
+// because the config catalog omits the bundled/workspace source tag the picker
+// groups by — so an emptied mode list stayed empty for the rest of the session,
+// and a CurrentModeID reaching "" also drops the mode the next session/new
+// would have asked for.
+//
+// session/new keeps its unconditional writes on purpose (persistNewSessionMetadata
+// below): there the overwrite IS the check, because reportModeNotApplied compares
+// the mode asked for against the mode that landed, and a fresh session that
+// advertised no catalog is the documented "entitlement unknowable" state rather
+// than a loss.
+func applyLoadedSessionFacts(c *vibekit.Chat, facts acpSessionFacts, title string) {
+	if mode := facts.CurrentMode(); mode != "" {
+		c.CurrentModeID = mode
+	}
+	if modes := facts.Modes(); len(modes) > 0 {
+		c.AvailableModes = modes
+	}
+	if models := facts.Models(); len(models) > 0 {
+		c.AvailableModels = models
+	}
+	adoptKASTitle(c, title)
 }
 
 func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID vibekit.ChatID, bridge acpSessionFacts) {
