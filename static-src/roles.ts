@@ -77,6 +77,19 @@ const BUILTIN_MODES: readonly SessionMode[] = [
     description: "Autonomous agent execution",
     source: "bundled",
   },
+  // Kiro ships this one as a bundled AGENT rather than a workflow mode, so it
+  // has no entry in iconForMode and takes the generic hexagon — which is what a
+  // workspace custom agent gets too, and is correct: it is not one of the six
+  // workflow arms. It belongs in this list anyway, because the list's job is to
+  // seed a bridgeless chat with what session/new WILL report, and upstream
+  // reports seven bundled entries (measured on kiro-cli 2.20.0). Without it the
+  // pre-fetch picker was short by one.
+  {
+    id: "semantic_reviewer",
+    name: "Semantic Reviewer",
+    description: "Reviews code changes at the behavioral level rather than the syntactic level",
+    source: "bundled",
+  },
 ];
 
 /** Server-fetched pre-session mode catalog (kiro-cli 2.14
@@ -159,6 +172,23 @@ export function mergeCatalogAndWorkspace(
     });
   }
   return out;
+}
+
+/** Whether a mode's `source` puts it under the picker's "Custom agents"
+ *  divider rather than in the bundled top group.
+ *
+ *  Answers by testing what IS bundled rather than by enumerating the two custom
+ *  values, and the difference only shows up on a value that does not exist yet:
+ *  excluding `workspace|global` puts anything upstream adds later
+ *  (`organization`, `team`) in the BUNDLED group, which is the one group a
+ *  reader trusts to be Kiro's own. An absent or empty source is bundled,
+ *  because that is what BUILTIN_MODES carries before the catalog fetch resolves.
+ *
+ *  Lives here beside scopeLabel so the wire's source vocabulary has ONE home;
+ *  the picker's grouping and its row labels cannot then disagree about what
+ *  "custom" means. */
+export function isCustomSource(source: string | undefined): boolean {
+  return source !== undefined && source !== "" && source !== "bundled";
 }
 
 /** Human-facing label for a mode's scope. The wire's `source` values are
