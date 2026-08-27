@@ -37,7 +37,7 @@ import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { reconcile } from "./reconcile.js";
-import type { CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
+import type { AptPackage, CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
 
 /** Trailing-edge debounce for the catalog search input. */
 function debounce(fn: () => void, ms: number): () => void {
@@ -56,7 +56,8 @@ function debounce(fn: () => void, ms: number): () => void {
 type ListEntry =
   | { kind: "label"; label: string }
   | { kind: "tool"; tool: ToolInfo }
-  | { kind: "system"; name: string; installed: boolean };
+  | { kind: "system"; name: string; installed: boolean }
+  | { kind: "apt"; pkg: AptPackage };
 
 // The two toolbelt job kinds a reader launches from a named pill. The other
 // four — install, uninstall, disable, reconcile — are launched from a tool row
@@ -452,6 +453,27 @@ class ToolsManager {
         flat.push({ kind: "system", name: s.name, installed: s.installed });
       }
     }
+    // The Debian packages nobody here installed: what the image asked apt
+    // for, plus anything a reader or an agent added in the shell. The engine
+    // excludes apt's own auto-installed dependencies and Debian's
+    // required/important priorities, so this is the set somebody CHOSE rather
+    // than the base OS — a handful of rows, not the whole dpkg database.
+    // Read-only: no manifest row stands behind one, so nothing updates it and
+    // nothing here can remove it. A reader who wants one managed adds it by
+    // name, which creates the row.
+    //
+    // An ABSENT list and an empty one are different. Absent means apt is not
+    // this host's package manager, or the enumeration failed, and an inventory
+    // that cannot answer says nothing rather than reporting an empty box as a
+    // fact. Both render as no group, which is the one place the distinction
+    // does not need to reach the reader.
+    const apt = d.apt_packages ?? [];
+    if (apt.length > 0) {
+      flat.push({ kind: "label", label: "installed with apt, outside the engine" });
+      for (const pkg of apt) {
+        flat.push({ kind: "apt", pkg });
+      }
+    }
 
     // Drop any non-keyed empty-state placeholder before reconciling.
     for (const child of [...container.children]) {
@@ -489,6 +511,8 @@ class ToolsManager {
             return join("label", e.label);
           case "system":
             return join("sys", e.name);
+          case "apt":
+            return join("apt", e.pkg.name, e.pkg.version ?? "");
           case "tool":
             // State fields participate in the key so any transition
             // (installing spinner, error, new version) remounts the
@@ -528,6 +552,8 @@ class ToolsManager {
             return el("div", { className: "list-group-label" }, e.label);
           case "system":
             return this.renderSystemRow(e.name);
+          case "apt":
+            return renderAptRow(e.pkg);
           case "tool":
             return this.renderToolRow(e.tool);
         }
@@ -1036,6 +1062,28 @@ function stateDot(t: ToolInfo): HTMLElement {
     role: "img",
     "aria-label": label,
   });
+}
+
+/** One Debian package the engine does not manage. Shaped like the system row
+ *  — a dot, a name, a right-aligned note — because it is the same kind of row:
+ *  something that is present and is not this table's to change. Its note is the
+ *  `apt` chip rather than the word "system", so the row says where it came
+ *  from, and it carries the installed version, which is the fact a reader is
+ *  here for. No controls: removing an apt package from a tools table would
+ *  uninstall something the engine never installed and cannot prove nothing else
+ *  needs. */
+function renderAptRow(pkg: AptPackage): HTMLDivElement {
+  const meta: HTMLElement[] = [el("span", { className: "tool-source-chip" }, "apt")];
+  if (pkg.version !== undefined && pkg.version !== "") {
+    meta.push(el("span", { className: "list-row-meta" }, pkg.version));
+  }
+  return el(
+    "div",
+    { className: "list-row list-row-system" },
+    el("span", { className: "tool-state-dot tool-state-ok", "aria-hidden": "true" }),
+    el("span", { className: "list-row-name" }, pkg.name),
+    el("span", { className: "list-row-actions" }, ...meta),
+  ) as HTMLDivElement;
 }
 
 function metaText(t: ToolInfo): string {
