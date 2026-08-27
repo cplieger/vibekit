@@ -1299,6 +1299,18 @@ export interface SearchHit {
  * is set only alongside Unavailable.
  */
   reason?: string;
+  /**
+ * Match names which field the query hit — see [toolbelt.MatchKind].
+ * Empty for the featured set (there was no query) and for an
+ * unavailable hit (that block is informational, not ranked against
+ * the rest).
+ * //
+ * It is on the wire because a client cannot work it out: aliases are
+ * not projected here, so a hit on `rg` looks exactly like a
+ * description match on ripgrep's summary. A client that wants to
+ * group, label or filter the weakest tier needs the answer stated.
+ */
+  match?: string;
   featured?: boolean;
   lsp?: boolean;
   /**
@@ -1321,18 +1333,30 @@ export interface SearchHit {
 }
 
 /**
- * SearchResponse is the search route's body. Results arrive in blocks,
- * in this order: installable catalog entries, Debian packages, then,
- * only when the caller asked for them, the catalog entries no install
- * source exists for. Each block is capped independently by the engine, so
- * a client renders them as sections without re-sorting and one corpus
- * cannot crowd out another.
+ * SearchResponse is the search route's body.
  * //
- * The third block is OPT-IN via `?unavailable=1`. Absent by default
- * because a dialog offering things to install has no use for a row it
- * cannot act on, while an agent reading this API does: it would rather be
- * told a tool is known and why it cannot be installed than get an empty
- * result and conclude the tool does not exist.
+ * Results carry the INSTALLABLE hits first — catalog entries and Debian
+ * packages merged into ONE relevance order — then, only when the caller
+ * asked for them, the catalog entries no install source exists for.
+ * //
+ * The two installable corpora are merged rather than blocked, because
+ * blocking them made the best answer unreachable. Both are scored by the
+ * same [toolbelt.Match] tiers, so concatenating them put every catalog
+ * hit ahead of every Debian one whatever it scored: "python" answered
+ * with sixteen catalog tools that merely mention Python in their
+ * descriptions, and `python3` — a name-prefix hit, and the thing the
+ * reader was looking for — sat seventeenth. Each corpus is still capped
+ * independently by the engine, so one cannot crowd the other out of the
+ * merge.
+ * //
+ * The unavailable block stays last and is deliberately NOT merged: it is
+ * informational rather than actionable, so ranking it against rows a
+ * caller can install would put a dead end above a live option. It is
+ * OPT-IN via `?unavailable=1`, absent by default because a dialog
+ * offering things to install has no use for a row it cannot act on, while
+ * an agent reading this API does — it would rather be told a tool is
+ * known and why it cannot be installed than get an empty result and
+ * conclude the tool does not exist.
  * //
  * AptAvailable distinguishes "no Debian package matched" from "the
  * package list could not be consulted", which look identical in an empty
