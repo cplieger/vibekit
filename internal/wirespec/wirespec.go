@@ -113,6 +113,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolJob](),
 	wiregen.TypeRef[vibekit.ToolInfo](),
 	wiregen.TypeRef[vibekit.SystemTool](),
+	wiregen.TypeRef[vibekit.AptPackage](),
 	wiregen.TypeRef[vibekit.ToolsList](),
 	wiregen.TypeRef[vibekit.ToolCatalogHit](),
 	wiregen.TypeRef[vibekit.ToolsSearchResponse](),

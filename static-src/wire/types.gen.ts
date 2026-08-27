@@ -128,6 +128,22 @@ export interface ApprovalFile {
 }
 
 /**
+ * AptPackage is one installed Debian package this engine does not manage:
+ * something a user or an agent installed in the shell. Read-only — there is
+ * no manifest row behind it, so nothing updates it and nothing can remove it
+ * from here.
+ * //
+ * Reported so a consumer's tools surface can answer "what is on this box"
+ * without pretending the engine installed it. A reader who wants one managed
+ * adds it by name, which creates the row; until then the engine touches
+ * neither the package nor apt's record of it.
+ */
+export interface AptPackage {
+  name: string;
+  version?: string;
+}
+
+/**
  * Attachment is a file attached to a prompt. The server reads the file
  * and decides whether to send it as a document content block (PDF, DOCX,
  * etc.) or a text path reference based on the extension.
@@ -558,7 +574,7 @@ export interface Inventory {
  * inventory that cannot answer says nothing rather than reporting an
  * empty box as a fact.
  */
-  apt_packages?: unknown[];
+  apt_packages?: AptPackage[];
 }
 
 /** Issue represents a forge issue. */
@@ -1278,6 +1294,11 @@ export interface SearchHit {
  * entries without an upstream version source (manual installs).
  */
   version?: string;
+  /**
+ * Reason names the registry backend that defeated the compiler, and
+ * is set only alongside Unavailable.
+ */
+  reason?: string;
   featured?: boolean;
   lsp?: boolean;
   /**
@@ -1290,7 +1311,6 @@ export interface SearchHit {
  * as it did before this pair existed.
  */
   unavailable?: boolean;
-  reason?: string;
   /**
  * Apt marks a Debian package rather than a catalog entry. Version
  * then carries the distro's candidate, which routinely differs from

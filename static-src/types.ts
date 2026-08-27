@@ -89,6 +89,7 @@ export type {
   ToolCallPayload,
   ToolCallUpdatePayload,
   CatalogInfo,
+  AptPackage,
   Inventory,
   Job,
   JobResponse,

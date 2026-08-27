@@ -25,6 +25,12 @@ type ToolInfo = toolbelt.ToolInfo
 // SystemTool is one image-baked binary surfaced read-only in the UI.
 type SystemTool = toolbelt.SystemTool
 
+// AptPackage is one installed Debian package the engine does not manage:
+// something a user or an agent installed in the shell. Aliased so the
+// client gets a real type for Inventory.AptPackages rather than an
+// unknown element.
+type AptPackage = toolbelt.AptPackage
+
 // ToolsList is the GET /api/tools response body.
 type ToolsList = toolbelt.Inventory
 

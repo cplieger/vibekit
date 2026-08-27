@@ -764,6 +764,59 @@ describe("pre-bundled tools", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The apt group: Debian packages the engine does not manage.
+// ---------------------------------------------------------------------------
+
+describe("unmanaged apt packages", () => {
+  /** The read-only rows, minus the system group's own (`git`, from listWith). */
+  function aptRows(): string[] {
+    return [...document.querySelectorAll<HTMLElement>("#tools-list .list-row-system")]
+      .map((r) => r.querySelector(".list-row-name")?.textContent ?? "")
+      .filter((n) => n !== "git");
+  }
+
+  function rowFor(name: string): HTMLElement | undefined {
+    return [...document.querySelectorAll<HTMLElement>("#tools-list .list-row")].find(
+      (r) => r.querySelector(".list-row-name")?.textContent === name,
+    );
+  }
+
+  it("lists them under their own label, with the version and an apt chip", () => {
+    initWith({
+      ...listWith([tool({ name: "ripgrep" })]),
+      apt_packages: [
+        { name: "gcc", version: "4:14.2.0-1" },
+        { name: "libc6-dev", version: "2.41-12" },
+      ],
+    });
+    const labels = [
+      ...document.querySelectorAll<HTMLElement>("#tools-list .list-group-label"),
+    ].map((e) => e.textContent ?? "");
+    expect(labels).toContain("installed with apt, outside the engine");
+    expect(aptRows()).toEqual(["gcc", "libc6-dev"]);
+
+    const gcc = rowFor("gcc");
+    expect(gcc?.querySelector(".tool-source-chip")?.textContent).toBe("apt");
+    expect(gcc?.textContent).toContain("4:14.2.0-1");
+    // Read-only, and asserted rather than assumed: no manifest row stands
+    // behind one, so the engine can neither update it nor prove nothing else
+    // needs it. A control here would offer an action that cannot be honoured.
+    expect(gcc?.querySelector("button")).toBeNull();
+    expect(gcc?.querySelector("input")).toBeNull();
+  });
+
+  it("renders no group when the engine could not answer, and none when it answered empty", () => {
+    // Absent and empty mean different things — apt is not this host's package
+    // manager or the enumeration failed, against nothing unmanaged is installed
+    // — and this is the one place the distinction does not reach the reader.
+    initWith(listWith([tool({ name: "ripgrep" })]));
+    expect(aptRows()).toEqual([]);
+    initWith({ ...listWith([tool({ name: "ripgrep" })]), apt_packages: [] });
+    expect(aptRows()).toEqual([]);
+  });
+});
+
 describe("row honesty chips", () => {
   function chips(name: string): string[] {
     return [...(rowFor(name)?.querySelectorAll<HTMLElement>(".tool-source-chip") ?? [])].map(
