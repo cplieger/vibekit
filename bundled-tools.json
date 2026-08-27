@@ -35,9 +35,19 @@
     "forge on every update) or a manual: install script.",
     "",
     "upstream: {...} is read by cplieger/.github's Renovate customManager",
-    "to bump a hand-pinned version. Only a manual entry needs one -- a",
-    "release: entry resolves its own latest tag, which is why glab, clangd",
-    "and kotlin-language-server carry no pin at all.",
+    "to bump a hand-pinned version, and only a manual entry can need one.",
+    "tea is the last entry that does. glab carries no pin because it is",
+    "sourceless, so the catalog owns its version; clangd,",
+    "kotlin-language-server and java carry none because a release: source",
+    "resolves its own latest tag on every update; rust tracks a rustup",
+    "channel and jdtls a -latest URL, so neither has a version to compare.",
+    "",
+    "release: {...} is toolbelt's asset-selection hint, and a release that",
+    "publishes more than one plausible archive needs it. Adoptium ships 313",
+    "files per release, so `matching` narrows to the JRE before the",
+    "file-name heuristic runs -- without it the matcher scores every",
+    "candidate at zero, breaks the tie on name length and takes the",
+    "static-libs archive. `bins` names what to link into bin/.",
     "",
     "Manual install commands run under bash with VERSION, VERSION_NOPFX",
     "(leading v stripped), BIN, TOOLS, OPT and the ARCH_*_OR_* variables in",
@@ -141,16 +151,15 @@
       "probe": "cargo"
     },
     "java": {
-      "source": "manual",
-      "version": "jdk-21.0.9+10",
-      "upstream": {
-        "datasource": "github-releases",
-        "depName": "adoptium/temurin21-binaries",
-        "versioning": "regex:^jdk-(?<major>\\d+)(?:\\.(?<minor>\\d+))?(?:\\.(?<patch>\\d+))?\\+(?<build>\\d+)(?:\\.(?<revision>\\d+))?$"
+      "source": "release:github/adoptium/temurin21-binaries",
+      "release": {
+        "matching": "-jre",
+        "bins": [
+          "java",
+          "keytool"
+        ]
       },
-      "featured": true,
       "description": "OpenJDK 21 JRE (Eclipse Temurin). Required by jdtls and kotlin-language-server; shared between them.",
-      "install": "safe_tag=$(printf '%s' \"${VERSION}\" | sed 's/+/%2B/g') && rel=$(printf '%s' \"${VERSION}\" | sed 's/jdk-//;s/+/_/') && curl -fsSL \"https://github.com/adoptium/temurin21-binaries/releases/download/${safe_tag}/OpenJDK21U-jre_${ARCH_X86_64_OR_AARCH64}_linux_hotspot_${rel}.tar.gz\" | tar -xz -C \"${OPT}\" --strip-components=1 && ln -sf \"${OPT}/bin/java\" \"${BIN}/java\" && ln -sf \"${OPT}/bin/keytool\" \"${BIN}/keytool\"",
       "probe": "java"
     },
     "jdtls": {
@@ -161,7 +170,7 @@
         "java"
       ],
       "description": "Java LSP (Eclipse JDT language server). Requires the java runtime.",
-      "install": "mkdir -p \"${OPT}/dist\" && curl -fsSL https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar -xz -C \"${OPT}/dist\" && printf '#!/bin/sh\\nexec \"%s/opt/java/bin/java\" -jar \"%s\"/dist/plugins/org.eclipse.equinox.launcher_*.jar -configuration \"%s/dist/config_linux\" -data \"${HOME}/.cache/jdtls-workspace\" \"$@\"\\n' \"${TOOLS}\" \"${OPT}\" \"${OPT}\" > \"${BIN}/jdtls\" && chmod 755 \"${BIN}/jdtls\"",
+      "install": "mkdir -p \"${OPT}/dist\" && curl -fsSL https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar -xz -C \"${OPT}/dist\" && printf '#!/bin/sh\\nJAVA=\"%s/bin/java\"\\n[ -x \"$JAVA\" ] || JAVA=java\\nexec \"$JAVA\" -jar \"%s\"/dist/plugins/org.eclipse.equinox.launcher_*.jar -configuration \"%s/dist/config_linux\" -data \"${HOME}/.cache/jdtls-workspace\" \"$@\"\\n' \"${TOOLS}\" \"${OPT}\" \"${OPT}\" > \"${BIN}/jdtls\" && chmod 755 \"${BIN}/jdtls\"",
       "probe": "jdtls"
     },
     "kotlin-language-server": {
