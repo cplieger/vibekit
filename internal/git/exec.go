@@ -256,7 +256,19 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		// .git/config.
 		"-c", "core.fsmonitor=",
 	}, args...)
-	//nolint:gosec // G702: the subcommand is checked against allowedSubcommands above and the binary name is the literal "git"; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
+	// nolintlint is listed because gosec's verdict here is not stable, so its
+	// own unused-directive check cannot be trusted at this line. G702 is a
+	// G7xx TAINT rule, and the taint analysis does not terminate reliably on a
+	// package this shaped — many exec sites with variadic args (upstream
+	// securego/gosec#1608 reports it hanging outright on the same shape).
+	// Measured on golangci-lint 2.13.1: identical source, cache cleaned, gosec
+	// reported G702 on 6 of 8 runs and stayed silent on 2, and each silent run
+	// makes nolintlint fail the build for a directive that is required on every
+	// other run. Deleting the directive is not the fix; it just swaps which
+	// half of the coin flip goes red. G204 does not cover this site (the binary
+	// is the literal below, so the old AST rule never fires), which is why the
+	// suppression rests entirely on the unstable rule.
+	//nolint:gosec,nolintlint // G702: the subcommand is checked against allowedSubcommands above and the binary name is the literal "git"; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
 	cmd := exec.CommandContext(ctx, "git", hardenedArgs...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(),
