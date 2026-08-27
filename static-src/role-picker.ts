@@ -34,6 +34,7 @@ import {
   catalogBaseModes,
   displayModeName,
   iconForMode,
+  isCustomSource,
   labelForMode,
   mergeCatalogAndWorkspace,
   normalizeModeID,
@@ -115,8 +116,10 @@ function renderOptions(list: HTMLElement): void {
   // bundled | global | workspace; both global and workspace custom agents
   // belong under the "Custom agents" divider, so only "bundled" (and any
   // unset source, which the built-in catalog uses) stays in the top group.
-  const isCustomAgent = (p: PickerMode): boolean =>
-    p.mode.source === "workspace" || p.mode.source === "global";
+  //
+  // The predicate is roles.ts's, beside scopeLabel, so this grouping and the
+  // row labels read one source vocabulary.
+  const isCustomAgent = (p: PickerMode): boolean => isCustomSource(p.mode.source);
   const bundled = modes.filter((p) => !isCustomAgent(p));
   const workspace = modes.filter(isCustomAgent);
 
