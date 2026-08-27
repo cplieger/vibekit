@@ -169,11 +169,17 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	// the same reason: a workflow step reaching for a knowledge base or an MCP tool
 	// is the same agent doing the same work.
 	if sErr := bridge.Start(cctx, &vibekit.StartOpts{
-		Lifetime:   rs.lifecycle.shutdownCtx,
-		Presets:    securityPresets(cctx, rs.lifecycle.configDir),
-		ToolSearch: toolSearchEnabled(cctx, rs.lifecycle.configDir),
-		Knowledge:  knowledgeEnabled(cctx, rs.lifecycle.configDir),
-		Memory:     memoryEnabled(cctx, rs.lifecycle.configDir),
+		Lifetime: rs.lifecycle.shutdownCtx,
+		// Named rather than left to buildACPArgs's empty-string default, so every
+		// spawn in this process takes the engine from the one pin. The default
+		// resolves to v3 too, so this changes no argv; what it changes is that a
+		// future edit to the default cannot silently launch a run bridge on the
+		// legacy engine while every chat bridge stays on v3.
+		AgentEngine: resolveAgentEngine(),
+		Presets:     securityPresets(cctx, rs.lifecycle.configDir),
+		ToolSearch:  toolSearchEnabled(cctx, rs.lifecycle.configDir),
+		Knowledge:   knowledgeEnabled(cctx, rs.lifecycle.configDir),
+		Memory:      memoryEnabled(cctx, rs.lifecycle.configDir),
 	}); sErr != nil {
 		return "", "", fmt.Errorf("run bridge start: %w", sErr)
 	}
@@ -377,11 +383,12 @@ func (rs *Runs) Retry(ctx context.Context, workflowID string) error {
 
 	bridge := rs.bridges.factory()
 	if err := bridge.Start(cctx, &vibekit.StartOpts{
-		Lifetime:   rs.lifecycle.shutdownCtx,
-		Presets:    securityPresets(cctx, rs.lifecycle.configDir),
-		ToolSearch: toolSearchEnabled(cctx, rs.lifecycle.configDir),
-		Knowledge:  knowledgeEnabled(cctx, rs.lifecycle.configDir),
-		Memory:     memoryEnabled(cctx, rs.lifecycle.configDir),
+		Lifetime:    rs.lifecycle.shutdownCtx,
+		AgentEngine: resolveAgentEngine(),
+		Presets:     securityPresets(cctx, rs.lifecycle.configDir),
+		ToolSearch:  toolSearchEnabled(cctx, rs.lifecycle.configDir),
+		Knowledge:   knowledgeEnabled(cctx, rs.lifecycle.configDir),
+		Memory:      memoryEnabled(cctx, rs.lifecycle.configDir),
 	}); err != nil {
 		return fmt.Errorf("retry bridge start: %w", err)
 	}
