@@ -340,9 +340,11 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatI
 	//     differ between vibekit's record and the wire, event messages exist
 	//     only in vibekit's, and a turn newer than the replay's window may be
 	//     one KAS never flushed. See mergeProjection.
-	//  3. The gate is PER-FRAME, not per-load. available_commands_update and
-	//     config_option_update arrive untagged during a load because they carry
-	//     current state, not history, and must keep reaching the live handlers.
+	//  3. The gate is PER-FRAME, not per-load. KAS leaves a frame untagged when
+	//     it carries current state rather than history, so it must keep reaching
+	//     the live handlers during a load — available_commands_update and
+	//     config_option_update are the two that arrive as session/update
+	//     sub-kinds, and the set grows (see translate.ACPSessionUpdateBase).
 	if base.Meta.Kiro.Replay {
 		// A load in flight consumes the frame into its projection; anything
 		// else is dropped, because a replay frame with no load to belong to has
