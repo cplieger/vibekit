@@ -1,6 +1,13 @@
 // Table-driven tests for highlight.ts tokenizer across all supported languages.
 import { describe, it, expect } from "vitest";
-import { highlightByLang, highlight, detectLang, normalizeLang } from "./highlight.js";
+import {
+  highlightByLang,
+  highlight,
+  detectLang,
+  normalizeLang,
+  resolveLangHint,
+  highlightMarked,
+} from "./highlight.js";
 
 // ---------------------------------------------------------------------------
 // Helper: extract spans from highlightByLang output.
@@ -651,5 +658,142 @@ describe("the punctuation table", () => {
       expect(extractSpans(fresh(ch, "go"))).toEqual([]);
       expect(fresh(ch, "go")).toBe(ch);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveLangHint: a fence tag, a bare extension, or a file PATH.
+//
+// The path arm is the one that had never worked. Both diff call sites pass a
+// path, `normalizeLang` compares the whole string, so it matched nothing and
+// every diff in the app rendered unhighlighted while the code and its comments
+// claimed otherwise.
+// ---------------------------------------------------------------------------
+
+describe("resolveLangHint", () => {
+  const cases: { name: string; tag: string; want: string }[] = [
+    { name: "a bare extension", tag: "go", want: "go" },
+    { name: "a fence alias", tag: "typescript", want: "ts" },
+    { name: "a bare filename", tag: "main.go", want: "go" },
+    { name: "a repo-relative path", tag: "internal/git/exec.go", want: "go" },
+    { name: "an absolute path", tag: "/workspace/vibekit/static-src/diff.ts", want: "ts" },
+    { name: "a dotted path with an unknown extension", tag: "notes/todo.zzz", want: "" },
+    { name: "a dotfile with no extension", tag: ".gitignore", want: "" },
+    { name: "a path whose directory holds the dot", tag: "v1.2/README", want: "" },
+    { name: "an unknown bare word", tag: "nonsense", want: "" },
+    { name: "the empty string", tag: "", want: "" },
+  ];
+  for (const tc of cases) {
+    it(tc.name, () => {
+      expect(resolveLangHint(tc.tag)).toBe(tc.want);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// highlightMarked: two independent channels on one line. A token straddling a
+// mark boundary is SPLIT and each piece keeps its syntax class, so the classes
+// compose on one element rather than one displacing the other.
+// ---------------------------------------------------------------------------
+
+describe("highlightMarked", () => {
+  it("is exactly highlightByLang when there is nothing to mark", () => {
+    const code = `x := "s" // c`;
+    expect(highlightMarked(code, "go", [], "m")).toBe(highlightByLang(code, "go"));
+  });
+
+  it("keeps the same syntax classes as the unmarked path", () => {
+    // The fast path and the marked walk must produce the same syntax markup, or
+    // a line's colours would depend on whether it happened to pair with a
+    // counterpart. A split token repeats its class, so runs collapse first.
+    const code = `x := "abcd" // c`;
+    const hlClasses = (html: string): string[] =>
+      Array.from(html.matchAll(/<span class="([^"]*)"/g), (m) =>
+        (m[1] ?? "")
+          .split(" ")
+          .filter((c) => c.startsWith("hl-"))
+          .join(" "),
+      ).filter((c) => c !== "");
+    const collapseRuns = (xs: string[]): string[] => xs.filter((x, i) => x !== xs[i - 1]);
+    const marked = highlightMarked(code, "go", [{ start: 6, end: 8 }], "m");
+    expect(collapseRuns(hlClasses(marked))).toEqual(
+      collapseRuns(hlClasses(highlightByLang(code, "go"))),
+    );
+  });
+
+  it("carries both classes on one span when a mark covers a whole token", () => {
+    // `"s"` is one string token at offsets 5..8.
+    const html = highlightMarked(`x := "s"`, "go", [{ start: 5, end: 8 }], "m");
+    expect(html).toContain('class="hl-string m"');
+  });
+
+  it("splits a token at a mark boundary and keeps its syntax class on both", () => {
+    // Mark only `ab` of the 4-character string token `"abcd"` starts at 1.
+    const html = highlightMarked(`"abcd"`, "go", [{ start: 1, end: 3 }], "m");
+    expect(html).toBe(
+      '<span class="hl-string">&quot;</span><span class="hl-string m">ab</span>' +
+        '<span class="hl-string">cd&quot;</span>',
+    );
+  });
+
+  it("marks plain text with the mark class alone", () => {
+    expect(highlightMarked("abcd", "go", [{ start: 1, end: 3 }], "m")).toBe(
+      'a<span class="m">bc</span>d',
+    );
+  });
+
+  it("marks an unhighlightable language too, so a mark never depends on lang", () => {
+    expect(highlightMarked("abcd", "", [{ start: 0, end: 2 }], "m")).toBe(
+      '<span class="m">ab</span>cd',
+    );
+    expect(highlightMarked("abcd", "md", [{ start: 0, end: 2 }], "m")).toBe(
+      '<span class="m">ab</span>cd',
+    );
+  });
+
+  it("applies several marks in one line", () => {
+    const html = highlightMarked(
+      "aXbXc",
+      "",
+      [
+        { start: 1, end: 2 },
+        { start: 3, end: 4 },
+      ],
+      "m",
+    );
+    expect(html).toBe('a<span class="m">X</span>b<span class="m">X</span>c');
+  });
+
+  it("escapes marked text, so a mark is never an HTML injection", () => {
+    const html = highlightMarked(`<script>`, "", [{ start: 0, end: 8 }], "m");
+    expect(html).toBe('<span class="m">&lt;script&gt;</span>');
+    expect(html).not.toContain("<script>");
+  });
+
+  it("reproduces the input exactly once the tags are stripped", () => {
+    const code = `\tname := strings.TrimSpace(os.Getenv("NAME"))`;
+    const html = highlightMarked(
+      code,
+      "go",
+      [
+        { start: 9, end: 27 },
+        { start: 43, end: 44 },
+      ],
+      "m",
+    );
+    const text = html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+    expect(text).toBe(code);
+  });
+
+  it("tolerates a mark that runs to the end of the line", () => {
+    expect(highlightMarked("abc", "", [{ start: 1, end: 3 }], "m")).toBe(
+      'a<span class="m">bc</span>',
+    );
   });
 });

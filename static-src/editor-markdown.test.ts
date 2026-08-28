@@ -31,6 +31,8 @@ vi.mock("./highlight.js", () => ({
   // these, so no path under test changes behavior.
   highlightByLang: undefined,
   normalizeLang: undefined,
+  resolveLangHint: undefined,
+  highlightMarked: undefined,
   highlight: (s: string) => s,
 }));
 // `get` is reached through the tab factory, which reads the chat store for a chat

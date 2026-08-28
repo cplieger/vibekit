@@ -225,6 +225,63 @@ export function highlight(code: string, filename: string): string {
   return highlightByLang(code, extToLang(ext));
 }
 
+/** Highlight source code and additionally mark character ranges with
+ *  `markClass`, for a caller that has a second, independent thing to say about
+ *  parts of one line — the diff pane's word-level changes.
+ *
+ *  A token straddling a mark boundary is SPLIT, and each piece keeps its syntax
+ *  class, so the two channels compose on one element (`hl-string diff-word-add`)
+ *  rather than one displacing the other. Ranges are half-open `[start, end)`
+ *  character offsets into `code`, and the walk relies on them being ascending,
+ *  non-overlapping and non-empty for its own progress — `wordDiff` is the only
+ *  producer and satisfies all three. An empty list is exactly
+ *  `highlightByLang`, which is the common case: most rows carry no mark. */
+export function highlightMarked(
+  code: string,
+  lang: string,
+  marks: readonly { readonly start: number; readonly end: number }[],
+  markClass: string,
+): string {
+  if (marks.length === 0) {
+    return highlightByLang(code, lang);
+  }
+  const tokens = tokenizable(lang) ? tokenize(code, lang) : [{ type: "text", value: code }];
+  const parts: string[] = [];
+  let at = 0;
+  let m = 0;
+  for (const t of tokens) {
+    const end = at + t.value.length;
+    // Walk the token, cutting it wherever the next mark starts or ends.
+    let cut = at;
+    while (cut < end) {
+      // Advance past marks that ended before this token.
+      while (m < marks.length && (marks[m]?.end ?? 0) <= cut) {
+        m++;
+      }
+      const mark = marks[m];
+      const inMark = mark !== undefined && mark.start <= cut;
+      const stop = Math.min(end, inMark ? mark.end : (mark?.start ?? end));
+      const text = code.slice(cut, stop);
+      const cls = [t.type === "text" ? "" : `hl-${t.type}`, inMark ? markClass : ""]
+        .filter((c) => c !== "")
+        .join(" ");
+      parts.push(cls === "" ? escText(text) : `<span class="${cls}">${escText(text)}</span>`);
+      cut = stop;
+    }
+    at = end;
+  }
+  return parts.join("");
+}
+
+/** Whether `lang` reaches the tokenizer at all. `md` and unknown languages are
+ *  escaped passthrough (tier 3), so they carry no syntax spans. */
+function tokenizable(lang: string): boolean {
+  if (lang === "" || lang === "md") {
+    return false;
+  }
+  return SUPPORTED_LANGUAGES.has(lang) || lang in KNOWN_EXTENSIONS || lang in FENCED_ALIASES;
+}
+
 /** Detect language from filename extension. */
 export function detectLang(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -250,4 +307,19 @@ export function normalizeLang(tag: string): string {
   }
   // Fenced-code aliases (covers "javascript", "typescript", "python", etc.).
   return FENCED_ALIASES[s] ?? "";
+}
+
+/** Resolve a language from whatever a caller happens to hold: a fence tag, a
+ *  bare extension, or a FILE PATH. Returns "" when nothing matches.
+ *
+ *  The path arm is why this exists. `normalizeLang` compares the whole string,
+ *  so `"internal/git/exec.go"` matched nothing and every diff in the app
+ *  rendered unhighlighted — both call sites pass a path, and both of them, plus
+ *  the option's own doc comment, claimed otherwise. */
+export function resolveLangHint(tag: string): string {
+  const direct = normalizeLang(tag);
+  if (direct !== "") {
+    return direct;
+  }
+  return tag.includes(".") ? detectLang(tag) : "";
 }

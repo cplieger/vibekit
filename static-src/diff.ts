@@ -345,6 +345,203 @@ function diffMiddle(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Intra-line (word-level) diff.
+//
+// A line-level diff says a line changed; it does not say WHERE. On a modified
+// line the reader's question is which characters moved, and the row tint cannot
+// answer it. VS Code paints two layers for this: the line background plus a
+// stronger background on the changed characters only.
+// ---------------------------------------------------------------------------
+
+/** A half-open character range `[start, end)` within one line. */
+export interface CharRange {
+  /** 0-based index of the first character in the range. */
+  readonly start: number;
+  /** 0-based index one past the last character. */
+  readonly end: number;
+}
+
+/** The changed character ranges of one del/add line pair. */
+export interface WordDiff {
+  /** Ranges into the OLD line that the new line does not have. */
+  readonly del: CharRange[];
+  /** Ranges into the NEW line that the old line did not have. */
+  readonly add: CharRange[];
+}
+
+/** Token budget per side. Past this a line is long enough that no reader is
+ *  hunting individual words in it, and the m×n table stops being free. */
+const MAX_WORD_TOKENS = 400;
+
+/** Changed-range budget per side. Past this the two lines share so little that
+ *  per-word marks read as confetti and say less than the row tint alone. */
+const MAX_WORD_RUNS = 8;
+
+function isWordCharCode(c: number): boolean {
+  return (
+    (c >= 48 && c <= 57) || // 0-9
+    (c >= 65 && c <= 90) || // A-Z
+    (c >= 97 && c <= 122) || // a-z
+    c === 95 || // _
+    c === 36 || // $
+    c >= 0x80 // keep non-ASCII identifiers whole
+  );
+}
+
+function isSpaceCode(c: number): boolean {
+  return c === 32 || c === 9;
+}
+
+interface WordToken {
+  readonly text: string;
+  readonly start: number;
+}
+
+/** Split a line into identifier runs, whitespace runs, and single other
+ *  characters. Every character lands in exactly one token, so a token's `start`
+ *  plus its length addresses the original line. */
+function splitWords(s: string): WordToken[] {
+  const out: WordToken[] = [];
+  let i = 0;
+  while (i < s.length) {
+    const start = i;
+    const c = s.charCodeAt(i);
+    if (isWordCharCode(c)) {
+      while (i < s.length && isWordCharCode(s.charCodeAt(i))) {
+        i++;
+      }
+    } else if (isSpaceCode(c)) {
+      while (i < s.length && isSpaceCode(s.charCodeAt(i))) {
+        i++;
+      }
+    } else {
+      i++;
+    }
+    out.push({ text: s.slice(start, i), start });
+  }
+  return out;
+}
+
+/** Append a token's span to `out`, merging it into the previous range when the
+ *  two touch — so `foo(` and `bar` produce one mark, not three. */
+function pushRange(out: CharRange[], tok: WordToken): void {
+  const end = tok.start + tok.text.length;
+  const last = out[out.length - 1];
+  if (last?.end === tok.start) {
+    out[out.length - 1] = { start: last.start, end };
+    return;
+  }
+  out.push({ start: tok.start, end });
+}
+
+/** Character ranges that differ between two versions of ONE line, or null when
+ *  a per-word answer would not beat the row tint.
+ *
+ *  Null is returned when the lines share no non-blank token (the whole line IS
+ *  the change) or when the change is scattered past `MAX_WORD_RUNS`. A null
+ *  result is not a failure: the caller keeps the line-level tint and paints no
+ *  word marks. */
+export function wordDiff(oldLine: string, newLine: string): WordDiff | null {
+  if (oldLine === newLine || oldLine === "" || newLine === "") {
+    return null;
+  }
+  const a = splitWords(oldLine);
+  const b = splitWords(newLine);
+  if (a.length > MAX_WORD_TOKENS || b.length > MAX_WORD_TOKENS) {
+    return null;
+  }
+
+  const at = a.map((t) => t.text);
+  const bt = b.map((t) => t.text);
+  const t = lcsTable(at, bt);
+
+  const del: CharRange[] = [];
+  const add: CharRange[] = [];
+  let matchedInk = 0;
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (at[i] === bt[j]) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- i < a.length
+      const tok = a[i]!;
+      if (tok.text.trim() !== "") {
+        matchedInk += tok.text.length;
+      }
+      i++;
+      j++;
+    } else if ((t[i + 1]?.[j] ?? 0) >= (t[i]?.[j + 1] ?? 0)) {
+      pushRange(del, a[i]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      i++;
+    } else {
+      pushRange(add, b[j]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      j++;
+    }
+  }
+  while (i < a.length) {
+    pushRange(del, a[i]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    i++;
+  }
+  while (j < b.length) {
+    pushRange(add, b[j]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    j++;
+  }
+
+  // No shared ink means every token on both sides changed, so the marks would
+  // just restate the row tint. This also covers the whole-line rewrite: a
+  // matched token always leaves a gap in its side's ranges, so "one range
+  // spanning the entire line" cannot happen with matched ink — a separate gate
+  // for it was written, measured over 607,620 short line pairs, never fired
+  // once, and was deleted rather than left as a guard nothing can reach.
+  if (matchedInk === 0) {
+    return null;
+  }
+  if (del.length > MAX_WORD_RUNS || add.length > MAX_WORD_RUNS) {
+    return null;
+  }
+  return { del, add };
+}
+
+/** Word-level marks for every modified line in a line diff, keyed by the line
+ *  itself. A del and an add are one MODIFICATION when they sit in the same run
+ *  of changed lines at the same offset within it; anything unpaired is a pure
+ *  insert or delete and gets no marks.
+ *
+ *  Pairing by offset within a run rather than by adjacency is what survives the
+ *  del/add interleaving `lineDiff` is free to emit. */
+export function wordMarks(lines: readonly DiffLine[]): Map<DiffLine, CharRange[]> {
+  const marks = new Map<DiffLine, CharRange[]>();
+  let dels: DiffLine[] = [];
+  let adds: DiffLine[] = [];
+
+  const flush = (): void => {
+    const pairs = Math.min(dels.length, adds.length);
+    for (let k = 0; k < pairs; k++) {
+      const d = dels[k]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      const s = adds[k]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      const wd = wordDiff(d.text, s.text);
+      if (wd !== null) {
+        marks.set(d, wd.del);
+        marks.set(s, wd.add);
+      }
+    }
+    dels = [];
+    adds = [];
+  };
+
+  for (const l of lines) {
+    if (l.kind === "del") {
+      dels.push(l);
+    } else if (l.kind === "add") {
+      adds.push(l);
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return marks;
+}
+
 /** Window a diff to WHOLE HUNKS with surrounding context, capped on total rows.
  *
  *  This replaced `truncateChanged(diff, 3)`, whose unit was wrong rather than

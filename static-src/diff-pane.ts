@@ -16,8 +16,8 @@
 // compare popup.
 // ---------------------------------------------------------------------------
 
-import { lineDiff, type DiffLine } from "./diff.js";
-import { highlightByLang, normalizeLang } from "./highlight.js";
+import { lineDiff, wordMarks, type CharRange, type DiffLine } from "./diff.js";
+import { highlightMarked, resolveLangHint } from "./highlight.js";
 import { el } from "@cplieger/reactive";
 
 export interface DiffPaneOpts {
@@ -40,9 +40,16 @@ export interface DiffPaneOpts {
    *  signal stays on the row BACKGROUND plus the `+`/`-` marker, never on the
    *  text colour: text colour is the only channel highlighting has. */
   unified?: boolean;
-  /** Language hint for syntax highlighting in `unified` mode (a file extension
-   *  or a highlighter language id). Ignored in two-pane mode, where a row can
-   *  be half of a pair and highlighting one side of a deletion is misleading. */
+  /** Language hint for syntax highlighting: a file PATH, a bare extension, or a
+   *  highlighter language id (`resolveLangHint` accepts all three). Applies to
+   *  BOTH shapes.
+   *
+   *  It used to be unified-only, on the reasoning that highlighting one side of
+   *  a deletion is misleading. That contradicted its own sibling: the unified
+   *  shape highlights deletions deliberately, because "what did it replace my
+   *  function with" is frequently the actual question, and a reader who clicked
+   *  through from an inline preview landed on a flatter rendering than the peek
+   *  that sent them. Both shapes highlight both sides now. */
   lang?: string;
   /** Callback for "Ask about this" button on diff hunks. Receives the
    *  hunk text (old + new lines). If not set, no button is shown. */
@@ -94,7 +101,29 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
 
   const unified = opts.unified === true;
   const limit = opts.maxRows ?? Number.POSITIVE_INFINITY;
+  const lang = opts.lang !== undefined && opts.lang !== "" ? resolveLangHint(opts.lang) : "";
   let rowCount = 0;
+
+  // An all-context diff is not an empty diff, and rendering it as two identical
+  // file listings says nothing — the reader sees a wall of unmarked code and
+  // reads it as broken markup. This is reachable on the ordinary path: a chat's
+  // changed-file link diffs HEAD against the working tree, so once the write is
+  // committed the two agree.
+  if (!lines.some((l) => l.kind !== "ctx")) {
+    container.appendChild(
+      el(
+        "div",
+        { className: "diff-none" },
+        lines.length === 0 ? "Empty file" : "No changes between these versions",
+      ),
+    );
+    return container;
+  }
+
+  // Word-level marks pair each modified line with its counterpart, so a
+  // one-character edit reads as a one-character edit rather than as two whole
+  // changed lines. Computed once for the whole diff, before any windowing.
+  const marks = wordMarks(lines);
 
   if (unified) {
     container.classList.add("diff-pane-unified");
@@ -104,7 +133,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
       if (rowCount >= limit) {
         break;
       }
-      col.appendChild(makeUnifiedRow(line, lineNumbers, opts.lang));
+      col.appendChild(makeUnifiedRow(line, lineNumbers, lang, marks.get(line)));
       rowCount++;
     }
     return finishPane(container, lines, rowCount, opts);
@@ -118,7 +147,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     if (rowCount >= limit) {
       break;
     }
-    appendRow(leftCol, rightCol, line, lineNumbers);
+    appendRow(leftCol, rightCol, line, lineNumbers, lang, marks.get(line));
     rowCount++;
   }
   finishPane(container, lines, rowCount, opts);
@@ -223,7 +252,12 @@ function finishPane(
  *  every row IS a code line. Deleted lines are highlighted too — "what did it
  *  replace my function with" is frequently the actual question, so they stay
  *  fully legible rather than being dimmed to a strikethrough. */
-function makeUnifiedRow(line: DiffLine, lineNumbers: boolean, lang?: string): HTMLDivElement {
+function makeUnifiedRow(
+  line: DiffLine,
+  lineNumbers: boolean,
+  lang: string,
+  marks?: readonly CharRange[],
+): HTMLDivElement {
   const row = el("div", { className: `diff-row diff-row-${line.kind}` }) as HTMLDivElement;
   if (lineNumbers) {
     // The NEW number where there is one, else the old: a unified row belongs to
@@ -232,22 +266,34 @@ function makeUnifiedRow(line: DiffLine, lineNumbers: boolean, lang?: string): HT
     row.appendChild(el("span", { className: "diff-gutter" }, no > 0 ? String(no) : ""));
   }
   const marker = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
-  const text = el("span", { className: "diff-line-text" });
-  const resolved = lang !== undefined && lang !== "" ? normalizeLang(lang) : "";
-  if (resolved !== "") {
-    text.innerHTML = highlightByLang(line.text, resolved);
-  } else {
-    text.textContent = line.text;
-  }
   row.appendChild(
     el(
       "span",
       { className: "diff-content" },
       el("span", { className: "diff-marker" }, marker),
-      text,
+      lineText(line, lang, marks),
     ),
   );
   return row;
+}
+
+/** The code half of a row: syntax-highlighted, with the word-level changes
+ *  marked. Shared by both shapes so a click through from the inline preview
+ *  cannot land on a plainer rendering than the peek that sent the reader. */
+function lineText(
+  line: DiffLine,
+  lang: string,
+  marks: readonly CharRange[] | undefined,
+): HTMLSpanElement {
+  const text = el("span", { className: "diff-line-text" });
+  const spans = marks ?? [];
+  if (lang === "" && spans.length === 0) {
+    text.textContent = line.text;
+    return text;
+  }
+  const wordClass = line.kind === "del" ? "diff-word-del" : "diff-word-add";
+  text.innerHTML = highlightMarked(line.text, lang, spans, wordClass);
+  return text;
 }
 
 /** Identify contiguous hunks (groups of add/del lines separated by context). */
@@ -283,27 +329,34 @@ function appendRow(
   rightCol: HTMLDivElement,
   line: DiffLine,
   lineNumbers: boolean,
+  lang: string,
+  marks?: readonly CharRange[],
 ): void {
   // Each row occupies the same vertical slot on both sides, even if one
   // side is empty — that keeps scroll-sync correct.
-  const [leftRow, rightRow] = makeRowPair(line, lineNumbers);
+  const [leftRow, rightRow] = makeRowPair(line, lineNumbers, lang, marks);
   leftCol.appendChild(leftRow);
   rightCol.appendChild(rightRow);
 }
 
-function makeRowPair(line: DiffLine, lineNumbers: boolean): [HTMLDivElement, HTMLDivElement] {
+function makeRowPair(
+  line: DiffLine,
+  lineNumbers: boolean,
+  lang: string,
+  marks?: readonly CharRange[],
+): [HTMLDivElement, HTMLDivElement] {
   const left = el("div", { className: "diff-row" }) as HTMLDivElement;
   const right = el("div", { className: "diff-row" }) as HTMLDivElement;
 
   if (line.kind === "ctx") {
-    populateRow(left, line.oldNo, line.text, "ctx", lineNumbers);
-    populateRow(right, line.newNo, line.text, "ctx", lineNumbers);
+    populateRow(left, line.oldNo, "ctx", lineNumbers, lineText(line, lang, undefined));
+    populateRow(right, line.newNo, "ctx", lineNumbers, lineText(line, lang, undefined));
   } else if (line.kind === "del") {
-    populateRow(left, line.oldNo, line.text, "del", lineNumbers);
-    populateRow(right, 0, "", "empty", lineNumbers);
+    populateRow(left, line.oldNo, "del", lineNumbers, lineText(line, lang, marks));
+    populateRow(right, 0, "empty", lineNumbers, null);
   } else {
-    populateRow(left, 0, "", "empty", lineNumbers);
-    populateRow(right, line.newNo, line.text, "add", lineNumbers);
+    populateRow(left, 0, "empty", lineNumbers, null);
+    populateRow(right, line.newNo, "add", lineNumbers, lineText(line, lang, marks));
   }
   return [left, right];
 }
@@ -311,9 +364,9 @@ function makeRowPair(line: DiffLine, lineNumbers: boolean): [HTMLDivElement, HTM
 function populateRow(
   row: HTMLDivElement,
   lineNo: number,
-  text: string,
   kind: "add" | "del" | "ctx" | "empty",
   lineNumbers: boolean,
+  text: HTMLSpanElement | null,
 ): void {
   row.classList.add(`diff-row-${kind}`);
   if (lineNumbers) {
@@ -324,12 +377,8 @@ function populateRow(
     el(
       "span",
       { className: "diff-content" },
-      el(
-        "span",
-        { className: "diff-marker" },
-        kind === "add" ? "+" : kind === "del" ? "-" : kind === "ctx" ? " " : " ",
-      ),
-      el("span", {}, text),
+      el("span", { className: "diff-marker" }, kind === "add" ? "+" : kind === "del" ? "-" : " "),
+      text ?? el("span", { className: "diff-line-text" }),
     ),
   );
 }
