@@ -87,7 +87,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	})
 	results, _ := v.([]allRepoStatus)
 	// Treated as read-only by every singleflight sharer.
-	webhttp.WriteJSON(w, map[string]any{"repos": results})
+	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: results})
 }
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +96,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	for i, d := range discovered {
 		repos[i] = d.Name
 	}
-	webhttp.WriteJSON(w, map[string]any{"repos": repos})
+	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: repos})
 }
 
 // handleShow serves a file's CONTENT at a git ref — the base side of the

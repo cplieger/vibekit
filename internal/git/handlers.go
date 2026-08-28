@@ -25,6 +25,7 @@ type Handler struct {
 	fetchFlight  singleflight.Group
 	repoFlight   singleflight.Group
 	statusFlight singleflight.Group
+	pullFlight   singleflight.Group
 	workDir      string
 	timeouts     gitTimeouts
 }
@@ -49,6 +50,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/commit", h.handleCommit)
 	mux.HandleFunc("/api/git/push", h.handlePush)
 	mux.HandleFunc("/api/git/pull", h.handlePull)
+	mux.HandleFunc("/api/git/pull-all", h.handlePullAll)
 	mux.HandleFunc("/api/git/show", h.handleShow)
 	mux.HandleFunc("/api/git/clone", h.handleClone)
 	mux.HandleFunc("/api/git/log", h.handleLog)

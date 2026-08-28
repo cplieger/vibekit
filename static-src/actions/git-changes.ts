@@ -17,6 +17,7 @@
 import { apiAction, ActionError, hasErrorString, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 import { truncate } from "../strings.js";
+import { summarizePullAll, type GitPullResult } from "../git-types.js";
 
 // --- Wire types ---
 
@@ -132,6 +133,62 @@ export const pull = apiAction<GitRepoArgs, GitCmdResult>({
   error: "Pull failed",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
+});
+
+/** Narrow the pull-all response into its per-repo rows.
+ *
+ *  A missing or non-array `repos` is a FAILURE rather than an empty pass: the
+ *  caller reports counts from it and flags repos from it, so a body it cannot
+ *  read must not resolve as "nothing to pull". Read as unknown and narrowed
+ *  field by field, because asserting the shape is what would make these checks
+ *  statically dead. */
+function decodePullAll(data: unknown): GitPullResult[] {
+  const rec = data as Record<string, unknown> | null;
+  const repos = rec?.["repos"];
+  if (!Array.isArray(repos)) {
+    throw new ActionError("unexpected response", { code: "decode" });
+  }
+  const out: GitPullResult[] = [];
+  for (const raw of repos as unknown[]) {
+    const e = raw as Record<string, unknown>;
+    const repo = e["repo"];
+    const verdict = e["verdict"];
+    if (typeof repo !== "string" || typeof verdict !== "string") {
+      throw new ActionError("unexpected response", { code: "decode" });
+    }
+    const reason = e["reason"];
+    const detail = e["detail"];
+    out.push({
+      repo,
+      verdict,
+      ...(typeof reason === "string" ? { reason } : {}),
+      ...(typeof detail === "string" ? { detail } : {}),
+    });
+  }
+  return out;
+}
+
+/** Fast-forward every repo where that is safe, and report the rest.
+ *
+ *  ONE request rather than a fan-out over `pull` above, because the judgement
+ *  "is a fast-forward safe in this tree" has to be atomic with the pull it
+ *  guards — a client asking a second endpoint and then pulling leaves a window
+ *  where the tree changes between the answer and the action. It is also the only
+ *  side that can fetch first, so `behind` is measured rather than remembered.
+ *
+ *  `dedupe` collapses a second press onto the pass already running; the server
+ *  singleflights the same key, so the two agree. No retry: a pass that timed out
+ *  may have pulled some of the repos, and re-running it would re-fetch every
+ *  remote for no new information — Refresh is the recovery. The summary toast is
+ *  computed from the result because the counts exist nowhere else. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no args
+export const pullAll = apiAction<void, GitPullResult[]>({
+  name: "git.pull_all",
+  dedupe: true,
+  request: () => ({ method: "POST", path: "/api/git/pull-all" }),
+  decode: decodePullAll,
+  success: (_args, result) => summarizePullAll(result),
+  error: "Pull all failed",
 });
 
 export const push = apiAction<GitRepoArgs, GitCmdResult>({
