@@ -409,7 +409,7 @@ describe("patchSettings saving indicator", () => {
   });
 
   it("announces only the keys that survived the no-op filter", async () => {
-    initSettingsTracking({ debug_logs: true });
+    initSettingsTracking(settingsPayload({ debug_logs: true }));
     const { showSaving } = await import("./save-indicator.js");
     patchSettings({ debug_logs: true, last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
