@@ -15,8 +15,16 @@
 
 import { describe, it, expect } from "vitest";
 import indexHtml from "../static/index.html?raw";
-import persistSrc from "./persist.ts?raw";
 import settingsSrc from "./settings.ts?raw";
+import { settingsPayload } from "./__test-helpers__/settings.js";
+
+/** Every field of the settings payload the client reads.
+ *
+ *  Read off a complete fixture rather than scanned out of the source text: the
+ *  interface is GENERATED (wire/types.gen.ts) and every member is required, so a
+ *  helper whose return type is EffectiveSettings cannot omit one and cannot carry
+ *  a name the type does not have. The compiler keeps this set honest. */
+const SETTINGS_FIELDS = new Set(Object.keys(settingsPayload()));
 
 /** Every setting that owns a slot, with the key its own write carries. */
 const EXPECTED_KEYS = [
@@ -83,13 +91,13 @@ describe("per-setting save slots (static/index.html)", () => {
     }
   });
 
-  it("names an AppSettings field for every vibekit-owned key", () => {
+  it("names a settings field for every vibekit-owned key", () => {
     const dotted = (k: string): boolean => k.includes(".");
     for (const key of EXPECTED_KEYS) {
       if (dotted(key) || key === "steering") {
         continue; // a kiro-cli key, or the steering textarea's own token
       }
-      expect(persistSrc, `${key} must be an AppSettings field`).toContain(`  ${key}?:`);
+      expect(SETTINGS_FIELDS.has(key), `${key} must be an EffectiveSettings field`).toBe(true);
     }
   });
 
@@ -106,7 +114,7 @@ describe("per-setting save slots (static/index.html)", () => {
     const found = new Set(slots().flatMap((s) => (s.dataset["saveStatus"] ?? "").split(/\s+/)));
     for (const key of NO_SLOT_KEYS) {
       expect(found.has(key), `${key} is written from outside Settings`).toBe(false);
-      expect(persistSrc, `${key} must still be an AppSettings field`).toContain(`  ${key}?:`);
+      expect(SETTINGS_FIELDS.has(key), `${key} must still be a settings field`).toBe(true);
     }
   });
 });
