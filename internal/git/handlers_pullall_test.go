@@ -320,17 +320,35 @@ func TestWorktreeState_TakesBothEndsOfARenameAsDirty(t *testing.T) {
 
 // The parse this exists for: a real conflict, read from a real repo, so the
 // assertion is against git's output rather than against a hand-written record.
+//
+// The identity goes in the repo's OWN config, because the merge below runs
+// through the production exec path and that carries no identity env — so on a
+// machine with no global git identity (a CI runner) the merge aborts at 128
+// before touching the index, no conflict exists, and the test fails for a reason
+// that has nothing to do with the parse. `runGit` supplies an identity per
+// invocation and cannot help here; the ambient environment was the fixture, so
+// this makes it part of the fixture instead.
 func TestWorktreeState_ReportsARealMergeConflict(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "test")
 	writeCommit(t, dir, "shared.txt", "base\n", "base")
 	runGit(t, dir, "checkout", "-b", "other")
 	writeCommit(t, dir, "shared.txt", "theirs\n", "theirs")
 	runGit(t, dir, "checkout", "main")
 	writeCommit(t, dir, "shared.txt", "ours\n", "ours")
-	// Expected to fail: the point is the conflicted index it leaves behind.
-	_, _ = gitCmd(t.Context(), dir, "merge", "other")
+	// Expected to fail: the point is the conflicted index it leaves behind. The
+	// output is read so a merge that failed for ANOTHER reason (no identity, a
+	// dirty tree) is reported as itself rather than as a parse miss.
+	out, err := gitCmd(t.Context(), dir, "merge", "other")
+	if err == nil {
+		t.Fatalf("merge succeeded; the fixture produced no conflict:\n%s", out)
+	}
+	if !strings.Contains(out, "CONFLICT") {
+		t.Fatalf("merge failed without conflicting, so the fixture is not armed:\n%s", out)
+	}
 
 	_, conflicted, ok := worktreeState(t.Context(), dir)
 	if !ok {
