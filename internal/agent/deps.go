@@ -62,7 +62,7 @@ type RouteRegistrar interface {
 
 // bridgeChatRecords is the chat store as the BRIDGE LIFECYCLE uses it: read a
 // chat, read its transcript to prime a fresh session, write the session metadata
-// a spawn produced, and append the turn's messages. 4 of the 9 methods
+// a spawn produced, and append the turn's messages. 4 of the 11 methods
 // *chat.Store offers.
 //
 // Delete is deliberately absent, and that absence is an app invariant rather
@@ -82,19 +82,17 @@ type bridgeChatRecords interface {
 }
 
 // chatRecords is the runtime's field type, and it is a UNION rather than a usage
-// claim. 7 of the 9 methods *chat.Store offers.
+// claim. 9 of the 11 methods *chat.Store offers.
 //
-// The runtime itself calls 3 (Get, List, Mutate). It is 7 because the runtime is what
+// The runtime itself calls 3 (Get, List, Mutate). It is 9 because the runtime is what
 // the composition root hands the store to, and it passes narrower views of the
-// same value on: bridgeChatRecords (4) to the coordinator, command.ChatStore (5)
-// to the dispatcher, translate.ChatRecords (3) to the translator. A field has to
+// same value on: bridgeChatRecords (4) to the coordinator, command.ChatStore (6)
+// to the dispatcher, translate.ChatRecords (4) to the translator. A field has to
 // satisfy every one of them.
 //
-// The 2 it does NOT carry are the finding worth recording: UpdateMessage and
-// RegisterRoutes are reached through no interface anywhere in the build.
-// RegisterRoutes is called on the concrete store by internal/server, and
-// UpdateMessage is called by nothing at all in production — see the note on
-// (*chat.Store).UpdateMessage.
+// The 2 it does NOT carry: RegisterRoutes, which internal/server takes through
+// its own routeHandler rather than this field, and UpdateMessage, which is called
+// by nothing at all in production — see the note on (*chat.Store).UpdateMessage.
 type chatRecords interface {
 	bridgeChatRecords
 
@@ -110,6 +108,10 @@ type chatRecords interface {
 	// the command dispatcher, whose cmdDeleteChat is the build's only caller;
 	// the runtime never calls it, and the coordinator's own view cannot see it.
 	Delete(ctx context.Context, id vibekit.ChatID) error
+	// UpsertTurnPlan writes the turn's single plan row. Passed on to the
+	// translator, whose HandlePlan is the build's only caller; the runtime
+	// never calls it.
+	UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 }
 
 // pushNotifier is the notification SEND half: ask whether anyone is listening,

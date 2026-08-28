@@ -39,13 +39,15 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit
 		ToolCallID  string     `json:"toolCallId"`
 		Elicitation elicitBody `json:"elicitation"`
 	}
-	p, ok := unmarshalParams[elicitParams](msg, vibekit.MethodElicitationCreate)
-	if !ok {
+	reqID := *msg.ID
+	p, err := decodeParams[elicitParams](msg)
+	if err != nil {
+		t.refuseAsk(ctx, chatID, vibekit.MethodElicitationCreate, reqID,
+			vibekit.ElicitationResult{Action: vibekit.ElicitationActionCancel}, err)
 		return
 	}
 
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
-	reqID := *msg.ID
 
 	step := t.steps.refFor(p.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventElicitationNeeded, chatID, vibekit.ElicitationNeededPayload{

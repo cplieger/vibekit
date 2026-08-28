@@ -113,10 +113,10 @@ func WithAgent(a chatEngine) Option { return func(s *Server) { s.agent = a } }
 // WithChats sets the chat store, whose own router owns the chat HTTP surface.
 //
 // The parameter is routeHandler because mounting those routes is the ONLY thing
-// this package does with the store: 1 of its 9 methods. The chat reads
+// this package does with the store: 1 of its 11 methods. The chat reads
 // (GET /api/chats, /api/chats/{id}, its search and turns endpoints) are
 // registered and served by internal/chat's own router, so the server neither
-// reads nor writes a chat itself. It used to hold all 9 to call one.
+// reads nor writes a chat itself. It used to hold all of them to call one.
 func WithChats(c routeHandler) Option { return func(s *Server) { s.chats = c } }
 
 // WithGit sets the git handler for non-AI git HTTP endpoints.

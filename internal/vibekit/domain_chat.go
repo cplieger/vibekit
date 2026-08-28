@@ -615,9 +615,14 @@ type Chat struct {
 	// rendering nothing selected is what made the control look broken. With a
 	// choice applied the two agree, and the choice is the one StartOpts.Effort
 	// carries into a later session.
-	EffortActive string      `json:"effort_active,omitempty"`
-	Messages     []Message   `json:"messages"`
-	CurrentPlan  []PlanEntry `json:"current_plan,omitempty"`
+	EffortActive string    `json:"effort_active,omitempty"`
+	Messages     []Message `json:"messages"`
+	// There is no CurrentPlan. It held the newest plan's entries and was
+	// WRITE-ONLY: nothing in Go or TypeScript ever read it, and it was absent from
+	// ChatHeader so it never reached a client. Its write also cost a SECOND full
+	// chat-file rewrite per plan frame, on top of the row itself. The latest plan
+	// is the turn's plan row (see chat.Store.UpsertTurnPlan), which the prompt-bar
+	// task pill already reads by walking back to the first non-empty one.
 	// PriorACPSessionIDs are the KAS sessions this chat USED to run on,
 	// oldest first. ACPSessionID is only the current one, and a chat
 	// routinely changes session: a failed session/load blanks it, a model

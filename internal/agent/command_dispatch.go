@@ -2,6 +2,7 @@ package agent
 
 import (
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -44,6 +45,11 @@ func (rt *Runtime) registerCommandHandlers() {
 		Lifecycle:   rt.lifecycle,
 		MCP:         rt.mcpRegistry,
 		TurnOutcome: rt,
+		// The token source is constructed inside this package by WithKiroCLIPath,
+		// because composition passes only a path resolver and an env overlay —
+		// both functions. So this is the one place the prompt path's role can be
+		// filled, and a nil source travels as a nil role for tabSetOrNil's reason.
+		Tokens: tokenSourceOrNil(rt.kiroToken),
 	})
 
 	// Register handlers that remain on Runtime (complex internal coupling).
@@ -63,6 +69,17 @@ func tabSetOrNil(st *tabs.Store) command.TabSet {
 		return nil
 	}
 	return st
+}
+
+// tokenSourceOrNil converts an unwired token source into a nil INTERFACE, the
+// same trap tabSetOrNil exists for: Invalidate takes the source's mutex, so a
+// non-nil interface holding a nil *kiroauth.CLISource would nil-deref on the
+// prompt path's auth branch instead of being skipped.
+func tokenSourceOrNil(src *kiroauth.CLISource) command.TokenSource {
+	if src == nil {
+		return nil
+	}
+	return src
 }
 
 // Membership returns the coordinator over the chat store and the open-tab set.

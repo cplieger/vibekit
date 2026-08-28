@@ -9,9 +9,11 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -40,6 +42,8 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 		}
 	}
 
+	// Whether anything changed, and nothing more: a refused write is reported by
+	// Mutate's error, not by this flag.
 	var changed bool
 	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
@@ -61,14 +65,14 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 		changed = true
 		return true
 	}); err != nil {
-		return nil, StatusError(http.StatusInternalServerError, err)
-	}
-	if !changed {
-		if _, ok := chats.Get(ctx, cmd.ChatID); !ok {
-			// Only reachable for a tombstoned id (Mutate refuses to
-			// resurrect a just-deleted chat).
+		// A tombstoned id names a chat deleted in the last ten minutes, which the
+		// store refuses to resurrect — so this is the whole 404 condition, and a
+		// no-op mutation is not part of it: a repeat pick of the mode already in
+		// force changes nothing and is a success.
+		if errors.Is(err, chat.ErrTombstoned) {
 			return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 		}
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if changed {
 		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))

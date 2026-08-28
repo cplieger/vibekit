@@ -54,6 +54,7 @@ func (d *benchDeps) DeleteChatState(context.Context, vibekit.ChatID)       {}
 func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)        {}
 func (d *benchDeps) KillForTurn(vibekit.ChatID)                            {}
 func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool      { return true }
+func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary      { return MCPPendingSummary{} }
 func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)         {}
 func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)          {}
 func (d *benchDeps) IsEmptyTurn(*vibekit.RPCResponse, vibekit.ChatID) bool { return false }

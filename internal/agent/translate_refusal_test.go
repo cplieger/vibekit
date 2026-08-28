@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -195,4 +196,114 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 			t.Errorf("a refusal that landed was reported as undelivered: %s", out)
 		}
 	})
+}
+
+// TestTranslateACPEvent_HandlerTableIsIDAware pins the gate on the handler-map
+// LOOKUP, which is the guard the noop line one branch below has always had.
+//
+// The table holds two dozen methods and only three are request-shaped. Ungated,
+// a method the backend later promotes from a notification to a request reaches a
+// notification handler that reads Params and returns — the same wedge the -32601
+// fence exists to prevent, arriving through the one door that answers nothing and
+// logs nothing. The three that ARE request-shaped are dispatched from
+// routeInboundRequest instead, so the two halves are disjoint by construction.
+func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
+	const method = "_kiro/mcp/status" // a notification handler in the table
+	params := mustJSON(t, map[string]any{
+		"servers": []map[string]any{{"name": "github", "status": "connected"}},
+	})
+
+	t.Run("a notification still reaches its handler", func(t *testing.T) {
+		h, _ := hubForFSTest(t, t.TempDir())
+
+		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: method, Params: params})
+
+		if snap := h.mcpRegistry.Snapshot(); len(snap) != 1 {
+			t.Fatalf("registry snapshot = %+v, want the one server the notification carried: "+
+				"gating the lookup must not stop notification handling", snap)
+		}
+	})
+
+	t.Run("the same method arriving as a request is refused", func(t *testing.T) {
+		h, br := hubForFSTest(t, t.TempDir())
+		id := int64(31337)
+
+		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: method, ID: &id, Params: params})
+
+		select {
+		case <-br.done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("a request-shaped table member got no response; a notification handler " +
+				"swallowed it and the fence was never reached")
+		}
+		br.respMu.Lock()
+		got := br.response
+		br.respMu.Unlock()
+
+		var rpcErr *vibekit.RPCError
+		if !errors.As(got.err, &rpcErr) {
+			t.Fatalf("refusal is not an *vibekit.RPCError (%T, result %v)", got.err, got.result)
+		}
+		if rpcErr.Code != vibekit.RPCCodeMethodNotFound {
+			t.Errorf("refusal code = %d, want %d", rpcErr.Code, vibekit.RPCCodeMethodNotFound)
+		}
+		// The handler must not have run: a frame that was both handled AND refused
+		// is the double-dispatch hazard, one id with two answers.
+		if snap := h.mcpRegistry.Snapshot(); len(snap) != 0 {
+			t.Errorf("the notification handler also ran (snapshot %+v); the frame was handled "+
+				"and refused, which is two answers on one id", snap)
+		}
+	})
+}
+
+// TestTranslateACPEvent_AskMethodsDispatchOnce is the other half of the gate: the
+// three request-shaped members of the table are dispatched from the REQUEST side,
+// exactly once.
+//
+// One permission_needed broadcast is what "once" looks like from here, because
+// the permission handler's answer is the card rather than an RPC reply. The
+// failure this catches is ZERO — the whitelist missing while the table lookup is
+// gated, which sends the user's approval to the -32601 fence instead of to them.
+// Measured: two is unreachable rather than merely absent, because the caller
+// returns the moment routeInboundRequest claims a frame, so the table can never
+// see one of these three. Do not read this test as the guard against that.
+func TestTranslateACPEvent_AskMethodsDispatchOnce(t *testing.T) {
+	h, br := hubForFSTest(t, t.TempDir())
+	_, before := h.bus.fanout.Bounds()
+	id := int64(31338)
+
+	h.translateACPEvent("c1", &vibekit.RPCResponse{
+		Method: vibekit.MethodRequestPermission,
+		ID:     &id,
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess_1",
+			"toolCall":  map[string]any{"toolCallId": "tc1", "title": "write file", "kind": "edit"},
+			"options":   []map[string]any{{"optionId": "accept", "name": "Allow", "kind": "allow_once"}},
+		}),
+	})
+
+	asks := 0
+	for _, e := range bufferedSince(h, before) {
+		var msg vibekit.ServerEvent
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if msg.Type == vibekit.EventPermissionNeeded {
+			asks++
+		}
+	}
+	if asks != 1 {
+		t.Errorf("permission_needed fired %d times, want 1: 0 means the ask never reached its "+
+			"handler, 2 means both halves dispatched it", asks)
+	}
+
+	select {
+	case <-br.done:
+		br.respMu.Lock()
+		got := br.response
+		br.respMu.Unlock()
+		t.Errorf("the ask was answered on the wire (id=%d, err=%v) instead of raised to the user; "+
+			"it fell through to the refusal", got.id, got.err)
+	case <-time.After(200 * time.Millisecond):
+	}
 }

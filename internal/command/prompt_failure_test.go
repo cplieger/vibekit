@@ -68,14 +68,80 @@ func TestClassifyPromptFailure(t *testing.T) {
 			want: classTransient,
 		},
 		// Retrying an expired token is pure latency, and KAS collapses auth
-		// onto the same -32603 as a genuine fault.
-		"auth failure is fatal, not transient": {
+		// onto the same -32603 as a genuine fault. Its own class rather than
+		// classFatal, because the remedy is a sign-in and only a class can carry
+		// that to the client — see classAuth.
+		"auth failure is auth, not transient": {
 			err:  rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}),
-			want: classFatal,
+			want: classAuth,
 		},
-		"expired token is fatal": {
+		"expired token is auth": {
 			err:  rpcErr(t, vibekit.RPCCodeInternal, "ExpiredToken: refresh required", nil),
-			want: classFatal,
+			want: classAuth,
+		},
+		// The eight auth messages measured off the KAS bundle. Every one of them
+		// classified TRANSIENT before the name table, so each was re-sent twice
+		// and then reported as a generic failure — the prose markers were written
+		// against AWS SDK exception names and matched none of KAS's own sentences.
+		// One case per name, because a partial table is the failure mode: a name
+		// left out is silently back on the old behaviour.
+		"invalid token names its class": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": `{"errorType":"TokenInvalidError"}`,
+			}),
+			want: classAuth,
+		},
+		"expired token names its class": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": `{"errorType":"TokenExpiredError"}`,
+			}),
+			want: classAuth,
+		},
+		"a failed auth refresh names its class": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": `{"errorType":"AuthRefreshFailedError"}`,
+			}),
+			want: classAuth,
+		},
+		"the signed-out model registry names its class": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": `{"errorType":"ModelRegistryUnauthenticatedError"}`,
+			}),
+			want: classAuth,
+		},
+		"a bare name code is enough": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "INVALID_SSO_AUTH",
+			}),
+			want: classAuth,
+		},
+		// The two phrases the backend emits as prose, for the errors that carry
+		// no class name at all — the population the upstream fix was written for.
+		"the sign-in-again sentence is auth": {
+			err:  rpcErr(t, vibekit.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
+			want: classAuth,
+		},
+		"a token sentence is auth": {
+			err:  rpcErr(t, vibekit.RPCCodeInternal, "Authentication token has expired", nil),
+			want: classAuth,
+		},
+		// The marker that had to GO. This is an AWS SDK message that says a
+		// refresh WILL be attempted, so grading it terminal-auth suppressed the
+		// retry it is asking for and, after this change, would put a Sign in
+		// banner over a working session.
+		"an SDK credential-refresh notice stays transient": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "a credential service availability issue. A refresh of these credentials will be attempted after Tue Jan 01 2030",
+			}),
+			want: classTransient,
+		},
+		// Same marker, the other two texts it reached: a header name echoed back
+		// in a proxy response, and a gRPC channel error.
+		"an echoed credentials header stays transient": {
+			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+				"details": "access-control-allow-credentials: true",
+			}),
+			want: classTransient,
 		},
 		// KAS reports a throttle on the same -32000 vibekit uses for its own
 		// bridge-exited constant. The data payload is the distinguisher.
@@ -106,6 +172,36 @@ func TestClassifyPromptFailure(t *testing.T) {
 				RetryErrorType: "CLIENT_ERROR",
 			}),
 			want: classFatal,
+		},
+		// A MAPPED auth error is graded by its name too, not only by
+		// retryErrorType: on this code the machine name is the field, and every
+		// mapped error carries the same data block, so presence proves nothing.
+		"a mapped auth class is auth": {
+			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Authentication failed. Please sign in again.", mappedErrorData{
+				ErrorType:      "TokenExpiredError",
+				RetryErrorType: "CLIENT_ERROR",
+			}),
+			want: classAuth,
+		},
+		// The one auth-shaped class deliberately left OUT of the table: the
+		// account does not have access to those models, which no sign-in fixes,
+		// so it must not earn a Sign in banner.
+		"an entitlement refusal is not auth": {
+			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "…this account does not have access to them.", mappedErrorData{
+				ErrorType:      "ModelRegistryAccessDeniedError",
+				RetryErrorType: "CLIENT_ERROR",
+			}),
+			want: classFatal,
+		},
+		// A throttle stays a throttle even if its prose mentions authentication:
+		// the retry classification is checked first, and a Sign in banner over a
+		// rate limit is advice that cannot work.
+		"a throttle outranks auth prose": {
+			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Authentication token refresh throttled.", mappedErrorData{
+				ErrorType:      "ClientThrottleError",
+				RetryErrorType: "THROTTLING",
+			}),
+			want: classThrottled,
 		},
 		"server error is not a throttle": {
 			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
@@ -219,6 +315,15 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 	}
 	if !retriesFor(&vibekit.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {
 		t.Error("a transient write failure must still be retried")
+	}
+
+	// classAuth is terminal by OMISSION from the retry set, which is the whole
+	// mechanism — it has no arm of its own to get wrong. Asserted anyway because
+	// the class exists to change the CODE the user is told, and a class added to
+	// the retry set by accident would spend three prompt sends per dead token
+	// before saying so.
+	if retriesFor(rpcErr(t, vibekit.RPCCodeInternal, "Authentication failed. Please sign in again.", nil)) {
+		t.Error("an auth failure is reported retryable; no number of attempts fixes a token the backend rejected")
 	}
 }
 

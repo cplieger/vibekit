@@ -215,7 +215,8 @@ func (s *Store) Get(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, 
 // The mutator runs under the per-chat mutex and receives the current chat
 // (or a fresh zero-value chat if it does not exist). If mutator returns
 // false, the mutation is aborted without side effects. If it returns true,
-// the chat is persisted and a chat_updated event is broadcast.
+// the chat is persisted and a chat_updated event is broadcast. Both of those
+// report nil; a write to a recently deleted id is refused with ErrTombstoned.
 //
 // To create a new chat, call Mutate with an ID that does not exist. The
 // store pre-fills c.ID and c.CreatedAt before invoking the mutator;
@@ -244,14 +245,20 @@ func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c
 		// just removed the file while a cmdPrompt or translate_* handler
 		// is about to call AppendMessage (or similar) on the stale id.
 		// Tombstone check blocks re-creation for a short window so the
-		// late write becomes a no-op instead of resurrecting the chat
-		// as a ghost row the user has to delete again. Callers that
-		// already gate with `if !exists { return false }` are unaffected;
-		// the guard kicks in for the narrow "mutate auto-creates"
-		// paths (cmdCreateChat, cmdPrompt's user-message append).
+		// late write is refused instead of resurrecting the chat as a
+		// ghost row the user has to delete again. Callers that already
+		// gate with `if !exists { return false }` are unaffected; the
+		// guard kicks in for the narrow "mutate auto-creates" paths
+		// (cmdCreateChat, cmdPrompt's user-message append).
+		//
+		// The refusal is NAMED rather than reported as success: a caller
+		// that cannot tell it apart from a persisted write proceeds — a
+		// bridge is spawned, credits are spent, and the turn's output is
+		// discarded at persist. A path that wants the drop matches
+		// ErrTombstoned.
 		if s.isTombstoned(chatID) {
 			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", chatID)
-			return nil
+			return ErrTombstoned
 		}
 		c = &vibekit.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
@@ -518,6 +525,70 @@ func (s *Store) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *v
 	}
 	s.broadcast.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 	slog.Debug("chat append", "chat_id", chatID, "msg_id", msg.ID, "role", msg.Role)
+	return nil
+}
+
+// UpsertTurnPlan records the agent's plan for the turn in flight: it overwrites
+// this turn's existing plan row when there is one and appends msg otherwise,
+// broadcasting message_updated or message_appended to match.
+//
+// ONE row per turn, because ACP resends the WHOLE entries array on every plan
+// update. An append per frame persisted N snapshots of one plan, and the client
+// rendered N cards — mountPlan dedupes within a message's own wrap, not across
+// messages — each frozen at a different stage. They also inflated message_count
+// and consumed slots in the paginated newest page, pushing real content off it.
+// The plan a reader watches while work happens is the prompt-bar task pill, which
+// already reads only the newest plan and ignores every earlier one.
+//
+// "This turn" is the tail up to the first user message, matching projectTurns'
+// own rule that a user message opens a turn. Deriving the row rather than
+// remembering it is what keeps this out of the chat record: nothing has to hold a
+// plan message id across frames, so there is no state to leave stale when a turn
+// ends. A plan arriving with no turn open (an agent-initiated turn has no user
+// row) correctly finds the previous plan only if no user message separates them,
+// which is the same window projectTurns would draw.
+//
+// Ts is deliberately NOT restamped on the update path: the row's timestamp marks
+// where the plan entered the conversation, and moving it would claim the plan was
+// made later than it was.
+//
+// The broadcast fires only after the save succeeds, like its two siblings.
+func (s *Store) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	var updated *vibekit.Message
+	var appended bool
+	err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		for i := len(c.Messages) - 1; i >= 0; i-- {
+			if c.Messages[i].Role == vibekit.RoleUser {
+				break // turn boundary: this turn carries no plan row yet
+			}
+			if len(c.Messages[i].Plan) == 0 {
+				continue
+			}
+			c.Messages[i].Plan = msg.Plan
+			updated = &c.Messages[i]
+			return true
+		}
+		if msg.Ts == 0 {
+			msg.Ts = time.Now().UnixMilli()
+		}
+		c.Messages = append(c.Messages, *msg)
+		appended = true
+		return true
+	})
+	if err != nil || s.broadcast == nil {
+		return err
+	}
+	switch {
+	case updated != nil:
+		s.broadcast.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageUpdated, chatID, updated))
+		slog.Debug("chat plan update", "chat_id", chatID, "msg_id", updated.ID, "entries", len(updated.Plan))
+	case appended:
+		s.broadcast.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
+		slog.Debug("chat plan append", "chat_id", chatID, "msg_id", msg.ID, "entries", len(msg.Plan))
+	}
 	return nil
 }
 

@@ -15,19 +15,26 @@ import (
 
 var errBoom = errors.New("persist boom")
 
-// recStore records AppendMessage/Mutate calls and returns configurable
-// errors so HandlePlan's persist branches are observable.
+// recStore records AppendMessage/Mutate/UpsertTurnPlan calls and returns
+// configurable errors so each write site's persist branches are observable.
 type recStore struct {
 	nopChatRecords
 	appendErr   error
 	mutateErr   error
+	upsertErr   error
 	appendCalls int
 	mutateCalls int
+	upsertCalls int
 }
 
 func (s *recStore) AppendMessage(_ context.Context, _ vibekit.ChatID, _ *vibekit.Message) error {
 	s.appendCalls++
 	return s.appendErr
+}
+
+func (s *recStore) UpsertTurnPlan(_ context.Context, _ vibekit.ChatID, _ *vibekit.Message) error {
+	s.upsertCalls++
+	return s.upsertErr
 }
 
 func (s *recStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
@@ -156,16 +163,23 @@ func TestBufferCap_ReasoningCountsTowardTotal(t *testing.T) {
 }
 
 // TestHandlePlan_UnmarshalGuard pins that HandlePlan persists only when
-// the plan JSON parses; malformed JSON is skipped without appending.
+// the plan JSON parses; malformed JSON is skipped without a write.
+//
+// It also pins that ONE store call carries a plan frame: the second write that
+// used to maintain Chat.CurrentPlan is gone, so a frame costs one chat-file
+// rewrite rather than two.
 func TestHandlePlan_UnmarshalGuard(t *testing.T) {
-	t.Run("ValidJSONAppendsMessage", func(t *testing.T) {
+	t.Run("ValidJSONUpsertsOnce", func(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
-		if rec.appendCalls != 1 {
-			t.Errorf("valid plan JSON: AppendMessage calls = %d, want 1", rec.appendCalls)
+		if rec.upsertCalls != 1 {
+			t.Errorf("valid plan JSON: UpsertTurnPlan calls = %d, want 1", rec.upsertCalls)
+		}
+		if rec.appendCalls != 0 || rec.mutateCalls != 0 {
+			t.Errorf("a plan frame must cost one store call: AppendMessage = %d, Mutate = %d, want 0 and 0", rec.appendCalls, rec.mutateCalls)
 		}
 	})
 	t.Run("InvalidJSONSkips", func(t *testing.T) {
@@ -174,40 +188,40 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{`))
-		if rec.appendCalls != 0 {
-			t.Errorf("invalid plan JSON: AppendMessage calls = %d, want 0", rec.appendCalls)
+		if rec.upsertCalls != 0 {
+			t.Errorf("invalid plan JSON: UpsertTurnPlan calls = %d, want 0", rec.upsertCalls)
 		}
 	})
 }
 
-// TestHandlePlan_LogsOnlyOnAppendError pins that HandlePlan logs a
-// persist-plan error only when AppendMessage fails, and stays silent on
+// TestHandlePlan_LogsOnlyOnUpsertError pins that HandlePlan logs a
+// persist-plan error only when UpsertTurnPlan fails, and stays silent on
 // success.
-func TestHandlePlan_LogsOnlyOnAppendError(t *testing.T) {
-	t.Run("ErrorLoggedWhenAppendFails", func(t *testing.T) {
+func TestHandlePlan_LogsOnlyOnUpsertError(t *testing.T) {
+	t.Run("ErrorLoggedWhenUpsertFails", func(t *testing.T) {
 		var logbuf bytes.Buffer
 		restore := captureSlog(&logbuf)
 		defer restore()
-		rec := &recStore{appendErr: errBoom}
+		rec := &recStore{upsertErr: errBoom}
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if !strings.Contains(logbuf.String(), "persist plan") {
-			t.Errorf("AppendMessage error not logged; log=%q, want it to contain %q", logbuf.String(), "persist plan")
+			t.Errorf("UpsertTurnPlan error not logged; log=%q, want it to contain %q", logbuf.String(), "persist plan")
 		}
 	})
-	t.Run("NoLogWhenAppendSucceeds", func(t *testing.T) {
+	t.Run("NoLogWhenUpsertSucceeds", func(t *testing.T) {
 		var logbuf bytes.Buffer
 		restore := captureSlog(&logbuf)
 		defer restore()
-		rec := &recStore{} // appendErr nil, mutateErr nil
+		rec := &recStore{} // every error field nil
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if strings.Contains(logbuf.String(), "persist plan") {
-			t.Errorf("unexpected error log on AppendMessage success; log=%q", logbuf.String())
+			t.Errorf("unexpected error log on UpsertTurnPlan success; log=%q", logbuf.String())
 		}
 	})
 }
@@ -262,33 +276,12 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	}
 }
 
-// TestHandlePlan_ContextErrGuard pins that HandlePlan proceeds to Mutate
-// under an active context but skips it when the context is already
-// cancelled.
-func TestHandlePlan_ContextErrGuard(t *testing.T) {
-	t.Run("ActiveContextProceedsToMutate", func(t *testing.T) {
-		rec := &recStore{}
-		deps := newBaseDeps()
-		deps.store = rec
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
-		if rec.mutateCalls != 1 {
-			t.Errorf("active ctx: Mutate calls = %d, want 1", rec.mutateCalls)
-		}
-	})
-	t.Run("CancelledContextSkipsMutate", func(t *testing.T) {
-		rec := &recStore{}
-		deps := newBaseDeps()
-		deps.store = rec
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		tr.HandlePlan(ctx, vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
-		if rec.mutateCalls != 0 {
-			t.Errorf("cancelled ctx: Mutate calls = %d, want 0", rec.mutateCalls)
-		}
-	})
-}
+// There is no TestHandlePlan_ContextErrGuard any more, and its absence is the
+// point: it pinned a `ctx.Err()` check that sat BETWEEN HandlePlan's two writes,
+// existing only to skip the second one when the frame's context had already
+// expired. One write means there is no second write to skip, so the guard went
+// with Chat.CurrentPlan and the test's whole subject went with it. Whether a
+// cancelled context reaches disk is the store's contract, tested there.
 
 // --- Model refusal (kiro-cli 2.13 _meta.kiro.refusal) ---
 

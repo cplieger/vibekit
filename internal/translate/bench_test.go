@@ -34,6 +34,11 @@ type baseDeps struct {
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
+	// asked records every BridgeRespond call, so a test can assert that a frame
+	// vibekit declined to process was still ANSWERED on its own id, with no
+	// bridge behind it. respondErr, when set, is what BridgeRespond reports.
+	asked      []askAnswer
+	respondErr error
 	// terminals stands in for the runtime's agent-terminal registry, keyed by
 	// terminal id, so adoptTerminalOutput is exercisable without one. A key
 	// present with an empty text is a REGISTERED terminal that printed nothing,
@@ -84,6 +89,10 @@ func (d *baseDeps) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg
 	return d.store.AppendMessage(ctx, chatID, msg)
 }
 
+func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	return d.store.UpsertTurnPlan(ctx, chatID, msg)
+}
+
 func (d *baseDeps) GetOrInit(chatID vibekit.ChatID) *buffer.Buffer {
 	return d.bufStore.GetOrInit(chatID)
 }
@@ -122,8 +131,19 @@ func (d *baseDeps) BridgeNotify(context.Context, vibekit.ChatID, string, map[str
 	return nil
 }
 
-func (d *baseDeps) BridgeRespond(context.Context, vibekit.ChatID, int64, any, error) error {
-	return nil
+// askAnswer is one recorded BridgeRespond call.
+type askAnswer struct {
+	chatID    vibekit.ChatID
+	requestID int64
+	result    any
+	rpcErr    error
+}
+
+func (d *baseDeps) BridgeRespond(
+	_ context.Context, chatID vibekit.ChatID, requestID int64, result any, rpcErr error,
+) error {
+	d.asked = append(d.asked, askAnswer{chatID, requestID, result, rpcErr})
+	return d.respondErr
 }
 func (d *baseDeps) MCPRecorder() MCPRecorder { return nopMCPRecorder{} }
 func (d *baseDeps) SetGovernance(g vibekit.GovernanceStatePayload) {

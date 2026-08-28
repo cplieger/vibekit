@@ -4,8 +4,10 @@ package translate
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -25,13 +27,17 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID vibekit.Cha
 		return
 	}
 	if p.Fallback != "" && chatID != "" {
-		if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+		err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
 			c.CurrentModeID = p.Fallback
 			return true
-		}); err != nil {
+		})
+		if errors.Is(err, chat.ErrTombstoned) {
+			return
+		}
+		if err != nil {
 			slog.Error("agent_not_found: persist fallback", "error", err)
 		}
 	}

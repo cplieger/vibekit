@@ -4,17 +4,18 @@ import "context"
 
 // --- Persistence ---
 
-// There is no ChatStore interface here. *chat.Store offers 9 methods and no
-// consumer wants more than 5 of them:
+// There is no ChatStore interface here. *chat.Store offers 11 methods and no
+// consumer wants more than 6 of them:
 //
 //	internal/server        1   RegisterRoutes — the chat router owns its own HTTP surface
-//	internal/translate     3   Get, Mutate, AppendMessage
-//	internal/agent's coord   4   + BuildHistory
-//	internal/command       5   Get, Mutate, AppendMessage, SetDraft, Delete
-//	internal/agent's field   7   the union it passes on, not what it calls
+//	internal/translate     4   Get, Mutate, AppendMessage, UpsertTurnPlan
+//	internal/agent's coord   4   Get, Mutate, AppendMessage, BuildHistory
+//	internal/command       6   Get, Mutate, AppendMessage, SetDraft, SetAttachments, Delete
+//	internal/agent's field   9   the union it passes on, not what it calls
 //
-// Two members were reached through no interface at all: RegisterRoutes (called
-// on the concrete store) and UpdateMessage (called by nothing in production).
+// One member is reached through no interface at all: UpdateMessage, called by
+// nothing in production. RegisterRoutes is reached only through
+// internal/server's own routeHandler, never through a chat-store interface.
 
 // --- Communication ---
 

@@ -36,15 +36,17 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID,
 		Question   string                `json:"question"`
 		Options    []wireUserInputOption `json:"options"`
 	}
-	p, ok := unmarshalParams[userInputParams](msg, vibekit.MethodKiroUserInput)
-	if !ok {
+	reqID := *msg.ID
+	p, err := decodeParams[userInputParams](msg)
+	if err != nil {
+		t.refuseAsk(ctx, chatID, vibekit.MethodKiroUserInput, reqID,
+			vibekit.UserInputResult{Action: vibekit.UserInputActionDismissed}, err)
 		return
 	}
 
 	options := sanitizeUserInputOptions(p.Options)
 
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
-	reqID := *msg.ID
 
 	step := t.steps.refFor(p.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventUserInputNeeded, chatID, vibekit.UserInputNeededPayload{

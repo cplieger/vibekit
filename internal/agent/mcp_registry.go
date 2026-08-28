@@ -32,9 +32,12 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2"
 )
@@ -175,6 +178,72 @@ func (reg *mcpRegistry) Snapshot() []mcpServerRuntime {
 	}
 	slices.SortFunc(out, func(a, b mcpServerRuntime) int { return cmp.Compare(a.Name, b.Name) })
 	return out
+}
+
+// mcpSummaryNameCap bounds one bucket of PendingSummary. The server list is
+// backend-controlled — a Power's servers reach this registry through KAS's own
+// config file — so an unbounded list in a log record is its own defect: it pushes
+// the attributes an operator needs off the end of the line. Eight names plus a
+// count is enough to act on; the full list is a /api/mcp/status read away.
+const mcpSummaryNameCap = 8
+
+// PendingSummary reports which of vibekit's enabled MCP servers a readiness wait
+// is still short of, partitioned by cause. Read-only: it takes the read lock and
+// mutates nothing.
+//
+// The bounds live INSIDE the method rather than at the caller, so a second caller
+// cannot forget them: mcpSummaryNameCap names per bucket with a more-marker, and
+// every name and every upstream error through logsafe.Field, because both are text
+// this process did not write.
+//
+// The two reads are SEQUENTIAL, never nested: EnabledNames reaches vibekit's own
+// config store, which has its own lock, so taking it under reg.mu would put two
+// locks in an order nothing else here establishes.
+func (reg *mcpRegistry) PendingSummary(ctx context.Context) command.MCPPendingSummary {
+	var enabled map[string]struct{}
+	if reg.config != nil {
+		enabled = reg.config.EnabledNames(ctx)
+	}
+
+	reg.mu.RLock()
+	reported := make(map[string]struct{}, len(reg.servers))
+	var failed, awaiting []string
+	for name, s := range reg.servers {
+		reported[name] = struct{}{}
+		switch s.State {
+		case mcpStateFailed:
+			failed = append(failed, logsafe.Field(name)+": "+logsafe.Field(s.Error))
+		case mcpStateOAuth:
+			awaiting = append(awaiting, logsafe.Field(name))
+		}
+	}
+	reg.mu.RUnlock()
+
+	var silent []string
+	for name := range enabled {
+		if _, ok := reported[name]; !ok {
+			silent = append(silent, logsafe.Field(name))
+		}
+	}
+	return command.MCPPendingSummary{
+		Silent:       boundSummaryNames(silent),
+		Failed:       boundSummaryNames(failed),
+		AwaitingAuth: boundSummaryNames(awaiting),
+	}
+}
+
+// boundSummaryNames sorts a bucket and caps it, replacing the tail with a count.
+//
+// Sorted because both inputs are map iterations, so an unsorted bucket reorders
+// itself between two reads of identical state — which makes two log lines look
+// like two different situations.
+func boundSummaryNames(names []string) []string {
+	slices.Sort(names)
+	if len(names) <= mcpSummaryNameCap {
+		return names
+	}
+	return append(names[:mcpSummaryNameCap:mcpSummaryNameCap],
+		"+"+strconv.Itoa(len(names)-mcpSummaryNameCap)+" more")
 }
 
 // RegisterRoutes wires the runtime MCP endpoints: a read-only status view

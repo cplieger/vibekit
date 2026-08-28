@@ -45,8 +45,10 @@ func ignoreAttribution(fn func(context.Context, vibekit.ChatID, json.RawMessage)
 	}
 }
 
-// initDispatch builds the method → handler maps. Called once from
-// translateACPEvent on first use (lazy init avoids a constructor).
+// initDispatch builds the method → handler maps, once, from the runtime's
+// constructor. Eagerly rather than on first use: several bridge goroutines read
+// these maps concurrently, and routeInboundRequest reaches chatHandlers on the
+// request path.
 func (rt *Runtime) initDispatch() {
 	rt.chatHandlers = map[string]chatHandler{
 		vibekit.MethodSessionUpdate: rt.handleSessionUpdate,
@@ -178,7 +180,13 @@ func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResp
 		return
 	}
 
-	if fn, ok := rt.chatHandlers[msg.Method]; ok {
+	// Gated on the id for the same reason the noop table below is: ungated, a
+	// method the backend later promotes from a notification to a request reaches a
+	// notification handler that reads Params and returns, and the fence below is
+	// never reached. The three request-shaped members are dispatched from
+	// routeInboundRequest instead, so the halves are disjoint. The guard belongs on
+	// the LOOKUP — moved below the fence it would stop notifications entirely.
+	if fn, ok := rt.chatHandlers[msg.Method]; ok && msg.ID == nil {
 		fn(ctx, chatID, msg)
 		return
 	}
@@ -269,6 +277,22 @@ func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatI
 	if strings.HasPrefix(msg.Method, methodTermPrefix) {
 		rt.handleTerminalRequest(ctx, chatID, msg.Method, msg)
 		return true
+	}
+	// The three request-shaped members of the chat handler table, whitelisted
+	// EXPLICITLY the way run_host.go's dispatchRequest does it: they live in that
+	// table because the surface they drive is the chat's, but a request belongs on
+	// this half of the dispatch, where every arm owes an answer. Claiming the frame
+	// here is also what makes double dispatch unreachable rather than merely
+	// avoided — the caller returns the moment this returns true, so the table is
+	// never consulted for these three.
+	switch msg.Method {
+	case vibekit.MethodRequestPermission,
+		vibekit.MethodElicitationCreate,
+		vibekit.MethodKiroUserInput:
+		if fn, ok := rt.chatHandlers[msg.Method]; ok {
+			fn(ctx, chatID, msg)
+			return true
+		}
 	}
 	return false
 }

@@ -34,10 +34,12 @@ package translate
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -131,14 +133,18 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatI
 // flips the tab label live.
 func (t *Translator) applyFocusTitle(ctx context.Context, chatID vibekit.ChatID, title string) {
 	renamed := false
-	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
 			return false
 		}
 		c.Name = title
 		renamed = true
 		return true
-	}); err != nil {
+	})
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("focus title: persist", "chat_id", chatID, "error", err)
 		return
 	}

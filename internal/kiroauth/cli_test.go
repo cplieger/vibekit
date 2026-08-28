@@ -503,6 +503,110 @@ func TestToken_TransientFailureWithAnExpiredCacheStillFails(t *testing.T) {
 	}
 }
 
+// switchingRun answers a different access token per invocation, so a test can
+// tell a cached vend from a fresh one by the VALUE rather than by a count alone.
+// The last token is repeated once the script runs out.
+func switchingRun(calls *int, expiresAt string, tokens ...string) func(context.Context, string, []string) ([]byte, error) {
+	return func(context.Context, string, []string) ([]byte, error) {
+		tok := tokens[min(*calls, len(tokens)-1)]
+		*calls++
+		return []byte(fmt.Sprintf(
+			`{"kind":"getKasToken","data":{"accessToken":%q,"expiresAt":%q}}`, tok, expiresAt,
+		)), nil
+	}
+}
+
+// An invalidated token is not re-vended from the cache, even with its whole clock
+// expiry ahead of it.
+//
+// That is the account-switch state exactly: switching the active kiro-cli account
+// kills a token without touching its expiresAt, so the reuse branch keeps serving
+// it for up to (expiry - reuseLeeway). Nothing else catches it, because the vend
+// SUCCEEDS — the readiness latch clears, readiness stays ready, and the sign-in
+// banner never fires while every turn dies at the backend.
+//
+// The first two calls are the control: without them a source that simply never
+// caches would pass the invalidation assertion. The fourth is the other control —
+// an invalidation withdraws ONE token, it does not disable the cache.
+func TestInvalidate_StopsReVendingTheStaleToken(t *testing.T) {
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	// An hour of life: far outside the reuse leeway, so the cache answers
+	// everything until something withdraws the token.
+	src.runCommand = switchingRun(&calls, time.Now().Add(time.Hour).Format(time.RFC3339Nano),
+		"tok-account-a", "tok-account-b")
+
+	first, err := src.Token(t.Context())
+	if err != nil {
+		t.Fatalf("seeding Token: %v", err)
+	}
+	if first["accessToken"] != "tok-account-a" {
+		t.Fatalf("accessToken = %v, want tok-account-a", first["accessToken"])
+	}
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("second Token: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("CLI invocations = %d after two calls, want 1: the cache is not serving, so this test cannot see an invalidation", calls)
+	}
+
+	src.Invalidate()
+
+	third, err := src.Token(t.Context())
+	if err != nil {
+		t.Fatalf("Token after Invalidate: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("CLI invocations = %d after Invalidate, want 2: an invalidated token was served from the cache", calls)
+	}
+	if third["accessToken"] != "tok-account-b" {
+		t.Errorf("accessToken = %v, want tok-account-b: the switched account's token never reached the callback", third["accessToken"])
+	}
+
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("fourth Token: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("CLI invocations = %d on the call after a fresh vend, want 2: the invalidation withdrew one token, not the cache", calls)
+	}
+}
+
+// A transient CLI failure AFTER an invalidation still falls back to the cached
+// token instead of hard-failing.
+//
+// This is the other half of the trade, and it is why Invalidate zeroes the reuse
+// window rather than dropping the value. A blunt invalidate would leave nothing to
+// fall back on, so a hiccup during the CLI's own refresh — or cliTimeout firing —
+// becomes the sign-in banner and a failed turn on a session that may be working,
+// which is the failure vendCachedOrFail exists to absorb. The token is possibly
+// dead, and vending it is still the better answer: reuse is where the certainty
+// is, and that is where the withdrawal applies.
+//
+// Pinned beside the test above deliberately. Either one alone is satisfiable by an
+// implementation the other one refuses.
+func TestInvalidate_ATransientCLIFailureStillFallsBack(t *testing.T) {
+	calls := 0
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
+	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Hour).Format(time.RFC3339Nano)), nil)
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("seeding Token: %v", err)
+	}
+
+	src.Invalidate()
+	src.runCommand = fakeRun(&calls, "", errors.New("exit status 1"))
+
+	res, err := src.Token(t.Context())
+	if err != nil {
+		t.Fatalf("Token returned %v, want the cached token vended: an invalidation must not turn a CLI blip into a hard auth failure", err)
+	}
+	if res["accessToken"] != "tok-abc" {
+		t.Errorf("accessToken = %v, want the cached tok-abc", res["accessToken"])
+	}
+	if calls != 2 {
+		t.Errorf("CLI invocations = %d, want 2: the invalidated token must still be re-asked before the fallback", calls)
+	}
+}
+
 // A token with no CodeWhisperer profile ARN is vended AND logged.
 //
 // Without the log this is a silent hard turn failure that reads as a service

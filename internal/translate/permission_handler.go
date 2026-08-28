@@ -24,7 +24,7 @@ type permOptionWire struct {
 //
 // The v3 params object is FLAT — {sessionId, toolCall{...}, options[]} —
 // and the JSON-RPC correlation id is on the envelope (msg.ID), NOT inside
-// params. unmarshalParams decodes msg.Params directly, so the decode struct
+// params. decodeParams decodes msg.Params directly, so the decode struct
 // must match those fields at top level; a `params`-wrapped struct (or an
 // `id` field read from params) decodes to all-zero, yielding an empty dialog
 // and request_id=0 (the outcome would then be answered on id 0, wedging the
@@ -55,11 +55,16 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		} `json:"toolCall"`
 		Options []permOptionWire `json:"options"`
 	}
-	req, ok := unmarshalParams[permReq](msg, "session/request_permission")
-	if !ok {
+	reqID := *msg.ID
+	req, err := decodeParams[permReq](msg)
+	if err != nil {
+		// CANCELLED, which names no option, is the only safe answer to a frame
+		// whose options[] could not be read: inventing an option id would answer
+		// with a choice the request never offered. run_unattended.go refuses to
+		// fabricate one for the same reason.
+		t.refuseAsk(ctx, chatID, vibekit.MethodRequestPermission, reqID, vibekit.PermissionOutcomeCancelled(), err)
 		return
 	}
-	reqID := *msg.ID
 
 	subSessionID := t.deriveSubSession(chatID, req.SessionID)
 

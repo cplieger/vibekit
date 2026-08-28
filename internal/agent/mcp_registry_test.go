@@ -512,3 +512,125 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 // own test binary (TestStore_MCPConfigContract). It used to be duplicated here
 // as well, which spent a second run on the identical assertion and made the
 // runtime's test binary import internal/mcp for nothing else.
+
+// TestMCPRegistry_PendingSummaryPartitionsByCause is the join a readiness timeout
+// used to lack: the prompt path logged a chat id and nothing else, while every
+// cause an operator acts on was already distinguishable per server here.
+//
+// One case per bucket, and the ENABLED-but-unreported case is the one that needs
+// the census rather than the registry: a server that never said anything appears
+// nowhere in the registry at all, so "absent from the reported set" is the only
+// way it can be named. A server that reported CONNECTED is in none of the
+// buckets, which is what stops the summary reporting a healthy fleet as pending.
+func TestMCPRegistry_PendingSummaryPartitionsByCause(t *testing.T) {
+	cfg := &fakeMCPConfig{
+		enabled: map[string]struct{}{
+			"quiet": {}, "broken": {}, "needsauth": {}, "working": {},
+		},
+	}
+	cfg.configured = cfg.copyOf(cfg.enabled)
+	cfg.all = cfg.copyOf(cfg.enabled)
+	h := newHubWithMCPConfig(cfg)
+	ctx := t.Context()
+
+	h.mcpRegistry.RecordConnected(ctx, "working", nil, nil, nil)
+	h.mcpRegistry.RecordInitFailure(ctx, "broken", "connection refused")
+	h.mcpRegistry.RecordOAuth(ctx, "needsauth", "https://oauth.example/auth")
+
+	got := h.mcpRegistry.PendingSummary(ctx)
+
+	if want := []string{"quiet"}; !slices.Equal(got.Silent, want) {
+		t.Errorf("Silent = %v, want %v: an enabled server that reported nothing is nameable only from the census", got.Silent, want)
+	}
+	if want := []string{"needsauth"}; !slices.Equal(got.AwaitingAuth, want) {
+		t.Errorf("AwaitingAuth = %v, want %v", got.AwaitingAuth, want)
+	}
+	if len(got.Failed) != 1 {
+		t.Fatalf("Failed = %v, want one entry", got.Failed)
+	}
+	if !strings.Contains(got.Failed[0], "broken") || !strings.Contains(got.Failed[0], "connection refused") {
+		t.Errorf("Failed[0] = %q, want the server name and the upstream error; the error is the whole diagnostic", got.Failed[0])
+	}
+	for _, bucket := range [][]string{got.Silent, got.Failed, got.AwaitingAuth} {
+		if slices.ContainsFunc(bucket, func(s string) bool { return strings.Contains(s, "working") }) {
+			t.Errorf("a connected server appears in %v; a readiness timeout must not name the servers that answered", bucket)
+		}
+	}
+}
+
+// The bounds are the method's, not the caller's, because the server list is
+// backend-controlled: a Power's servers reach this registry through KAS's own
+// config file, so an unbounded list would push the attributes an operator needs
+// off the end of a log record.
+//
+// Both halves are asserted together: the cap keeps mcpSummaryNameCap names, and
+// the marker keeps the total honest. Truncating silently would report a fleet of
+// nine as a fleet of eight.
+func TestMCPRegistry_PendingSummaryBoundsEachBucket(t *testing.T) {
+	const extra = 3
+	cfg := &fakeMCPConfig{enabled: map[string]struct{}{}}
+	for i := range mcpSummaryNameCap + extra {
+		cfg.enabled[fmt.Sprintf("server-%02d", i)] = struct{}{}
+	}
+	cfg.configured = cfg.copyOf(cfg.enabled)
+	cfg.all = cfg.copyOf(cfg.enabled)
+	h := newHubWithMCPConfig(cfg)
+
+	got := h.mcpRegistry.PendingSummary(t.Context())
+
+	if len(got.Silent) != mcpSummaryNameCap+1 {
+		t.Fatalf("Silent has %d entries, want %d names plus one marker", len(got.Silent), mcpSummaryNameCap)
+	}
+	if marker := got.Silent[mcpSummaryNameCap]; marker != fmt.Sprintf("+%d more", extra) {
+		t.Errorf("last entry = %q, want a +%d more marker", marker, extra)
+	}
+	// Sorted, so two reads of identical state produce the identical line. An
+	// unsorted bucket comes off a map iteration and reorders itself, which reads
+	// as two different situations.
+	if !slices.IsSorted(got.Silent[:mcpSummaryNameCap]) {
+		t.Errorf("Silent = %v, want the names sorted", got.Silent)
+	}
+}
+
+// Every name and every upstream error goes through the log-safety helper, because
+// both are text this process did not write and the summary's only consumer is a
+// log record. A raw newline there forges a line, and a C1 introducer writes
+// terminal escapes into whatever reads the log.
+func TestMCPRegistry_PendingSummarySanitizesBackendText(t *testing.T) {
+	cfg := &fakeMCPConfig{enabled: map[string]struct{}{"ok\nlevel=ERROR msg=forged": {}}}
+	cfg.configured = cfg.copyOf(cfg.enabled)
+	cfg.all = cfg.copyOf(cfg.enabled)
+	h := newHubWithMCPConfig(cfg)
+	ctx := t.Context()
+	h.mcpRegistry.RecordInitFailure(ctx, "broken", "boom\nlevel=ERROR msg=forged")
+
+	got := h.mcpRegistry.PendingSummary(ctx)
+
+	for _, bucket := range [][]string{got.Silent, got.Failed} {
+		for _, entry := range bucket {
+			if strings.ContainsAny(entry, "\n\r") {
+				t.Errorf("entry %q carries a raw newline; a backend-controlled string can forge a log record", entry)
+			}
+		}
+	}
+}
+
+// A registry with no name census answers empty rather than guessing. That is the
+// build a test hub has, and it is also the state a composition with no MCP config
+// leaves: with nothing to compare the reported set against, "which enabled server
+// is silent" has no answer, and inventing one would name every server the agent
+// reached through a Power as missing.
+func TestMCPRegistry_PendingSummaryWithNoCensusNamesNoSilentServers(t *testing.T) {
+	h := newHubWithMCPConfig(nil)
+	ctx := t.Context()
+	h.mcpRegistry.RecordInitFailure(ctx, "broken", "connection refused")
+
+	got := h.mcpRegistry.PendingSummary(ctx)
+
+	if len(got.Silent) != 0 {
+		t.Errorf("Silent = %v, want empty: there is no census to subtract the reported set from", got.Silent)
+	}
+	if len(got.Failed) != 1 {
+		t.Errorf("Failed = %v, want the reported failure: a missing census must not suppress what IS known", got.Failed)
+	}
+}
