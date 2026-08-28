@@ -456,6 +456,24 @@ func TestAdoptKASTitle(t *testing.T) {
 
 // --- sweepSessionsOnce: the keep-list is chat-referenced UNION live ---
 
+// testReaperWorkDir is the workspace root the reaper fixtures below are built
+// for. It is both the runtime's workDir and the root every fixture session claims
+// in its own session.json, because the reaper reaps only for the workspace it was
+// constructed with.
+const testReaperWorkDir = "/tmp/work"
+
+// writeSessionRecord writes the session.json the reaper reads to decide whether a
+// session belongs to its workspace. A fixture without one is DOUBT, which the
+// reaper answers by retaining — correct in production and vacuous in a test that
+// wants to observe a reap.
+func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
+	t.Helper()
+	body := `{"workspacePaths":["` + workspaceRoot + `"]}`
+	if err := os.WriteFile(filepath.Join(sessionDir, "session.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write session record in %s: %v", sessionDir, err)
+	}
+}
+
 // TestSweepSessionsOnce_KeepListCompleteness pins doubt-retains at the sweep
 // boundary, against a real orphan on disk.
 //
@@ -491,6 +509,11 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 				if err := os.MkdirAll(p, 0o700); err != nil {
 					t.Fatalf("mkdir %s: %v", p, err)
 				}
+				// The reaper reads each candidate's own workspacePaths and skips
+				// anything that does not name the workspace it was built for, so a
+				// fixture without this record is retained whatever the keep-list
+				// says — which would make the control arm pass for the wrong reason.
+				writeSessionRecord(t, p, testReaperWorkDir)
 				if err := os.Chtimes(p, old, old); err != nil {
 					t.Fatalf("chtimes %s: %v", p, err)
 				}
@@ -500,9 +523,9 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 			// sweepSessionsLoop, which reads these fields, so assigning them
 			// afterwards is a data race (caught by -race, not by plain go test).
 			cs := newFakeChatStore()
-			h := New(t.Context(), "/tmp/work", func() ACPBridge { return newFakeBridge() }, cs,
+			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
-					kirosession.New(sessionsDir),
+					kirosession.New(sessionsDir, testReaperWorkDir),
 					func(context.Context) (map[string]struct{}, bool) {
 						return map[string]struct{}{"sess_ref": {}}, tc.complete
 					},
@@ -537,7 +560,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	// this test needs bridges with distinct session ids, so build the runtime with
 	// a per-spawn factory instead.
 	cs := newFakeChatStore()
-	h := New(t.Context(), "/tmp/work", func() ACPBridge { return newFakeBridge() }, cs)
+	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs)
 	cs.Bus = h
 
 	setSession := func(chatID vibekit.ChatID, sessionID string) {
@@ -735,11 +758,12 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			if err := os.MkdirAll(sessDir, 0o700); err != nil {
 				t.Fatalf("mkdir session: %v", err)
 			}
+			writeSessionRecord(t, sessDir, testReaperWorkDir)
 
 			cs := newFakeChatStore()
-			h := New(t.Context(), "/tmp/work", func() ACPBridge { return newFakeBridge() }, cs,
+			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
-					kirosession.New(sessionsDir),
+					kirosession.New(sessionsDir, testReaperWorkDir),
 					func(context.Context) (map[string]struct{}, bool) {
 						return map[string]struct{}{"sess_owned": {}}, true
 					},

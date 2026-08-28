@@ -10,10 +10,24 @@ import (
 	"time"
 )
 
-// makeSession creates a fake KAS session on disk: a
-// sessions/<hash>/<id>/ dir (with an inner file) plus a
-// sessions/cli/<id>.history sidecar, then back-dates both to age.
+// testWorkspace is the workspace root every fixture session claims unless a case
+// says otherwise. Every reap and every sweep is confined to it, so a fixture
+// without a matching session.json is retained rather than reaped — which is what
+// the mismatch and doubt cases below drive.
+const testWorkspace = "/ws"
+
+// makeSession creates a fake KAS session on disk belonging to testWorkspace.
 func makeSession(t *testing.T, root, hash, id string, age time.Duration) {
+	t.Helper()
+	makeSessionIn(t, root, hash, id, age, `{"workspacePaths":["`+testWorkspace+`"]}`)
+}
+
+// makeSessionIn creates a fake KAS session on disk: a sessions/<hash>/<id>/ dir
+// (with an inner file plus the session.json the workspace guard reads) and a
+// sessions/cli/<id>.history sidecar, then back-dates both to age. record is
+// written verbatim so a case can supply a foreign root, an empty list or
+// undecodable bytes; an empty record writes no session.json at all.
+func makeSessionIn(t *testing.T, root, hash, id string, age time.Duration, record string) {
 	t.Helper()
 	dir := filepath.Join(root, hash, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -21,6 +35,11 @@ func makeSession(t *testing.T, root, hash, id string, age time.Duration) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if record != "" {
+		if err := os.WriteFile(filepath.Join(dir, sessionRecordName), []byte(record), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cliDir := filepath.Join(root, "cli")
 	if err := os.MkdirAll(cliDir, 0o755); err != nil {
@@ -51,7 +70,7 @@ func TestReap(t *testing.T) {
 	makeSession(t, root, "hash1", "sess_keep", 0)
 	makeSession(t, root, "hash1", "sess_gone", 0)
 
-	New(root).Reap("sess_gone")
+	New(root, testWorkspace).Reap("sess_gone")
 
 	if exists(t, filepath.Join(root, "hash1", "sess_gone")) {
 		t.Error("reaped session dir still present")
@@ -70,7 +89,7 @@ func TestReap(t *testing.T) {
 func TestReapRejectsMalformedID(t *testing.T) {
 	root := t.TempDir()
 	makeSession(t, root, "hash1", "sess_keep", 0)
-	r := New(root)
+	r := New(root, testWorkspace)
 	// None of these should touch the filesystem (no sess_ prefix, empty
 	// remainder, or glob/path metacharacters).
 	for _, bad := range []string{"", "sess_", "no-prefix", "sess_../keep", "sess_*"} {
@@ -99,7 +118,7 @@ func TestSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reaped := New(root).Sweep(map[string]struct{}{"sess_ref": {}})
+	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_ref": {}})
 
 	if reaped != 1 {
 		t.Errorf("reaped count = %d, want 1 (only sess_orphan)", reaped)
@@ -123,7 +142,7 @@ func TestSweep(t *testing.T) {
 
 func TestSweepEmptyDirIsNoop(t *testing.T) {
 	// Missing sessions dir must not panic or error.
-	if n := New(filepath.Join(t.TempDir(), "nonexistent")).Sweep(nil); n != 0 {
+	if n := New(filepath.Join(t.TempDir(), "nonexistent"), testWorkspace).Sweep(nil); n != 0 {
 		t.Errorf("sweep of missing dir reaped %d, want 0", n)
 	}
 }
@@ -157,7 +176,7 @@ func TestSweepRefusesEmptyKeepListAgainstPopulatedTree(t *testing.T) {
 	makeSession(t, root, "second_hash", "sess_d", old)
 
 	for _, keep := range []map[string]struct{}{nil, {}} {
-		if n := New(root).Sweep(keep); n != 0 {
+		if n := New(root, testWorkspace).Sweep(keep); n != 0 {
 			t.Errorf("Sweep(%v) reaped %d, want 0 — an empty keep-list must be refused", keep, n)
 		}
 	}
@@ -183,7 +202,7 @@ func TestSweepEmptyKeepListOnEmptyTreeIsOrdinaryNoop(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "cli"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if n := New(root).Sweep(map[string]struct{}{}); n != 0 {
+	if n := New(root, testWorkspace).Sweep(map[string]struct{}{}); n != 0 {
 		t.Errorf("reaped %d on an empty tree, want 0", n)
 	}
 }
@@ -209,7 +228,7 @@ func TestCountSessionsSpansWorkspaceHashes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := New(root).countSessions(); got != 3 {
+	if got := New(root, testWorkspace).countSessions(); got != 3 {
 		t.Errorf("countSessions() = %d, want 3", got)
 	}
 }
@@ -235,7 +254,7 @@ func TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reaped := New(root).Sweep(map[string]struct{}{"sess_live": {}})
+	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
 
 	if reaped != 1 {
 		t.Errorf("Sweep() = %d, want 1: the session dir it removed must be counted", reaped)
@@ -270,7 +289,7 @@ func TestSweep_CountsAStrandedSidecarAsAReapedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reaped := New(root).Sweep(map[string]struct{}{"sess_live": {}})
+	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
 
 	if reaped != 1 {
 		t.Errorf("Sweep() = %d, want 1: a stranded v3 sidecar is a session being reclaimed", reaped)
@@ -296,7 +315,7 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 		makeSession(t, root, "h", "sess_gone", 0)
 		logs := captureLogs(t)
 
-		New(root).Reap("sess_gone")
+		New(root, testWorkspace).Reap("sess_gone")
 
 		out := logs.String()
 		if exists(t, filepath.Join(root, "h", "sess_gone")) {
@@ -316,7 +335,7 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 		makeSession(t, root, "otherapp", "sess_b", 30*time.Minute)
 		logs := captureLogs(t)
 
-		if n := New(root).Sweep(map[string]struct{}{}); n != 0 {
+		if n := New(root, testWorkspace).Sweep(map[string]struct{}{}); n != 0 {
 			t.Fatalf("Sweep(empty keep-list) = %d, want 0", n)
 		}
 		out := logs.String()
@@ -335,7 +354,7 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 		}
 		logs := captureLogs(t)
 
-		if n := New(root).Sweep(map[string]struct{}{}); n != 0 {
+		if n := New(root, testWorkspace).Sweep(map[string]struct{}{}); n != 0 {
 			t.Fatalf("Sweep() = %d, want 0", n)
 		}
 		if out := logs.String(); strings.Contains(out, "REFUSING orphan sweep") {
@@ -348,7 +367,7 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 		makeSession(t, root, "h", "sess_live", 30*time.Minute)
 		logs := captureLogs(t)
 
-		if n := New(root).Sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
+		if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
 			t.Fatalf("Sweep() = %d, want 0: the only session is referenced", n)
 		}
 		if out := logs.String(); strings.Contains(out, "orphan sweep reaped sessions") {
@@ -357,7 +376,7 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 
 		makeSession(t, root, "h", "sess_orphan", 30*time.Minute)
 		logs2 := captureLogs(t)
-		if n := New(root).Sweep(map[string]struct{}{"sess_live": {}}); n != 1 {
+		if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 1 {
 			t.Fatalf("Sweep() = %d, want 1", n)
 		}
 		out := logs2.String()
@@ -380,4 +399,119 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	return buf
+}
+
+// TestReap_SkipsASessionInAnotherWorkspacesBucket covers the DELETE path, which
+// is the one an unguarded hash makes reachable without any collision: Reap
+// locates a session by globbing sessions/*/sess_<id> and never reads the hash, so
+// a bucket belonging to another workspace root under the same Kiro home is
+// matched exactly like this workspace's own.
+func TestReap_SkipsASessionInAnotherWorkspacesBucket(t *testing.T) {
+	root := t.TempDir()
+	makeSessionIn(t, root, "ourhash", "sess_dup", 0, `{"workspacePaths":["`+testWorkspace+`"]}`)
+	makeSessionIn(t, root, "otherhash", "sess_dup", 0, `{"workspacePaths":["/other/ws"]}`)
+
+	New(root, testWorkspace).Reap("sess_dup")
+
+	if exists(t, filepath.Join(root, "ourhash", "sess_dup")) {
+		t.Error("this workspace's own session survived the reap it asked for")
+	}
+	if !exists(t, filepath.Join(root, "otherhash", "sess_dup")) {
+		t.Error("a session whose record names another workspace was reaped: the glob crossed buckets")
+	}
+}
+
+// TestSweep_SkipsSessionsThatDoNotNameThisWorkspace is the sweep half, and the
+// population it protects is every session another client in this Kiro home
+// created: they are unreferenced by construction, because the keep-list is built
+// from vibekit's own chats.
+//
+// The trailing case is what makes the whole guard honest rather than a hash
+// comparison in disguise: a session in OUR bucket that names another root is
+// still skipped, and a session in a foreign-looking bucket that names ours is
+// still reaped. The record decides, not the path.
+func TestSweep_SkipsSessionsThatDoNotNameThisWorkspace(t *testing.T) {
+	root := t.TempDir()
+	old := 30 * time.Minute
+	makeSessionIn(t, root, "h", "sess_ours", old, `{"workspacePaths":["`+testWorkspace+`"]}`)
+	makeSessionIn(t, root, "h", "sess_theirs", old, `{"workspacePaths":["/other/ws"]}`)
+	makeSessionIn(t, root, "elsewhere", "sess_ours_elsewhere", old,
+		`{"workspacePaths":["/other/ws","`+testWorkspace+`"]}`)
+
+	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+
+	if reaped != 2 {
+		t.Errorf("Sweep() = %d, want 2: both sessions naming this workspace, and only those", reaped)
+	}
+	if exists(t, filepath.Join(root, "h", "sess_ours")) {
+		t.Error("an orphan naming this workspace survived")
+	}
+	if exists(t, filepath.Join(root, "elsewhere", "sess_ours_elsewhere")) {
+		t.Error("an orphan naming this workspace among several survived because its bucket looked foreign")
+	}
+	if !exists(t, filepath.Join(root, "h", "sess_theirs")) {
+		t.Error("an orphan naming another workspace was deleted: that is another workspace's history")
+	}
+	// The sidecar is the narrower route to the same loss: it carries no
+	// workspacePaths of its own, so a guard on the dirs alone spares the session
+	// and deletes its history file anyway.
+	if !exists(t, filepath.Join(root, "cli", "sess_theirs.history")) {
+		t.Error("another workspace's cli sidecar was deleted while its session dir was spared")
+	}
+}
+
+// TestSweep_DoubtRetains pins the three doubt cases against the mismatch case
+// above, because they are the ones a future KAS version can produce by accident.
+//
+// Each of them is a session this sweep would otherwise reap: unreferenced, past
+// the guard, in a readable bucket. Skipping costs retained disk; reaping costs
+// history that cannot be recovered, and there is no way to tell "KAS stopped
+// writing workspacePaths" from "this session is not ours" at the moment of the
+// unlink. So the cheap outcome is the answer for all four.
+func TestSweep_DoubtRetains(t *testing.T) {
+	old := 30 * time.Minute
+	for _, tc := range []struct {
+		desc   string
+		record string
+	}{
+		{desc: "no session.json at all", record: ""},
+		{desc: "undecodable session.json", record: `{`},
+		{desc: "absent workspacePaths", record: `{"id":"sess_x"}`},
+		{desc: "empty workspacePaths", record: `{"workspacePaths":[]}`},
+		{desc: "an empty entry in workspacePaths", record: `{"workspacePaths":[""]}`},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := t.TempDir()
+			makeSessionIn(t, root, "h", "sess_doubt", old, tc.record)
+
+			if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
+				t.Errorf("Sweep() = %d, want 0: doubt retains", n)
+			}
+			if !exists(t, filepath.Join(root, "h", "sess_doubt")) {
+				t.Errorf("a session whose ownership could not be established (%s) was deleted", tc.desc)
+			}
+		})
+	}
+}
+
+// TestReap_NonCanonicalWorkspaceRootsStillMatch pins the one normalization the
+// guard does, and its limit. A trailing slash or an interior "." on either side
+// is the same root and must still match, because a caller's KIRO_WORK_DIR and
+// KAS's own record are written by different programs. A path that only resolves
+// to the same directory through a symlink does NOT match, and that is the doubt
+// direction again: nothing here calls EvalSymlinks.
+func TestReap_NonCanonicalWorkspaceRootsStillMatch(t *testing.T) {
+	root := t.TempDir()
+	makeSessionIn(t, root, "h", "sess_slash", 0, `{"workspacePaths":["/ws/"]}`)
+	makeSessionIn(t, root, "h", "sess_dot", 0, `{"workspacePaths":["/ws/./"]}`)
+
+	r := New(root, "/ws/")
+	r.Reap("sess_slash")
+	r.Reap("sess_dot")
+
+	for _, id := range []string{"sess_slash", "sess_dot"} {
+		if exists(t, filepath.Join(root, "h", id)) {
+			t.Errorf("%s survived: a trailing slash made the same root read as a different one", id)
+		}
+	}
 }

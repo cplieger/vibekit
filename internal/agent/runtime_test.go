@@ -170,7 +170,7 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 	cs := newFakeChatStore()
 	h := New(context.Background(), t.TempDir(),
 		func() ACPBridge { return newFakeBridge() }, cs,
-		WithSessionReaper(kirosession.New(t.TempDir()), refs))
+		WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs))
 	cs.Bus = h
 
 	select {
