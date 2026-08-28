@@ -733,22 +733,29 @@ DOT_SWEEP_CHROMA = (0.05, 0.28, 0.005)
 
 # The base favicon's own artwork under the attention badge, and why the badge's
 # ink is a separate question from the tab dot's. static/favicon.svg is an opaque
-# 48-unit rounded rect filled FLAT with the light theme's `--c-accent`, so the
-# badge is never seen against a theme surface, which is what decides which
-# theme's value it must carry.
+# 48-unit rounded rect filled FLAT, so the badge is never seen against a theme
+# surface, which is what decides that ONE icon serves both themes.
 #
-# The hex is written out because that is what an SVG fill can carry — a var()
-# would not resolve in an icon file, and `oklch(50% 0.254 295.8deg)` is the token
-# it copies. The two are checked against each other below rather than trusted:
-# retuning the accent without regenerating the icons would otherwise leave this
-# whole table measuring a backdrop no shipped asset has.
-FAVICON_BADGE_BACKDROP = "#771edf"
-FAVICON_BACKDROP_TOKEN = ("light", "--c-accent")
+# The backdrop is READ OUT OF THE SHIPPED ASSET rather than restated here. It used
+# to be a literal cross-checked against light `--c-accent`, on the reasoning that
+# the icon copied that token; the icon carries the FLEET's brand violet now
+# (#9046FF, shared byte-for-byte with web-terminal-kiro) and no token holds it, so
+# a copy here would be a second source of truth for a fact only the asset owns.
+# Deriving it makes the drift the old check existed to catch unrepresentable.
+FAVICON_SVG = Path(__file__).resolve().parent.parent / "static" / "favicon.svg"
 FAVICON_CUES = [
     ("input", "--c-dot-input"),
     ("done", "--c-dot-done"),
     ("alert", "--c-dot-failed"),
 ]
+
+
+def favicon_backdrop() -> str:
+    """The flat fill of the base favicon's background rect."""
+    m = re.search(r"<rect\b[^>]*\bfill=\"(#[0-9a-fA-F]{6})\"", FAVICON_SVG.read_text())
+    if m is None:
+        raise SystemExit(f"no background rect fill in {FAVICON_SVG}")
+    return m.group(1)
 
 
 def as_expr(ink: str) -> str:
@@ -1034,28 +1041,12 @@ def show_favicon_badge(themes: list[Theme]) -> None:
     print("are actually seen. The badge is composited onto static/favicon.svg,")
     print("whose own artwork is a flat saturated violet, so its backdrop is")
     print("NEITHER theme's surface — which is what decides that ONE icon serving")
-    print("both themes is correct, and which value it has to carry.")
+    print("both themes is correct.")
     print()
-    backdrop = from_hex(FAVICON_BADGE_BACKDROP)
-    theme_name, token = FAVICON_BACKDROP_TOKEN
+    backdrop = from_hex(favicon_backdrop())
     print(f"  badge sits on the icon's flat fill: {backdrop.hex()}")
-    # The icon carries a literal hex, so a retuned accent cannot reach it. Saying
-    # so is the whole point of the check: a divergence means the icons are stale,
-    # not that this figure is wrong.
-    source = next((th for th in themes if th.name == theme_name), None)
-    if source is None:
-        print(f"  (cannot check against {theme_name} {token}: theme not parsed)")
-    else:
-        declared = source.colour(token)
-        agrees = declared.hex() == backdrop.hex().lstrip("#")
-        print(
-            f"  copied from {theme_name} {token}: {declared.hex()} "
-            + (
-                "matches"
-                if agrees
-                else "DIVERGED — regenerate the icons (gen-attention-icons.py)"
-            )
-        )
+    print("  (read from static/favicon.svg; the fleet brand violet, shared with")
+    print("  web-terminal-kiro, and deliberately not a copy of any theme token)")
     print()
     print(
         f"  {'cue':<8} {'token':<12} "

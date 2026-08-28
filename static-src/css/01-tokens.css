@@ -102,7 +102,12 @@
      * the pastel reads at 7.2:1. Light mode carries a deep purple one rung
      * BELOW that retired one — oklch(50% 0.254 295.8deg), #771edf, not
      * #9046FF, which is a different colour and was what this comment and
-     * <meta name="theme-color"> both claimed until it was measured. A pastel
+     * <meta name="theme-color"> both claimed until it was measured. #9046FF
+     * IS live again since 2026-08, but as the ICON artwork's backdrop only
+     * (static/favicon.svg and every PNG beside it, shared with
+     * web-terminal-kiro) — retired here means retired as TEXT ink, which says
+     * nothing about a flat fill no text sits on, so do not point the icons
+     * back at this token. A pastel
      * fill inverts its ink: anything ON an accent fill uses --c-on-accent
      * (dark ink here, white in light mode), never a hardcoded #fff. The
      * --img-*-on-accent tokens bake that same ink into the checkbox glyph
