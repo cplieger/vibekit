@@ -385,3 +385,40 @@ func TestStart_ChildEnvironmentCarriesTheMemoryLever(t *testing.T) {
 		})
 	}
 }
+
+// The child locale is pinned by the parent, and the inherited value loses.
+//
+// Two halves, and the ordering one is what the test exists for: the credential
+// screen is a denylist that passes LANG through by name, so a locale appended
+// BEFORE it is a silent no-op against an operator's own value — os/exec keeps the
+// LAST assignment of a repeated key. The ambient value is set rather than assumed
+// for that reason.
+func TestStart_ChildEnvironmentPinsTheLocale(t *testing.T) {
+	t.Setenv(localeEnvVar, "ambient-should-lose")
+
+	dir := t.TempDir()
+	dumpPath := filepath.Join(dir, "child.env")
+	scriptPath := envDumpFake(t, dir, dumpPath)
+
+	b := New(scriptPath, dir)
+	t.Cleanup(b.Stop)
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background()}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	dump, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("read the child environment dump: %v", err)
+	}
+	lines := strings.Split(string(dump), "\n")
+	// Composed through the production function so a change to the value cannot
+	// leave this test asserting the old one.
+	if want := localeEnv()[0]; !slices.Contains(lines, want) {
+		t.Errorf("child environment is missing %q; every spawned tool then chooses its own output encoding:\n%s",
+			want, dump)
+	}
+	if slices.Contains(lines, localeEnvVar+"=ambient-should-lose") {
+		t.Errorf("the inherited %s survived; the pin must be appended AFTER the screen so it wins",
+			localeEnvVar)
+	}
+}

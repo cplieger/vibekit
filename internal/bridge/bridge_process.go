@@ -217,6 +217,24 @@ var handshakeBudget = 120 * time.Second
 // correctness argument and needs none — see internal/agent/load_projection.go.
 var replayBudget = 300 * time.Second
 
+// writeDeadline bounds ONE write to kiro-cli's stdin. NOT a setting, on the same
+// reasoning the two budgets above carry — a backstop the user can raise stops
+// being a backstop, and no caller supplies one. A var only so a test can shorten
+// it; nothing in production writes it.
+//
+// It bounds a peer that is DRAINING AT ALL, not a peer's processing: writeMu
+// serialises every outbound frame, so one wedged write blocks every later Respond,
+// Call and Notify on that bridge, session/cancel included, permanently and with
+// nothing logged.
+//
+// 30s, chosen so a healthy peer cannot reach it while a wedge is still reported
+// inside one prompt round trip. The pipe buffer is 65,536 bytes, so an 8 MiB reply
+// is 128 drains at process speed — comfortably under a second — and single-digit
+// seconds is already an order of magnitude of headroom over that. Too short reaps
+// a slow-but-alive peer mid-turn, which costs one turn and leaves the session
+// resumable; too long is the old unbounded stall, later.
+var writeDeadline = 30 * time.Second
+
 // handshakeTimeout rewrites an expired handshake budget into something a person
 // can act on, and returns every other failure exactly as it was.
 //
@@ -233,6 +251,24 @@ func handshakeTimeout(err error, phase string, budget time.Duration) error {
 	}
 	return fmt.Errorf("%s did not finish within %s. kiro-cli stopped answering during the handshake. Send again to retry, and check /api/health if it keeps happening: %w",
 		phase, budget, err)
+}
+
+// localeEnvVar is the locale variable every child of this bridge inherits.
+// TWIN of internal/agent's termLocaleEnvVar: an agent terminal composes its own
+// child environment and internal/agent does not import this package, so the value
+// is stated twice on purpose. Change one, change the other.
+const localeEnvVar = "LANG"
+
+// localeEnv pins the text encoding of everything kiro-cli spawns.
+//
+// The runtime image ships no `locales` package, so an unset LANG leaves glibc's
+// default C locale and each child then picks its own output encoding — git
+// octal-escapes every non-ASCII path in status, diff and log output under it.
+// C.UTF-8 is a glibc built-in and needs no generated locale files. The image sets
+// the same value, so this is the half that cannot be overridden by whatever the
+// server process happened to inherit.
+func localeEnv() []string {
+	return []string{localeEnvVar + "=C.UTF-8"}
 }
 
 // buildACPArgs assembles the kiro-cli `acp` invocation arguments. Kept
@@ -303,6 +339,10 @@ func (b *Bridge) startProcess(engine string) error {
 	// the half of the memory switch that cannot ride the wire, because the
 	// settings bridge reaches the gate's veto but not its eligibility term.
 	env = append(env, memoryEnv(b.memory)...)
+	// AFTER the screen and after the memory lever, for the same reason: os/exec
+	// keeps the LAST value for a repeated key, so appending a locale before them
+	// would be a silent no-op against an inherited one.
+	env = append(env, localeEnv()...)
 	b.cmd.Env = env
 	if len(dropped) > 0 {
 		// NAMES only: their values are the credentials this dropped. One line

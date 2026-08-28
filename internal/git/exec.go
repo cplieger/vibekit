@@ -255,24 +255,27 @@ func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		// fsmonitor daemon, so any value present came from a repo's own
 		// .git/config.
 		"-c", "core.fsmonitor=",
+		// Without this git C-quotes any path holding a non-ASCII byte, so
+		// café.txt reaches a caller as "caf\303\251.txt". The status parser is
+		// unaffected either way (it reads -z, which emits paths verbatim — see
+		// parseGitStatusOutput), so what this actually repairs is the non--z
+		// output that reaches the model: handlers_ai.go builds commit messages,
+		// PR descriptions and branch names from `status --porcelain` and
+		// `diff --no-textconv`, and an escaped filename there ends up written
+		// into a commit message the user keeps.
+		//
+		// It does not make quoting unreachable: a path containing a literal
+		// double quote, a newline or a control byte is still quoted, so no
+		// parser may drop its quote handling on the strength of this flag.
+		"-c", "core.quotePath=false",
 	}, args...)
-	// The directive below suppresses the unused-directive check as well, because
-	// gosec's verdict at this line is not stable. G702 is a G7xx TAINT rule, and
-	// the taint analysis does not terminate reliably on a package shaped like
-	// this one — many exec sites with variadic args (upstream
-	// securego/gosec#1608 reports the same family hanging outright on the same
-	// shape). Measured on golangci-lint 2.13.1: identical source, cache cleaned,
-	// gosec reported G702 on 6 of 8 runs and stayed silent on 2, and each silent
-	// run fails the build for a directive the other six require. Deleting the
-	// directive is not the fix; it swaps which half of the coin flip goes red,
-	// because a reporting run then fails on the finding. G204 does not cover
-	// this site either — the binary is the literal below and the old AST rule
-	// only fires on a variable one — so the suppression rests entirely on the
-	// unstable rule.
-	//
-	// Do not open a comment line here with the token that names that check:
-	// gocritic's whyNoLint matches `// *nolint`, so a line whose prose starts
-	// with it is read as a second, explanation-less directive.
+	// The directive below also suppresses the unused-directive check: golangci-lint's
+	// gosec integration reports this line nondeterministically (at the pinned 2.13.1
+	// G702 appeared on 6 of 8 cold runs, and a silent run fails the build for an
+	// unused directive). Standalone gosec is deterministic here, so the instability
+	// is the integration's, and deleting the directive only swaps which half of the
+	// flip goes red. Never open a comment line with the token that names that check:
+	// gocritic's whyNoLint reads it as a second directive.
 	//nolint:gosec,nolintlint // G702: the subcommand is checked against allowedSubcommands above and the binary name is the literal "git"; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
 	cmd := exec.CommandContext(ctx, "git", hardenedArgs...)
 	cmd.Dir = dir
