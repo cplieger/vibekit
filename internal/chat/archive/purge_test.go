@@ -465,9 +465,10 @@ func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
 // The ordering is the whole point: onPurge fires AFTER os.Remove(entry.path),
 // so the chain has to be read before the file goes or the ids are unrecoverable
 // — which is why the callback used to receive only a chat id and the purge could
-// clean up nothing but checkpoints. With DefaultChatRetentionDays at 1, nearly
-// every session directory would otherwise become an orphan within a day, making
-// the sweep the primary retention mechanism instead of a residue collector.
+// clean up nothing but checkpoints. At the DefaultChatRetentionDays window the
+// purge is what reaches an expired chat's session directories; a purge that
+// reaped nothing but checkpoints would leave the hourly orphan sweep, a residue
+// collector, as the only thing that ever removed them.
 func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 	var rec purgeRecorder
 	svc, store, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))

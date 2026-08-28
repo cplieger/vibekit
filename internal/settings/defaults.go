@@ -174,8 +174,13 @@ const (
 //
 // The server purge scheduler treats <= 0 as "no purge" (off AND forever); the
 // client decides archive-vs-delete on close from the same value (enabled when
-// != 0). Default 1 preserves the prior 1-day behavior.
-const DefaultChatRetentionDays = 1
+// != 0). Seven days is a week, so a chat is still there when someone comes back
+// to it after a weekend.
+//
+// There is no TypeScript mirror of this value: GET /api/settings resolves the
+// default underneath the stored document, so the payload always carries a real
+// number and the client has nothing to fall back to.
+const DefaultChatRetentionDays = 7
 
 // DefaultAgentIgnoreFiles is the seeded default for the agent_ignore_files
 // setting: the ignore-file basenames the agent read filter (internal/ignore,
