@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/settings"
@@ -295,7 +296,17 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 
 	// 1. Ensure the chat exists and append the user message, naming the chat
 	// from its first prompt.
+	//
+	// A refused write answers HERE, before anything else runs, because every step
+	// below depends on the record this one declined to create. Carrying on spawns
+	// a bridge for a chat with no file (breaking the live-bridge invariant), sends
+	// the prompt, spends the credits, lets the agent write to the workspace, and
+	// then loses the whole turn at persist, since the same refusal applies there —
+	// and every one of those steps reports success.
 	if err := appendUserMessage(ctx, roles.chats, roles.bus, roles.workspace, cmd.ChatID, &p); err != nil {
+		if errors.Is(err, chat.ErrTombstoned) {
+			return nil, StatusError(http.StatusConflict, ErrChatNotFound)
+		}
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
@@ -334,17 +345,26 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 
 	// 4. Send the prompt to kiro-cli.
 	if !roles.mcp.WaitForReady(ctx, 30*time.Second) {
-		slog.Warn("MCP readiness timeout, proceeding anyway", "chat_id", cmd.ChatID)
+		// The registry distinguishes all three causes per server and holds the
+		// enabled-name census, and this is the one moment the join is worth making:
+		// a chat id on its own reports only that a wait expired, which is the one
+		// fact the operator already has.
+		pending := roles.mcp.PendingSummary(ctx)
+		slog.Warn("MCP readiness timeout, proceeding anyway",
+			"chat_id", cmd.ChatID,
+			"silent", pending.Silent,
+			"failed", pending.Failed,
+			"awaiting_auth", pending.AwaitingAuth)
 	}
 	var creditsBeforeTurn float64
-	if chat, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
-		creditsBeforeTurn = chat.Usage.Credits
+	if ch, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
+		creditsBeforeTurn = ch.Usage.Credits
 		// Latch the answering model HERE, at dispatch, not on the turn's first
 		// frame. The bridge is up and its model persisted by this point, and
 		// switch_model's fast path can land any time from now on — including
 		// before the old model has emitted anything, which is precisely when the
 		// first-frame read attributed one model's answer to another.
-		roles.turnOutcome.LatchTurnModel(cmd.ChatID, chat.Model)
+		roles.turnOutcome.LatchTurnModel(cmd.ChatID, ch.Model)
 	}
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()
@@ -352,29 +372,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 	resp, err := callPromptWithRetry(ctx, sb, promptParams, cmd.ChatID)
 	elapsed := time.Since(start)
 	if err != nil {
-		slog.Error("prompt failed", "chat_id", cmd.ChatID, keyError, err, "elapsed", elapsed)
-		// ONE rendering of the cause, on every surface that carries it. Handing the
-		// raw error to RespondErr instead meant RPCErrorText's fallback -- the
-		// machine triplet {"errorType":...,"retryErrorType":"THROTTLING",...} --
-		// overwrote the prose promptFailureReason exists to produce. The chain is
-		// already in the log line above; what travels to the user is the reason.
-		//
-		// Three surfaces take it, and they have three different lifetimes: this
-		// POST's error body and the SSE frame below both reach the toast (whichever
-		// arrives first wins, the other dedupes), and the transcript's interrupted
-		// divider keeps it for good. The divider is why the reason is computed HERE
-		// rather than after the finalize call -- AbandonInFlightTurn writes it.
-		reason := promptFailureReason(err)
-		// Finalize the turn before returning. Without this the assistant buffer
-		// survives with Started == true, so the NEXT prompt's ensureTurnStarted
-		// no-ops, emits no message_created, and extends this dead turn's blocks
-		// under this dead turn's message id: one persisted assistant message
-		// holding two turns' replies. The partial is persisted rather than
-		// dropped -- see AbandonInFlightTurn for why that direction.
-		roles.turnOutcome.AbandonInFlightTurn(ctx, cmd.ChatID, reason)
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
-			vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
-		return nil, StatusError(http.StatusInternalServerError, errors.New(reason))
+		return nil, reportPromptFailure(ctx, roles, cmd.ChatID, err, elapsed)
 	}
 	slog.Info("prompt complete", "chat_id", cmd.ChatID, "elapsed", elapsed)
 
@@ -383,14 +381,62 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 
 	// Compute credit delta for the turn summary.
 	var creditsDelta float64
-	if chat, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
-		creditsDelta = chat.Usage.Credits - creditsBeforeTurn
+	if ch, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
+		creditsDelta = ch.Usage.Credits - creditsBeforeTurn
 	}
 	roles.turnOutcome.EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, TurnStats{
 		CreditsDelta: creditsDelta,
 		ElapsedMs:    float64(elapsed.Milliseconds()),
 	})
 	return responseOK, nil
+}
+
+// reportPromptFailure finalizes a turn whose prompt Call failed and returns the
+// error the POST answers with.
+//
+// ONE rendering of the cause, on every surface that carries it. Handing the raw
+// error to RespondErr instead meant RPCErrorText's fallback -- the machine triplet
+// {"errorType":...,"retryErrorType":"THROTTLING",...} -- overwrote the prose
+// promptFailureReason exists to produce. The chain is in the log line here; what
+// travels to the user is the reason.
+//
+// Three surfaces take it, and they have three different lifetimes: the POST's
+// error body and the SSE frame both reach the toast (whichever arrives first wins,
+// the other dedupes), and the transcript's interrupted divider keeps it for good.
+// The divider is why the reason is computed BEFORE the finalize call --
+// AbandonInFlightTurn writes it.
+func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, err error, elapsed time.Duration) error {
+	slog.Error("prompt failed", "chat_id", chatID, keyError, err, "elapsed", elapsed)
+	reason := promptFailureReason(err)
+	// An auth failure is the one prompt failure whose remedy is not "send
+	// again", so it does not travel as the generic prompt_failed code.
+	// ErrCodeAuthTokenUnavailable already routes to a non-dismissible banner
+	// with a Sign in CTA, which is why this is the whole client-side change:
+	// no new wire enum, no decoder regeneration.
+	code := vibekit.ErrCodePromptFailed
+	if classifyPromptFailure(err) == classAuth {
+		code = vibekit.ErrCodeAuthTokenUnavailable
+		// The banner is only half the remedy. The token vibekit vended was
+		// accepted at the vend and rejected at the backend, which is what an
+		// account switch looks like — invalidated without being expired — so
+		// without this the cache re-vends the same dead credential for up to
+		// (expiry - reuseLeeway) and signing in again changes nothing until it
+		// ages out. Withdrawing it from reuse makes the next callback re-ask
+		// the CLI, which picks up the switched account with no restart.
+		if roles.tokens != nil {
+			roles.tokens.Invalidate()
+		}
+	}
+	// Finalize the turn before returning. Without this the assistant buffer
+	// survives with Started == true, so the NEXT prompt's ensureTurnStarted
+	// no-ops, emits no message_created, and extends this dead turn's blocks
+	// under this dead turn's message id: one persisted assistant message
+	// holding two turns' replies. The partial is persisted rather than
+	// dropped -- see AbandonInFlightTurn for why that direction.
+	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, reason)
+	roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID,
+		vibekit.ErrorPayload{Code: code, Message: reason}))
+	return StatusError(http.StatusInternalServerError, errors.New(reason))
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map. Takes
@@ -441,6 +487,13 @@ const (
 	// is the whole point of separating it from classTransient: the payload IS
 	// what was refused, so resending the identical payload cannot succeed.
 	classRejected
+	// classAuth is the backend refusing the TOKEN rather than the request.
+	// Terminal by OMISSION from callPromptWithRetry's retry set, like every class
+	// but busy and transient; what it is FOR is the answer, not the retry
+	// decision. CmdPrompt sends vibekit.ErrCodeAuthTokenUnavailable for it, which
+	// is the only code the client routes to a Sign in CTA — so without a class
+	// here the one remedy that works cannot be offered, whatever the message says.
+	classAuth
 )
 
 // validationErrorNames are the backend's own names for a request it refused as
@@ -475,6 +528,37 @@ var validationErrorNames = []string{
 	"DocumentSizeExceeded",
 	"DocumentMaximumPagesExceeded",
 	"DocumentCountExceeded",
+}
+
+// authErrorNames are the backend's own names for a request it refused because
+// the CREDENTIAL was not usable. Measured off the KAS 2.20.0 bundle: the first
+// four are the error classes it throws, the five upper-case entries are the name
+// codes its own auth predicate keys on.
+//
+// A NAME rather than the surrounding prose, for the same reason
+// validationErrorNames is a name list: it comes from a closed set the backend
+// stamps as `error.data.errorType`, so it survives a reworded message. Measured
+// against the bundle, the prose markers below matched NONE of the backend's eight
+// auth messages — they were written against AWS SDK exception-name fragments
+// ("ExpiredToken" against a class called TokenExpiredError, "unauthorized"
+// against "not authorized").
+//
+// Deliberately EXCLUDED, though it sits in the same family:
+// ModelRegistryAccessDeniedError. Its message is that the account does not have
+// access, which is an entitlement fact rather than a sign-in problem — signing in
+// again does not fix it, so a Sign in banner would be advice that cannot work.
+// This narrows rather than widens: it is the one auth-shaped class the old
+// AccessDenied marker could reach.
+var authErrorNames = []string{
+	"TokenInvalidError",
+	"TokenExpiredError",
+	"AuthRefreshFailedError",
+	"ModelRegistryUnauthenticatedError",
+	"MISSING_TOKEN",
+	"MALFORMED_TOKEN",
+	"INVALID_AUTH",
+	"INVALID_SSO_AUTH",
+	"INVALID_IDC_AUTH",
 }
 
 // mappedErrorData is the shape KAS puts in `error.data` on a mapped backend
@@ -540,8 +624,17 @@ func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
 		// KAS's own SDK ladder has already run (a real 429 on disk shows
 		// `attempts: 5`), and CLIENT_ERROR is definitionally not retryable. The
 		// class only decides what the user is told.
-		if d := mappedFromData(re); d != nil && d.RetryErrorType == kasRetryThrottling {
+		d := mappedFromData(re)
+		if d == nil {
+			return classFatal
+		}
+		if d.RetryErrorType == kasRetryThrottling {
 			return classThrottled
+		}
+		// errorType is the machine name, so it is read directly rather than
+		// searched for in the haystack: on this code the name is the field.
+		if slices.Contains(authErrorNames, d.ErrorType) {
+			return classAuth
 		}
 		return classFatal
 	case vibekit.RPCCodeInternal:
@@ -552,7 +645,7 @@ func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
 		// not merely wasted latency but a second and third upload of the same
 		// rejected payload.
 		if isAuthShaped(re) {
-			return classFatal
+			return classAuth
 		}
 		if isValidationShaped(re) {
 			return classRejected
@@ -583,15 +676,31 @@ func mappedFromData(re *vibekit.RPCError) *mappedErrorData {
 // isAuthShaped reports whether an internal error is really an authentication
 // failure. Matched on the payload rather than the code because KAS collapses
 // both onto -32603, and no amount of retrying fixes an expired token.
+//
+// authErrorNames comes first and carries the weight (see it for why a name beats
+// prose); the markers remain for the errors that arrive with no class name at all.
+//
+// `credentials` is deliberately NOT among them: it matched an AWS SDK message
+// that states a refresh WILL be attempted, so grading it terminal-auth suppressed
+// the retry the message was asking for, plus an echoed
+// access-control-allow-credentials header and a gRPC channel error. The two
+// phrases are prefix-anchored rather than a bounded regex because this haystack
+// is a JSON object, where bounding a two-token match across it means nothing.
 func isAuthShaped(re *vibekit.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
+	for _, name := range authErrorNames {
+		if strings.Contains(hay, name) {
+			return true
+		}
+	}
 	markers := []string{
+		"Authentication failed",
+		"Authentication token",
 		"not logged in",
 		"Unauthorized",
 		"unauthorized",
 		"ExpiredToken",
 		"AccessDenied",
-		"credentials",
 	}
 	for _, marker := range markers {
 		if strings.Contains(hay, marker) {
@@ -708,6 +817,8 @@ func (c promptFailureClass) String() string {
 		return "throttled"
 	case classRejected:
 		return "rejected"
+	case classAuth:
+		return "auth"
 	case classFatal:
 		return "fatal"
 	}

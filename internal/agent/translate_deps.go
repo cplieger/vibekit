@@ -55,15 +55,18 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Buffers:      rt.bridge.assistantBufs,
 		Lines:        rt.lines,
 		PendingPerms: rt.bus,
-		Push:         rt.coord,
-		Sessions:     rt.coord,
-		Terminals:    rt.agentTerms,
-		HookStatus:   rt.hookStatus,
-		WorkDir:      rt.lifecycle.workDir,
-		MCP:          rt.mcpRegistry,
-		Governance:   rt.config,
-		RunOrigin:    rt.runs,
-		RunBounds:    rt.runs,
+		// rt, not the coordinator: BridgeRespond resolves the reply bridge from
+		// the manager by chat id, which is this type's own reach.
+		Respond:    rt,
+		Push:       rt.coord,
+		Sessions:   rt.coord,
+		Terminals:  rt.agentTerms,
+		HookStatus: rt.hookStatus,
+		WorkDir:    rt.lifecycle.workDir,
+		MCP:        rt.mcpRegistry,
+		Governance: rt.config,
+		RunOrigin:  rt.runs,
+		RunBounds:  rt.runs,
 		// The coordinator, not rt: ending a turn needs the chat's bridge and its
 		// in-flight prompt cancel, which are the coordinator's to reach.
 		TurnInterrupt: rt.coord,

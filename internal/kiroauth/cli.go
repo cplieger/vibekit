@@ -182,12 +182,45 @@ type CLISource struct {
 	// That is every chat's auth callback queued behind the same question.
 	fetched time.Time
 	mu      sync.Mutex
+
+	// stale withdraws the cached token from the REUSE window while keeping it as
+	// vendCachedOrFail's fallback input. Set by Invalidate, cleared by the next
+	// answer from the CLI.
+	//
+	// A second field rather than a zeroed expiry, because the cache answers two
+	// different questions: may this token be vended without asking, and is there
+	// anything to fall back on when the CLI cannot answer. An invalidated
+	// credential changes only the first — zeroing the expiry would change both
+	// and make the next CLI blip a hard failure where today it is absorbed.
+	stale bool
 }
 
 // NewCLISource builds a CLISource over the given binary resolver and
 // environment-overlay source (both from the install manager).
 func NewCLISource(resolve func() string, env func() []string) *CLISource {
 	return &CLISource{resolve: resolve, env: env, runCommand: execGetToken}
+}
+
+// Invalidate withdraws the cached credential from the reuse window: the next
+// Token re-asks the CLI even when the cached token's clock expiry is far off.
+//
+// It exists for a credential that is dead while UNEXPIRED. Switching the active
+// kiro-cli account invalidates a token without touching its expiresAt, so the
+// reuse branch below keeps vending it for up to (expiry - reuseLeeway) and every
+// turn fails at the backend. Nothing else notices, because the vend SUCCEEDS: the
+// readiness latch clears and the app's only sign-in affordance never fires.
+//
+// The cached value is KEPT, and stays vendCachedOrFail's fallback input. Dropping
+// it would trade one silent failure for another — a transient CLI failure after an
+// invalidation would have nothing to fall back on and become a hard auth failure,
+// which is the defect that function exists to prevent. So an over-eager call costs
+// one cliTimeout-capped subprocess, not a working session.
+//
+// Safe with nothing cached, and safe to call concurrently with Token.
+func (s *CLISource) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stale = true
 }
 
 // Token returns the current access token result for the auth callback:
@@ -201,7 +234,7 @@ func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cached != nil && time.Until(s.expiry) > reuseLeeway {
+	if !s.stale && s.cached != nil && time.Until(s.expiry) > reuseLeeway {
 		return s.cached.result(), nil
 	}
 	// Inside the leeway window the CLI is re-asked, but only once per burst: a
@@ -214,7 +247,11 @@ func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
 	// The expiry re-check is not redundant with it: this branch is reached only
 	// when the token is inside the leeway window, and a hard-expired one must be
 	// re-asked however recently it arrived.
-	if s.cached != nil && s.fetched.After(arrived) && time.Now().Before(s.expiry) {
+	//
+	// The stale gate is on this branch too. An invalidated token is not a waiting
+	// caller's to adopt either, and a token fetched SINCE the invalidation has
+	// already cleared the flag, so the guard only ever withholds a dead one.
+	if !s.stale && s.cached != nil && s.fetched.After(arrived) && time.Now().Before(s.expiry) {
 		return s.cached.result(), nil
 	}
 	if s.resolve == nil {
@@ -263,10 +300,10 @@ func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
 		// token whose expiry we cannot judge. That also withdraws it from the
 		// coalescing branch above, which is right: a token nothing can judge must
 		// not be handed to a caller that did not ask for it.
-		s.cached, s.expiry, s.fetched = nil, time.Time{}, time.Time{}
+		s.cached, s.expiry, s.fetched, s.stale = nil, time.Time{}, time.Time{}, false
 		return data.result(), nil
 	}
-	s.cached, s.expiry, s.fetched = data, exp, time.Now()
+	s.cached, s.expiry, s.fetched, s.stale = data, exp, time.Now(), false
 	return data.result(), nil
 }
 
@@ -286,9 +323,17 @@ func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
 // logged and swallowed precisely because the cached token is still valid. The
 // cache is deliberately NOT cleared — the next callback retries the CLI, and
 // discarding a live credential to record a transient failure is the defect.
+//
+// An INVALIDATED token is still vended here, and the `invalidated` attribute is
+// what makes that visible. The two mechanisms pull in opposite directions on the
+// same value: Invalidate withdraws it from reuse because it may be dead, this
+// vends it because the alternative is a hard failure on a session that may be
+// working. Reuse is where the certainty is, so that is where the withdrawal
+// applies; here the token is the only answer there is.
 func (s *CLISource) vendCachedOrFail(err error) (map[string]any, error) {
 	if s.cached != nil && time.Now().Before(s.expiry) {
-		slog.Warn("kiro-cli token refresh failed; vending the cached token, which is still valid",
+		slog.Warn("kiro-cli token refresh failed; vending the cached token",
+			"invalidated", s.stale,
 			"expires_in", time.Until(s.expiry).Round(time.Second), "error", err)
 		return s.cached.result(), nil
 	}

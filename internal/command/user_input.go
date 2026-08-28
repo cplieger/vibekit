@@ -15,15 +15,6 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// userInputResult is the _kiro/userInput response body. KAS acts on
-// {action:"answered", answer:"<text>"}; any other action (or an empty
-// answer) makes the agent advance to its next phase, which is exactly
-// the dismissal semantic.
-type userInputResult struct {
-	Action string `json:"action"`
-	Answer string `json:"answer,omitempty"`
-}
-
 // CmdUserInputResponse forwards the user's answer to kiro-cli as the
 // _kiro/userInput response.
 func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
@@ -53,7 +44,7 @@ func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms Pendi
 	if !perms.TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
-	result := userInputResult{Action: p.Action}
+	result := vibekit.UserInputResult{Action: p.Action}
 	if p.Action == vibekit.UserInputActionAnswered {
 		result.Answer = p.Answer
 	}

@@ -29,7 +29,7 @@ import (
 // no host should be in the middle of reading it.
 //
 // The chat-store width arithmetic still holds: this package reads and writes
-// chats through 3 of the 9 methods *chat.Store offers. It never lists chats,
+// chats through 4 of the 11 methods *chat.Store offers. It never lists chats,
 // never builds a history transcript, never deletes one, never touches a draft
 // and never registers a route. The old note about needing a differently-NAMED
 // accessor than internal/command's is obsolete with the getters gone: both
@@ -49,7 +49,14 @@ type LineRecorder interface {
 }
 
 // ChatRecords is the chat store as this package uses it: read a chat, mutate it,
-// append a message. 3 of the 9 methods *chat.Store offers.
+// append a message, upsert the turn's plan row. 4 of the 11 methods *chat.Store
+// offers.
+//
+// Every write through it is a LATE write: it lands after the frame that caused
+// it, on a chat the user may already have deleted. So chat.ErrTombstoned is the
+// designed outcome here rather than a fault — the tombstone exists to make such
+// a write a no-op — and each site matches it and returns instead of logging an
+// error. Every other error keeps its handling.
 type ChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
@@ -57,6 +64,9 @@ type ChatRecords interface {
 	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	// AppendMessage appends msg to the chat's messages.
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	// UpsertTurnPlan overwrites the turn's existing plan row, or appends msg when
+	// the turn carries none. One row per turn rather than one per plan frame.
+	UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 }
 
 // Roles is the wiring-time role set: the host names which of its interfaces
@@ -72,7 +82,7 @@ type Roles struct {
 	// It was a Broadcast member on BOTH composites, which is what made every
 	// split of the host drag the event bus along with it.
 	Bus Broadcaster
-	// Chats is the chat store at 3 methods.
+	// Chats is the chat store at 4 methods.
 	Chats ChatRecords
 	// Buffers is the in-flight assistant-message store at 1 method.
 	Buffers BufferAccess
@@ -80,6 +90,8 @@ type Roles struct {
 	Lines LineRecorder
 	// PendingPerms registers an unanswered decision for reconnect replay.
 	PendingPerms PendingPermAdder
+	// Respond answers a server-to-client request on the chat's bridge.
+	Respond Responder
 	// Push sends a web-push notification.
 	Push Pusher
 	// Sessions resolves a chat's parent ACP session, to tell a subagent's frame
@@ -110,6 +122,20 @@ type Broadcaster interface {
 // gets it replayed.
 type PendingPermAdder interface {
 	PendingPermsAdd(requestID int64, evt vibekit.ServerEvent)
+}
+
+// Responder answers a server-to-client ACP request on the chat's bridge.
+//
+// The one role here that writes to the WIRE rather than to the event bus, and it
+// exists because a request vibekit declines to process still has to be answered:
+// KAS's sendRequest carries no timeout, so an unanswered ask strands the tool
+// batch until process teardown. The ordinary answer to an ask travels the other
+// way, from the client through internal/command, and never through here.
+//
+// A chat with no bridge is not an error — a response has nowhere to go — so an
+// implementation reports nil for that case rather than a failure.
+type Responder interface {
+	BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error
 }
 
 // Pusher delivers a web-push notification for a chat.
@@ -184,6 +210,7 @@ type Translator struct {
 	buffers       BufferAccess
 	lines         LineRecorder
 	pendingPerms  PendingPermAdder
+	respond       Responder
 	push          Pusher
 	sessions      SessionResolver
 	terminals     TerminalReader
@@ -208,6 +235,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		buffers:       r.Buffers,
 		lines:         r.Lines,
 		pendingPerms:  r.PendingPerms,
+		respond:       r.Respond,
 		push:          r.Push,
 		sessions:      r.Sessions,
 		terminals:     r.Terminals,

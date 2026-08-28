@@ -33,9 +33,11 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -119,7 +121,11 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibek
 // breadcrumb never blocks the stream.
 func (t *Translator) persistSafetyBlock(ctx context.Context, chatID vibekit.ChatID, p v3SafetyStatusChanged) {
 	evt := t.newEventMessage(vibekit.EventInfraSafetyBlocked, safetyBlockContent(p))
-	if err := t.chats.AppendMessage(ctx, chatID, &evt); err != nil {
+	err := t.chats.AppendMessage(ctx, chatID, &evt)
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("safety: append block event", "chat_id", chatID, "error", err)
 	}
 }

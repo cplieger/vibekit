@@ -30,6 +30,10 @@ func (nopChatRecords) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Me
 	return nil
 }
 
+func (nopChatRecords) UpsertTurnPlan(context.Context, vibekit.ChatID, *vibekit.Message) error {
+	return nil
+}
+
 var _ ChatRecords = nopChatRecords{}
 
 // nopMCPRecorder is a no-op MCPRecorder for the handler benchmarks, which drive
@@ -70,6 +74,7 @@ type hostDouble interface {
 	RunBoundsAccess
 	TurnInterruptAccess
 	ChatRecords
+	Responder
 	GetOrInit(chatID vibekit.ChatID) *buffer.Buffer
 	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
 	MCPRecorder() MCPRecorder
@@ -89,6 +94,7 @@ func rolesOf(d hostDouble) *Roles {
 		Buffers:       d,
 		Lines:         d,
 		PendingPerms:  d,
+		Respond:       d,
 		Push:          d,
 		Sessions:      d,
 		Terminals:     d,

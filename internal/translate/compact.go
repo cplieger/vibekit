@@ -7,8 +7,10 @@ package translate
 import (
 	"cmp"
 	"context"
+	"errors"
 	"log/slog"
 
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -22,19 +24,27 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 		summary = *summaryPtr
 	}
 	evt := t.newEventMessage(vibekit.EventCompacted, summary)
-	if err := t.chats.AppendMessage(ctx, chatID, &evt); err != nil {
+	err := t.chats.AppendMessage(ctx, chatID, &evt)
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
 	}
 	if ctx.Err() != nil {
 		return
 	}
-	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	err = t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
 		c.CompactionWatermark = evt.ID
 		return true
-	}); err != nil {
+	})
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("compaction: set watermark", "chat_id", chatID, "error", err)
 	}
 }
@@ -44,7 +54,11 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.ChatID, errMsg string) {
 	errMsg = cmp.Or(errMsg, "compaction failed")
 	evt := t.newEventMessage(vibekit.EventCompactFailed, errMsg)
-	if err := t.chats.AppendMessage(ctx, chatID, &evt); err != nil {
+	err := t.chats.AppendMessage(ctx, chatID, &evt)
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
 	}
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeCompactionFailed, Message: errMsg}))

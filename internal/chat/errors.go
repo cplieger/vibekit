@@ -1,10 +1,23 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
+
+// ErrTombstoned reports that a write was DECLINED because the chat id was
+// deleted within the tombstone window: the mutator never ran, nothing reached
+// disk and nothing was broadcast. It is the third outcome of the store's single
+// write path, and the only one that is not nil — an applied write and a no-op
+// both report nil, so without a value of its own a refusal was indistinguishable
+// from success and a caller ran a whole turn against a chat with no record.
+//
+// A caller that must not proceed on a refused write branches on it with
+// errors.Is. A late-write path that genuinely wants the drop — the tombstone's
+// original purpose — ignores it in one visible line rather than implicitly.
+var ErrTombstoned = errors.New("chat: id was recently deleted")
 
 // The typed StoreError / ErrorKind pair that used to live here is DELETED, not
 // relocated. It existed for two consumers, both of which are gone: the archive

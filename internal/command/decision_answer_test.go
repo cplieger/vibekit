@@ -218,9 +218,9 @@ func TestCmdUserInputResponse_AnswerTravelsOnlyWhenAnswered(t *testing.T) {
 			if len(bridge.results) != 1 {
 				t.Fatalf("got %d answers, want 1", len(bridge.results))
 			}
-			result, ok := bridge.results[0].(userInputResult)
+			result, ok := bridge.results[0].(vibekit.UserInputResult)
 			if !ok {
-				t.Fatalf("answer = %T, want userInputResult", bridge.results[0])
+				t.Fatalf("answer = %T, want vibekit.UserInputResult", bridge.results[0])
 			}
 			if result.Action != tc.action {
 				t.Errorf("action = %q, want %q", result.Action, tc.action)

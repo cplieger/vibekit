@@ -118,10 +118,29 @@ type termEnvVar struct {
 	Value string `json:"value"`
 }
 
+// termLocaleEnvVar is the locale variable an agent terminal's command inherits.
+// TWIN of internal/bridge's localeEnvVar: internal/agent declares the subprocess
+// contract at its consumer and never imports internal/bridge, so the value is
+// stated twice on purpose. Change one, change the other.
+const termLocaleEnvVar = "LANG"
+
+// termLocaleEnv pins the text encoding of an agent terminal's command. The
+// runtime image ships no `locales` package, so an unset LANG leaves glibc's C
+// locale and the command octal-escapes every non-ASCII path the model reads
+// back. C.UTF-8 is a glibc built-in needing no generated locale files.
+func termLocaleEnv() []string {
+	return []string{termLocaleEnvVar + "=C.UTF-8"}
+}
+
 // termEnv layers the requested env vars on top of the current process
-// environment. Returns nil when none are requested so cmd.Env stays nil
-// and the child inherits os.Environ() unchanged (identical to the
-// pre-env behaviour).
+// environment, then the locale pin. Returns nil when none are requested so
+// cmd.Env stays nil and the child inherits os.Environ() unchanged — which
+// already carries the image's own LANG, so there is nothing to pin there.
+//
+// The pin lands LAST because os/exec keeps the last value for a repeated key, so
+// appending it first would be a silent no-op against an agent-supplied one. It
+// covers LANG only: glibc gives LC_ALL and LC_CTYPE precedence over LANG whatever
+// the env ordering, so an agent setting either still picks its own encoding.
 func termEnv(vars []termEnvVar) []string {
 	if len(vars) == 0 {
 		return nil
@@ -130,7 +149,7 @@ func termEnv(vars []termEnvVar) []string {
 	for _, v := range vars {
 		env = append(env, v.Name+"="+v.Value)
 	}
-	return env
+	return append(env, termLocaleEnv()...)
 }
 
 // exitStatusObject returns the ACP exit-status object for an exited
@@ -522,6 +541,18 @@ func (at *agentTerminals) failCreate(ctx context.Context, chatID vibekit.ChatID,
 	respondErr(ctx, at.bridges, chatID, msg, reason)
 }
 
+// failParse answers a terminal request whose params did not decode, and logs it.
+//
+// The id is already verified non-nil by the router and KAS awaits these with no
+// timeout, so a bare return strands the promise rather than failing the call. The
+// request's OWN chatID is load-bearing: respondErr resolves the reply bridge by
+// chat id, so an empty one misses the lookup and the answer is dropped.
+func (at *agentTerminals) failParse(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, method string, err error) {
+	slog.Warn("agent terminal request had undecodable params",
+		"method", method, "chat_id", chatID, "error", err)
+	respondErr(ctx, at.bridges, chatID, msg, "invalid params")
+}
+
 func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		Command string `json:"command"`
@@ -896,7 +927,8 @@ func (at *agentTerminals) respondOutput(ctx context.Context, chatID vibekit.Chat
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
-	if parseRequest(msg, &params) != nil {
+	if err := parseRequest(msg, &params); err != nil {
+		at.failParse(ctx, chatID, msg, methodTermOutput, err)
 		return
 	}
 	at.mu.Lock()
@@ -929,7 +961,8 @@ func (at *agentTerminals) respondRelease(ctx context.Context, chatID vibekit.Cha
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
-	if parseRequest(msg, &params) != nil {
+	if err := parseRequest(msg, &params); err != nil {
+		at.failParse(ctx, chatID, msg, methodTermRelease, err)
 		return
 	}
 	term, ok := at.release(params.TerminalID)
@@ -962,7 +995,8 @@ func (at *agentTerminals) respondWaitForExit(ctx context.Context, chatID vibekit
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
-	if parseRequest(msg, &params) != nil {
+	if err := parseRequest(msg, &params); err != nil {
+		at.failParse(ctx, chatID, msg, methodTermWaitForExit, err)
 		return
 	}
 	at.mu.Lock()
@@ -995,7 +1029,8 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
-	if parseRequest(msg, &params) != nil {
+	if err := parseRequest(msg, &params); err != nil {
+		at.failParse(ctx, chatID, msg, methodTermKill, err)
 		return
 	}
 	at.mu.Lock()

@@ -26,11 +26,13 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math"
 	"reflect"
 
 	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -308,7 +310,7 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 		// because the alternative is a spend line that silently stops counting.
 		censusMeteringUnit(summaries[i].Unit)
 	}
-	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -323,7 +325,11 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 			c.Usage.HasRealData = true
 		}
 		return true
-	}); err != nil {
+	})
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("persist v3 turn summary", "chat_id", chatID, "error", err)
 	}
 }
@@ -385,7 +391,7 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatI
 // on (80 = warning, 95 = critical) so a crossing is never rounded away. A
 // change the UI cannot show is not worth a transcript rewrite.
 func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pct float64, size int, credits float64) {
-	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -412,7 +418,11 @@ func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pc
 		// money value is also the one field where rounding a change away would be
 		// wrong.
 		return changed
-	}); err != nil {
+	})
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("persist v3 usage", "chat_id", chatID, "error", err)
 	}
 }
@@ -489,12 +499,16 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 	if len(cat.models) == 0 && !cat.sawEffort {
 		return
 	}
-	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
 		return cat.applyTo(c)
-	}); err != nil {
+	})
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("persist v3 config catalog", "chat_id", chatID, "error", err)
 	}
 }

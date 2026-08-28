@@ -5,10 +5,12 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -208,7 +210,17 @@ func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
 	}
 }
 
-// HandlePlan persists a plan message directly.
+// HandlePlan persists the agent's plan as ONE row per turn.
+//
+// ACP resends the whole entries array on every plan update, so this is an upsert
+// rather than an append: the store overwrites this turn's plan row when there is
+// one. See chat.Store.UpsertTurnPlan for why the row is derived from the turn
+// boundary rather than remembered, and for what appending per frame cost.
+//
+// The id is minted here even on the update path and then discarded by the store,
+// because minting is the translator's (it owns newMsgID) while deciding which
+// row wins is the store's — the alternative is a read here to find out whether
+// an id is needed, which is a second trip and a race with nothing to gain.
 func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p ACPPlanWire
 	if json.Unmarshal(raw, &p) != nil {
@@ -220,31 +232,12 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw 
 		Ts:   time.Now().UnixMilli(),
 		Plan: p.Entries,
 	}
-	if err := t.chats.AppendMessage(ctx, chatID, &msg); err != nil {
-		slog.Error("persist plan", "chat_id", chatID, "error", err)
-	}
-	if ctx.Err() != nil {
+	err := t.chats.UpsertTurnPlan(ctx, chatID, &msg)
+	if errors.Is(err, chat.ErrTombstoned) {
 		return
 	}
-	allDone := true
-	for _, e := range p.Entries {
-		if e.Status != vibekit.PlanCompleted {
-			allDone = false
-			break
-		}
-	}
-	var plan []vibekit.PlanEntry
-	if !allDone {
-		plan = p.Entries
-	}
-	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
-		if !ex {
-			return false
-		}
-		c.CurrentPlan = plan
-		return true
-	}); err != nil {
-		slog.Error("persist plan update", "chat_id", chatID, "error", err)
+	if err != nil {
+		slog.Error("persist plan", "chat_id", chatID, "error", err)
 	}
 }
 
@@ -255,14 +248,18 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID vibekit.ChatID
 		return
 	}
 	changed := false
-	if err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex || c.CurrentModeID == p.ModeID {
 			return false
 		}
 		c.CurrentModeID = p.ModeID
 		changed = true
 		return true
-	}); err != nil {
+	})
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
 		slog.Error("mode update persist", "chat_id", chatID, "error", err)
 	}
 	if changed {

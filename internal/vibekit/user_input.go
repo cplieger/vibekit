@@ -43,3 +43,15 @@ type UserInputNeededPayload struct {
 	Options   []UserInputOption `json:"options,omitempty"`
 	RequestID int64             `json:"request_id"`
 }
+
+// UserInputResult is the _kiro/userInput RESPONSE body: the answer sent back on
+// the request id. KAS acts on {action:"answered", answer:"<text>"}; any other
+// action, or an empty answer, makes the agent advance to its next phase, which
+// is exactly the dismissal semantic. Sibling of ElicitationResult, and the one
+// spelling of this shape — the refusal path in internal/translate answers a
+// question it could not decode with it, and internal/command answers the user's
+// own reply with it.
+type UserInputResult struct {
+	Action string `json:"action"`
+	Answer string `json:"answer,omitempty"`
+}

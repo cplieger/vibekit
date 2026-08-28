@@ -132,14 +132,16 @@ type BridgeAccess interface {
 }
 
 // ChatStore is the chat store as the command handlers use it: read a chat,
-// mutate it, append a message, record a draft, delete it. 5 of the 9 methods
-// *chat.Store offers.
+// mutate it, append a message, record a draft and its attachments, delete it.
+// 6 of the 11 methods *chat.Store offers.
 //
-// The 4 it excludes are each a capability a command handler must not have. It
+// The 5 it excludes are each a capability a command handler must not have. It
 // cannot List (that is the chats index endpoint's read, and a dispatcher
 // enumerating every chat is a dispatcher that can leak one into another's
-// response), it cannot BuildHistory (priming is the bridge coordinator's),
-// it cannot UpdateMessage, and it cannot RegisterRoutes.
+// response), it cannot BuildHistory (priming is the bridge coordinator's), it
+// cannot UpsertTurnPlan (a plan row is the translator's, written from an ACP
+// frame rather than from a command), it cannot UpdateMessage, and it cannot
+// RegisterRoutes.
 //
 // Exported because ChatAccess is exported and *agent.Runtime has to name this as its
 // internal/translate declares its own narrower
@@ -276,9 +278,52 @@ type LifecycleAccess interface {
 }
 
 // MCPAccess is the MCP readiness gate a prompt waits on, so a first turn does
-// not reach the model before the workspace's MCP servers have connected.
+// not reach the model before the workspace's MCP servers have connected, plus
+// the account of what the wait was waiting FOR when it expires.
 type MCPAccess interface {
 	WaitForReady(ctx context.Context, timeout time.Duration) bool
+	// PendingSummary names the servers a readiness wait is still short of. Read
+	// only when the wait EXPIRES: it is a diagnostic, not part of the decision.
+	PendingSummary(ctx context.Context) MCPPendingSummary
+}
+
+// MCPPendingSummary is the three buckets a readiness timeout can be about, and
+// they want three different operator actions: a server that has said nothing at
+// all, one that reported a failure, and one waiting for a human to authorize it.
+//
+// A struct rather than three adjacent []string returns, because the three are
+// indistinguishable by type and the only consumer stamps them onto a log line as
+// separate attributes — a transposition would mislabel every bucket and read as
+// perfectly plausible.
+//
+// Declared here, at the consumer, like every other role in this file: the
+// producer is the MCP registry in another package, and the vocabulary belongs to
+// the surface that reads it.
+type MCPPendingSummary struct {
+	// Silent is the enabled servers that reported no terminal state. A server
+	// still CONNECTING is in here too — that state is deliberately not recorded —
+	// which is the honest answer for a readiness timeout and is why the attribute
+	// says silent rather than absent.
+	Silent []string
+	// Failed is the servers that reported a failure, each with the upstream
+	// error text.
+	Failed []string
+	// AwaitingAuth is the servers waiting for an authorization nobody has
+	// completed. The one bucket whose remedy is a click rather than a repair.
+	AwaitingAuth []string
+}
+
+// TokenSource is the vended KAS credential as this package uses it: one method,
+// called when the backend rejects the token vibekit successfully vended.
+//
+// Declared here, at the consumer, like every other role in this file. The
+// implementation is kiroauth.CLISource, constructed inside internal/agent, so the
+// prompt path reaches it through this role rather than importing it.
+type TokenSource interface {
+	// Invalidate withdraws the cached credential from the reuse window, so the
+	// next vend re-asks the CLI. It keeps the cached value as the CLI-failure
+	// fallback, so an unnecessary call costs one subprocess and nothing else.
+	Invalidate()
 }
 
 // TurnStats is a finished turn's two measurements.
@@ -356,6 +401,11 @@ type Roles struct {
 	Lifecycle   LifecycleAccess
 	MCP         MCPAccess
 	TurnOutcome TurnOutcomeAccess
+	// Tokens is the KAS credential cache, and it is the second role that may be
+	// NIL: a runtime built without WithKiroCLIPath vends no token at all, so
+	// there is nothing to invalidate. The prompt path skips the call in that
+	// state rather than the host handing over a source that answers nothing.
+	Tokens TokenSource
 	// Workspace is last because it ends in a string: govet's fieldalignment
 	// counts leading POINTER bytes, and a trailing length word stops that count
 	// early. Field order here carries no other meaning.
@@ -377,5 +427,7 @@ type promptRoles struct {
 	lifecycle   LifecycleAccess
 	mcp         MCPAccess
 	turnOutcome TurnOutcomeAccess
-	workspace   Workspace // last for fieldalignment, as in Roles
+	// tokens may be nil, as in Roles.
+	tokens    TokenSource
+	workspace Workspace // last for fieldalignment, as in Roles
 }

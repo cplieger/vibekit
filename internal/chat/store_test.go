@@ -513,15 +513,16 @@ func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	b.reset()
 
 	// Simulate a late handler racing the delete — it tries to Mutate
-	// the just-deleted id. The call must return nil (no error, no
-	// resurrection) so the caller treats it as a benign no-op.
+	// the just-deleted id. Nothing is written and nothing is broadcast,
+	// and the refusal is reported so the caller can tell it apart from
+	// a persisted write.
 	err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		c.Name = "resurrected"
 		c.Messages = append(c.Messages, vibekit.Message{Role: vibekit.RoleUser, Content: "ghost"})
 		return true
 	})
-	if err != nil {
-		t.Fatalf("Mutate on tombstoned chat returned error: %v", err)
+	if !errors.Is(err, ErrTombstoned) {
+		t.Fatalf("Mutate on tombstoned chat error = %v, want ErrTombstoned", err)
 	}
 	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("chat was resurrected despite tombstone")
@@ -531,6 +532,28 @@ func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 		if e.Type == "chat_created" || e.Type == "chat_updated" {
 			t.Errorf("unexpected event after tombstoned mutate: %+v", e)
 		}
+	}
+}
+
+// The three outcomes of the single write path, pinned apart in one test
+// because the defect was that two of them were indistinguishable: applied and
+// no-op are both nil, and refused is ErrTombstoned. A regression that reports
+// a refusal as nil passes every other test in this file.
+func TestMutate_PinsAppliedNoOpAndRefusedApart(t *testing.T) {
+	s, _ := newTestStore(t)
+	if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+		t.Errorf("Mutate(applied) = %v, want nil", err)
+	}
+	if err := s.Mutate(t.Context(), "c1", func(*vibekit.Chat, bool) bool { return false }); err != nil {
+		t.Errorf("Mutate(no-op) = %v, want nil", err)
+	}
+	_ = s.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
+	if err := s.Delete(t.Context(), "c2"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	err := s.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "ghost"; return true })
+	if !errors.Is(err, ErrTombstoned) {
+		t.Errorf("Mutate(refused) = %v, want ErrTombstoned", err)
 	}
 }
 
@@ -554,7 +577,7 @@ func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
 	}
 }
 
-func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
+func TestAppendMessage_OnTombstonedChatIsRefused(t *testing.T) {
 	s, b := newTestStore(t)
 	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
@@ -563,12 +586,12 @@ func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
 	// Mutate's tombstone check runs before the mutator when the chat
 	// doesn't exist, so AppendMessage's `if !exists { return false }`
 	// early-return never fires here — the tombstone guard short-circuits
-	// first. This test pins that path: after Delete, AppendMessage must
-	// produce no events and not resurrect the chat even though the
-	// mutator would have happily returned false anyway.
+	// first. This test pins that path: after Delete, AppendMessage writes
+	// nothing, emits nothing, and PROPAGATES the refusal, so a late
+	// handler cannot read the dropped message as appended.
 	err := s.AppendMessage(t.Context(), "c1", &vibekit.Message{Role: vibekit.RoleUser, Content: "ghost"})
-	if err != nil {
-		t.Fatalf("AppendMessage error: %v", err)
+	if !errors.Is(err, ErrTombstoned) {
+		t.Fatalf("AppendMessage error = %v, want ErrTombstoned", err)
 	}
 	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("chat was recreated via AppendMessage after delete")
