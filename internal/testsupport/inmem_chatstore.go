@@ -88,9 +88,9 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate 
 	s.chats[id] = &c
 	if s.Bus != nil {
 		if !exists {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_created", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatCreated, ChatID: id, Payload: c.Header()})
 		} else {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_updated", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatUpdated, ChatID: id, Payload: c.Header()})
 		}
 	}
 	return nil
@@ -139,7 +139,7 @@ func (s *InMemoryChatStore) Delete(_ context.Context, id vibekit.ChatID) error {
 	delete(s.chats, id)
 	s.mu.Unlock()
 	if s.Bus != nil {
-		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
+		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
 	return nil
 }
@@ -152,7 +152,30 @@ func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID vibekit.Chat
 		}
 		c.Messages = append(c.Messages, *msg)
 		if s.Bus != nil {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "message_appended", ChatID: chatID, Payload: msg})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg})
+		}
+		return true
+	})
+}
+
+// UpsertTurnPlan overwrites this turn's plan row, or appends msg when the turn
+// carries none. Mirrors (*chat.Store).UpsertTurnPlan; the turn boundary is the
+// first user message walking back from the tail.
+func (s *InMemoryChatStore) UpsertTurnPlan(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	return s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		if i, ok := turnPlanRow(c.Messages); ok {
+			c.Messages[i].Plan = msg.Plan
+			if s.Bus != nil {
+				s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: &c.Messages[i]})
+			}
+			return true
+		}
+		c.Messages = append(c.Messages, *msg)
+		if s.Bus != nil {
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg})
 		}
 		return true
 	})

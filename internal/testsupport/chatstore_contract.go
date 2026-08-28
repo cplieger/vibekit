@@ -7,16 +7,21 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// ChatStoreContract is the subject of ChatStoreContractTest: the 7 methods of a
+// ChatStoreContract is the subject of ChatStoreContractTest: the 8 methods of a
 // chat store this suite exercises. There is no shared ChatStore interface any
-// more — each consumer declares 1 to 5 methods of the 9 — and a contract suite
+// more — each consumer declares 1 to 6 methods of the 11 — and a contract suite
 // has no business naming a method it does not assert on.
 //
 // SetDraft is absent because the suite does not exercise it, and that is a GAP
-// rather than a decision: SetDraft has the subtlest contract of the nine (no
+// rather than a decision: SetDraft has the subtlest contract of the eleven (no
 // UpdatedAt stamp, no broadcast, a silent no-op on a chat that does not exist)
 // and no shared case pins any of it. RegisterRoutes is absent because a store's
 // HTTP mounting is not a storage behaviour.
+//
+// UpsertTurnPlan is here because its turn-boundary rule is derived rather than
+// remembered — the row is found by walking back to the first user message — so a
+// fake that appends instead would let every plan test pass while the real store's
+// one-row-per-turn behaviour went unpinned.
 type ChatStoreContract interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	List(ctx context.Context) []vibekit.ChatHeader
@@ -25,7 +30,12 @@ type ChatStoreContract interface {
 	Delete(ctx context.Context, id vibekit.ChatID) error
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 	UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error
+	UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 }
+
+// contractChatName is the name every case gives the chat it opens; the suite
+// asserts on messages, never on the name.
+const contractChatName = "test"
 
 // ChatStoreContractTest exercises the behavioral expectations of any chat store
 // implementation. Run against both fakes and real implementations to catch
@@ -44,6 +54,15 @@ func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) ChatStoreCo
 	t.Run("BuildHistory_empty_for_missing", func(t *testing.T) { testBuildHistoryEmptyForMissing(t, newStore(t)) })
 	t.Run("AppendMessage_adds_to_chat", func(t *testing.T) { testAppendMessageAddsToChat(t, newStore(t)) })
 	t.Run("UpdateMessage_mutates_in_place", func(t *testing.T) { testUpdateMessageMutatesInPlace(t, newStore(t)) })
+	t.Run("UpsertTurnPlan_appends_when_turn_has_none", func(t *testing.T) {
+		testUpsertTurnPlanAppendsWhenTurnHasNone(t, newStore(t))
+	})
+	t.Run("UpsertTurnPlan_overwrites_within_one_turn", func(t *testing.T) {
+		testUpsertTurnPlanOverwritesWithinOneTurn(t, newStore(t))
+	})
+	t.Run("UpsertTurnPlan_starts_a_row_per_turn", func(t *testing.T) {
+		testUpsertTurnPlanStartsARowPerTurn(t, newStore(t))
+	})
 }
 
 func testGetMissingReturnsFalse(t *testing.T, s ChatStoreContract) {
@@ -207,7 +226,7 @@ func testBuildHistoryEmptyForMissing(t *testing.T, s ChatStoreContract) {
 func testAppendMessageAddsToChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Name = "test"
+		c.Name = contractChatName
 		return true
 	})
 	msg := &vibekit.Message{ID: "m1", Role: "user", Content: "hi"}
@@ -226,7 +245,7 @@ func testAppendMessageAddsToChat(t *testing.T, s ChatStoreContract) {
 func testUpdateMessageMutatesInPlace(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Name = "test"
+		c.Name = contractChatName
 		return true
 	})
 	_ = s.AppendMessage(context.Background(), "c1", &vibekit.Message{ID: "m1", Role: "assistant", Content: "draft"})
@@ -239,5 +258,78 @@ func testUpdateMessageMutatesInPlace(t *testing.T, s ChatStoreContract) {
 	c, _ := s.Get(context.Background(), "c1")
 	if c.Messages[0].Content != "final" {
 		t.Errorf("Content = %q, want final", c.Messages[0].Content)
+	}
+}
+
+// planMsg is a plan-bearing assistant message carrying one entry at status.
+func planMsg(id, content string, status vibekit.PlanStatus) *vibekit.Message {
+	return &vibekit.Message{
+		ID:   id,
+		Role: vibekit.RoleAssistant,
+		Plan: []vibekit.PlanEntry{{Content: content, Status: status}},
+	}
+}
+
+// seedTurn opens a chat and appends one user message, which is what makes a turn.
+func seedTurn(s ChatStoreContract, chatID vibekit.ChatID, msgID string) {
+	_ = s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		c.Name = contractChatName
+		return true
+	})
+	_ = s.AppendMessage(context.Background(), chatID, &vibekit.Message{ID: msgID, Role: vibekit.RoleUser, Content: "go"})
+}
+
+func testUpsertTurnPlanAppendsWhenTurnHasNone(t *testing.T, s ChatStoreContract) {
+	t.Helper()
+	seedTurn(s, "c1", "u1")
+	if err := s.UpsertTurnPlan(context.Background(), "c1", planMsg("p1", "step", vibekit.PlanPending)); err != nil {
+		t.Fatalf("UpsertTurnPlan: %v", err)
+	}
+	c, _ := s.Get(context.Background(), "c1")
+	if len(c.Messages) != 2 {
+		t.Fatalf("UpsertTurnPlan on a turn with no plan row: Messages len = %d, want 2", len(c.Messages))
+	}
+	if len(c.Messages[1].Plan) != 1 || c.Messages[1].Plan[0].Content != "step" {
+		t.Errorf("appended row Plan = %+v, want one entry \"step\"", c.Messages[1].Plan)
+	}
+}
+
+func testUpsertTurnPlanOverwritesWithinOneTurn(t *testing.T, s ChatStoreContract) {
+	t.Helper()
+	seedTurn(s, "c1", "u1")
+	_ = s.UpsertTurnPlan(context.Background(), "c1", planMsg("p1", "step", vibekit.PlanPending))
+	if err := s.UpsertTurnPlan(context.Background(), "c1", planMsg("p2", "step", vibekit.PlanCompleted)); err != nil {
+		t.Fatalf("UpsertTurnPlan (second frame): %v", err)
+	}
+	c, _ := s.Get(context.Background(), "c1")
+	if len(c.Messages) != 2 {
+		t.Fatalf("two plan frames in one turn: Messages len = %d, want 2 (one user, one plan)", len(c.Messages))
+	}
+	if got := c.Messages[1].Plan[0].Status; got != vibekit.PlanCompleted {
+		t.Errorf("plan row Status = %q, want %q (the newest frame's)", got, vibekit.PlanCompleted)
+	}
+	if c.Messages[1].ID != "p1" {
+		t.Errorf("plan row ID = %q, want p1 — the overwrite keeps the row's identity", c.Messages[1].ID)
+	}
+}
+
+func testUpsertTurnPlanStartsARowPerTurn(t *testing.T, s ChatStoreContract) {
+	t.Helper()
+	seedTurn(s, "c1", "u1")
+	_ = s.UpsertTurnPlan(context.Background(), "c1", planMsg("p1", "first turn", vibekit.PlanPending))
+	// A user message opens the next turn, so the plan above is out of reach.
+	_ = s.AppendMessage(context.Background(), "c1", &vibekit.Message{ID: "u2", Role: vibekit.RoleUser, Content: "again"})
+	if err := s.UpsertTurnPlan(context.Background(), "c1", planMsg("p2", "second turn", vibekit.PlanPending)); err != nil {
+		t.Fatalf("UpsertTurnPlan (second turn): %v", err)
+	}
+	c, _ := s.Get(context.Background(), "c1")
+	if len(c.Messages) != 4 {
+		t.Fatalf("a plan in each of two turns: Messages len = %d, want 4", len(c.Messages))
+	}
+	if c.Messages[1].Plan[0].Content != "first turn" {
+		t.Errorf("turn 1 plan = %q, want \"first turn\" — a later turn must not overwrite it", c.Messages[1].Plan[0].Content)
+	}
+	if c.Messages[3].Plan[0].Content != "second turn" {
+		t.Errorf("turn 2 plan = %q, want \"second turn\"", c.Messages[3].Plan[0].Content)
 	}
 }

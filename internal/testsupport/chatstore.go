@@ -23,7 +23,7 @@ import (
 // chatStoreUnion is the union of what the real consumers declare, spelled out
 // here rather than named, so a consumer that grows a method fails to compile
 // against these fakes instead of silently outgrowing them. It is
-// ChatStoreContract's 7 plus the two composer writers, which internal/command
+// ChatStoreContract's 8 plus the two composer writers, which internal/command
 // needs and the contract suite does not exercise.
 //
 // RegisterRoutes is NOT here, and each fake dropped its no-op: only
@@ -114,9 +114,9 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate
 	s.Chats[id] = &c
 	if s.Bus != nil {
 		if !exists {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_created", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatCreated, ChatID: id, Payload: c.Header()})
 		} else {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_updated", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatUpdated, ChatID: id, Payload: c.Header()})
 		}
 	}
 	return nil
@@ -171,7 +171,7 @@ func (s *RecordingChatStore) Delete(_ context.Context, id vibekit.ChatID) error 
 	delete(s.Chats, id)
 	s.mu.Unlock()
 	if s.Bus != nil {
-		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
+		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
 	return nil
 }
@@ -184,7 +184,31 @@ func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID vibekit.Cha
 		}
 		c.Messages = append(c.Messages, *msg)
 		if s.Bus != nil {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "message_appended", ChatID: chatID, Payload: msg})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg})
+		}
+		return true
+	})
+}
+
+// UpsertTurnPlan overwrites this turn's plan row, or appends msg when the turn
+// carries none. Mirrors (*chat.Store).UpsertTurnPlan, including the turn
+// boundary being the first user message walking back from the tail — see the
+// contract suite for why the fake implements the rule rather than appending.
+func (s *RecordingChatStore) UpsertTurnPlan(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	return s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		if i, ok := turnPlanRow(c.Messages); ok {
+			c.Messages[i].Plan = msg.Plan
+			if s.Bus != nil {
+				s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: &c.Messages[i]})
+			}
+			return true
+		}
+		c.Messages = append(c.Messages, *msg)
+		if s.Bus != nil {
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg})
 		}
 		return true
 	})

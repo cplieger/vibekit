@@ -2,6 +2,7 @@ package testsupport
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -38,4 +39,23 @@ func cloneChat(c *vibekit.Chat) *vibekit.Chat {
 		return &shallow
 	}
 	return &out
+}
+
+// turnPlanRow reports the index of the plan row belonging to the turn in flight,
+// which is the newest plan-bearing message at or after the last user message.
+// Shared by both fakes so neither can drift from the other, and derived the same
+// way (*chat.Store).UpsertTurnPlan derives it: nothing remembers a plan message
+// id, so there is no state to leave stale when a turn ends.
+func turnPlanRow(msgs []vibekit.Message) (int, bool) {
+	// Index-only: a vibekit.Message is 256 bytes, so binding the value would copy
+	// one per iteration for two field reads.
+	for i := range slices.Backward(msgs) {
+		if msgs[i].Role == vibekit.RoleUser {
+			return 0, false // turn boundary: this turn carries no plan row yet
+		}
+		if len(msgs[i].Plan) > 0 {
+			return i, true
+		}
+	}
+	return 0, false
 }
