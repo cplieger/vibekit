@@ -7,9 +7,10 @@
 // Level choices:
 //   - debug=false → slog.LevelInfo (default; production chatty-ish
 //     but not noisy)
-//   - debug=true  → slog.LevelDebug (surfaces the slog.Debug lines
-//     in translateACPEvent's default case, fs handler details,
-//     and bridge stdin/stdout sampling)
+//   - debug=true  → slog.LevelDebug (surfaces the unhandled-extension
+//     and dropped-replayed-frame lines in the ACP dispatcher, the
+//     fs-request-denied line, and the bridge's per-notification method
+//     name and initialize timing)
 //
 // The setting reads from <configDir>/config.json `debug_logs`
 // (bool). Install reads it once to pick the boot level; the handler

@@ -158,7 +158,7 @@ const defaultBundledTools = "/opt/vibekit/bundled-tools.json"
 // says the boot path must not police what it can report instead.
 func bundledToolsFiles(explicit string) []string {
 	path := filepath.Clean(cmp.Or(explicit, defaultBundledTools))
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); err != nil { // #nosec G703 -- operator-supplied env var, cleaned above; an existence probe that reads no content
 		slog.Warn("config: bundled tools file does not resolve; the seeded language servers "+
 			"will not resolve at enable time",
 			"path", path, "explicit", explicit != "",
