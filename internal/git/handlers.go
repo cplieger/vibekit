@@ -102,50 +102,6 @@ func (h *Handler) repoDir(repo string) string {
 	return resolveRepoDir(h.workDir, repo)
 }
 
-// repoDirForDelete is repoDir plus the containment check a DESTRUCTIVE caller
-// needs. It returns "" for a path it will not vouch for.
-//
-// It exists because the lexical-only rule above is justified on a premise that
-// does not cover deletion: "safe for the read operations this package performs".
-//
-// What it checks is the resolved PARENT, and that is the whole subtlety.
-// os.RemoveAll does not follow a symlink at the FINAL component (it unlinks the
-// link itself), so a repo the user symlinked into the workspace is already safe to
-// name directly and must stay addressable — refusing it would break the feature
-// the lexical rule exists for. Every INTERMEDIATE component is resolved by the
-// kernel during traversal, so with /workspace/link pointing outside,
-// {"repo":"link/victim"} is lexically clean (no `..`, not absolute, under workDir
-// as written) and deletes <target>/victim. Checking the parent refuses exactly
-// that and nothing else.
-//
-// The returned path is the LEXICAL one, not the resolved target, so RemoveAll
-// still unlinks a named symlink rather than deleting what it points at.
-func (h *Handler) repoDirForDelete(repo string) string {
-	dir := resolveRepoDir(h.workDir, repo)
-	root, err := filepath.EvalSymlinks(h.workDir)
-	if err != nil {
-		slog.Warn("git remove: cannot resolve workspace root", "error", err)
-		return ""
-	}
-	// The workspace root itself resolves to root and has no parent to check; the
-	// caller refuses it separately, because "remove the workspace" is a different
-	// refusal from "that path escapes".
-	if dir == h.workDir {
-		return dir
-	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(dir))
-	if err != nil {
-		slog.Warn("git remove: cannot resolve the repo's parent", "repo", repo, "error", err)
-		return ""
-	}
-	if parent != root && !pathinside.Root(root).Contains(parent) {
-		slog.Warn("git remove: refusing a path whose parent resolves outside the workspace",
-			"repo", repo, "resolved_parent", parent)
-		return ""
-	}
-	return dir
-}
-
 func repoFromQuery(r *http.Request) string { return r.URL.Query().Get("repo") }
 
 type repoBody struct {
@@ -160,7 +116,6 @@ type gitStatusResp struct {
 	Behind   int       `json:"behind"`
 	Stashes  int       `json:"stashes"`
 	IsRepo   bool      `json:"is_repo"`
-	HasGH    bool      `json:"has_gh"`
 	HasDirty bool      `json:"has_dirty"`
 }
 

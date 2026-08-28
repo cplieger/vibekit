@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
@@ -176,11 +177,51 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 		httpreply.Forbidden(w, "refusing to delete protected directory")
 		return errHandled
 	}
-	if err := l.m.root.RemoveAll(l.rel()); err != nil {
+	// The mount's os.Root confines this unlink but does not PIN it: a root
+	// deliberately follows an in-root symlink, so a multi-component rel can
+	// resolve to a different file than the one isProtectedDir judged. That is
+	// reachable THROUGH the sensitive-path check, because the check is exact-prefix
+	// over the resolved path — /config/x/chats matches no sensitive prefix and
+	// passes, and if x is an in-mount symlink to "." at the moment of the unlink
+	// the delete lands on /config/chats, the whole chat store, through a check
+	// that said the path was not protected. OpenParentInRoot descends component by
+	// component, Lstat-ing each one and refusing a symlink rather than following
+	// it, so naming only the final element through the pinned parent removes every
+	// ancestor from the unlink's path.
+	//
+	// The parent's own RemoveAll, never atomicfile.RemoveFileInRoot: that refuses
+	// anything non-regular with ErrNotRegular, which would make a symlinked entry
+	// undeletable from the browser.
+	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
+	if err != nil {
+		// os.Root.RemoveAll reported an already-absent path as success, and a
+		// parent directory that is gone is the same answer to the caller. Only
+		// ErrNotExist: a component refused for being a symlink or a non-directory
+		// is a real failure and must surface.
+		if errors.Is(err, fs.ErrNotExist) {
+			slog.Info("filebrowse: delete (already absent)", "path", l.abs)
+			return nil
+		}
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	if err := parent.RemoveAll(base); err != nil {
 		return err
 	}
 	slog.Info("filebrowse: delete", "path", l.abs)
 	return nil
+}
+
+// isSingleSegmentName reports whether name is one non-traversal path component,
+// safe to Join onto a parent directory.
+//
+// filepath.Base alone isn't enough: a bare ".." passes Base untouched, and Join
+// then silently escapes to the parent directory. A path separator or a NUL is
+// rejected before anything touches the filesystem.
+func isSingleSegmentName(name string) bool {
+	return name != "" && name != "." && name != ".." &&
+		!strings.ContainsRune(name, '/') && !strings.ContainsRune(name, '\\') &&
+		!strings.ContainsRune(name, 0)
 }
 
 func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
@@ -199,19 +240,11 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 		httpreply.Forbidden(w, "refusing to rename protected directory")
 		return errHandled
 	}
-	// `name` must be a single-segment, non-empty, non-traversal
-	// filename. Anything with a path separator or ".." gets rejected
-	// before we touch the filesystem. filepath.Base alone isn't
-	// enough: a bare ".." would pass Base untouched, then Join
-	// silently escapes to the parent directory.
-	name := body.Name
-	if name == "" || name == "." || name == ".." ||
-		strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') ||
-		strings.ContainsRune(name, 0) {
+	if !isSingleSegmentName(body.Name) {
 		httpreply.BadRequest(w, "invalid name")
 		return errHandled
 	}
-	dest := filepath.Join(filepath.Dir(l.abs), name)
+	dest := filepath.Join(filepath.Dir(l.abs), body.Name)
 	// Route the destination through resolvePath so the allow-list +
 	// real-path (EvalSymlinks) checks fire against the rename target
 	// the same way copy/move enforce them via resolveCopyMoveDest.
@@ -244,7 +277,17 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 		httpreply.Forbidden(w, "rename target is protected")
 		return errHandled
 	}
-	if err := l.m.root.Rename(l.rel(), l.relOf(destLoc.abs)); err != nil {
+	// One pinned parent addresses both ends here, because the same-parent
+	// assertion above has already established that they share one directory — so
+	// every ancestor leaves the rename's path without needing a second descent.
+	// See actionDelete for why the mount's os.Root is not enough on its own, and
+	// renameAcrossPinnedParents for the move case, where the ends can differ.
+	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	if err := parent.Rename(base, filepath.Base(destLoc.abs)); err != nil {
 		return err
 	}
 	slog.Info("filebrowse: rename", "from", l.abs, "to", destLoc.abs)
@@ -364,11 +407,51 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 		httpreply.BadRequest(w, "cannot move across granted roots; use copy")
 		return errHandled
 	}
-	if err := l.m.root.Rename(l.rel(), destLoc.rel()); err != nil {
+	if err := renameAcrossPinnedParents(l, destLoc); err != nil {
 		return err
 	}
 	slog.Info("filebrowse: move", "from", l.abs, "to", destLoc.abs)
 	return nil
+}
+
+// renameAcrossPinnedParents renames src to dest with BOTH parent directories
+// pinned by atomicfile.OpenParentInRoot, so no ancestor component of either end
+// can redirect the rename at another file inside the mount. actionDelete carries
+// the reasoning for why the mount's os.Root is not enough on its own.
+//
+// renameat(2) rather than os.Root.Rename, because a move's two ends can be in
+// different directories and os.Root.Rename resolves both names inside ONE root:
+// a pinned parent's root is that single directory, so the other end is only
+// reachable through a ".." the root correctly refuses. renameat is the syscall
+// os.Root.Rename itself issues; what changes is that each name is a single final
+// element relative to a descended, identity-confirmed directory rather than a
+// multi-component path re-resolved at operation time. The caller has already
+// established that src and dest share a mount.
+func renameAcrossPinnedParents(src, dest loc) error {
+	srcParent, srcBase, err := atomicfile.OpenParentInRoot(src.m.root, src.rel())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = srcParent.Close() }()
+	destParent, destBase, err := atomicfile.OpenParentInRoot(dest.m.root, dest.rel())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = destParent.Close() }()
+	// The descriptors are what renameat addresses; the pinned roots exist to hold
+	// them open, so neither directory can be swapped between the descent that
+	// confirmed its identity and the rename that names an entry inside it.
+	srcDir, err := srcParent.Open(".")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = srcDir.Close() }()
+	destDir, err := destParent.Open(".")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = destDir.Close() }()
+	return syscall.Renameat(int(srcDir.Fd()), srcBase, int(destDir.Fd()), destBase)
 }
 
 // resolveCopyMoveDest validates + resolves the `dest` field common to

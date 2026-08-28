@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,8 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/vibekit/internal/workspace"
 	"github.com/cplieger/webhttp/v2"
 	"golang.org/x/sync/errgroup"
 )
@@ -294,23 +298,73 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "repo name required (cannot remove workspace root)")
 		return
 	}
-	// The resolved variant, because this is the one handler that DELETES: see
-	// repoDirForDelete for the intermediate-symlink escape the lexical resolver
-	// cannot see. It answers "" for a path it will not vouch for.
-	dir := h.repoDirForDelete(body.Repo)
-	if dir == "" {
-		httpreply.BadRequest(w, "that repo path is not inside the workspace")
-		return
-	}
+	dir := h.repoDir(body.Repo)
+	// The lexical resolver answers workDir for every input it will not vouch for
+	// (empty, ".", a `..` component, an absolute path), so this one comparison is
+	// both the escape refusal and the "remove the workspace" refusal.
 	if dir == h.workDir {
 		httpreply.BadRequest(w, "cannot remove workspace root")
 		return
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := h.removeRepoDir(dir); err != nil {
+		if errors.Is(err, ErrUnsafeRepoPath) {
+			slog.Warn("git remove: refused", "repo", body.Repo, "error", err)
+			httpreply.BadRequest(w, "that repo path is not inside the workspace")
+			return
+		}
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
 		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
 	webhttp.Ok(w)
+}
+
+// removeRepoDir unlinks dir through a parent pinned inside a confined root on the
+// workspace, never by name. A lexical containment check cannot carry its answer
+// forward: between the check and the remove the kernel re-resolves every
+// component from the root, so an ordinary directory that passed, replaced by a
+// symlink before the unlink, sends the delete wherever the link points — and with
+// no root on the path the target is not even bounded to the workspace, while this
+// container's /config holds the chat store, the secret store, the tool tree and
+// the installed agent runtime.
+//
+// atomicfile.OpenParentInRoot descends component by component, Lstat-ing each and
+// refusing a symlink rather than following it, then confirms with os.SameFile that
+// the directory it opened is the one it inspected. Naming only the final element
+// through that handle removes every ancestor from the unlink's path.
+//
+// A repo the user symlinked into the workspace stays removable, which is the
+// feature the lexical resolver exists for: the descent refuses a symlink only at
+// an INTERMEDIATE component and hands back the parent for the final one, and the
+// parent's own RemoveAll unlinks a symlink rather than following it.
+// atomicfile.RemoveFileInRoot would refuse it with ErrNotRegular — the right rule
+// for a writer sweeping names it created, the wrong one here.
+// internal/agent's _kiro/fs/delete records the same choice.
+//
+// Holding the root on the Handler is the better shape, but it changes
+// construction; one per request is the smaller step.
+func (h *Handler) removeRepoDir(dir string) error {
+	root, err := os.OpenRoot(h.workDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	rel, err := workspace.RelPath(h.workDir, dir)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrUnsafeRepoPath, err)
+	}
+	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
+	if err != nil {
+		// os.RemoveAll answered success for a missing path, and a parent directory
+		// that is gone is the same answer to the caller. Only the not-exist verdict:
+		// a component refused for being a symlink or a non-directory is a real
+		// failure and must surface, as a REFUSAL rather than as a disk error.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("%w: %w", ErrUnsafeRepoPath, err)
+	}
+	defer func() { _ = parent.Close() }()
+	return parent.RemoveAll(base)
 }

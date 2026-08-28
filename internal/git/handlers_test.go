@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -2092,16 +2092,15 @@ func TestHandleReclone_RejectsNonStandardScheme(t *testing.T) {
 	}
 }
 
-// TestHandleReclone_RefusesAnIntermediateSymlinkEscape is the handler-level
-// counterpart to TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape: it
-// pins that reclone actually CALLS the resolved variant.
+// TestHandleReclone_RefusesAnIntermediateSymlinkEscape pins the second
+// destructive site on the pinned-parent removal.
 //
-// The bait is one the unguarded code takes. With the lexical resolver,
+// The bait is one the unguarded code takes. Unlinking by name,
 // {"repo":"link/victim"} passes every guard reclone has — it is not empty, not
 // ".", not the workspace root, `<dir>/.git` exists through the symlink, origin
-// resolves, and the scheme is allowed — and os.RemoveAll then deletes a repo
+// resolves, and the scheme is allowed — and the delete then destroys a repo
 // outside the workspace. So the surviving victim tree is the assertion that
-// matters: revert handleReclone to h.repoDir and this test fails on it.
+// matters: revert handleReclone to os.RemoveAll and this test fails on it.
 //
 // The positive control lives next door: TestHandleReclone_RejectsNonStandardScheme
 // drives a plain in-workspace repo all the way to the scheme check, so the guard
@@ -2144,12 +2143,12 @@ func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
 	h.handleReclone(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("handleReclone({\"repo\":\"link/victim\"}) code = %d, want %d",
+		t.Errorf("handleReclone({\"repo\":\"link/victim\"}) status = %d, want %d",
 			rec.Code, http.StatusBadRequest)
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "not inside the workspace") {
-		t.Errorf("handleReclone({\"repo\":\"link/victim\"}) body = %q, want substring %q",
-			body, "not inside the workspace")
+		t.Errorf("handleReclone({\"repo\":\"link/victim\"}) body = %q, want it to name the refusal",
+			body)
 	}
 	// The assertion the guard exists for: the repo outside the workspace is intact.
 	if _, err := os.Stat(filepath.Join(victim, ".git")); err != nil {
@@ -3259,57 +3258,6 @@ func TestCollectStatus_StashCount(t *testing.T) {
 	}
 }
 
-// collectStatus.HasGH reflects whether the gh CLI is on PATH.
-func TestCollectStatus_HasGH(t *testing.T) {
-	mkRepo := func(t *testing.T) string {
-		t.Helper()
-		repo := t.TempDir()
-		// A bare .git directory is enough for IsRepo (os.Stat-based);
-		// the gh lookup is reached regardless of git availability.
-		if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return repo
-	}
-
-	// hasGH is memoized (sync.OnceValue) — the answer is process-global —
-	// so each subtest swaps in a fresh once-value bound to its PATH.
-	freshHasGH := func(t *testing.T) {
-		t.Helper()
-		orig := hasGH
-		hasGH = sync.OnceValue(func() bool {
-			_, err := exec.LookPath("gh")
-			return err == nil
-		})
-		t.Cleanup(func() { hasGH = orig })
-	}
-
-	t.Run("gh_absent", func(t *testing.T) {
-		repo := mkRepo(t)
-		t.Setenv("PATH", t.TempDir()) // empty bin dir: gh not found
-		freshHasGH(t)
-		st := collectStatus(t.Context(), repo, defaultTimeouts(), &singleflight.Group{}, false)
-		if st.HasGH {
-			t.Errorf("HasGH = true with gh absent")
-		}
-	})
-
-	t.Run("gh_present", func(t *testing.T) {
-		repo := mkRepo(t)
-		binDir := t.TempDir()
-		gh := filepath.Join(binDir, "gh")
-		if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("PATH", binDir)
-		freshHasGH(t)
-		st := collectStatus(t.Context(), repo, defaultTimeouts(), &singleflight.Group{}, false)
-		if !st.HasGH {
-			t.Errorf("HasGH = false with gh present")
-		}
-	})
-}
-
 // parseGitStatusOutput's inclusive lower bound for a parseable record is
 // 4 bytes ("XY P": 2 status bytes, a space, a >=1-char path). A record of
 // exactly 4 bytes yields one entry; a 3-byte record (no path) is dropped
@@ -3723,81 +3671,156 @@ func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
 	}
 }
 
-// TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape pins the containment
-// check the DESTRUCTIVE callers need.
+// swappedAncestor stages the race a pinned parent exists for: a repo path whose
+// directory component was a real, empty directory when the caller resolved it, and
+// is an IN-WORKSPACE symlink to a protected tree by the time the remove runs. The
+// path is computed before the swap, which is what makes the window deterministic.
 //
-// repoDir is deliberately lexical-only so a user can address a symlinked repo by
-// its link name, and its doc justifies that on the ground that this package
-// performs "read operations". Two handlers are the exception, because they call
-// os.RemoveAll: handleRemove and handleReclone. That unlinks a final symlink
-// rather than following it, but the kernel resolves every INTERMEDIATE
-// component, so a lexically-clean "link/victim" deletes outside the workspace.
-// No `..`, not absolute, and the dir == workDir guard does not fire.
+// In-workspace deliberately: the confined root follows an in-root symlink by
+// design, so this is the case confinement alone does not answer and only the
+// pinned descent does.
 //
-// Both directions are asserted, because a fix that simply refused symlinks would
-// break the feature the lexical rule exists for.
-func TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
+// It returns the repo name to remove and the on-disk path that must survive.
+func swappedAncestor(t *testing.T, workDir string) (repo, victim string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(workDir, "store"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	victim = filepath.Join(workDir, "store", "keep")
+	if err := os.MkdirAll(victim, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(victim, "chats.json"), []byte("the chat store"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// "keep" does not exist inside the real x, so anything the remove touches is a
+	// path it was never pointed at.
+	if err := os.Mkdir(filepath.Join(workDir, "x"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(workDir, "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("store", filepath.Join(workDir, "x")); err != nil {
+		t.Fatal(err)
+	}
+	return "x/keep", victim
+}
+
+// TestRemoveRepoDir_RefusesASwappedAncestor is the race a lexical check cannot
+// answer: it resolves the path once and the kernel re-resolves every component at
+// the unlink, so a directory that was real when it was checked can be a symlink by
+// the time the delete runs. Naming only the final element through a pinned parent
+// is what closes it.
+func TestRemoveRepoDir_RefusesASwappedAncestor(t *testing.T) {
+	workDir := t.TempDir()
+	repo, victim := swappedAncestor(t, workDir)
+	h := &Handler{workDir: workDir}
+
+	if err := h.removeRepoDir(h.repoDir(repo)); err == nil {
+		t.Errorf("removeRepoDir through a symlinked ancestor returned nil, want a refusal")
+	}
+	if _, err := os.Lstat(filepath.Join(victim, "chats.json")); err != nil {
+		t.Errorf("the protected tree was deleted through the symlinked ancestor: %v", err)
+	}
+}
+
+// TestHandleRemove_RefusesASwappedAncestor is the same race at the handler, so the
+// refusal is pinned on the route rather than only on the helper.
+func TestHandleRemove_RefusesASwappedAncestor(t *testing.T) {
+	workDir := t.TempDir()
+	repo, victim := swappedAncestor(t, workDir)
+	h := NewHandler(workDir)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/git/remove",
+		strings.NewReader(`{"repo":`+strconv.Quote(repo)+`}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.handleRemove(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("handleRemove status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "not inside the workspace") {
+		t.Errorf("handleRemove body = %q, want it to name the refusal", body)
+	}
+	if _, err := os.Lstat(filepath.Join(victim, "chats.json")); err != nil {
+		t.Errorf("the protected tree was deleted through the symlinked ancestor: %v", err)
+	}
+}
+
+// TestHandleRemove_RefusesAnEscapingAncestor is the original defect's own bait: a
+// lexically clean "link/victim" whose intermediate component is a symlink OUT of
+// the workspace. No `..`, not absolute, and the workspace-root guard does not
+// fire, so an unlink by name deletes a tree the workspace does not contain.
+func TestHandleRemove_RefusesAnEscapingAncestor(t *testing.T) {
 	outside := t.TempDir()
 	workDir := t.TempDir()
-
-	// The escape: a symlink inside the workspace pointing at a tree outside it,
-	// with a real victim directory under the target.
-	if err := os.MkdirAll(filepath.Join(outside, "victim"), 0o750); err != nil {
+	victim := filepath.Join(outside, "victim")
+	if err := os.MkdirAll(victim, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(workDir, "link")); err != nil {
 		t.Fatal(err)
 	}
-	// The feature: a symlink inside the workspace pointing at a real repo, also
-	// outside it. Addressing THIS by its link name must keep working for reads,
-	// and resolving it for a delete must land on the resolved target rather than
-	// be refused for being a link.
+	h := NewHandler(workDir)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/git/remove",
+		strings.NewReader(`{"repo":"link/victim"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.handleRemove(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("handleRemove status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "not inside the workspace") {
+		t.Errorf("handleRemove body = %q, want it to name the refusal", body)
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Errorf("remove deleted a tree outside the workspace: %v", err)
+	}
+}
+
+// TestRemoveRepoDir_UnlinksASymlinkedRepo is the feature the lexical resolver
+// exists for, and the reason the parent's own RemoveAll is used rather than
+// atomicfile.RemoveFileInRoot: a repo the user symlinked into the workspace must
+// stay removable, as a LINK, without touching the tree it points at.
+func TestRemoveRepoDir_UnlinksASymlinkedRepo(t *testing.T) {
+	outside := t.TempDir()
+	workDir := t.TempDir()
 	realRepo := filepath.Join(outside, "realrepo")
 	if err := os.MkdirAll(realRepo, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(realRepo, filepath.Join(workDir, "repolink")); err != nil {
+	link := filepath.Join(workDir, "repolink")
+	if err := os.Symlink(realRepo, link); err != nil {
 		t.Fatal(err)
 	}
-	// An ordinary repo directly inside the workspace: the common case.
-	if err := os.MkdirAll(filepath.Join(workDir, "plain"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-
 	h := &Handler{workDir: workDir}
 
-	if got := h.repoDirForDelete("link/victim"); got != "" {
-		t.Errorf("repoDirForDelete(%q) = %q, want \"\" (it resolves outside the workspace)",
-			"link/victim", got)
+	if err := h.removeRepoDir(h.repoDir("repolink")); err != nil {
+		t.Fatalf("removeRepoDir(%q) = %v, want nil (a symlinked repo stays removable)", "repolink", err)
 	}
-	// `..` falls back to workDir in the lexical resolver, so it arrives here as
-	// the root and the caller refuses it as "cannot remove workspace root" -- a
-	// different refusal from an escape, which is why it is not "" .
-	if got := h.repoDirForDelete("../escape"); got != workDir {
-		t.Errorf("repoDirForDelete(%q) = %q, want the workspace root %q", "../escape", got, workDir)
+	if _, err := os.Lstat(link); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("os.Lstat(%q) = %v, want the link to be gone", link, err)
 	}
-	// A repo that does not exist is NOT an escape: its parent is the workspace, so
-	// it passes, and os.RemoveAll is a no-op on a missing path. Demanding existence
-	// here would add a TOCTOU between the check and the delete for no benefit.
-	if got := h.repoDirForDelete("nope"); got != filepath.Join(workDir, "nope") {
-		t.Errorf("repoDirForDelete(%q) = %q, want the lexical join", "nope", got)
+	if _, err := os.Stat(realRepo); err != nil {
+		t.Errorf("the symlink's target was deleted with it: %v", err)
 	}
-	// The lexical resolver still names it, which is what makes the escape
-	// reachable without this check and is why the test asserts on both.
-	if lexical := h.repoDir("link/victim"); lexical == "" {
-		t.Error("repoDir(\"link/victim\") = \"\", want the lexical join (the premise of this test)")
-	}
+}
 
-	wantPlain := filepath.Join(workDir, "plain")
-	if got := h.repoDirForDelete("plain"); got != wantPlain {
-		t.Errorf("repoDirForDelete(%q) = %q, want %q", "plain", got, wantPlain)
-	}
-	// A symlinked repo stays addressable, and the LEXICAL path is returned so
-	// os.RemoveAll unlinks the link rather than deleting the repo it points at.
-	wantLink := filepath.Join(workDir, "repolink")
-	if got := h.repoDirForDelete("repolink"); got != wantLink {
-		t.Errorf("repoDirForDelete(%q) = %q, want %q (a symlinked repo stays addressable)",
-			"repolink", got, wantLink)
+// TestRemoveRepoDir_MissingPathIsSuccess preserves the observable outcome
+// os.RemoveAll had: a path that is already gone answers success, whether it is the
+// entry itself or a parent directory of it. Only the not-exist verdict maps back —
+// a refused component is a failure, which the swapped-ancestor test above pins.
+func TestRemoveRepoDir_MissingPathIsSuccess(t *testing.T) {
+	workDir := t.TempDir()
+	h := &Handler{workDir: workDir}
+	for _, repo := range []string{"nope", "nope/deeper"} {
+		if err := h.removeRepoDir(h.repoDir(repo)); err != nil {
+			t.Errorf("removeRepoDir(%q) = %v, want nil", repo, err)
+		}
 	}
 }
 

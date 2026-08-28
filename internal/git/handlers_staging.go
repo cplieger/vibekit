@@ -4,10 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
@@ -81,7 +79,6 @@ func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchF
 	}
 	st.Files = files
 	st.Stashes = stashes
-	st.HasGH = hasGH()
 	st.HasDirty = len(st.Files) > 0
 	return st
 }
@@ -132,14 +129,6 @@ func countStashes(ctx context.Context, dir string) int {
 	}
 	return strings.Count(out, "\n") + 1
 }
-
-// hasGH reports whether the gh CLI is available on PATH. Memoized: the
-// answer is process-global and status-all was paying one PATH walk per
-// repo per scan for it.
-var hasGH = sync.OnceValue(func() bool {
-	_, err := exec.LookPath("gh")
-	return err == nil
-})
 
 func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
