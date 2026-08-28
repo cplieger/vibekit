@@ -118,6 +118,24 @@
     --c-red: oklch(75.6% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
 
+    /* THE DIFF ROW SURFACES, and they are their own seeds because an ALPHA WASH
+     * of the status hues cannot be both visible and readable on this palette.
+     * Measured with `css-contrast.py`'s resolver over every ink a diff row can
+     * carry (the four hl-* tokens plus the three text rungs): mixing dark's
+     * PASTEL --c-green into the near-black pane raises luminance fast, so at the
+     * 20% VS Code uses for its own line background the worst ink lands at
+     * 2.87:1, and no alpha from 12% to 26% reaches AA in either theme — the
+     * whole sweep is in the 2.0-3.6 band. Alpha moves LIGHTNESS, and lightness
+     * is what contrast is made of.
+     *
+     * These hold the pane's lightness (or step away from the ink) and spend
+     * CHROMA instead, which reads as green or red while leaving text where the
+     * flat pane had it. Every ink is ABOVE the flat pane's own floor: worst
+     * 5.50:1 on add and 5.71:1 on del against the pane's 4.77:1. In gamut at
+     * these values; green cannot hold more than C 0.06 at L 22%. */
+    --c-diff-add-bg: oklch(22% 0.05 142.7deg);
+    --c-diff-del-bg: oklch(22% 0.09 2.8deg);
+
     /* Secondary status hues, theme-split like green/red/yellow. danger and
      * warning were undeclared tokens resolving through per-site fallback
      * literals (#e66666 / #e6c074, ~28 sites); these dark values EQUAL those
@@ -596,8 +614,24 @@
        uncapped page floats that number arbitrarily far from the name it belongs
        to. */
     --run-page-max-w: 68rem;
+    /* ---- Control heights -------------------------------------------------- *
+     * Two tiers, and every button, input and select reads one of them. Which
+     * tier a row takes, and why a control may not leave its height to its font,
+     * is `vibekit-ui.md` "One control height per row"; the audit that proves a
+     * row agrees is `ui-qa/references/control-height-audit.mjs`.
+     *
+     *   --btn-h        a control that stands alone in its row, or shares one
+     *                  with a full-size button (2.75rem on touch, 50-mobile)
+     *   --ctl-h-dense  a labelled field or an action inside a dense row; drops
+     *                  back to --btn-h at the same 48rem breakpoint, so a phone
+     *                  gets the 44px touch target rather than a desktop size
+     *
+     * There was a third value, `--input-h: 2.375rem`, read by the file
+     * browser's path and search fields and the editor's filename. It differed
+     * from --btn-h on desktop only (mobile agreed), so those fields sat 2px
+     * taller than the buttons beside them in three rows and nothing said why. */
     --btn-h: 2.25rem;
-    --input-h: 2.375rem;
+    --ctl-h-dense: 2rem;
 
     /* ---- The radius ladder ----------------------------------------------- *
      * Four rungs, because a radius reads far rounder on a small box than on a
@@ -735,6 +769,15 @@
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
     --c-green: oklch(50% 0.12 142.7deg);
     --c-red: oklch(55% 0.15 2.8deg);
+
+    /* The diff row surfaces, dark's reasoning inverted: step AWAY from the ink,
+     * which here means lighter than the pane. Worst ink 5.70:1 on add and
+     * 4.95:1 on del against the pane's own 4.72:1 floor. Red is capped by gamut
+     * rather than by contrast — hue 2.8deg wants R past 1.0 above L 94%, so a
+     * lighter pink would be silently gamut-mapped by the browser and stop
+     * matching what was measured here. */
+    --c-diff-add-bg: oklch(98% 0.035 142.7deg);
+    --c-diff-del-bg: oklch(94% 0.03 2.8deg);
 
     /* Deeper than the old 60%: yellow needs lower L than its siblings to
      * read as text on white (60% was 3.1:1 as pill text; 49% is 6:1). */

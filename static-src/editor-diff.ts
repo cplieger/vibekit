@@ -24,6 +24,10 @@ export function renderDiffModeUI(state: FileState): void {
     newLabel: src.newLabel,
     lineNumbers: true,
     syncScroll: true,
+    // The file's own path is the language hint. Without it this pane — the
+    // depth-2 view a chat's changed-file link opens — rendered unhighlighted
+    // while the inline peek that sent the reader here was meant to be coloured.
+    lang: state.path,
     onAskAbout: (hunkText: string) => {
       const chatID = getActiveId();
       if (chatID === "") {

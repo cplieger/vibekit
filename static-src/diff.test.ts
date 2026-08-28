@@ -1,7 +1,15 @@
-// Table-driven tests for diff.ts — lineDiff and windowHunks.
+// Table-driven tests for diff.ts — lineDiff, wordDiff and windowHunks.
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { lineDiff, windowHunks, stats, type DiffLine } from "./diff.js";
+import {
+  lineDiff,
+  windowHunks,
+  stats,
+  wordDiff,
+  wordMarks,
+  type CharRange,
+  type DiffLine,
+} from "./diff.js";
 
 describe("lineDiff", () => {
   const cases: {
@@ -853,5 +861,141 @@ describe("lineDiff at the time budget", () => {
       ["B-HEAD", ...body, "B-TAIL"].join("\n"),
     );
     expect(stats(d)).toEqual({ adds: 2, dels: 2, ctx: 4998 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Word-level diff. A line-level diff says a line changed; these say WHERE.
+// Every case names the exact substrings, because a range list is only useful if
+// it addresses the characters the reader is looking for.
+// ---------------------------------------------------------------------------
+
+/** Slice a line by its ranges so a case can assert on text, not on offsets. */
+function marked(line: string, ranges: readonly CharRange[]): string[] {
+  return ranges.map((r) => line.slice(r.start, r.end));
+}
+
+describe("wordDiff", () => {
+  it("marks only the inserted call, not the whole line", () => {
+    const oldLine = `\tname := os.Getenv("NAME")`;
+    const newLine = `\tname := strings.TrimSpace(os.Getenv("NAME"))`;
+    const wd = wordDiff(oldLine, newLine);
+    expect(wd).not.toBeNull();
+    expect(marked(oldLine, wd!.del)).toEqual([]);
+    expect(marked(newLine, wd!.add)).toEqual(["strings.TrimSpace(", ")"]);
+  });
+
+  it("marks a one-character insert as one character", () => {
+    const oldLine = `fmt.Printf("hello %s\\n", name)`;
+    const newLine = `fmt.Printf("hello, %s\\n", name)`;
+    const wd = wordDiff(oldLine, newLine);
+    expect(wd).not.toBeNull();
+    expect(marked(newLine, wd!.add)).toEqual([","]);
+  });
+
+  it("marks both sides of a replacement", () => {
+    const oldLine = `fmt.Println("total", total)`;
+    const newLine = `fmt.Println("sum:", total)`;
+    const wd = wordDiff(oldLine, newLine);
+    expect(wd).not.toBeNull();
+    expect(marked(oldLine, wd!.del)).toEqual(["total"]);
+    expect(marked(newLine, wd!.add)).toEqual(["sum:"]);
+  });
+
+  it("merges touching tokens into one range", () => {
+    // `strings` `.` `TrimSpace` `(` are four tokens and one edit.
+    const wd = wordDiff("a := b", "a := strings.Trim(b)");
+    expect(wd).not.toBeNull();
+    expect(wd!.add).toHaveLength(2);
+  });
+
+  it("declines a pair sharing no non-blank token", () => {
+    // Only whitespace matches, so there is nothing to point at inside the line
+    // and the row tint already says the whole line changed.
+    expect(wordDiff("\talpha beta", "\tgamma delta")).toBeNull();
+  });
+
+  it("declines a single-token pair, which shares nothing at all", () => {
+    expect(wordDiff("aaa", "bbb")).toBeNull();
+  });
+
+  it("declines a scattered rewrite past the run budget", () => {
+    // Nine separate edits: alternating shared and changed tokens.
+    const oldLine = "a 1 b 2 c 3 d 4 e 5 f 6 g 7 h 8 i 9";
+    const newLine = "a x b x c x d x e x f x g x h x i x";
+    expect(wordDiff(oldLine, newLine)).toBeNull();
+  });
+
+  it("declines an identical or empty line", () => {
+    expect(wordDiff("same", "same")).toBeNull();
+    expect(wordDiff("", "text")).toBeNull();
+    expect(wordDiff("text", "")).toBeNull();
+  });
+
+  it("keeps every range inside its own line and ascending", () => {
+    const oldLine = `for i := 0; i < 10; i++ {`;
+    const newLine = `for i := range 10 {`;
+    const wd = wordDiff(oldLine, newLine);
+    expect(wd).not.toBeNull();
+    for (const [line, ranges] of [
+      [oldLine, wd!.del],
+      [newLine, wd!.add],
+    ] as const) {
+      let prev = 0;
+      for (const r of ranges) {
+        expect(r.start).toBeGreaterThanOrEqual(prev);
+        expect(r.end).toBeGreaterThan(r.start);
+        expect(r.end).toBeLessThanOrEqual(line.length);
+        prev = r.end;
+      }
+    }
+  });
+});
+
+describe("wordMarks", () => {
+  it("pairs a del with the add at the same offset in its run", () => {
+    const d1 = { kind: "del", oldNo: 1, newNo: 0, text: "one alpha" } as const;
+    const d2 = { kind: "del", oldNo: 2, newNo: 0, text: "two alpha" } as const;
+    const a1 = { kind: "add", oldNo: 0, newNo: 1, text: "one beta" } as const;
+    const a2 = { kind: "add", oldNo: 0, newNo: 2, text: "two beta" } as const;
+    const marks = wordMarks([d1, d2, a1, a2]);
+    expect(marked(d1.text, marks.get(d1) ?? [])).toEqual(["alpha"]);
+    expect(marked(a1.text, marks.get(a1) ?? [])).toEqual(["beta"]);
+    expect(marked(d2.text, marks.get(d2) ?? [])).toEqual(["alpha"]);
+    expect(marked(a2.text, marks.get(a2) ?? [])).toEqual(["beta"]);
+  });
+
+  it("pairs within a run and never across a context line", () => {
+    // Without the context boundary these two would pair and mark "b"/"c".
+    const d = { kind: "del", oldNo: 1, newNo: 0, text: "a b" } as const;
+    const c = { kind: "ctx", oldNo: 2, newNo: 1, text: "unchanged" } as const;
+    const a = { kind: "add", oldNo: 0, newNo: 2, text: "a c" } as const;
+    const marks = wordMarks([d, c, a]);
+    expect(marks.size).toBe(0);
+  });
+
+  it("leaves an unpaired insert unmarked", () => {
+    const a = { kind: "add", oldNo: 0, newNo: 1, text: "brand new line" } as const;
+    expect(wordMarks([a]).size).toBe(0);
+  });
+
+  it("marks the paired lines of a run and leaves the surplus alone", () => {
+    const d = { kind: "del", oldNo: 1, newNo: 0, text: "keep x" } as const;
+    const a1 = { kind: "add", oldNo: 0, newNo: 1, text: "keep y" } as const;
+    const a2 = { kind: "add", oldNo: 0, newNo: 2, text: "extra" } as const;
+    const marks = wordMarks([d, a1, a2]);
+    expect(marks.has(d)).toBe(true);
+    expect(marks.has(a1)).toBe(true);
+    expect(marks.has(a2)).toBe(false);
+  });
+
+  it("finds the word change a real lineDiff produces", () => {
+    const d = lineDiff("alpha\nkeep me\nomega\n", "alpha\nkeep us\nomega\n");
+    const marks = wordMarks(d);
+    const changed = d.filter((l) => l.kind !== "ctx");
+    expect(changed).toHaveLength(2);
+    for (const l of changed) {
+      expect(marked(l.text, marks.get(l) ?? [])).toEqual([l.kind === "del" ? "me" : "us"]);
+    }
   });
 });

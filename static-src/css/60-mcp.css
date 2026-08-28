@@ -89,7 +89,12 @@
      place across a click. The hint ink alone is 4.771 / 4.719 and reads the same. */
   color: var(--c-text-tertiary);
   user-select: none;
-  background: var(--c-bg-secondary);
+  /* NO background. It used to paint `--c-bg-secondary`, which is the pane's own
+     background — a no-op on a context row and a hole punched in the tint of a
+     changed one, so the line-number column read as unchanged on every added and
+     deleted line. VS Code tints the gutter with the line (its
+     `diffEditorGutter.*` colors default to the line background); letting the
+     row's own tint through is the same result with no second declaration. */
 }
 
 .diff-content {
@@ -101,35 +106,73 @@
 
 .diff-marker {
   flex: 0 0 1.5ch;
-  color: var(--c-text-tertiary);
+  /* The marker keeps the SHAPE and gives up the hue. `--c-green` / `--c-red` are
+     tuned as ink on the flat pane (10.0:1 and 6.4:1 in dark, and light's red is
+     already 4.15:1 there before any tint), so on a green or red row they were
+     the two worst inks in the pane and the only ones that pushed the surface
+     search below AA. The row background carries the hue; the glyph carries the
+     channel that does not depend on it. */
+  color: var(--c-text-secondary);
   user-select: none;
 }
 
+/* A changed LINE is a surface; a changed WORD is an underline on it.
+   VS Code paints two backgrounds (`insertedLineBackground` at 20% plus
+   `insertedTextBackground` over it), and that second wash is what this palette
+   cannot afford: measured over every ink a row carries, a stacked wash puts the
+   gutter ink at 2.90:1 and an accent keyword at 2.61:1. VS Code ships the
+   alternative itself for its accessible themes — `insertedTextBorder` /
+   `removedTextBorder` — so the word mark is a 2px inset rule in the status hue.
+   It costs no contrast, it lands exactly under the characters that moved, and it
+   is a SHAPE, so the mark survives without relying on hue (WCAG 1.4.1).
+   Why the row surfaces are their own tokens rather than an alpha wash of
+   `--c-green` / `--c-red`, with the measured numbers: 01-tokens.css. */
 .diff-row-add {
-  background: color-mix(in oklch, var(--c-green) 14%, transparent);
-}
-
-.diff-row-add .diff-marker {
-  color: var(--c-green);
+  background: var(--c-diff-add-bg);
 }
 
 .diff-row-del {
-  background: color-mix(in oklch, var(--c-red) 14%, transparent);
+  background: var(--c-diff-del-bg);
 }
 
-.diff-row-del .diff-marker {
-  color: var(--c-red);
+.diff-word-add {
+  box-shadow: inset 0 -2px 0 var(--c-green);
+}
+
+.diff-word-del {
+  box-shadow: inset 0 -2px 0 var(--c-red);
 }
 
 .diff-row-ctx {
   color: var(--c-text-primary);
 }
 
-/* `background: var(--c-bg-disabled, transparent)` was here and did nothing: the
-   token was never declared, so the declaration resolved to the transparent this
-   element already had. The dim is the whole treatment. */
+/* The two-pane gap: this side of the file has nothing here, which is a
+   different statement from "an unchanged blank line". VS Code says it with a
+   diagonal fill (`diffEditor.diagonalFill`), which is a SHAPE, so the gap
+   survives without relying on hue (WCAG 1.4.1) and cannot be mistaken for a
+   faint add or del tint. The stripes span the gutter too, so the row reads as
+   one band.
+   The `opacity: 0.5` that used to be the whole treatment dimmed an empty box,
+   and `background: var(--c-bg-disabled, transparent)` before it resolved to the
+   transparent the element already had — the token was never declared. */
 .diff-row-empty {
-  opacity: 0.5;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in oklch, var(--c-text-tertiary) 16%, transparent) 0 1px,
+    transparent 1px 7px
+  );
+}
+
+/* No changes is a STATE, not an empty layout: two identical file listings read
+   as broken markup, and this is the ordinary case for a chat's changed-file
+   link once the write is committed (HEAD and the working tree then agree). */
+.diff-none {
+  padding: var(--sp-4) var(--sp-2);
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
 }
 
 .diff-more {
@@ -543,6 +586,7 @@
 .mcp-relay-input {
   flex: 1 1 16rem;
   min-width: 0;
+  min-block-size: var(--btn-h);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
 }
@@ -659,7 +703,6 @@
 :where(.mcp-search-row) .tool-form-input {
   flex: 1;
   min-width: 0;
-  min-height: var(--btn-h);
 }
 
 .mcp-mode-hint {
@@ -757,12 +800,14 @@
 .mcp-pair-name,
 .mcp-pair-value {
   width: 100%;
+  min-block-size: var(--ctl-h-dense);
   padding: var(--sp-1) var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
 }
 
 .mcp-pair-del {
+  min-block-size: var(--ctl-h-dense);
   padding: var(--sp-1);
   color: var(--c-text-tertiary);
 
@@ -1090,6 +1135,7 @@
 .mcp-disc-arg-input {
   flex: 1;
   min-width: 0;
+  min-block-size: var(--ctl-h-dense);
   padding: var(--sp-1) var(--sp-2);
   font-size: var(--fs-xs);
   border: 1px solid var(--c-border);
