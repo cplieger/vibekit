@@ -157,6 +157,7 @@ func buildCSS() error {
 		{manifestPath: filepath.Join(appCSS, "MANIFEST"), baseDir: appCSS},
 	}
 	var out strings.Builder
+	parts := 0
 	for _, src := range sources {
 		data, err := os.ReadFile(src.manifestPath)
 		if err != nil {
@@ -172,7 +173,25 @@ func buildCSS() error {
 				return fmt.Errorf("css part: %w", err)
 			}
 			out.Write(part)
+			parts++
 		}
 	}
-	return os.WriteFile(filepath.Join(outDir, "style.css"), []byte(out.String()), 0o600)
+	// A manifest that EXISTS and lists nothing — every line commented out, or a
+	// body lost to a bad merge — is the one shape neither the missing-manifest nor
+	// the missing-part error covers, and nothing downstream catches it: tsc does
+	// not see CSS, the image smoke test's healthcheck reads none, and the CSS tests
+	// read the manifest SOURCES because static/style.css is gitignored. So a
+	// zero-byte stylesheet would ship as a build success and surface as a
+	// completely unstyled app. The floor is "not zero"; the real counts are 44
+	// parts and ~709 KB, and a size threshold would be a guess.
+	if out.Len() == 0 {
+		return fmt.Errorf("css: the manifests listed no parts (%d manifests read)", len(sources))
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "style.css"), []byte(out.String()), 0o600); err != nil {
+		return err
+	}
+	// Say what was measured, so a shrink is visible in the build log rather than
+	// only in the browser.
+	fmt.Printf("bundle: css %d parts, %d bytes\n", parts, out.Len())
+	return nil
 }
