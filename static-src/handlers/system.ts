@@ -46,12 +46,17 @@ onSSE("settings_updated", () => {
   // patchSettings, which writes the value back to the server, which
   // re-broadcasts settings_updated, looping forever at debounce speed.
   void syncSettings().then((s) => {
-    if (s.last_model !== undefined) {
-      restoreLastModel(s.last_model);
+    // Null means the refetch failed. Nothing is applied: the local cache is the
+    // last thing the server told us, which is a better answer than a value
+    // invented here, and the next frame or reload re-syncs.
+    if (s === null) {
+      return;
     }
-    if (s.last_effort !== undefined) {
-      restoreLastEffort(s.last_effort);
-    }
+    // The `!== undefined` guards these two reads used to carry are gone with the
+    // optional fields: an empty last_model is a real value meaning "nothing
+    // remembered", and restoreLastModel already treats it that way.
+    restoreLastModel(s.last_model);
+    restoreLastEffort(s.last_effort);
     // A theme chosen on ANOTHER device lands here, which is the behaviour the
     // retired whole-document arrangement broadcast used to carry. Safe against a
     // loop from both sides: syncSettings has just seeded the write tracker from

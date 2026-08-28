@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve({})),
@@ -148,7 +149,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
-    initSettingsTracking({ supervised_default: false, last_model: "claude" });
+    initSettingsTracking(settingsPayload({ supervised_default: false, last_model: "claude" }));
     // Simulate the bootstrap fire from onSelectionChange: same
     // supervised_default value the server already has.
     patchSettings({ supervised_default: false });
@@ -157,7 +158,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
-    initSettingsTracking({ supervised_default: false, last_model: "claude" });
+    initSettingsTracking(settingsPayload({ supervised_default: false, last_model: "claude" }));
     // supervised_default unchanged, last_model changed.
     patchSettings({ supervised_default: false });
     patchSettings({ last_model: "gemini" });
@@ -179,7 +180,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("PATCHes again when the value changes back after a different value", async () => {
-    initSettingsTracking({ last_model: "claude" });
+    initSettingsTracking(settingsPayload({ last_model: "claude" }));
     patchSettings({ last_model: "gemini" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -193,7 +194,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("array-valued settings dedup correctly", async () => {
-    initSettingsTracking({ agent_ignore_files: ["a", "b", "c"] });
+    initSettingsTracking(settingsPayload({ agent_ignore_files: ["a", "b", "c"] }));
     patchSettings({ agent_ignore_files: ["a", "b", "c"] });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -206,7 +207,7 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("does not fire showSaving when every key in the patch is filtered", async () => {
-    initSettingsTracking({ supervised_default: true });
+    initSettingsTracking(settingsPayload({ supervised_default: true }));
     const { showSaving } = await import("./save-indicator.js");
     patchSettings({ supervised_default: true });
     await vi.advanceTimersByTimeAsync(350);
@@ -314,7 +315,7 @@ describe("patchSettings failure handling", () => {
   });
 
   it("re-sends a value the server rejected instead of filtering it as sent", async () => {
-    initSettingsTracking({ last_model: "claude" });
+    initSettingsTracking(settingsPayload({ last_model: "claude" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
     patchSettings({ last_model: "opus" });
     await vi.advanceTimersByTimeAsync(350);
@@ -335,7 +336,7 @@ describe("patchSettings failure handling", () => {
   });
 
   it("keeps the first pre-patch value when a key is written twice before flushing", async () => {
-    initSettingsTracking({ last_model: "claude" });
+    initSettingsTracking(settingsPayload({ last_model: "claude" }));
     fetchSpy.mockImplementation(() => Promise.resolve(new Response("nope", { status: 500 })));
     // Two writes coalesce into one PATCH; the rollback has to restore the value
     // the server still holds ("claude"), not the intermediate one.
@@ -433,10 +434,16 @@ describe("loadSettings", () => {
     vi.clearAllMocks();
     fetchSpy = vi.fn(() =>
       Promise.resolve(
-        new Response(JSON.stringify({ last_model: "sonnet", chat_retention_days: 30 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+        // The COMPLETE payload: loadSettings decodes through the generated
+        // decoder, and every field of EffectiveSettings is required, so a sparse
+        // body is a response the server cannot produce and the decoder refuses.
+        new Response(
+          JSON.stringify(settingsPayload({ last_model: "sonnet", chat_retention_days: 30 })),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
       ),
     );
     vi.stubGlobal("fetch", fetchSpy);
@@ -448,10 +455,9 @@ describe("loadSettings", () => {
   });
 
   it("returns the settings the server sent", async () => {
-    await expect(loadSettings()).resolves.toEqual({
-      last_model: "sonnet",
-      chat_retention_days: 30,
-    });
+    await expect(loadSettings()).resolves.toEqual(
+      settingsPayload({ last_model: "sonnet", chat_retention_days: 30 }),
+    );
   });
 });
 

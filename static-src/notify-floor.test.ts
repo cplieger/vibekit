@@ -14,9 +14,10 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 import indexHtml from "../static/index.html?raw";
 import notifySrc from "./notify.ts?raw";
-import persistSrc from "./persist.ts?raw";
+import wireTypesSrc from "./wire/types.gen.ts?raw";
 import domSrc from "./dom.ts?raw";
 import turnHandlerSrc from "./handlers/turn.ts?raw";
 
@@ -68,8 +69,14 @@ describe("no client code can address the removed setting", () => {
     expect(notifySrc).not.toMatch(/^\s*notify_permission\?/m);
   });
 
-  it("AppSettings does not declare the key", () => {
-    expect(persistSrc).not.toMatch(/^\s*notify_permission\?/m);
+  // Reads the GENERATED type, not persist.ts. This case was written against a
+  // hand-written `AppSettings` interface in persist.ts; that interface is deleted
+  // and persist.ts now re-exports EffectiveSettings, which cmd/wire-codegen emits
+  // from internal/vibekit. So the old assertion had stopped looking at the file
+  // that declares the field and could not have failed. The field is also REQUIRED
+  // now rather than optional, hence the `\??`.
+  it("the generated settings type declares no field for the key", () => {
+    expect(wireTypesSrc).not.toMatch(/^\s*notify_permission\??:/m);
   });
 
   it("the DOM registry has no getter for the removed toggle", () => {
@@ -94,10 +101,12 @@ describe("the master switch still governs everything", () => {
 
     // And a settings payload still carrying the removed key changes nothing
     // about the permission channel: there is no field left to land in.
-    notify.restoreNotifications({
-      notifications_enabled: false,
-      notify_agent_finished: true,
-    });
+    notify.restoreNotifications(
+      settingsPayload({
+        notifications_enabled: false,
+        notify_agent_finished: true,
+      }),
+    );
     expect(notify.areNotificationsEnabled()).toBe(false);
   });
 });

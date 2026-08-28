@@ -417,12 +417,17 @@ func (s *Server) failProfileSelection(ctx context.Context, w http.ResponseWriter
 // It takes the same settingsMu the settings writer takes: two concurrent writers
 // of one file would otherwise read-modify-write over each other, and one of them
 // deleting a preference is exactly the silent loss the atomic write exists to
-// prevent.
+// prevent. For the same reason a config.json that cannot be read refuses the
+// write rather than merging over an empty map, which would replace the file with
+// this one key — the caller then restores the policy files it already rewrote.
 func (s *Server) persistProfile(ctx context.Context, id string) error {
 	path := filepath.Join(s.configDir, settings.Filename)
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	merged := readExistingSettings(path)
+	merged, err := readStoredSettings(path)
+	if err != nil {
+		return err
+	}
 	raw, err := json.Marshal(id)
 	if err != nil {
 		return err

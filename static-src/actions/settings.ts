@@ -10,6 +10,8 @@
 // ---------------------------------------------------------------------------
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { decodeEffectiveSettings } from "../wire/decoders.gen.js";
+import type { EffectiveSettings } from "../wire/types.gen.js";
 
 // --- Steering save ---
 
@@ -92,12 +94,18 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
 
 // --- Load settings (deduped fetch for SSE-triggered reconcile) ---
 
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const loadSettings = apiAction<void, Record<string, unknown>>({
+// The generated decoder is what gives the required fields of EffectiveSettings
+// runtime force. Without it every field is a compile-time claim only, and a
+// reader that stops guarding is trusting a cast. A decode failure (including the
+// empty-body 2xx, which arrives as undefined) routes to the error branch, so
+// dispatch resolves null and each caller leaves its UI where it was.
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
+export const loadSettings = apiAction<void, EffectiveSettings>({
   name: "settings.load",
   dedupe: true,
   retryable: retryNetwork,
   request: () => ({ method: "GET", path: "/api/settings" }),
+  decode: (data) => decodeEffectiveSettings(data),
   error: false,
   success: false,
 });

@@ -4,11 +4,12 @@
 // keyed-reconcile behaviour of renderIgnoreChips: add/remove must touch
 // only the changed chip and preserve untouched node identity.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { AppSettings } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn<(path: string, signal?: AbortSignal) => Promise<unknown>>(),
-  patchSettings: vi.fn<(patch: Partial<AppSettings>) => Promise<void>>(),
+  patchSettings: vi.fn<(patch: Partial<EffectiveSettings>) => Promise<void>>(),
 }));
 
 // Mock only the I/O edges. ui-primitives (buildChip), reconcile,
@@ -71,11 +72,9 @@ async function flush(): Promise<void> {
 }
 
 function initWith(ignoreFiles: string[], supervised = false): void {
-  const initial: AppSettings = {
-    agent_ignore_files: ignoreFiles,
-    supervised_default: supervised,
-  };
-  initPermissionsUI(initial);
+  initPermissionsUI(
+    settingsPayload({ agent_ignore_files: ignoreFiles, supervised_default: supervised }),
+  );
 }
 
 function ignoreChips(): HTMLElement[] {
@@ -164,6 +163,28 @@ describe("renderIgnoreChips — keyed reconcile", () => {
     expect(ignoreChips()).toHaveLength(2);
     expect(ignoreChips().some((c) => chipLabel(c) === ".kiroignore")).toBe(false);
     expect(ignoreChips().find((c) => chipLabel(c) === ".gitignore")).toBe(gitignore);
+  });
+
+  it("renders the seeded defaults, and an add persists them beside the new entry", async () => {
+    // The row used to coalesce an absent agent_ignore_files to [], so on any
+    // config.json that had never set the key it rendered EMPTY while the agent
+    // read filter was applying two patterns — and because the row is
+    // authoritative on write, the first add persisted a list that dropped both.
+    // The server now resolves that default into the response, so the seeded
+    // values arrive as ordinary values and the row has nothing to invent.
+    // settingsPayload() with no override is the fresh-volume payload.
+    initPermissionsUI(settingsPayload());
+
+    expect(ignoreChips().map(chipLabel)).toEqual([".gitignore", ".kiroignore"]);
+    expect(byId("agent-ignore-empty-hint").classList.contains("hidden")).toBe(true);
+
+    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    byId<HTMLButtonElement>("agent-ignore-add").click();
+    await flush();
+
+    expect(mocks.patchSettings).toHaveBeenCalledWith({
+      agent_ignore_files: [".gitignore", ".kiroignore", ".env.dec"],
+    });
   });
 
   it("ignores duplicate adds", async () => {

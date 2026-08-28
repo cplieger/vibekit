@@ -429,23 +429,31 @@ function init(): void {
 }
 
 async function checkAuthAndStart(): Promise<void> {
+  // Null means the settings fetch failed, which is NOT the same as "the settings
+  // are the defaults". Nothing is restored on that path: the theme keeps the
+  // pre-paint cache the inline snippet already applied, the model and effort
+  // seeds stay unset (a new chat opens on the model's own default), and boot
+  // continues so the app is usable and the failure is recoverable by a reload.
+  // Inventing values here is what the client-side default mirrors used to do.
   const settings = await loadSettings();
-  restoreLastModel(settings.last_model);
-  restoreLastEffort(settings.last_effort);
-  // The theme, from the payload already in hand. The toggle was constructed
-  // during initUI against the pre-paint cache, so this is where the server's
-  // choice replaces that hint — and where the cache is carried across once if
-  // the server has none, which is the only value the retired arrangement
-  // document hands over (see settings.ts).
-  adoptThemeFromSettings(settings);
+  if (settings !== null) {
+    restoreLastModel(settings.last_model);
+    restoreLastEffort(settings.last_effort);
+    // The theme, from the payload already in hand. The toggle was constructed
+    // during initUI against the pre-paint cache, so this is where the server's
+    // choice replaces that hint — and where the cache is carried across once if
+    // the server has none, which is the only value the retired arrangement
+    // document hands over (see settings.ts).
+    adoptThemeFromSettings(settings);
 
-  suppressPush(true);
-  try {
-    restoreAll(settings);
-  } catch {
-    /* best-effort */
+    suppressPush(true);
+    try {
+      restoreAll(settings);
+    } catch {
+      /* best-effort */
+    }
+    suppressPush(false);
   }
-  suppressPush(false);
 
   let authenticated = false;
   const d = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
