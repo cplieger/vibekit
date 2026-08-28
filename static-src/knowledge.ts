@@ -209,7 +209,21 @@ function renderList(items: KnowledgeContext[]): void {
   }
   if (items.length === 0) {
     container.replaceChildren();
-    container.appendChild(el("div", { className: "list-empty" }, "No knowledge bases yet."));
+    // Two CONCRETE examples, one of them a named repository (user ruling): the
+    // shapes-only wording that stood here left readers unsure what an entry is.
+    // The section hint above already defines what a base IS, so this states only
+    // the examples; the README carries the longer list of documentation trees.
+    container.appendChild(
+      el(
+        "div",
+        { className: "list-empty" },
+        "No knowledge bases yet. Add your own ",
+        el("code", {}, "docs/"),
+        " folder, or a documentation repository cloned into the workspace, such as ",
+        el("code", {}, "refs/rust-book/src"),
+        " from rust-lang/book.",
+      ),
+    );
     return;
   }
   reconcile(container, items, {
@@ -325,14 +339,14 @@ function buildAddForm(): HTMLFormElement {
   const pathInput = el("input", {
     type: "text",
     id: "knowledge-add-path",
-    className: "knowledge-add-input",
+    className: "tool-form-input",
     placeholder: "Directory path (e.g. docs or /abs/path)…",
     "aria-label": "Knowledge base directory path",
   }) as HTMLInputElement;
   const nameInput = el("input", {
     type: "text",
     id: "knowledge-add-name",
-    className: "knowledge-add-input",
+    className: "tool-form-input",
     placeholder: "Name (optional)…",
     "aria-label": "Knowledge base name",
   }) as HTMLInputElement;

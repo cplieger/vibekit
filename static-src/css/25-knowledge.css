@@ -30,23 +30,21 @@
   margin-block: var(--sp-2);
 }
 
-.knowledge-add-input {
+.knowledge-add-form .tool-form-input {
   flex: 1 1 12rem;
   min-inline-size: 0;
-  padding: var(--sp-1) var(--sp-2);
-  color: var(--c-text-primary);
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
   touch-action: manipulation;
-  transition: border-color var(--dur-micro) var(--ease-standard);
 }
 
-.knowledge-add-input:focus-visible {
-  outline: none;
-  border-color: var(--c-accent);
+/* The path is required and holds the longer value, so it takes the larger share
+   of the row; the name is optional and can be narrow. Both selectors score the
+   same as the rule above and win on source order. */
+.knowledge-add-form [id="knowledge-add-path"] {
+  flex: 2 1 14rem;
+}
+
+.knowledge-add-form [id="knowledge-add-name"] {
+  flex: 1 1 8rem;
 }
 
 /* Item-count meta uses tabular figures so counts don't jitter. */

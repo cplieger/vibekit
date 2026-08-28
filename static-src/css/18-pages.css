@@ -127,29 +127,6 @@ h3.section-title {
   position: relative;
 }
 
-.textarea-status {
-  position: absolute;
-  bottom: var(--sp-2);
-  right: var(--sp-3);
-  color: var(--c-text-tertiary);
-  line-height: 0;
-  opacity: 1;
-  transition: opacity var(--dur-enter);
-
-  &.fade-out {
-    opacity: 0;
-  }
-}
-
-.textarea-status .spinner-sm {
-  width: 0.875rem;
-  height: 0.875rem;
-  border: 0.125rem solid var(--c-text-tertiary);
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: vk-spin 0.6s linear infinite;
-}
-
 .section-divider {
   height: 1px;
   background: var(--c-border);
@@ -714,6 +691,7 @@ h3.section-title {
 
 .tool-form-input,
 .tool-form-select {
+  min-block-size: var(--btn-h);
   padding: var(--sp-2) var(--sp-3);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
@@ -783,7 +761,59 @@ h3.section-title {
   color: var(--c-accent);
 }
 
-/* Catalog search results inside the add modal. */
+/* Search-result controls: the order picker, the name-match filter, and the
+ * result count. They sit above ONE flat list, which replaced two labelled
+ * blocks (catalog, then Debian packages) — see .tool-search-results. */
+.tool-results-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-block-start: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.tool-results-order,
+.tool-results-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.tool-results-filter {
+  cursor: pointer;
+}
+
+/* Compact variant of the form select: at the form-field size the control
+ * would stand taller than the rows it orders. */
+.tool-sort-select {
+  padding: 0 var(--sp-5) 0 var(--sp-2);
+  block-size: 1.75rem;
+  font-size: var(--fs-xs);
+  font-family: var(--font-sans);
+  background-color: var(--c-bg-secondary);
+  background-position: right var(--sp-2) center;
+}
+
+/* Pushed to the far end: it reports on the list rather than acting on it,
+ * so it reads as a readout instead of a third control. */
+.tool-results-count {
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Catalog search results inside the add modal.
+ *
+ * ONE list, ordered by relevance. It was two labelled blocks — the catalog,
+ * then the host's Debian packages — on the reasoning that the same name can
+ * appear in both at different versions, so a merged list would have to pick
+ * one and hide a real choice. That reasoning was about DEDUPING, not about
+ * merging: no row is dropped, and every row carries its own source and
+ * version chip, so both options are visible and comparable in one list.
+ * Blocking them instead put every catalog hit ahead of every Debian one
+ * whatever it scored, which buried `python3` under sixteen tools that merely
+ * mention Python in their descriptions. */
 .tool-search-results {
   max-block-size: 17rem;
   min-block-size: 4rem;
@@ -802,18 +832,24 @@ h3.section-title {
   min-inline-size: 0;
 }
 
-.tool-hit-title {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
 .tool-hit-desc {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Chips sit on their OWN line under the name, so every row's chips start at
+ * the same x. Inline after the name they began wherever that name ended, so
+ * a column of rows put them at as many different offsets as there were name
+ * lengths. */
+.tool-hit-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-block: 1px;
 }
 
 .tool-source-chip {
@@ -824,35 +860,6 @@ h3.section-title {
   border-radius: var(--r);
   padding: 0 var(--sp-1);
   line-height: 1.4;
-}
-
-/* Search-result block heads. The catalog and the host's Debian packages are
- * two lists, not one: the same name can appear in both at different versions,
- * so a merged list would have to pick one and hide a real choice. */
-.tool-block-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-1) var(--sp-1);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--c-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-/* Not the first head: the second block needs separating from the rows above
- * it, and the first sits directly under the search field already. */
-.tool-block-head:not(:first-child) {
-  margin-block-start: var(--sp-2);
-  border-block-start: 1px solid var(--c-border);
-}
-
-.tool-block-note {
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
-  color: var(--c-text-tertiary);
 }
 
 /* The closing note, shown under EVERY result set including a full one: the
@@ -897,10 +904,40 @@ h3.section-title {
   text-transform: capitalize;
 }
 
+/* Up to three lines of content, so the padding grows with them: a 3-line row at
+   the 1-line row's padding reads as cramped against its neighbours. The trailing
+   elements keep `.list-row`'s `align-items: center`. Top-aligning them under one
+   flat 0.1rem margin aligned nothing: five intrinsic heights (chip 18.6, status
+   15, date 13, glyph 14, button 28) put five centres 7.5px apart, the delete
+   button 8.6px below the title's. Centring needs no per-element number. */
 .history-table-row {
   cursor: pointer;
+  padding-block: var(--sp-2);
 }
-.history-table-row:focus-visible {
+
+/* The row's open control. A real button, so the platform supplies Enter and Space
+   and the delete button beside it stays in the accessibility tree; it is reset to
+   the span it replaced, because a control inherits neither the page font SIZE nor
+   its padding and paints a UA border. The mono family is re-asserted after `font`,
+   which this rule's own specificity would otherwise take back from
+   `.list-row-name`. */
+button.list-row-name {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-family: var(--font-mono);
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The ring frames the ROW, because clicking anywhere on the row is what the
+   button does; the button suppresses its own so the two do not nest. */
+button.list-row-name:focus-visible {
+  outline: none;
+}
+.history-table-row:has(> .list-row-title > .list-row-name:focus-visible) {
   outline: 2px solid var(--c-accent);
   outline-offset: -2px;
 }
@@ -957,24 +994,6 @@ h3.section-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* The rows are taller because they carry up to three lines now, and the padding
-   grows with them: a 3-line row at the 1-line row's padding reads as cramped
-   against its neighbours. `align-items: start` stops the kind chip, the outcome
-   glyph and the delete button from floating to the vertical middle of a tall row
-   and losing their alignment with the title they belong to; the small block
-   padding on each puts them on the title's own line. */
-.history-table-row {
-  align-items: start;
-  padding-block: var(--sp-2);
-}
-.history-table-row > .history-kind,
-.history-table-row > .history-status,
-.history-table-row > .tool-icon,
-.history-table-row > .list-row-meta,
-.history-table-row > .history-delete {
-  margin-block-start: 0.1rem;
 }
 
 /* --- Workflow run review (the /run/{id} tab) ------------------------------ */

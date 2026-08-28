@@ -424,9 +424,12 @@ describe("a11y: failed tool aria-expanded", () => {
 });
 
 describe("a11y: History row accessible names", () => {
-  // A history row is a role=button whose name says what a click does ("Open X").
+  // A history row's OPEN control is a real button whose name says what a click
+  // does ("Open X"); the row itself carries no role, because a role="button" on it
+  // is Children-Presentational and flattens the delete button beside it out of the
+  // accessibility tree (axe nested-interactive, serious, every row).
   // A settled parentless run also states its OUTCOME, and that outcome is a
-  // glyph — so the word has exactly one home, the row's accessible name, and
+  // glyph — so the word has exactly one home, that control's accessible name, and
   // must not be duplicated as visible text beside the glyph it replaced.
   it("a settled run row names the outcome once, in the accessible name only", async () => {
     vi.resetModules();
@@ -504,10 +507,12 @@ describe("a11y: History row accessible names", () => {
     });
 
     const row = host.querySelector<HTMLElement>('[data-key="r:wf_a11y"]')!;
-    expect(row.getAttribute("role")).toBe("button");
-    expect(row.getAttribute("tabindex")).toBe("0");
+    // The row is a plain container; its two controls are siblings.
+    expect(row.getAttribute("role")).toBeNull();
+    expect(row.getAttribute("tabindex")).toBeNull();
+    const open = row.querySelector<HTMLElement>("button.list-row-name")!;
     // The name still opens with the action, then states the verdict.
-    expect(row.getAttribute("aria-label")).toBe("Open nightly-sweep, failed");
+    expect(open.getAttribute("aria-label")).toBe("Open nightly-sweep, failed");
     // The glyph carrying it is decorative: the name already says the word.
     expect(row.querySelector(".tool-outcome-badge")?.getAttribute("aria-hidden")).toBe("true");
     expect(row.textContent).not.toContain("failed");

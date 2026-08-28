@@ -37,7 +37,15 @@ import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { reconcile } from "./reconcile.js";
-import type { AptPackage, CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
+import type {
+  AptPackage,
+  CatalogInfo,
+  Inventory,
+  Job,
+  SearchHit,
+  SearchResponse,
+  ToolInfo,
+} from "./types.js";
 
 /** Trailing-edge debounce for the catalog search input. */
 function debounce(fn: () => void, ms: number): () => void {
@@ -194,10 +202,34 @@ const f = {
   get search(): HTMLInputElement {
     return byId("tool-search");
   },
+  get sort(): HTMLSelectElement {
+    return byId("tool-sort");
+  },
+  get resultCount(): HTMLOutputElement {
+    return byId("tool-results-count");
+  },
   get results(): HTMLDivElement {
     return byId("tool-search-results");
   },
 };
+
+/** The orders the results bar offers.
+ *
+ *  `relevance` is the SERVER's order, adopted verbatim: the engine scores both
+ *  corpora on one scale and merges them, and it is the only participant that
+ *  can — aliases are not projected onto the wire, so a client re-deriving a
+ *  score would rank an alias hit as a description match. The other two are
+ *  presentational and the client owns them.
+ *
+ *  There is deliberately no `popularity`: nothing on the wire carries download
+ *  counts, stars or install counts, and `featured` is a 20-entry curated list
+ *  of what this product bundles rather than a measure of anything. An order
+ *  named popularity would be sorting by something else. */
+type SortOrder = "relevance" | "name-asc" | "name-desc";
+
+function isSortOrder(v: string): v is SortOrder {
+  return v === "relevance" || v === "name-asc" || v === "name-desc";
+}
 
 class ToolsManager {
   private data: Inventory | null = null;
@@ -210,6 +242,14 @@ class ToolsManager {
   private updatePill: JobPill | null = null;
   private refreshPill: JobPill | null = null;
   private unsubscribes: (() => void)[] = [];
+  /** The last search response, kept so the order picker and the name-match
+   *  filter re-paint without a round trip. Null means the request failed,
+   *  which is a different thing from an empty result set. */
+  private lastSearch: SearchResponse | null = null;
+  /** The trimmed query that produced `lastSearch`, for the empty-state note.
+   *  Read rather than the live input value, which the reader may already have
+   *  edited past the results on screen. */
+  private lastQuery = "";
 
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
@@ -287,11 +327,16 @@ class ToolsManager {
       }),
     );
 
-    // Add-modal wiring: a debounced search over the catalog and apt.
+    // Add-modal wiring: a debounced search over the catalog and apt, plus the
+    // order picker over the result set. The picker re-paints the cached
+    // response rather than re-querying: it is a decision about a set in hand.
     const runSearch = debounce(() => {
       void this.renderSearch(f.search.value);
     }, 200);
     f.search.addEventListener("input", runSearch);
+    f.sort.addEventListener("change", () => {
+      this.paintSearch();
+    });
   }
 
   dispose(): void {
@@ -840,18 +885,26 @@ class ToolsManager {
 
   private openAddModal(): void {
     f.search.value = "";
+    // Reset with the query: an order left over from a previous search would be
+    // applied to a set the reader has not seen yet.
+    f.sort.value = "relevance";
     openModal($.toolModal);
     void this.renderSearch("");
     f.search.focus();
   }
 
-  /** Render the search: catalog entries first, then Debian packages.
+  /** Render the search: ONE relevance-ordered list of every installable hit,
+   *  catalog entries and Debian packages alike.
    *
-   *  TWO blocks rather than one merged list, because the same name can appear
+   *  It was two labelled blocks, on the reasoning that the same name can appear
    *  in both at DIFFERENT versions -- the catalog tracks upstream releases and
-   *  apt tracks the distro's candidate -- and a merged list would have to pick
-   *  one, hiding a real choice. Each row carries its own version and source, so
-   *  the two are comparable rather than conflated.
+   *  apt tracks the distro's candidate -- so a merged list would have to pick
+   *  one and hide a real choice. That argument was about DEDUPING rather than
+   *  merging: nothing is dropped here, and each row carries its own source and
+   *  version chip, so both options stay visible and comparable in one list.
+   *  Blocking them cost the reader the best answer, because a block boundary
+   *  outranks every score inside it: "python" put sixteen catalog tools that
+   *  merely mention Python in their descriptions above `python3`.
    *
    *  Uninstallable entries are never requested: the engine hides them unless a
    *  caller opts in with `unavailable=1`, and this client deliberately does not.
@@ -860,52 +913,58 @@ class ToolsManager {
   private async renderSearch(query: string): Promise<void> {
     const q = query.trim();
     const d = await searchTools.dispatch({ q });
+    this.lastSearch = d;
+    this.lastQuery = q;
+    this.paintSearch();
+  }
+
+  /** Paint the cached result set under the current order.
+   *
+   *  Separate from the fetch so changing the order costs no round trip: it is a
+   *  decision ABOUT a set the client already holds, and re-querying for it
+   *  would also throw the server's relevance order away and then ask for it
+   *  back. */
+  private paintSearch(): void {
     const box = f.results;
     box.replaceChildren();
+    const d = this.lastSearch;
     if (d === null) {
+      f.resultCount.textContent = "";
       box.appendChild(el("div", { className: "list-empty" }, "Catalog unavailable"));
       return;
     }
-    const catalog = d.results.filter((h) => h.apt !== true);
-    const apt = d.results.filter((h) => h.apt === true);
+    const hits = this.orderHits(d.results);
+    f.resultCount.textContent = hits.length === 0 ? "" : `${String(hits.length)} shown`;
 
-    if (catalog.length === 0 && apt.length === 0) {
+    if (hits.length === 0) {
       box.appendChild(
         el(
           "div",
           { className: "list-empty" },
-          q === ""
+          this.lastQuery === ""
             ? "Everything featured is already installed. Search by name."
-            : `Nothing matches "${q}".`,
+            : `Nothing matches "${this.lastQuery}".`,
         ),
       );
       box.appendChild(this.shellNote(d.apt_available));
       return;
     }
-
-    if (catalog.length > 0) {
-      box.appendChild(el("div", { className: "tool-block-head" }, "Catalog"));
-      for (const hit of catalog) {
-        box.appendChild(this.renderSearchHit(hit));
-      }
-    }
-    if (apt.length > 0) {
-      box.appendChild(
-        el(
-          "div",
-          { className: "tool-block-head" },
-          "Debian packages",
-          // Stated on the block rather than per row: an apt package is not
-          // version-managed by the engine and dies with the container layer
-          // unless the entry is kept, which is a property of the whole group.
-          el("span", { className: "tool-block-note" }, "installed with apt, on this container"),
-        ),
-      );
-      for (const hit of apt) {
-        box.appendChild(this.renderSearchHit(hit));
-      }
+    for (const hit of hits) {
+      box.appendChild(this.renderSearchHit(hit));
     }
     box.appendChild(this.shellNote(d.apt_available));
+  }
+
+  /** Apply the chosen order. `relevance` returns the server's own order, which
+   *  is why this carries no scoring of its own — see [SortOrder]. */
+  private orderHits(hits: readonly SearchHit[]): SearchHit[] {
+    const raw = f.sort.value;
+    const order: SortOrder = isSortOrder(raw) ? raw : "relevance";
+    if (order === "relevance") {
+      return [...hits];
+    }
+    const dir = order === "name-asc" ? 1 : -1;
+    return [...hits].sort((a, b) => dir * a.name.localeCompare(b.name));
   }
 
   /** The closing note. Present on EVERY result set, including a full one:
@@ -945,9 +1004,21 @@ class ToolsManager {
         hit.apt === true ? { name: hit.name, source: hit.source } : { name: hit.name },
       );
     });
-    const chips: HTMLElement[] = [sourceChip(hit.source)];
-    // The version rides its own chip because it is the reason both blocks
-    // exist: the same name can be one release in the catalog and another in
+    const source = sourceChip(hit.source);
+    // The caveat that used to sit on the Debian block head now rides the chip
+    // that carries it: an apt package is not version-managed by the engine and
+    // comes back at whatever apt offers at the next boot. With one merged list
+    // there is no group to state it on, and it is a property of the source
+    // rather than of a position in the list.
+    if (hit.apt === true) {
+      source.setAttribute(
+        "data-tooltip",
+        "Installed with apt, in this container. The engine does not manage its version.",
+      );
+    }
+    const chips: HTMLElement[] = [source];
+    // The version rides its own chip because it is the reason both corpora are
+    // searched: the same name can be one release in the catalog and another in
     // the distro, and a reader choosing between them needs both numbers.
     if (hit.version !== undefined && hit.version !== "") {
       chips.push(el("span", { className: "tool-source-chip" }, hit.version));
@@ -965,8 +1036,8 @@ class ToolsManager {
           "div",
           { className: "tool-hit-title" },
           el("span", { className: "list-row-name" }, hit.name),
-          ...chips,
         ),
+        el("div", { className: "tool-hit-chips" }, ...chips),
         el("span", { className: "tool-hit-desc" }, hit.description ?? ""),
       ),
       addBtn,

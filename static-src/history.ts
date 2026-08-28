@@ -570,10 +570,24 @@ function buildRow(row: HistoryRow): HTMLElement {
     { className: `history-kind ${isRun ? "history-kind-run" : "history-kind-chat"}` },
     isRun ? "Run" : "Chat",
   );
+  // The row's OPEN control, and a real <button> rather than a role on the row.
+  // `role="button"` is Children-Presentational, so it flattened the delete button
+  // beside it out of the accessibility tree (axe nested-interactive, serious, on
+  // every row) — the same finding the git Changes tab's file row and the
+  // disclosure headers already answered. It also never activated on Enter or
+  // Space: a role="button" needs a key handler and this page never had one, so the
+  // rows were focusable and not operable. A real button gets both from the
+  // platform, and the container's delegated click listener keeps the wide mouse
+  // target, so nothing about a click on the row changes.
+  const openBtn = el(
+    "button",
+    { type: "button", className: "list-row-name", "aria-label": `Open ${row.title}` },
+    row.title,
+  );
   const title = el(
     "div",
     { className: "list-row-title" },
-    el("span", { className: "list-row-name" }, row.title),
+    openBtn,
     row.detail !== "" ? el("span", { className: "list-row-summary" }, row.detail) : null,
     // The facts line. Present only when there is something factual to say, so a
     // row vibekit knows nothing about keeps its old two-line height instead of
@@ -592,10 +606,7 @@ function buildRow(row: HistoryRow): HTMLElement {
     "div",
     {
       className: "list-row history-table-row",
-      role: "button",
-      tabindex: "0",
       "data-key": row.key,
-      "aria-label": `Open ${row.title}`,
     },
     kindChip,
     title,
@@ -615,20 +626,20 @@ function buildRow(row: HistoryRow): HTMLElement {
     // ONE writer for the vocabulary: tint, shape and word all come from
     // tool-card.ts, so a run row and a tool card cannot spell the same verdict
     // differently. The subject is the row's own label, so the accessible name it
-    // composes still opens with what a click does ("Open X, succeeded").
-    applyOutcome(node, row.outcome, `Open ${row.title}`, ROW_RENDER_INFO);
+    // composes still opens with what a click does ("Open X, succeeded") — and it
+    // lands on the open button, because that is the control a reader reaches.
+    applyOutcome(node, row.outcome, `Open ${row.title}`, ROW_RENDER_INFO, openBtn);
   }
   return node;
 }
 
 /** The row's delete control.
  *
- *  A real `<button>` inside the row, which is a `role="button"` div rather than a
- *  native button, so this is an ordinary child element and assistive tech reads
- *  two controls rather than one flattened one. It carries `data-history-delete` so
- *  the container's one delegated listener can tell a delete click from an open
- *  click, and the open handler bails on it — otherwise every delete would also
- *  open the thing it is deleting.
+ *  A real `<button>`, beside the row's open button rather than inside it: both are
+ *  ordinary children of a plain row, so assistive tech reads two controls. It
+ *  carries `data-history-delete` so the container's one delegated listener can tell
+ *  a delete click from an open click, and the open handler bails on it — otherwise
+ *  every delete would also open the thing it is deleting.
  *
  *  Named for the row, not the glyph: "Delete X" is what a screen reader announces,
  *  beside the row's own "Open X". */
@@ -670,16 +681,19 @@ function buildMatchRow(m: ChatSearchMatch): HTMLElement {
     "div",
     {
       className: "list-row history-table-row",
-      role: "button",
-      tabindex: "0",
       "data-search-chat": m.id,
-      "aria-label": `Open ${m.name}`,
     },
     el("span", { className: "history-kind history-kind-chat" }, "Chat"),
     el(
       "div",
       { className: "list-row-title" },
-      el("span", { className: "list-row-name" }, m.name),
+      // The same open control the loaded list uses, so a keyboard reaches a match
+      // row exactly as it reaches a session row.
+      el(
+        "button",
+        { type: "button", className: "list-row-name", "aria-label": `Open ${m.name}` },
+        m.name,
+      ),
       el("span", { className: "list-row-summary" }, detail),
     ),
     more !== "" ? el("span", { className: "history-status" }, more) : null,

@@ -95,6 +95,17 @@ function mountToolsDOM(): void {
   add("div", "tools-list");
   add("div", "tool-modal");
   add("input", "tool-search");
+  // Mirrors static/index.html: the order picker carries its three options,
+  // because the module reads `value` and falls back to relevance on anything
+  // it does not recognise — an optionless select would read "" and take that
+  // fallback whatever the test selected.
+  const sort = add("select", "tool-sort") as HTMLSelectElement;
+  for (const value of ["relevance", "name-asc", "name-desc"]) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    sort.appendChild(opt);
+  }
+  add("output", "tool-results-count");
   add("div", "tool-search-results");
 }
 
@@ -351,10 +362,11 @@ describe("add modal", () => {
     expect(mocks.closeModal).toHaveBeenCalledTimes(1);
   });
 
-  // Two blocks rather than one merged list, because the same name can be one
-  // version in the catalog and another in the distro. A merged list would have
-  // to pick one and hide a real choice, so both rows carry their own version.
-  it("splits catalog and apt hits into two blocks, each row carrying its version", async () => {
+  // ONE list rather than two labelled blocks. The old split put every catalog
+  // hit ahead of every Debian one whatever it scored, which is what buried the
+  // best answer; both rows still appear, each carrying its own version, so no
+  // real choice is hidden.
+  it("renders catalog and apt hits in one list, each row carrying its version", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({
       results: [
@@ -366,12 +378,75 @@ describe("add modal", () => {
     byId<HTMLButtonElement>("tool-add-btn").click();
     await flush();
 
-    const text = byId("tool-search-results").textContent ?? "";
-    expect(text).toContain("Catalog");
-    expect(text).toContain("Debian packages");
-    // Both versions present: that is the whole reason the split exists.
+    const box = byId("tool-search-results");
+    expect(box.querySelectorAll(".tool-hit")).toHaveLength(2);
+    // No block heads: the two corpora are one list now.
+    expect(box.querySelectorAll(".tool-block-head")).toHaveLength(0);
+    const text = box.textContent ?? "";
+    // Both versions present: that is why both rows are kept rather than deduped.
     expect(text).toContain("1.8.1");
     expect(text).toContain("1.7.1-3");
+    expect(byId("tool-results-count").textContent).toBe("2 shown");
+  });
+
+  // Chips on their own line under the name. Inline after the name they started
+  // wherever that name ended, so a column of rows put them at as many
+  // different offsets as there were name lengths.
+  it("puts every row's chips in a row of their own, under the name", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "pyright", source: "npm:pyright", version: "1.1.0", lsp: true }],
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+
+    const text = byId("tool-search-results").querySelector(".tool-hit-text");
+    const kids = [...(text?.children ?? [])].map((e) => e.className);
+    expect(kids).toEqual(["tool-hit-title", "tool-hit-chips", "tool-hit-desc"]);
+    // Every chip is in the chip row, none left beside the name.
+    expect(text?.querySelectorAll(".tool-hit-title .tool-source-chip")).toHaveLength(0);
+    expect(
+      [...(text?.querySelectorAll(".tool-hit-chips .tool-source-chip") ?? [])].map(
+        (e) => e.textContent,
+      ),
+    ).toEqual(["npm", "1.1.0", "LSP"]);
+  });
+
+  // The order picker re-paints what is already in hand. Re-querying for it
+  // would also throw the server's relevance order away and then ask for it
+  // back, and relevance is the one order only the server can produce (it scores
+  // both corpora on one scale, and aliases never reach the client).
+  it("reorders without a second search, and relevance is the server's own order", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [
+        { name: "python3", source: "apt:python3", apt: true },
+        { name: "black", source: "aqua:psf/black", description: "Python formatter" },
+      ],
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+
+    const names = (): string[] =>
+      [...byId("tool-search-results").querySelectorAll(".list-row-name")].map(
+        (e) => e.textContent ?? "",
+      );
+    expect(names()).toEqual(["python3", "black"]);
+    const searches = mocks.searchDispatch.mock.calls.length;
+
+    const sort = byId<HTMLSelectElement>("tool-sort");
+    sort.value = "name-asc";
+    sort.dispatchEvent(new Event("change"));
+    expect(names()).toEqual(["black", "python3"]);
+
+    sort.value = "name-desc";
+    sort.dispatchEvent(new Event("change"));
+    expect(names()).toEqual(["python3", "black"]);
+
+    sort.value = "relevance";
+    sort.dispatchEvent(new Event("change"));
+    expect(names()).toEqual(["python3", "black"]);
+    expect(mocks.searchDispatch.mock.calls.length).toBe(searches);
   });
 
   // An apt row is not a catalog entry, so the engine has no source to hydrate
