@@ -395,12 +395,34 @@ describe("patchSettings saving indicator", () => {
     vi.unstubAllGlobals();
   });
 
-  it("fires once for a batch of changes that will be sent", async () => {
+  it("announces each call's own keys, so a later change still raises its slot", async () => {
     const { showSaving } = await import("./save-indicator.js");
     patchSettings({ last_model: "opus" });
     patchSettings({ debug_logs: true });
     await vi.advanceTimersByTimeAsync(350);
-    expect(showSaving).toHaveBeenCalledTimes(1);
+    // Per call rather than per batch: the two keys have separate slots, and the
+    // second one is flipped inside the first's debounce window.
+    expect(showSaving).toHaveBeenCalledTimes(2);
+    expect(showSaving).toHaveBeenNthCalledWith(1, ["last_model"]);
+    expect(showSaving).toHaveBeenNthCalledWith(2, ["debug_logs"]);
+  });
+
+  it("announces only the keys that survived the no-op filter", async () => {
+    initSettingsTracking({ debug_logs: true });
+    const { showSaving } = await import("./save-indicator.js");
+    patchSettings({ debug_logs: true, last_model: "opus" });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(showSaving).toHaveBeenCalledExactlyOnceWith(["last_model"]);
+  });
+
+  it("reports the outcome against the keys the write carried", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    patchSettings({ last_model: "opus", debug_logs: true });
+    await vi.advanceTimersByTimeAsync(350);
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalled();
+    });
+    expect(showSaved).toHaveBeenCalledWith(["last_model", "debug_logs"]);
   });
 });
 
@@ -434,17 +456,21 @@ describe("loadSettings", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The save indicator belongs to the NEWEST write.
+// The indicator belongs to the NEWEST write of each key.
 //
-// Each dispatch takes a generation stamp and compares it against the module's
-// counter when its response lands, so a response that has been overtaken cannot
-// paint the indicator for a write that has since been superseded. The two
-// halves of that are separately live: `patchAppSettings` is scope-serialized, so
-// the second PATCH does not reach the network until the first answers — but the
-// debounce timer does not wait for the network, so the second `executePatch`
-// (and its generation bump) has already happened by then. Without the
-// comparison the user reads "Saved" for a value the server has not been asked
-// about yet, and "failed" for one that is still in the air.
+// Each dispatch stamps its keys with a generation and compares that stamp when
+// its response lands, so a response that has been overtaken cannot paint a slot
+// for a write that has since been superseded. The two halves of that are
+// separately live: `patchAppSettings` is scope-serialized, so the second PATCH
+// does not reach the network until the first answers — but the debounce timer
+// does not wait for the network, so the second `executePatch` (and its stamp) has
+// already happened by then. Without the comparison the user reads "Saved" for a
+// value the server has not been asked about yet, and "failed" for one that is
+// still in the air.
+//
+// PER KEY, because the slots are per setting: a key the newer write does not
+// carry has not been overtaken, and under the single counter this replaced its
+// slot was left spinning with nothing left to answer it.
 //
 // Both tests need a response that is OUTSTANDING while the next write is
 // queued, which the immediate `Promise.resolve(...)` stub used elsewhere in this
@@ -529,5 +555,21 @@ describe("patchSettings generation guard", () => {
     await vi.waitFor(() => {
       expect(showError).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("still reports the keys the newer write did not carry", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    // The first write carries two settings; the second re-writes only one of
+    // them, so the other has nothing left to answer it and must report now.
+    patchSettings({ last_model: "first", debug_logs: true });
+    await vi.advanceTimersByTimeAsync(350);
+    patchSettings({ last_model: "second" });
+    await vi.advanceTimersByTimeAsync(350);
+
+    pending[0]?.(new Response("{}", { status: 200 }));
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalled();
+    });
+    expect(showSaved).toHaveBeenCalledExactlyOnceWith(["debug_logs"]);
   });
 });

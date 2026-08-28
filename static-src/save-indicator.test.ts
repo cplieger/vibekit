@@ -1,32 +1,12 @@
+// Per-setting save indicators: only the slot naming the written key animates.
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-const { state } = vi.hoisted(() => {
-  const state: {
-    cb: ((i: any) => void) | null;
-    pending: boolean;
-  } = { cb: null, pending: false };
-  return { state };
-});
-
-vi.mock("./actions/index.js", () => ({
-  subscribeToActions: (fn: (i: any) => void) => {
-    state.cb = fn;
-    return () => {
-      /* noop */
-    };
-  },
-  pendingCount: (_names?: readonly string[]) => (state.pending ? 1 : 0),
-}));
-
-vi.mock("./dom.js", () => ({
-  $: { settingsSaveStatus: document.createElement("div") },
-}));
 
 vi.mock("./icon-el.js", () => ({
   iconEl: (path: string) => {
-    const el = document.createElement("span");
-    el.dataset["icon"] = path;
-    return el;
+    const node = document.createElement("span");
+    node.dataset["icon"] = path;
+    return node;
   },
 }));
 
@@ -35,14 +15,37 @@ vi.mock("./icons.js", () => ({
   ICON_SAVE_FAIL: "fail",
 }));
 
-import { showSaving, _resetForTest } from "./save-indicator.js";
-import { $ } from "./dom.js";
+import { showSaving, showSaved, showError, _resetForTest } from "./save-indicator.js";
 
-describe("save-indicator subscription", () => {
+/** Mount one slot per key; the returned lookup throws on a key it did not mount,
+ *  so a renamed key in a test fails there rather than silently asserting on
+ *  nothing. */
+function mountSlots(...keys: string[]): (key: string) => HTMLElement {
+  const byKey = new Map<string, HTMLElement>();
+  for (const key of keys) {
+    const slot = document.createElement("span");
+    slot.className = "settings-save-status hidden";
+    slot.dataset["saveStatus"] = key;
+    document.body.append(slot);
+    byKey.set(key, slot);
+  }
+  return (key) => {
+    const slot = byKey.get(key);
+    if (slot === undefined) {
+      throw new Error(`no slot mounted for ${key}`);
+    }
+    return slot;
+  };
+}
+
+const spinner = (slot: HTMLElement): Element | null => slot.querySelector(".spinner-sm");
+const ok = (slot: HTMLElement): Element | null => slot.querySelector("[data-icon='ok']");
+const fail = (slot: HTMLElement): Element | null => slot.querySelector("[data-icon='fail']");
+
+describe("save-indicator", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    ($ as any).settingsSaveStatus = document.createElement("div");
-    state.pending = false;
+    document.body.replaceChildren();
     _resetForTest();
   });
 
@@ -50,96 +53,152 @@ describe("save-indicator subscription", () => {
     vi.useRealTimers();
   });
 
-  it("500ms guard only blocks pending, not completion", () => {
-    const el = $.settingsSaveStatus;
+  it("spins only the slot whose key was written", () => {
+    const slot = mountSlots("debug_logs", "memory_enabled");
 
-    showSaving();
-    expect(el.querySelector(".spinner-sm")).not.toBeNull();
+    showSaving("debug_logs");
 
-    // Within 500ms, a completion event should still fire
-    vi.advanceTimersByTime(100);
-    state.pending = false;
-    state.cb!({ name: "settings.patch", status: "success" });
-
-    expect(el.querySelector("[data-icon='ok']")).not.toBeNull();
+    expect(spinner(slot("debug_logs"))).not.toBeNull();
+    expect(slot("memory_enabled").children.length).toBe(0);
   });
 
-  it("500ms guard blocks pending branch", () => {
-    const el = $.settingsSaveStatus;
+  it("spins every slot a multi-key write carried", () => {
+    const slot = mountSlots("notifications_enabled", "notify_agent_finished", "debug_logs");
 
-    showSaving();
-    vi.advanceTimersByTime(100);
+    showSaving(["notifications_enabled", "notify_agent_finished"]);
 
-    state.pending = true;
-    state.cb!({ name: "settings.patch", status: "pending" });
-
-    // Still the original spinner — guard blocked the re-set
-    expect(el.querySelector(".spinner-sm")).not.toBeNull();
+    expect(spinner(slot("notifications_enabled"))).not.toBeNull();
+    expect(spinner(slot("notify_agent_finished"))).not.toBeNull();
+    expect(slot("debug_logs").children.length).toBe(0);
   });
 
-  it("does not fire showSaved if other settings actions are still pending", () => {
-    const el = $.settingsSaveStatus;
+  it("serves one slot that names several keys", () => {
+    const shared = document.createElement("span");
+    shared.className = "settings-save-status hidden";
+    shared.dataset["saveStatus"] = "chat_retention_days chat_retention_forever";
+    document.body.append(shared);
 
-    vi.advanceTimersByTime(1000);
+    showSaving("chat_retention_forever");
 
-    state.pending = true;
-    state.cb!({ name: "settings.patch", status: "success" });
-
-    // Should NOT show saved icon — others still pending
-    expect(el.querySelector("[data-icon='ok']")).toBeNull();
+    expect(spinner(shared)).not.toBeNull();
   });
 
-  it("fires showSaved only when all settings actions are settled", () => {
-    const el = $.settingsSaveStatus;
+  it("does nothing for a key no slot names", () => {
+    const slot = mountSlots("debug_logs");
 
-    vi.advanceTimersByTime(1000);
+    showSaving("last_model");
+    showSaved("last_model");
 
-    state.pending = false;
-    state.cb!({ name: "settings.save_steering", status: "success" });
-
-    expect(el.querySelector("[data-icon='ok']")).not.toBeNull();
+    expect(slot("debug_logs").children.length).toBe(0);
   });
 
-  it("fires showError when action errors and nothing pending", () => {
-    const el = $.settingsSaveStatus;
+  it("settles the written slot and leaves its neighbour untouched", () => {
+    const slot = mountSlots("debug_logs", "memory_enabled");
 
-    vi.advanceTimersByTime(1000);
+    showSaving("debug_logs");
+    showSaved("debug_logs");
 
-    state.pending = false;
-    state.cb!({ name: "settings.patch", status: "error" });
-
-    expect(el.querySelector("[data-icon='fail']")).not.toBeNull();
+    expect(ok(slot("debug_logs"))).not.toBeNull();
+    expect(slot("memory_enabled").children.length).toBe(0);
   });
 
-  it("ignores non-settings actions", () => {
-    const el = $.settingsSaveStatus;
+  it("shows the failure face on the slot that failed", () => {
+    const slot = mountSlots("debug_logs");
 
-    vi.advanceTimersByTime(1000);
-    state.pending = false;
-    state.cb!({ name: "unrelated.action", status: "success" });
+    showSaving("debug_logs");
+    showError("debug_logs");
 
-    expect(el.children.length).toBe(0);
+    expect(fail(slot("debug_logs"))).not.toBeNull();
   });
 
-  it("delays showSaved if it would happen too soon after showError (Tradeoff 3)", async () => {
-    const el = $.settingsSaveStatus;
-    // Simulate error showing
-    vi.advanceTimersByTime(1000);
-    state.pending = false;
-    state.cb!({ name: "settings.patch", status: "error" });
-    expect(el.querySelector("[data-icon='fail']")).not.toBeNull();
+  it("fades a settled face out and then hides it", () => {
+    const slot = mountSlots("debug_logs")("debug_logs");
 
-    // 300ms later, a success arrives directly (no showSaving in between)
+    showSaving("debug_logs");
+    showSaved("debug_logs");
+    expect(slot.classList.contains("hidden")).toBe(false);
+
+    vi.advanceTimersByTime(1200);
+    expect(slot.classList.contains("fade-out")).toBe(true);
+    expect(slot.classList.contains("hidden")).toBe(false);
+
+    vi.advanceTimersByTime(400);
+    expect(slot.classList.contains("hidden")).toBe(true);
+  });
+
+  it("holds the failure face longer than the success face", () => {
+    const slot = mountSlots("a", "b");
+
+    showSaved("a");
+    showError("b");
+
+    vi.advanceTimersByTime(1200);
+    expect(slot("a").classList.contains("fade-out")).toBe(true);
+    expect(slot("b").classList.contains("fade-out")).toBe(false);
+
+    vi.advanceTimersByTime(1200);
+    expect(slot("b").classList.contains("fade-out")).toBe(true);
+  });
+
+  it("delays a success that would blink an error away, per slot", () => {
+    const slot = mountSlots("debug_logs")("debug_logs");
+
+    showError("debug_logs");
+    expect(fail(slot)).not.toBeNull();
+
+    // A retry answers 300ms later: the ✗ still owes 1200ms of visibility.
     vi.advanceTimersByTime(300);
-    state.pending = false;
-    state.cb!({ name: "settings.save_steering", status: "success" });
+    showSaved("debug_logs");
+    expect(fail(slot)).not.toBeNull();
+    expect(ok(slot)).toBeNull();
 
-    // Success should NOT be visible yet — error still has 1200ms credit remaining
-    expect(el.querySelector("[data-icon='fail']")).not.toBeNull();
-    expect(el.querySelector("[data-icon='ok']")).toBeNull();
+    vi.advanceTimersByTime(1200);
+    expect(ok(slot)).not.toBeNull();
+  });
 
-    // Advance past the credit window — now ✓ should appear
-    vi.advanceTimersByTime(1300);
-    expect(el.querySelector("[data-icon='ok']")).not.toBeNull();
+  it("does not delay a success on a slot that never errored", () => {
+    const slot = mountSlots("a", "b");
+
+    showError("a");
+    vi.advanceTimersByTime(300);
+    showSaved("b");
+
+    expect(ok(slot("b"))).not.toBeNull();
+    expect(fail(slot("a"))).not.toBeNull();
+  });
+
+  it("a new write clears the error credit, so its success is immediate", () => {
+    const slot = mountSlots("debug_logs")("debug_logs");
+
+    showError("debug_logs");
+    vi.advanceTimersByTime(300);
+    // The user changed the setting again: the spinner already replaced the ✗.
+    showSaving("debug_logs");
+    showSaved("debug_logs");
+
+    expect(ok(slot)).not.toBeNull();
+  });
+
+  it("re-showing a settled slot brings it back from hidden", () => {
+    const slot = mountSlots("debug_logs")("debug_logs");
+
+    showSaved("debug_logs");
+    vi.advanceTimersByTime(1600);
+    expect(slot.classList.contains("hidden")).toBe(true);
+
+    showSaving("debug_logs");
+    expect(slot.classList.contains("hidden")).toBe(false);
+    expect(slot.classList.contains("fade-out")).toBe(false);
+    expect(spinner(slot)).not.toBeNull();
+  });
+
+  it("a spinner does not fade on its own", () => {
+    const slot = mountSlots("debug_logs")("debug_logs");
+
+    showSaving("debug_logs");
+    vi.advanceTimersByTime(10000);
+
+    expect(spinner(slot)).not.toBeNull();
+    expect(slot.classList.contains("hidden")).toBe(false);
   });
 });

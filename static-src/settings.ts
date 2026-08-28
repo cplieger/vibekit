@@ -29,7 +29,7 @@ import { $ } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
 
-import { showSaving, showSaved, showError } from "./save-indicator.js";
+import { showSaving, showSaved, showError, STEERING_SAVE_KEY } from "./save-indicator.js";
 import { saveSteering, logout, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
 import {
@@ -39,14 +39,14 @@ import {
   subscribeByName,
 } from "./actions/index.js";
 
-// Shared generation counter for kiro-setting saves. Last-write-wins:
-// if two settings change in rapid succession, only the final save
-// updates the indicator. This is acceptable because the indicator is
-// purely cosmetic (each save is independent on the server).
-let kiroSettingGen = 0;
+// Per-key write generation for the kiro-cli settings endpoint; same rule as
+// persist.ts's `keyGen`, which explains it. Separate because the key namespaces
+// are (dotted kiro-cli keys against AppSettings keys).
+let kiroSeq = 0;
+const kiroGen = new Map<string, number>();
 
 /**
- * Encapsulates the gen-counter + showSaving/showSaved/showError lifecycle
+ * Encapsulates the generation guard + showSaving/showSaved/showError lifecycle
  * for dispatching a kiro-cli setting change.
  *
  * Every remaining kiro-cli setting is a CHECKBOX, so there is no previous-value
@@ -55,16 +55,17 @@ let kiroSettingGen = 0;
  * readers upstream, and both fields are gone.
  */
 function dispatchKiroSetting(key: string, value: string, input: HTMLInputElement): void {
-  showSaving();
-  const gen = ++kiroSettingGen;
+  showSaving(key);
+  const gen = ++kiroSeq;
+  kiroGen.set(key, gen);
   void setKiroSetting.dispatch({ key, value, input }, { silent: true }).then((r) => {
-    if (gen !== kiroSettingGen) {
+    if (kiroGen.get(key) !== gen) {
       return;
     }
     if (r === null) {
-      showError();
+      showError(key);
     } else {
-      showSaved();
+      showSaved(key);
     }
   });
 }
@@ -407,14 +408,14 @@ function initSteeringEditor(): void {
 
   const unsub = subscribeByName("settings.save_steering", (inst) => {
     if (inst.status === "success") {
-      showSaved();
+      showSaved(STEERING_SAVE_KEY);
     } else if (inst.status === "error") {
-      showError();
+      showError(STEERING_SAVE_KEY);
     }
   });
 
   textarea.addEventListener("input", () => {
-    showSaving();
+    showSaving(STEERING_SAVE_KEY);
     debouncedSave({ content: textarea.value });
   });
 
@@ -675,7 +676,7 @@ const experimentalFlags: readonly {
   { key: "chat.disableInheritingDefaultResources", inputID: "flag-disable-inherit-resources" },
 ];
 
-function initExperimentalToggles(): void {
+export function initExperimentalToggles(): void {
   const inputs = experimentalFlags.map(
     (flag) => document.getElementById(flag.inputID) as HTMLInputElement | null,
   );

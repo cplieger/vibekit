@@ -295,7 +295,6 @@
           <header class="settings-header">
             <div class="settings-title-row">
               <h2 class="page-title"><span id="settings-page-title">General</span></h2>
-              <span id="settings-save-status" class="settings-save-status hidden" aria-live="polite"></span>
             </div>
             <nav id="settings-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Settings tabs">
               <button type="button" class="settings-tab" role="tab" data-settings-tab="general">General</button>
@@ -324,7 +323,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Push notifications</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Push notifications</span>
+                    <span class="settings-save-status hidden" data-save-status="notifications_enabled" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">Receive notifications on all your devices, even when the app is closed.</p>
                   <p id="notify-hint" class="section-hint hidden"></p>
                 </div>
@@ -336,7 +338,10 @@
                     <span class="toggle-slider"></span>
                   </label>
                   <div>
-                    <span class="section-option-label">Agent finished</span>
+                    <div class="section-title-status-row">
+                      <span class="section-option-label">Agent finished</span>
+                      <span class="settings-save-status hidden" data-save-status="notify_agent_finished" aria-live="polite"></span>
+                    </div>
                     <p class="section-hint">Notify when the agent completes a response and no device has the app in the foreground.</p>
                   </div>
                 </div>
@@ -346,7 +351,10 @@
                     <span class="toggle-slider"></span>
                   </label>
                   <div>
-                    <span class="section-option-label">Pull request checks</span>
+                    <div class="section-title-status-row">
+                      <span class="section-option-label">Pull request checks</span>
+                      <span class="settings-save-status hidden" data-save-status="notify_pr_status" aria-live="polite"></span>
+                    </div>
                     <p class="section-hint">Notify when CI on a pull request you opened turns green or red. Checked every minute while you have an open pull request in a repository checked out here, and every five minutes otherwise. Coverage follows what each host reports: GitHub sends both outcomes, GitLab reports a failure but cannot report a recovery, and Gitea or Codeberg report neither.</p>
                   </div>
                 </div>
@@ -379,7 +387,10 @@
             <div class="page-section" id="general-governance-section" hidden></div>
 
             <div class="page-section" id="general-retention-section">
-              <h3 class="section-title">Chat retention</h3>
+              <div class="section-title-status-row">
+                <h3 class="section-title">Chat retention</h3>
+                <span class="settings-save-status hidden" data-save-status="chat_retention_days" aria-live="polite"></span>
+              </div>
               <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. Otherwise <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. vibekit manages this itself; kiro-cli's own cleanup is off.</p>
               <div class="section-option">
                 <label for="chat-retention-forever" class="section-option-label">Keep forever</label>
@@ -400,7 +411,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Knowledge base search</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Knowledge base search</span>
+                    <span class="settings-save-status hidden" data-save-status="knowledge_enabled" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">Lets the agent search the directories you have indexed ("add this folder to my knowledge base"). On by default. Off withdraws the agent's search tool and the list of indexed bases it sees; the bases themselves stay on disk and Settings → Custom instructions still manages them, so nothing is lost by turning it off.</p>
                 </div>
               </div>
@@ -410,7 +424,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Load MCP tools on demand</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Load MCP tools on demand</span>
+                    <span class="settings-save-status hidden" data-save-status="tool_search_enabled" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt — the agent can call any tool immediately, but the tool list takes context-window space (~200–500 tokens per tool) on every turn. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model; when the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves context for 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Worth turning on only when you feel the context squeeze.</p>
                 </div>
               </div>
@@ -420,7 +437,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Remember things between conversations</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Remember things between conversations</span>
+                    <span class="settings-save-status hidden" data-save-status="memory_enabled" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">Off by default. Lets kiro-cli keep its own notes across chats — your stated preferences, decisions and corrections — written by the agent on its own initiative rather than by you, and fed into later conversations as a short list it can expand on demand. Three things to know before turning it on. The notes live in a file under the container's home directory that <strong>this app cannot show you</strong>, so you cannot read, edit or delete an individual note from here; the only control is switching the feature back off. <strong>Nothing prunes it</strong> — it grows for as long as it is on. And every note is filed under one shared workspace bucket rather than the repository it came from, because every chat runs from the same directory, so notes from unrelated projects land in one pile. For anything you want remembered deliberately, Settings → Custom instructions is reviewable, editable and version-controlled.</p>
                 </div>
               </div>
@@ -435,7 +455,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Show hook status in chat</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Show hook status in chat</span>
+                    <span class="settings-save-status hidden" data-save-status="hooks.showStatus" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">When on, kiro-cli hook executions appear as status messages in the chat transcript. Off hides them; hooks still run and enforce their rules, only the chat messages are suppressed.</p>
                 </div>
               </div>
@@ -445,7 +468,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">kiro-cli telemetry</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">kiro-cli telemetry</span>
+                    <span class="settings-save-status hidden" data-save-status="telemetry.enabled" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">Anonymous usage telemetry sent by kiro-cli (not vibekit). Helps the Kiro team improve the CLI. Off disables all telemetry collection. This does not affect vibekit's own operation.</p>
                 </div>
               </div>
@@ -455,7 +481,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Exclude default resources from custom agents</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Exclude default resources from custom agents</span>
+                    <span class="settings-save-status hidden" data-save-status="chat.disableInheritingDefaultResources" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">When on, custom agents (your own agent definitions) no longer inherit the default resources — global/workspace steering docs, skills, and <code>AGENTS.md</code> — so a custom agent starts from a clean context you control explicitly. The built-in Default and Plan agents are unaffected. Off (default) keeps every custom agent loading those resources automatically. Requires kiro-cli 2.10+.</p>
                 </div>
               </div>
@@ -465,7 +494,10 @@
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Debug logs</span>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">Debug logs</span>
+                    <span class="settings-save-status hidden" data-save-status="debug_logs" aria-live="polite"></span>
+                  </div>
                   <p class="section-hint">Raise vibekit's server-side log level to DEBUG. Surfaces extension-notification drops, fs handler details, and other verbose diagnostics. Read the logs with <code>docker logs vibekit</code>. Default off.</p>
                 </div>
               </div>
@@ -590,7 +622,10 @@
 
 
             <div class="page-section">
-              <h3 class="section-title">Supervised mode (default for new chats)</h3>
+              <div class="section-title-status-row">
+                <h3 class="section-title">Supervised mode (default for new chats)</h3>
+                <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
+              </div>
               <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent needs permission to <em>run</em> a write tool; Supervised mode decides whether the <em>resulting file change</em> needs your review before it's saved to disk. When on, every file change (create, edit, delete) shows up in the chat with Accept / Reject buttons and the write only lands after you approve. The Supervised pill next to the chat prompt toggles the current conversation; this setting only picks the default for new ones.</p>
               <label class="perm-mode">
                 <input type="checkbox" id="supervised-default-checkbox">
@@ -599,7 +634,10 @@
             </div>
 
             <div class="page-section">
-              <h3 class="section-title">Scheduled runs</h3>
+              <div class="section-title-status-row">
+                <h3 class="section-title">Scheduled runs</h3>
+                <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
+              </div>
               <p class="section-hint">A scheduled workflow runs with nobody watching, so a tool request it raises has nobody to answer it. By default vibekit <strong>refuses</strong> such a request after 3 minutes and says so on the workflow's row — the run stops rather than parking forever and blocking every later run of that schedule. Turn this on to approve those requests instead. It is a separate decision from the Active policy above on purpose: approving something while you watch is not the same as approving it unattended at 3am. Approvals granted this way are one-shot and never persisted as a rule.</p>
               <label class="perm-mode">
                 <input type="checkbox" id="scheduled-auto-approve-checkbox">
@@ -609,7 +647,10 @@
 
             <div class="page-section">
               <div id="agent-ignore-section">
-                <h3 class="section-title">Agent ignore files</h3>
+                <div class="section-title-status-row">
+                  <h3 class="section-title">Agent ignore files</h3>
+                  <span class="settings-save-status hidden" data-save-status="agent_ignore_files" aria-live="polite"></span>
+                </div>
                 <p class="section-hint">Paths to gitignore-style files. The agent cannot <em>read</em> files matching these patterns (writes are still allowed, same as git). Good for keeping decrypted secrets (<code>.env.dec</code>), build artifacts, and other gitignored files out of the agent's context window. Relative entries resolve against the workspace root.</p>
                 <div id="agent-ignore-chips" class="chip-list"></div>
                 <div class="rule-form" data-rule-form="ignore" role="group" aria-label="Add an agent ignore file">
@@ -630,8 +671,11 @@
           <div class="settings-panel hidden" data-settings-panel="instructions">
 
             <div class="page-section">
-              <label for="steering-input" class="section-title">Global instructions</label>
-              <p class="section-hint">Prepended to every conversation, on every device. Autosaves as you type. Good for always-on preferences like "respond in French" or "prefer concise answers".</p>
+              <div class="section-title-status-row">
+                <label for="steering-input" class="section-title">Global instructions</label>
+                <span class="settings-save-status hidden" data-save-status="steering" aria-live="polite"></span>
+              </div>
+              <p class="section-hint">Prepended to every conversation, on every device. Good for always-on preferences like "respond in French" or "prefer concise answers".</p>
               <div class="textarea-wrap">
                 <textarea id="steering-input" class="page-textarea" rows="5" placeholder="e.g. Always respond in French. Prefer concise answers. Don't explain unless asked."></textarea>
               </div>
@@ -646,7 +690,7 @@
                 </div>
               </div>
               <p id="knowledge-hint" class="section-hint knowledge-hint" hidden>Knowledge is turned off. Enable it in <strong>General</strong> for the agent to use these bases during chats.</p>
-              <div id="knowledge-list" class="list-container"><div class="list-empty">No knowledge bases yet.</div></div>
+              <div id="knowledge-list" class="list-container"><div class="list-empty">No knowledge bases yet. Add your own <code>docs/</code> folder, or a documentation repository cloned into the workspace, such as <code>refs/rust-book/src</code> from rust-lang/book.</div></div>
             </div>
 
           </div>
@@ -987,6 +1031,16 @@
         <input id="tool-search" class="tool-form-input" type="search" placeholder="ripgrep, terraform, pyright…" autocomplete="off">
         <span class="tool-form-hint">Runtimes, language servers and CLIs from the mise + aqua registries, plus this container&rsquo;s Debian packages. Versions resolve to the latest release; the pin icon freezes them afterwards.</span>
       </label>
+      <div class="tool-results-bar">
+        <label class="tool-results-order">Order
+          <select id="tool-sort" class="tool-form-select tool-sort-select">
+            <option value="relevance" selected>Relevance</option>
+            <option value="name-asc">Name (A&ndash;Z)</option>
+            <option value="name-desc">Name (Z&ndash;A)</option>
+          </select>
+        </label>
+        <output id="tool-results-count" class="tool-results-count"></output>
+      </div>
       <div id="tool-search-results" class="list-container tool-search-results" role="listbox" aria-label="Search results"></div>
     </div>
   </div>

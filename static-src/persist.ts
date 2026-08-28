@@ -103,8 +103,21 @@ let patchTimer: ReturnType<typeof setTimeout> | undefined;
 let patchQueue: Partial<AppSettings> = {};
 let patchSnapshot: Partial<AppSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
-let patchGen = 0;
 let patchResolvers: ((r: Record<string, unknown> | null) => void)[] = [];
+
+// The indicator belongs to the NEWEST write of each key.
+//
+// `patchAppSettings` is scope-serialized, so the second PATCH does not reach the
+// network until the first answers — but the debounce timer does not wait for the
+// network, so a second `executePatch` has already stamped its keys by then.
+// Reporting the first response would say "Saved" about a value the server has
+// not been asked about yet, and "failed" about one still in the air.
+//
+// Per KEY rather than one counter, because the indicators are per setting: a key
+// the newer write does not carry has not been overtaken, and with a single
+// counter its slot was left spinning forever.
+let writeSeq = 0;
+const keyGen = new Map<string, number>();
 
 /** Last-known value per settings key. Seeded by initSettingsTracking()
  *  on app boot from /api/settings; updated by patchSettings() as we
@@ -129,6 +142,7 @@ export function __testResetTracking(): void {
   patchSnapshot = {};
   patchInputs = [];
   patchResolvers = [];
+  keyGen.clear();
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
@@ -155,7 +169,13 @@ function executePatch(): void {
   patchSnapshot = {};
   patchInputs = [];
   patchResolvers = [];
-  const gen = ++patchGen;
+  const keys = Object.keys(body);
+  const gen = ++writeSeq;
+  for (const k of keys) {
+    keyGen.set(k, gen);
+  }
+  /** The keys of this write that no later write has claimed since. */
+  const stillOurs = (): string[] => keys.filter((k) => keyGen.get(k) === gen);
   let result: Record<string, unknown> | null = null;
   void patchAppSettings.dispatch(
     {
@@ -166,14 +186,16 @@ function executePatch(): void {
       silent: true,
       onSuccess: (r) => {
         result = r as Record<string, unknown>;
-        if (gen === patchGen) {
-          showSaved();
+        const mine = stillOurs();
+        if (mine.length > 0) {
+          showSaved(mine);
         }
       },
       onError: () => {
         Object.assign(lastSentPatch, rollback);
-        if (gen === patchGen) {
-          showError();
+        const mine = stillOurs();
+        if (mine.length > 0) {
+          showError(mine);
         }
       },
       onSettled: () => {
@@ -226,10 +248,13 @@ export function patchSettings(
   const p = new Promise<Record<string, unknown> | null>((resolve) => {
     patchResolvers.push(resolve);
   });
+  // Announced per call rather than per batch: each changed key has its own slot,
+  // so a setting flipped while an earlier one is still inside the debounce
+  // window has to raise its own spinner.
+  showSaving(Object.keys(changed));
   if (patchTimer !== undefined) {
     return p;
   }
-  showSaving();
   patchTimer = setTimeout(() => {
     patchTimer = undefined;
     executePatch();

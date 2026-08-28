@@ -377,9 +377,6 @@ class Elements {
   }
 
   // Settings panel (extra getters added by api-client migration)
-  get settingsSaveStatus(): HTMLSpanElement {
-    return byId("settings-save-status");
-  }
   get notifyToggle(): HTMLInputElement {
     return byId("notify-toggle");
   }

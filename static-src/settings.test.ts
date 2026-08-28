@@ -12,6 +12,7 @@ const H = vi.hoisted(() => ({
   mockRun: vi.fn(),
   mockBind: vi.fn(),
   mockApplyTheme: vi.fn(),
+  mockKiroDispatch: vi.fn(),
 }));
 
 vi.mock("./actions/tools.js", () => ({
@@ -25,13 +26,18 @@ vi.mock("./actions/index.js", () => ({
   ),
   subscribeByName: vi.fn(() => () => undefined),
 }));
-vi.mock("./actions/settings.js", () => ({ saveSteering: {}, logout: {}, setKiroSetting: {} }));
+vi.mock("./actions/settings.js", () => ({
+  saveSteering: {},
+  logout: {},
+  setKiroSetting: { dispatch: (...a: unknown[]) => H.mockKiroDispatch(...a) },
+}));
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
 vi.mock("./save-indicator.js", () => ({
   showSaving: vi.fn(),
   showSaved: vi.fn(),
   showError: vi.fn(),
+  STEERING_SAVE_KEY: "steering",
 }));
 vi.mock("./persist.js", () => ({
   loadSettings: vi.fn(),
@@ -170,6 +176,7 @@ const {
   extractDiagnosticVersion,
   initChatRetention,
   initDiagnostics,
+  initExperimentalToggles,
   themeStorage,
   _resetThemeForTest,
 } = await import("./settings.js");
@@ -472,5 +479,122 @@ describe("the theme, between config.json and its paint cache", () => {
     adoptThemeFromSettings({ theme: "chartreuse" });
     expect(cachedTheme()).toBeNull();
     expect(H.mockApplyTheme).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The experimental flags each report against their OWN key.
+//
+// Every kiro-cli flag has its own indicator slot beside its own label, so a write
+// names the key it wrote and the generation guard is per key. It used to be one
+// counter for the whole endpoint, which was correct for a single page-wide
+// indicator and wrong here in both directions: flipping a second flag while the
+// first was in flight suppressed the first flag's report entirely, leaving its
+// slot spinning with nothing left to answer it.
+//
+// These need a dispatch that stays OUTSTANDING while the next one is made, which
+// is what the deferred mock below hands back.
+// ---------------------------------------------------------------------------
+
+describe("initExperimentalToggles", () => {
+  /** Resolvers for the dispatches made so far, in order. */
+  let answer: ((r: unknown) => void)[];
+
+  function seedFlagsDom(): void {
+    document.body.innerHTML = `
+      <input type="checkbox" id="flag-hooks-status">
+      <input type="checkbox" id="flag-telemetry">
+      <input type="checkbox" id="flag-disable-inherit-resources">`;
+  }
+
+  function box(id: string): HTMLInputElement {
+    return document.getElementById(id) as HTMLInputElement;
+  }
+
+  function toggle(id: string, checked: boolean): void {
+    box(id).checked = checked;
+    box(id).dispatchEvent(new Event("change"));
+  }
+
+  /** Wire the toggles and wait out the initial read, so a late arrival of it
+   *  cannot land between a test's own toggle and its assertion. */
+  async function initFlags(): Promise<void> {
+    initExperimentalToggles();
+    await vi.waitFor(() => {
+      expect(box("flag-telemetry").checked).toBe(true);
+    });
+  }
+
+  beforeEach(() => {
+    answer = [];
+    H.mockKiroDispatch.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer.push(resolve);
+        }),
+    );
+    seedFlagsDom();
+  });
+
+  it("spins the flag's own key when it is flipped", async () => {
+    const { showSaving } = await import("./save-indicator.js");
+    await initFlags();
+
+    toggle("flag-telemetry", false);
+
+    expect(showSaving).toHaveBeenCalledExactlyOnceWith("telemetry.enabled");
+  });
+
+  it("reports each flag against its own key when an earlier write answers late", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    await initFlags();
+
+    toggle("flag-telemetry", false);
+    toggle("flag-hooks-status", false);
+    expect(H.mockKiroDispatch).toHaveBeenCalledTimes(2);
+
+    // The first flag answers while the second is still outstanding. Under one
+    // shared counter the second write had already claimed it, so this report was
+    // dropped and the telemetry slot never settled.
+    answer[0]?.({});
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalledWith("telemetry.enabled");
+    });
+
+    answer[1]?.({});
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalledWith("hooks.showStatus");
+    });
+    expect(showSaved).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not report a flag a newer write of the same flag has overtaken", async () => {
+    const { showSaved } = await import("./save-indicator.js");
+    await initFlags();
+
+    toggle("flag-telemetry", false);
+    toggle("flag-telemetry", true);
+    expect(H.mockKiroDispatch).toHaveBeenCalledTimes(2);
+
+    // Both answer; only the newer one owns the slot, so a broken guard shows up
+    // as a second call rather than as a missing one.
+    answer[0]?.({});
+    answer[1]?.({});
+    await vi.waitFor(() => {
+      expect(showSaved).toHaveBeenCalled();
+    });
+    expect(showSaved).toHaveBeenCalledExactlyOnceWith("telemetry.enabled");
+  });
+
+  it("names the flag's own key when its write fails", async () => {
+    const { showError } = await import("./save-indicator.js");
+    await initFlags();
+
+    toggle("flag-disable-inherit-resources", true);
+    answer[0]?.(null);
+
+    await vi.waitFor(() => {
+      expect(showError).toHaveBeenCalledExactlyOnceWith("chat.disableInheritingDefaultResources");
+    });
   });
 });
