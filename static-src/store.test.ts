@@ -938,7 +938,7 @@ describe("per-tool signal", () => {
     upsertToolCall("chat-1", "m1", baseTC("t1", "pending"), 0);
 
     // Now mount-time signal subscription happens.
-    const sig = ensureToolCallSig("t1", baseTC("t1", "pending"));
+    const sig = ensureToolCallSig("chat-1", "t1", baseTC("t1", "pending"));
     const firedCount = 0;
     const lastValue: ToolCall | null = null;
     // Manually subscribe via reading sig.value in an effect-like wrapper.
@@ -954,16 +954,39 @@ describe("per-tool signal", () => {
     void lastValue;
     void observed;
 
-    clearToolCallSig("t1");
+    clearToolCallSig("chat-1", "t1");
   });
 
-  it("ensureToolCallSig is idempotent on the id", () => {
-    const a = ensureToolCallSig("t-id", baseTC("t-id", "pending"));
-    const b = ensureToolCallSig("t-id", baseTC("t-id", "completed"));
+  it("ensureToolCallSig is idempotent on the chat and id together", () => {
+    const a = ensureToolCallSig("chat-1", "t-id", baseTC("t-id", "pending"));
+    const b = ensureToolCallSig("chat-1", "t-id", baseTC("t-id", "completed"));
     // Same signal — initial value preserved (b's `initial` is ignored).
     expect(a).toBe(b);
     expect(a.value.status).toBe("pending");
-    clearToolCallSig("t-id");
+    clearToolCallSig("chat-1", "t-id");
+  });
+
+  // THE KEYING: a tool call id is backend-authored and the wire guarantees no
+  // uniqueness for it, while `upsertToolCall` runs for whatever chat a frame
+  // arrived on. Keyed on the id alone, a collision wrote a background chat's card
+  // state into the visible chat's card.
+  it("keeps two chats' signals for one tool call id apart", () => {
+    const a = ensureToolCallSig("chat-A", "dup", baseTC("dup", "pending"));
+    const b = ensureToolCallSig("chat-B", "dup", baseTC("dup", "pending"));
+    expect(a).not.toBe(b);
+  });
+
+  it("does not move a signal ensured under chat A when chat B is written", () => {
+    resetStore("chat-A");
+    resetStore("chat-B");
+    upsertToolCall("chat-A", "m1", baseTC("dup", "pending"), 0);
+    upsertToolCall("chat-B", "m1", baseTC("dup", "pending"), 0);
+    const a = ensureToolCallSig("chat-A", "dup", baseTC("dup", "pending"));
+
+    upsertToolCall("chat-B", "m1", baseTC("dup", "completed"), 0);
+
+    expect(a.value.status).toBe("pending");
+    clearToolCallSig("chat-A", "dup");
   });
 });
 
@@ -2252,13 +2275,13 @@ describe("Store upsertToolCall", () => {
     resetStore("tc-10");
     upsertToolCall("tc-10", "m-1", call("t-1"), 0);
     await tick();
-    const sig = ensureToolCallSig("t-1", call("t-1"));
+    const sig = ensureToolCallSig("tc-10", "t-1", call("t-1"));
     const before = messagesVersion.peek();
     upsertToolCall("tc-10", "m-1", call("t-1", "completed"), 0);
     await tick();
     expect(sig.value.status).toBe("completed");
     expect(messagesVersion.peek()).toBe(before);
-    clearToolCallSig("t-1");
+    clearToolCallSig("tc-10", "t-1");
   });
 
   it("repaints a later update when no tool signal is mounted", async () => {

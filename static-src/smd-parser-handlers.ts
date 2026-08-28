@@ -574,14 +574,63 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
   return false;
 }
 
+// Characters a bare URL may not END on: the markdown emphasis and code
+// delimiters, plus the trailing punctuation GFM already trims. ASCII
+// parentheses are absent deliberately — trimming one needs GFM's balance rule,
+// and without it a Wikipedia disambiguation link is cut short.
+const RAW_URL_TAIL = new Set(["*", "_", "~", "`", ".", ",", ":", ";", "!", "?", "'", '"']);
+
+/** CJK punctuation: U+3000-U+303F and U+FF00-U+FF65. */
+function isCJKPunctuation(ch: string): boolean {
+  const cc = ch.charCodeAt(0);
+  return (cc >= 0x3000 && cc <= 0x303f) || (cc >= 0xff00 && cc <= 0xff65);
+}
+
+/** Split an accumulated bare URL into the href and the trailing run that is not
+ *  part of it.
+ *
+ *  Computed from the WHOLE accumulated pending and only at its END: `.` and `,`
+ *  are legal inside a path, so terminating on one would break every domain
+ *  name, and a trim derived from the incoming character alone would not be
+ *  chunk-size invariant, which the property and fuzz suites assert. */
+function splitRawURLTail(pending: string): { url: string; tail: string } {
+  let end = pending.length;
+  while (end > 0) {
+    const ch = pending.charAt(end - 1);
+    if (!RAW_URL_TAIL.has(ch) && !isCJKPunctuation(ch)) {
+      break;
+    }
+    end -= 1;
+  }
+  return { url: pending.slice(0, end), tail: pending.slice(end) };
+}
+
 export function handleRawURL(p: Parser, char: string, pending_with_char: string): void {
   if (char === " " || char === "\n" || char === "\\") {
-    p.renderer.set_attr(p.renderer.data, HREF, p.pending);
+    const { url, tail } = splitRawURLTail(p.pending);
+    p.renderer.set_attr(p.renderer.data, HREF, url);
+    // `textBuf` holds only the href half already (see below), so the visible
+    // text is cut at the SAME point as the href — a link whose label shows a
+    // `**` its href no longer carries would be worse than the bug.
     add_text(p);
     end_token(p);
-    p.pending = char;
+    p.pending = "";
+    // Re-fed rather than dropped, so a stripped emphasis close still closes its
+    // token and the punctuation still reaches the paragraph. The terminator
+    // rides along: with the tail ahead of it, leaving it in `pending` would
+    // overwrite whatever the tail left there.
+    for (const c of tail + char) {
+      p.write(p, c);
+    }
+  } else if (RAW_URL_TAIL.has(char) || isCJKPunctuation(char)) {
+    // HELD, not appended. `add_text` hands text to the renderer, which appends
+    // and cannot take it back, and `parser_write` flushes at every chunk
+    // boundary — so a character that may turn out to be the tail must not
+    // reach `textBuf` until the URL is known to continue past it.
+    p.pending = pending_with_char;
   } else {
-    p.textBuf += char;
+    // The URL continues, so everything held is part of it after all.
+    p.textBuf += splitRawURLTail(p.pending).tail + char;
     p.pending = pending_with_char;
   }
 }

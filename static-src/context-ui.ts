@@ -41,27 +41,36 @@ const DEFAULT_CUTOFF_PCT = 95;
 // than declaring it here) keeps the light send-state → prompt-input import chain
 // free of this module + status.ts.
 
+/** How many of the loaded messages the compaction watermark covers, or
+ *  undefined when this window cannot say.
+ *
+ *  The boundary is found FIRST and only then measured: counting while scanning
+ *  makes an unmet condition indistinguishable from a satisfied one, so a
+ *  watermark that is not resident — the ordinary state of a paged chat, and
+ *  permanent after a rewind — counted every loaded message. 0 is not the answer
+ *  for that case either; it keeps meaning the chat has no watermark. */
+function summarizedCount(s: Session): number | undefined {
+  const watermark = s.compaction_watermark ?? "";
+  if (watermark === "") {
+    return 0;
+  }
+  const idx = s.messages.findIndex((m) => m.id === watermark);
+  return idx < 0 ? undefined : idx + 1;
+}
+
 export function refreshContextUI(s: Session): void {
   const u = s.usage;
   const metering: MeteringItem[] = u.metering_items ?? [];
   // Count messages and tool calls for the context breakdown.
   let msgCount = 0;
   let toolCount = 0;
-  let summarizedCount = 0;
-  const watermark = s.compaction_watermark ?? "";
-  let pastWatermark = watermark === "";
   for (const m of s.messages) {
     msgCount++;
-    if (!pastWatermark) {
-      summarizedCount++;
-      if (m.id === watermark) {
-        pastWatermark = true;
-      }
-    }
     if (m.tool_calls !== undefined) {
       toolCount += m.tool_calls.length;
     }
   }
+  const summarized = summarizedCount(s);
   updateContextBar({
     pct: u.context_pct,
     contextSize: u.context_size,
@@ -80,7 +89,10 @@ export function refreshContextUI(s: Session): void {
     metering,
     msgCount,
     toolCount,
-    summarizedCount,
+    // Withheld rather than sent as a number when the window cannot say. The
+    // renderer already prints nothing for an absent count, so "unknowable" and
+    // "nothing was summarized" read the same to the user and differ here.
+    ...(summarized === undefined ? {} : { summarizedCount: summarized }),
   });
 
   // Only the active chat drives the shared prompt bar's advisory.

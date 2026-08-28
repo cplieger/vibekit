@@ -36,6 +36,7 @@ import {
   blockThinkingSigs,
   blockKey,
   toolCallSigs,
+  toolCallSigKey,
 } from "./store-signals.js";
 
 // --- Messages reactivity: the renderer + task-list subscribe to this ---
@@ -1456,7 +1457,7 @@ export function upsertToolCall(
     return;
   }
   msg.tool_calls[tcIdx] = call;
-  const sig = toolCallSigs.get(call.id);
+  const sig = toolCallSigs.get(toolCallSigKey(chatID, call.id));
   if (sig !== undefined) {
     sig.value = call;
   } else {

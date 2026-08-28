@@ -71,6 +71,15 @@ export function parseConflicts(content: string): ConflictFile {
       } else if (sep !== -1 && END_RX.test(l)) {
         end = j;
         break;
+      } else if (sep === -1 && HEAD_RX.test(l)) {
+        // A second opener before this hunk's separator: the first one is
+        // malformed, so stop and let the outer loop re-enter at the real
+        // opener. Absorbing it into the ours side means resolveHunk splices a
+        // conflict marker back into the file and save persists it.
+        //
+        // The `sep === -1` guard is what keeps this from truncating a
+        // well-formed hunk whose THEIRS side legitimately quotes an opener.
+        break;
       }
     }
     if (sep === -1 || end === -1) {

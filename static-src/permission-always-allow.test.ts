@@ -159,3 +159,62 @@ describe("the permission card's Always-allow row", () => {
     expect(note(c)).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// The metacharacter refusal, which gates the DERIVATION and not the row.
+//
+// A preset is a match pattern, so a token already carrying glob syntax has two
+// readings that disagree: `[a-z]* --force` derives `[a-z]* *`, granting nothing
+// read literally and a whole class of commands read as a glob. This is not
+// UNREPRESENTABLE_RE returning — that regex answered "could any saved rule ever
+// match", which is KAS's question and now arrives as always_allow_blocked.
+// ---------------------------------------------------------------------------
+
+function customInput(c: HTMLElement): HTMLInputElement | null {
+  return c.querySelector<HTMLInputElement>(".always-allow-custom .chip-input");
+}
+
+describe("Always-allow preset derivation refuses a glob-bearing token", () => {
+  it("derives no preset from a glob-bearing base", () => {
+    expect(presets(card({ title: "[a-z]* --force" }))).toEqual([]);
+  });
+
+  it("keeps the row, the custom input and Allow-once when no preset survives", () => {
+    const c = card({ title: "[a-z]* --force" });
+    expect(presets(c)).toEqual([]); // the premise this case is about
+    expect(row(c)).not.toBeNull();
+    expect(note(c)).toBeNull();
+    expect(customInput(c)).not.toBeNull();
+    expect([...c.querySelectorAll(".approval-actions > button")].map((b) => b.textContent)).toEqual(
+      ["Allow", "Reject"],
+    );
+  });
+
+  // The refused pattern must not come back as a suggestion in the box beside it.
+  it("keeps the refused pattern out of the custom-pattern placeholder", () => {
+    expect(customInput(card({ title: "[a-z]* --force" }))?.placeholder).toBe("command *");
+  });
+
+  // Per preset, not per row: the base is clean here, so `rm *` stands while the
+  // two patterns derived from the glob-bearing operand are refused.
+  it("drops only the presets derived from the glob-bearing token", () => {
+    expect(presets(card({ title: "rm -rf build/*" }))).toEqual(["rm *", "rm -rf *"]);
+  });
+
+  it.each(["a*b", "a?b", "a[b", "a]b", "a{b", "a}b", "a!b"])(
+    "refuses every preset when the base is %s",
+    (token) => {
+      expect(presets(card({ title: `${token} arg` }))).toEqual([]);
+    },
+  );
+
+  // The red-check from the brief: nothing here is glob syntax, so the refusal
+  // must not fire and all three presets stand.
+  it("still derives all three presets for a quoted command", () => {
+    expect(presets(card({ title: 'git commit -m "fix"' }))).toEqual([
+      "git *",
+      "git commit -m *",
+      'git commit -m "fix"',
+    ]);
+  });
+});

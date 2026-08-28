@@ -68,7 +68,7 @@ import {
 } from "./fundamentals/subagent-block.js";
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
-import { toolSpec } from "./messages-tools.js";
+import { toolSpecFor } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group.js";
 
@@ -81,7 +81,6 @@ import { buildRunCard, type RunCardView } from "./fundamentals/run-card.js";
 import { invalidateRun, runState, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
 import { hasTab } from "./tabs.js";
-import { getActiveId } from "./store.js";
 import { buildPath } from "./router.js";
 
 // ---------------------------------------------------------------------------
@@ -151,6 +150,14 @@ export function liveTextAnchor(root: HTMLElement): HTMLElement | null {
 // ---------------------------------------------------------------------------
 
 interface MsgRender {
+  /** The chat whose messages this render belongs to.
+   *
+   *  Carried rather than read from the store, because the per-tool signal is
+   *  keyed on (chat, call) and this render is not always the active chat's: the
+   *  subagent page renders one delegate of whatever chat its tab names. Reading
+   *  the active chat here would key the page's cards under a chat that never
+   *  writes them, so they would mount and never update. */
+  chatID: string;
   /** The `.assistant-blocks` container holding all top-level + subagent blocks. */
   blocksEl: HTMLElement;
   /** Count of blocks already mounted (index into m.blocks). */
@@ -239,16 +246,18 @@ const renders = new Map<string, MsgRender>();
 export function buildAssistantBody(
   wrap: HTMLElement,
   m: Message,
+  chatID: string,
   live: boolean,
   marks: readonly SteerMark[] = [],
 ): void {
-  buildBody(wrap, m, live, false, marks);
+  buildBody(wrap, m, chatID, live, false, marks);
   mountPlan(wrap, m);
 }
 
 function buildBody(
   wrap: HTMLElement,
   m: Message,
+  chatID: string,
   live: boolean,
   detached: boolean,
   marks: readonly SteerMark[] = [],
@@ -256,6 +265,7 @@ function buildBody(
   const blocksEl = el("div", { className: "assistant-blocks" });
   wrap.appendChild(blocksEl);
   const st: MsgRender = {
+    chatID,
     blocksEl,
     rendered: 0,
     blockText: new Map(),
@@ -304,7 +314,7 @@ function pushLifetimeEffect(st: MsgRender, msgId: string, cleanup: () => void): 
 /** Clear a per-tool signal, unless this render shares it with the transcript. */
 function releaseToolSig(st: MsgRender, toolID: string): void {
   if (!st.detached) {
-    clearToolCallSig(toolID);
+    clearToolCallSig(st.chatID, toolID);
   }
 }
 
@@ -313,16 +323,18 @@ function releaseToolSig(st: MsgRender, toolID: string): void {
 export function updateAssistantBody(
   wrap: HTMLElement,
   m: Message,
+  chatID: string,
   streaming: boolean,
   marks: readonly SteerMark[] = [],
 ): void {
-  updateBody(wrap, m, streaming, false, marks);
+  updateBody(wrap, m, chatID, streaming, false, marks);
   mountPlan(wrap, m);
 }
 
 function updateBody(
   wrap: HTMLElement,
   m: Message,
+  chatID: string,
   streaming: boolean,
   detached: boolean,
   marks: readonly SteerMark[] = [],
@@ -330,7 +342,7 @@ function updateBody(
   const st = renders.get(m.id);
   if (st === undefined) {
     // Should not happen (build runs first), but stay self-healing.
-    buildBody(wrap, m, streaming, detached, marks);
+    buildBody(wrap, m, chatID, streaming, detached, marks);
     return;
   }
   const blocks = m.blocks ?? [];
@@ -449,20 +461,22 @@ function detachedID(messageID: string, subtask: string): string {
 export function buildDetachedBody(
   host: HTMLElement,
   m: Message,
+  chatID: string,
   subtask: string,
   live: boolean,
 ): void {
-  buildBody(host, { ...m, id: detachedID(m.id, subtask) }, live, true);
+  buildBody(host, { ...m, id: detachedID(m.id, subtask) }, chatID, live, true);
 }
 
 /** Append newly-arrived blocks and bring mounted ones up to the store's text. */
 export function updateDetachedBody(
   host: HTMLElement,
   m: Message,
+  chatID: string,
   subtask: string,
   live: boolean,
 ): void {
-  updateBody(host, { ...m, id: detachedID(m.id, subtask) }, live, true);
+  updateBody(host, { ...m, id: detachedID(m.id, subtask) }, chatID, live, true);
 }
 
 /** Flush every markdown stream and seal every reasoning trace. */
@@ -628,16 +642,14 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
  *  chat, and a control that does nothing teaches a reader to distrust the others —
  *  the same rule that keeps the run card's link out of `full`.
  *
- *  The chat id is read from the store at BUILD time, and that is sound because the
- *  transcript only ever renders the active chat: `paint()` reads `getActive()`, and
- *  a chat switch disposes every render before the next one mounts. It is not
- *  carried on the render, because a second copy of "which chat is this" is a second
- *  thing that can disagree with the store. */
+ *  The chat id is the RENDER's, which is the one the delegate's blocks came from —
+ *  the transcript's render is the active chat's, and a render that is not would
+ *  otherwise link to a delegate of a different conversation. */
 function subagentOpenerFor(st: MsgRender, subtask: string): { open?: SubagentOpener } {
   if (st.detached) {
     return {};
   }
-  const chatID = getActiveId();
+  const chatID = st.chatID;
   if (chatID === "" || subtask === "") {
     return {};
   }
@@ -957,7 +969,7 @@ function mountThinking(
 
 function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): void {
   const group = toolGroupFor(st, container);
-  const card = toolSpec.mount(tc);
+  const card = toolSpecFor(st.chatID).mount(tc);
   if (card instanceof HTMLElement) {
     card.setAttribute(RECONCILE_KEY, tc.id);
     // Cards live in the group's body region (the disclosure-collapsible
@@ -971,7 +983,7 @@ function mountTodo(st: MsgRender, msgId: string, container: HTMLElement, tc: Too
   const list = buildTodoList(parseTodoItems(tc));
   list.dataset["toolId"] = tc.id;
   container.appendChild(list);
-  const sig = ensureToolCallSig(tc.id, tc);
+  const sig = ensureToolCallSig(st.chatID, tc.id, tc);
   let last = tc;
   const cleanup = effect(() => {
     const next = sig.value;
@@ -998,7 +1010,7 @@ function bindPipeline(st: MsgRender, msgId: string, tc: ToolCall, live: boolean)
   box.setName(pipelineLabel(tc));
   box.setStatus(tc.status);
   box.setSummary(pipelineSummary(st, tc));
-  const sig = ensureToolCallSig(tc.id, tc);
+  const sig = ensureToolCallSig(st.chatID, tc.id, tc);
   let last = tc;
   const cleanup = effect(() => {
     const next = sig.value;
@@ -1068,7 +1080,7 @@ function bindSubagent(
   sa.setIcon(iconForSubagent(subagentName(tc)));
   sa.setStatus(tc.status);
   sa.setSummary(subagentSummary(st, subtask, tc));
-  const sig = ensureToolCallSig(tc.id, tc);
+  const sig = ensureToolCallSig(st.chatID, tc.id, tc);
   let last = tc;
   const cleanup = effect(() => {
     const next = sig.value;
@@ -1108,7 +1120,7 @@ function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): 
   let reads = 0;
   const changed: Record<string, FileChange> = {};
   for (const id of members ?? []) {
-    const tc = peekToolCallSig(id);
+    const tc = peekToolCallSig(st.chatID, id);
     if (tc === undefined) {
       continue;
     }

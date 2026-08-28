@@ -359,3 +359,52 @@ describe("parseConflicts on marker-shaped content", () => {
     expect(file.hunks.map((h) => h.startLine)).toEqual([0, 5]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A second opener before the separator.
+//
+// git never writes one, but a document ABOUT merge conflicts, a test fixture, or
+// an already-mangled working tree does — and absorbing it into the ours side
+// makes resolveHunk splice a conflict marker back into the file, which save then
+// persists. The module's own header records that exact failure for the diff3
+// base marker, which is the precedent for treating this as a defect.
+// ---------------------------------------------------------------------------
+
+describe("parseConflicts with an opener inside the ours side", () => {
+  const quoted = [
+    "<<<<<<< HEAD",
+    "prose about markers:",
+    "<<<<<<< HEAD",
+    "=======",
+    "theirs",
+    ">>>>>>> b",
+    "",
+  ].join("\n");
+
+  it("does not absorb the second opener into the ours side", () => {
+    const file = parseConflicts(quoted);
+    for (const h of file.hunks) {
+      expect(h.oursLines).not.toContain("<<<<<<< HEAD");
+    }
+  });
+
+  // The malformed first opener is skipped and the scan re-enters at the second,
+  // which IS a well-formed hunk head.
+  it("takes the second opener as the hunk head", () => {
+    const file = parseConflicts(quoted);
+    expect(file.hunks.map((h) => h.startLine)).toEqual([2]);
+    expect(file.hunks[0]!.oursLines).toEqual([]);
+    expect(file.hunks[0]!.theirsLines).toEqual(["theirs"]);
+  });
+
+  // The guard is `sep === -1`, so a THEIRS side quoting an opener is untouched —
+  // dropping that condition would truncate a working resolution, which is
+  // strictly worse than the defect being fixed.
+  it("keeps an opener quoted in the theirs side", () => {
+    const file = parseConflicts(
+      ["<<<<<<< HEAD", "ours", "=======", "<<<<<<< quoted", "theirs", ">>>>>>> b", ""].join("\n"),
+    );
+    expect(file.hunks.map((h) => h.startLine)).toEqual([0]);
+    expect(file.hunks[0]!.theirsLines).toEqual(["<<<<<<< quoted", "theirs"]);
+  });
+});

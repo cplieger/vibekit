@@ -407,6 +407,42 @@ function buildAlwaysAllowNote(blocked: AlwaysAllowBlock): HTMLElement {
   return el("div", { className: "always-allow-unavailable" }, ALWAYS_ALLOW_UNAVAILABLE[blocked]);
 }
 
+/** Characters that make a token unusable as the source of a pattern.
+ *
+ *  A preset is a MATCH pattern, so a token that already carries glob syntax has
+ *  two readings that do not agree: `[a-z]* --force` derives `[a-z]* *`, which
+ *  grants nothing read literally and a whole class of commands read as a glob.
+ *  Neither is what the reader approved, so no preset is derived from it. */
+const PATTERN_UNSAFE_RE = /[*?[\]{}!]/;
+
+/** The preset patterns for one command's argv: base, base + flags, exact.
+ *
+ *  Each is dropped when the tokens it is derived FROM carry glob syntax, which
+ *  is why this is per preset rather than per row: the row, the Allow-once button
+ *  and the custom-pattern input all survive, so refusing a derivation never
+ *  dead-ends the reader. Whether a saved rule could match at all is a different
+ *  question, answered server-side by `always_allow_blocked`. */
+function derivePresets(effective: readonly string[]): string[] {
+  const derivable = (tokens: readonly string[]): boolean =>
+    !tokens.some((t) => PATTERN_UNSAFE_RE.test(t));
+  const base = effective[0] ?? "";
+  const presets: string[] = [];
+  if (derivable([base])) {
+    presets.push(`${base} *`);
+  }
+  if (effective.length > 1) {
+    const flags = effective.slice(0, -1);
+    const withFlags = flags.join(" ") + " *";
+    if (derivable(flags) && withFlags !== `${base} *`) {
+      presets.push(withFlags);
+    }
+    if (derivable(effective)) {
+      presets.push(effective.join(" "));
+    }
+  }
+  return presets;
+}
+
 /** Build the "Always allow..." expansion for shell commands: each preset
  *  persists a workspace-scope native allow rule (the same permissions.yaml
  *  the Settings → Permissions editor writes; KAS hot-reloads it), then
@@ -417,11 +453,14 @@ function buildAlwaysAllowNote(blocked: AlwaysAllowBlock): HTMLElement {
  *  never there to withdraw), and the note above when `blocked` says a saved
  *  rule could never match. That verdict is KAS's, arriving on the request
  *  itself: it generates the same three candidate patterns and probes each
- *  through the live policy engine. vibekit used to guess at it with a regex
- *  over shell metacharacters, which was wrong in both directions — it
- *  suppressed the row for `git commit -m "fix"`, where `git *` matches
- *  perfectly well, and it OFFERED the row for a command kiro-cli cannot parse,
- *  where the click wrote a permanent rule that could never fire. */
+ *  through the live policy engine, which is a question vibekit cannot answer
+ *  and must not guess at.
+ *
+ *  `derivePresets` gates something else and the two must not be conflated:
+ *  whether ANY saved rule could match is KAS's question about the row, while
+ *  whether a DERIVED pattern grants more than what was approved is this
+ *  client's question about one preset. So the row stands and only the
+ *  derivation is refused. */
 function buildAlwaysAllowRow(
   command: string,
   options: readonly PermissionOption[],
@@ -445,17 +484,7 @@ function buildAlwaysAllowRow(
   if (base === "") {
     return null;
   }
-  const effective = parts.slice(baseIdx);
-
-  // Preset patterns: base, base + flags, exact.
-  const presets: string[] = [`${base} *`];
-  if (effective.length > 1) {
-    const withFlags = effective.slice(0, -1).join(" ") + " *";
-    if (withFlags !== `${base} *`) {
-      presets.push(withFlags);
-    }
-    presets.push(effective.join(" "));
-  }
+  const presets = derivePresets(parts.slice(baseIdx));
 
   const body = el("div", { className: "always-allow-body" });
 
@@ -504,7 +533,10 @@ function buildAlwaysAllowRow(
   const input = el("input", {
     type: "text",
     className: "chip-input",
-    placeholder: `${base} *`,
+    // The first surviving preset, never `${base} *`: with a metacharacter in the
+    // base that string is the pattern the derivation just refused, and offering
+    // it as a placeholder hands the reader the grant it declined to derive.
+    placeholder: presets[0] ?? "command *",
     "aria-label": "Custom command pattern",
   }) as HTMLInputElement;
   const addBtn = el("button", { type: "button", className: "action-pill" }, "Add");
