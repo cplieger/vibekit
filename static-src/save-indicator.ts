@@ -1,183 +1,163 @@
 // ---------------------------------------------------------------------------
-// Global settings save indicator. Shows a spinner → checkmark → fade
-// sequence in the settings header whenever any setting is persisted.
+// Per-setting save indicators: a spinner while a write is in flight, then a
+// tick or a cross, in a slot next to the setting's own label.
 //
-// Usage: call `showSaving()` before the async save, then `showSaved()`
-// on success or `showError()` on failure. Multiple rapid calls coalesce
-// naturally because each call resets the state machine.
+// A caller names the KEYS it wrote and never a slot — an AppSettings key for a
+// PATCH /api/settings, the dotted kiro-cli key for PUT /api/kiro-settings, and
+// STEERING_SAVE_KEY for the global-instructions textarea. The markup binds each
+// key to a slot with `data-save-status`, which takes a space-separated list so
+// one slot can serve a value that has two controls.
+//
+// A key with no slot is a silent no-op, which is what `theme`, `fb_path`,
+// `last_model` and `last_effort` are: each is written from outside Settings, and
+// the control the user just moved is the confirmation.
+//
+// Usage: `showSaving(keys)` before the async write, then `showSaved(keys)` or
+// `showError(keys)` when it answers.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { $ } from "./dom.js";
 import { ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { subscribeToActions, pendingCount } from "./actions/index.js";
+
+/** The slot token for the global-instructions textarea. Not an AppSettings key —
+ *  that content is its own PUT /api/steering — so it is named here. */
+export const STEERING_SAVE_KEY = "steering";
+
+/** One key, or the set a single write carried. */
+export type SaveKeys = string | readonly string[];
+
+/** How long a settled face stays before it fades. The error holds longer
+ *  because it is the one a user has to notice. */
+const SAVED_HOLD_MS = 1200;
+const ERROR_HOLD_MS = 2400;
+/** Matches `.settings-save-status`'s opacity transition in 17-settings.css; the
+ *  element is hidden once the fade it starts has finished. */
+const FADE_MS = 400;
+/** A success arriving on an error's heels waits this long, so a retry does not
+ *  blink the ✗ away before it was read. */
+const MIN_ERROR_DISPLAY_MS = 1500;
+
+interface SlotState {
+  fadeTimer: ReturnType<typeof setTimeout> | undefined;
+  hideTimer: ReturnType<typeof setTimeout> | undefined;
+  pendingSuccessTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When this slot last painted a ✗, or 0. Drives the credit above. */
+  lastErrorAt: number;
+}
+
+/** Timer state per slot. A plain Map rather than a WeakMap because the slots are
+ *  permanent page elements and enumerating them is what lets a test clear their
+ *  timers. */
+const slotStates = new Map<HTMLElement, SlotState>();
+
+function stateOf(target: HTMLElement): SlotState {
+  let s = slotStates.get(target);
+  if (s === undefined) {
+    s = {
+      fadeTimer: undefined,
+      hideTimer: undefined,
+      pendingSuccessTimer: undefined,
+      lastErrorAt: 0,
+    };
+    slotStates.set(target, s);
+  }
+  return s;
+}
+
+/** The slots any of these keys names, each at most once. Read out of the DOM
+ *  rather than built into a selector so a key can never be a selector. */
+function slotsFor(keys: SaveKeys): HTMLElement[] {
+  const want = new Set(typeof keys === "string" ? [keys] : keys);
+  if (want.size === 0) {
+    return [];
+  }
+  const out: HTMLElement[] = [];
+  for (const target of document.querySelectorAll<HTMLElement>("[data-save-status]")) {
+    const tokens = (target.dataset["saveStatus"] ?? "").split(/\s+/);
+    if (tokens.some((t) => want.has(t))) {
+      out.push(target);
+    }
+  }
+  return out;
+}
 
 function spinnerNode(): HTMLDivElement {
   return el("div", { className: "spinner-sm" }) as HTMLDivElement;
 }
 
-let fadeTimer: ReturnType<typeof setTimeout> | undefined;
-let hideTimer: ReturnType<typeof setTimeout> | undefined;
-let lastShownAt = 0;
-// Tracks the time at which the last error was displayed. If a success
-// arrives within MIN_ERROR_DISPLAY_MS of an error, we delay the ✓
-// override so the user actually sees the error. Without this guard,
-// a rapid error→success sequence (e.g. retry click after error)
-// causes a near-imperceptible ✗→✓ blink.
-let lastErrorAt = 0;
-const MIN_ERROR_DISPLAY_MS = 1500;
-let pendingSuccessTimer: ReturnType<typeof setTimeout> | undefined;
-
-function clearTimers(): void {
-  if (fadeTimer !== undefined) {
-    clearTimeout(fadeTimer);
-  }
-  if (hideTimer !== undefined) {
-    clearTimeout(hideTimer);
-  }
-  if (pendingSuccessTimer !== undefined) {
-    clearTimeout(pendingSuccessTimer);
-  }
-  fadeTimer = undefined;
-  hideTimer = undefined;
-  pendingSuccessTimer = undefined;
+function clearTimers(s: SlotState): void {
+  clearTimeout(s.fadeTimer);
+  clearTimeout(s.hideTimer);
+  clearTimeout(s.pendingSuccessTimer);
+  s.fadeTimer = undefined;
+  s.hideTimer = undefined;
+  s.pendingSuccessTimer = undefined;
 }
 
-export function showSaving(): void {
-  lastShownAt = Date.now();
-  // Reset error-display credit: the user is starting a new operation,
-  // they're aware of the new in-flight save (spinner is visible). The
-  // next showSaved should not be delayed by an old error.
-  lastErrorAt = 0;
-  clearTimers();
-  const statusEl = $.settingsSaveStatus;
-  statusEl.replaceChildren(spinnerNode());
-  statusEl.classList.remove("hidden", "fade-out");
+function paint(target: HTMLElement, face: Node): void {
+  target.replaceChildren(face);
+  target.classList.remove("hidden", "fade-out");
 }
 
-export function showSaved(): void {
-  // Tradeoff 3: if an error was just displayed, delay the ✓ override
-  // until the error has had at least MIN_ERROR_DISPLAY_MS visibility.
-  // Without this, a rapid error→success would cause a ✗→✓ blink.
-  const elapsedSinceError = Date.now() - lastErrorAt;
-  if (lastErrorAt > 0 && elapsedSinceError < MIN_ERROR_DISPLAY_MS) {
-    if (pendingSuccessTimer !== undefined) {
-      clearTimeout(pendingSuccessTimer);
-    }
-    const remaining = MIN_ERROR_DISPLAY_MS - elapsedSinceError;
-    pendingSuccessTimer = setTimeout(() => {
-      pendingSuccessTimer = undefined;
-      doShowSaved();
-    }, remaining);
-    return;
-  }
-  doShowSaved();
+/** Paint a settled face, then fade it out after `holdMs`. */
+function settle(target: HTMLElement, s: SlotState, face: Node, holdMs: number): void {
+  clearTimers(s);
+  paint(target, face);
+  s.fadeTimer = setTimeout(() => {
+    s.fadeTimer = undefined;
+    target.classList.add("fade-out");
+    s.hideTimer = setTimeout(() => {
+      s.hideTimer = undefined;
+      target.classList.add("hidden");
+    }, FADE_MS);
+  }, holdMs);
 }
 
-function doShowSaved(): void {
-  lastShownAt = Date.now();
-  if (fadeTimer !== undefined) {
-    clearTimeout(fadeTimer);
-  }
-  if (hideTimer !== undefined) {
-    clearTimeout(hideTimer);
-  }
-  fadeTimer = undefined;
-  hideTimer = undefined;
-  const statusEl = $.settingsSaveStatus;
-  statusEl.replaceChildren(iconEl(ICON_SAVE_OK));
-  statusEl.classList.remove("hidden", "fade-out");
-  fadeTimer = setTimeout(() => {
-    statusEl.classList.add("fade-out");
-    hideTimer = setTimeout(() => {
-      statusEl.classList.add("hidden");
-    }, 400);
-  }, 1200);
+function paintSaved(target: HTMLElement, s: SlotState): void {
+  s.lastErrorAt = 0;
+  settle(target, s, iconEl(ICON_SAVE_OK), SAVED_HOLD_MS);
 }
 
-/** Show a red ✗ in the save indicator. Used by failed settings writes
- *  so the spinner doesn't stay forever; the toast already carries the
- *  detailed message, this is just the inline visual signal. */
-export function showError(): void {
-  lastShownAt = Date.now();
-  lastErrorAt = Date.now();
-  clearTimers();
-  const statusEl = $.settingsSaveStatus;
-  statusEl.replaceChildren(iconEl(ICON_SAVE_FAIL));
-  statusEl.classList.remove("hidden", "fade-out");
-  fadeTimer = setTimeout(() => {
-    statusEl.classList.add("fade-out");
-    hideTimer = setTimeout(() => {
-      statusEl.classList.add("hidden");
-    }, 400);
-  }, 2400); // longer than success — error deserves more eye time
+export function showSaving(keys: SaveKeys): void {
+  for (const target of slotsFor(keys)) {
+    const s = stateOf(target);
+    clearTimers(s);
+    // A new write for this setting supersedes the last error, so it no longer
+    // holds the next success back: the spinner already says something changed.
+    s.lastErrorAt = 0;
+    paint(target, spinnerNode());
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Hybrid registry subscription: if any settings action is in flight,
-// ensure the spinner is visible. The imperative showSaving/showSaved/
-// showError API remains canonical (it handles the debounce timer +
-// generation counter in persist.ts / settings.ts). This subscription
-// is a safety net so the spinner also shows if a settings action is
-// dispatched from a path that doesn't call showSaving() explicitly.
-// ---------------------------------------------------------------------------
-const SETTINGS_ACTIONS = [
-  "settings.patch",
-  "settings.save_steering",
-  "settings.set_kiro_setting",
-] as const;
-const SETTINGS_NAMES: ReadonlySet<string> = new Set<string>(SETTINGS_ACTIONS);
-
-// Track whether any settings action in the current batch has errored.
-// Reset when a new batch starts (this dispatch is the first pending
-// settings action) and consumed when the last action settles.
-// Without this, "last status wins" — if action A errors at t=3000
-// and action B succeeds at t=3500, we'd show ✓ even though A failed.
-let batchHadError = false;
-// Track whether a settings batch is currently active so we can
-// detect the rising edge (false → true) cleanly.
-let batchActive = false;
-
-subscribeToActions((instance) => {
-  if (!SETTINGS_NAMES.has(instance.name)) {
-    return;
+export function showSaved(keys: SaveKeys): void {
+  for (const target of slotsFor(keys)) {
+    const s = stateOf(target);
+    const sinceError = Date.now() - s.lastErrorAt;
+    if (s.lastErrorAt > 0 && sinceError < MIN_ERROR_DISPLAY_MS) {
+      clearTimeout(s.pendingSuccessTimer);
+      s.pendingSuccessTimer = setTimeout(() => {
+        s.pendingSuccessTimer = undefined;
+        paintSaved(target, s);
+      }, MIN_ERROR_DISPLAY_MS - sinceError);
+      continue;
+    }
+    paintSaved(target, s);
   }
-  if (instance.status === "pending") {
-    // Rising edge: this is the first pending in a new batch.
-    // Reset the error flag so a stale error from a previous batch
-    // doesn't mask this batch's success outcome.
-    if (!batchActive) {
-      batchHadError = false;
-      batchActive = true;
-    }
-    if (Date.now() - lastShownAt < 500) {
-      return;
-    }
-    showSaving();
-  } else {
-    if (instance.status === "error") {
-      batchHadError = true;
-    }
-    if (pendingCount(SETTINGS_ACTIONS) === 0) {
-      // Batch fully settled. Show error if ANY action in the batch
-      // errored, otherwise show success.
-      if (batchHadError) {
-        showError();
-      } else if (instance.status === "success") {
-        showSaved();
-      }
-      batchHadError = false;
-      batchActive = false;
-    }
+}
+
+export function showError(keys: SaveKeys): void {
+  for (const target of slotsFor(keys)) {
+    const s = stateOf(target);
+    settle(target, s, iconEl(ICON_SAVE_FAIL), ERROR_HOLD_MS);
+    s.lastErrorAt = Date.now();
   }
-});
+}
 
 /** @internal — test-only reset for module-level state. */
 export function _resetForTest(): void {
-  clearTimers();
-  lastShownAt = 0;
-  lastErrorAt = 0;
-  batchHadError = false;
-  batchActive = false;
+  for (const s of slotStates.values()) {
+    clearTimers(s);
+  }
+  slotStates.clear();
 }

@@ -40,17 +40,49 @@
   gap: var(--sp-3);
 }
 
+/* A setting's title with its own save indicator beside it. Every user setting has
+   one: the indicator belongs to the thing being written, not to a page-wide slot,
+   so the slot sits next to whichever label names that setting — a section
+   heading, a toggle's label, or the global-instructions label. */
+.section-title-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* h3.section-title pads var(--sp-4) above ITSELF. Left there, that padding is
+   inside the box `align-items: center` measures, so the status would land half of
+   it below the heading's ink — the same defect that put the old page-wide slot
+   5.5px below the settings title. Move the padding to the row. */
+.section-title-status-row:has(> h3.section-title) {
+  padding-block-start: var(--sp-4);
+}
+
+.section-title-status-row > h3.section-title {
+  padding-block-start: 0;
+}
+
 .settings-save-status {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
   display: inline-flex;
   align-items: center;
   opacity: 1;
-  transition: opacity 0.4s;
+  transition: opacity 0.4s var(--ease-exit);
 }
 
 .settings-save-status.fade-out {
   opacity: 0;
+}
+
+/* One size for both faces, overriding the icons' own width/height attributes:
+   12px, whichever label it sits beside. */
+.settings-save-status > svg,
+.settings-save-status > .spinner-sm {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.settings-save-status > .spinner-sm {
+  border-width: 1.5px;
 }
 
 /* Desktop tab bar: segmented-control pills.
@@ -125,6 +157,7 @@
 }
 
 .settings-tab-select {
+  min-block-size: var(--btn-h);
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
   background: var(--c-bg-secondary);
@@ -1476,6 +1509,7 @@ dd.governance-off {
    agent picker). Mirrors .settings-tab-select styling so both lives
    behave identically. */
 .page-select {
+  min-block-size: var(--btn-h);
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--c-border);
@@ -1661,7 +1695,7 @@ select.native-rule-effect:focus-visible {
 
 .rf-select,
 .rf-input {
-  block-size: 2rem; /* 32px: above the 24px floor, visually lighter than --btn-h */
+  block-size: var(--ctl-h-dense);
   padding-inline: var(--sp-2);
   font-size: var(--fs-sm); /* 12px, up from the chip surfaces' 11px */
   font-family: var(--font-sans);
@@ -1685,11 +1719,11 @@ select.native-rule-effect:focus-visible {
   outline-offset: -1px;
 }
 
-/* Labeled submit button, not an icon pill. Shares the 2rem control
- * baseline on desktop (overrides .btn's --btn-h min-height). */
+/* Labeled submit button, not an icon pill. Takes the dense tier its fields
+ * take, overriding .btn's --btn-h min-height. */
 .rule-form .rf-submit {
-  block-size: 2rem;
-  min-height: 2rem;
+  block-size: var(--ctl-h-dense);
+  min-height: var(--ctl-h-dense);
 }
 
 /* Tablet: two columns; the grow field + submit take full rows.
@@ -1710,17 +1744,12 @@ select.native-rule-effect:focus-visible {
   }
 }
 
-/* Phone: single column, mobile hit heights. */
+/* Phone: single column. The heights need no answer here — the token drops the
+   dense tier to --btn-h at 48rem, so these controls already carry the touch
+   floor by the time this breakpoint is reached. */
 @media (width <= 40rem) {
   .rule-form[data-rule-form] {
     grid-template-columns: 1fr;
-  }
-
-  .rf-select,
-  .rf-input,
-  .rule-form .rf-submit {
-    block-size: var(--btn-h);
-    min-height: var(--btn-h);
   }
 }
 
