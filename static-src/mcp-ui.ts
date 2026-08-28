@@ -568,7 +568,7 @@ export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
 
   const submit = el(
     "button",
-    { type: "button", className: "btn-secondary" },
+    { type: "button", className: "btn-small" },
     "Finish",
   ) as HTMLButtonElement;
   submit.addEventListener("click", () => {

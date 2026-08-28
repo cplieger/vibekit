@@ -331,7 +331,10 @@
   .tab-close,
   .conflict-btn,
   .diff-hunk-btn,
-  .diff-ask-btn
+  .diff-ask-btn,
+  .send-btn,
+  .mcp-modal-tab,
+  .upload-progress-cancel
 ) {
   min-width: 24px;
   min-height: 24px;
@@ -349,7 +352,10 @@
     .tab-close,
     .conflict-btn,
     .diff-hunk-btn,
-    .diff-ask-btn
+    .diff-ask-btn,
+    .send-btn,
+    .mcp-modal-tab,
+    .upload-progress-cancel
   ) {
     min-width: 44px;
     min-height: 44px;

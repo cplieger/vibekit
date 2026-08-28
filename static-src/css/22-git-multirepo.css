@@ -339,14 +339,10 @@
   pointer-events: none;
 }
 
-/* min-height is what makes the field the same height as the buttons beside it
- * (--btn-h is .btn-small's floor, and .tool-form-input has none of its own, so
- * the pair used to sit 32 against 36). Same rule and same reason as
- * .mcp-search-row's. The leading padding reserves the glyph's column. */
+/* The leading padding reserves the glyph's column. */
 .git-branch-field > .tool-form-input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: var(--btn-h);
   padding-inline-start: calc(var(--sp-2) + 14px + var(--sp-2));
 }
 
@@ -927,29 +923,17 @@ a.git-pr-row-title:hover {
   align-items: center;
 }
 
-/* The PRs tab's labelled buttons take the 2rem control baseline the Permissions
-   rule form already uses (`.rule-form .rf-submit`, 17-settings.css), not
-   `--btn-h`. At 36px a Merge button was 90% of the height of the action cluster
-   it sits in and the + New PR pill was 84% of its section header — measured, and
-   it read as the row's subject rather than as its action. */
+/* The PRs tab's labelled buttons take the dense tier rather than --btn-h. At
+   36px a Merge button was 90% of the height of the action cluster it sits in and
+   the + New PR pill was 84% of its section header — measured, and it read as the
+   row's subject rather than as its action. */
 .git-repo-section-header-row > .btn-small,
 .git-pr-row-actions .btn-small {
-  block-size: 2rem;
-  min-height: 2rem;
+  block-size: var(--ctl-h-dense);
+  min-height: var(--ctl-h-dense);
 }
 
-/* 48rem is where 50-mobile.css bumps `--btn-h` to 2.75rem, so the compact
-   baseline is dropped at exactly that width: below it these are touch targets
-   and owe the 44px floor, not a desktop control size. Two 44px buttons do not
-   fit beside a title on a phone, so the row restacks to one column and the
-   cluster gets its own line rather than squeezing the title to nothing. */
 @media (width <= 48rem) {
-  .git-repo-section-header-row > .btn-small,
-  .git-pr-row-actions .btn-small {
-    block-size: var(--btn-h);
-    min-height: var(--btn-h);
-  }
-
   /* A 44px touch target in a header whose own height is a 43px toggle leaves
      the pill wall-to-wall (measured: 0px above, 1px below). The inset goes on
      the BUTTON rather than as padding on the header, so the toggle's hover fill

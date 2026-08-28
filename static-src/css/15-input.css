@@ -1062,6 +1062,7 @@
 
 .chat-opt-input {
   width: 100%;
+  min-block-size: var(--ctl-h-dense);
   padding: 0.25rem var(--sp-2);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -1197,6 +1198,21 @@
 
   &:disabled {
     cursor: default;
+  }
+}
+
+/* Touch sizing for the prompt row, HERE rather than in 50-mobile.css: this slice
+   is unlayered, so it is the only place a mobile override of these properties
+   wins. The heights come from the hit-target floor (61-mcp-tools.css) and are
+   deliberately absent. */
+@media (width <= 48rem) {
+  .pill {
+    padding: 0 var(--sp-3);
+    font-size: var(--fs-sm);
+  }
+
+  .send-btn {
+    min-width: var(--btn-h);
   }
 }
 
