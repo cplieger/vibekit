@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
@@ -163,6 +164,22 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// with the new bytes for a rewritten one. Same policy the static asset
 	// handler already uses.
 	w.Header().Set("Cache-Control", "no-cache")
+	// A strong validator, because the mtime alone is not one for this consumer.
+	// ServeContent's only validator would otherwise be Last-Modified, whose
+	// HTTP-date is truncated to ONE SECOND — so two writes inside one second of
+	// the client's last Last-Modified answer 304 and the browser serves the
+	// previous bytes. readFile above refuses the mtime for exactly this reason
+	// (see its content_hash comment), and the screenshot loop this handler's
+	// Cache-Control comment describes is the rapid-write consumer that makes the
+	// second-resolution window reachable. ServeContent evaluates If-None-Match
+	// first and skips If-Modified-Since entirely when it is present, so size plus
+	// mtime-in-nanoseconds shrinks the stale window to one clock tick at zero I/O
+	// cost. The QUOTING is load-bearing: an unquoted value is not a valid strong
+	// validator, ServeContent will not match it, and the route silently falls back
+	// to the mtime. Deliberately not a content hash: this handler streams from an
+	// open fd and supports Range, so hashing means a second full read per
+	// impression.
+	w.Header().Set("ETag", strconv.Quote(fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())))
 	// Debug (not Info): the resolved path can name a workspace file and
 	// this line ships to Loki. http.ServeContent serves from the already-
 	// open, confined fd (handles Range requests + conditional headers too).
