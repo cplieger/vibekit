@@ -259,6 +259,27 @@
   color: var(--c-text-tertiary);
 }
 
+/* The mark on a repo the last Pull all left alone: a word beside the branch
+   chip, so a collapsed section still says which hazard is in the way. Two
+   verdicts share the shape and differ only in hue — `blocked` is a state the
+   reader resolves, `failed` is git refusing outright — and both carry the warn
+   glyph, so the distinction never rests on colour alone. */
+.git-repo-pull-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: color-mix(in srgb, var(--c-warning) 80%, var(--c-text-primary));
+}
+
+.git-repo-pull-flag[data-verdict="failed"] {
+  color: color-mix(in srgb, var(--c-danger) 85%, var(--c-text-primary));
+}
+
+.git-repo-pull-flag svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* Branch chip inside the section header — click to open the
  * branch switcher. Looks like a small pill so it reads as
  * interactive. */
@@ -473,6 +494,46 @@
 
 .git-open-pr-hint-msg {
   flex: 1;
+}
+
+/* The Pull-all note inside a repo section. Same shape as the Open-PR hint above
+   — both are a transient sentence about what just happened to this one repo —
+   tinted to its verdict rather than to the accent, since this one reports
+   something that did NOT happen. */
+.git-pull-flag-note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: color-mix(in srgb, var(--c-warning) 8%, var(--c-bg-primary));
+  border: 1px solid color-mix(in srgb, var(--c-warning) 35%, var(--c-border));
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+}
+
+.git-pull-flag-note[data-verdict="failed"] {
+  background: color-mix(in srgb, var(--c-danger) 8%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-danger) 35%, var(--c-border));
+}
+
+.git-pull-flag-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--c-warning) 80%, var(--c-text-primary));
+}
+
+.git-pull-flag-note[data-verdict="failed"] .git-pull-flag-icon {
+  color: color-mix(in srgb, var(--c-danger) 85%, var(--c-text-primary));
+}
+
+.git-pull-flag-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.git-pull-flag-msg {
+  flex: 1;
+  min-width: 0;
 }
 
 /* File rows under each repo section, in one group per side of the index.

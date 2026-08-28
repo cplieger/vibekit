@@ -12,11 +12,26 @@
 
 import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { ICON_REFRESH, ICON_REPO_EMPTY, ICON_FILTER } from "./icons.js";
+import {
+  ICON_REFRESH,
+  ICON_REPO_EMPTY,
+  ICON_FILTER,
+  ICON_GIT_DOWN_ARROW,
+  ICON_WARN_12,
+} from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
-import { stage, discard, pull, push, stash, stashPop, unstage } from "./actions/git-changes.js";
+import {
+  stage,
+  discard,
+  pull,
+  pullAll,
+  push,
+  stash,
+  stashPop,
+  unstage,
+} from "./actions/git-changes.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { openChange } from "./navigate.js";
@@ -48,7 +63,11 @@ class CancelledError extends Error {
 
 // --- Wire types ---
 
-import type { GitFileEntry as FileEntry, GitRepoStatus as RepoStatus } from "./git-types.js";
+import type {
+  GitFileEntry as FileEntry,
+  GitPullResult,
+  GitRepoStatus as RepoStatus,
+} from "./git-types.js";
 import {
   statusLetter,
   describeStatus,
@@ -56,6 +75,8 @@ import {
   changedPathCount,
   distinctPaths,
   partiallyStagedPaths,
+  isPullHeld,
+  pullHeldWord,
 } from "./git-types.js";
 
 interface StatusAllResponse {
@@ -94,6 +115,17 @@ const discardPendingRepos = new Set<string>();
 // Bug 3: Track user-toggled collapse state (repos the user manually collapsed).
 const userCollapsedRepos = new Set<string>();
 const userExpandedRepos = new Set<string>();
+
+/** What the last Pull all could NOT do, per repo — the input to the mark on a
+ *  repo's block. Only the two verdicts a reader has to act on are kept
+ *  (`isPullHeld`); a pulled or skipped repo needs no mark.
+ *
+ *  An entry survives a refresh, because the statement it makes is about a pass
+ *  that happened and a reader who walked away should still find it. It is
+ *  dropped the moment the repo stops being behind: there is nothing left to pull
+ *  then, so the flag has stopped describing anything. Replaced wholesale by the
+ *  next pass. */
+const pullFlags = new Map<string, GitPullResult>();
 
 // Per-paint cleanup: unbind functions from bindLoadingState calls.
 let bindingCleanups: (() => void)[] = [];
@@ -175,6 +207,19 @@ export function initChangesTab(): void {
     });
   }
 
+  const pullAllBtn = document.getElementById("git-pull-all-btn") as HTMLButtonElement | null;
+  if (pullAllBtn !== null) {
+    pullAllBtn.innerHTML = ICON_GIT_DOWN_ARROW;
+    pullAllBtn.addEventListener("click", () => {
+      void withAsyncFeedback(pullAllBtn, runPullAll);
+    });
+    // Bound once, NOT pushed into bindingCleanups: the toolbar sits outside the
+    // repaint cycle that array is drained by. `git.pull` is in the set so a
+    // single repo's Pull disables this button too — they are the same operation
+    // at two scopes, and running both at once serializes on the server anyway.
+    bindLoadingState(["git.pull_all", "git.pull"], pullAllBtn);
+  }
+
   // Refetch when the agent emits anything that touches files (it
   // emits this after every turn that wrote something), and when forge
   // accounts change (clones / removes ripple into the repo list).
@@ -225,6 +270,29 @@ export async function refreshChanges(doFetch = false): Promise<void> {
   paint();
 }
 
+/** Pull every repo a fast-forward is safe for, and mark the ones it is not.
+ *
+ *  The verdicts drive two surfaces: the framework's own toast carries the
+ *  summary (the action owns that), and the two verdicts a reader has to act on
+ *  are recorded here so each lands as a mark on its own repo block. Nothing is
+ *  decided client-side about what was safe — the pass judged that beside the
+ *  pull it guards.
+ *
+ *  The follow-up refresh is deliberately fetch-FREE: the pass has just fetched
+ *  every remote, so the refs are fresh and a second round of network fetches
+ *  would only re-derive an answer already on disk. */
+async function runPullAll(): Promise<void> {
+  const results = await pullAll.dispatch();
+  assertOk(results);
+  pullFlags.clear();
+  for (const r of results) {
+    if (isPullHeld(r)) {
+      pullFlags.set(r.repo, r);
+    }
+  }
+  await refreshChanges();
+}
+
 // --- Render ---
 
 function paint(): void {
@@ -267,6 +335,17 @@ function paintInner(): void {
   for (const k of commitMessages.keys()) {
     if (!activeRepos.has(k)) {
       commitMessages.delete(k);
+    }
+  }
+  // A pull flag reports what the last pass could not do, so it expires when the
+  // repo stops being behind — nothing is left to pull, so the mark describes
+  // nothing — and when the repo goes away. Keyed on `behind` rather than on the
+  // hazard itself: resolving a conflict does not pull the repo, and the mark
+  // should stand until something does.
+  for (const k of pullFlags.keys()) {
+    const repo = lastStatusAll.find((r) => r.repo === k);
+    if (repo === undefined || repo.behind === 0) {
+      pullFlags.delete(k);
     }
   }
 
@@ -392,6 +471,12 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   }
   // Hide clean repos by default unless filter is active or repo
   // matched the filter explicitly.
+  //
+  // A repo the last Pull all marked needs no clause here: the pass only judges a
+  // repo that is BEHIND, and the mark is pruned the moment it stops being
+  // (paintInner), so `r.behind > 0` already opens every marked section and the
+  // reason in its body is read without a click. One was written, and the red
+  // check showed nothing could make it matter.
   const dataDefault = r.has_dirty || r.ahead > 0 || r.behind > 0 || filterText !== "";
   // Bug 3: User-toggled state overrides data-driven default.
   let expandedDefault: boolean;
@@ -479,6 +564,14 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     inner.appendChild(actionBar);
   }
 
+  // Why the last Pull all left this repo alone, ABOVE the action bar: the bar
+  // holds the Pull button this note explains the absence of, so the reason
+  // wants to be read first.
+  const flag = pullFlags.get(r.repo);
+  if (flag !== undefined) {
+    inner.insertBefore(renderPullFlag(flag), inner.firstChild);
+  }
+
   // Open-PR hint after a successful push (transient).
   if (recentlyPushed.has(r.repo) && isFeatureBranch(r.branch)) {
     inner.appendChild(renderOpenPRHint(r));
@@ -527,6 +620,20 @@ function renderHeaderHTML(r: RepoStatus): string {
     r.stashes > 0
       ? ` <span class="git-repo-stashes" title="${r.stashes} stash${r.stashes === 1 ? "" : "es"}">📦${r.stashes}</span>`
       : "";
+  // The Pull-all mark. In the HEADER because a collapsed section is all a reader
+  // scanning fifty repos sees, and carrying the warn glyph as well as a hue so
+  // the state never rests on colour alone. The tooltip is omitted rather than
+  // emptied when there is no detail: an empty one is a tooltip that opens onto
+  // nothing.
+  const flag = pullFlags.get(r.repo);
+  let held = "";
+  if (flag !== undefined) {
+    const tip = flag.detail ?? "";
+    const tipAttr = tip === "" ? "" : ` data-tooltip="${escapeHTML(tip)}"`;
+    held =
+      ` <span class="git-repo-pull-flag" data-verdict="${escapeHTML(flag.verdict)}"${tipAttr}>` +
+      `${ICON_WARN_12}${escapeHTML(pullHeldWord(flag))}</span>`;
+  }
   const branch = escapeHTML(r.branch || "(detached)");
   // The branch chip is a span (not a nested button — buttons can't
   // be inside a button per HTML spec); a dedicated click listener on
@@ -536,9 +643,34 @@ function renderHeaderHTML(r: RepoStatus): string {
   return `
     <span class="git-repo-section-name">${escapeHTML(r.repo)}</span>${dirty}
     <span class="git-repo-section-meta">
-      <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" data-tooltip="Switch branch">${branch}</span>${ahead}${behind}${stashes}
+      <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" data-tooltip="Switch branch">${branch}</span>${ahead}${behind}${stashes}${held}
     </span>
   `;
+}
+
+/** The note inside a repo section saying why the last Pull all left it alone.
+ *
+ *  Inside the section as well as in the header, because the header has room for
+ *  a word and the reason needs a sentence: which files, how many commits, which
+ *  operation. Shaped like the post-push Open-PR hint, since both are a transient
+ *  statement about what just happened to this one repo. The sentence is the
+ *  server's — it is the side that knows what it found. */
+function renderPullFlag(f: GitPullResult): HTMLElement {
+  const box = el("div", { className: "git-pull-flag-note", "data-verdict": f.verdict });
+  const icon = el("span", { className: "git-pull-flag-icon", "aria-hidden": "true" });
+  icon.innerHTML = ICON_WARN_12;
+  const lead = f.verdict === "failed" ? "Pull failed." : "Not pulled.";
+  const detail = f.detail ?? "";
+  box.append(
+    icon,
+    el(
+      "span",
+      { className: "git-pull-flag-msg" },
+      el("strong", null, lead),
+      detail === "" ? "" : ` ${detail}`,
+    ),
+  );
+  return box;
 }
 
 /** The repo's SYNC actions: pull, push, stash, pop.

@@ -45,6 +45,65 @@ export type GitRepoStatusBadge = Pick<
   "repo" | "is_repo" | "branch" | "ahead" | "behind" | "has_dirty"
 >;
 
+/** What one Pull-all pass did to one repository (`POST /api/git/pull-all`).
+ *
+ *  The server's four verdicts are mutually exclusive and cover every repo it
+ *  looked at (`internal/git/handlers_pullall.go`): `pulled`, `blocked` (the
+ *  pre-flight refused, `reason` names the hazard), `failed` (git refused,
+ *  `detail` carries its words), `skipped` (nothing to do). `reason` and
+ *  `detail` are plain strings for the reason `GitPR.check_status` is: the
+ *  server's vocabulary can grow, and a union here would make this module's
+ *  own fallbacks read as dead code while the wire still produces them. */
+export interface GitPullResult {
+  repo: string;
+  verdict: string;
+  reason?: string;
+  detail?: string;
+}
+
+/** Whether this repo was left un-pulled in a way a reader has to act on.
+ *
+ *  The two verdicts the panel flags. A `pulled` or `skipped` repo needs no mark
+ *  — the pass already did the only thing it could — so it is reported by the
+ *  summary count alone. */
+export function isPullHeld(r: GitPullResult): boolean {
+  return r.verdict === "blocked" || r.verdict === "failed";
+}
+
+/** The one-line outcome of a Pull-all pass.
+ *
+ *  Derived from the verdicts, which are the only place the counts exist. Held
+ *  repos are counted here and named on their own blocks, so this stays one line
+ *  however many there are. */
+export function summarizePullAll(results: readonly GitPullResult[]): string {
+  const pulled = results.filter((r) => r.verdict === "pulled").length;
+  const held = results.filter(isPullHeld).length;
+  if (pulled === 0 && held === 0) {
+    return "Nothing to pull";
+  }
+  const first = pulled === 1 ? "Pulled 1 repo" : `Pulled ${String(pulled)} repos`;
+  return held === 0 ? first : `${first}, ${String(held)} left alone`;
+}
+
+/** The word a held repo's header badge carries: short enough for a collapsed
+ *  row, specific enough to say WHICH hazard without opening the section. An
+ *  unrecognised reason falls back to the plain fact, so a server that grows the
+ *  vocabulary still renders a mark. */
+const PULL_HELD_WORDS: Readonly<Record<string, string>> = {
+  in_progress: "mid-merge",
+  conflict: "conflict",
+  unreadable: "unreadable",
+  diverged: "diverged",
+  local_changes: "local changes",
+};
+
+export function pullHeldWord(r: GitPullResult): string {
+  if (r.verdict === "failed") {
+    return "pull failed";
+  }
+  return PULL_HELD_WORDS[r.reason ?? ""] ?? "not pulled";
+}
+
 /** A pull request from the forge API.
  *
  *  `check_status` and `merge_blocked` are plain strings rather than

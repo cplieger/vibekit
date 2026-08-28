@@ -36,6 +36,10 @@ const openChange = vi.fn();
 
 const dispatches: { name: string; args: unknown }[] = [];
 
+/** What the mocked `git.pull_all` action resolves to. Set per test, because the
+ *  verdicts ARE the subject: everything the panel marks is derived from them. */
+let pullAllResult: unknown = [];
+
 /** The two callbacks the tab hands to its filter popup. */
 interface FilterSeam {
   query: (q: string, ctx: unknown) => unknown;
@@ -78,6 +82,12 @@ vi.mock("./actions/git-changes.js", () => ({
   unstage: recorder("unstage"),
   discard: recorder("discard"),
   pull: recorder("pull"),
+  pullAll: {
+    dispatch: async (args: unknown) => {
+      dispatches.push({ name: "pullAll", args });
+      return pullAllResult;
+    },
+  },
   push: recorder("push"),
   stash: recorder("stash"),
   stashPop: recorder("stashPop"),
@@ -210,6 +220,7 @@ beforeEach(() => {
   confirmDialog.mockResolvedValue(true);
   dispatches.length = 0;
   filterSeam = null;
+  pullAllResult = [];
   document.body.innerHTML = `<div id="git-view"><div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div></div>`;
 });
 
@@ -742,5 +753,187 @@ describe("a repo with nothing uncommitted", () => {
     expect(mount.querySelector('[data-repo="two"] .git-repo-action-bar button')?.textContent).toBe(
       "Pull ↓1",
     );
+  });
+});
+
+// Pull all fast-forwards every repo it safely can and leaves the rest alone. The
+// pass itself is the server's (internal/git/handlers_pullall.go judges each repo
+// beside the pull it guards, which is the only place that judgement is atomic
+// with the action); what this suite covers is the half that is the panel's — that
+// a repo the pass could NOT pull says so on its own block, and that the mark
+// expires rather than outliving the fact it reports.
+describe("Pull all", () => {
+  /** The toolbar plus the mount, and the wiring that binds the button. Returns
+   *  the Pull-all button. */
+  async function bootToolbar(repos: GitRepoStatus[]): Promise<HTMLButtonElement> {
+    document.body.innerHTML = `<div id="git-view">
+      <div class="git-tab-toolbar">
+        <button type="button" id="git-pull-all-btn" class="icon-btn"></button>
+        <button type="button" id="git-refresh-all-btn" class="icon-btn"></button>
+      </div>
+      <div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div>
+    </div>`;
+    apiGet.mockResolvedValue({ repos });
+    const mod = await load();
+    mod.initChangesTab();
+    await mod.refreshChanges();
+    const btn = document.getElementById("git-pull-all-btn");
+    if (!(btn instanceof HTMLButtonElement)) {
+      throw new Error("the toolbar button was not wired");
+    }
+    return btn;
+  }
+
+  function mountEl(): HTMLElement {
+    const mount = document.getElementById("git-changes-mount");
+    if (mount === null) {
+      throw new Error("mount missing");
+    }
+    return mount;
+  }
+
+  /** Press the button and wait for the pass plus its follow-up repaint. The
+   *  click handler is fire-and-forget, so the settle has to be observed rather
+   *  than counted in microtasks. */
+  async function pressPullAll(btn: HTMLButtonElement, after: GitRepoStatus[]): Promise<void> {
+    apiGet.mockResolvedValue({ repos: after });
+    btn.click();
+    await vi.waitFor(() => {
+      expect(dispatches.some((d) => d.name === "pullAll")).toBe(true);
+      expect(apiGet.mock.calls.length).toBeGreaterThan(1);
+    });
+  }
+
+  it("gives the toolbar a button that dispatches one pass", async () => {
+    const btn = await bootToolbar([repo([], { repo: "demo", behind: 1, has_dirty: false })]);
+    // An icon, because the toolbar renders its glyphs from TS rather than markup.
+    expect(btn.innerHTML).toContain("<svg");
+
+    await pressPullAll(btn, [repo([], { repo: "demo", has_dirty: false })]);
+    expect(dispatches.filter((d) => d.name === "pullAll").length).toBe(1);
+  });
+
+  it("marks a blocked repo in its header and names the reason in its body", async () => {
+    const btn = await bootToolbar([repo([], { repo: "demo", behind: 2, has_dirty: false })]);
+    pullAllResult = [
+      {
+        repo: "demo",
+        verdict: "blocked",
+        reason: "diverged",
+        detail: "main has 1 local commit the upstream does not, so there is no fast-forward.",
+      },
+    ];
+
+    // Still behind afterwards: nothing was pulled, which is what the mark says.
+    await pressPullAll(btn, [repo([], { repo: "demo", behind: 2, has_dirty: false })]);
+
+    const flag = mountEl().querySelector<HTMLElement>(".git-repo-pull-flag");
+    expect(flag?.textContent).toContain("diverged");
+    expect(flag?.dataset["verdict"]).toBe("blocked");
+    // The glyph as well as the hue, so the state does not rest on colour alone.
+    expect(flag?.querySelector("svg")).not.toBeNull();
+
+    const note = mountEl().querySelector<HTMLElement>(".git-pull-flag-note");
+    expect(note?.textContent).toContain("Not pulled.");
+    expect(note?.textContent).toContain("1 local commit");
+    // And the section is open, so that sentence is read without a click. Carried
+    // by `behind > 0` in the collapse default rather than by the mark, which is
+    // why no separate clause exists for it.
+    expect(
+      mountEl()
+        .querySelector('[data-repo="demo"] .git-repo-section-header')
+        ?.getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+
+  it("distinguishes git refusing the pull from the pre-flight refusing to run it", async () => {
+    const btn = await bootToolbar([repo([], { repo: "demo", behind: 1, has_dirty: false })]);
+    pullAllResult = [{ repo: "demo", verdict: "failed", detail: "fatal: could not read remote" }];
+
+    await pressPullAll(btn, [repo([], { repo: "demo", behind: 1, has_dirty: false })]);
+
+    expect(mountEl().querySelector<HTMLElement>(".git-repo-pull-flag")?.textContent).toContain(
+      "pull failed",
+    );
+    const note = mountEl().querySelector<HTMLElement>(".git-pull-flag-note");
+    expect(note?.dataset["verdict"]).toBe("failed");
+    expect(note?.textContent).toContain("Pull failed.");
+  });
+
+  it("marks nothing for a repo it pulled or had no reason to touch", async () => {
+    const btn = await bootToolbar([
+      repo([], { repo: "pulled", behind: 1, has_dirty: false }),
+      repo([], { repo: "quiet", has_dirty: false }),
+    ]);
+    pullAllResult = [
+      { repo: "pulled", verdict: "pulled" },
+      { repo: "quiet", verdict: "skipped", reason: "up_to_date" },
+    ];
+
+    await pressPullAll(btn, [
+      repo([], { repo: "pulled", has_dirty: false }),
+      repo([], { repo: "quiet", has_dirty: false }),
+    ]);
+
+    expect(mountEl().querySelectorAll(".git-repo-pull-flag").length).toBe(0);
+    expect(mountEl().querySelectorAll(".git-pull-flag-note").length).toBe(0);
+  });
+
+  it("drops the mark once the repo stops being behind", async () => {
+    // The mark reports what the pass could not pull. Once something else pulls
+    // the repo there is nothing left to pull, so the sentence has stopped
+    // describing anything and keeping it would be a stale warning.
+    const btn = await bootToolbar([repo([], { repo: "demo", behind: 1, has_dirty: false })]);
+    pullAllResult = [
+      {
+        repo: "demo",
+        verdict: "blocked",
+        reason: "local_changes",
+        detail: "Local changes to a.ts",
+      },
+    ];
+    await pressPullAll(btn, [repo([], { repo: "demo", behind: 1, has_dirty: false })]);
+    expect(mountEl().querySelectorAll(".git-repo-pull-flag").length).toBe(1);
+
+    // Something else pulls it: Refresh now reports it in sync.
+    apiGet.mockResolvedValue({ repos: [repo([], { repo: "demo", has_dirty: false })] });
+    document.getElementById("git-refresh-all-btn")?.click();
+    await vi.waitFor(() => {
+      expect(mountEl().querySelectorAll(".git-repo-pull-flag").length).toBe(0);
+    });
+  });
+
+  it("keeps the mark while the repo is still behind, across a refresh", async () => {
+    // The other side of the rule: a reader who walked away must still find the
+    // reason their repos did not move.
+    const btn = await bootToolbar([repo([], { repo: "demo", behind: 4, has_dirty: false })]);
+    pullAllResult = [
+      {
+        repo: "demo",
+        verdict: "blocked",
+        reason: "in_progress",
+        detail: "A merge is in progress.",
+      },
+    ];
+    await pressPullAll(btn, [repo([], { repo: "demo", behind: 4, has_dirty: false })]);
+
+    document.getElementById("git-refresh-all-btn")?.click();
+    await vi.waitFor(() => {
+      expect(apiGet.mock.calls.length).toBeGreaterThan(2);
+    });
+    expect(mountEl().querySelector(".git-repo-pull-flag")?.textContent).toContain("mid-merge");
+  });
+
+  it("marks a repo the server describes with a reason this build does not know", async () => {
+    // The wire vocabulary can grow; an unrecognised reason still earns a mark,
+    // because the fact that the repo was not pulled is the part that matters.
+    const btn = await bootToolbar([repo([], { repo: "demo", behind: 1, has_dirty: false })]);
+    pullAllResult = [
+      { repo: "demo", verdict: "blocked", reason: "something_new", detail: "A newer reason." },
+    ];
+
+    await pressPullAll(btn, [repo([], { repo: "demo", behind: 1, has_dirty: false })]);
+
+    expect(mountEl().querySelector(".git-repo-pull-flag")?.textContent).toContain("not pulled");
   });
 });

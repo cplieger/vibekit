@@ -12,7 +12,10 @@ import (
 )
 
 const (
-	jsonKeyOutput  = httpreply.JSONKeyOutput
+	jsonKeyOutput = httpreply.JSONKeyOutput
+	// jsonKeyRepos is the envelope key of every per-repository array this package
+	// serves: /api/git/repos, /api/git/status-all and /api/git/pull-all.
+	jsonKeyRepos   = "repos"
 	refHEAD        = "HEAD"
 	remoteOrigin   = "origin"
 	msgNotAGitRepo = "not a git repo"
