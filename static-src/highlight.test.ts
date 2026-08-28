@@ -782,7 +782,8 @@ describe("highlightMarked", () => {
       "m",
     );
     const text = html
-      .replace(/<[^>]*>/g, "")
+      .replace(/<span class="[\w -]+">/g, "")
+      .replace(/<\/span>/g, "")
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
       .replace(/&quot;/g, '"')
