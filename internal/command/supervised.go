@@ -4,7 +4,7 @@ package command
 //
 // vibekit used to hold every agent write in memory, mirror it, broadcast it, and
 // wait for a per-file verdict before letting it reach disk. All of that is
-// deleted. KAS has a turn-approval gate — `autopilot: false` — and it reviews a
+// deleted. KAS has a turn-approval gate — `autopilot: "off"` — and it reviews a
 // whole turn at once, so this command's entire job is now to set that option and
 // persist the user's choice.
 //
@@ -56,7 +56,7 @@ func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatS
 	if bridge := bridges.Bridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
 			"configId": vibekit.ConfigOptionAutopilot,
-			"value":    !p.Enabled,
+			"value":    autopilotValue(p.Enabled),
 		})); err != nil {
 			if p.Enabled {
 				slog.Error("supervised mode not applied to the live session; it will NOT ask before writing",
@@ -69,4 +69,21 @@ func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatS
 
 	slog.Info("supervised mode set", "chat", cmd.ChatID, "enabled", p.Enabled)
 	return responseWith(map[string]any{"enabled": p.Enabled}), nil
+}
+
+// autopilotValue maps supervised mode onto KAS's `autopilot` option: supervised
+// ON means autopilot OFF, because the option names the behaviour being turned
+// off rather than the switch the user flipped.
+//
+// The value is a STRING because the option is a select over "on" and "off". A
+// JSON boolean satisfies neither arm of the request union without a
+// `type:"boolean"` discriminator, so it is refused with -32602 and the session
+// stays in autopilot — in BOTH directions, which is why this is a two-arm helper
+// and not a special case for enabling. Stated once here so this sender and the
+// session door cannot disagree about the spelling.
+func autopilotValue(supervised bool) string {
+	if supervised {
+		return vibekit.ConfigValueAutopilotOff
+	}
+	return vibekit.ConfigValueAutopilotOn
 }

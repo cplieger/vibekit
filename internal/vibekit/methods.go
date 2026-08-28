@@ -188,6 +188,21 @@ const (
 	ConfigOptionAutopilot = "autopilot"
 )
 
+// The two values KAS's autopilot option accepts. It is a SELECT over these
+// STRINGS, not a boolean: zSetSessionConfigOptionRequest's union takes a boolean
+// only alongside a `type:"boolean"` discriminator, and a bare
+// {"configId":"autopilot","value":false} satisfies neither arm. Live-probed on
+// kiro-cli 2.20.0, it answers -32602 Invalid params and the session stays in
+// autopilot, so the shape is the whole difference between a supervised chat
+// asking before it writes and not asking at all.
+//
+// A pair rather than one constant so the two senders — the session door and the
+// live toggle — cannot disagree about the spelling.
+const (
+	ConfigValueAutopilotOn  = "on"
+	ConfigValueAutopilotOff = "off"
+)
+
 // ACP content-block JSON field name constants. These are the wire-format
 // keys inside a content block object (distinct from ContentTypeText which
 // is the field VALUE). Single source of truth for agent, command, and
