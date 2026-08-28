@@ -16,6 +16,7 @@ vi.mock("./store-signals.js", () => ({
   streamingReasoningSigs: undefined,
   streamingTextSigs: undefined,
   toolCallSigs: undefined,
+  toolCallSigKey: undefined,
   ensureToolCallSig: vi.fn(() => ({ value: undefined })),
   clearToolCallSig: vi.fn(),
 }));

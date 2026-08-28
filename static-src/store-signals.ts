@@ -5,6 +5,7 @@
 
 import type { ToolCall } from "./types.js";
 import { SignalMap, type Signal } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 
 // SignalMap (the dynamic per-id signal registry) is provided by @cplieger/reactive.
 
@@ -27,8 +28,22 @@ export const blockTextSigs = new SignalMap<string>();
  *  blocks each get their own subscription. */
 export const blockThinkingSigs = new SignalMap<string>();
 
-/** Per-tool-call signal. */
+/** Per-(chat-id, tool-call-id) signal.
+ *
+ *  The chat is part of the key because a tool call id is BACKEND-authored and
+ *  the wire carries no uniqueness guarantee for it, while `upsertToolCall` runs
+ *  for whatever chat a frame arrived on — a background chat's data lands
+ *  unconditionally and only the repaint is gated. Keyed on the call id alone, a
+ *  collision wrote a background chat's card state into the visible chat's card,
+ *  for as long as that card stayed mounted. */
 export const toolCallSigs = new SignalMap<ToolCall>();
+
+/** Key for `toolCallSigs`. Through keyenc rather than a template literal because
+ *  a chat id is opaque hex while a tool call id is arbitrary text, so a
+ *  separator the id may contain must not be able to shift the boundary. */
+export function toolCallSigKey(chatID: string, toolID: string): string {
+  return join(chatID, toolID);
+}
 
 // --- Public accessors ---
 
@@ -40,16 +55,20 @@ export function ensureReasoningSig(messageID: string, initial: string): Signal<s
   return streamingReasoningSigs.ensure(messageID, initial);
 }
 
-export function ensureToolCallSig(toolID: string, initial: ToolCall): Signal<ToolCall> {
-  return toolCallSigs.ensure(toolID, initial);
+export function ensureToolCallSig(
+  chatID: string,
+  toolID: string,
+  initial: ToolCall,
+): Signal<ToolCall> {
+  return toolCallSigs.ensure(toolCallSigKey(chatID, toolID), initial);
 }
 
 /** The current value of a tool call's signal, untracked, or undefined when no
  *  signal exists. For derivations that run inside someone ELSE's effect (the
  *  delegate footer sums its members on the invocation's ticks) — reading
  *  `.value` there would subscribe that effect to every member. */
-export function peekToolCallSig(toolID: string): ToolCall | undefined {
-  return toolCallSigs.get(toolID)?.peek();
+export function peekToolCallSig(chatID: string, toolID: string): ToolCall | undefined {
+  return toolCallSigs.get(toolCallSigKey(chatID, toolID))?.peek();
 }
 
 /** Key helper for per-(message, block-index) signal maps. */
@@ -81,8 +100,8 @@ export function clearReasoningSig(messageID: string): void {
   streamingReasoningSigs.clear(messageID);
 }
 
-export function clearToolCallSig(toolID: string): void {
-  toolCallSigs.clear(toolID);
+export function clearToolCallSig(chatID: string, toolID: string): void {
+  toolCallSigs.clear(toolCallSigKey(chatID, toolID));
 }
 
 /** Drop every per-(message, block-index) streaming signal. Called on chat

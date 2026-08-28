@@ -974,7 +974,11 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
  *  message's canonical `blocks` array. */
 function buildAssistant(m: Message): HTMLElement {
   const wrap = el("div", { className: "msg-wrap msg-wrap-assistant" });
-  buildAssistantBody(wrap, m, isLikelyLiveStreaming(m), steerMarks(getActiveId()));
+  // The transcript only ever renders the active chat (`paint` reads
+  // `getActive()`), and the render carries that id because the per-tool signal is
+  // keyed on it: the mount and `upsertToolCall` have to name the same chat.
+  const chatID = getActiveId();
+  buildAssistantBody(wrap, m, chatID, isLikelyLiveStreaming(m), steerMarks(chatID));
   return wrap;
 }
 
@@ -986,7 +990,8 @@ function updateAssistant(wrap: HTMLElement, m: Message): void {
   if (state === undefined) {
     return;
   }
-  updateAssistantBody(wrap, m, state.streaming, steerMarks(getActiveId()));
+  const chatID = getActiveId();
+  updateAssistantBody(wrap, m, chatID, state.streaming, steerMarks(chatID));
 }
 
 /** Finalize a streamed assistant turn: flush every markdown stream + seal

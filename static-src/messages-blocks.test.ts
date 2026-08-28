@@ -38,6 +38,10 @@ const {
   disposeAssistantBody,
 } = await import("./messages-blocks.js");
 
+/** The chat every render in this file belongs to. It is part of the per-tool
+ *  signal key, so a mount and its writer have to name the same one. */
+const CHAT_ID = "c-blocks";
+
 function text(t: string, subtask = ""): Record<string, unknown> {
   return { type: "text", text: t, agent_subtask_id: subtask };
 }
@@ -65,6 +69,7 @@ function render(blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): 
       blocks,
       tool_calls: toolCalls,
     } as unknown as Message,
+    CHAT_ID,
     false,
   );
   return wrap;
@@ -568,11 +573,11 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
     const blocks = [text("Here's v")];
     const m = growingMessage(blocks);
     // live: false — the frozen case.
-    buildAssistantBody(wrap, m, false);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
     expect(wrap.querySelector(".message.assistant")?.textContent).toBe("Here's v");
 
     blocks[0]!["text"] = "Here's version two of the plan.";
-    updateAssistantBody(wrap, m, false);
+    updateAssistantBody(wrap, m, CHAT_ID, false);
     // The grown bubble is on the incremental renderer now, which holds its last
     // character provisionally until the next write or the finalize — the same
     // contract a live turn has. What matters here is that the tail arrived at all.
@@ -592,11 +597,11 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
       { type: "thinking", thinking: "I", agent_subtask_id: "" },
     ];
     const m = growingMessage(blocks);
-    buildAssistantBody(wrap, m, false);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
     expect(wrap.querySelector(".reasoning-body")?.textContent).toBe("I");
 
     blocks[0]!["thinking"] = "I should read the file first.";
-    updateAssistantBody(wrap, m, false);
+    updateAssistantBody(wrap, m, CHAT_ID, false);
     expect(wrap.querySelector(".reasoning-body")?.textContent).toBe(
       "I should read the file first.",
     );
@@ -608,11 +613,11 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
     const wrap = document.createElement("div");
     const blocks = [text("settled")];
     const m = growingMessage(blocks);
-    buildAssistantBody(wrap, m, false);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
     const before = wrap.querySelector(".message.assistant")?.innerHTML;
 
-    updateAssistantBody(wrap, m, false);
-    updateAssistantBody(wrap, m, false);
+    updateAssistantBody(wrap, m, CHAT_ID, false);
+    updateAssistantBody(wrap, m, CHAT_ID, false);
     expect(wrap.querySelector(".message.assistant")?.innerHTML).toBe(before);
   });
 
@@ -620,10 +625,10 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
     const wrap = document.createElement("div");
     const blocks = [text("delegate ", "sub-A")];
     const m = growingMessage(blocks);
-    buildAssistantBody(wrap, m, false);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
 
     blocks[0]!["text"] = "delegate finished its walk.";
-    updateAssistantBody(wrap, m, false);
+    updateAssistantBody(wrap, m, CHAT_ID, false);
     expect(wrap.querySelector(".subagent-body")?.textContent).toContain(
       "delegate finished its walk",
     );
@@ -660,14 +665,14 @@ describe("exactly one streaming caret, and it ends", () => {
     const wrap = document.createElement("div");
     const blocks = [text("first paragraph")];
     const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, true);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
 
     // Three more text blocks arrive, each becoming the tail in turn. This is the
     // ordinary shape of a turn that interleaves prose and tool calls.
     for (const next of ["second paragraph", "third paragraph", "fourth paragraph"]) {
       blocks.push(text(next));
-      updateAssistantBody(wrap, m, true);
+      updateAssistantBody(wrap, m, CHAT_ID, true);
       expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
     }
     // ...and it is the LAST bubble that carries it.
@@ -680,11 +685,11 @@ describe("exactly one streaming caret, and it ends", () => {
     const wrap = document.createElement("div");
     const blocks = [text("about to run something")];
     const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, true);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
 
     blocks.push(toolUse("t1"));
-    updateAssistantBody(wrap, m, true);
+    updateAssistantBody(wrap, m, CHAT_ID, true);
     // Prose that has been superseded by a tool call is not streaming; a tool
     // card carries its own status affordance and never a caret.
     expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
@@ -694,9 +699,9 @@ describe("exactly one streaming caret, and it ends", () => {
     const wrap = document.createElement("div");
     const blocks = [text("one")];
     const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, true);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
     blocks.push(text("two"));
-    updateAssistantBody(wrap, m, true);
+    updateAssistantBody(wrap, m, CHAT_ID, true);
 
     finalizeAssistantBody(m.id);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
@@ -706,11 +711,11 @@ describe("exactly one streaming caret, and it ends", () => {
     const wrap = document.createElement("div");
     const blocks = [text("one")];
     const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, true);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
 
     finalizeAssistantBody(m.id);
     finalizeAssistantBody(m.id);
-    updateAssistantBody(wrap, m, false);
+    updateAssistantBody(wrap, m, CHAT_ID, false);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
   });
 
@@ -718,7 +723,7 @@ describe("exactly one streaming caret, and it ends", () => {
     const wrap = document.createElement("div");
     const blocks = [text("a"), toolUse("t1"), text("b")];
     const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, false);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
   });
 
@@ -729,14 +734,14 @@ describe("exactly one streaming caret, and it ends", () => {
     const wrap = document.createElement("div");
     const blocks = [text("parent prose")];
     const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, true);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
 
     blocks.push(text("delegate prose", "sub-A"));
-    updateAssistantBody(wrap, m, true);
+    updateAssistantBody(wrap, m, CHAT_ID, true);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
 
     blocks.push(text("parent again"));
-    updateAssistantBody(wrap, m, true);
+    updateAssistantBody(wrap, m, CHAT_ID, true);
     expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
 
     finalizeAssistantBody(m.id);
@@ -767,7 +772,7 @@ describe("liveTextAnchor", () => {
 
   it("has no anchor when nothing is streaming", () => {
     const wrap = document.createElement("div");
-    buildAssistantBody(wrap, liveMsg([text("done")]), false);
+    buildAssistantBody(wrap, liveMsg([text("done")]), CHAT_ID, false);
     expect(liveTextAnchor(wrap)).toBeNull();
   });
 
@@ -777,8 +782,8 @@ describe("liveTextAnchor", () => {
     // message's trailing bubble stays marked until the turn finalizes. A
     // `querySelector` would hand back that one, which is the older of the two.
     const wrap = document.createElement("div");
-    buildAssistantBody(wrap, liveMsg([text("the earlier message")]), true);
-    buildAssistantBody(wrap, liveMsg([text("the message still streaming")]), true);
+    buildAssistantBody(wrap, liveMsg([text("the earlier message")]), CHAT_ID, true);
+    buildAssistantBody(wrap, liveMsg([text("the message still streaming")]), CHAT_ID, true);
 
     const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
     expect(live).toHaveLength(2);
@@ -795,9 +800,9 @@ describe("liveTextAnchor", () => {
     const wrap = document.createElement("div");
     const blocks = [text("parent prose")];
     const m = liveMsg(blocks);
-    buildAssistantBody(wrap, m, true);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
     blocks.push(text("delegate prose", "sub-A"));
-    updateAssistantBody(wrap, m, true);
+    updateAssistantBody(wrap, m, CHAT_ID, true);
 
     const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
     expect(live).toHaveLength(1);
@@ -813,10 +818,10 @@ describe("liveTextAnchor", () => {
     const wrap = document.createElement("div");
     const withDelegate = liveMsg([text("older parent prose")]);
     const blocks = withDelegate.blocks as unknown as Record<string, unknown>[];
-    buildAssistantBody(wrap, withDelegate, true);
+    buildAssistantBody(wrap, withDelegate, CHAT_ID, true);
     blocks.push(text("delegate prose", "sub-A"));
-    updateAssistantBody(wrap, withDelegate, true);
-    buildAssistantBody(wrap, liveMsg([text("newer parent prose")]), true);
+    updateAssistantBody(wrap, withDelegate, CHAT_ID, true);
+    buildAssistantBody(wrap, liveMsg([text("newer parent prose")]), CHAT_ID, true);
 
     const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
     expect(live).toHaveLength(2);

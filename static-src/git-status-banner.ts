@@ -3,17 +3,6 @@
 // that surfaces forge auth issues, gh-CLI install/login needs, and the
 // "no forges connected" prompt.
 //
-// Replaces three previous mechanisms that could overlap on screen and
-// each had its own inconsistencies:
-//
-//   - #git-forges-banner   — static element toggled by repo-picker
-//   - #git-gh-section      — static button toggled by has_gh
-//   - showForgeAuthBanner  — git.ts function that prepended a dynamic
-//                            #forge-auth-banner to #git-panel /
-//                            #git-section, neither of which exist in
-//                            the DOM (silent no-op for forge auth
-//                            failures since the migration).
-//
 // Mount point: <div id="git-status-banner"> at the top of #git-view.
 // At most one state renders at a time, prioritized:
 //

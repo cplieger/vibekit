@@ -82,22 +82,33 @@ const PENDING_TERMINALS_CAP = 16;
  *  lines say how it ended. */
 const LIVE_OUTPUT_CHARS_CAP = 256 * 1024;
 
-/** Per-tool-call effect cleanups. Disposed on unmount or chat-switch. */
-const toolEffects = new Map<string, () => void>();
+/** Per-tool-call effect cleanups, keyed on tool_call.id. Disposed on unmount or
+ *  chat-switch.
+ *
+ *  The chat the card mounted for is recorded here rather than looked up at
+ *  dispose time: the tool-call signal is keyed on (chat, call), and by the time
+ *  a chat switch runs the teardown the active chat is already the NEW one, so a
+ *  disposal that asked for it would clear the wrong key and leak the old chat's
+ *  signals. */
+interface ToolEffect {
+  chatID: string;
+  cleanup: () => void;
+}
+const toolEffects = new Map<string, ToolEffect>();
 
 function disposeToolEffect(id: string): void {
-  const fn = toolEffects.get(id);
-  if (fn !== undefined) {
-    fn();
+  const entry = toolEffects.get(id);
+  if (entry !== undefined) {
+    entry.cleanup();
     toolEffects.delete(id);
+    clearToolCallSig(entry.chatID, id);
   }
-  clearToolCallSig(id);
 }
 
 export function disposeAllToolEffects(): void {
-  for (const [id, fn] of toolEffects) {
-    fn();
-    clearToolCallSig(id);
+  for (const [id, entry] of toolEffects) {
+    entry.cleanup();
+    clearToolCallSig(entry.chatID, id);
   }
   toolEffects.clear();
   toolEls.clear();
@@ -260,53 +271,62 @@ export function initToolCallbacks(cbs: {
 // Tool-call ReconcileSpec
 // ---------------------------------------------------------------------------
 
-export const toolSpec: ReconcileSpec<ToolCall> = {
-  key: (tc) => tc.id,
-  mount: (tc) => {
-    // Every tool call — including a subagent's nested tools — renders as a
-    // real tool card. Subagent GROUPING (the invocation → a SubagentBlock
-    // header, the nested tools → cards inside its body) is handled one level
-    // up in messages-blocks.ts, keyed by agent_subtask_id, so this spec has no
-    // subagent-specific branches.
-    const opts = toolCardOptsFor(tc, true);
-    const card = buildToolCard(opts);
-    toolEls.set(tc.id, card);
-    // After buildToolCard, deliberately: the card is what a held chunk would be
-    // appended to, and whether the hold is flushed at all depends on the output
-    // this build just rendered.
-    linkTerminal(tc);
+/** The tool-card spec for one CHAT.
+ *
+ *  Per chat rather than one module-level spec, because a card's signal is keyed
+ *  on (chat, call): a tool call id is backend-authored and carries no uniqueness
+ *  guarantee, so the mount and its writer have to agree on the chat or the card
+ *  mounts, never updates, and shows a permanently pending spinner. */
+export function toolSpecFor(chatID: string): ReconcileSpec<ToolCall> {
+  return {
+    key: (tc) => tc.id,
+    mount: (tc) => mountToolCall(chatID, tc),
+    update: (el, tc) => {
+      applyToolCallUpdate(el as HTMLDivElement, tc);
+    },
+    onRemove: (_, key) => {
+      disposeToolEffect(key);
+      toolEls.delete(key);
+    },
+  };
+}
 
-    const sig = ensureToolCallSig(tc.id, tc);
-    let lastApplied = tc;
-    const cleanup = effect(() => {
-      const next = sig.value;
-      if (next === lastApplied) {
-        return;
-      }
-      applyToolCallUpdate(card, next);
-      lastApplied = next;
-    });
-    toolEffects.set(tc.id, cleanup);
-    return card;
-  },
-  update: (el, tc) => {
-    applyToolCallUpdate(el as HTMLDivElement, tc);
-  },
-  onRemove: (_, key) => {
-    disposeToolEffect(key);
-    toolEls.delete(key);
-  },
-};
+function mountToolCall(chatID: string, tc: ToolCall): HTMLDivElement {
+  // Every tool call — including a subagent's nested tools — renders as a
+  // real tool card. Subagent GROUPING (the invocation → a SubagentBlock
+  // header, the nested tools → cards inside its body) is handled one level
+  // up in messages-blocks.ts, keyed by agent_subtask_id, so this spec has no
+  // subagent-specific branches.
+  const opts = toolCardOptsFor(tc, true);
+  const card = buildToolCard(opts);
+  toolEls.set(tc.id, card);
+  // After buildToolCard, deliberately: the card is what a held chunk would be
+  // appended to, and whether the hold is flushed at all depends on the output
+  // this build just rendered.
+  linkTerminal(tc);
+
+  const sig = ensureToolCallSig(chatID, tc.id, tc);
+  let lastApplied = tc;
+  const cleanup = effect(() => {
+    const next = sig.value;
+    if (next === lastApplied) {
+      return;
+    }
+    applyToolCallUpdate(card, next);
+    lastApplied = next;
+  });
+  toolEffects.set(tc.id, { chatID, cleanup });
+  return card;
+}
 
 // ---------------------------------------------------------------------------
-// Public helpers (used by messages.ts reconcile)
+// Public helpers
 // ---------------------------------------------------------------------------
 
-/** Update a tool call element (delegates to toolSpec.update). */
+/** Apply a ToolCall snapshot to an already-mounted card. Chat-agnostic: it reads
+ *  no signal, so unlike a mount it needs no chat to key one under. */
 export function updateToolCall(el: HTMLElement, tc: ToolCall): void {
-  if (toolSpec.update !== undefined) {
-    toolSpec.update(el, tc);
-  }
+  applyToolCallUpdate(el as HTMLDivElement, tc);
 }
 
 // ---------------------------------------------------------------------------
