@@ -27,10 +27,13 @@
 //	$KIRO_HOME/sessions/cli/<uuid>.{json,jsonl,lock}  — dead v2-engine files
 //
 // The workspace-hash dir is not tracked by vibekit, so a single session is
-// located by globbing sessions/*/sess_<id>.
+// located by globbing sessions/*/sess_<id>. That glob crosses every workspace
+// bucket under one $KIRO_HOME, so the hash cannot be the only thing standing
+// between a reap and another workspace's transcripts — see belongsToWorkspace.
 package kirosession
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -51,29 +54,89 @@ const sessionPrefix = "sess_"
 // subject to the guard — there the caller knows the chat is gone.
 const defaultGuard = 10 * time.Minute
 
-// Reaper removes on-disk KAS session state under sessionsDir.
+// sessionRecordName is the per-session file KAS writes its own metadata into.
+// Its workspacePaths list is the subject record every removal here is checked
+// against.
+const sessionRecordName = "session.json"
+
+// Reaper removes on-disk KAS session state under sessionsDir, for the one
+// workspace it is entitled to reap.
 type Reaper struct {
 	sessionsDir string
-	guard       time.Duration
+	// workspaceRoot is the workspace this reaper may delete sessions for. Every
+	// removal reads the candidate's own workspacePaths and skips a session whose
+	// list does not name it — see belongsToWorkspace for why doubt skips too.
+	// There is no empty-root escape: an empty root names nothing, so it reaps
+	// nothing, which is the same direction every other doubt takes here.
+	workspaceRoot string
+	guard         time.Duration
 }
 
 // New returns a Reaper rooted at sessionsDir (typically
-// filepath.Join(workspace.KiroHome(), "sessions")).
-func New(sessionsDir string) *Reaper {
-	return &Reaper{sessionsDir: sessionsDir, guard: defaultGuard}
+// filepath.Join(workspace.KiroHome(), "sessions")) and confined to
+// workspaceRoot (the bridge's own cwd).
+func New(sessionsDir, workspaceRoot string) *Reaper {
+	root := workspaceRoot
+	if root != "" {
+		root = filepath.Clean(root)
+	}
+	return &Reaper{sessionsDir: sessionsDir, workspaceRoot: root, guard: defaultGuard}
+}
+
+// belongsToWorkspace reports whether the session at sessionDir names this
+// reaper's workspace root in its own workspacePaths.
+//
+// A MISMATCH is a skip, and so is DOUBT — an unreadable record, an absent or
+// empty list, a decode error. That is this package's stated posture (see Sweep's
+// empty-keep-list refusal) and it is the cheap side of an asymmetric trade: a
+// wrong skip costs retained disk, a wrong removal costs somebody else's history.
+// So a KAS version that stops writing workspacePaths reclaims nothing, and a
+// multi-root or non-canonical entry is spared.
+//
+// It exists because the reap paths glob across every workspace-hash bucket under
+// one $KIRO_HOME and never read the hash, so no collision is required for a reap
+// to cross workspaces — a `docker exec kiro-cli` at another cwd is enough.
+func (r *Reaper) belongsToWorkspace(sessionDir string) bool {
+	data, err := os.ReadFile(filepath.Join(sessionDir, sessionRecordName))
+	if err != nil {
+		return false
+	}
+	var rec struct {
+		WorkspacePaths []string `json:"workspacePaths"`
+	}
+	if json.Unmarshal(data, &rec) != nil {
+		return false
+	}
+	for _, p := range rec.WorkspacePaths {
+		if p != "" && filepath.Clean(p) == r.workspaceRoot {
+			return true
+		}
+	}
+	return false
 }
 
 // Reap removes all on-disk state for a single session id, immediately and
 // regardless of age. Used on chat delete, where the caller already knows the
 // chat (and therefore its session) is gone. A no-op for an empty or
 // malformed id, or when the reaper is nil.
+//
+// The cli/ sidecars go unconditionally: they are addressed by the exact id the
+// caller owns, not by a wildcard, and a sidecar whose dir is already gone must
+// still be reclaimable.
 func (r *Reaper) Reap(sessionID string) {
 	if r == nil || !validSessionID(sessionID) {
 		return
 	}
-	// Session dir under an untracked per-workspace-hash subdir: glob for it.
+	// Session dir under an untracked per-workspace-hash subdir: glob for it. The
+	// glob spans every bucket in this $KIRO_HOME, so each match still has to say
+	// it belongs to this workspace before it is removed.
 	dirs, _ := filepath.Glob(filepath.Join(r.sessionsDir, "*", sessionID))
 	for _, d := range dirs {
+		if !r.belongsToWorkspace(d) {
+			slog.Debug("kirosession: skipped a session dir that does not name this workspace",
+				"session", sessionID, "path", d, "workspace", r.workspaceRoot)
+			continue
+		}
 		if err := os.RemoveAll(d); err != nil {
 			slog.Warn("kirosession: remove session dir", "session", sessionID, "path", d, "error", err)
 		}
@@ -212,6 +275,14 @@ func (r *Reaper) reapOrphanSessionDir(sub string, sd os.DirEntry, referenced map
 		return false // spare young orphans (create race)
 	}
 	path := filepath.Join(sub, name)
+	// The sweep enumerates every bucket, so a session belonging to another
+	// workspace root under this $KIRO_HOME is unreferenced by construction. Its
+	// own record is what tells the two apart.
+	if !r.belongsToWorkspace(path) {
+		slog.Debug("kirosession sweep: skipped a session that does not name this workspace",
+			"path", path, "workspace", r.workspaceRoot)
+		return false
+	}
 	if err := os.RemoveAll(path); err != nil {
 		slog.Warn("kirosession sweep: remove session dir", "path", path, "error", err)
 		return false
@@ -231,7 +302,7 @@ func (r *Reaper) sweepCLI(referenced map[string]struct{}, cutoff time.Time) int 
 	}
 	reaped := 0
 	for _, e := range entries {
-		if reapOrphanCLIFile(cliDir, e, referenced, cutoff) {
+		if r.reapOrphanCLIFile(cliDir, e, referenced, cutoff) {
 			reaped++
 		}
 	}
@@ -242,7 +313,7 @@ func (r *Reaper) sweepCLI(referenced map[string]struct{}, cutoff time.Time) int 
 // unreferenced v3 sidecar or a dead v2-engine file, older than the guard.
 // Reports whether a v3 SESSION was reaped (dead v2 files are incidental and
 // not counted).
-func reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[string]struct{}, cutoff time.Time) bool {
+func (r *Reaper) reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[string]struct{}, cutoff time.Time) bool {
 	if e.IsDir() {
 		return false
 	}
@@ -252,6 +323,11 @@ func reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[string]struc
 		id, _, _ := strings.Cut(name, ".") // "sess_<id>.history" → "sess_<id>"; uuids carry no dots
 		if _, keep := referenced[id]; keep {
 			return false // live v3 session
+		}
+		if !r.sidecarReapable(id) {
+			slog.Debug("kirosession sweep: skipped a cli sidecar whose session names another workspace",
+				"file", name, "workspace", r.workspaceRoot)
+			return false
 		}
 	}
 	info, err := e.Info()
@@ -263,6 +339,33 @@ func reapOrphanCLIFile(cliDir string, e os.DirEntry, referenced map[string]struc
 		return false
 	}
 	return isV3
+}
+
+// sidecarReapable reports whether the cli/ sidecars for sessionID may be removed.
+//
+// A sidecar carries no workspacePaths of its own, so ownership is answered by the
+// session DIR it belongs to: a dir that names this workspace makes the sidecar
+// ours, and a dir that does not makes it another workspace's file to keep. A
+// sidecar with no dir anywhere is STRANDED — the shape a crash between the two
+// removals leaves — and nothing will ever reference it again, so it stays
+// reclaimable.
+//
+// Without this the workspace guard would be half a guard: the dir sweep would
+// spare a foreign session while this loop deleted its history sidecar, which is
+// the same lost transcript by a narrower route.
+func (r *Reaper) sidecarReapable(sessionID string) bool {
+	dirs, _ := filepath.Glob(filepath.Join(r.sessionsDir, "*", sessionID))
+	stranded := true
+	for _, d := range dirs {
+		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+			continue
+		}
+		stranded = false
+		if r.belongsToWorkspace(d) {
+			return true
+		}
+	}
+	return stranded
 }
 
 // removeCLISidecars removes every sessions/cli/<sessionID>.* file for a

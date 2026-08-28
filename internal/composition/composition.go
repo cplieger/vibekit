@@ -150,7 +150,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// vibekit owns kiro-cli/KAS session cleanup end to end (cleanup.periodDays
 	// pinned to 0/never): reap a chat's session state on delete, and orphans
 	// via a periodic sweep that spares every active/archived chat's session.
-	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"))
+	// cfg.WorkDir is what the reaper is entitled to reap: it globs across every
+	// workspace-hash bucket under one Kiro home and never reads the hash, so the
+	// workspace root is what a candidate's own session.json is checked against.
+	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"), cfg.WorkDir)
 	tabStore := openTabStore(cfg.ConfigDir)
 	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
