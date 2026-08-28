@@ -34,6 +34,7 @@ REPO=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 # assertions read the Go side, so without this seam that half could not be
 # red-checked at all -- and an assertion nobody has seen fail is not evidence.
 CONFIG_GO="${VIBEKIT_CONFIG_GO:-$REPO/internal/composition/config.go}"
+KIROCLI_GO="${VIBEKIT_KIROCLI_GO:-$REPO/internal/composition/kirocli.go}"
 GO_SOURCE_ROOT="${VIBEKIT_GO_SOURCE_ROOT:-$REPO}"
 README="${VIBEKIT_README:-$REPO/README.md}"
 # A precondition, not decoration: an unreadable config.go makes every cross-file
@@ -41,6 +42,10 @@ README="${VIBEKIT_README:-$REPO/README.md}"
 # fatal for the section rather than reported as a drift.
 if [ ! -r "$CONFIG_GO" ]; then
   printf 'harness error: internal/composition/config.go is not readable at %s\n' "$CONFIG_GO" >&2
+  exit 1
+fi
+if [ ! -r "$KIROCLI_GO" ]; then
+  printf 'harness error: internal/composition/kirocli.go is not readable at %s\n' "$KIROCLI_GO" >&2
   exit 1
 fi
 if [ ! -r "$README" ] || [ ! -d "$GO_SOURCE_ROOT" ]; then
@@ -184,6 +189,23 @@ if grep -q 'KIRO_CLI_TOOLS_TAINTED' "$ENTRYPOINT" || grep -q 'KIRO_CLI_TOOLS_TAI
     || no "taint flag half-wired" "only one side mentions KIRO_CLI_TOOLS_TAINTED: an export nothing reads is a no-op that looks like a guard, and a read with no producer reports every boot as clean"
 else
   ok "neither side claims a taint observation vibekit cannot make (no hardening pass here)"
+fi
+
+# --- the LIBRARY half of the same non-claim: pinstall.Untrusted --------------
+# The block above reads the env var; this reads the pinstall.Config field the env
+# var would feed. pinstall renamed it Tainted -> Untrusted at v2, so a grep for
+# the old spelling passes vacuously and this one has to name the current field.
+# Untrusted restricts activation to versions THIS process installed, on the
+# strength of having found the install root writable by others -- an observation
+# only a hardening pass produces, and vibekit has none. Setting it would be a
+# guard with no producer, which reports every boot as clean while looking like a
+# check. kirocli.go states that non-claim in a comment and CITES this assertion;
+# without it the citation names nothing, and the field can be set by anyone who
+# reads pinstall's docs and not that comment.
+if grep -q 'Untrusted:' "$KIROCLI_GO"; then
+  no "Untrusted claimed" "internal/composition/kirocli.go now sets pinstall.Untrusted, but vibekit has no hardening pass to make that observation: the field then reports every boot as clean while looking like a check"
+else
+  ok "the Go side sets no pinstall.Untrusted (the observation has no producer here)"
 fi
 
 report
