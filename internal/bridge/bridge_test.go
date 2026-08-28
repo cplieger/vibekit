@@ -1591,6 +1591,43 @@ func TestMatchesKeyword_SeparatorChain(t *testing.T) {
 	}
 }
 
+// --- bridge_rpc.go: what a dying bridge says about the calls it stranded ---
+
+// The exit drain reports HOW MANY in-flight calls it answered, and stays quiet
+// when it answered none.
+//
+// The number is the difference between a bridge that exited idle and one that
+// stranded a turn, and it is otherwise unobtainable from the logs: session/prompt
+// carries no client-side deadline, so a wedged kiro-cli's whole on-the-wire
+// signature is one prompt line followed by silence.
+func TestDrainPendingAndClose_ReportsTheStrandedCalls(t *testing.T) {
+	t.Run("names the count", func(t *testing.T) {
+		c := capture.Default(t)
+		b := New("/nonexistent", "/work")
+		for _, id := range []int64{1, 2} {
+			b.pending[id] = make(chan *vibekit.RPCResponse, 1)
+		}
+
+		b.drainPendingAndClose()
+
+		if !c.HasAttr("in flight", "failed_requests", "2") {
+			t.Errorf(`the exit drain did not report failed_requests=2; the count failPending
+already computes is being discarded`)
+		}
+	})
+
+	t.Run("silent on an idle exit", func(t *testing.T) {
+		c := capture.Default(t)
+		b := New("/nonexistent", "/work")
+
+		b.drainPendingAndClose()
+
+		if c.Count("in flight") > 0 {
+			t.Errorf("the exit drain logged on an idle teardown; every tab close would carry the line")
+		}
+	})
+}
+
 // --- bridge_rpc.go: readLoop end-of-scan error log ---
 
 // readLoop logs "ACP read" on a real (non-EOF) scanner error and reaps
@@ -1693,6 +1730,126 @@ func TestWriteFrame_ReturnsUnderlyingWriteError(t *testing.T) {
 	}
 	if !errors.Is(err, sentinel) {
 		t.Errorf("writeFrame err = %v, want the underlying write error %v", err, sentinel)
+	}
+	// A plain write error is NOT a framing loss: nothing partial reached the
+	// scanner, and readLoop reaps on the EOF a dead peer produces. Reaping here
+	// would take a bridge down on a transient error the caller can retry.
+	select {
+	case <-b.done:
+		t.Errorf("writeFrame reaped the bridge on a plain write error; only a partial frame is unrecoverable")
+	default:
+	}
+}
+
+// shortenWriteDeadline replaces the shipped stdin write deadline for the duration
+// of one test.
+//
+// The budget is a package var for this reason and no other, exactly as
+// handshakeBudget is: driving the expiry through the SHIPPED value means the
+// assertion fails when the timer is removed, where a test that arranged its own
+// deadline would pass with the deadline deleted. Nothing in production writes it,
+// so a test that calls this must not run in parallel with anything that writes a
+// frame.
+func shortenWriteDeadline(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := writeDeadline
+	writeDeadline = d
+	t.Cleanup(func() { writeDeadline = orig })
+}
+
+// waitReaped polls until the bridge's done channel closes. Bounded, so a missing
+// reap reports rather than hanging: Stop runs asynchronously, because it waits on
+// cmd.Wait which is downstream of the read loop.
+func waitReaped(t *testing.T, b *Bridge, what string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case <-b.done:
+			return
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: the bridge was never reaped", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining pins both halves of the
+// write bound: the write is bounded at all, and its expiry kills the bridge.
+//
+// The reap is the load-bearing half. An expiry leaves a PARTIAL frame in
+// kiro-cli's stdin scanner (measured: 65,536 of 1,048,576 bytes on a 64 KiB pipe
+// buffer), which writeFrame's own comment calls an unrecoverable desync — so a
+// deadline that returned an error and left the bridge running would be strictly
+// worse than the permanent stall it replaces, because every later frame would
+// land in a scanner that can no longer parse one.
+func TestWriteFrame_ReapsTheBridgeWhenStdinStopsDraining(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	// pr is deliberately NEVER drained: that is the wedge under test, a peer that
+	// keeps the read end open and stops reading.
+	t.Cleanup(func() {
+		_ = pw.Close()
+		_ = pr.Close()
+	})
+	shortenWriteDeadline(t, 50*time.Millisecond)
+
+	b := New("/nonexistent", "/work")
+	b.stdin = pw
+	// Larger than the pipe buffer, so the write cannot complete however long it
+	// waits.
+	err = b.writeFrame(make([]byte, 256*1024))
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("writeFrame against an undrained pipe err = %v, want %v; the write is unbounded",
+			err, os.ErrDeadlineExceeded)
+	}
+	waitReaped(t, b, "a write deadline expired, leaving a partial frame on the wire")
+}
+
+// shortWriter reports fewer bytes than it was given with a nil error, which
+// io.Writer's contract permits on some pipe edge conditions and which leaves the
+// same partial frame a deadline expiry does.
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
+func (shortWriter) Close() error                { return nil }
+
+// TestWriteFrame_ReapsTheBridgeOnAShortWrite pins that the short-write branch
+// reaps too. It detected the desync and then left the bridge running, which is the
+// same unrecoverable state a deadline expiry produces by a different route.
+func TestWriteFrame_ReapsTheBridgeOnAShortWrite(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	b.stdin = shortWriter{}
+
+	if err := b.writeFrame([]byte("hello\n")); err == nil {
+		t.Fatalf("writeFrame swallowed a short write; a truncated frame desyncs kiro-cli's scanner")
+	}
+	waitReaped(t, b, "a short write left a partial frame on the wire")
+}
+
+// TestWriteFrame_WritesThroughAWriterWithNoDeadline pins that the deadline is
+// applied only where the writer supports one.
+//
+// cmd.StdinPipe returns an *os.File, which does; the package's own fixtures are a
+// bytes.Buffer and an error injector, which do not. An unconditional
+// SetWriteDeadline call would make every one of them a compile-time or runtime
+// failure, so the interface check is what keeps the production path bounded
+// without the fixtures having to impersonate a file.
+func TestWriteFrame_WritesThroughAWriterWithNoDeadline(t *testing.T) {
+	shortenWriteDeadline(t, time.Nanosecond)
+	w := &captureWriter{}
+	b := New("/nonexistent", "/work")
+	b.stdin = w
+
+	if err := b.writeFrame([]byte("hello\n")); err != nil {
+		t.Fatalf("writeFrame through a deadline-less writer: %v", err)
+	}
+	if !w.wrote() {
+		t.Errorf("writeFrame wrote nothing through a deadline-less writer")
 	}
 }
 
@@ -2188,7 +2345,12 @@ done
 // Fails rather than returns empty on a miss, because "the call did not happen"
 // and "the call carried nothing" are different defects and only one of them is
 // about the session door.
-func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts) string {
+//
+// alsoContains narrows the match for a method a single start sends more than once:
+// session/set_config_option carries the model, the effort level and autopilot on
+// the same method name, so a caller after one of them names the configId too
+// rather than depending on which applier ran first.
+func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts, alsoContains ...string) string {
 	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
@@ -2210,12 +2372,20 @@ func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts) string
 	if err != nil {
 		t.Fatalf("read rpc capture: %v", err)
 	}
+	needles := append([]string{`"method":"` + method + `"`}, alsoContains...)
 	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
-		if strings.Contains(line, `"method":"`+method+`"`) {
+		matched := true
+		for _, needle := range needles {
+			if !strings.Contains(line, needle) {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			return line
 		}
 	}
-	t.Fatalf("no %s request in the capture; got:\n%s", method, data)
+	t.Fatalf("no %s request matching %q in the capture; got:\n%s", method, alsoContains, data)
 	return ""
 }
 
@@ -2385,6 +2555,37 @@ security profile stops reaching the session:
 		return
 	}
 	t.Fatalf("no session/new request in the capture; got:\n%s", data)
+}
+
+// --- supervised mode: the autopilot config-option VALUE ---
+
+// TestApplySupervised_SendsTheStringKASDeclares pins that autopilot travels as
+// the string KAS's select declares, on the real wire.
+//
+// A boolean is REFUSED: probed on the pinned kiro-cli 2.20.0,
+// {"configId":"autopilot","value":false} answers -32602 Invalid params and the
+// session stays in autopilot, so a supervised chat ran every turn without asking
+// while the switch read on and the only signal was one log line. Asserted on the
+// captured bytes rather than on a params map, because `false` and `"off"` are both
+// a legal map value and a unit assertion cannot tell the accepted shape from the
+// refused one.
+func TestApplySupervised_SendsTheStringKASDeclares(t *testing.T) {
+	line := captureRequest(t, "session/set_config_option",
+		&vibekit.StartOpts{Lifetime: t.Context(), Model: "m", Supervised: true},
+		`"configId":"`+vibekit.ConfigOptionAutopilot+`"`)
+	if !strings.Contains(line, `"value":"`+vibekit.ConfigValueAutopilotOff+`"`) {
+		t.Errorf(`autopilot did not carry "value":%q on the wire; KAS refuses every other
+shape with -32602 and leaves the session in autopilot. Captured:
+%s`, vibekit.ConfigValueAutopilotOff, line)
+	}
+	// And the decoded value is a STRING, so a future spelling that happens to
+	// contain the same characters (a "off" nested somewhere else, a boolean with a
+	// type discriminator) cannot satisfy the byte check above alone.
+	params := digObject(t, "the autopilot set_config_option params", line, "params")
+	if got, ok := params[keyConfigValue].(string); !ok || got != vibekit.ConfigValueAutopilotOff {
+		t.Errorf("autopilot value = %#v (%T), want the string %q",
+			params[keyConfigValue], params[keyConfigValue], vibekit.ConfigValueAutopilotOff)
+	}
 }
 
 // --- _meta.title: the wire shape KAS actually sends ---
