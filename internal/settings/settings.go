@@ -4,8 +4,10 @@
 // than implementing their own open+read+unmarshal pattern.
 //
 // Field extracts a single typed key via generics; FieldInto is its
-// pointer-target variant. Both read through one mtime-keyed cache with a
-// 1 MiB size cap (MaxBytes).
+// pointer-target variant; FieldStrict is Field with the unreadable-file
+// channel kept separate from absence, for a caller that gates a destructive
+// action on the value. All read through one mtime-keyed cache with a 1 MiB
+// size cap (MaxBytes).
 //
 // There is deliberately no exported raw-bytes reader. The cache OWNS the
 // slice it hands out — one backing array, shared by every caller and
@@ -20,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -217,30 +220,59 @@ func readBytes(ctx context.Context, configDir string) ([]byte, error) {
 	return getCache(configDir).load()
 }
 
+// errKeyParse marks the one failure FieldStrict reports that is about a single
+// key rather than the whole document: the value is present and does not decode
+// into the caller's type. Field reports the two classes under different
+// messages, and nothing outside this package needs to tell them apart.
+var errKeyParse = errors.New("settings: parse")
+
+// FieldStrict is Field with the unreadability channel kept separate from
+// absence. found reports that the key was PRESENT and decoded; err reports that
+// config.json exists and could not be read or parsed. Exactly one of them is
+// ever meaningful: (zero, false, nil) is a legitimately absent key or a missing
+// file, and (zero, false, err) is a file that is there and unusable.
+//
+// The split exists because a caller gating a destructive action cannot treat
+// those two the same. Field folds them, which is correct for a caller whose
+// fallback is a display default and wrong for one whose fallback deletes.
+func FieldStrict[T any](ctx context.Context, configDir, key string) (value T, found bool, err error) {
+	var zero T
+	raw, err := parsedMap(ctx, configDir)
+	if err != nil {
+		return zero, false, err
+	}
+	if raw == nil {
+		return zero, false, nil // no config.json: ABSENT, and intentional
+	}
+	v, ok := raw[key]
+	if !ok {
+		return zero, false, nil // key absent: ABSENT, and intentional
+	}
+	var out T
+	if uErr := json.Unmarshal(v, &out); uErr != nil {
+		return zero, false, fmt.Errorf("%w %s: %w", errKeyParse, key, uErr)
+	}
+	return out, true, nil
+}
+
 // Field reads config.json, extracts the named key, and
 // json-unmarshals it into the target type T. Returns the zero value
 // and false when the file is missing, the key is absent, or parsing
 // fails. Parse failures are logged at Warn level naming the key.
+//
+// The two-value signature is deliberate: a caller whose fallback is a display
+// default does not need absence and unreadability apart, and two of them
+// document the conflation and accept it. FieldStrict is for the caller that
+// does, and this is a thin wrapper over it so there is one parse path.
 func Field[T any](ctx context.Context, configDir, key string) (T, bool) {
-	var zero T
-	raw, err := parsedMap(ctx, configDir)
-	if err != nil {
-		slog.Warn("settings: read config.json for "+key, "error", err)
-		return zero, false
-	}
-	if raw == nil {
-		return zero, false
-	}
-	v, ok := raw[key]
-	if !ok {
-		return zero, false
-	}
-	var out T
-	if err := json.Unmarshal(v, &out); err != nil {
+	out, ok, err := FieldStrict[T](ctx, configDir, key)
+	switch {
+	case errors.Is(err, errKeyParse):
 		slog.Warn("settings: parse "+key, "error", err)
-		return zero, false
+	case err != nil:
+		slog.Warn("settings: read config.json for "+key, "error", err)
 	}
-	return out, true
+	return out, ok
 }
 
 // FieldInto reads config.json, extracts the named key, and

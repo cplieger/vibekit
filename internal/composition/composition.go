@@ -252,19 +252,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	retention := func() time.Duration {
-		// vibekit owns retention (see settings.KeyChatRetentionDays). <= 0 is
-		// "no purge": 0 = off (chats deleted on close, nothing to purge) and
-		// -1 = forever (archived, never purged). N > 0 = purge after N days.
-		days, ok := settings.Field[int](ctx, cfg.ConfigDir, settings.KeyChatRetentionDays)
-		if !ok {
-			days = settings.DefaultChatRetentionDays
-		}
-		if days <= 0 {
-			return 0
-		}
-		return time.Duration(days) * 24 * time.Hour
-	}
+	retention := func() time.Duration { return chatRetention(ctx, cfg.ConfigDir) }
 	purgeScheduler := chat.NewPurgeScheduler(chatStore, retention)
 	// Retention must never delete a chat someone is using. Chats no longer
 	// move to an archive directory, so the purge scans the SAME directory live
@@ -422,6 +410,34 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 	if !*built {
 		cancel()
 	}
+}
+
+// chatRetention resolves the purge window the retention scheduler reads on every
+// pass. <= 0 is "no purge": 0 = off (chats are deleted on close, so there is
+// nothing to purge) and -1 = forever. N > 0 = purge after N days.
+//
+// It reads through FieldStrict so a config.json that is PRESENT and unreadable is
+// not answered with the default window: folding the two lets a malformed file
+// override a stored -1 and delete every chat the user asked to keep, plus reap
+// their KAS session trees, on the very next pass. 0 is already the no-purge value,
+// so refusing costs no new mechanism — the posture sweepSessionsOnce takes on an
+// incomplete keep-list. An ABSENT key or file keeps the default, which is the half
+// that must stay lenient: a fresh install has no config.json.
+func chatRetention(ctx context.Context, configDir string) time.Duration {
+	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
+	if err != nil {
+		slog.Error("chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window",
+			"key", settings.KeyChatRetentionDays,
+			"default_days", settings.DefaultChatRetentionDays, "error", err)
+		return 0
+	}
+	if !ok {
+		days = settings.DefaultChatRetentionDays
+	}
+	if days <= 0 {
+		return 0
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 // sweepStaleTemps removes orphan temp files left by SIGKILL between
