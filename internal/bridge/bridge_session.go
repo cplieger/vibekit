@@ -279,8 +279,12 @@ func (b *Bridge) applyInitialEffort(ctx context.Context, sessionID, effort strin
 }
 
 // applySupervised turns KAS's turn-approval gate on for this session by setting
-// `autopilot` to false. No-op when the chat is not supervised, because true is
-// already the session default.
+// `autopilot` to "off". No-op when the chat is not supervised, because the option
+// defaults to on at session creation — which is why only Off is reachable here.
+//
+// The VALUE is a string because the option is a select over "on" and "off"; a
+// boolean is refused with -32602 and leaves the session in autopilot. See
+// vibekit.ConfigValueAutopilotOff.
 //
 // Set ONCE, at creation. The value persists into KAS's own session metadata, so
 // it survives session/load and re-asserting it would be a round trip that
@@ -295,7 +299,7 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 	if _, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
 		vibekit.KeySessionID: sessionID,
 		keyConfigID:          vibekit.ConfigOptionAutopilot,
-		keyConfigValue:       false,
+		keyConfigValue:       vibekit.ConfigValueAutopilotOff,
 	}); err != nil {
 		slog.Error("supervised mode not applied; this session will NOT ask before writing",
 			"session_id", sessionID, "error", err)
