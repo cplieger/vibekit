@@ -178,3 +178,34 @@ func TestDangerousAgentEnv_MatchesUpstream(t *testing.T) {
 		}
 	}
 }
+
+// lastValueFor answers what the CHILD would see for name: os/exec keeps the last
+// value for a repeated key, so any earlier entry is dead.
+func lastValueFor(env []string, name string) string {
+	prefix := name + "="
+	value := ""
+	for _, entry := range env {
+		if v, ok := strings.CutPrefix(entry, prefix); ok {
+			value = v
+		}
+	}
+	return value
+}
+
+// TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale is the composition half of this
+// file: the screen above decides WHICH variables an agent may set, and this
+// decides who wins when both sides set the same one.
+//
+// Ordering, not membership. LANG is deliberately absent from dangerousAgentEnv —
+// that list is upstream's verbatim, and refusing a locale would also refuse
+// LC_ALL=C, the ordinary idiom for deterministic sort output.
+func TestTermEnv_LocalePinBeatsAnAgentSuppliedLocale(t *testing.T) {
+	env := termEnv([]termEnvVar{{Name: termLocaleEnvVar, Value: "hostile"}})
+
+	want := termLocaleEnv()[0]
+	got := termLocaleEnvVar + "=" + lastValueFor(env, termLocaleEnvVar)
+	if got != want {
+		t.Errorf("termEnv(%s=hostile) leaves %q in force, want %q: os/exec keeps the last value, so the pin must be appended AFTER the agent's pairs",
+			termLocaleEnvVar, got, want)
+	}
+}

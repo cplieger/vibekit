@@ -74,9 +74,12 @@ func TestGitExec_Args(t *testing.T) {
 		t.Errorf("gitExec.Dir = %q, want /tmp", cmd.Dir)
 	}
 	// Args include the prepended -c hardening pairs, before the subcommand.
-	// Shape: [git -c protocol.ext.allow=never -c core.fsmonitor= status].
 	wantArgs := []string{
-		"git", "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=", "status",
+		"git",
+		"-c", "protocol.ext.allow=never",
+		"-c", "core.fsmonitor=",
+		"-c", "core.quotePath=false",
+		"status",
 	}
 	if len(cmd.Args) != len(wantArgs) {
 		t.Errorf("gitExec.Args length = %d, want %d (%v)", len(cmd.Args), len(wantArgs), cmd.Args)
@@ -154,6 +157,40 @@ func TestGitExec_ClearsConfigDrivenExecution(t *testing.T) {
 			}
 			if !found {
 				t.Errorf("Args = %v, want a `-c core.fsmonitor=` pair", args)
+			}
+		})
+	}
+}
+
+// Without core.quotePath=false git C-quotes every path holding a byte above
+// 0x80, so café.txt reaches a caller as "caf\303\251.txt". Independent of the
+// locale: the image's LANG=C.UTF-8 does not change git's path quoting.
+//
+// The status parser is unaffected either way — it reads -z, which emits paths
+// verbatim — so what this pins is the non--z output handlers_ai.go folds into a
+// prompt, where an escaped filename ends up written into a commit message.
+//
+// Positioned like the pair above, and for the same reason: after the subcommand
+// it is an argument to it rather than a config flag.
+func TestGitExec_DisablesPathQuoting(t *testing.T) {
+	t.Parallel()
+
+	for _, sub := range []string{"status", "diff", "log"} {
+		t.Run(sub, func(t *testing.T) {
+			t.Parallel()
+			args := gitExec(t.Context(), "/tmp", sub, "--porcelain").Args
+			var found bool
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] != "-c" || args[i+1] != "core.quotePath=false" {
+					continue
+				}
+				found = true
+				if idx := indexOf(args, sub); idx >= 0 && idx < i {
+					t.Errorf("core.quotePath=false at %d is after the subcommand at %d: %v", i, idx, args)
+				}
+			}
+			if !found {
+				t.Errorf("Args = %v, want a `-c core.quotePath=false` pair", args)
 			}
 		})
 	}

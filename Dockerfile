@@ -324,6 +324,11 @@ ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/bin"
 ENV HOME="/config/home"
 ENV KIRO_HOME="/config/home/.kiro"
+# The encoding every child process resolves. Unset, glibc's default C locale
+# applies and git octal-escapes every non-ASCII path in status/diff/log output.
+# C.UTF-8 is a glibc BUILT-IN, so this needs no `locales` package — and a base
+# image on musl would make the line a claim the image cannot honour.
+ENV LANG="C.UTF-8"
 RUN mkdir -p /config/home/.kiro && chmod 777 /config/home /config/home/.kiro
 
 # Repoint root's pw_dir to /config/home so OpenSSH (which resolves "~"
