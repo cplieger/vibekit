@@ -263,6 +263,7 @@ var (
 	ErrTooManyRules    = errors.New("policy file has too many rules")
 	ErrPatternTooLong  = errors.New("match/exclude pattern too long")
 	ErrPatternInvalid  = errors.New("match/exclude pattern contains invalid characters")
+	ErrPatternEmpty    = errors.New("match/exclude list has no non-empty pattern")
 )
 
 // ValidScope reports whether scope is writable by vibekit.
@@ -471,6 +472,19 @@ func sanitizePatterns(in []string) ([]string, error) {
 		}
 		seen[p] = struct{}{}
 		out = append(out, p)
+	}
+	// A list that emptied itself is not the same input as an ABSENT list, and the
+	// difference inverts the rule's meaning. Rule.Match is `yaml:"match,omitempty"`,
+	// so a nil Match serialises with no `match` key at all — which SetProfileRules
+	// and relaxRules both document as the broadest grant a permissions file can
+	// express (KAS reads a match-less rule as `**`). So `match:[""]`, whose literal
+	// reading is "matches nothing", would be written as "matches everything".
+	//
+	// The condition is len(in) > 0, never len(out) == 0: an absent list is the
+	// legitimate way to write that broad grant (relaxRules constructs a bare rule
+	// with Match nil) and must stay writable.
+	if len(in) > 0 && len(out) == 0 {
+		return nil, ErrPatternEmpty
 	}
 	if len(out) == 0 {
 		return nil, nil

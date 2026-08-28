@@ -193,6 +193,53 @@ func TestSanitizeRule(t *testing.T) {
 	}
 }
 
+// TestSanitizeRule_RefusesAnAllEmptyPatternList closes the widening side of the
+// shape check. Every entry trimming away used to return nil, and a nil Match
+// serialises with no `match` key (yaml:"match,omitempty"), which KAS reads as
+// `**` — so `match:[""]`, whose literal reading is "matches nothing", wrote the
+// broadest grant the file can express. The same function already refuses an
+// empty CAPABILITY, so the lenient side was the widening one.
+func TestSanitizeRule_RefusesAnAllEmptyPatternList(t *testing.T) {
+	cases := map[string][]string{
+		"one empty string":       {""},
+		"whitespace only":        {"   "},
+		"several, all blank":     {"", " ", "\t"},
+		"a comma-split leftover": {"", ""},
+	}
+	for name, patterns := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow, Match: patterns}); !errors.Is(err, ErrPatternEmpty) {
+				t.Errorf("match %q: err = %v, want ErrPatternEmpty", patterns, err)
+			}
+			if _, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow, Exclude: patterns}); !errors.Is(err, ErrPatternEmpty) {
+				t.Errorf("exclude %q: err = %v, want ErrPatternEmpty", patterns, err)
+			}
+		})
+	}
+}
+
+// TestSanitizeRule_BareRuleStaysWritable is the other half of the condition, and
+// it is the assertion that fails if the refusal is ever keyed on the OUTPUT being
+// empty instead of on the caller having supplied something. An ABSENT match list
+// is legitimate: relaxRules constructs exactly this shape for the loosest
+// profile rung, and it is the intended broad grant.
+func TestSanitizeRule_BareRuleStaysWritable(t *testing.T) {
+	got, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow})
+	if err != nil {
+		t.Fatalf("SanitizeRule(bare rule) = %v, want it written", err)
+	}
+	if got.Match != nil || got.Exclude != nil {
+		t.Errorf("sanitized = %+v, want nil Match and nil Exclude", got)
+	}
+	// The in-repo producer of bare rules, so the assertion tracks the real caller
+	// rather than a hand-built shape that resembles it.
+	for _, r := range relaxRules() {
+		if _, err := SanitizeRule(&r); err != nil {
+			t.Errorf("SanitizeRule(%+v) = %v, want it written", r, err)
+		}
+	}
+}
+
 // TestSanitizeRule_ForwardsUnrecognisedCapability is the T67 inversion. This
 // used to be a 400. The capability vocabulary is KAS's — it validates on load and
 // SKIPS an unrecognised rule as non-fatal, reporting it on
