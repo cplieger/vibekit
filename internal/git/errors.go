@@ -58,6 +58,14 @@ func writeGitError(w http.ResponseWriter, kind ErrorKind, detail string) {
 // should surface this as empty content rather than a hard error.
 var ErrPathNotInRef = errors.New("path not found at ref")
 
+// ErrUnsafeRepoPath indicates a destructive repo operation was REFUSED because
+// the name it was given does not resolve to a directory inside the workspace:
+// an intermediate component is a symlink or not a directory, or the path escapes
+// the workspace root. Distinct from a disk failure on purpose — a refusal is the
+// operator's to fix and a disk error is not, and answering both with one generic
+// message leaves no way to tell them apart.
+var ErrUnsafeRepoPath = errors.New("repo path is not safe to unlink")
+
 // gitShowCmd runs `git show <ref>:<path>` and classifies the error.
 // Returns ErrPathNotInRef when the file doesn't exist at the ref
 // (exit code 128 is the fatal error signal for `git show ref:path`).

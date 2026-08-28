@@ -610,6 +610,77 @@ func TestAction_Delete(t *testing.T) {
 	}
 }
 
+// swappedAncestor stages the race a pinned parent exists for: a path whose
+// directory component was a real, empty directory when the policy check resolved
+// it, and is a symlink to a sensitive tree by the time the operation runs.
+//
+// The loc is built before the swap, which is what makes the window deterministic.
+// It returns the request-path form of the named entry, the on-disk path of the
+// file that must survive, and the loc the action is called with.
+func swappedAncestor(t *testing.T, h *Handler, dir string) (victim string, l loc) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "store"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim = filepath.Join(dir, "store", "keep.txt")
+	if err := os.WriteFile(victim, []byte("the chat store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The named entry does not exist inside the real x, so anything the operation
+	// touches is a file it was never pointed at.
+	l = locAt(h, filepath.Join(dir, "x", "keep.txt"))
+	if err := os.Remove(filepath.Join(dir, "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("store", filepath.Join(dir, "x")); err != nil {
+		t.Fatal(err)
+	}
+	return victim, l
+}
+
+// TestActionDelete_RefusesASwappedAncestor: the sensitive-path check is
+// exact-prefix over the resolved path, so /config/x/chats matches no sensitive
+// prefix and passes — and with x swapped for an in-mount symlink, the mount's
+// os.Root would FOLLOW it (a root confines but does not pin) and the unlink would
+// land on the protected tree through a check that said the path was not
+// protected. Naming only the final element through a pinned parent is what closes
+// it.
+func TestActionDelete_RefusesASwappedAncestor(t *testing.T) {
+	h, dir, _ := testDir(t)
+	victim, l := swappedAncestor(t, h, dir)
+
+	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{Action: "delete"}, l, h)
+	if err == nil {
+		t.Error("delete through a symlinked ancestor was accepted, want a refusal")
+	}
+	if _, statErr := os.Lstat(victim); statErr != nil {
+		t.Errorf("the protected file was deleted through the symlinked ancestor: %v", statErr)
+	}
+}
+
+// TestActionMove_RefusesASwappedAncestor is actionDelete's case on the source
+// side of a move, which cannot leave the mount but can carry the protected tree
+// out from under its own guard.
+func TestActionMove_RefusesASwappedAncestor(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	victim, l := swappedAncestor(t, h, dir)
+
+	body := fileAction{Action: "move", Dest: prefix + "/stolen.txt"}
+	err := actionMove(context.Background(), httptest.NewRecorder(), body, l, h)
+	if err == nil {
+		t.Error("move through a symlinked ancestor was accepted, want a refusal")
+	}
+	if _, statErr := os.Lstat(victim); statErr != nil {
+		t.Errorf("the protected file was moved through the symlinked ancestor: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(dir, "stolen.txt")); statErr == nil {
+		t.Error("the move landed, want nothing at the destination")
+	}
+}
+
 // S3 regression: shallow-path guard.
 // TestAction_SecurityRejections consolidates all action-rejection tests
 // that verify 403 responses for sensitive/protected/blacklisted paths.
@@ -1165,6 +1236,86 @@ func TestHandleDownload_File(t *testing.T) {
 	ct := rec.Header().Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/plain") {
 		t.Errorf("Content-Type = %q, want text/plain*", ct)
+	}
+}
+
+// condGet issues a conditional download the way a browser revalidating a
+// no-cache response does: both validators from the previous 200.
+func condGet(t *testing.T, h *Handler, path, etag, lastMod string) *httptest.ResponseRecorder {
+	t.Helper()
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	if lastMod != "" {
+		req.Header.Set("If-Modified-Since", lastMod)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestHandleDownload_ETagSurvivesASameSecondRewrite pins the strong validator.
+//
+// Last-Modified is an HTTP-date truncated to one second, so with it as the only
+// validator a rewrite inside one second of the client's last Last-Modified
+// answers 304 and the browser serves the previous bytes. The agent's screenshot
+// loop is that consumer: a re-shot frame keeps its filename and therefore its
+// URL, so nothing busts the cache. Both revalidations here carry both headers,
+// which is what a browser sends, and the SIZE is held constant so the assertion
+// rests on the mtime-nanoseconds leg rather than passing for a second reason.
+func TestHandleDownload_ETagSurvivesASameSecondRewrite(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	path := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(path, []byte("frame-one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Both mtimes are pinned into ONE wall-clock second so the test does not
+	// depend on how coarse the host's inode clock happens to be.
+	base := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, base, base.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ModTime().Nanosecond() == 0 {
+		t.Skipf("%s stores mtime at second granularity, so sub-second rewrites are indistinguishable here", dir)
+	}
+
+	url := "/api/file/download?path=" + prefix + "/shot.png"
+	first := getReq(t, h, url)
+	if first.Code != 200 {
+		t.Fatalf("first GET: status %d: %s", first.Code, first.Body.String())
+	}
+	etag, lastMod := first.Header().Get("ETag"), first.Header().Get("Last-Modified")
+	if len(etag) < 3 || !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) {
+		t.Fatalf("ETag = %q, want a quoted strong validator (an unquoted one ServeContent never matches)", etag)
+	}
+
+	// The validator must still validate, or the fix would be "always 200".
+	if rec := condGet(t, h, url, etag, lastMod); rec.Code != http.StatusNotModified {
+		t.Errorf("unchanged file: status = %d, want 304", rec.Code)
+	}
+
+	if err := os.WriteFile(path, []byte("frame-two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, base, base.Add(2*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	rec := condGet(t, h, url, etag, lastMod)
+	if rec.Code != 200 {
+		t.Fatalf("same-second rewrite: status = %d, want 200 with the new bytes", rec.Code)
+	}
+	if got := rec.Body.String(); got != "frame-two" {
+		t.Errorf("same-second rewrite: body = %q, want %q", got, "frame-two")
+	}
+	if next := rec.Header().Get("ETag"); next == etag {
+		t.Errorf("ETag = %q for both generations, want it to change", next)
 	}
 }
 

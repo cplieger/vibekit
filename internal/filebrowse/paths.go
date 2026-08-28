@@ -61,7 +61,7 @@ func (l loc) rel() string {
 }
 
 // relOf converts sibling absolute path p (must be inside l's mount —
-// true by construction at both call sites, which join a basename onto
+// true by construction at its call site, which joins a basename onto
 // a directory already resolved into this mount) to root-relative form.
 func (l loc) relOf(p string) string {
 	return loc{m: l.m, abs: p}.rel()

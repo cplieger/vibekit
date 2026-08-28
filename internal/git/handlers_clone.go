@@ -6,6 +6,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -202,14 +203,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "re-clone requires a named repo (cannot target workspace root)")
 		return
 	}
-	// The resolved variant, matching handleRemove: this handler DELETES, so it
-	// needs the intermediate-symlink check the lexical resolver cannot make (see
-	// repoDirForDelete). It answers "" for a path it will not vouch for.
-	dir := h.repoDirForDelete(body.Repo)
-	if dir == "" {
-		httpreply.BadRequest(w, "that repo path is not inside the workspace")
-		return
-	}
+	dir := h.repoDir(body.Repo)
 	if dir == h.workDir {
 		httpreply.BadRequest(w, "cannot re-clone workspace root")
 		return
@@ -237,8 +231,15 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
 	// Nuke and reclone in place. We delete after resolving the URL so a
-	// partial delete doesn't strand the repo in an unreclonable state.
-	if rmErr := os.RemoveAll(dir); rmErr != nil {
+	// partial delete doesn't strand the repo in an unreclonable state. Through the
+	// pinned parent, the same as handleRemove: this is the other destructive site,
+	// and removeRepoDir carries why a name is not safe to unlink.
+	if rmErr := h.removeRepoDir(dir); rmErr != nil {
+		if errors.Is(rmErr, ErrUnsafeRepoPath) {
+			slog.Warn("git reclone: refused", "repo", body.Repo, "error", rmErr)
+			httpreply.BadRequest(w, "that repo path is not inside the workspace")
+			return
+		}
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
 		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
