@@ -73,12 +73,10 @@ func runCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEn
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	// The directive below suppresses the unused-directive check as well, for the
-	// reason internal/git/exec.go records in full: G702 is a G7xx taint rule
-	// whose analysis does not terminate reliably on a package with many variadic
-	// exec sites, so gosec reports it on some runs and not others, and the silent
-	// runs fail the build. This is the second of the two sites in this repo that
-	// rest on that rule alone.
+	// The directive below also suppresses the unused-directive check, for the
+	// reason internal/git/exec.go records in full: golangci-lint's gosec
+	// integration reports this line on some runs and not others, and a silent
+	// run fails the build for an unused directive.
 	//nolint:gosec,nolintlint // G702: cli is one of the three literal CLI names Kind.CLI() returns, resolved through LookPath above; args are built by this package's providers and reach execve as separate tokens with no shell, so a request-supplied repo or branch cannot become a command
 	cmd := exec.CommandContext(ctx, cli, args...)
 	cmd.Env = sanitizeEnv(os.Environ())

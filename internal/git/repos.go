@@ -28,7 +28,7 @@ func IsRepo(ctx context.Context, dir string) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(dir, ".git"))
+	_, err := os.Stat(filepath.Join(dir, ".git")) // #nosec G703 -- handlers resolve dir through repoDir, which refuses ".." and absolute paths; reads no content
 	return err == nil
 }
 
