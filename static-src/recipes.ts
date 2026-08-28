@@ -161,7 +161,13 @@ let autoApprove = false;
 
 async function refreshAutoApprove(): Promise<void> {
   const s = await loadSettings();
-  autoApprove = s.scheduled_auto_approve === true;
+  // A failed read leaves the last known value rather than resetting to false:
+  // false is the SERVER's default for an absent key, which the payload now states
+  // outright, so re-deriving it here on a network failure would be this module
+  // guessing at a value it can just be told.
+  if (s !== null) {
+    autoApprove = s.scheduled_auto_approve;
+  }
 }
 
 /** Schedules by recipe source. One per recipe, matching the single-run rule. */

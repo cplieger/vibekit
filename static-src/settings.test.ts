@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
 const H = vi.hoisted(() => ({
   mockRun: vi.fn(),
@@ -25,6 +26,10 @@ vi.mock("./actions/index.js", () => ({
     Object.assign(() => undefined, { isPending: () => false, flush: vi.fn() }),
   ),
   subscribeByName: vi.fn(() => () => undefined),
+  // retention.js defines an action at module scope. Browser Mode links this
+  // factory for real, so a name anywhere in the graph has to exist on it.
+  defineAction: vi.fn(() => ({ dispatch: vi.fn() })),
+  retryNetwork: vi.fn(),
 }));
 vi.mock("./actions/settings.js", () => ({
   saveSteering: {},
@@ -350,7 +355,7 @@ describe("initChatRetention", () => {
   });
 
   it("shows the Days-kept row for a day count", () => {
-    initChatRetention({ chat_retention_days: 14 });
+    initChatRetention(settingsPayload({ chat_retention_days: 14 }));
 
     expect(foreverInput().checked).toBe(false);
     expect(daysRow().classList.contains("hidden")).toBe(false);
@@ -358,7 +363,7 @@ describe("initChatRetention", () => {
   });
 
   it("hides the Days-kept row when the stored value is forever", () => {
-    initChatRetention({ chat_retention_days: -1 });
+    initChatRetention(settingsPayload({ chat_retention_days: -1 }));
 
     expect(foreverInput().checked).toBe(true);
     expect(daysRow().classList.contains("hidden")).toBe(true);
@@ -369,7 +374,7 @@ describe("initChatRetention", () => {
 
   it("hides the row on check and restores it, with its number, on uncheck", async () => {
     const { patchSettings } = await import("./persist.js");
-    initChatRetention({ chat_retention_days: 30 });
+    initChatRetention(settingsPayload({ chat_retention_days: 30 }));
 
     toggleForever(true);
     expect(daysRow().classList.contains("hidden")).toBe(true);
@@ -416,7 +421,7 @@ describe("the theme, between config.json and its paint cache", () => {
 
   it("adopts the server's theme and refreshes the cache", async () => {
     const { cachedTheme } = await import("./device-view.js");
-    adoptThemeFromSettings({ theme: "light" });
+    adoptThemeFromSettings(settingsPayload({ theme: "light" }));
 
     expect(cachedTheme()).toBe("light");
     expect(H.mockApplyTheme).toHaveBeenCalledWith("light");
@@ -424,7 +429,7 @@ describe("the theme, between config.json and its paint cache", () => {
 
   it("does not write an adopted value back, which is what would loop", async () => {
     const { patchSettings } = await import("./persist.js");
-    adoptThemeFromSettings({ theme: "dark" });
+    adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
     expect(patchSettings).not.toHaveBeenCalled();
   });
 
@@ -433,7 +438,7 @@ describe("the theme, between config.json and its paint cache", () => {
     const { patchSettings } = await import("./persist.js");
     cacheTheme("light");
 
-    adoptThemeFromSettings({});
+    adoptThemeFromSettings(settingsPayload({}));
 
     // Written through, so the value stops being cache-only and starts travelling
     // to every other device — which is exactly what it could not do before.
@@ -442,7 +447,7 @@ describe("the theme, between config.json and its paint cache", () => {
 
   it("carries nothing across when the cache is empty too", async () => {
     const { patchSettings } = await import("./persist.js");
-    adoptThemeFromSettings({});
+    adoptThemeFromSettings(settingsPayload({}));
     expect(patchSettings).not.toHaveBeenCalled();
   });
 
@@ -452,31 +457,31 @@ describe("the theme, between config.json and its paint cache", () => {
     // The reader chose a theme, then cleared it. A second adoption of the cache
     // would bring the cleared value back, which is the difference between a cache
     // and a migration path.
-    adoptThemeFromSettings({ theme: "dark" });
+    adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
     vi.mocked(patchSettings).mockClear();
     cacheTheme("dark");
 
-    adoptThemeFromSettings({});
+    adoptThemeFromSettings(settingsPayload({}));
 
     expect(patchSettings).not.toHaveBeenCalled();
   });
 
   it("repaints when another device's choice arrives, and only when it differs", () => {
-    adoptThemeFromSettings({ theme: "dark" });
+    adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
     expect(H.mockApplyTheme).toHaveBeenCalledTimes(1);
 
     // The writer's own echo. Repainting anyway would be a second theme transition
     // for a change this device made itself.
-    adoptThemeFromSettings({ theme: "dark" });
+    adoptThemeFromSettings(settingsPayload({ theme: "dark" }));
     expect(H.mockApplyTheme).toHaveBeenCalledTimes(1);
 
-    adoptThemeFromSettings({ theme: "light" });
+    adoptThemeFromSettings(settingsPayload({ theme: "light" }));
     expect(H.mockApplyTheme).toHaveBeenLastCalledWith("light");
   });
 
   it("ignores a value that is not one of the three choices", async () => {
     const { cachedTheme } = await import("./device-view.js");
-    adoptThemeFromSettings({ theme: "chartreuse" });
+    adoptThemeFromSettings(settingsPayload({ theme: "chartreuse" }));
     expect(cachedTheme()).toBeNull();
     expect(H.mockApplyTheme).not.toHaveBeenCalled();
   });

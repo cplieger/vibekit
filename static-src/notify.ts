@@ -7,6 +7,7 @@
 import { isIOS, isStandalone } from "./platform.js";
 import { registerPush, unsubscribePush } from "./actions/notify.js";
 import { registerCleanup } from "./actions/index.js";
+import type { EffectiveSettings } from "./wire/types.gen.js";
 
 // ---------------------------------------------------------------------------
 // Module-level state (replaces the former NotifyController class).
@@ -35,7 +36,9 @@ type PushState =
  *  turn and has no per-tab marker, so a channel that could go dark on its own
  *  would stall every later turn with nothing on screen to say why. That absence is
  *  why this map exists as a map and not as an exhaustive record over PushKind. */
-export const KEYED_PUSH_KINDS: Readonly<Record<string, string>> = {
+export const KEYED_PUSH_KINDS: Readonly<
+  Record<string, "notify_agent_finished" | "notify_pr_status">
+> = {
   agent_finished: "notify_agent_finished",
   pr_status: "notify_pr_status",
 };
@@ -127,22 +130,19 @@ export function setNotifyUICallback(fn: () => void): void {
 /** Apply the persisted preferences.
  *
  *  The per-kind values are read through KEYED_PUSH_KINDS, so adding a kind is one
- *  entry there rather than a declared parameter field plus a line in this body. An
- *  absent value keeps the default (on), matching the server's registry for a
- *  config.json that predates the kind.
+ *  entry there rather than a declared parameter field plus a line in this body.
  *
- *  The lookup is BY KEY — the settings key comes from KEYED_PUSH_KINDS at runtime —
- *  so the body indexes a widened view of the payload. That widening is the one cast
- *  here, and it is safe in the direction that matters: every read compares against
- *  `false`, so a field of some other type cannot be misread as an off switch, and a
- *  key that is absent keeps the default. Narrowing to a declared interface instead
- *  would mean listing every kind's field here as well as in KEYED_PUSH_KINDS. */
-export function restoreNotifications(s: object): void {
-  const flags = s as Readonly<Record<string, unknown>>;
+ *  There is no cast and no `!== false` any more. Both existed to cope with a key
+ *  that might be absent: the master switch defaults OFF and the two per-kind
+ *  switches default ON (matching push.kindRegistry), so this one function had to
+ *  carry two opposite polarities and get each right. The payload states all three
+ *  now, and typing KEYED_PUSH_KINDS' values as the payload's own keys is what makes
+ *  the runtime lookup type-safe without listing every kind's field here as well. */
+export function restoreNotifications(s: EffectiveSettings): void {
   const wasEnabled = enabled;
-  enabled = flags["notifications_enabled"] === true;
+  enabled = s.notifications_enabled;
   for (const [kind, settingsKey] of Object.entries(KEYED_PUSH_KINDS)) {
-    kindEnabled.set(kind, flags[settingsKey] !== false);
+    kindEnabled.set(kind, s[settingsKey]);
   }
 
   if (enabled) {

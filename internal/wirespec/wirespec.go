@@ -134,6 +134,11 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.TerminalCreatedPayload](),
 	wiregen.TypeRef[vibekit.TerminalOutputPayload](),
 	wiregen.TypeRef[vibekit.TerminalExitedPayload](),
+	// The GET /api/settings response. Registered so the client's payload type is
+	// GENERATED rather than a hand-written mirror: every field is required on both
+	// sides (no omitempty), which is what lets the client hold no defaults of its
+	// own. See vibekit.EffectiveSettings.
+	wiregen.TypeRef[vibekit.EffectiveSettings](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
 	wiregen.TypeRef[forges.Repo](),
 	wiregen.TypeRef[forges.PR](),

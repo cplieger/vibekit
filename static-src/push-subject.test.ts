@@ -6,6 +6,7 @@
 // page handler. Three copies of one literal is what the read below turns into a
 // test rather than a hope.
 import { describe, it, expect, beforeEach } from "vitest";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 import pushTypesGo from "../internal/vibekit/push_types.go?raw";
 import pushServiceGo from "../internal/push/service.go?raw";
 import settingsDefaultsGo from "../internal/settings/defaults.go?raw";
@@ -72,11 +73,13 @@ describe("restoreNotifications", () => {
 
   it("reads every keyed kind from the payload", async () => {
     const notify = await import("./notify.js");
-    notify.restoreNotifications({
-      notifications_enabled: true,
-      notify_agent_finished: false,
-      notify_pr_status: true,
-    });
+    notify.restoreNotifications(
+      settingsPayload({
+        notifications_enabled: true,
+        notify_agent_finished: false,
+        notify_pr_status: true,
+      }),
+    );
     expect(notify.areNotificationsEnabled()).toBe(true);
     expect(notify.isKindEnabled("agent_finished")).toBe(false);
     expect(notify.isKindEnabled("pr_status")).toBe(true);
@@ -86,13 +89,17 @@ describe("restoreNotifications", () => {
     const notify = await import("./notify.js");
     // A config.json written before pr_status existed carries no value for it, and
     // the server's registry entry is DefaultOn.
-    notify.restoreNotifications({ notifications_enabled: true, notify_agent_finished: true });
+    notify.restoreNotifications(
+      settingsPayload({ notifications_enabled: true, notify_agent_finished: true }),
+    );
     expect(notify.isKindEnabled("pr_status")).toBe(true);
   });
 
   it("keeps agent_finished's own getter working", async () => {
     const notify = await import("./notify.js");
-    notify.restoreNotifications({ notifications_enabled: true, notify_agent_finished: false });
+    notify.restoreNotifications(
+      settingsPayload({ notifications_enabled: true, notify_agent_finished: false }),
+    );
     expect(notify.isAgentFinishedEnabled()).toBe(false);
   });
 });

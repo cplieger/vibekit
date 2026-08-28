@@ -4,11 +4,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./api-client.js", () => ({
-  apiGet: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
   apiGetTyped: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and this name is imported somewhere in it. No case here calls it.
+  apiGet: vi.fn(),
 }));
 
 vi.mock("./toast.js", () => ({
@@ -18,13 +17,18 @@ vi.mock("./toast.js", () => ({
   showToast: vi.fn(),
 }));
 
-import { apiGet } from "./api-client.js";
+import { apiGetTyped } from "./api-client.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
 
-const mockApiGet = vi.mocked(apiGet);
+// retention.ts reads through the generated decoder, so the double stands in for
+// apiGetTyped and returns an already-decoded payload.
+const mockApiGet = vi.mocked(apiGetTyped);
 
-// Return the /api/settings shape retention.ts reads.
-function settings(days: number | undefined): { chat_retention_days?: number } {
-  return days === undefined ? {} : { chat_retention_days: days };
+// The COMPLETE payload, because that is what the wire carries: GET /api/settings
+// resolves every default underneath the stored document, so a fixture supplying
+// only the key under test would exercise a response the server cannot produce.
+function settings(days: number): ReturnType<typeof settingsPayload> {
+  return settingsPayload({ chat_retention_days: days });
 }
 
 beforeEach(() => {
@@ -40,27 +44,37 @@ describe("retention", () => {
     await mod.refreshRetention();
 
     expect(mod.isRetentionEnabled()).toBe(true);
-    expect(mockApiGet).toHaveBeenCalledWith("/api/settings", expect.anything());
+    expect(mockApiGet).toHaveBeenCalledWith(
+      "/api/settings",
+      expect.any(Function),
+      expect.anything(),
+    );
   });
 
   it("a null response (network failure) leaves the current value in place", async () => {
-    mockApiGet.mockResolvedValue(null);
+    let payload: unknown = settings(0);
+    mockApiGet.mockImplementation(async () => payload);
     const mod = await import("./retention.js");
 
+    // Move OFF the placeholder first, so the assertion below distinguishes
+    // "kept what the server last said" from "the placeholder happens to agree".
+    // Asserting enabled straight after a failed first fetch passes either way.
+    await mod.refreshRetention();
+    expect(mod.isRetentionEnabled()).toBe(false);
+
+    payload = null;
     await mod.refreshRetention();
 
-    // Default is 1 (enabled); a failed fetch must not flip it off.
-    expect(mod.isRetentionEnabled()).toBe(true);
+    expect(mod.isRetentionEnabled()).toBe(false);
   });
 
-  it("a missing field falls back to the default (1 day, enabled)", async () => {
-    mockApiGet.mockResolvedValue(settings(undefined));
-    const mod = await import("./retention.js");
-
-    await mod.refreshRetention();
-
-    expect(mod.isRetentionEnabled()).toBe(true);
-  });
+  // There is no absent-key case any more, and its subject is what went rather
+  // than the test. It asserted a client-side fallback to a mirrored default, and
+  // both halves are gone: the server resolves the default into the response, so a
+  // payload without the key is a shape the wire cannot produce. It was also
+  // passing for the wrong reason — the missing field arrived as `undefined`, and
+  // `isRetentionEnabled()` reads `!== 0`, which `undefined` satisfies, so the case
+  // would have stayed green with the default deleted.
 
   it("forever (-1) counts as enabled (archive on close, History shown)", async () => {
     mockApiGet.mockResolvedValue(settings(-1));
@@ -78,7 +92,8 @@ describe("retention", () => {
     const listener = vi.fn();
     const unsub = mod.onRetentionChange(listener);
 
-    // subscribe() fires immediately with the current value (default 1 => enabled).
+    // subscribe() fires immediately with the current value (the default day
+    // count => enabled).
     expect(listener).toHaveBeenCalledTimes(1);
     expect(mod.isRetentionEnabled()).toBe(true);
 

@@ -76,7 +76,11 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 			patch:        `{}`,
 			wantFinished: true,
 			wantPR:       true,
-			why:          "readExistingSettings yields an empty map on a corrupt file rather than failing the write",
+			// readStoredSettings reports the corrupt file as an error, which
+			// the WRITE arms refuse on. This runs after the write succeeded, so
+			// there is no stored value left to honour and the registry default is
+			// the only answer available; the failure is logged, not swallowed.
+			why: "an unreadable config.json leaves every kind at its registry default",
 		},
 		"a malformed patch value falls back to the registry default": {
 			persisted:    `{"notify_agent_finished":false}`,
@@ -146,11 +150,15 @@ func TestSyncPushPreferences_MergedPatchNeedsNoDiskRead(t *testing.T) {
 	}
 }
 
-// The size cap bounds what a PATCH merges, and its own boundary value is inside
-// the bound: a file exactly at the cap is still merged, so the keys the patch
-// does not name survive. Treating it as oversize would silently drop every
-// untouched setting on the write that follows.
-func TestReadExistingSettings_SizeCapIsInclusive(t *testing.T) {
+// The size cap bounds what a settings write merges, and its own boundary value is
+// inside the bound: a file exactly at the cap is still merged, so the keys the
+// request does not name survive. Treating it as oversize would refuse a write that
+// is perfectly serviceable.
+//
+// One past the cap is an ERROR rather than an empty map, which is the other half
+// of the same claim: an oversize file is present and unread, so answering "nothing
+// was stored" would let the write replace it with just the request's keys.
+func TestExistingSettingsForMerge_SizeCapIsInclusive(t *testing.T) {
 	// Trailing whitespace is legal JSON, so the padding leaves the document
 	// parseable at any size.
 	seed := func(t *testing.T, size int) string {
@@ -170,17 +178,28 @@ func TestReadExistingSettings_SizeCapIsInclusive(t *testing.T) {
 	tests := []struct {
 		name      string
 		size      int
+		wantErr   bool
 		wantKeys  int
 		wantTheme string
 	}{
 		{name: "at_the_cap", size: maxSettingsBytes, wantKeys: 1, wantTheme: `"dark"`},
-		{name: "one_past_the_cap", size: maxSettingsBytes + 1, wantKeys: 0},
+		{name: "one_past_the_cap", size: maxSettingsBytes + 1, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := readExistingSettings(seed(t, tt.size))
+			got, err := readStoredSettings(seed(t, tt.size))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("readStoredSettings of a %d-byte file = (%d keys, nil), want an error",
+						tt.size, len(got))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readStoredSettings of a %d-byte file: err = %v, want nil", tt.size, err)
+			}
 			if len(got) != tt.wantKeys {
-				t.Fatalf("readExistingSettings of a %d-byte file returned %d keys, want %d",
+				t.Fatalf("readStoredSettings of a %d-byte file returned %d keys, want %d",
 					tt.size, len(got), tt.wantKeys)
 			}
 			if tt.wantTheme != "" && string(got["theme"]) != tt.wantTheme {

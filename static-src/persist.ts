@@ -8,100 +8,33 @@
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
 import { registerCleanup } from "./actions/index.js";
+import type { EffectiveSettings } from "./wire/types.gen.js";
 
-export interface AppSettings {
-  last_model?: string;
-  /** The reasoning-effort level the user picked last, anywhere. The twin of
-   *  last_model and used the same way: a NEW chat opens on it instead of on the
-   *  current model's default tier.
-   *
-   *  A seed, never a store. The level still lives on the chat record
-   *  (Session.effort) and this is only consulted when a chat has chosen nothing,
-   *  so two chats can still disagree. Reconciled against the current model's own
-   *  tier list before it is marked, because a level the new model does not offer
-   *  would be a tier the service rejects. */
-  last_effort?: string;
-  notifications_enabled?: boolean;
-  notify_agent_finished?: boolean;
-  /** CI on a pull request the connected identity opened turned green or red.
-   *  Keyed like agent_finished (both are switchable channels); the poller behind
-   *  it is server-side because a client poll cannot fire with the tab closed. */
-  notify_pr_status?: boolean;
-  // No notify_permission: the permission ask is a floor, not a preference.
-  // See the "no notify_permission key" note in internal/settings/defaults.go.
-  agent_ignore_files?: string[];
-  debug_logs?: boolean;
-  /** Default Supervised-mode state for new chats. When true, new
-   *  chats start with SupervisedMode=true and every file change
-   *  the agent makes stages for user review before hitting disk.
-   *  Per-chat toggle is on the chat prompt row (Supervised pill). */
-  supervised_default?: boolean;
-  /** Approve (rather than refuse) a scheduled run's tool request when the
-   *  unattended budget expires. Off by default; see run_unattended.go. */
-  scheduled_auto_approve?: boolean;
-  // There is no model_effort. Reasoning effort is per-chat, on the chat record
-  // beside model, mode and supervised (Session.effort); it used to be one global
-  // setting shaped {last_model, effort}, so two chats could not disagree and
-  // switching models discarded the previous model's level. last_effort above is
-  // not that key returning: it carries only the MEMORY of the last pick, as a
-  // bare level with per-chat storage intact.
-  /** Chat retention, owned end to end by vibekit (kiro-cli's own
-   *  cleanup.periodDays is pinned to 0/never). Encoding: -1 = forever
-   *  (close keeps the chat, never purged — "backups"), 0 = off (delete on
-   *  close, History hidden — ephemeral), N = keep N days (close keeps the
-   *  chat, purged after N). There is no archive directory: "archived" is
-   *  computed from the chat's age against the window. */
-  chat_retention_days?: number;
-  /** Whether the agent gets the knowledge feature: the list of indexed bases in
-   *  its system prompt and KAS's own knowledge search tool. Defaults TRUE, which
-   *  is why the server sends it in GET /api/settings rather than leaving it
-   *  absent — an unset key read as the zero value would render this switch off
-   *  while the feature was on. It does not gate the knowledge PANEL, which reads
-   *  the store through an RPC that consults neither key. */
-  knowledge_enabled?: boolean;
-  /** Whether a session ships KAS's tool_search tool instead of every MCP tool's
-   *  full description. Defaults false, matching kiro-cli's own default.
-   *
-   *  Both of these are vibekit settings that reach the AGENT: internal/agent
-   *  resolves each at spawn time into the _meta.kiro.settings keys KAS reads.
-   *  They were kiro-cli settings until 2026-08, and that door reaches no running
-   *  chat. Neither is live — KAS freezes both at session creation. */
-  tool_search_enabled?: boolean;
-  /** Whether a session opts into kiro-cli's memory subsystem. Defaults false, and
-   *  here the zero value IS the answer, unlike knowledge_enabled — memory is a
-   *  feature vibekit has never had, so an absent key means nobody asked for it and
-   *  the server leaves it out of GET /api/settings.
-   *
-   *  Off is not a quiet state on the wire. The server still SENDS the
-   *  `userMemoryOptIn` veto, because kiro-cli reads an absent key as "no opinion,
-   *  let the experiment decide" and only an explicit false refuses; withholding it
-   *  is what would let a backend rollout turn memory on with no setting and no
-   *  signal. On also contributes an environment variable to the agent process,
-   *  which is the only lever that can make the feature eligible at all. */
-  memory_enabled?: boolean;
-  /** The theme choice: "dark", "light" or "system". Absent means nothing was
-   *  chosen, which resolves to the OS preference.
-   *
-   *  Server-owned since the workspace arrangement was modelled: it used to be a
-   *  field in `ui-state.json`, and it is a workspace preference rather than
-   *  anything about tabs, so it came here when that document went. "system" is a
-   *  real stored CHOICE — the user asked to follow the OS — and dropping it is
-   *  what once made Auto unreachable after a single toggle click.
-   *
-   *  ALSO cached in this browser's localStorage, which is not a second source of
-   *  truth: the inline pre-paint snippet has to pick a theme before any fetch
-   *  resolves. `settings.ts` owns that cache's policy; the server always wins
-   *  after the settings load. */
-  theme?: string;
-  /** The file browser's last directory. Server-owned for the arrangement's
-   *  reason: it is where this WORKSPACE was being browsed, so a second device
-   *  should open there too. Empty lists the granted mounts. */
-  fb_path?: string;
-}
+// The GET /api/settings payload. GENERATED from the Go struct
+// vibekit.EffectiveSettings (see internal/wirespec), so it is not maintained
+// here and cannot drift from what the server sends.
+//
+// Every field is REQUIRED, which is the whole point. The hand-written interface
+// this replaced had all 15 fields optional, so each read site had to decide what
+// an absent key meant and five of them answered by restating a server-side
+// default — one of which (agent_ignore_files, whose fallback was the empty list
+// against a server default of two patterns) rendered an empty chip row while the
+// agent read filter was applying both, and then persisted that emptiness on the
+// first edit. A required field is one a reader cannot supply a fallback for.
+//
+// The server guarantees it: GET resolves defaults underneath the stored file and
+// validates each stored value against its field's TYPE, dropping a mismatch in
+// favour of the default. Presence alone would not license deleting the guards —
+// a required field is a compile-time claim with no runtime force — which is why
+// the validation and this type landed together.
+//
+// A PATCH body is Partial<EffectiveSettings>: the full shape is what you read, a
+// partial is what you write.
+export type { EffectiveSettings } from "./wire/types.gen.js";
 
 let patchTimer: ReturnType<typeof setTimeout> | undefined;
-let patchQueue: Partial<AppSettings> = {};
-let patchSnapshot: Partial<AppSettings> = {};
+let patchQueue: Partial<EffectiveSettings> = {};
+let patchSnapshot: Partial<EffectiveSettings> = {};
 let patchInputs: HTMLInputElement[] = [];
 let patchResolvers: ((r: Record<string, unknown> | null) => void)[] = [];
 
@@ -125,13 +58,13 @@ const keyGen = new Map<string, number>();
  *  trigger the saving animation for nothing — e.g. the bootstrap
  *  fire of repo-picker's onSelectionChange persisting the already-
  *  saved git_repo on every page load). */
-let lastSentPatch: Partial<AppSettings> = {};
+let lastSentPatch: Partial<EffectiveSettings> = {};
 
 /** Seed the dedup tracker from the loaded settings. Called once at
  *  app boot before any patchSettings() can fire. Without this, the
  *  first patch for any key after page load is treated as a change
  *  even when the value matches the server. */
-export function initSettingsTracking(s: AppSettings): void {
+export function initSettingsTracking(s: EffectiveSettings): void {
   lastSentPatch = { ...s };
 }
 
@@ -216,16 +149,16 @@ registerCleanup(() => {
 });
 
 export function patchSettings(
-  patch: Partial<AppSettings>,
+  patch: Partial<EffectiveSettings>,
   ...inputs: HTMLInputElement[]
 ): Promise<Record<string, unknown> | null> {
   // Filter out keys whose value matches the last-sent value. JSON
-  // equality is good enough for the AppSettings shape (primitives +
+  // equality is good enough for the EffectiveSettings shape (primitives +
   // arrays of strings); avoids reflecting no-op writes back to the
   // server and prevents the "Saving..." animation from firing on
   // bootstrap subscriptions like onSelectionChange's immediate fire.
-  const changed: Partial<AppSettings> = {};
-  for (const k of Object.keys(patch) as (keyof AppSettings)[]) {
+  const changed: Partial<EffectiveSettings> = {};
+  for (const k of Object.keys(patch) as (keyof EffectiveSettings)[]) {
     if (JSON.stringify(patch[k]) !== JSON.stringify(lastSentPatch[k])) {
       if (!(k in patchSnapshot)) {
         Object.assign(patchSnapshot, { [k]: lastSentPatch[k] });
@@ -262,8 +195,24 @@ export function patchSettings(
   return p;
 }
 
-export async function loadSettings(): Promise<AppSettings> {
-  const s = await loadSettingsAction.dispatch(undefined);
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  return (s as AppSettings) ?? {};
+/** Load the effective settings, or null when the fetch itself failed.
+ *
+ *  Null is "I do not know what the settings are", which is a different state
+ *  from any particular value and is why this is not `?? {}` any more. That
+ *  fallback handed every caller an empty object indistinguishable from a real
+ *  payload, so a network failure rendered as a full set of client-invented
+ *  defaults — and it needed an eslint suppression to write, because the declared
+ *  type promised what the wire did not. Both are gone.
+ *
+ *  A caller that gets null leaves its UI at its current state. `retention.ts`
+ *  was doing that already, deliberately, and is the precedent the other two now
+ *  follow.
+ *
+ *  Every field of a non-null result is present, and the action's generated
+ *  decoder is what enforces it at this boundary: the server resolves defaults
+ *  underneath the stored document and type-checks each stored value, and the
+ *  decode rejects a payload that does not match. A decode failure, an empty
+ *  body and a non-2xx all arrive here as null. */
+export async function loadSettings(): Promise<EffectiveSettings | null> {
+  return await loadSettingsAction.dispatch(undefined);
 }

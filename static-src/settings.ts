@@ -13,7 +13,7 @@ import { restoreShell } from "./shell.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
 import { loadSettings, patchSettings, initSettingsTracking } from "./persist.js";
-import type { AppSettings } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
 import { cacheTheme, cachedTheme, shellOpen } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
@@ -70,7 +70,7 @@ function dispatchKiroSetting(key: string, value: string, input: HTMLInputElement
   });
 }
 
-export type { AppSettings } from "./persist.js";
+export type { EffectiveSettings } from "./persist.js";
 export { loadSettings } from "./persist.js";
 
 // --- The theme, and the paint cache that mirrors it ---
@@ -94,7 +94,7 @@ export { loadSettings } from "./persist.js";
 //      when the real choice arrived.
 
 /** The theme the server last reported, or the cache before it has. Module state
- *  rather than a read of AppSettings, because the toggle is constructed before
+ *  rather than a read of EffectiveSettings, because the toggle is constructed before
  *  the settings fetch resolves (rule 3). */
 let themeChoice: ThemeChoice | null = null;
 
@@ -142,7 +142,7 @@ function repaintTheme(choice: ThemeChoice): void {
  *  for nothing), and the settings_updated handler, which is what makes a theme
  *  chosen on another device land here live — the behaviour the retired
  *  whole-document broadcast used to provide. */
-export function adoptThemeFromSettings(s: AppSettings): void {
+export function adoptThemeFromSettings(s: EffectiveSettings): void {
   const fromServer = asThemeChoice(s.theme);
   const first = !themeLoaded;
   themeLoaded = true;
@@ -218,8 +218,16 @@ export function _resetThemeForTest(): void {
  *  Used for lightweight re-sync (e.g. after login) without touching
  *  per-device UI state. Compare with restoreAll() which also restores
  *  localStorage-based UI (shell, file browser, editor tabs). */
-export async function syncSettings(): Promise<AppSettings> {
+export async function syncSettings(): Promise<EffectiveSettings | null> {
   const s = await loadSettings();
+  // Null means the fetch failed: seeding the dedup tracker from nothing would
+  // clear it and re-arm the very write-back it exists to suppress, and applying
+  // notification state from nothing would silence or unsilence push on a network
+  // blip. Both callers (boot, and the settings_updated handler) tolerate a
+  // no-op — the next frame or reload re-syncs.
+  if (s === null) {
+    return null;
+  }
   // Seed the dedup tracker BEFORE any code path can fire patchSettings().
   // The bootstrap subscription fires (e.g. repo-picker.onSelectionChange)
   // would otherwise re-PATCH /api/settings with values it just loaded
@@ -234,11 +242,11 @@ export async function syncSettings(): Promise<AppSettings> {
  *  from the loaded settings payload. Called once at startup. Unlike
  *  syncSettings(), this also restores shell, file browser, and editor tabs.
  *  (Theme is applied separately by initThemeToggle() during initUI.) */
-export function restoreAll(s: AppSettings): void {
+export function restoreAll(s: EffectiveSettings): void {
   if (shellOpen()) {
     restoreShell();
   }
-  if (s.fb_path !== undefined && s.fb_path !== "") {
+  if (s.fb_path !== "") {
     restoreFileBrowser(s.fb_path);
   }
   // Editor tabs are NOT restored from here any more, and there is no second list
@@ -276,7 +284,7 @@ export function restoreAll(s: AppSettings): void {
 // goes through the `.hidden` utility rather than the `hidden` attribute:
 // `.section-option` declares `display: flex`, which beats the UA
 // `[hidden] { display: none }` rule.
-export function initChatRetention(s: AppSettings): void {
+export function initChatRetention(s: EffectiveSettings): void {
   const daysInput = document.getElementById("chat-retention-days") as HTMLInputElement | null;
   const daysRow = document.getElementById("chat-retention-days-row");
   const foreverInput = document.getElementById("chat-retention-forever") as HTMLInputElement | null;
@@ -286,7 +294,9 @@ export function initChatRetention(s: AppSettings): void {
   const showDaysRow = (forever: boolean): void => {
     daysRow?.classList.toggle("hidden", forever);
   };
-  const current = typeof s.chat_retention_days === "number" ? s.chat_retention_days : 1;
+  // No coalesce: the field is required on the payload and the server resolved
+  // its default. The mirror that used to sit here is why this change exists.
+  const current = s.chat_retention_days;
   foreverInput.checked = current === -1;
   showDaysRow(current === -1);
   if (current >= 0) {
@@ -311,7 +321,11 @@ export function initChatRetention(s: AppSettings): void {
       return;
     }
     const n = parseInt(daysInput.value, 10);
-    persist(!isNaN(n) && n >= 0 ? n : 1, foreverInput);
+    // Input validation rather than an absent-key fallback: the box can hold
+    // empty or non-numeric text when Keep-forever is unchecked. The value it
+    // falls back to is the one the SERVER sent for this key, not a constant
+    // restated here.
+    persist(!isNaN(n) && n >= 0 ? n : s.chat_retention_days, foreverInput);
   });
 }
 
@@ -732,32 +746,30 @@ export function initExperimentalToggles(): void {
 // Neither is live. KAS resolves both when a session is created and freezes the
 // answer for that session's life, which is why the section hint says new
 // conversations rather than leaving a user to discover it.
+// There is no `fallback` column any more. knowledge_enabled's was `true`,
+// mirroring the server's default because an absent key read as the zero value
+// would take the knowledge tool away from every existing install — and the case
+// it covered was "a settings payload written before the key existed", which the
+// resolved GET no longer produces. The server states every one of these.
 const agentCapabilities: readonly {
   key: "knowledge_enabled" | "tool_search_enabled" | "memory_enabled";
   inputID: string;
-  fallback: boolean;
 }[] = [
-  // knowledge_enabled defaults TRUE: the index, its REST surface and its UI all
-  // predate this switch, so an absent key has to read as on. The server sends the
-  // same default in GET /api/settings, and this fallback covers the one case that
-  // cannot — a settings payload written before the key existed.
-  { key: "knowledge_enabled", inputID: "flag-knowledge", fallback: true },
-  { key: "tool_search_enabled", inputID: "flag-tool-search", fallback: false },
-  // memory_enabled defaults FALSE, and here the zero value IS the answer: memory
-  // is a feature vibekit has never had, so an absent key means nobody asked for
-  // it. Off is not a quiet state on the wire — the server still sends the veto,
-  // because an absent key reads to kiro-cli as "let the experiment decide".
-  { key: "memory_enabled", inputID: "flag-memory", fallback: false },
+  { key: "knowledge_enabled", inputID: "flag-knowledge" },
+  { key: "tool_search_enabled", inputID: "flag-tool-search" },
+  // memory_enabled is off by standing veto, and off is not a quiet state on the
+  // wire: the server still SENDS the veto, because an absent key reads to
+  // kiro-cli as "let the experiment decide".
+  { key: "memory_enabled", inputID: "flag-memory" },
 ];
 
-function initAgentCapabilities(initial: AppSettings): void {
+function initAgentCapabilities(initial: EffectiveSettings): void {
   for (const cap of agentCapabilities) {
     const input = document.getElementById(cap.inputID) as HTMLInputElement | null;
     if (input === null) {
       continue;
     }
-    const current = initial[cap.key];
-    input.checked = typeof current === "boolean" ? current : cap.fallback;
+    input.checked = initial[cap.key];
     input.addEventListener("change", () => {
       void patchSettings({ [cap.key]: input.checked }, input);
     });
@@ -780,12 +792,12 @@ function initAgentCapabilities(initial: AppSettings): void {
 // endpoint. When on, server-side logs include slog.Debug entries;
 // read them with `docker logs vibekit`.
 
-function initDebugLogsToggle(initial: AppSettings): void {
+function initDebugLogsToggle(initial: EffectiveSettings): void {
   const input = document.getElementById("flag-debug-logs") as HTMLInputElement | null;
   if (input === null) {
     return;
   }
-  input.checked = initial.debug_logs === true;
+  input.checked = initial.debug_logs;
   input.addEventListener("change", () => {
     void patchSettings({ debug_logs: input.checked }, input);
   });

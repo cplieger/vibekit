@@ -14,8 +14,16 @@ import "log/slog"
 // Exported constants for settings key names. All consumers should
 // reference these instead of bare string literals to prevent drift.
 const (
-	KeyAgentIgnoreFiles     = "agent_ignore_files"
-	KeyChatRetentionDays    = "chat_retention_days"
+	KeyAgentIgnoreFiles = "agent_ignore_files"
+
+	// KeyChatRetentionDays is NOT in ServerManagedKeys, so handleSettingsWrite's
+	// PUT branch DROPS it when a body omits it — which would silently reset a
+	// deliberate "keep forever" or "delete on close" to the 7-day default. Dormant
+	// only because nothing PUTs this document (both client PUT actions target
+	// /api/steering and /api/kiro-settings; /api/settings is PATCH-only). Add it
+	// there before wiring any PUT to this document.
+	KeyChatRetentionDays = "chat_retention_days"
+
 	KeyDebugLogs            = "debug_logs"
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
@@ -208,36 +216,27 @@ func DefaultAgentIgnoreFiles() []string {
 	return []string{".gitignore", ".kiroignore"}
 }
 
-// Default returns the canonical defaults the GET /api/settings
-// handler emits when config.json is missing or unreadable. Every key it emits
-// must also be in KnownKeys (enforced by TestDefault_OnlyKnownKeys) so
-// a fresh GET response round-tripped back as a PATCH never trips the
-// unknown-key warning.
+// There is no Default() any more. It returned a map of five keys and had exactly
+// ONE caller, the GET /api/settings handler, which emitted it when config.json was
+// unreadable and echoed the file's bytes verbatim when it was not. That made the
+// response shape depend on the file's state, so every key nobody had explicitly
+// set was absent from the response and the client had to decide what absence
+// meant — which is how it came to carry its own copies of these defaults, and how
+// the agent-ignore list came to render empty while the read filter was applying
+// two patterns.
 //
-// agent_ignore_files carries a real default (DefaultAgentIgnoreFiles) so the
-// agent read filter is ON out of the box and the GET-when-missing wire shape
-// advertises it. knowledge_enabled is here for the inverse reason: it defaults
-// TRUE, so a client that read an absent key as the zero value would render the
-// knowledge switch off while the feature was on. Preferences NOT listed here
-// apply their default in-process near their consumer (e.g. logctl.go's false for
-// debug_logs, and tool_search_enabled's false in internal/agent) because the
-// consumer owns the fail-mode policy; those need not ride this wire shape.
-func Default() map[string]any {
-	return map[string]any{
-		KeyAgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
-		KeyChatRetentionDays: DefaultChatRetentionDays,
-		KeyKnowledgeEnabled:  true,
-		// Both empty, and the empty string is a REAL value here rather than a
-		// placeholder: it is "nothing has been chosen". An empty theme resolves at
-		// the client to the OS preference, and an empty browser path lists the
-		// granted mounts. They are in this shape so a client reading the
-		// GET-when-missing response finds the keys it is about to write rather
-		// than inferring them, which is what the two localStorage fields they
-		// replaced never had to do.
-		KeyTheme:  "",
-		KeyFBPath: "",
-	}
-}
+// EffectiveDefaults in effective.go replaces it: a TYPED struct covering every
+// key the client renders, so the response is complete by construction rather than
+// by whichever branch of a handler ran, and so wiregen can carry the same shape
+// into TypeScript with every field required. Its doc comment carries the
+// membership rule this one used to.
+//
+// The old comment's other half still holds and is worth keeping: a preference's
+// in-process default lives near its CONSUMER (logctl's false for debug_logs,
+// internal/agent's for the session-door keys) because the consumer owns what to do
+// with an UNREADABLE file, which differs per consumer. EffectiveDefaults answers
+// the narrower question of what is true when the document is merely SILENT, and
+// the two are orthogonal.
 
 // KnownKeys is the set of vibekit-managed config.json keys. PATCH
 // handlers warn (but do not reject) keys outside this set so a typo

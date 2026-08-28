@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import { patchSettings } from "./persist.js";
-import type { AppSettings } from "./persist.js";
+import type { EffectiveSettings } from "./persist.js";
 import { maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./chip.js";
@@ -35,12 +35,12 @@ import { el } from "@cplieger/reactive";
 class PermissionsUIController {
   private ignoreFiles: string[] = [];
 
-  initPermissions(initial: AppSettings): void {
+  initPermissions(initial: EffectiveSettings): void {
     // Supervised-mode default for new chats. (Tool-call approval itself is
     // the native Cedar policy, rendered by NativePolicyController below.)
     const supCheckbox = maybeEl<HTMLInputElement>("supervised-default-checkbox");
     if (supCheckbox !== null) {
-      supCheckbox.checked = initial.supervised_default === true;
+      supCheckbox.checked = initial.supervised_default;
       supCheckbox.addEventListener("change", () => {
         void patchSettings({ supervised_default: supCheckbox.checked });
       });
@@ -50,7 +50,7 @@ class PermissionsUIController {
     // approving while watching is a different consent from approving unattended.
     const schedCheckbox = maybeEl<HTMLInputElement>("scheduled-auto-approve-checkbox");
     if (schedCheckbox !== null) {
-      schedCheckbox.checked = initial.scheduled_auto_approve === true;
+      schedCheckbox.checked = initial.scheduled_auto_approve;
       schedCheckbox.addEventListener("change", () => {
         void patchSettings({ scheduled_auto_approve: schedCheckbox.checked });
       });
@@ -60,8 +60,14 @@ class PermissionsUIController {
 
   // --- Private: agent ignore files ---
 
-  private initAgentIgnoreUI(initial: AppSettings): void {
-    this.ignoreFiles = [...(initial.agent_ignore_files ?? [])];
+  private initAgentIgnoreUI(initial: EffectiveSettings): void {
+    // No `?? []`. That fallback was the live bug this whole change exists for:
+    // the server's default is two patterns (.gitignore, .kiroignore) and the
+    // filter applies them whenever the key is absent, so on any config.json that
+    // existed without the key this row rendered EMPTY while agent reads were
+    // being filtered — and because the row is authoritative on write, the first
+    // add or remove persisted an explicit list that dropped both of them.
+    this.ignoreFiles = [...initial.agent_ignore_files];
     this.renderIgnoreChips();
 
     const input = maybeEl<HTMLInputElement>("agent-ignore-input");
@@ -800,7 +806,7 @@ class NativePolicyController {
 const nativePolicy = new NativePolicyController();
 
 // Public delegate functions preserving the existing module API.
-export function initPermissionsUI(initial: AppSettings): void {
+export function initPermissionsUI(initial: EffectiveSettings): void {
   controller.initPermissions(initial);
 }
 
