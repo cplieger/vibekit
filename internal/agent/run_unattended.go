@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -43,6 +44,30 @@ import (
 // window burns hours on every unattended approval. It is not zero because the
 // user may have the run's page open and can still answer.
 const unattendedApprovalBudget = 180 * time.Second
+
+// maxToolNameBytes bounds the tool name on its two human surfaces, the log
+// attribute and the schedule row's sentence. Deliberately not the permission
+// card's 512: this value is CONCATENATED into a one-line sentence an operator
+// reads in the Workflows tab rather than given a surface of its own, and it is
+// persisted into schedules.json on every fire. 128 leaves every legitimate name
+// intact — a KAS tool id is a short snake_case token, and the longest real
+// tool-call title in this repo's fixtures is under 60 bytes. Bytes of CONTENT:
+// the preset's truncation marker rides outside the cap.
+const maxToolNameBytes = 128
+
+// approvalTypeTurn is the `_meta.kiro.type` marking a TURN APPROVAL.
+const approvalTypeTurn = "turn_approval"
+
+// turnApprovalName is vibekit's own name for a turn approval, which carries no
+// tool name and titles itself the literal "Review changes".
+const turnApprovalName = "this turn's file changes"
+
+// The two option kinds an unattended answer may select. Both are one-shot: the
+// `_always` twins persist a rule, which is what optionIDByKind refuses to reach.
+const (
+	optionKindAllowOnce  = "allow_once"
+	optionKindRejectOnce = "reject_once"
+)
 
 // logMsgUnattendedPermission is the message the unattended answer logs under.
 //
@@ -119,10 +144,18 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 		return
 	}
 	approve := scheduledAutoApprove(ctx, rs.lifecycle.configDir)
+	// Refuse with the reject option the request ADVERTISED, the same rule the
+	// approve side below follows: answer with a choice the request offered.
+	// Cancelled stays the FALL-BACK for a request advertising none, so behaviour
+	// there is unchanged. It also stops an unattended refusal reading as a turn
+	// cancel in the backend's own session record.
 	outcome := vibekit.PermissionOutcomeCancelled()
+	if opt := optionIDByKind(msgParams, optionKindRejectOnce); opt != "" {
+		outcome = vibekit.PermissionOutcomeSelected(opt)
+	}
 	verb := outcomeRefused
 	if approve {
-		opt := autoApproveOptionID(msgParams)
+		opt := optionIDByKind(msgParams, optionKindAllowOnce)
 		if opt == "" {
 			// Nothing to select: an allow option is what makes approval
 			// expressible, and inventing an id would answer with a choice the
@@ -178,22 +211,63 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 	}
 }
 
-// permissionToolName pulls the tool's display name out of a request, for the log
-// line and the schedule row. Best-effort: an unnamed request still gets denied.
+// permissionToolName names what a request is asking about, for the log line and
+// the schedule row. Best-effort: an unnamed request still gets denied.
+//
+// Machine-authored names first, the model's prose last. A PRECEDENCE rather than
+// a gate on toolId: only the ordinary tool approval carries one, three of the
+// backend's six ask kinds carry no `_meta` at all, and a hook approval carries a
+// different shape — so failing closed on toolId would blank the operator's only
+// description of five of the six.
 func permissionToolName(params json.RawMessage) string {
 	var p struct {
 		ToolCall struct {
 			Title string `json:"title"`
 			Kind  string `json:"kind"`
 		} `json:"toolCall"`
+		Meta struct {
+			// Decoded here rather than through translate.ACPPermissionKiroBlock:
+			// that block carries the turn-approval discriminator and the file
+			// list, not these two names.
+			Kiro struct {
+				// ToolID is KAS's own tool id (`execute_bash`, `fs_write`) and is
+				// unconditional on an ordinary tool approval.
+				ToolID string `json:"toolId"`
+				// HookName comes from a hook file on disk, so it is
+				// user-authored rather than the model's.
+				HookName string `json:"hookName"`
+				Type     string `json:"type"`
+			} `json:"kiro"`
+		} `json:"_meta"`
 	}
 	if json.Unmarshal(params, &p) != nil {
 		return ""
 	}
-	if p.ToolCall.Title != "" {
-		return p.ToolCall.Title
+	kiro := p.Meta.Kiro
+	switch {
+	case kiro.ToolID != "":
+		return safeToolName(kiro.ToolID)
+	case kiro.HookName != "":
+		return safeToolName(kiro.HookName)
+	case kiro.Type == approvalTypeTurn:
+		return turnApprovalName
 	}
-	return p.ToolCall.Kind
+	if p.ToolCall.Title != "" {
+		return safeToolName(p.ToolCall.Title)
+	}
+	return safeToolName(p.ToolCall.Kind)
+}
+
+// safeToolName defuses one wire-supplied name for a single-line human surface.
+//
+// The title is composed upstream by the MODEL, so an agent that read a poisoned
+// file can reach both the log line and the schedule row through it — and that row
+// is a decision surface by the same argument the permission card is one: it is
+// what an operator reads the next morning to decide which permission rule to
+// write. The sanitizer replaces rather than deletes, so a legitimate name is
+// byte-identical and a bidi reversal becomes visible whitespace.
+func safeToolName(s string) string {
+	return runesafe.SanitizeSingleLineBounded(s, maxToolNameBytes)
 }
 
 // scheduledAutoApprove reads the opt-out. Absent or unreadable means OFF, so a
@@ -206,12 +280,14 @@ func scheduledAutoApprove(ctx context.Context, configDir string) bool {
 	return b
 }
 
-// autoApproveOptionID picks the request's allow-once option.
+// optionIDByKind picks the request's advertised option of one EXACT kind.
 //
-// `allow_always` is deliberately NOT chosen: it would persist a rule from an
-// automated answer, turning one unattended decision into a standing grant the
-// user never wrote. A one-shot approval expires with the turn.
-func autoApproveOptionID(params json.RawMessage) string {
+// Exact, never a prefix, and that is the whole safety property: `allow_always`
+// and `reject_always` are advertised whenever consent is persistable, and
+// selecting either makes the backend PERSIST a rule — turning one automated
+// answer into a standing grant, or a standing deny, that nobody wrote. A one-shot
+// answer expires with the turn.
+func optionIDByKind(params json.RawMessage, kind string) string {
 	var p struct {
 		Options []struct {
 			OptionID string `json:"optionId"`
@@ -222,7 +298,7 @@ func autoApproveOptionID(params json.RawMessage) string {
 		return ""
 	}
 	for _, o := range p.Options {
-		if o.Kind == "allow_once" {
+		if o.Kind == kind {
 			return o.OptionID
 		}
 	}

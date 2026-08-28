@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -240,4 +241,42 @@ func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 		return
 	}
 	t.Fatal("no tool_call event was broadcast")
+}
+
+// TestApplyToolCallStatus_SecondTerminalFrameKeepsTheFirstDuration is the
+// call-site guard for the destructive duration read.
+//
+// buffer.ComputeDuration CONSUMES its start time, so it answers 0 on a second
+// read, and KAS can send more than one terminal status frame for one tool call.
+// Assigning it unconditionally wrote that 0 over a correct duration; the SSE
+// carried it, the turn-end persist made it durable, and chat/export_md.go then
+// dropped the Duration line entirely because it is gated on a positive value.
+//
+// The start time is staged rather than slept for, so the expected duration is a
+// fixed number instead of whatever the clock happened to do.
+func TestApplyToolCallStatus_SecondTerminalFrameKeepsTheFirstDuration(t *testing.T) {
+	tr, _, deps, events, chatID := primeToolCall(t)
+	buf := deps.bufStore.GetOrInit(chatID)
+	buf.ToolStartTimes["tc-1"] = time.Now().UnixMilli() - 5000
+
+	completed := mustJSON(t, map[string]any{"toolCallId": "tc-1", "status": "completed"})
+	tr.HandleToolCallUpdate(t.Context(), chatID, completed, FrameAttribution{})
+
+	first, ok := lastToolCallUpdate(t, events)
+	if !ok {
+		t.Fatal("no tool_call_update event for the first terminal frame")
+	}
+	if first.DurationMs < 5000 {
+		t.Fatalf("first DurationMs = %d, want >= 5000", first.DurationMs)
+	}
+
+	tr.HandleToolCallUpdate(t.Context(), chatID, completed, FrameAttribution{})
+
+	second, ok := lastToolCallUpdate(t, events)
+	if !ok {
+		t.Fatal("no tool_call_update event for the second terminal frame")
+	}
+	if second.DurationMs != first.DurationMs {
+		t.Errorf("second DurationMs = %d, want %d kept from the first frame", second.DurationMs, first.DurationMs)
+	}
 }

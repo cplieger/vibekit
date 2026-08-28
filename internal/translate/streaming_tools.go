@@ -271,7 +271,15 @@ func (t *Translator) applyToolCallStatus(
 	if tu.Status != vibekit.ToolCompleted && tu.Status != vibekit.ToolFailed {
 		return
 	}
-	tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
+	// KAS can send more than one terminal status frame for one tool call, and
+	// ComputeDuration CONSUMES its start time, so the second read answers 0.
+	// Assigning it unconditionally wrote that 0 over a correct duration, the SSE
+	// carried it, the turn-end persist made it durable, and the markdown export
+	// then dropped the line because it is gated on a positive value. The sibling
+	// read on the next line was made non-destructive for the same reason.
+	if tc.DurationMs == 0 {
+		tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
+	}
 	t.adoptTerminalOutput(chatID, tc)
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelThinking}))
