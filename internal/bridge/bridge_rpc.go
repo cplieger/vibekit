@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -108,8 +109,18 @@ func (b *Bridge) reportDroppedFrame(dropped int) {
 // signal to errBridgeExited without string comparison, unifying the
 // drain path and the done-channel race-guard on the same sentinel.
 // Runs as readLoop's deferred cleanup.
+//
+// The count failPending already computes is logged rather than discarded, because
+// a bridge that dies holding N in-flight calls otherwise never says N anywhere:
+// session/prompt has no client-side deadline, so a wedged kiro-cli's on-the-wire
+// signature is one prompt line followed by silence, and this number is the
+// difference between a bridge that exited idle and one that stranded a turn.
+// Logged only when it stranded something, so ordinary teardown stays quiet.
 func (b *Bridge) drainPendingAndClose() {
-	b.failPending(bridgeExitedResp)
+	if failed := b.failPending(bridgeExitedResp); failed > 0 {
+		slog.Warn("ACP bridge exited with requests in flight; failed them",
+			"failed_requests", failed)
+	}
 	close(b.notifCh)
 }
 
@@ -301,21 +312,65 @@ func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) e
 	return b.writeFrame(data)
 }
 
-// writeFrame serialises stdin writes across Call/Notify/Respond and
-// treats any short write as an error. io.Writer's contract permits a
-// short write with err==nil on some pipe edge conditions; a truncated
-// JSON-RPC frame would desync kiro-cli's stdin scanner and corrupt
-// framing for every subsequent write, so we surface it as a real error
-// instead of silently flushing a partial object.
+// writeFrame serialises stdin writes across Call/Notify/Respond, bounds each one
+// by writeDeadline, and treats a partial frame as the end of the bridge.
+//
+// io.Writer's contract permits a short write with err==nil on some pipe edge
+// conditions; a truncated JSON-RPC frame desyncs kiro-cli's stdin scanner and
+// corrupts framing for every subsequent write, so it can only be reported, never
+// retried. A peer that stops reading produces the same partial frame by a
+// different route — the pipe buffer fills, the deadline expires mid-frame — so
+// both outcomes reap.
+//
+// The mutex is what the deadline exists for. Every Respond, Call and Notify on a
+// bridge funnels through here, session/cancel included, so without a bound one
+// wedged write blocks all of them permanently, the documented escape hatch for a
+// stuck turn among them, and nothing logs it because the only log on that path is
+// downstream of the hang.
 func (b *Bridge) writeFrame(data []byte) error {
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
-	n, err := b.stdin.Write(data)
-	if err != nil {
-		return err
+	// Inside the mutex, which is what makes a per-handle deadline safe: writeMu is
+	// what serialises the writers, so no other frame is in flight on this handle.
+	if dw, ok := b.stdin.(deadlineWriter); ok {
+		if err := dw.SetWriteDeadline(time.Now().Add(writeDeadline)); err == nil {
+			// Cleared on the way out. The next writer arms its own, and an absolute
+			// deadline left behind would expire a healthy write later.
+			defer func() { _ = dw.SetWriteDeadline(time.Time{}) }()
+		}
 	}
-	if n != len(data) {
+	n, err := b.stdin.Write(data)
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		// The bytes already accepted are a truncated frame in kiro-cli's stdin
+		// scanner, so the desync the short-write branch below names has happened by
+		// another route and the bridge cannot be used again. Reaping is what makes
+		// the deadline safe: every pending Call fails with the retryable
+		// dead-bridge sentinel, the prompt path finalizes the turn through its
+		// ordinary failure route, and the ACP session is untouched so the next
+		// prompt loads it back.
+		slog.Error("ACP write: kiro-cli stopped draining stdin within the deadline; reaping bridge",
+			"deadline_s", int(writeDeadline/time.Second),
+			"wrote_bytes", n, "frame_bytes", len(data))
+		go b.Stop()
+		return err
+	case err != nil:
+		return err
+	case n != len(data):
+		slog.Error("ACP write: short write left a partial frame in kiro-cli's stdin; reaping bridge",
+			"wrote_bytes", n, "frame_bytes", len(data))
+		go b.Stop()
 		return fmt.Errorf("short write to ACP stdin: %d of %d bytes", n, len(data))
 	}
 	return nil
+}
+
+// deadlineWriter is the part of a stdin handle a write deadline needs.
+//
+// An interface check rather than a type assertion on *os.File: cmd.StdinPipe
+// returns one and it does support a deadline, while this package's own fixtures
+// are a bytes.Buffer and an error injector that do not, so the check is what keeps
+// the production path bounded without every fixture having to impersonate a file.
+type deadlineWriter interface {
+	SetWriteDeadline(time.Time) error
 }
