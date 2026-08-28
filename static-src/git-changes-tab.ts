@@ -12,7 +12,7 @@
 
 import { apiGet } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { ICON_REFRESH, ICON_REPO_EMPTY, ICON_CLEAN, ICON_FILTER } from "./icons.js";
+import { ICON_REFRESH, ICON_REPO_EMPTY, ICON_FILTER } from "./icons.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { preserveGitScroll } from "./git-scroll.js";
@@ -301,24 +301,25 @@ function paintInner(): void {
     }
   }
 
+  // Every repo dropped, which can ONLY be the filter: filteredFilesFor returns
+  // the file array rather than null whenever filterText is empty, so an
+  // unfiltered paint always has one section per repo.
+  //
+  // There is deliberately no aggregate "everything is quiet" state beside this
+  // one. It would replace the repo list on a workspace whose repos are merely
+  // behind origin, ahead of it, or holding a stash, hiding both their sync
+  // buttons and their branch chip — the only door to the branch switcher. That
+  // a workspace has nothing pending anywhere is the sidebar git badge's fact.
   if (visibleRepos.length === 0) {
     reconcile(root, [] as RepoStatus[], {
       key: (r) => r.repo,
       mount: () => el("div"),
     });
-    if (filterText !== "") {
-      root.innerHTML = renderEmptyState({
-        icon: ICON_FILTER,
-        title: "No matching changes",
-        hint: "Adjust your filter to see more.",
-      });
-    } else {
-      root.innerHTML = renderEmptyState({
-        icon: ICON_CLEAN,
-        title: "All clean",
-        hint: "Nothing to commit across your repositories.",
-      });
-    }
+    root.innerHTML = renderEmptyState({
+      icon: ICON_FILTER,
+      title: "No matching changes",
+      hint: "Adjust your filter to see more.",
+    });
     return;
   }
 
@@ -373,9 +374,9 @@ function paintError(msg: string): void {
  *  section instead: a repo whose changed paths did not happen to repeat the
  *  repo name rendered "No paths match the filter." under its own heading.
  *
- *  An admitted repo always yields a non-empty file list OR is genuinely
- *  clean, which is what makes "no paths match" unreachable and lets
- *  renderRepoSection's empty case be the honest one ("Clean."). */
+ *  An admitted repo always yields a non-empty file list OR has nothing
+ *  uncommitted, which is what makes "no paths match" unreachable and lets
+ *  renderRepoSection's empty case be the honest one. */
 function filteredFilesFor(r: RepoStatus): FileEntry[] | null {
   if (filterText === "" || r.repo.toLowerCase().includes(filterText)) {
     return r.files;
@@ -485,14 +486,17 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
 
   // The file list, in one group per side of the index.
   //
-  // An empty list here means the repo is CLEAN, never "the filter hid
+  // An empty list here means nothing is uncommitted, never "the filter hid
   // everything": filteredFilesFor returns null rather than an empty array in
-  // that case, and paint drops the section before it gets here. So there is
-  // one empty state and it is the true one. (A "No paths match the filter."
-  // row used to sit beside it, reachable only through the filter bug the
-  // predicate above fixes.)
+  // that case, and paint drops the section before it gets here.
+  //
+  // The sentence names the WORKING TREE and not the repo, because this row
+  // renders directly under the sync actions: a repo behind origin, ahead of it,
+  // or holding a stash reaches it with Pull, Push or Pop right above, and
+  // "Clean." read as a verdict on those too. Scoped, it also earns its place
+  // beside Pull, which cannot conflict with local edits there are none of.
   if (filteredFiles.length === 0) {
-    inner.appendChild(el("div", { className: "git-repo-row-clean" }, "Clean."));
+    inner.appendChild(el("div", { className: "git-repo-row-clean" }, "No uncommitted changes."));
   } else {
     inner.appendChild(renderFileList(r, filteredFiles));
   }

@@ -121,6 +121,12 @@ const runRow = {
 /** A parentless run at the given status; parentless is what scopes the glyph. */
 const runAt = (status: string) => ({ ...runRow, status });
 
+/** A row's accessible name, which lives on its open BUTTON. The row itself is a
+ *  plain container: a role on it would flatten the delete button beside it out of
+ *  the accessibility tree. */
+const openName = (row: Element): string | null =>
+  row.querySelector("button.list-row-name")?.getAttribute("aria-label") ?? null;
+
 async function render(payload: unknown): Promise<HTMLElement> {
   document.body.innerHTML = `<div id="history-table"></div>`;
   dispatch.mockResolvedValue(payload);
@@ -322,7 +328,7 @@ describe("history: a run's outcome is a glyph, not a word", () => {
       expect(icon.querySelector(".tool-outcome-badge")?.textContent).toBe(s.badge);
       // The word is in the accessible name and nowhere else, and the row's own
       // "Open X" label survives in front of it.
-      expect(row.getAttribute("aria-label")).toBe(`Open feature-pipeline, ${s.word}`);
+      expect(openName(row)).toBe(`Open feature-pipeline, ${s.word}`);
       expect(row.textContent).not.toContain(s.word);
       expect(row.textContent).not.toContain(s.status);
       // The glyph REPLACES the status slot rather than joining it.
@@ -336,7 +342,7 @@ describe("history: a run's outcome is a glyph, not a word", () => {
       const row = c.querySelector('[data-key="r:wf_1"]')!;
       expect(row.querySelector(".tool-icon")).toBeNull();
       expect(row.querySelector(".history-status")?.textContent).toBe(status);
-      expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline");
+      expect(openName(row)).toBe("Open feature-pipeline");
     });
   }
 
@@ -419,7 +425,7 @@ describe("history: an overrun reads differently from a cancel", () => {
     });
     const row = c.querySelector('[data-key="r:wf_1"]')!;
     expect(row.textContent).toContain("the server restarted while it was running");
-    expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline, aborted");
+    expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
   it("says nothing extra for a user cancel, which is the same status", async () => {
@@ -443,7 +449,7 @@ describe("history: an overrun reads differently from a cancel", () => {
     const row = c.querySelector('[data-key="r:wf_1"]')!;
     expect(row.querySelector(".tool-icon")).not.toBeNull();
     expect(row.querySelector(".history-status")).toBeNull();
-    expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline, aborted");
+    expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
   it("states the reason on an agent-parented run too", async () => {
@@ -469,7 +475,7 @@ describe("history: an overrun reads differently from a cancel", () => {
     });
     const row = c.querySelector('[data-key="r:wf_1"]')!;
     expect(row.textContent).not.toContain("quiesced");
-    expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline, succeeded");
+    expect(openName(row)).toBe("Open feature-pipeline, succeeded");
   });
 });
 
@@ -768,6 +774,26 @@ describe("history: the per-row delete", () => {
     }
   });
 
+  it("keeps the delete button out of a control, so it is not nested in one", async () => {
+    // A role="button" on the row is Children-Presentational: it flattens this
+    // button out of the accessibility tree, which axe reports as
+    // nested-interactive on every row. The open control is a real button beside
+    // it instead, and the platform gives that one Enter and Space — which the
+    // row's role never had, because nothing ever added the key handler it needs.
+    const c = await render({ sessions: [ownedRow], runs: [runRow] });
+    for (const key of ["s:sess_owned", "r:wf_1"]) {
+      const row = c.querySelector<HTMLElement>(`[data-key="${key}"]`)!;
+      expect(row.getAttribute("role"), `${key} row is a control`).toBeNull();
+      expect(row.getAttribute("tabindex"), `${key} row is focusable`).toBeNull();
+      const open = row.querySelector("button.list-row-name");
+      expect(open, `${key} has no open button`).not.toBeNull();
+      expect(open?.getAttribute("aria-label")).toMatch(/^Open /);
+      // Nothing else in the row may be interactive: two controls, no nesting.
+      const controls = [...row.querySelectorAll("button, [role='button'], [tabindex]")];
+      expect(controls).toHaveLength(2);
+    }
+  });
+
   it("deletes a conversation through the chat-delete command and closes no tab itself", async () => {
     const c = await render({ sessions: [ownedRow], runs: [] });
     (c.querySelector("[data-history-delete]") as HTMLElement).click();
@@ -795,8 +821,8 @@ describe("history: the per-row delete", () => {
   });
 
   it("does not ALSO open the row it is deleting", async () => {
-    // The button sits inside a role=button row, so its click reaches the row's
-    // own delegated handler too. Without the guard the confirm dialog would open
+    // The button sits inside the row, so its click reaches the container's own
+    // delegated handler too. Without the guard the confirm dialog would open
     // over a chat that had just been activated behind it.
     const c = await render({ sessions: [ownedRow], runs: [] });
     (c.querySelector("[data-history-delete]") as HTMLElement).click();

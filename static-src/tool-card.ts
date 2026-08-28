@@ -263,12 +263,18 @@ type OutcomeState = "ok" | "fail" | "warn" | "denied" | "running";
  *  are one channel — so a settled card also carries a SHAPE: a small check or
  *  cross composited on the glyph. The status word is not restored as visible
  *  text; the accessible name carries it instead ("Edited auth.go, succeeded"),
- *  and a programmatic name is not visible text. */
+ *  and a programmatic name is not visible text.
+ *
+ *  `nameTarget` is the element the name lands on, defaulting to the glyph's own
+ *  host because on a tool card they are one element. A History row separates
+ *  them: the glyph is a row column while the control is the row's open button,
+ *  and a name on the plain row would reach nobody. */
 export function applyOutcome(
   node: HTMLElement,
   status: OutcomeStatus,
   displayTitle: string,
   info: ToolRenderInfo,
+  nameTarget: HTMLElement = node,
 ): void {
   const icon = node.querySelector<HTMLElement>(".tool-icon");
   // A policy refusal is its OWN state, not a failure. The command was never run,
@@ -303,7 +309,7 @@ export function applyOutcome(
     }
   }
   const subject = info.fileBasename !== "" ? `${displayTitle} ${info.fileBasename}` : displayTitle;
-  node.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
+  nameTarget.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
 
 /** The shape half of the vocabulary, one glyph per settled state.

@@ -1390,13 +1390,16 @@
   flex: 1;
 }
 
-/* Sidebar git button dot. Colors derived from data-state via
+/* Git button dot in the chat toolbar. Colors derived from data-state via
  * git-badge.ts. Priority: error > both > local > remote > hidden.
  * Each state gets a distinct hue so the user can tell at a glance
  * whether the badge is calling for action (error / local) or just
  * informational (remote-only). */
 .git-badge {
   position: absolute;
+  /* These insets have to keep it INSIDE the button's box: the toolbar clips its
+     buttons (`.chat-toolbar > .icon-btn { overflow: hidden }`, 12-chat.css, for
+     the find-button collapse) and outscores any override on the button's id. */
   top: 0.25rem;
   right: 0.25rem;
   width: 0.4375rem;
@@ -1422,9 +1425,9 @@
   background: var(--c-danger);
 }
 
+/* Makes this button the badge's containing block; nothing else positions it. */
 [id="git-btn"] {
   position: relative;
-  overflow: visible;
 }
 
 .rolling-output {
@@ -1587,6 +1590,7 @@
 
 .chip-input {
   flex: 1;
+  min-block-size: var(--btn-h);
   padding: var(--sp-1) var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -1602,6 +1606,7 @@
 }
 
 .chip-mode-select {
+  min-block-size: var(--btn-h);
   padding: var(--sp-1) var(--sp-2);
   font-family: inherit;
   font-size: var(--fs-xs);
@@ -1695,6 +1700,7 @@
 }
 
 .elicitation-input {
+  min-block-size: var(--btn-h);
   padding: var(--sp-2);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);

@@ -643,23 +643,15 @@ describe("the path filter", () => {
     expect(rowPaths(mount)).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
-  it("says Clean only when the repo really is clean", async () => {
-    // The one empty state left inside a section. A filter that hides everything
-    // drops the section instead of claiming the repo is clean, so this sentence
-    // can be trusted.
+  it("says No matching changes when it drops every repo", async () => {
     const mount = await paintRepos([
       repo([], { repo: "quiet", has_dirty: false }),
       repo([file("a.ts", "M")], { repo: "busy" }),
     ]);
 
-    expect(mount.querySelector('[data-repo="quiet"] .git-repo-row-clean')?.textContent).toBe(
-      "Clean.",
-    );
-    expect(mount.querySelector('[data-repo="busy"] .git-repo-row-clean')).toBeNull();
-
     applyFilter("zzz-matches-nothing");
 
-    // Neither repo survives, so neither is described as clean.
+    // Neither repo survives, so neither is described inside a section either.
     expect(mount.querySelector(".git-repo-row-clean")).toBeNull();
     expect(mount.querySelector(".git-multirepo-empty-title")?.textContent).toBe(
       "No matching changes",
@@ -689,6 +681,66 @@ describe("the path filter", () => {
     expect(rowPaths(group(mount, "unstaged"))).toEqual(["src/b.ts"]);
     expect(group(mount, "unstaged")?.querySelector(".git-file-group-count")?.textContent).toBe(
       "1 file",
+    );
+  });
+});
+
+// A repo with no file changes is not the same thing as a repo with nothing to
+// do, and this tab used to spend one word ("Clean.") on both readings — once per
+// section, and once as an aggregate card that replaced the whole list.
+describe("a repo with nothing uncommitted", () => {
+  it("scopes its sentence to the working tree", async () => {
+    const mount = await paintRepos([
+      repo([], { repo: "quiet", has_dirty: false }),
+      repo([file("a.ts", "M")], { repo: "busy" }),
+    ]);
+
+    expect(mount.querySelector('[data-repo="quiet"] .git-repo-row-clean')?.textContent).toBe(
+      "No uncommitted changes.",
+    );
+    expect(mount.querySelector('[data-repo="busy"] .git-repo-row-clean')).toBeNull();
+  });
+
+  it("keeps that sentence true beside Pull, Push and Pop", async () => {
+    // The row renders under the sync actions, so it reaches a repo that is out
+    // of sync or holding a stash. It read "Clean." there, contradicting the Pull
+    // button one line above it.
+    const mount = await paintRepos([
+      repo([], { repo: "behind", has_dirty: false, behind: 3 }),
+      repo([], { repo: "ahead", has_dirty: false, ahead: 2 }),
+      repo([], { repo: "stashed", has_dirty: false, stashes: 1 }),
+    ]);
+
+    for (const name of ["behind", "ahead", "stashed"]) {
+      const section = mount.querySelector<HTMLElement>(`[data-repo="${name}"]`);
+      expect(section?.querySelector(".git-repo-row-clean")?.textContent).toBe(
+        "No uncommitted changes.",
+      );
+      // The sentence claims nothing the action bar denies.
+      expect(section?.querySelector(".git-repo-row-clean")?.textContent).not.toContain("Clean");
+    }
+
+    expect(
+      mount.querySelector('[data-repo="behind"] .git-repo-action-bar button')?.textContent,
+    ).toBe("Pull ↓3");
+  });
+
+  it("still gets a section on a workspace where every repo is quiet", async () => {
+    // No aggregate empty state: an "All clean" card here would replace the repo
+    // list, and with it the Pull button of a repo that is merely behind AND the
+    // branch chip, which is the only door to the branch switcher.
+    const mount = await paintRepos([
+      repo([], { repo: "one", has_dirty: false }),
+      repo([], { repo: "two", has_dirty: false, behind: 1 }),
+    ]);
+
+    expect(
+      [...mount.querySelectorAll(".git-repo-section")].map((s) => s.getAttribute("data-repo")),
+    ).toEqual(["one", "two"]);
+    expect(mount.querySelector(".git-multirepo-empty-title")).toBeNull();
+    expect(mount.querySelectorAll("[data-branch-trigger]").length).toBe(2);
+    expect(mount.querySelector('[data-repo="two"] .git-repo-action-bar button')?.textContent).toBe(
+      "Pull ↓1",
     );
   });
 });
