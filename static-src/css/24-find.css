@@ -186,16 +186,6 @@
 .page-find-input {
   flex: 1;
   min-inline-size: 0;
-
-  /* THE SAME HEIGHT AS THE × BESIDE IT. `--btn-h` is what sets this row's
-     height — `.page-find-btn` is a square of it — so a field with nothing but
-     padding to its name came out 28px against the button's 36px, and read as a
-     slimmer control inside its own bar. `min-` rather than a fixed
-     `block-size`, which is what the file browser's and the editor's fields
-     already do with `--input-h`: a larger user font then grows the box instead
-     of clipping the text. Mobile needs no second answer — 50-mobile.css raises
-     `--btn-h` to 2.75rem in the token layer, so the field follows the button to
-     the 44px touch target. */
   min-block-size: var(--btn-h);
   font: inherit;
   padding: var(--sp-1) var(--sp-2);

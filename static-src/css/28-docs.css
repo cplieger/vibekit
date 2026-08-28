@@ -376,6 +376,7 @@
 
 .recipe-input {
   min-width: 14rem;
+  min-block-size: var(--ctl-h-dense);
   padding: var(--sp-1) var(--sp-2);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
@@ -482,6 +483,7 @@
 .sched-monthday,
 .sched-time,
 .sched-num {
+  min-block-size: var(--ctl-h-dense);
   font: inherit;
   color: var(--c-text-primary);
   background: var(--c-bg-secondary);

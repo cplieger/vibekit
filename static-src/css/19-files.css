@@ -310,6 +310,7 @@
 
 .fb-name-edit {
   flex: 1;
+  min-block-size: var(--ctl-h-dense);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
   border: 1px solid var(--c-accent);
@@ -413,7 +414,7 @@
   border-radius: var(--r);
   padding: var(--sp-2) var(--sp-3);
   outline: none;
-  min-height: var(--input-h);
+  min-block-size: var(--btn-h);
   transition: border-color var(--dur-micro) var(--ease-standard);
 
   &:focus,
@@ -459,7 +460,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   font-size: var(--fs-base);
-  min-height: var(--input-h);
+  min-block-size: var(--btn-h);
   outline: none;
   touch-action: manipulation;
   transition: border-color var(--dur-micro) var(--ease-standard);
