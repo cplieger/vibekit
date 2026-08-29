@@ -113,36 +113,47 @@ export function initBlockRenderer(c: BlockCbs): void {
   cbs = c;
 }
 
-/**
- * The live TOP-LEVEL text bubble under `root`, or null.
- *
- * This is what Following pins to (`scroll.ts` `setAnchorProvider`), and it lives
- * here because this module is what puts `.streaming` on a bubble and what builds
- * the delegate boxes. Two rules, and both exist because a pin above the live edge
- * strands the reader mid-transcript:
- *
- *   - THE LAST match, not the first. `sealLiveBubble` is per-MESSAGE state, so a
- *     turn split across two assistant messages (a mid-turn model switch does
- *     that) leaves the earlier message's trailing bubble marked until the turn
- *     finalizes. A `querySelector` returns document order, which is the OLDEST
- *     of them.
- *   - NOT a delegate's bubble. A subagent's or workflow step's live text streams
- *     inside a box that is collapsed by default, and `height: 0` +
- *     `overflow: hidden` clips that content without taking it out of layout — so
- *     it reports offsets inside a box contributing no height to the document,
- *     and the pin they produce points at nothing the reader can see. With no
- *     top-level bubble streaming, null is the right answer: the document bottom
- *     is where the box's own rolling tail and its footer are.
- */
-export function liveTextAnchor(root: HTMLElement): HTMLElement | null {
-  const live = root.querySelectorAll<HTMLElement>(".message.assistant.streaming");
-  for (let i = live.length - 1; i >= 0; i--) {
-    const bubble = live[i];
-    if (bubble?.closest(".subagent-body") === null) {
-      return bubble;
+// ---------------------------------------------------------------------------
+// The live-anchor registry: which bubble Following pins to.
+//
+// A last-writer-wins slot, maintained where `.streaming` is granted and
+// revoked, so the follow path costs one field read instead of a whole-tree
+// selector walk per frame. Two rules carry over from the walk it replaced,
+// both because a pin above the live edge strands the reader mid-transcript:
+//
+//   - THE NEWEST top-level bubble wins (registration order is mount order, so
+//     last writer IS the newest). `sealLiveBubble` is per-MESSAGE state, so a
+//     turn split across two assistant messages (a mid-turn model switch does
+//     that) leaves the earlier message's trailing bubble streaming until the
+//     turn finalizes — when the newer seals first, the CLEAR falls back to
+//     that older survivor by scanning the render map.
+//   - Delegate-hosted bubbles NEVER register. A subagent's or workflow step's
+//     live text streams inside a box that is collapsed by default, and
+//     `height: 0` + `overflow: hidden` clips that content without taking it
+//     out of layout — so it reports offsets the reader cannot see. With no
+//     top-level bubble streaming, null is the right answer: the document
+//     bottom is where the box's own rolling tail and its footer are.
+// ---------------------------------------------------------------------------
+
+let liveAnchor: { messageID: string; el: HTMLElement } | null = null;
+
+/** The element Following pins to, or null for the document bottom. */
+export function getLiveAnchor(): HTMLElement | null {
+  return liveAnchor?.el ?? null;
+}
+
+/** Identity-guarded clear: only the registered element's own seal clears the
+ *  slot, then the newest still-live top-level bubble (if any) takes it back. */
+function clearLiveAnchor(el: HTMLElement): void {
+  if (liveAnchor?.el !== el) {
+    return;
+  }
+  liveAnchor = null;
+  for (const [id, st] of renders) {
+    if (!st.detached && st.topLiveEl !== null) {
+      liveAnchor = { messageID: id, el: st.topLiveEl };
     }
   }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +235,12 @@ interface MsgRender {
    *  pointer nothing can seal the block that WAS the tail when a new one opens,
    *  and each streamed block keeps its caret for the rest of the turn. */
   liveBubble: AssistantBubble | null;
+  /** This message's TOP-LEVEL streaming bubble root, or null. The live-anchor
+   *  registry's per-message half: registration writes it, the bubble's own
+   *  seal clears it (identity-guarded), and the anchor's fallback scan reads
+   *  it to find the newest split-turn survivor. Delegate-hosted bubbles never
+   *  set it. */
+  topLiveEl: HTMLElement | null;
   /** Every mounted reasoning handle (for finalize seal()). */
   reasonings: ReasoningView[];
   /** The still-open reasoning block per container (auto-collapse on sibling). */
@@ -279,6 +296,7 @@ function buildBody(
     detached,
     bubbles: [],
     liveBubble: null,
+    topLiveEl: null,
     reasonings: [],
     openReasoning: new Map(),
     toolGroups: new Map(),
@@ -422,6 +440,7 @@ export function disposeAssistantBody(msgId: string): void {
 }
 
 export function resetBlockRenders(): void {
+  liveAnchor = null;
   for (const st of renders.values()) {
     for (const b of st.bubbles) {
       b.finishNow();
@@ -913,10 +932,31 @@ function mountText(
   live: boolean,
 ): void {
   const initial = block.text ?? "";
-  const bubble = buildAssistantBubble(initial, live);
+  // Only a top-level live bubble joins the anchor registry: the seal callback
+  // clears this message's slot (identity-guarded) and the registry falls back
+  // to the newest surviving top-level bubble.
+  const topLive = live && !st.detached && container === st.blocksEl;
+  const bubble = buildAssistantBubble(
+    initial,
+    live,
+    topLive
+      ? {
+          onSeal: (root) => {
+            if (st.topLiveEl === root) {
+              st.topLiveEl = null;
+            }
+            clearLiveAnchor(root);
+          },
+        }
+      : undefined,
+  );
   st.bubbles.push(bubble);
   if (live) {
     st.liveBubble = bubble;
+  }
+  if (topLive) {
+    st.topLiveEl = bubble.root;
+    liveAnchor = { messageID: msgId, el: bubble.root };
   }
   st.blockText.set(i, (full) => {
     bubble.setText(full);
