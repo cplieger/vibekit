@@ -73,7 +73,7 @@ import {
 } from "./fundamentals/subagent-block.js";
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
-import { toolSpecFor } from "./messages-tools.js";
+import { mountToolCallCard, disposeToolSlot } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group.js";
 
@@ -1245,14 +1245,20 @@ function mountThinking(
 
 function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): void {
   const group = toolGroupFor(st, container);
-  const card = toolSpecFor(st.chatID).mount(tc);
-  if (card instanceof HTMLElement) {
-    card.setAttribute(RECONCILE_KEY, tc.id);
-    // Cards live in the group's body region (the disclosure-collapsible
-    // container), not on the group root beside the header.
-    groupBody(group).appendChild(card);
-    refreshGroupHeader(group);
-  }
+  const card = mountToolCallCard(st.chatID, tc);
+  card.setAttribute(RECONCILE_KEY, tc.id);
+  // Cards live in the group's body region (the disclosure-collapsible
+  // container), not on the group root beside the header.
+  groupBody(group).appendChild(card);
+  refreshGroupHeader(group);
+  // The slot is THIS render's, disposed with it: the transcript's card and the
+  // subagent page's detached card for the same call come and go independently
+  // (the slot registry is a multimap). st.disposers, not pushLifetimeEffect —
+  // a transcript card outlives turn end, and park suspends it through the
+  // registry rather than disposing it.
+  st.disposers.push(() => {
+    disposeToolSlot(st.chatID, tc.id, card);
+  });
 }
 
 function mountTodo(st: MsgRender, msgId: string, container: HTMLElement, tc: ToolCall): void {

@@ -378,3 +378,153 @@ describe("the run clock", () => {
     host.remove();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Two surfaces, one tool call: the slot registry is a multimap.
+//
+// The subagent page renders the SAME (chat, tool) pairs as the transcript,
+// through a detached render. Each mounted card owns its own slot; mounting the
+// page's card must not evict the transcript's from lifecycle management (the
+// last-writer-wins clobber left the transcript's effect orphaned: live, no
+// handle, unreachable by park), and each surface's disposal takes only its
+// own slot with it.
+// ---------------------------------------------------------------------------
+
+describe("two surfaces over one tool call", () => {
+  function seedToolChat(a: string, b: string, msgID: string, tc: ToolCall): void {
+    seed(
+      session(a, {
+        messages: [
+          user(freshID("u"), "run it"),
+          assistant(msgID, [{ type: "tool_use", tool_call_id: tc.id } as Block], [tc]),
+        ],
+        message_count: 2,
+      }),
+      session(b, { messages: [user(freshID("u"), "x")], message_count: 1 }),
+    );
+  }
+
+  function detach(host: HTMLElement, msgID: string, chatID: string, tc: ToolCall): void {
+    blocks.buildDetachedBody(
+      host,
+      assistant(msgID, [{ type: "tool_use", tool_call_id: tc.id } as Block], [tc]) as Message,
+      chatID,
+      "subtask-1",
+      false,
+    );
+  }
+
+  it("park freezes the transcript card while the page's card keeps updating", async () => {
+    const a = freshID("c-two");
+    const b = freshID("c-two");
+    const msgID = freshID("m");
+    const tc = call("t-shared");
+    seedToolChat(a, b, msgID, tc);
+    await flushed();
+    const transcriptCard = viewOf(a).querySelector<HTMLElement>(".tool-call");
+    expect(transcriptCard).not.toBeNull();
+
+    // The page's detached card mounts SECOND — the order that used to clobber
+    // the transcript's registry entry.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    detach(host, msgID, a, tc);
+    const pageCard = host.querySelector<HTMLElement>(".tool-call");
+    expect(pageCard).not.toBeNull();
+
+    store.setActive(b);
+    await flushed();
+
+    // A completion lands while A's transcript is parked: nothing may move
+    // under the parked view, while the page's card takes it live.
+    const watcher = new MutationObserver(() => undefined);
+    watcher.observe(viewOf(a), {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    });
+    store.upsertToolCall(a, msgID, call(tc.id, { status: "completed" }), 0);
+    await flushed();
+    expect(watcher.takeRecords()).toHaveLength(0);
+    watcher.disconnect();
+    expect(pageCard?.dataset["outcome"]).toBe("ok");
+    expect(transcriptCard?.dataset["outcome"]).not.toBe("ok");
+
+    // Unpark replays the missed snapshot onto the transcript card.
+    store.setActive(a);
+    await flushed();
+    expect(transcriptCard?.dataset["outcome"]).toBe("ok");
+
+    blocks.disposeDetachedBody(msgID, "subtask-1");
+    host.remove();
+  });
+
+  it("disposing the page's render leaves the transcript's card managed", async () => {
+    const a = freshID("c-two");
+    const b = freshID("c-two");
+    const msgID = freshID("m");
+    const tc = call("t-shared");
+    seedToolChat(a, b, msgID, tc);
+    await flushed();
+    const transcriptCard = viewOf(a).querySelector<HTMLElement>(".tool-call");
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    detach(host, msgID, a, tc);
+    blocks.disposeDetachedBody(msgID, "subtask-1");
+    host.remove();
+
+    // The shared signal survives the page's dispose: the transcript still
+    // reads it (refcounted clearing, last slot out turns off the light).
+    expect(sigs.toolCallSigs.get(sigs.toolCallSigKey(a, tc.id))).toBeDefined();
+
+    // The transcript slot is still the park machinery's to manage: parked, a
+    // late completion stays out of its DOM; unparked, it lands.
+    store.setActive(b);
+    await flushed();
+    store.upsertToolCall(a, msgID, call(tc.id, { status: "failed" }), 0);
+    await flushed();
+    expect(transcriptCard?.dataset["outcome"]).not.toBe("fail");
+    store.setActive(a);
+    await flushed();
+    expect(transcriptCard?.dataset["outcome"]).toBe("fail");
+  });
+
+  it("terminal chunks reach the live page while the transcript is parked, and the drain never double-writes", async () => {
+    const a = freshID("c-two");
+    const b = freshID("c-two");
+    const msgID = freshID("m");
+    const termID = freshID("term");
+    const tc = call("t-term2", { terminal_id: termID });
+    seedToolChat(a, b, msgID, tc);
+    await flushed();
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    detach(host, msgID, a, tc);
+
+    const transcriptPre = (): string =>
+      viewOf(a).querySelector(".tool-call .tool-output pre")?.textContent ?? "";
+    const pagePre = (): string =>
+      host.querySelector(".tool-call .tool-output pre")?.textContent ?? "";
+
+    store.setActive(b);
+    await flushed();
+
+    appendTerminalChunk(termID, "while parked\n", [], 0);
+    // The page's card is live and takes the chunk now; the parked transcript
+    // card waits for the drain.
+    expect(pagePre()).toBe("while parked\n");
+    expect(transcriptPre()).toBe("");
+
+    store.setActive(a);
+    await flushed();
+    // Drained once, into the unparked card only: one copy each.
+    expect(transcriptPre()).toBe("while parked\n");
+    expect(pagePre()).toBe("while parked\n");
+
+    blocks.disposeDetachedBody(msgID, "subtask-1");
+    host.remove();
+  });
+});
