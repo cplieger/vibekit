@@ -32,7 +32,7 @@ import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bu
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { $, byId } from "./dom.js";
-import { guardAction, initSidebarSwipe } from "./platform.js";
+import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
 import {
@@ -748,11 +748,11 @@ function setupInput(): void {
     },
   );
 
-  const doCreate = guardAction(() => {
+  const doCreate = guardDuplicateActivation(() => {
     // DETACHED: the New chat button's only follow-up is closing the sidebar, which
-    // does not depend on the chat. `guardAction` already suppresses a double click
-    // while the handler runs; the create's own retry idempotency (its op id) is what
-    // covers a repeat past that.
+    // does not depend on the chat. The guard absorbs only a duplicated pointer
+    // dispatch of one press; the create's own retry idempotency (its op id) is what
+    // covers a deliberate repeat.
     void createSession();
     $.sidebar.classList.remove("open");
   });
