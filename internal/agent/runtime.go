@@ -200,7 +200,6 @@ type Runtime struct {
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
 	kiroToken          *kiroauth.CLISource
-	preBridgeSpawn     func(context.Context) // optional; fired before each new bridge starts
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[vibekit.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
@@ -541,7 +540,12 @@ func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.SetOnChange(fn) }
 // on client disconnection. It runs synchronously on the spawn path, so
 // it must be fast (the existing steering.Generate is bounded by the
 // workspace walk + skip-if-unchanged write — typically a few ms).
-func (rt *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { rt.preBridgeSpawn = fn }
+//
+// The hook lives on the coordinator — its one reader — because a copy
+// held here would be captured by newBridgeCoordinator before the
+// composition root has called this, and a nil captured at construction
+// is permanent.
+func (rt *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { rt.coord.preBridgeSpawn = fn }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
 // /api/shell/ws (WebSocket PTY).

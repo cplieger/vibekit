@@ -194,19 +194,19 @@ func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 }
 
 // gateSpawn parks every bridge spawn on the returned gate, signalling entry.
-// It pokes the coordinator's own hook: the spawn is the one admission window
-// with no other seam.
+// It installs the hook through the PUBLIC setter — the composition root's own
+// path — so these tests also pin that the setter reaches the coordinator.
 func gateSpawn(h *Runtime) (entered, gate chan struct{}) {
 	entered = make(chan struct{})
 	gate = make(chan struct{})
 	var once sync.Once
-	h.coord.preBridgeSpawn = func(ctx context.Context) {
+	h.SetPreBridgeSpawn(func(ctx context.Context) {
 		once.Do(func() { close(entered) })
 		select {
 		case <-gate:
 		case <-ctx.Done():
 		}
-	}
+	})
 	return entered, gate
 }
 
