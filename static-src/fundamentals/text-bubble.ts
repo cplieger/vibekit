@@ -72,7 +72,7 @@ export function buildAssistantBubble(
   const root = el("div", { className: "message assistant" }) as HTMLDivElement;
   let stream: MarkdownStream | null = null;
   let text = ""; // what the parser has been given
-  let target = ""; // the full text known, revealed or not
+  let targetLen = 0; // length of the full text known, revealed or not
   let ending = false;
 
   /** Blank = nothing to show and not streaming. Initialized after the initial
@@ -151,11 +151,11 @@ export function buildAssistantBubble(
 
   if (live) {
     root.classList.add("streaming");
-    target = initial;
+    targetLen = initial.length;
     write(initial);
   } else {
     text = initial;
-    target = initial;
+    targetLen = initial.length;
     if (initial !== "") {
       renderMarkdownInto(root, initial);
     }
@@ -166,17 +166,25 @@ export function buildAssistantBubble(
   blank = !live && root.firstChild === null;
   opts?.onBlankChange?.(blank);
 
+  /** Take `delta` as pure growth past everything known so far. */
+  const feed = (delta: string): void => {
+    targetLen += delta.length;
+    if (reveal === null) {
+      write(delta);
+      return;
+    }
+    reveal.append(delta);
+  };
+
   /** Take `full` as the text now known. Growth only; shorter is ignored. */
   const grow = (full: string): void => {
-    if (full.length <= target.length) {
+    if (full.length <= targetLen) {
       return;
     }
-    target = full;
-    if (reveal === null) {
-      write(full.slice(text.length));
-      return;
-    }
-    reveal.setText(full);
+    // The caller's stream is append-only, so the tail past `targetLen` is the
+    // whole growth — which is what makes a resync from full text and a
+    // streamed delta one path.
+    feed(full.slice(targetLen));
   };
 
   return {
@@ -185,7 +193,7 @@ export function buildAssistantBubble(
       if (delta === "") {
         return;
       }
-      grow(target + delta);
+      feed(delta);
     },
     setText: grow,
     end(): void {

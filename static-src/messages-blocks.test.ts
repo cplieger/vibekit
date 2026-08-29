@@ -38,6 +38,8 @@ const {
   disposeAssistantBody,
   resetBlockRenders,
 } = await import("./messages-blocks.js");
+const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
+  await import("./store-signals.js");
 
 /** The chat every render in this file belongs to. It is part of the per-tool
  *  signal key, so a mount and its writer have to name the same one. */
@@ -633,6 +635,101 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
     expect(wrap.querySelector(".subagent-body")?.textContent).toContain(
       "delegate finished its walk",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The live per-block effect consumes {full, delta} under a WATERMARK GUARD
+// (design B5): the delta is appended only when it bridges the text accepted so
+// far to `full`; anything else resyncs from `full`. The signal layer's
+// synchronous flush makes a mismatch impossible in the steady state, so these
+// pin the self-healing paths — a missed write, a replayed write, and a mount
+// onto a signal that advanced before this render subscribed (the unpark case).
+// ---------------------------------------------------------------------------
+
+describe("the live block effect's watermark guard", () => {
+  beforeEach(() => {
+    resetBlockRenders();
+    clearAllBlockSigs();
+  });
+
+  function liveMount(blocks: Record<string, unknown>[]): { wrap: HTMLElement; id: string } {
+    const wrap = document.createElement("div");
+    const id = `m-wm-${String(Math.random())}`;
+    buildAssistantBody(
+      wrap,
+      {
+        id,
+        role: "assistant",
+        content: "",
+        blocks,
+        tool_calls: [],
+      } as unknown as Message,
+      CHAT_ID,
+      true,
+    );
+    return { wrap, id };
+  }
+
+  /** The bubble's settled text: dispose drains the reveal and finalizes the
+   *  markdown stream synchronously, so the DOM is exact. */
+  function settledText(wrap: HTMLElement, id: string): string {
+    disposeAssistantBody(id);
+    return wrap.querySelector(".message.assistant")?.textContent ?? "";
+  }
+
+  it("resyncs from full after a missed write — no loss, no duplication", () => {
+    const { wrap, id } = liveMount([text("")]);
+    const sig = blockTextSigs.get(blockKey(id, 0));
+    expect(sig).toBeDefined();
+    sig!.value = { full: "Hello ", delta: "Hello " };
+    // The "lo brave " write never reaches the effect; the next one arrives
+    // with a delta that cannot bridge the accepted text to full.
+    sig!.value = { full: "Hello brave world", delta: "world" };
+    expect(settledText(wrap, id)).toBe("Hello brave world");
+  });
+
+  it("ignores a replayed write — no duplication", () => {
+    const { wrap, id } = liveMount([text("")]);
+    const sig = blockTextSigs.get(blockKey(id, 0));
+    sig!.value = { full: "Hi ", delta: "Hi " };
+    sig!.value = { full: "Hi there", delta: "there" };
+    // The same value re-published as a fresh object: the effect observes it
+    // again, and the guard must not append "there" twice.
+    sig!.value = { full: "Hi there", delta: "there" };
+    expect(settledText(wrap, id)).toBe("Hi there");
+  });
+
+  it("a rebind's first observed value never double-appends", () => {
+    // The unpark shape: the signal advanced while no render was subscribed,
+    // so its LAST value still carries a nonempty delta. A fresh mount reads
+    // the store's full text as its initial, observes that stale pair once,
+    // and must treat it as already-on-screen rather than growth.
+    const seeded = ensureBlockTextSig("m-wm-rebind", 0, "");
+    seeded.value = { full: "abc", delta: "c" };
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      {
+        id: "m-wm-rebind",
+        role: "assistant",
+        content: "",
+        blocks: [text("abc")],
+        tool_calls: [],
+      } as unknown as Message,
+      CHAT_ID,
+      true,
+    );
+    expect(settledText(wrap, "m-wm-rebind")).toBe("abc");
+  });
+
+  it("a thinking block follows full text across a missed write", () => {
+    const { wrap, id } = liveMount([{ type: "thinking", thinking: "", agent_subtask_id: "" }]);
+    const sig = blockThinkingSigs.get(blockKey(id, 0));
+    expect(sig).toBeDefined();
+    sig!.value = { full: "why", delta: "why" };
+    sig!.value = { full: "why not now", delta: "now" };
+    expect(wrap.querySelector(".reasoning-body")?.textContent).toBe("why not now");
   });
 });
 
