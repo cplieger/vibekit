@@ -5,8 +5,9 @@
 // The shared lifecycle rules live in exactly one place:
 //
 //   1. `store.setThinking(chatID, true)` before posting.
-//   2. 409 busy on prompts is reported as "queued"; deciding what to do with
-//      it (buffer, drain, restore) is prompt-queue.ts's job, not this leaf's.
+//   2. A plain 409 on prompts is reported as "queued" and 409 reason:"starting"
+//      as "starting"; deciding what each means (steer vs the busy face) is
+//      submit.ts's job, not this leaf's.
 //   3. Other failures clear thinking so send-state settles back to "idle"
 //      (transport.ts reports the failure through failure-notice.ts). Nothing
 //      locks the composer — pressing Send again is the retry.
@@ -54,16 +55,18 @@ export interface SendPromptOpts {
 
 /** Post a prompt to a chat once. Low-level "send" primitive: it dispatches the
  *  prompt command (which sets thinking optimistically) and reports the
- *  outcome — "sent" on 2xx, "queued" on 409 (a turn is in flight), or "failed"
- *  on any other error. It does NOT own the queue: whether a "queued" prompt is
- *  buffered, drained, or its attachments restored is prompt-queue.ts's job.
- *  Callers outside prompt-queue.ts should use `submitPrompt` (from
- *  prompt-queue.ts) for user sends rather than calling this directly. */
+ *  outcome — "sent" on the admission ack, "queued" on a plain 409 (a steerable
+ *  turn is in flight), "starting" on 409 reason:"starting" (the admission
+ *  holder cannot receive a steer — a post-persist failure), or "failed" on any
+ *  other error. It does NOT own what a busy chat means: converting "queued" to
+ *  a steer and rendering the "starting" face are submit.ts's job.
+ *  Callers outside submit.ts should use `submitPrompt` (from submit.ts) for
+ *  user sends rather than calling this directly. */
 export async function sendPromptTo(
   chatID: string,
   text: string,
   opts: SendPromptOpts = {},
-): Promise<"sent" | "queued" | "failed"> {
+): Promise<"sent" | "queued" | "starting" | "failed"> {
   const result = await sendPromptAction.dispatch({
     chatID,
     text,

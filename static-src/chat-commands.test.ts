@@ -29,10 +29,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// sendPromptTo is a pure "send once" primitive now: it dispatches the prompt
-// command and maps the action result to sent/queued/failed. It does NOT own
-// the queue (that's prompt-queue.ts) — so there is no enqueue/attachment side
-// effect to assert here.
+// sendPromptTo is a pure "send once" primitive: it dispatches the prompt
+// command and maps the action result to sent/queued/starting/failed. What each
+// value MEANS (steer vs busy face vs restore) is submit.ts's job — so there is
+// no enqueue/attachment side effect to assert here.
 describe("sendPromptTo", () => {
   it("returns 'sent' on 2xx and forwards chat/text/model to the action", async () => {
     mockSendPromptDispatch.mockResolvedValue("sent");
@@ -50,10 +50,16 @@ describe("sendPromptTo", () => {
     expect(mockSendPromptDispatch.mock.calls[0]?.[0]).not.toHaveProperty("attachments");
   });
 
-  it("returns 'queued' on 409 (no local enqueue — that's prompt-queue's job)", async () => {
+  it("returns 'queued' on a plain 409 (converting it to a steer is submit's job)", async () => {
     mockSendPromptDispatch.mockResolvedValue("queued");
     const result = await sendPromptTo("chat1", "hello");
     expect(result).toBe("queued");
+  });
+
+  it("passes 'starting' through as a value — the caller branches on it, never on prose", async () => {
+    mockSendPromptDispatch.mockResolvedValue("starting");
+    const result = await sendPromptTo("chat1", "hello");
+    expect(result).toBe("starting");
   });
 
   it("forwards explicit opts (model + attachments) to the action", async () => {

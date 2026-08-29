@@ -9,7 +9,9 @@
 // Errors surface through send-state.ts (which drives the send-button
 // error face + tooltip). There is no inline error card; the button is
 // the single error surface, and it stays clickable so the next Send is the
-// retry. 409 busy is a handshake, not an error — callers steer instead.
+// retry. A plain 409 busy is a handshake, not an error — callers steer
+// instead; a 409 whose envelope carries `reason: "starting"` is a real
+// failure the caller renders through the send-error face (see SendResult).
 //
 // Reconnect model:
 //   - EventSource's native auto-reconnect covers transient drops with
@@ -144,6 +146,12 @@ export interface SendResult {
   status: number;
   /** Server error message, if any. */
   error?: string;
+  /** Machine-readable failure class from the error envelope's additive
+   *  `reason` field (internal/command writeErr), so a caller branches on a
+   *  VALUE rather than on error prose. One reason exists today: "starting",
+   *  on the 409 prompt refusal whose admission holder cannot receive a steer
+   *  (a cold spawn, a shell, a prime). */
+  reason?: string;
   /** Structured error code for non-HTTP failures. */
   code?: string;
   /** The success body, undecoded. Present only when the response parsed as JSON.
@@ -626,23 +634,38 @@ class TransportController {
       }
 
       let errMsg = `HTTP ${String(r.status)}`;
+      let reason: string | undefined;
       try {
         const d: unknown = await r.json();
         if (hasErrorString(d)) {
           errMsg = d.error;
         }
+        // Lifted beside the error string: the envelope's additive `reason`
+        // field is the machine-readable failure class (see SendResult.reason).
+        const rawReason = (d as { reason?: unknown }).reason;
+        if (typeof rawReason === "string" && rawReason !== "") {
+          reason = rawReason;
+        }
       } catch {
         /* non-JSON */
       }
-      // 409 is a queue signal — never reported as a failure.
-      // Otherwise honour the caller's reportSendState preference
-      // (defaults to true for legacy direct callers; transportAction
-      // sets it false to avoid double-feedback with its toast).
+      // No failure toast for ANY 409. A plain 409 is a queue signal the caller
+      // converts to a steer, and a 409 with reason "starting" IS a failure —
+      // carved out of that collapse via `reason` on the result — but its
+      // surface is the send-error face submit.ts renders through send-state,
+      // not a toast. Otherwise honour the caller's reportSendState preference
+      // (defaults to true for legacy direct callers; transportAction sets it
+      // false to avoid double-feedback with its toast).
       const reportSendState = opts?.reportSendState ?? true;
       if (r.status !== 409 && reportSendState) {
         reportFailure(chatIDOf(cmd), errMsg);
       }
-      return { ok: false, status: r.status, error: errMsg };
+      return {
+        ok: false,
+        status: r.status,
+        error: errMsg,
+        ...(reason !== undefined ? { reason } : {}),
+      };
     } catch (e: unknown) {
       const err = e instanceof Error ? e : null;
       let msg: string;

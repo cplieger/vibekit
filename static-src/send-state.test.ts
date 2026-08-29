@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { SendState } from "./prompt-input.js";
 import { setSendState } from "./prompt-input.js";
-import { setSSEStatus, setAgentDown, clearAgentDown } from "./send-state.js";
+import { setSSEStatus, setAgentDown, clearAgentDown, reportSendRefused } from "./send-state.js";
 import { setSessions, setActive, setThinking, recordSteerQueued } from "./store.js";
 import type { Session } from "./types.js";
 
@@ -159,6 +159,64 @@ describe("send-state auto-tracking", () => {
     setThinking(id, true);
     expect(pushed).toHaveBeenCalledTimes(1);
     expect(lastPushed()).toEqual({ kind: "streaming" });
+  });
+});
+
+// The third face state: a refused send (409 reason:"starting"). submit.ts owns
+// the copy; this module only renders it, on the same rung and with the same
+// lifecycle as the unreachable-agent state — the next attempt clears it via
+// clearAgentDown, and a chat switch drops it because the refusal was one
+// chat's.
+describe("send-state refused-send face", () => {
+  it("renders the caller's copy through the error surface", () => {
+    const id = "c1";
+    setSessions([makeSession(id)]);
+    setActive(id);
+    setSSEStatus("connected");
+
+    reportSendRefused("The chat is busy right now — send again to retry");
+    expect(lastPushed()).toEqual({
+      kind: "error",
+      reason: "The chat is busy right now — send again to retry",
+    });
+  });
+
+  it("outranks streaming, exactly like the agent-down rung", () => {
+    // The store may read busy for the holder's own turn (SSE turn_state); the
+    // refusal face must still win, or the reader never learns their send was
+    // refused.
+    const id = "c1";
+    setSessions([makeSession(id)]);
+    setActive(id);
+    setSSEStatus("connected");
+    setThinking(id, true);
+    expect(lastPushed()).toEqual({ kind: "streaming" });
+
+    reportSendRefused("The chat is busy right now — send again to retry");
+    expect(lastPushed()?.kind).toBe("error");
+  });
+
+  it("clears on the next attempt (clearAgentDown), settling back to idle", () => {
+    const id = "c1";
+    setSessions([makeSession(id)]);
+    setActive(id);
+    setSSEStatus("connected");
+    reportSendRefused("The chat is busy right now — send again to retry");
+
+    // What submitPrompt does at the top of every attempt.
+    clearAgentDown();
+    expect(lastPushed()).toEqual({ kind: "idle" });
+  });
+
+  it("does not survive a chat switch — the refusal belonged to one chat", () => {
+    setSessions([makeSession("c1"), makeSession("c2")]);
+    setActive("c1");
+    setSSEStatus("connected");
+    reportSendRefused("The chat is busy right now — send again to retry");
+    expect(lastPushed()?.kind).toBe("error");
+
+    setActive("c2");
+    expect(lastPushed()).toEqual({ kind: "idle" });
   });
 });
 
