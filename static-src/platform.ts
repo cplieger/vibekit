@@ -12,19 +12,38 @@ export const isIOS: boolean =
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
 // ---------------------------------------------------------------------------
-// guardAction — debounce wrapper that prevents double-fire on iOS.
-// Returns a function that calls `fn` at most once per `ms` milliseconds.
+// guardDuplicateActivation — absorbs duplicated pointer→click dispatch of ONE
+// physical activation; the 300 ms tap-delay class is already eliminated by
+// `touch-action: manipulation`. Keyboard activations are never filtered.
 // ---------------------------------------------------------------------------
 
-export function guardAction(fn: () => void, ms = 400): () => void {
-  let last = 0;
-  return () => {
-    const now = Date.now();
-    if (now - last < ms) {
-      return;
+// A duplicate dispatch replays one gesture within a few ms; no deliberate human
+// input falls under 50 ms (fastest sustained clicking is ~60 ms+ apart).
+export const GHOST_CLICK_MS = 50;
+
+/**
+ * Wraps an activation handler, absorbing only mechanical duplicates: same
+ * pointerType, pointer-initiated (detail > 0), arriving within GHOST_CLICK_MS
+ * of the previously accepted pointer activation. A keyboard activation
+ * (detail 0 / no pointerType) always dispatches. `now` is a test seam.
+ */
+export function guardDuplicateActivation(
+  fn: (e: MouseEvent) => void,
+  now: () => number = () => performance.now(),
+): (e: MouseEvent) => void {
+  let lastPointerType = "";
+  let lastAcceptedAt = -Infinity;
+  return (e: MouseEvent): void => {
+    const pointerType = e instanceof PointerEvent ? e.pointerType : "";
+    if (e.detail > 0 && pointerType !== "") {
+      const t = now();
+      if (pointerType === lastPointerType && t - lastAcceptedAt < GHOST_CLICK_MS) {
+        return;
+      }
+      lastPointerType = pointerType;
+      lastAcceptedAt = t;
     }
-    last = now;
-    fn();
+    fn(e);
   };
 }
 

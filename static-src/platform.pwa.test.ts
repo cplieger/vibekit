@@ -1,9 +1,10 @@
 //
 // PLATFORM DETECTION AND THE TWO PWA-ONLY GESTURES.
 //
-// `platform.test.ts` covers `guardAction`, which is a pure debounce. This file
-// covers the other three exports, all of which read the PLATFORM rather than
-// their arguments: the `isStandalone` / `isIOS` constants, the iOS keyboard
+// `platform.test.ts` covers `guardDuplicateActivation`, which is pure logic
+// over its event argument and injected clock. This file covers the other three
+// exports, all of which read the PLATFORM rather than their arguments: the
+// `isStandalone` / `isIOS` constants, the iOS keyboard
 // viewport fix, and the sidebar swipe gestures.
 //
 // Every test here loads the module DYNAMICALLY, after stubbing the globals it

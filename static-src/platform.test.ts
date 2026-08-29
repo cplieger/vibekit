@@ -1,97 +1,104 @@
-// Table-driven tests for platform.ts guardAction debounce behavior.
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { guardAction } from "./platform.js";
+// Tests for platform.ts guardDuplicateActivation: the duplicate-pointer-dispatch
+// guard in front of activation handlers.
+//
+// Events are real PointerEvent / MouseEvent objects carrying the pointerType and
+// detail the browser stamps on each activation shape (a pointer click has
+// detail > 0 and a concrete pointerType; a keyboard activation has detail 0 and
+// an empty pointerType). The guard's clock is its injectable `now` parameter, so
+// arrival times are hand-cranked numbers rather than races against real time —
+// an event's own timeStamp is read-only and cannot be aimed.
+import { describe, expect, it, vi } from "vitest";
+import { guardDuplicateActivation } from "./platform.js";
 
-describe("guardAction", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
+/** A pointer-initiated click: what a mouse/touch/pen press dispatches. */
+function pointerClick(pointerType: "mouse" | "touch" | "pen"): PointerEvent {
+  return new PointerEvent("click", { pointerType, detail: 1 });
+}
+
+/** A keyboard activation: Enter/Space on a button synthesizes a click with
+ *  detail 0 and no pointerType. */
+function keyboardClick(): PointerEvent {
+  return new PointerEvent("click", { pointerType: "", detail: 0 });
+}
+
+/** A guarded spy on a hand-cranked clock: `at(t, e)` delivers `e` at time t. */
+function harness(): {
+  fn: ReturnType<typeof vi.fn>;
+  at: (time: number, e: MouseEvent) => void;
+} {
+  let t = 0;
+  const fn = vi.fn();
+  const guarded = guardDuplicateActivation(fn, () => t);
+  return {
+    fn,
+    at(time: number, e: MouseEvent): void {
+      t = time;
+      guarded(e);
+    },
+  };
+}
+
+describe("guardDuplicateActivation", () => {
+  it("absorbs a duplicate mouse dispatch 40 ms after the accepted click", () => {
+    const { fn, at } = harness();
+    const accepted = pointerClick("mouse");
+    at(0, accepted);
+    at(40, pointerClick("mouse"));
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn).toHaveBeenCalledWith(accepted);
   });
-  afterEach(() => {
-    vi.useRealTimers();
+
+  it("dispatches a second mouse click 60 ms after the first", () => {
+    const { fn, at } = harness();
+    at(0, pointerClick("mouse"));
+    at(60, pointerClick("mouse"));
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 
-  const cases = [
-    {
-      name: "first call fires immediately",
-      ms: 400,
-      calls: [{ advanceMs: 0 }],
-      expectedCalls: 1,
-    },
-    {
-      name: "second call within window is suppressed",
-      ms: 400,
-      calls: [{ advanceMs: 0 }, { advanceMs: 200 }],
-      expectedCalls: 1,
-    },
-    {
-      name: "call after window expires fires again",
-      ms: 400,
-      calls: [{ advanceMs: 0 }, { advanceMs: 401 }],
-      expectedCalls: 2,
-    },
-    {
-      name: "call exactly at window boundary is suppressed",
-      ms: 400,
-      calls: [{ advanceMs: 0 }, { advanceMs: 399 }],
-      expectedCalls: 1,
-    },
-    {
-      // The window is exclusive at its end: the guard suppresses a call that
-      // lands INSIDE it, and 400ms after the last fire is no longer inside.
-      name: "call exactly ms after the last fire is allowed through",
-      ms: 400,
-      calls: [{ advanceMs: 0 }, { advanceMs: 400 }],
-      expectedCalls: 2,
-    },
-    {
-      name: "custom ms parameter is respected",
-      ms: 1000,
-      calls: [{ advanceMs: 0 }, { advanceMs: 500 }, { advanceMs: 1001 }],
-      expectedCalls: 2,
-    },
-    {
-      name: "multiple calls after window each fire",
-      ms: 400,
-      calls: [{ advanceMs: 0 }, { advanceMs: 500 }, { advanceMs: 1000 }],
-      expectedCalls: 3,
-    },
-    {
-      name: "rapid burst only fires once",
-      ms: 400,
-      calls: [
-        { advanceMs: 0 },
-        { advanceMs: 50 },
-        { advanceMs: 100 },
-        { advanceMs: 150 },
-        { advanceMs: 200 },
-      ],
-      expectedCalls: 1,
-    },
-    {
-      name: "default ms is 400 when not specified",
-      ms: undefined,
-      calls: [{ advanceMs: 0 }, { advanceMs: 399 }, { advanceMs: 401 }],
-      expectedCalls: 2,
-    },
-  ] as const;
+  it("dispatches a click landing exactly on the 50 ms window boundary", () => {
+    // The window is exclusive at its end: a duplicate is STRICTLY inside it.
+    const { fn, at } = harness();
+    at(0, pointerClick("mouse"));
+    at(50, pointerClick("mouse"));
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 
-  for (const tc of cases) {
-    it(tc.name, () => {
-      expect.assertions(1);
-      const fn = vi.fn();
-      const guarded = tc.ms === undefined ? guardAction(fn) : guardAction(fn, tc.ms);
+  it("never filters keyboard activations, even 40 ms apart", () => {
+    const { fn, at } = harness();
+    at(0, keyboardClick());
+    at(40, keyboardClick());
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 
-      let elapsed = 0;
-      for (const call of tc.calls) {
-        const advance = call.advanceMs - elapsed;
-        if (advance > 0) {
-          vi.advanceTimersByTime(advance);
-        }
-        elapsed = call.advanceMs;
-        guarded();
-      }
+  it("never filters a keyboard activation arriving 40 ms after a pointer click", () => {
+    const { fn, at } = harness();
+    at(0, pointerClick("mouse"));
+    at(40, keyboardClick());
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 
-      expect(fn).toHaveBeenCalledTimes(tc.expectedCalls);
-    });
-  }
+  it("does not treat a different pointer type as a duplicate", () => {
+    // A ghost dispatch replays ONE physical gesture, so it arrives with the
+    // same pointerType; mouse-then-touch is two inputs, not a duplicate.
+    const { fn, at } = harness();
+    at(0, pointerClick("mouse"));
+    at(40, pointerClick("touch"));
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("dispatches every deliberate click in a 100 ms series", () => {
+    const { fn, at } = harness();
+    for (const t of [0, 100, 200, 300, 400]) {
+      at(t, pointerClick("mouse"));
+    }
+    expect(fn).toHaveBeenCalledTimes(5);
+  });
+
+  it("anchors the ghost window on the accepted activation, not the absorbed duplicate", () => {
+    const { fn, at } = harness();
+    at(0, pointerClick("mouse"));
+    at(40, pointerClick("mouse")); // absorbed; must NOT restart the window
+    at(80, pointerClick("mouse")); // 80 ms past the ACCEPTED click → dispatched
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 });
