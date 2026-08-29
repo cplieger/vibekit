@@ -49,7 +49,20 @@ export interface AssistantBubble {
  * blinking block caret, not a pulsing dot (css/13-messages.css). Replay renders
  * the full markdown one-shot.
  */
-export function buildAssistantBubble(initial: string, live: boolean): AssistantBubble {
+export interface AssistantBubbleOpts {
+  /** Fired exactly once, when the bubble seals — the moment `.streaming` (the
+   *  wash and the caret) drops. The live-anchor registry hangs off this: the
+   *  composition layer registers a top-level live bubble at mount and must
+   *  clear it at the same moment the class goes, whichever path sealed it
+   *  (tail moved, turn finalized, unmount). */
+  onSeal?: (root: HTMLElement) => void;
+}
+
+export function buildAssistantBubble(
+  initial: string,
+  live: boolean,
+  opts?: AssistantBubbleOpts,
+): AssistantBubble {
   const root = el("div", { className: "message assistant" }) as HTMLDivElement;
   let stream: MarkdownStream | null = null;
   let text = ""; // what the parser has been given
@@ -91,11 +104,16 @@ export function buildAssistantBubble(initial: string, live: boolean): AssistantB
   };
 
   /** Finalize the markdown stream and drop `.streaming` — the wash and the
-   *  caret go with it. Idempotent. */
+   *  caret go with it. Idempotent; `onSeal` fires on the first call only. */
+  let sealed = false;
   const seal = (): void => {
     stream?.end();
     stream = null;
     root.classList.remove("streaming");
+    if (!sealed) {
+      sealed = true;
+      opts?.onSeal?.(root);
+    }
   };
 
   const reveal: Reveal | null = live

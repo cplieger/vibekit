@@ -84,7 +84,7 @@ import {
   resetBlockRenders,
   refreshGroupHeader,
   initBlockRenderer,
-  liveTextAnchor,
+  getLiveAnchor,
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
@@ -349,10 +349,11 @@ function initFollowModel(): void {
   // the top — an edge case before evidence went full width, and the common case
   // after. Tall evidence stays below the fold until the reader goes to it.
   //
-  // WHICH bubble is `liveTextAnchor`'s call, in messages-blocks.ts: that module
-  // owns the `.streaming` class and the delegate boxes, and both of its rules are
-  // about never handing back a bubble that sits above the live edge.
-  setAnchorProvider(() => liveTextAnchor(messagesEl));
+  // WHICH bubble is the anchor registry's call, in messages-blocks.ts: that
+  // module owns the `.streaming` class and the delegate boxes, and both of its
+  // rules are about never handing back a bubble that sits above the live edge.
+  // A registry read, not a selector walk — the follow path runs per frame.
+  setAnchorProvider(getLiveAnchor);
   onReadingStateChange((next) => {
     if (next === "reading") {
       followBaseline = blockCount(getActive()?.messages ?? []);

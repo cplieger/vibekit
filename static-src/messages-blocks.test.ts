@@ -13,7 +13,7 @@
 // tests rather than a corrected sentence.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Message, ToolCall } from "./types.js";
 
 // The dispatcher's import graph reaches the shared DOM registry, which throws on
@@ -34,8 +34,9 @@ const {
   buildAssistantBody,
   updateAssistantBody,
   finalizeAssistantBody,
-  liveTextAnchor,
+  getLiveAnchor,
   disposeAssistantBody,
+  resetBlockRenders,
 } = await import("./messages-blocks.js");
 
 /** The chat every render in this file belongs to. It is part of the per-tool
@@ -755,10 +756,18 @@ describe("exactly one streaming caret, and it ends", () => {
 // The pin puts the anchor's bottom at the viewport's bottom, so an anchor that
 // sits ABOVE the live edge parks the reader mid-transcript with the newest work
 // off-screen — and, before the scroll listener learned to ignore the controller's
-// own landing, latched the auto-scroll off entirely.
+// own landing, latched the auto-scroll off entirely. The anchor is a REGISTRY
+// maintained at the `.streaming` grant/seal sites, so the follow path reads one
+// field instead of walking the tree per frame.
 // ---------------------------------------------------------------------------
-describe("liveTextAnchor", () => {
+describe("getLiveAnchor", () => {
   const CARETS = ".message.assistant.streaming";
+
+  // The registry is module state written by every render in this file, so each
+  // case starts from a clean slate rather than from the previous case's caret.
+  beforeEach(() => {
+    resetBlockRenders();
+  });
 
   function liveMsg(blocks: Record<string, unknown>[]): Message {
     return {
@@ -773,7 +782,7 @@ describe("liveTextAnchor", () => {
   it("has no anchor when nothing is streaming", () => {
     const wrap = document.createElement("div");
     buildAssistantBody(wrap, liveMsg([text("done")]), CHAT_ID, false);
-    expect(liveTextAnchor(wrap)).toBeNull();
+    expect(getLiveAnchor()).toBeNull();
   });
 
   it("takes the LAST live bubble, not the first in document order", () => {
@@ -787,7 +796,60 @@ describe("liveTextAnchor", () => {
 
     const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
     expect(live).toHaveLength(2);
-    expect(liveTextAnchor(wrap)).toBe(live[1]);
+    expect(getLiveAnchor()).toBe(live[1]);
+  });
+
+  it("falls back to the older split-turn survivor when the newest seals", () => {
+    // The registry's clear is identity-guarded and falls back by scanning the
+    // render map: when the NEWER message's bubble finalizes first, the older
+    // still-streaming bubble takes the slot back — the case the tree walk
+    // solved by taking the LAST match.
+    const wrap = document.createElement("div");
+    const older = liveMsg([text("the earlier message")]);
+    const newer = liveMsg([text("the message that finalizes first")]);
+    buildAssistantBody(wrap, older, CHAT_ID, true);
+    buildAssistantBody(wrap, newer, CHAT_ID, true);
+
+    finalizeAssistantBody(newer.id);
+    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
+    expect(live).toHaveLength(1);
+    expect(getLiveAnchor()).toBe(live[0]);
+  });
+
+  it("clears for good when every bubble has sealed", () => {
+    const wrap = document.createElement("div");
+    const m = liveMsg([text("prose")]);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    expect(getLiveAnchor()).not.toBeNull();
+
+    finalizeAssistantBody(m.id);
+    expect(getLiveAnchor()).toBeNull();
+  });
+
+  it("a disposed render releases its anchor", () => {
+    const wrap = document.createElement("div");
+    const m = liveMsg([text("prose")]);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    expect(getLiveAnchor()).not.toBeNull();
+
+    disposeAssistantBody(m.id);
+    expect(getLiveAnchor()).toBeNull();
+  });
+
+  it("reads the registry, not the tree — no selector call on the follow path", () => {
+    const wrap = document.createElement("div");
+    buildAssistantBody(wrap, liveMsg([text("prose")]), CHAT_ID, true);
+
+    const spyAll = vi.spyOn(document, "querySelectorAll");
+    const spyWrap = vi.spyOn(wrap, "querySelectorAll");
+    try {
+      expect(getLiveAnchor()).not.toBeNull();
+      expect(spyAll).not.toHaveBeenCalled();
+      expect(spyWrap).not.toHaveBeenCalled();
+    } finally {
+      spyAll.mockRestore();
+      spyWrap.mockRestore();
+    }
   });
 
   it("has no anchor when only a DELEGATE is streaming", () => {
@@ -807,7 +869,7 @@ describe("liveTextAnchor", () => {
     const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
     expect(live).toHaveLength(1);
     expect(live[0]?.closest(".subagent-body")).not.toBeNull();
-    expect(liveTextAnchor(wrap)).toBeNull();
+    expect(getLiveAnchor()).toBeNull();
   });
 
   it("prefers a top-level bubble over a later delegate bubble", () => {
@@ -826,6 +888,6 @@ describe("liveTextAnchor", () => {
     const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
     expect(live).toHaveLength(2);
     expect(live[1]?.closest(".subagent-body")).toBeNull();
-    expect(liveTextAnchor(wrap)).toBe(live[1]);
+    expect(getLiveAnchor()).toBe(live[1]);
   });
 });
