@@ -93,13 +93,30 @@ export function blockKey(messageID: string, blockIndex: number): string {
   return `${messageID}:${String(blockIndex)}`;
 }
 
+/** Keys minted per message across BOTH block-signal maps, so a message's
+ *  disposal can clear its signals without enumerating the maps (SignalMap
+ *  exposes no key walk). One set serves both maps: text and thinking share the
+ *  key format, and clearing a key the other map never held is a no-op. */
+const blockSigKeysByMsg = new Map<string, Set<string>>();
+
+function noteBlockKey(messageID: string, key: string): void {
+  let keys = blockSigKeysByMsg.get(messageID);
+  if (keys === undefined) {
+    keys = new Set();
+    blockSigKeysByMsg.set(messageID, keys);
+  }
+  keys.add(key);
+}
+
 export function ensureBlockTextSig(
   messageID: string,
   blockIndex: number,
   initial: string,
 ): Signal<BlockSignalValue> {
+  const key = blockKey(messageID, blockIndex);
+  noteBlockKey(messageID, key);
   // A signal minted at mount carries no growth: `initial` is already on screen.
-  return blockTextSigs.ensure(blockKey(messageID, blockIndex), { full: initial, delta: "" });
+  return blockTextSigs.ensure(key, { full: initial, delta: "" });
 }
 
 export function ensureBlockThinkingSig(
@@ -107,7 +124,9 @@ export function ensureBlockThinkingSig(
   blockIndex: number,
   initial: string,
 ): Signal<BlockSignalValue> {
-  return blockThinkingSigs.ensure(blockKey(messageID, blockIndex), { full: initial, delta: "" });
+  const key = blockKey(messageID, blockIndex);
+  noteBlockKey(messageID, key);
+  return blockThinkingSigs.ensure(key, { full: initial, delta: "" });
 }
 
 export function clearStreamingSig(messageID: string): void {
@@ -122,10 +141,26 @@ export function clearToolCallSig(chatID: string, toolID: string): void {
   toolCallSigs.clear(toolCallSigKey(chatID, toolID));
 }
 
-/** Drop every per-(message, block-index) streaming signal. Called on chat
- *  switch / full teardown so block signals don't accumulate across chats
- *  (the per-key set isn't cheaply enumerable, so this is a wholesale wipe). */
+/** Drop one message's per-block streaming signals. The per-message half of
+ *  `clearAllBlockSigs`: without it a block signal lives until the last chat
+ *  closes, one entry per streamed block, for the whole page's life. */
+export function clearBlockSigsFor(messageID: string): void {
+  const keys = blockSigKeysByMsg.get(messageID);
+  if (keys === undefined) {
+    return;
+  }
+  for (const k of keys) {
+    blockTextSigs.clear(k);
+    blockThinkingSigs.clear(k);
+  }
+  blockSigKeysByMsg.delete(messageID);
+}
+
+/** Drop every per-(message, block-index) streaming signal. Called on full
+ *  teardown (last chat closed); per-message disposal goes through
+ *  `clearBlockSigsFor`. */
 export function clearAllBlockSigs(): void {
   blockTextSigs.clearAll();
   blockThinkingSigs.clearAll();
+  blockSigKeysByMsg.clear();
 }

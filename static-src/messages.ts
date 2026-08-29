@@ -32,7 +32,12 @@ import {
   renderCauseOf,
   steerMarks,
 } from "./store.js";
-import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store-signals.js";
+import {
+  clearStreamingSig,
+  clearReasoningSig,
+  clearBlockSigsFor,
+  clearAllBlockSigs,
+} from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
@@ -764,6 +769,10 @@ function disposeMessage(key: string): void {
   // (cleanup only — the message row is being removed).
   finalizeAssistantBody(key);
   disposeAssistantBody(key);
+  // The row's per-block streaming signals go with it: `teardownAll` only runs
+  // when the LAST chat closes, so signals left here would outlive the message
+  // for the rest of the page.
+  clearBlockSigsFor(key);
   messageStates.delete(key);
   streamingIds.delete(key);
 }

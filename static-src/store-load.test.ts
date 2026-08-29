@@ -231,3 +231,60 @@ describe("loadMessages pagination dedupe", () => {
     expect(ids).toEqual(["c"]);
   });
 });
+
+describe("residency", () => {
+  // Only a successful NEWEST-page load may claim `loaded`: it is what the
+  // activation refetch gate trusts, so nothing weaker (background ingest, an
+  // older-page prepend, a failed fetch) can be allowed to set it.
+  it("marks the chat loaded on a successful newest-page load", async () => {
+    seedSession("c1", []);
+    sessions.get("c1")!.residency = "evicted";
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("a", 1)],
+      has_more: false,
+    });
+
+    const ok = await loadMessages("c1");
+    expect(ok).toBe(true);
+    expect(sessions.get("c1")?.residency).toBe("loaded");
+  });
+
+  it("an older-page prepend asserts nothing about residency", async () => {
+    seedSession("c1", [msg("m2", 2)]);
+    sessions.get("c1")!.residency = "partial";
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+    });
+
+    await loadMessages("c1", "m2");
+    expect(sessions.get("c1")?.residency).toBe("partial");
+  });
+
+  it("a failed newest-page load claims nothing", async () => {
+    seedSession("c1", []);
+    sessions.get("c1")!.residency = "evicted";
+    mockApiGetTyped.mockResolvedValue(null);
+
+    const ok = await loadMessages("c1");
+    expect(ok).toBe(false);
+    expect(sessions.get("c1")?.residency).toBe("evicted");
+  });
+
+  it("loadList carries residency across the header rebuild", async () => {
+    // The header list rebuilds Session objects from the server's headers, and
+    // residency is a client-only fact about the carried-over window: dropping
+    // it would make every reconnect read a loaded chat as never-loaded.
+    seedSession("c1", [msg("a", 1)]);
+    sessions.get("c1")!.residency = "loaded";
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "One", message_count: 1, usage: {} }],
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed[0]?.residency).toBe("loaded");
+  });
+});

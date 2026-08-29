@@ -318,6 +318,53 @@ func TestSweepOrphanedRuns_ReleasesTheLeaseOfARunThatIsOver(t *testing.T) {
 	}
 }
 
+// TestSweepOrphanedRuns_ReleasesAnAgentOriginLeaseWhoseRunIsOver is the
+// bookkeeping arm applied to the origin it used to skip, and the mechanism
+// behind "terminal runs are absent from GET /api/runs/live".
+//
+// The agent exclusion exists to avoid destroying an agent's work, and the
+// bookkeeping arm cancels nothing — it releases the lease of a run KAS reports
+// terminal or unknown. When the exclusion sat above BOTH arms, an agent-origin
+// lease whose terminal frame was missed (the launching chat's bridge was torn
+// down by a close, delete or model-switch fallback before the frame arrived)
+// was permanent: presence stopped meaning "non-terminal", and with the lease
+// carrying the launching chat it would hold that chat exempt from client
+// eviction forever.
+func TestSweepOrphanedRuns_ReleasesAnAgentOriginLeaseWhoseRunIsOver(t *testing.T) {
+	for name, rows := range map[string][]map[string]any{
+		"KAS reports it completed": {{"workflowId": "wf_1", "name": "publish", "status": "completed"}},
+		"KAS does not know it":     {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			br.callResults = map[string]json.RawMessage{
+				methodKiroWorkflowList:   kasRuns(t, rows...),
+				methodKiroWorkflowCancel: json.RawMessage(`{}`),
+			}
+			if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+				WorkflowID: "wf_1", Recipe: "publish", ChatID: "c-live", Origin: runlease.OriginAgent,
+			}); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+
+			h.runs.SweepOrphaned(t.Context())
+
+			if _, held := h.runs.lease("wf_1"); held {
+				t.Error("an agent-origin lease outlived its run; the recipe reads busy and the " +
+					"launching chat stays exempt from eviction until the next boot")
+			}
+			// The exclusion still guards the CANCEL: bookkeeping must not have
+			// turned into an ending.
+			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+				t.Fatal("the sweep CANCELLED an agent's run while releasing its lease")
+			}
+			if got := h.runs.endReason("wf_1"); got != "" {
+				t.Errorf("a finished run was recorded as %q; nothing was cancelled", got)
+			}
+		})
+	}
+}
+
 // TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails: at boot the
 // likeliest cause is that kiro-cli is still installing. The admission backstop is
 // the second chance, and it runs with a bridge that answered.

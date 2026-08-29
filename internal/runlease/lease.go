@@ -10,7 +10,7 @@
 // One lease per run vibekit itself put on the wire. That scoping is the whole
 // safety property of the restart-orphan sweep: a lease exists if and only if
 // vibekit minted one, so a run launched from the TUI can never be swept, and an
-// agent-launched run is excluded by its own origin.
+// agent-launched run is excluded from the sweep's cancel arm by its own origin.
 package runlease
 
 import "time"
@@ -23,8 +23,9 @@ import "time"
 //   - OriginManual: bounded by the ceiling, attended, sweepable.
 //   - OriginAgent: bounded by the ceiling and NOTHING else. KAS parents such a
 //     run on the calling chat's session, so it is chat-parented by construction
-//     and belongs to the chat rehydrate's resume sweep — which is why it is
-//     excluded from the orphan sweep rather than merely unlikely to match.
+//     and belongs to the chat rehydrate's resume sweep — which is why the orphan
+//     sweep's CANCEL arm excludes it rather than merely being unlikely to match.
+//     Its lease is still released like any other once the run is over.
 type Origin string
 
 // The three launches vibekit knows about. There is deliberately no `tui` value:
@@ -72,6 +73,14 @@ type Lease struct {
 	SlotAt time.Time `json:"slot_at,omitzero"`
 	// WorkflowID is KAS's id for the run, and the lease's key.
 	WorkflowID string `json:"workflow_id"`
+	// ChatID is the chat whose agent launched the run, stamped where the origin
+	// is observed (the run_start frame's carrier). Empty means "no chat to
+	// exempt": the parentless launch verbs (manual, scheduled) mint with no
+	// chat BY DESIGN, and a lease written before this field existed decodes
+	// the same way. ADDITIVE at Version 1 deliberately — a version bump would
+	// make NewStore discard the whole file at load, stripping every live lease
+	// of its deadline for a field whose absence already means the right thing.
+	ChatID string `json:"chat_id,omitempty"`
 	// Recipe is the run's recipe NAME, which is what the single-run rule keys
 	// on (KAS's run list reports the same string).
 	Recipe string `json:"recipe"`

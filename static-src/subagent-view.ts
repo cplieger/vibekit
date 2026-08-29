@@ -45,7 +45,7 @@
 // ---------------------------------------------------------------------------
 
 import { el, effect, signal } from "@cplieger/reactive";
-import { openSubagentTab } from "./tabs.js";
+import { hasTab, openSubagentTab } from "./tabs.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight } from "./exec-view/status.js";
 import type { ExecNode } from "./exec-view/model.js";
@@ -60,6 +60,7 @@ import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
 import { ICON_TAB_AGENT } from "./icons.js";
 import { blockShape, shapeExtends, sliceSubagent, type SubagentSlice } from "./subagent-slice.js";
 import { subagentPath, subagentToExec } from "./subagent-exec-source.js";
+import { subagentRef } from "./tab-materialize.js";
 import type { Message } from "./types.js";
 
 /** The synthetic message id the delegate's detached render is keyed under.
@@ -288,4 +289,26 @@ function syntheticMessage(id: string, slice: SubagentSlice): Message {
  *  restored on boot and a tab opened from a card read the same. */
 export function openSubagentView(chatID: string, subtaskID: string): void {
   void openSubagentTab(chatID, subtaskID);
+}
+
+/** Whether an open subagent tab projects `chatID`'s transcript — the eviction
+ *  sweep's exemption, registered by app.ts through `registerEvictionExemption`
+ *  (store.ts must not import tabs.ts, so the composition root wires it).
+ *
+ *  Answered from the RESIDENT blocks: a subagent tab's ref is
+ *  `chatID/subtaskID`, and the subtask ids reachable from this chat are the
+ *  ones on its blocks. A tab for a delegate whose turn is NOT resident does not
+ *  hold the window — its page already renders the not-resident notice, so
+ *  eviction changes nothing it was showing. */
+export function subagentTabProjectsChat(chatID: string): boolean {
+  const msgs = get(chatID)?.messages ?? [];
+  for (const m of msgs) {
+    for (const b of m.blocks ?? []) {
+      const st = b.agent_subtask_id;
+      if (st !== undefined && st !== "" && hasTab("subagent", subagentRef(chatID, st))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }

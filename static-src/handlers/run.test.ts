@@ -10,7 +10,12 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-vi.mock("../run-store.js", () => ({ invalidateRun: vi.fn(), noteRunChat: vi.fn() }));
+vi.mock("../run-store.js", () => ({
+  invalidateRun: vi.fn(),
+  noteRunChat: vi.fn(),
+  noteRunLive: vi.fn(),
+  noteRunSettled: vi.fn(),
+}));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
 // The proactive sub-tab opener, the completion auto-close, and the live step
 // transcript. Their own rules (nest under the launching chat, do not activate, do
@@ -27,13 +32,15 @@ vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() 
 import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
-import { invalidateRun, noteRunChat } from "../run-store.js";
+import { invalidateRun, noteRunChat, noteRunLive, noteRunSettled } from "../run-store.js";
 import { trackRun } from "../run-dots.js";
 import { openRunSubTab, autoCloseRunSubTab, applyRunStep } from "../run-view.js";
 import { info, success, error } from "../toast.js";
 
 const invalidate = vi.mocked(invalidateRun);
 const noteChat = vi.mocked(noteRunChat);
+const noteLive = vi.mocked(noteRunLive);
+const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
 const openSubTab = vi.mocked(openRunSubTab);
 const autoClose = vi.mocked(autoCloseRunSubTab);
@@ -59,6 +66,8 @@ onBus(BUS_RUNS_CHANGED, () => {
 beforeEach(() => {
   invalidate.mockClear();
   noteChat.mockClear();
+  noteLive.mockClear();
+  noteSettled.mockClear();
   track.mockClear();
   openSubTab.mockClear();
   autoClose.mockClear();
@@ -160,6 +169,33 @@ describe("run SSE handlers", () => {
   it("passes the workflow id through so a surface showing another run ignores it", () => {
     send("run_progress", { workflow_id: "wf_other", kind: "node_start" });
     expect(invalidate).toHaveBeenCalledWith("wf_other");
+  });
+
+  // The live-runs inventory feeds the eviction sweep's exemption: a chat with a
+  // run in flight must not lose its transcript window. Both live-marking events
+  // carry the chat — run_progress too, because run_started is not replayed to a
+  // client that connects mid-run.
+  it("records the run LIVE with its chat on start and on progress", () => {
+    send("run_started", { workflow_id: "wf_live", name: "publish" });
+    expect(noteLive).toHaveBeenCalledWith("wf_live", "c1");
+    send("run_progress", { workflow_id: "wf_live", kind: "node_start" });
+    expect(noteLive).toHaveBeenCalledTimes(2);
+    expect(noteSettled).not.toHaveBeenCalled();
+  });
+
+  it("settles the run on every terminal finish, recognised or not", () => {
+    for (const status of ["completed", "failed", "aborted", "cancelled", "exploded"]) {
+      noteSettled.mockClear();
+      send("run_finished", { workflow_id: "wf_end", status });
+      expect(noteSettled, status).toHaveBeenCalledWith("wf_end");
+    }
+  });
+
+  it("keeps a PAUSED run live: it is stopped waiting, not over", () => {
+    // The server's lease survives a pause the same way — presence means
+    // non-terminal, and a paused chat-parented run still exempts its chat.
+    send("run_finished", { workflow_id: "wf_pause", status: "paused" });
+    expect(noteSettled).not.toHaveBeenCalled();
   });
 
   // The finish frame's other half: the tab the run opened for itself goes away with

@@ -42,6 +42,7 @@ import {
   blockTextSigs,
   blockThinkingSigs,
   blockKey,
+  clearBlockSigsFor,
   toolCallSigs,
   toolCallSigKey,
 } from "./store-signals.js";
@@ -253,6 +254,155 @@ export function setActive(id: string): void {
   // chat's #messages). Without this the renderer would keep the previous
   // chat's DOM until something else bumped a version.
   activeId.value = id;
+  stampActivity(id);
+}
+
+// --- Eviction: reclaim idle background transcripts ---
+//
+// A long-lived tab accumulates one paginated message window per chat ever
+// opened. The sweep below evicts the window of a chat nobody can be reading —
+// the session ROW survives with its header data, and `residency` is what makes
+// the next activation refetch instead of trusting the hole.
+
+/** How often the sweep looks for idle chats. */
+export const EVICT_SWEEP_MS = 5 * 60 * 1000;
+/** How long a chat must sit without activity before its window is evictable. */
+export const EVICT_IDLE_MS = 30 * 60 * 1000;
+
+/** When each chat last did anything a reader could be following: activation,
+ *  a turn starting or ending, a message or chunk landing. A side table rather
+ *  than a Session field so a per-chunk stamp never churns the session signal.
+ *  A chat with NO entry is treated as active (err toward keeping). */
+const lastActivity = new Map<string, number>();
+
+function stampActivity(chatID: string): void {
+  if (chatID !== "") {
+    lastActivity.set(chatID, Date.now());
+  }
+}
+
+/** Externally-owned reasons a chat must not be evicted, registered by the
+ *  composition root so this module stays a leaf (importing tabs.ts or
+ *  run-store.ts from here would invert the dependency direction). app.ts
+ *  registers the live-run and subagent-tab predicates; the parked-view
+ *  predicate registers here when parked views land. Nothing registered means
+ *  no external exemption — the predicate set defaults to false. */
+const evictionExemptions: ((chatID: string) => boolean)[] = [];
+
+/** Register one exemption predicate. Returns its unregister. */
+export function registerEvictionExemption(fn: (chatID: string) => boolean): () => void {
+  evictionExemptions.push(fn);
+  return () => {
+    const i = evictionExemptions.indexOf(fn);
+    if (i >= 0) {
+      evictionExemptions.splice(i, 1);
+    }
+  };
+}
+
+/** Whether the sweep may evict this chat's window. FIVE exemptions, each alone
+ *  decisive: the active chat, a busy/streaming chat, a chat with a live run
+ *  (registered predicate), a parked view, and an open subagent tab projecting
+ *  the chat (both registered predicates). */
+function evictable(s: Session, now: number): boolean {
+  if (s.messages.length === 0) {
+    return false; // nothing resident to reclaim
+  }
+  if (s.id === activeId.peek()) {
+    return false; // the active chat is being read
+  }
+  if (s.thinking) {
+    return false; // busy: a live turn is streaming into this window
+  }
+  const at = lastActivity.get(s.id);
+  if (at === undefined || now - at < EVICT_IDLE_MS) {
+    return false; // recently active, or never observed — err toward keeping
+  }
+  return !evictionExemptions.some((fn) => fn(s.id));
+}
+
+function sweepEvictions(): void {
+  // Visibility-aware: a hidden tab's clock keeps running but nothing is
+  // reclaimed until the reader returns — eviction is for THEIR memory, and a
+  // wake-up burst of refetches on tab return is the cost being avoided. The
+  // capability read (never a typeof-object test) only skips on a positive
+  // "hidden"; a document-less runtime sweeps.
+  const hidden = (globalThis as { readonly document?: { readonly hidden?: boolean } }).document
+    ?.hidden;
+  if (hidden === true) {
+    return;
+  }
+  const now = Date.now();
+  for (const s of getSessions()) {
+    if (evictable(s, now)) {
+      evictChatMessages(s.id);
+    }
+  }
+}
+
+let evictTimer: ReturnType<typeof setInterval> | undefined;
+
+/** Start the sweep. Idempotent; the composition root calls it at boot. */
+export function startEvictionSweep(): void {
+  evictTimer ??= setInterval(sweepEvictions, EVICT_SWEEP_MS);
+}
+
+/** Stop the sweep (tests and symmetric teardown). */
+export function stopEvictionSweep(): void {
+  if (evictTimer !== undefined) {
+    clearInterval(evictTimer);
+    evictTimer = undefined;
+  }
+}
+
+/** Drop every per-message streaming signal a chat's resident messages minted:
+ *  block signals, the per-message text/reasoning pair, and tool-call signals.
+ *  The store-level half of the leak fix — the renderer's disposeMessage covers
+ *  rows that unmount, and this covers a chat leaving WHOLE (removal, eviction),
+ *  where no reconcile ever runs for background rows. */
+function clearMessageSignals(chatID: string, messages: readonly Message[]): void {
+  for (const m of messages) {
+    clearBlockSigsFor(m.id);
+    streamingTextSigs.clear(m.id);
+    streamingReasoningSigs.clear(m.id);
+    for (const tc of m.tool_calls ?? []) {
+      toolCallSigs.clear(toolCallSigKey(chatID, tc.id));
+    }
+  }
+}
+
+/** Evict a chat's message window, keeping the session ROW (header data stays:
+ *  name, model, usage, message_count). Everything keyed by the window goes with
+ *  it — the msg index, the per-message signals, the snapshot watermark, and the
+ *  chat's version signal + scheduled marker (the same set `removeChat` drops).
+ *  `residency: "evicted"` is what the next activation keys its refetch on, and
+ *  `has_more` re-derives from the server count so pagination furniture stays
+ *  honest until then. */
+export function evictChatMessages(chatID: string): void {
+  const s = get(chatID);
+  if (s === undefined) {
+    return;
+  }
+  clearMessageSignals(chatID, s.messages);
+  s.messages = [];
+  s.has_more = s.message_count > 0;
+  s.residency = "evicted";
+  msgIndex.delete(chatID);
+  clearSnapshotSeq(chatID);
+  messagesScheduled.delete(chatID);
+  pendingCause.delete(chatID);
+  flushedCause.delete(chatID);
+  messagesVersionSigs.clear(chatID);
+}
+
+/** Background ingest on an evicted chat leaves it PARTIAL: some messages are
+ *  resident, the window around them is not, so only a successful newest-page
+ *  load may claim `loaded` again. Called at every site that pushes a NEW
+ *  message row into a session. */
+function noteResidentMutation(s: Session): void {
+  if (s.residency === "evicted") {
+    s.residency = "partial";
+  }
 }
 
 export function isThinking(id: string): boolean {
@@ -278,6 +428,7 @@ export function setThinking(id: string, v: boolean): void {
   if (get(id) === undefined) {
     return;
   }
+  stampActivity(id);
   sessions.update(id, (s) => {
     const next: Session = {
       ...s,
@@ -951,7 +1102,8 @@ export function setCurrentMode(id: string, modeID: string): void {
 }
 
 export function removeChat(id: string): void {
-  if (!sessions.has(id)) {
+  const doomed = get(id);
+  if (doomed === undefined) {
     return;
   }
   const wasActive = activeId.peek() === id;
@@ -968,6 +1120,11 @@ export function removeChat(id: string): void {
     // comments already say "or chat removed"; this is where that becomes true.
     clearSnapshotSeq(id);
     clearLiveTurnMessage(id);
+    // Every per-message streaming signal the chat's window minted, block
+    // signals included: the renderer's disposeMessage only reaches rows a
+    // reconcile removes, and a background chat's rows never see one.
+    clearMessageSignals(id, doomed.messages);
+    lastActivity.delete(id);
     // The chat's version signal, its cause bookkeeping, and any bump parked on
     // the next microtask go with it — a flush after this must not re-mint the
     // signal.
@@ -1089,9 +1246,11 @@ function ingestMessage(chatID: string, incoming: Message): void {
   if (s === undefined) {
     return;
   }
+  stampActivity(chatID);
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(incoming.id) ?? -1;
   if (idx === -1) {
+    noteResidentMutation(s);
     mi.set(incoming.id, s.messages.length);
     s.messages.push(normalizeMessage(incoming));
     s.message_count = Math.max(s.message_count, s.messages.length);
@@ -1347,11 +1506,13 @@ export function appendChunk(
   if (wm?.messageID === messageID && seq > 0 && seq <= wm.seq) {
     return;
   }
+  stampActivity(chatID);
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
   let isNew = false;
   if (msg === undefined) {
+    noteResidentMutation(s);
     msg = { id: messageID, role: "assistant", ts: Date.now(), content: "", blocks: [] };
     const newIdx = s.messages.length;
     s.messages.push(msg);
@@ -1500,6 +1661,7 @@ export function upsertToolCall(
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
   if (msg === undefined) {
+    noteResidentMutation(s);
     // HONOUR `blockIndex` HERE TOO. This used to hard-code the tool_use block at
     // index 0, so a turn whose first frame to reach the client was a `tool_call`
     // at index 2 started life misaligned by two, and every index after it was

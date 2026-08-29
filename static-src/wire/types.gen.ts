@@ -731,6 +731,26 @@ export interface Label {
 }
 
 /**
+ * LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry
+ * says is in flight, named with the chat whose agent launched it. ChatID is
+ * empty for a parentless run (manual, scheduled) and for a lease written
+ * before the field existed — both mean "no chat to exempt" to the consumer,
+ * the client's eviction sweep.
+ */
+export interface LiveRun {
+  workflow_id: string;
+  chat_id: string;
+}
+
+/**
+ * LiveRunsResponse is GET /api/runs/live's reply. An envelope rather than a
+ * bare array, the GET /api/tabs precedent.
+ */
+export interface LiveRunsResponse {
+  runs: LiveRun[];
+}
+
+/**
  * MCPConnectedPayload is the payload for type="mcp_connected", emitted
  * when kiro-cli reports _kiro.dev/mcp/server_initialized.
  */

@@ -123,6 +123,10 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolCatalogInfo](),
 	wiregen.TypeRef[vibekit.Recipe](),
 	wiregen.TypeRef[vibekit.RecipesResponse](),
+	// Declared BEFORE LiveRunsResponse, which references it: the generator
+	// emits in slice order.
+	wiregen.TypeRef[vibekit.LiveRun](),
+	wiregen.TypeRef[vibekit.LiveRunsResponse](),
 	wiregen.TypeRef[vibekit.RunLaunchRequest](),
 	wiregen.TypeRef[vibekit.RunLaunchedResponse](),
 	wiregen.TypeRef[vibekit.RunStartedPayload](),

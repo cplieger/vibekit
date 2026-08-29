@@ -642,14 +642,16 @@ func (rs *Runs) cancelBounded(workflowID, reason string) {
 	}
 }
 
-// runStartOrigin classifies a lease minted from a `run_start` frame by the
+// runStartLaunch classifies a lease minted from a `run_start` frame by the
 // CARRIER the frame arrived on, which is the only thing that actually says who
 // launched the run.
 //
 // A real chat id means the frame came up a CHAT's bridge, and KAS puts a run on a
 // chat's session only when that chat's agent asked for it — so that is an
 // agent-launched run, chat-parented by construction and excluded from the orphan
-// sweep because the chat rehydrate's resume sweep owns it.
+// sweep's cancel arm because the chat rehydrate's resume sweep owns it. The
+// carrier is also the one moment the launching chat is knowable, so the lease
+// carries it (runlease.Lease.ChatID).
 //
 // Anything else is PARENTLESS: run-bridge frames are dispatched with an empty chat
 // id (dispatch), and the bridge itself is registered under the synthetic
@@ -665,11 +667,11 @@ func (rs *Runs) cancelBounded(workflowID, reason string) {
 // or vibekit restarted, its restart-paused row was never cleared and blocked every
 // later launch of the recipe. The carrier is knowable at the frame, so nothing is
 // left to infer.
-func runStartOrigin(chatID vibekit.ChatID) runlease.Origin {
+func runStartLaunch(chatID vibekit.ChatID) launchOrigin {
 	if chatID == "" || isRunChat(chatID) {
-		return runlease.OriginManual
+		return launchOrigin{origin: runlease.OriginManual}
 	}
-	return runlease.OriginAgent
+	return launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}
 }
 
 // observeStart arms the run's deadline, then hands the frame to the
@@ -680,9 +682,9 @@ func runStartOrigin(chatID vibekit.ChatID) runlease.Origin {
 // and parents it on the calling chat's session, so this frame is the FIRST thing
 // vibekit sees of it — which is why the lease for that population is minted HERE
 // rather than at a launch verb it never passes through. That lease carries the
-// ceiling and nothing else: an agent's run has no slot, is attended by the chat
-// that asked for it, and is deliberately excluded from the restart-orphan sweep
-// because KAS parents it on that chat's session.
+// ceiling and the launching chat: an agent's run has no slot, is attended by the
+// chat that asked for it, and is deliberately excluded from the orphan sweep's
+// cancel arm because KAS parents it on that chat's session.
 //
 // The frame's own WorkflowName is the recipe, and it is the same string KAS's run
 // list reports — so a lease minted here is keyed consistently with every other
@@ -698,8 +700,7 @@ func runStartOrigin(chatID vibekit.ChatID) runlease.Origin {
 func (rs *Runs) observeStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
 		if _, held := rs.lease(f.WorkflowID); !held {
-			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName,
-				launchOrigin{origin: runStartOrigin(chatID)})
+			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName, runStartLaunch(chatID))
 		}
 		rs.armDeadline(ctx, f.WorkflowID)
 	}

@@ -36,7 +36,7 @@
 
 import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
 import { info, success, error } from "../toast.js";
-import { invalidateRun, noteRunChat } from "../run-store.js";
+import { invalidateRun, noteRunChat, noteRunLive, noteRunSettled } from "../run-store.js";
 import { trackRun } from "../run-dots.js";
 import { autoCloseRunSubTab, openRunSubTab, applyRunStep } from "../run-view.js";
 
@@ -116,6 +116,7 @@ function toastCompletion(status: string, name: string | undefined): void {
 onSSE("run_started", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
+  noteRunLive(p.workflow_id, chatID);
   openRunSubTab(p.workflow_id, runLabel(p.name), chatID);
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
@@ -130,6 +131,14 @@ onSSE("run_finished", (chatID, p) => {
   // Recorded even here: the launching chat is what a LATER re-open nests under, and
   // a client that joined after the run ended still needs it.
   noteRunChat(p.workflow_id, chatID);
+  // `paused` keeps the run in the live inventory: it is stopped waiting for
+  // something, not over (KAS reports an onMaxIterations policy stop through
+  // this same frame), and the server's lease survives a pause the same way.
+  // Anything else — the four terminal statuses and any status this client
+  // does not recognise — is an ending, matching toastCompletion below.
+  if (p.status !== "paused") {
+    noteRunSettled(p.workflow_id);
+  }
   // Deliberately NOT opened. A run that finished before anyone looked has nothing
   // live to watch, and a tab appearing at the moment work ENDS is noise; History is
   // the door to a finished run.
@@ -164,6 +173,9 @@ onSSE("run_step", (_chatID, p) => {
 onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
+  // A progress frame is proof of life: a client that missed run_started (a
+  // mid-run join, a rebuild that raced a fresh launch) re-learns the run here.
+  noteRunLive(p.workflow_id, chatID);
   // Also opens, because `run_started` can be missed: a client that connects mid-run
   // gets no replay of it (the run events are not in the SSE replay ring's
   // pending-state synthesis), so the progress frames are the only door left. It

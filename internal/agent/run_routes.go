@@ -32,6 +32,7 @@ type runRoutes struct{ runs *Runs }
 // has an opinion about. A surface that owns its handlers should own its paths.
 func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", rr.handleRun)
+	mux.HandleFunc("GET /api/runs/live", rr.handleLiveRuns)
 	mux.HandleFunc("POST /api/runs", rr.handleLaunch)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", rr.handleCancel)
 	mux.HandleFunc("POST /api/runs/{id}/pause", rr.handlePause)

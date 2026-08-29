@@ -102,6 +102,69 @@ func TestStore_FileShapeIsAVersionedObject(t *testing.T) {
 	}
 }
 
+// TestStore_RoundTripsTheLaunchingChat: the chat id is the live-runs
+// projection's whole payload, so a restart that dropped it would leave a
+// still-live agent run unable to exempt its chat from client eviction.
+func TestStore_RoundTripsTheLaunchingChat(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Put(t.Context(), &Lease{
+		StartedAt: time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC),
+		Recipe:    "publish", WorkflowID: "wf_1", ChatID: "c-live", Origin: OriginAgent,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	got, ok := reopened.Get("wf_1")
+	if !ok {
+		t.Fatal("the lease did not survive the restart")
+	}
+	if got.ChatID != "c-live" {
+		t.Errorf("ChatID = %q after a restart, want %q", got.ChatID, "c-live")
+	}
+}
+
+// TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID pins why ChatID is
+// ADDITIVE at Version 1: a lease written before the field existed must load as
+// a usable lease whose empty chat id means "no chat to exempt" — the same
+// designed value the parentless launch verbs mint — rather than costing a
+// version bump that would discard the whole file and strip every live lease of
+// its deadline at boot.
+func TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Version-1 bytes exactly as a pre-upgrade build wrote them: no chat_id key.
+	body := `{"version":1,"leases":[{"started_at":"2026-08-01T03:00:00Z",` +
+		`"workflow_id":"wf_old","recipe":"nightly","origin":"scheduled",` +
+		`"schedule_id":"sched-1","unattended":true}]}`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore rejected a version-1 file a pre-upgrade build wrote: %v", err)
+	}
+	got, ok := s.Get("wf_old")
+	if !ok {
+		t.Fatal("the pre-upgrade lease was dropped; its run is unbounded and its recipe reads idle")
+	}
+	if got.ChatID != "" {
+		t.Errorf("ChatID = %q for a row written before the field existed, want empty", got.ChatID)
+	}
+	if got.Recipe != "nightly" || got.Origin != OriginScheduled || !got.Unattended {
+		t.Errorf("the pre-upgrade row lost fields it did carry: %+v", got)
+	}
+}
+
 // TestStore_RejectsAVersionItDoesNotKnow is the forward-compatibility rule, and
 // the reason it DISCARDS rather than refuses.
 //
