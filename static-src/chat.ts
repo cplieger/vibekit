@@ -18,6 +18,7 @@ import {
   removeChat,
   tabStatusFor,
   isEmptyChat,
+  transcriptStale,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
@@ -227,8 +228,23 @@ export function activateChatView(id: string): void {
 
   if (isEmptyChat(session)) {
     // The picker shows itself: its visibility is an effect over this same
-    // predicate (picker.ts bindVisibility). Only the draft is this branch's.
-    seedEmptyChatDraft(id);
+    // predicate (picker.ts bindVisibility). Only the draft is this branch's —
+    // and the record GET exists only to adopt the server-held draft, so it is
+    // gated like the loaded branch: a window this device already fetched and no
+    // gap has undermined yielded that draft the first time.
+    if (transcriptStale(session)) {
+      seedEmptyChatDraft(id);
+    }
+  } else if (!transcriptStale(session)) {
+    // The window is the server's answer and no gap or eviction has undermined
+    // it since it was fetched, so switching back costs ZERO fetches: the
+    // repaint above already rendered it. Only the per-chat view furniture is
+    // re-wired, and the rail decides its own fetch off its record — the
+    // message count moves under background SSE ingest while the window (which
+    // tracks the tail live) stays trustworthy.
+    setupLoadMore(id);
+    scrollToBottom();
+    void loadTurnRail(id);
   } else {
     // Hydrate messages from the server, then render.
     //
@@ -299,7 +315,10 @@ export function activateChatView(id: string): void {
       }
       // The rail's index is session-wide and independent of the message window,
       // so it is its own fetch rather than something derived from what loaded.
-      void loadTurnRail(id);
+      // FORCED: this activation found the transcript stale, and the rail is
+      // implicated with it — but the load that just landed re-stamped the
+      // session fresh, so the rail's gate can no longer see the verdict.
+      void loadTurnRail(id, { force: true });
     });
   }
 }

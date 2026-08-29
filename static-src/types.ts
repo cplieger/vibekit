@@ -365,6 +365,11 @@ export interface Session {
   /** Client-only transcript residency; see MessagesResidency. Carried across
    *  the header-list rebuild like every other client-only projection. */
   residency?: MessagesResidency;
+  /** Client-only: the sync epoch captured before the page fetch that produced
+   *  this window, written on newest-page success. Fresh only while it equals
+   *  `syncEpoch()`; a fetch that raced a transport gap therefore stores a
+   *  number that already reads stale. See store.ts transcriptStale. */
+  loadedEpoch?: number;
 }
 
 /** One resumable KAS session, from GET /api/sessions. Mirrors

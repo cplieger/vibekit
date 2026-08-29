@@ -20,6 +20,8 @@ import {
   setTurnDone,
   setTurnFailed,
   tabStatusFor,
+  syncEpoch,
+  transcriptStale,
 } from "../store.js";
 import { workspaceRoot, _resetForTest as resetWorkspace, setWorkspaceRoot } from "../workspace.js";
 import type { Session } from "../types.js";
@@ -290,6 +292,56 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(mockLoadMessages).toHaveBeenCalledWith("active-chat");
   });
 
+  it("refetches the rail for the active chat, and for no other", () => {
+    // The rail's half of the same heal. Background chats are deliberately NOT
+    // fetched: their records are stale by epoch now, so each heals on its own
+    // next activation instead of fanning N GETs out on every reconnect.
+    setSessions([makeSession("bg-1"), makeSession("active-chat"), makeSession("bg-2")]);
+    setActive("active-chat");
+    fireGap();
+    expect(mockRefreshTurnRail).toHaveBeenCalledWith("active-chat");
+    expect(mockRefreshTurnRail).not.toHaveBeenCalledWith("bg-1");
+    expect(mockRefreshTurnRail).not.toHaveBeenCalledWith("bg-2");
+    expect(mockLoadMessages).not.toHaveBeenCalledWith("bg-1");
+    expect(mockLoadMessages).not.toHaveBeenCalledWith("bg-2");
+  });
+
+  it("marks every loaded window stale by bumping the sync epoch", () => {
+    // The lazy half of the reconcile: nothing refetches a background chat here,
+    // so the bump is what guarantees its next activation does.
+    const fresh = makeSession("bg", { residency: "loaded", loadedEpoch: syncEpoch() });
+    setSessions([fresh]);
+    setActive("");
+    expect(transcriptStale(get("bg")!)).toBe(false);
+
+    fireGap();
+    expect(transcriptStale(get("bg")!)).toBe(true);
+  });
+
+  it("bumps the epoch before the active chat's heals go out", () => {
+    // Order is the contract: a heal that started before the bump would stamp
+    // the OLD epoch and read stale forever; one started after stamps the new
+    // one and counts as fresh. The loader's own capture discipline is
+    // store-load.test.ts's subject — this pins the door's sequencing.
+    setSessions([makeSession("active-chat")]);
+    setActive("active-chat");
+    const before = syncEpoch();
+    let epochAtMessagesFetch = -1;
+    let epochAtRailFetch = -1;
+    mockLoadMessages.mockImplementationOnce(() => {
+      epochAtMessagesFetch = syncEpoch();
+      return Promise.resolve(true);
+    });
+    mockRefreshTurnRail.mockImplementationOnce(() => {
+      epochAtRailFetch = syncEpoch();
+      return Promise.resolve();
+    });
+
+    fireGap();
+    expect(epochAtMessagesFetch).toBe(before + 1);
+    expect(epochAtRailFetch).toBe(before + 1);
+  });
+
   it("clears the finished-turn latch, for the same reason it clears thinking", async () => {
     // The latch normally stands until the next turn, but "the next turn" may have
     // happened inside the outage, so a green dot after a gap is a claim this client
@@ -382,18 +434,22 @@ describe("the gap reconcile runs the shared turn teardown", () => {
     mockDrainModelSwitchQueue.mockClear();
   });
 
-  it("clears the in-flight marker, the banners and the rail for every chat", () => {
+  it("clears the in-flight marker and the banners for every chat, the rail for none", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("");
     noteLiveTurnMessage("chat-1", "m-live");
 
     fireGap();
 
     expect(liveTurnMessage("chat-1")).toBeUndefined();
     expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-1");
-    expect(mockRefreshTurnRail).toHaveBeenCalledWith("chat-1");
     expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-1");
     // And every chat, not only the active one: a gap describes the connection.
     expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-2");
+    // The rail left the shared teardown: a gap makes every chat's index equally
+    // unsupportable, which the epoch bump records, so no per-chat GET goes out
+    // here (with no active chat, none at all) — each rail heals on activation.
+    expect(mockRefreshTurnRail).not.toHaveBeenCalled();
   });
 
   it("latches NEITHER outcome, because a gap is not an outcome", () => {

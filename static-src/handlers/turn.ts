@@ -30,6 +30,7 @@ import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { clearTurnState } from "../turn-teardown.js";
+import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
 
 // `notifyAndBadge` is gone. Its badge half wrote the literal 1 into
@@ -109,6 +110,11 @@ onSSE("turn_ended", (chatID, p) => {
   }
   // Everything a turn ending and a transport gap agree on, including the dot.
   clearTurnState(chatID);
+  // The set of turns changed for THIS chat — a turn just ended — so its
+  // session-wide index is re-read into the rail's per-chat record, pointed or
+  // not. The outcome door's half of an asymmetry: the gap door bumps the sync
+  // epoch instead (see turn-teardown.ts).
+  void refreshTurnRail(chatID);
   // A turn ended, so there is demonstrably an agent behind this chat. Failure
   // toasts are deliberately NOT retracted here: they report a past event and
   // time out on their own, and the turn's divider keeps the record regardless.

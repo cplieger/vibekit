@@ -29,6 +29,9 @@ import {
   activeSession,
   getActiveId,
   setModel,
+  syncEpoch,
+  bumpSyncEpoch,
+  transcriptStale,
 } from "./store.js";
 import type { Block, ChatHeader, Session } from "./types.js";
 import { effect } from "@cplieger/reactive";
@@ -2744,5 +2747,55 @@ describe("the in-flight turn marker", () => {
     noteLiveTurnMessage("chat-live6", "m-turn");
     removeChat("chat-live6");
     expect(liveTurnMessage("chat-live6")).toBeUndefined();
+  });
+});
+
+describe("transcriptStale (the activation refetch gate)", () => {
+  function loadedNow(chatID: string): Session {
+    return { ...makeSession(chatID), residency: "loaded", loadedEpoch: syncEpoch() };
+  }
+
+  it("a loaded window from the current epoch is fresh", () => {
+    expect(transcriptStale(loadedNow("c-fresh"))).toBe(false);
+  });
+
+  it("a never-loaded chat is stale by construction", () => {
+    // No residency and no stamp: the boot-listed shape. Both halves absent must
+    // read stale, or the first activation would skip the fetch it exists to do.
+    expect(transcriptStale(makeSession("c-cold"))).toBe(true);
+  });
+
+  it("an evicted window is stale whatever its stamp says", () => {
+    const s: Session = {
+      ...makeSession("c-evicted"),
+      residency: "evicted",
+      loadedEpoch: syncEpoch(),
+    };
+    expect(transcriptStale(s)).toBe(true);
+  });
+
+  it("a partial window is stale whatever its stamp says", () => {
+    // Background ingest into an evicted chat: some rows resident, the window
+    // around them not — only a newest-page load may claim otherwise.
+    const s: Session = {
+      ...makeSession("c-partial"),
+      residency: "partial",
+      loadedEpoch: syncEpoch(),
+    };
+    expect(transcriptStale(s)).toBe(true);
+  });
+
+  it("a gap flips a fresh window stale", () => {
+    const s = loadedNow("c-gapped");
+    expect(transcriptStale(s)).toBe(false);
+    bumpSyncEpoch();
+    expect(transcriptStale(s)).toBe(true);
+  });
+
+  it("a loaded window with no stamp is stale", () => {
+    // The pre-upgrade shape (residency landed one task before the stamp): a row
+    // claiming loaded with no epoch record must refetch, not trust the hole.
+    const s: Session = { ...makeSession("c-unstamped"), residency: "loaded" };
+    expect(transcriptStale(s)).toBe(true);
   });
 });

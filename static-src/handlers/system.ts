@@ -21,10 +21,12 @@ import {
   forgetSteers,
   clearTurnFailed,
   clearTurnDone,
+  bumpSyncEpoch,
 } from "../store.js";
 import { dropDecisions } from "../decision-dock.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
+import { refreshTurnRail } from "../turn-rail.js";
 import { refreshRetention } from "../retention.js";
 import { rebuildLiveRuns } from "../run-store.js";
 
@@ -73,10 +75,19 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   // whatever is still true (one authoritative `turn_state` per chat with an open
   // turn, the whole pending-ask set, a retained waiting status). What it must NOT
   // do is assert an outcome: nothing here knows how anything finished.
-  //   1. Per chat: unlatch the claims, then run the shared turn teardown.
-  //   2. Reload the header list so name / usage / mode changes reconcile.
-  //   3. If a chat is active, reload its messages from scratch so streaming
-  //      tails and tool-call updates heal.
+  //   1. Bump the sync epoch, so every loaded window and rail index becomes a
+  //      claim this client no longer supports.
+  //   2. Per chat: unlatch the claims, then run the shared turn teardown.
+  //   3. Reload the header list so name / usage / mode changes reconcile.
+  //   4. If a chat is active, reload its messages and rail from scratch so
+  //      streaming tails and tool-call updates heal.
+  //
+  // FIRST, before any heal below goes out: the heals must capture the new
+  // epoch to count as fresh, and any fetch already in flight captured the old
+  // one, which is what keeps its answer from claiming to have survived the
+  // gap. Background chats are NOT refetched here — their loadedEpoch and rail
+  // records now read stale, so each heals on its next activation.
+  bumpSyncEpoch();
   for (const s of getSessions()) {
     // Agent-declared status is as untrustworthy as `thinking` after a
     // gap: the clearing chat_status may be among the dropped events.
@@ -111,10 +122,10 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     // per-busy-bridge `steer_queued` replay) and is recorded as a follow-up.
     forgetSteers(s.id);
     // Everything a gap and a turn ending agree on: thinking, both in-flight
-    // markers, the transient banners, a stranded model switch, the rail and the
-    // dot. The gap door spelled this itself and was short by four effects, which
-    // is what left a rate-limit banner over a finished turn and a chunk watermark
-    // that dropped the next turn's early deltas.
+    // markers, the transient banners, a stranded model switch and the dot. The
+    // gap door spelled this itself and was short by four effects, which is what
+    // left a rate-limit banner over a finished turn and a chunk watermark that
+    // dropped the next turn's early deltas.
     clearTurnState(s.id);
   }
   // There is no tab reconcile here any more, and its absence is the point. This
@@ -134,6 +145,11 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   const id = getActiveId();
   if (id !== "") {
     void loadMessages(id);
+    // The rail's half of the same heal: only the ACTIVE chat's index is re-read
+    // eagerly (both fetches start after the bump above, so both records claim
+    // the new epoch); every other chat's stale record is caught by the gate on
+    // its next activation.
+    void refreshTurnRail(id);
   }
 });
 

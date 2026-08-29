@@ -414,6 +414,33 @@ function noteResidentMutation(s: Session): void {
   }
 }
 
+// --- Sync epoch: which loads survived the last transport gap ---
+
+/** Counts transport replay gaps. Plain module state rather than a signal:
+ *  it is consulted at activation and fetch time, never rendered. */
+let syncEpochCount = 0;
+
+export function syncEpoch(): number {
+  return syncEpochCount;
+}
+
+/** The `transport:gap` door's half: events were lost, so every window and
+ *  session-wide index loaded under the old epoch is a claim this client can no
+ *  longer support. Bumped BEFORE any heal starts — a fetch in flight at that
+ *  moment captured the old number and stays stale, because its answer may
+ *  predate events the gap dropped. */
+export function bumpSyncEpoch(): void {
+  syncEpochCount++;
+}
+
+/** The activation refetch gate: a window is trustworthy only if a newest-page
+ *  load succeeded (residency), and no transport gap has intervened since that
+ *  load's request went out (loadedEpoch). An absent loadedEpoch never equals
+ *  the counter, so a never-loaded chat is stale by construction. */
+export function transcriptStale(s: Session): boolean {
+  return s.residency !== "loaded" || s.loadedEpoch !== syncEpochCount;
+}
+
 export function isThinking(id: string): boolean {
   return get(id)?.thinking ?? false;
 }

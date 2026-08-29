@@ -32,6 +32,7 @@ import { apiGet } from "./api-client.js";
 import { jumpTo, scrollableBy } from "./scroll.js";
 import { turnAnchorID, type TurnOutcome } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
+import { get, syncEpoch } from "./store.js";
 
 /** One row of the session-wide turn index. Mirrors vibekit.TurnSummary. */
 export interface TurnSummary {
@@ -91,6 +92,34 @@ let summaries: TurnSummary[] = [];
  *  a card per observer delta, so the lookup must not be a linear scan of the
  *  index. Rebuilt wherever `summaries` is assigned. */
 let summaryByID = new Map<string, TurnSummary>();
+
+/** One chat's fetched index plus what the world looked like when the request
+ *  went out: the sync epoch and the chat's message count, both captured BEFORE
+ *  the fetch (the same discipline as loadMessages' epochAtStart — an answer
+ *  that raced a gap or an append must not claim currency over it). */
+interface RailRecord {
+  summaries: TurnSummary[];
+  epoch: number;
+  atCount: number;
+}
+
+/** Session-wide indexes by chat, kept across switches so returning to a loaded
+ *  chat paints its rail from memory instead of refetching. `refreshTurnRail`
+ *  is the one writer; re-pointing prunes rows the store no longer holds. */
+const records = new Map<string, RailRecord>();
+
+/** Whether `id`'s record can stand in for a fetch: present, from the current
+ *  sync epoch, and from the chat's current message count. The count is the
+ *  cheap proxy for "a turn started or ended since" — background SSE ingest
+ *  moves it while the rail is pointed elsewhere. */
+function recordCurrent(id: string): boolean {
+  const r = records.get(id);
+  if (r === undefined) {
+    return false;
+  }
+  return r.epoch === syncEpoch() && r.atCount === get(id)?.message_count;
+}
+
 let chatID = "";
 let currentN = 0;
 /** The range the rail is zoomed into, set by clicking a cluster. */
@@ -161,7 +190,7 @@ export function mountTurnRail(host: HTMLElement): void {
   }
 }
 
-/** Hand the rail to a chat, dropping the previous session's index.
+/** Hand the rail to a chat, dropping the previous session's view state.
  *
  *  Separate from the fetch because an EMPTY chat has to re-point too, and it has
  *  nothing to fetch: its turn count is zero by definition, and a brand-new chat's
@@ -171,7 +200,11 @@ export function mountTurnRail(host: HTMLElement): void {
  *  conversation with no messages in it — a timeline before the first message. And
  *  `refreshTurnRail` drops a result whose id is not the rail's, so the first
  *  `turn_ended` of a chat the rail had never been handed was discarded, and no
- *  marker appeared until the reader switched away and back. */
+ *  marker appeared until the reader switched away and back.
+ *
+ *  The index itself is NOT view state: the chat's record paints immediately,
+ *  which is what makes a switch back to a loaded chat cost zero fetches. Whether
+ *  the record is also CURRENT is `loadTurnRail`'s question, not this one's. */
 export function pointTurnRail(id: string): void {
   if (id === chatID) {
     return;
@@ -180,7 +213,15 @@ export function pointTurnRail(id: string): void {
   // than carrying a stale range onto unrelated turns.
   zoom = undefined;
   pending.clear();
-  setSummaries([]);
+  // Records for chats the store no longer holds are dead weight (closed tabs,
+  // deleted chats), and a re-point is the cheap moment to drop them — including
+  // the target's own, so a purged chat renders empty rather than from memory.
+  for (const key of records.keys()) {
+    if (get(key) === undefined) {
+      records.delete(key);
+    }
+  }
+  setSummaries(records.get(id)?.summaries ?? []);
   currentN = 0;
   // A turn number from the previous chat is a live wrong answer, not merely a
   // stale one: `numberOf` resolves against THIS chat's summaries, so a leftover
@@ -190,9 +231,16 @@ export function pointTurnRail(id: string): void {
   render();
 }
 
-/** Point the rail at a chat and (re)load its session-wide index. */
-export async function loadTurnRail(id: string): Promise<void> {
+/** The activation entry: point the rail at the chat, then fetch its index only
+ *  when the chat's record cannot stand in for one. `force` skips that gate —
+ *  the caller activating a stale transcript (gap, eviction, first load) knows
+ *  the rail is implicated with it, and by the time the messages heal lands the
+ *  session reads fresh again, so the verdict cannot be re-derived here. */
+export async function loadTurnRail(id: string, opts?: { force?: boolean }): Promise<void> {
   pointTurnRail(id);
+  if (opts?.force !== true && recordCurrent(id)) {
+    return;
+  }
   await refreshTurnRail(id);
 }
 
@@ -202,20 +250,36 @@ export async function refreshTurnRail(id: string): Promise<void> {
   if (id === "") {
     return;
   }
+  // Both captured BEFORE the request — see RailRecord. A count the store does
+  // not know (the chat was removed, or was never seeded) records nothing: there
+  // is no session left to activate against, and pruning would drop the row.
+  const epochAtStart = syncEpoch();
+  const countAtStart = get(id)?.message_count;
   const d = await apiGet<{ turns?: TurnSummary[] }>(`/api/chats/${encodeURIComponent(id)}/turns`);
-  if (d === null || id !== chatID) {
+  if (d === null) {
     // A null is a failed fetch, already logged centrally. Keep whatever the rail
-    // is showing: a rail that empties itself on a transient failure is worse
-    // than one that is briefly a turn behind.
+    // is showing — a rail that empties itself on a transient failure is worse
+    // than one that is briefly a turn behind — and keep the stale record, so the
+    // next activation retries instead of trusting it.
     return;
   }
-  setSummaries(d.turns ?? []);
+  const turns = d.turns ?? [];
+  if (countAtStart !== undefined) {
+    records.set(id, { summaries: turns, epoch: epochAtStart, atCount: countAtStart });
+  }
+  if (id !== chatID) {
+    // A background chat's index (a turn ended while the rail points elsewhere):
+    // recorded above so its next activation paints from memory, not painted now.
+    return;
+  }
+  setSummaries(turns);
   render();
 }
 
 export function resetTurnRail(): void {
   chatID = "";
   setSummaries([]);
+  records.clear();
   currentN = 0;
   zoom = undefined;
   renderedNavigable = false;

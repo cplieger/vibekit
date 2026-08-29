@@ -17,18 +17,21 @@
 // Deliberately NOT here, and each absence is the asymmetry rather than an
 // oversight: the outcome latches (a gap knows no outcome), the finished
 // notification (nothing finished), `clearAgentDown` (a turn ending PROVES an agent
-// is behind the chat; a gap proves nothing), and the decision/steer teardown,
+// is behind the chat; a gap proves nothing), the decision/steer teardown,
 // whose two doors differ in kind — a turn end retires that turn's asks and
 // promotes an unread steer into the transcript, while a gap drops every ask
 // including a run's and FORGETS its steers rather than asserting the agent never
-// read them.
+// read them — and the rail's session-wide index. A turn ending changes ONE
+// chat's set of turns, so that door re-reads that chat's index; a gap makes
+// every chat's index equally unsupportable, which the sync epoch already
+// records, so its door heals only the active chat and leaves the rest to
+// their next activation instead of fanning a fetch out per open chat.
 // ---------------------------------------------------------------------------
 
 import { setThinking, clearSnapshotSeq, clearLiveTurnMessage, get, tabStatusFor } from "./store.js";
 import { setTabStatus } from "./tabs.js";
 import { hasPendingDecision } from "./decision-dock.js";
 import { onTurnEnded } from "./banner-stack.js";
-import { refreshTurnRail } from "./turn-rail.js";
 import { drainModelSwitchQueue } from "./model-switcher.js";
 
 /** Bring one chat's local turn state to rest.
@@ -51,9 +54,6 @@ export function clearTurnState(chatID: string): void {
   // turn_ended that would have drained it may be among the dropped events, which
   // is what left the switch stranded behind a stuck `.pending` pill.
   drainModelSwitchQueue(chatID);
-  // The set of turns only changes when one ends, so this is the only moment the
-  // rail's session-wide index needs re-reading.
-  void refreshTurnRail(chatID);
   // Last: the dot is derived from everything above plus the caller's own latches.
   setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
 }

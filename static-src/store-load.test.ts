@@ -5,11 +5,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Message, Session } from "./types.js";
 
-const { sessions, liveIDs, mockApiGetTyped, mockSetSessions } = vi.hoisted(() => ({
+const { sessions, liveIDs, mockApiGetTyped, mockSetSessions, epoch } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
   liveIDs: new Map<string, string>(),
   mockApiGetTyped: vi.fn(),
   mockSetSessions: vi.fn(),
+  // The store's transport sync epoch, controllable so a case can land a "gap"
+  // at an exact point in the fetch lifecycle.
+  epoch: { n: 0 },
 }));
 
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
@@ -20,6 +23,7 @@ vi.mock("./store.js", () => ({
   setSessions: mockSetSessions,
   rebuildMsgIndex: vi.fn(),
   bumpMessages: vi.fn(),
+  syncEpoch: () => epoch.n,
   // Identity here — the block-synthesis path is covered by store.test.ts; these
   // tests assert pagination/dedupe by id.
   normalizeMessage: (m: Message) => m,
@@ -56,6 +60,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   sessions.clear();
   liveIDs.clear();
+  epoch.n = 0;
 });
 
 describe("loadList pruning", () => {
@@ -286,5 +291,104 @@ describe("residency", () => {
     await loadList();
     const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
     expect(passed[0]?.residency).toBe("loaded");
+  });
+});
+
+describe("loadedEpoch", () => {
+  // The freshness stamp is the epoch captured BEFORE the request went out, so a
+  // window assembled from an answer that never raced a gap claims the current
+  // epoch and reads fresh.
+  it("stamps the pre-request epoch on a successful newest-page load", async () => {
+    seedSession("c1", []);
+    epoch.n = 3;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("a", 1)],
+      has_more: false,
+    });
+
+    const ok = await loadMessages("c1");
+    expect(ok).toBe(true);
+    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
+  });
+
+  // Race order one: the gap lands while the fetch is IN FLIGHT. The answer may
+  // predate events the gap dropped, so the stamp must be the pre-gap number —
+  // never equal to the bumped epoch — and the window stays stale.
+  it("a fetch that raced a gap stores a stamp that already reads stale", async () => {
+    seedSession("c1", []);
+    epoch.n = 3;
+    mockApiGetTyped.mockImplementation(() => {
+      // The gap arrives after the request went out, before the answer lands.
+      epoch.n = 4;
+      return Promise.resolve({
+        chat: { message_count: 1 },
+        messages: [msg("a", 1)],
+        has_more: false,
+      });
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
+    expect(sessions.get("c1")?.loadedEpoch).not.toBe(epoch.n);
+  });
+
+  // Race order two: the gap lands AFTER the load completed. The stamp is a
+  // capture, not a live read, so it keeps naming the epoch the window was
+  // fetched under and the comparison flips stale on its own.
+  it("a gap after completion leaves the stored stamp behind the epoch", async () => {
+    seedSession("c1", []);
+    epoch.n = 3;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("a", 1)],
+      has_more: false,
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
+
+    epoch.n = 4;
+    expect(sessions.get("c1")?.loadedEpoch).toBe(3);
+  });
+
+  it("an older-page prepend stamps nothing", async () => {
+    seedSession("c1", [msg("m2", 2)]);
+    sessions.get("c1")!.loadedEpoch = 1;
+    epoch.n = 2;
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+    });
+
+    await loadMessages("c1", "m2");
+    expect(sessions.get("c1")?.loadedEpoch).toBe(1);
+  });
+
+  it("a failed newest-page load stamps nothing", async () => {
+    seedSession("c1", []);
+    epoch.n = 2;
+    mockApiGetTyped.mockResolvedValue(null);
+
+    const ok = await loadMessages("c1");
+    expect(ok).toBe(false);
+    expect(sessions.get("c1")?.loadedEpoch).toBeUndefined();
+  });
+
+  it("loadList carries loadedEpoch across the header rebuild", async () => {
+    // Same reason residency travels: the stamp describes the carried-over
+    // window, and dropping it would read every loaded chat as stale after any
+    // reconnect's header refresh.
+    seedSession("c1", [msg("a", 1)]);
+    sessions.get("c1")!.residency = "loaded";
+    sessions.get("c1")!.loadedEpoch = 2;
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "One", message_count: 1, usage: {} }],
+    });
+
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    expect(passed[0]?.loadedEpoch).toBe(2);
   });
 });
