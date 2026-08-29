@@ -1,8 +1,10 @@
 // ---------------------------------------------------------------------------
 // Context bar update + the single "context is nearly full" signal.
 //
-// Every store emit refreshes the context bar from the active session. When the
-// ACTIVE chat's context is (nearly) full, `contextFull` flips true — that signal
+// Runs from chat.ts's active-session effect: every change to the ACTIVE
+// session (and every switch of which session is active) refreshes the context
+// bar; background session churn never reaches it. When the active chat's
+// context is (nearly) full, `contextFull` flips true — that signal
 // is the ONE source of truth for the condition; prompt-input.ts reads it and
 // renders it as a placeholder + tooltip (see status.ts note). It is ADVISORY: it
 // no longer disables the composer, because kiro-cli compacts on the next turn,
@@ -82,9 +84,9 @@ export function refreshContextUI(s: Session): void {
     // (effort.ts owns that test, and the default is the catalog's per-model
     // field rather than anything stored here). Resolved HERE rather than in
     // status.ts so the renderer keeps writing what it is handed: this module
-    // already runs on every store emit, so the pill repaints when an optimistic
-    // set_effort write lands, when the session reports a new currentValue, and
-    // when a model switch changes which default applies.
+    // already runs on every active-session change, so the pill repaints when an
+    // optimistic set_effort write lands, when the session reports a new
+    // currentValue, and when a model switch changes which default applies.
     effort: nonDefaultEffortLabel(s, getCachedModels(), getLastEffort()),
     metering,
     msgCount,

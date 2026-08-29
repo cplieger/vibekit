@@ -69,6 +69,8 @@ vi.mock("./store.js", () => ({
   getActive: vi.fn(() => undefined),
   get: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
+  // The per-row strip effect's tracked read; inert until a case aims it.
+  watchSession: vi.fn(() => undefined),
   setActive: vi.fn((id: string) => {
     activeId = id;
   }),
@@ -107,6 +109,9 @@ vi.mock("./tabs.js", () => ({
   // The lookup that replaced `hasTab(chatID)`: a chat id is no longer a tab id, so
   // "" means no tab is open for that chat.
   tabIdFor: vi.fn(() => ""),
+  // The registry seam: which chat refs hold an open tab. Empty means the strip
+  // wires no row effects; the tooltip suite below aims it at one chat.
+  openChatRefs: vi.fn(() => [] as string[]),
   getActiveTabId: vi.fn(() => ""),
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
@@ -188,10 +193,17 @@ import {
   openPreviousSession,
   installStoreSubscribers,
 } from "./chat.js";
-import { openTab, adoptSubject, activateTab, tabIdFor, setTabTooltip } from "./tabs.js";
+import {
+  openTab,
+  adoptSubject,
+  activateTab,
+  tabIdFor,
+  setTabTooltip,
+  openChatRefs,
+} from "./tabs.js";
 import { addAttachment } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
-import { get, getSessions, removeChat, setActive, upsertHeader, clearTurnDone } from "./store.js";
+import { get, watchSession, removeChat, setActive, upsertHeader, clearTurnDone } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
 import { loadTurnRail, pointTurnRail, resetScrollState, fadeInTranscript } from "./messages.js";
 import { seedComposerState } from "./composer-state.js";
@@ -816,14 +828,16 @@ describe("no transcript context menu", () => {
 // no element, no width, no second visual vocabulary in the 9px column. It is
 // pointer-only, so it is a convenience rather than a full restoration.
 describe("the chat tab's tooltip carries the mode as well as the activity", () => {
-  /** The opaque id the projection minted for chat `c1`. Every writer in the store
+  /** The opaque id the projection minted for chat `c1`. Every writer in the row
    *  effect is id-keyed because the DOM row is, and a chat id is no longer that
-   *  id — so ONE `tabIdFor` lookup per chat is what the effect reuses. */
+   *  id — so ONE `tabIdFor` lookup per row is what the effect reuses. */
   const TAB_ID = "tb_c1";
 
   function driveEffect(over: Record<string, unknown>): void {
     const s = { id: "c1", name: "Fix the parser", available_modes: [], ...over };
-    vi.mocked(getSessions).mockReturnValue([s as never]);
+    // One open tab for c1; its row effect reads the chat through watchSession.
+    vi.mocked(openChatRefs).mockReturnValue(["c1"]);
+    vi.mocked(watchSession).mockReturnValue(s as never);
     vi.mocked(tabIdFor).mockReturnValue(TAB_ID);
     installStoreSubscribers();
   }

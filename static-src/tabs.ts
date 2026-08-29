@@ -1182,6 +1182,22 @@ export function activeChatRef(): string {
   return row?.subject.kind === "chat" ? row.subject.ref : "";
 }
 
+/** The chat refs with an open tab, deduplicated (an owning tab and a view tab
+ *  can project one chat), as a TRACKED read: an effect calling this re-runs on
+ *  every projection mutation and never on a dot write. The strip's per-row
+ *  store effects (chat.ts) sync their registry on it. */
+export function openChatRefs(): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  stateVersion.value;
+  const refs: string[] = [];
+  for (const t of state.tabs) {
+    if (t.subject.kind === "chat" && !refs.includes(t.subject.ref)) {
+      refs.push(t.subject.ref);
+    }
+  }
+  return refs;
+}
+
 /** The chat tabs and their current dot states, for the out-of-page attention
  *  fold (attention.ts). A pure projection read: the dot state is parked on the
  *  row, so nothing here reads the DOM and a row whose element has not been built

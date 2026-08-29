@@ -224,6 +224,15 @@ export function get(id: string): Session | undefined {
   return sessions.get(id);
 }
 
+/** One chat's session as a TRACKED read: an effect calling this re-runs when
+ *  THIS session's fields change and when the session set's structure changes
+ *  (the row appearing or vanishing) — never on another session's field churn.
+ *  The tab strip's per-row effects (chat.ts) are the consumer. */
+export function watchSession(id: string): Session | undefined {
+  void sessions.ids.value;
+  return sessions.signalFor(id)?.value;
+}
+
 /** Whether `chatID`'s transcript already holds `messageID`.
  *
  *  The ACCEPTANCE test for a prompt this client sent, and the reason it is a

@@ -21,7 +21,6 @@ import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { setCurrentModel, setLastModel, getLastEffort, setLastEffort } from "./session-context.js";
 import { refreshPickerIfVisible, getCachedModels } from "./picker.js";
-import { refreshContextUI } from "./context-ui.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import {
   bindLoadingState,
@@ -446,15 +445,9 @@ export function applyLocalModel(modelID: string): void {
   const session = getActive();
   if (session !== undefined) {
     // setModel replaces the session object in the store (and refreshes the
-    // derived usage.context_size); re-read it so the context bar renders the
-    // NEW model. Refreshing from the stale reference was the "picker says
-    // sonnet, pill says auto" desync: the old object still carried the old
-    // model and its rAF-batched updateContextBar write landed last.
+    // derived usage.context_size); the context bar's active-session effect
+    // (chat.ts) repaints from the NEW object inside this write.
     setModel(session.id, modelID);
-    const updated = getActive();
-    if (updated !== undefined) {
-      refreshContextUI(updated);
-    }
   }
   refreshPickerIfVisible(modelID);
 }

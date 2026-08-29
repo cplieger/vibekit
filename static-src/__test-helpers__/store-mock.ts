@@ -47,6 +47,7 @@ export const storeMock = {
   getActiveId: vi.fn(() => ""),
   getActive: vi.fn((): undefined => undefined),
   get: vi.fn((): undefined => undefined),
+  watchSession: vi.fn((): undefined => undefined),
   setSessions: vi.fn(),
   setActive: vi.fn(),
   // The head of the list, not the real function's -1: a suite reaching this is
