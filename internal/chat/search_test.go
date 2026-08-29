@@ -461,3 +461,205 @@ func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
 		})
 	}
 }
+
+// blockMsg builds a block-bearing assistant message whose legacy Content and
+// Reasoning fields mirror the block texts — the shape the buffer persists,
+// since one Append*Delta call fills the block array AND the legacy builders.
+func blockMsg(id string, blocks []vibekit.Block, tools ...vibekit.ToolCall) vibekit.Message {
+	var content, reasoning strings.Builder
+	for _, b := range blocks {
+		content.WriteString(b.Text)
+		reasoning.WriteString(b.Thinking)
+	}
+	return vibekit.Message{
+		ID:        id,
+		Role:      vibekit.RoleAssistant,
+		Ts:        100,
+		Content:   content.String(),
+		Reasoning: reasoning.String(),
+		Blocks:    blocks,
+		ToolCalls: tools,
+	}
+}
+
+// wantHit is the segment-addressing half of an expected hit; assertBlockHits
+// checks it field by field so a failure names the exact coordinate that broke.
+type wantHit struct {
+	blockIndex *int
+	kind       SegmentKind
+	subtask    string
+	offset     int
+	segmentLen int
+}
+
+func assertBlockHits(t *testing.T, hits []SearchHit, want []wantHit) {
+	t.Helper()
+	if len(hits) != len(want) {
+		t.Fatalf("got %d hits, want %d: %+v", len(hits), len(want), hits)
+	}
+	for i, w := range want {
+		h := hits[i]
+		if h.SegmentKind != w.kind {
+			t.Errorf("hit %d SegmentKind = %q, want %q", i, h.SegmentKind, w.kind)
+		}
+		if h.AgentSubtaskID != w.subtask {
+			t.Errorf("hit %d AgentSubtaskID = %q, want %q", i, h.AgentSubtaskID, w.subtask)
+		}
+		if h.Offset != w.offset {
+			t.Errorf("hit %d Offset = %d, want %d", i, h.Offset, w.offset)
+		}
+		if h.SegmentLen != w.segmentLen {
+			t.Errorf("hit %d SegmentLen = %d, want %d", i, h.SegmentLen, w.segmentLen)
+		}
+		switch {
+		case w.blockIndex == nil && h.BlockIndex != nil:
+			t.Errorf("hit %d BlockIndex = %d, want nil", i, *h.BlockIndex)
+		case w.blockIndex != nil && h.BlockIndex == nil:
+			t.Errorf("hit %d BlockIndex = nil, want %d", i, *w.blockIndex)
+		case w.blockIndex != nil && *h.BlockIndex != *w.blockIndex:
+			t.Errorf("hit %d BlockIndex = %d, want %d", i, *h.BlockIndex, *w.blockIndex)
+		}
+	}
+}
+
+// The same text in a parent block and a delegate block is two different places:
+// each hit names its own block and subtask, and both offsets are relative to
+// their OWN segment, so the two identical prefixes yield identical offsets.
+func TestSearch_DistinguishesParentAndDelegateBlocks(t *testing.T) {
+	m := blockMsg("a1", []vibekit.Block{
+		{Type: vibekit.BlockText, Text: "the needle in the parent"},
+		{Type: vibekit.BlockText, Text: "the needle in the delegate", AgentSubtaskID: "sub-1"},
+	})
+	hits := Search([]vibekit.Message{m}, "needle", false)
+	assertBlockHits(t, hits, []wantHit{
+		{kind: SegmentContent, blockIndex: new(0), subtask: "", offset: 4, segmentLen: 24},
+		{kind: SegmentContent, blockIndex: new(1), subtask: "sub-1", offset: 4, segmentLen: 26},
+	})
+}
+
+// Two occurrences INSIDE one block are two hits with distinct segment-relative
+// offsets — not offsets into any concatenation of the message.
+func TestSearch_TwoHitsInOneBlockGetSegmentRelativeOffsets(t *testing.T) {
+	m := blockMsg("a1",
+		[]vibekit.Block{
+			{Type: vibekit.BlockText, Text: "intro paragraph"},
+			{Type: vibekit.BlockToolUse, ToolCallID: "t1"},
+			{Type: vibekit.BlockText, Text: "needle then a needle"},
+		},
+		vibekit.ToolCall{ID: "t1", Title: "shell"},
+	)
+	hits := Search([]vibekit.Message{m}, "needle", false)
+	assertBlockHits(t, hits, []wantHit{
+		{kind: SegmentContent, blockIndex: new(2), offset: 0, segmentLen: 20},
+		{kind: SegmentContent, blockIndex: new(2), offset: 14, segmentLen: 20},
+	})
+}
+
+// A tool block exposes its title and its output as SEPARATE segments SHARING
+// the block index: the kind disambiguates them, and an output hit's offset is
+// relative to the output segment, not the title.
+func TestSearch_ToolTitleAndOutputAreSeparateSegmentsSharingTheBlock(t *testing.T) {
+	m := blockMsg("a1",
+		[]vibekit.Block{
+			{Type: vibekit.BlockText, Text: "running the search now"},
+			{Type: vibekit.BlockToolUse, ToolCallID: "t1", AgentSubtaskID: "sub-9"},
+		},
+		vibekit.ToolCall{ID: "t1", Title: "grep needle", Output: "found a needle here"},
+	)
+	hits := Search([]vibekit.Message{m}, "needle", false)
+	assertBlockHits(t, hits, []wantHit{
+		{kind: SegmentToolTitle, blockIndex: new(1), subtask: "sub-9", offset: 5, segmentLen: 11},
+		{kind: SegmentToolOutput, blockIndex: new(1), subtask: "sub-9", offset: 8, segmentLen: 19},
+	})
+}
+
+// A message persisted before blocks existed has no block array to address:
+// its prose and thinking fall back to ONE content segment over the legacy
+// content/reasoning concatenation (the existing searchable shape), and its
+// tool calls keep their own segments — all without a block index.
+func TestSearch_LegacyBlocklessMessageFallsBackToOneContentSegment(t *testing.T) {
+	m := vibekit.Message{
+		ID: "a1", Role: vibekit.RoleAssistant, Ts: 1,
+		Content:   "prose needle",
+		Reasoning: "thinking needle",
+		ToolCalls: []vibekit.ToolCall{{ID: "t1", Title: "shell", Output: "output needle"}},
+	}
+	hits := Search([]vibekit.Message{m}, "needle", false)
+	// "prose needle\nthinking needle" is one 28-rune segment.
+	assertBlockHits(t, hits, []wantHit{
+		{kind: SegmentContent, offset: 6, segmentLen: 28},
+		{kind: SegmentContent, offset: 22, segmentLen: 28},
+		{kind: SegmentToolOutput, offset: 7, segmentLen: 13},
+	})
+}
+
+// Segment offsets and lengths count RUNES, not bytes, and are relative to the
+// matched segment even when earlier segments hold multi-byte text.
+func TestSearch_SegmentOffsetsAreRuneIndices(t *testing.T) {
+	m := blockMsg("a1", []vibekit.Block{
+		{Type: vibekit.BlockText, Text: "héllo wörld"},
+		{Type: vibekit.BlockThinking, Thinking: "åß needle"},
+	})
+	hits := Search([]vibekit.Message{m}, "needle", false)
+	// "åß " is 3 runes (5 bytes); the whole segment is 9 runes (11 bytes).
+	assertBlockHits(t, hits, []wantHit{
+		{kind: SegmentReasoning, blockIndex: new(1), offset: 3, segmentLen: 9},
+	})
+}
+
+// A filter-only query keeps its one-synthetic-hit-per-message contract, carried
+// as segment_kind "message": offset 0, zero segment length, no block index —
+// the hit locates the message, not a span inside it. A tool-only assistant
+// message with empty prose is still listed.
+func TestSearch_FilterOnlyHitsAreMessageKind(t *testing.T) {
+	msgs := []vibekit.Message{
+		blockMsg("a1", []vibekit.Block{{Type: vibekit.BlockText, Text: "prose here"}}),
+		blockMsg("a2",
+			[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
+			vibekit.ToolCall{ID: "t1", Title: "shell", Output: "ran fine"},
+		),
+	}
+	hits := Search(msgs, "role:assistant", false)
+	assertBlockHits(t, hits, []wantHit{
+		{kind: SegmentMessage, offset: 0, segmentLen: 0},
+		{kind: SegmentMessage, offset: 0, segmentLen: 0},
+	})
+	if hits[0].MessageID != "a1" || hits[1].MessageID != "a2" {
+		t.Errorf("hits name %q and %q, want a1 and a2", hits[0].MessageID, hits[1].MessageID)
+	}
+	// The tool-only message still gets a usable excerpt.
+	if hits[1].Excerpt == "" {
+		t.Error("tool-only message got an empty excerpt")
+	}
+}
+
+// The TS mirror in chat-search.ts is hand-maintained, so the wire spelling of
+// the segment fields is a contract this side must hold: snake_case names, and
+// the optional pair absent rather than null when unset.
+func TestSearchHit_WireShape(t *testing.T) {
+	full, err := json.Marshal(SearchHit{
+		MessageID:      "m1",
+		SegmentKind:    SegmentToolOutput,
+		AgentSubtaskID: "sub-1",
+		BlockIndex:     new(3),
+		Offset:         8,
+		SegmentLen:     19,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{`"segment_kind":"tool_output"`, `"agent_subtask_id":"sub-1"`, `"block_index":3`, `"segment_len":19`, `"offset":8`} {
+		if !strings.Contains(string(full), key) {
+			t.Errorf("marshalled hit %s lacks %s", full, key)
+		}
+	}
+	minimal, err := json.Marshal(SearchHit{MessageID: "m1", SegmentKind: SegmentMessage})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{"block_index", "agent_subtask_id"} {
+		if strings.Contains(string(minimal), key) {
+			t.Errorf("marshalled filter-only hit %s carries %s, want it omitted", minimal, key)
+		}
+	}
+}

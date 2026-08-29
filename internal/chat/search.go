@@ -45,9 +45,38 @@ const searchExcerptRadius = 60
 // thousand-turn chat is a wire cost paid for nothing.
 const maxSearchHits = 200
 
+// SegmentKind identifies which span of a message a hit landed in, so the
+// client can pick the right rendered surface before applying the offset.
+type SegmentKind string
+
+// Segment kinds. A tool block exposes its title and its output as SEPARATE
+// segments sharing one block index, so the kind is what disambiguates their
+// offsets.
+const (
+	SegmentContent    SegmentKind = "content"
+	SegmentReasoning  SegmentKind = "reasoning"
+	SegmentToolTitle  SegmentKind = "tool_title"
+	SegmentToolOutput SegmentKind = "tool_output"
+	// SegmentMessage is the filter-only kind: a query with filters and no free
+	// text yields one synthetic hit per matching message, locating the message
+	// rather than a span inside it (offset 0, zero segment length, no block).
+	SegmentMessage SegmentKind = "message"
+)
+
 // SearchHit locates one match. The client fetches only the turns it needs to
 // reveal and highlights locally, so this carries position rather than markup.
+// Position is segment-relative: Offset indexes runes inside the one segment
+// named by SegmentKind + BlockIndex, never a concatenation of the message.
+//
+// NOT wiregen-registered, deliberately: the TS mirror in chat-search.ts is
+// hand-maintained (the generated namespace's SearchHit name is taken by the
+// tools type), so field names here must match its spelling.
 type SearchHit struct {
+	// BlockIndex is the matched segment's block position in the message's
+	// chronological Blocks array. Nil for messages persisted before blocks
+	// existed and for message-kind hits. First for govet fieldalignment: a
+	// pointer after the strings would extend the GC scan past their len words.
+	BlockIndex *int `json:"block_index,omitempty"`
 	// MessageID is the matched message.
 	MessageID string `json:"message_id"`
 	// TurnMessageID is the matched turn's OPENING message id.
@@ -63,12 +92,23 @@ type SearchHit struct {
 	// Role of the matched message, so a result list can say where a hit came
 	// from without a second lookup.
 	Role vibekit.Role `json:"role"`
+	// SegmentKind names the span the hit landed in: content | reasoning |
+	// tool_title | tool_output, or message for a filter-only hit.
+	SegmentKind SegmentKind `json:"segment_kind"`
+	// AgentSubtaskID is the subtask id of the agent that produced the matched
+	// segment ("" = top-level agent), so a hit inside a delegate's stream can
+	// open that delegate's chain before highlighting.
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
 	// Turn is the 1-based session-absolute turn ordinal, matching
 	// projectTurnSummaries so a hit can mark the timeline rail.
 	Turn int `json:"turn"`
-	// Offset is the rune index of the match within the searched text, so the
-	// client can highlight the right occurrence rather than the first.
+	// Offset is the rune index of the match inside its segment, so the client
+	// can highlight the right occurrence rather than the first.
 	Offset int `json:"offset"`
+	// SegmentLen is the segment's rune length: the denominator for a relative
+	// position, carried so the client never re-derives the server's
+	// segmentation. Zero for message-kind hits.
+	SegmentLen int `json:"segment_len"`
 }
 
 // searchQuery is a parsed query: scoped filters plus the free text.
@@ -225,29 +265,43 @@ func messageUsesTool(m *vibekit.Message, want string) bool {
 	return false
 }
 
-// appendMessageHits adds every match within one message.
+// appendMessageHits adds every match within one message, matching each of the
+// message's segments independently — a hit's Offset and SegmentLen are the
+// segment's, so a match can never span two segments.
 //
 // A filter-only query (`file:auth.go` with no text) still yields one hit per
 // matching message, so a scoped search without free text is a way to LIST turns
-// rather than a query that finds nothing.
+// rather than a query that finds nothing. That hit locates the MESSAGE
+// (SegmentMessage, offset 0, zero length, no block index), not a span in it.
 func appendMessageHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, turn int, opener string) []SearchHit {
-	body := searchableText(m)
 	if q.text == "" {
 		return append(hits, SearchHit{
 			MessageID:     m.ID,
 			TurnMessageID: opener,
 			Role:          m.Role,
 			Turn:          turn,
-			Offset:        0,
-			Excerpt:       excerptAround([]rune(body), 0, 0),
+			SegmentKind:   SegmentMessage,
+			Excerpt:       excerptAround([]rune(searchableText(m)), 0, 0),
 		})
 	}
-	runes := []rune(body)
+	for _, seg := range messageSegments(m) {
+		hits = appendSegmentHits(hits, m, q, turn, opener, &seg)
+		if len(hits) >= maxSearchHits {
+			return hits
+		}
+	}
+	return hits
+}
+
+// appendSegmentHits adds every occurrence of the query text inside one segment.
+func appendSegmentHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, turn int, opener string, seg *segment) []SearchHit {
+	runes := []rune(seg.text)
 	// The haystack is folded only when the query was folded, so the two always
-	// agree; parseSearchQuery owns the needle's side of that.
-	hay := body
+	// agree; parseSearchQuery owns the needle's side of that. Folding maps rune
+	// to rune, so an index into the folded string is an index into the original.
+	hay := seg.text
 	if !q.caseSensitive {
-		hay = strings.ToLower(body)
+		hay = strings.ToLower(seg.text)
 	}
 	needle := q.text
 	from := 0
@@ -259,12 +313,16 @@ func appendMessageHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, tur
 		byteAt := from + idx
 		runeAt := len([]rune(hay[:byteAt]))
 		hits = append(hits, SearchHit{
-			MessageID:     m.ID,
-			TurnMessageID: opener,
-			Role:          m.Role,
-			Turn:          turn,
-			Offset:        runeAt,
-			Excerpt:       excerptAround(runes, runeAt, len([]rune(needle))),
+			MessageID:      m.ID,
+			TurnMessageID:  opener,
+			Role:           m.Role,
+			Turn:           turn,
+			SegmentKind:    seg.kind,
+			AgentSubtaskID: seg.subtaskID,
+			BlockIndex:     seg.blockIndex,
+			Offset:         runeAt,
+			SegmentLen:     len(runes),
+			Excerpt:        excerptAround(runes, runeAt, len([]rune(needle))),
 		})
 		if len(hits) >= maxSearchHits {
 			return hits
@@ -273,10 +331,90 @@ func appendMessageHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, tur
 	}
 }
 
-// searchableText is everything in a message a reader could plausibly search:
-// the prose, the thinking trace, and each tool call's title and output. Tool
-// output matters — "which turn printed that error" is asked more often than
-// "which turn mentioned it".
+// segment is one searchable span of a message: the unit a hit's offset is
+// relative to.
+type segment struct {
+	// blockIndex is the owning block's position in Message.Blocks, nil on the
+	// legacy blockless fallback. A tool block's title and output segments share
+	// it; the kind is what tells their offsets apart.
+	blockIndex *int
+	kind       SegmentKind
+	text       string
+	subtaskID  string
+}
+
+// messageSegments lists a message's searchable spans in order. Block-bearing
+// messages segment per block — the legacy Content/Reasoning fields mirror the
+// block texts, so reading both would double every hit. Messages persisted
+// before blocks existed fall back to one content segment over the legacy
+// concatenation plus one title/output pair per tool call.
+func messageSegments(m *vibekit.Message) []segment {
+	if len(m.Blocks) == 0 {
+		return legacySegments(m)
+	}
+	segs := make([]segment, 0, len(m.Blocks)+2)
+	for i := range m.Blocks {
+		b := &m.Blocks[i]
+		switch b.Type {
+		case vibekit.BlockText:
+			segs = append(segs, segment{kind: SegmentContent, text: b.Text, subtaskID: b.AgentSubtaskID, blockIndex: new(i)})
+		case vibekit.BlockThinking:
+			segs = append(segs, segment{kind: SegmentReasoning, text: b.Thinking, subtaskID: b.AgentSubtaskID, blockIndex: new(i)})
+		case vibekit.BlockToolUse:
+			tc := toolCallByID(m, b.ToolCallID)
+			if tc == nil {
+				continue
+			}
+			segs = append(segs, toolSegments(tc, b.AgentSubtaskID, new(i))...)
+		}
+	}
+	return segs
+}
+
+// legacySegments is the fallback for messages with no block array: the prose
+// and thinking trace as ONE content segment over their concatenation — the
+// shape searchableText always exposed, kept so legacy offsets stay stable —
+// and each tool call's title/output pair, none of it block-addressed.
+func legacySegments(m *vibekit.Message) []segment {
+	text := m.Content
+	if m.Reasoning != "" {
+		text += "\n" + m.Reasoning
+	}
+	segs := make([]segment, 0, 1+2*len(m.ToolCalls))
+	segs = append(segs, segment{kind: SegmentContent, text: text})
+	for i := range m.ToolCalls {
+		tc := &m.ToolCalls[i]
+		segs = append(segs, toolSegments(tc, tc.AgentSubtaskID, nil)...)
+	}
+	return segs
+}
+
+// toolSegments is a tool call's title and output as separate segments sharing
+// one block index. The title is always searchable; an empty output contributes
+// no segment, mirroring what the pre-segment concatenation exposed.
+func toolSegments(tc *vibekit.ToolCall, subtaskID string, blockIndex *int) []segment {
+	segs := []segment{{kind: SegmentToolTitle, text: tc.Title, subtaskID: subtaskID, blockIndex: blockIndex}}
+	if tc.Output != "" {
+		segs = append(segs, segment{kind: SegmentToolOutput, text: tc.Output, subtaskID: subtaskID, blockIndex: blockIndex})
+	}
+	return segs
+}
+
+// toolCallByID resolves a tool_use block's reference into Message.ToolCalls.
+func toolCallByID(m *vibekit.Message, id string) *vibekit.ToolCall {
+	for i := range m.ToolCalls {
+		if m.ToolCalls[i].ID == id {
+			return &m.ToolCalls[i]
+		}
+	}
+	return nil
+}
+
+// searchableText is everything in a message a reader could plausibly search,
+// concatenated: the prose, the thinking trace, and each tool call's title and
+// output. Matching runs per segment via messageSegments; this concatenation
+// survives only as the excerpt source for filter-only hits, which locate the
+// whole message and so preview its start whatever shape it is stored in.
 func searchableText(m *vibekit.Message) string {
 	var b strings.Builder
 	b.Grow(len(m.Content) + len(m.Reasoning) + 64)
