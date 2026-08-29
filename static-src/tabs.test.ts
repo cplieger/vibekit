@@ -1336,19 +1336,15 @@ describe("close provenance", () => {
 // Which mutations are allowed to swap the visible view
 // ---------------------------------------------------------------------------
 
-// The view/route effect re-runs on EVERY projection mutation, and its DOM swap
-// runs inside `viewTransition`, which serializes each call behind the previous
-// one's `finished` and suppresses rendering while one is live. So a swap on a
-// mutation that changes nothing about which view is visible is not merely wasted
-// work — it is a crossfade the reader waits behind. Closing four tabs cost four
-// of them, which is what made rapid closing feel like it needed a pause between
-// clicks (measured on the live instance: the close commands answered in 1-4ms
-// while their POSTs arrived ~1s apart).
+// The view/route effect re-runs on EVERY projection mutation, so a swap on a
+// mutation that changes nothing about which view is visible is not merely
+// wasted work — swapViews cancels and replays the entry fade, so a redundant
+// swap re-animates the view the reader is already looking at.
 //
 // These cases count `class` mutations on the view elements, which is what the
 // swap actually does and the only thing that separates a skip from an idempotent
-// re-run. No transition mock is needed: with boot not marked done, viewTransition
-// invokes its callback synchronously.
+// re-run. No view-swap mock is needed: swapViews applies the swap synchronously,
+// and with boot not marked done it skips the animation.
 describe("the visible view is only swapped when it actually changes", () => {
   let views: HTMLElement[];
   let mutations = 0;

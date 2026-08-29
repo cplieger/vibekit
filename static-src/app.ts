@@ -53,9 +53,9 @@ import {
   setSettingsTab,
   setGitTab,
   setDocsTab,
-  markBootDone,
   tabIdForRoute,
 } from "./tabs.js";
+import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import { chatSkeleton } from "./skeleton.js";

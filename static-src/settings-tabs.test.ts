@@ -17,18 +17,22 @@ import type * as ModSettingsTabs from "./settings-tabs.js";
  */
 let bootSeq = 0;
 
-// maybeViewTransition spy: runs its callback synchronously (so the panel swap
-// still happens) while recording every invocation. One invocation == one swap.
-const { viewTransitionSpy } = vi.hoisted(() => ({
-  viewTransitionSpy: vi.fn((fn: () => void) => {
+// swapViews spy: runs its callback synchronously (so the panel swap still
+// happens) while recording every invocation. One invocation == one swap.
+const { swapViewsSpy } = vi.hoisted(() => ({
+  swapViewsSpy: vi.fn((fn: () => HTMLElement | null) => {
     fn();
   }),
 }));
 
-// Mock ./dom.js so the panel swap is observable through the spy. The `$`
-// registry resolves the test-built tab bar / select lazily from the live DOM,
-// mirroring the real lazy getters in dom.ts so initSettingsTabs() works
-// against whatever was built in beforeEach.
+vi.mock("./view-swap.js", () => ({
+  swapViews: swapViewsSpy,
+}));
+
+// Mock ./dom.js so `$` resolves against the test-built DOM. The registry
+// resolves the tab bar / select lazily from the live DOM, mirroring the real
+// lazy getters in dom.ts so initSettingsTabs() works against whatever was
+// built in beforeEach.
 vi.mock("./dom.js", () => {
   const idFor: Record<string, string> = {
     settingsTabBar: "settings-tab-bar",
@@ -58,7 +62,6 @@ vi.mock("./dom.js", () => {
     ),
     byId: byIdReal,
     maybeEl: (id: string): HTMLElement | null => document.getElementById(id),
-    maybeViewTransition: viewTransitionSpy,
   };
 });
 
@@ -119,7 +122,7 @@ describe("settings-tabs forceSettingsTab dedup", () => {
     vi.resetModules();
     bootSeq++;
     buildSettingsDom();
-    viewTransitionSpy.mockClear();
+    swapViewsSpy.mockClear();
   });
 
   afterEach(() => {
@@ -131,11 +134,11 @@ describe("settings-tabs forceSettingsTab dedup", () => {
       /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
     )) as typeof ModSettingsTabs;
     initSettingsTabs(); // subscribe fires immediately → one swap for the default "general" tab
-    viewTransitionSpy.mockClear();
+    swapViewsSpy.mockClear();
 
     forceSettingsTab("general"); // already active → deduped signal → no notify → no swap
 
-    expect(viewTransitionSpy).not.toHaveBeenCalled();
+    expect(swapViewsSpy).not.toHaveBeenCalled();
   });
 
   it("two consecutive forceSettingsTab(tools) swap once", async () => {
@@ -143,11 +146,11 @@ describe("settings-tabs forceSettingsTab dedup", () => {
       /* @vite-ignore */ `./settings-tabs.ts?boot=${bootSeq}`
     )) as typeof ModSettingsTabs;
     initSettingsTabs();
-    viewTransitionSpy.mockClear();
+    swapViewsSpy.mockClear();
 
     forceSettingsTab("tools"); // general → tools: one swap
     forceSettingsTab("tools"); // tools → tools: deduped, no swap
 
-    expect(viewTransitionSpy).toHaveBeenCalledTimes(1);
+    expect(swapViewsSpy).toHaveBeenCalledTimes(1);
   });
 });

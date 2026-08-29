@@ -203,11 +203,6 @@ vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) 
 vi.mock("./dom.js", () => {
   const cache = new Map<string, HTMLElement>();
   return {
-    // Present-but-undefined so real-ESM linking succeeds: another module in this
-    // graph imports the name, and Browser Mode links for real rather than
-    // reading properties off a namespace object. `undefined` is what the node
-    // runner gave it, so no path under test changes behavior.
-    maybeViewTransition: undefined,
     $: new Proxy(
       {},
       {
