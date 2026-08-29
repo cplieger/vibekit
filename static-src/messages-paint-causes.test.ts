@@ -255,3 +255,60 @@ describe("paint branches on the flushed render cause", () => {
     expect(after.every((el, i) => el === kids[i])).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// `.is-bodyless` on the turn card mirrors "the card ends with an empty body"
+// for CSS (29-turns.css keys the header's bottom edge on it). buildTurn and
+// updateTurn stamp it after every pass, so it must track both facts it
+// encodes: the body's children AND whether a footer follows.
+// ---------------------------------------------------------------------------
+
+describe("the bodyless turn card is marked .is-bodyless", () => {
+  it("marks a prompt-only turn and clears it when the reply lands", async () => {
+    const chat = "bodyless-clear";
+    const kids = mount(chat, [user("bl-u1", "hi")], true);
+    expect(kids.length).toBe(1);
+    expect(kids[0]?.classList.contains("is-bodyless")).toBe(true);
+
+    store.upsertMessage(chat, assistant("bl-a1", "hello"));
+    await flushed();
+    const card = messagesEl.firstElementChild;
+    expect(card?.querySelector(":scope > .turn-body")?.childElementCount).toBe(1);
+    expect(card?.classList.contains("is-bodyless")).toBe(false);
+  });
+
+  it("paints a reserved slot as a marked row, end to end", async () => {
+    // The msg-row half of the same CSS contract, through the REAL block
+    // callbacks (initBlockCallbacks): an assistant message whose text block is
+    // still empty paints a `.msg-row.is-empty` the stylesheet can hide.
+    const chat = "bodyless-row";
+    mount(chat, [user("br-u1", "go"), assistant("br-a1", "")], false);
+    const row = messagesEl.querySelector(".msg-row");
+    expect(row).not.toBeNull();
+    expect(row?.classList.contains("is-empty")).toBe(true);
+
+    store.appendChunk(chat, "br-a1", "landed", false, 0, "");
+    await flushed();
+    expect(messagesEl.querySelector(".msg-row")?.classList.contains("is-empty")).toBe(false);
+  });
+
+  it("clears it when a FOOTER arrives under a still-empty body", async () => {
+    // A second prompt gives the first turn a rewind footer while its body stays
+    // empty. The body is no longer the card's last child, so the header keeps
+    // its border and `.turn-body:empty + .turn-footer` drops the footer's
+    // instead — marking here would erase the only line between the two bands.
+    const chat = "bodyless-footer";
+    const kids = mount(chat, [user("bf-u1", "one")], false);
+    expect(kids[0]?.classList.contains("is-bodyless")).toBe(true);
+
+    store.upsertMessage(chat, user("bf-u2", "two"));
+    await flushed();
+    const cards = [...messagesEl.children] as HTMLElement[];
+    expect(cards.length).toBe(2);
+    expect(cards[0]?.querySelector(":scope > .turn-footer")).not.toBeNull();
+    expect(cards[0]?.querySelector(":scope > .turn-body")?.childElementCount).toBe(0);
+    expect(cards[0]?.classList.contains("is-bodyless")).toBe(false);
+    // The new prompt-only turn takes the mark instead.
+    expect(cards[1]?.classList.contains("is-bodyless")).toBe(true);
+  });
+});

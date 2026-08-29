@@ -339,13 +339,15 @@
  * round the corners the body was covering — the same adjacency `[data-folded]`
  * already resolves this way further down.
  *
- * Both selectors read the ADJACENCY rather than descending from `.turn`, which
- * is what keeps them inside the stylelint specificity and pseudo-class caps:
- * `.turn:has(> .turn-body:empty):not(:has(> .turn-footer)) > .turn-header` says
- * the same thing with five classes and four pseudo-classes. `:last-child` on
- * the body IS the no-footer test, because a card holds exactly a header, a body
- * and an optional footer, and Rewind mounts inside that footer. */
-.turn-header:has(+ .turn-body:empty:last-child) {
+ * `.is-bodyless` is renderer-set on the CARD (messages.ts syncTurnBodyless):
+ * present exactly when the body is empty AND last child — `:last-child` on the
+ * body IS the no-footer test, because a card holds exactly a header, a body and
+ * an optional footer, and Rewind mounts inside that footer. A class rather than
+ * `.turn-header:has(+ .turn-body:empty:last-child)` because a streaming turn's
+ * card mutates every frame and `:has()` charges each recalc for relational
+ * matching (design §B4). The footer case below keeps reading the adjacency:
+ * `:empty` is cheap, and no `:has()` is needed to look backward. */
+.turn.is-bodyless > .turn-header {
   border-bottom: 0;
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);

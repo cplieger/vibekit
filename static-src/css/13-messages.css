@@ -221,18 +221,14 @@
  * `display: none` is what removes the gap as well — a zero-height flex item is
  * still an item, and `gap` counts it.
  *
- * `:not(.streaming)` mirrors `mountThinking`'s `initial === "" && !live` guard, so
- * a live bubble waiting on its first token keeps its caret. The row comes back on
- * its own the moment the bubble has a child, which is why this is a style rule
- * rather than a guard in `mountText`: skipping the mount would throw the reserved
- * position away and lose the text that lands in it later.
- *
- * `.message` rather than `.message.assistant` to stay inside the specificity cap
- * — `:has()` and `:not()` each take their argument's specificity, and the fuller
- * form scores (0,5,0) against a (0,4,3) maximum. It loses nothing: a `.msg-row`
- * only ever wraps an assistant bubble (`mountText`'s top-level branch), because
- * the user's request is the turn HEADER and there are no user bubbles. */
-.msg-row:has(> .message:empty:not(.streaming)) {
+ * `.is-empty` is renderer-set (the bubble reports its blank state, mountText
+ * writes it onto the row): present while the bubble has nothing rendered AND is
+ * not streaming, so a live bubble waiting on its first token keeps its caret,
+ * and the row comes back the moment text lands. A class rather than
+ * `.msg-row:has(> .message:empty:not(.streaming))` because the row's subtree
+ * mutates every frame while a turn streams, and `:has()` makes each of those
+ * recalcs run relational matching (design §B4). */
+.msg-row.is-empty {
   display: none;
 }
 

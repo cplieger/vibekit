@@ -164,7 +164,12 @@ function buildHeader(
   info: ToolRenderInfo,
   withToggle: boolean,
 ): HTMLDivElement {
-  const header = el("div", { className: "tool-header", title: opts.title }) as HTMLDivElement;
+  // `.has-disclosure` is the CSS hook for the clickable affordance
+  // (14-tools.css); stamped with the toggle so the two cannot drift.
+  const header = el("div", {
+    className: withToggle ? "tool-header has-disclosure" : "tool-header",
+    title: opts.title,
+  }) as HTMLDivElement;
 
   const iconSpan = el("span", { className: "tool-icon" }, iconEl(toolIcon(info.kind, opts.title)));
   header.appendChild(iconSpan);

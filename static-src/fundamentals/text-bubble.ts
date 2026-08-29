@@ -56,6 +56,12 @@ export interface AssistantBubbleOpts {
    *  clear it at the same moment the class goes, whichever path sealed it
    *  (tail moved, turn finalized, unmount). */
   onSeal?: (root: HTMLElement) => void;
+  /** Reports whether the bubble is BLANK — nothing to show and not streaming —
+   *  once with the initial state during build, then on every transition. The
+   *  row wrapper hides on it (`.msg-row.is-empty`, css/13-messages.css): a
+   *  reserved block slot must keep its DOM position but cost no row until its
+   *  text arrives, while a live bubble stays visible to carry its caret. */
+  onBlankChange?: (blank: boolean) => void;
 }
 
 export function buildAssistantBubble(
@@ -68,6 +74,16 @@ export function buildAssistantBubble(
   let text = ""; // what the parser has been given
   let target = ""; // the full text known, revealed or not
   let ending = false;
+
+  /** Blank = nothing to show and not streaming. Initialized after the initial
+   *  render below; write/seal fire transitions through onBlankChange. */
+  let blank = false;
+  const setBlank = (b: boolean): void => {
+    if (b !== blank) {
+      blank = b;
+      opts?.onBlankChange?.(b);
+    }
+  };
 
   /** Append `delta`, opening the incremental renderer when there is not one yet.
    *
@@ -88,6 +104,9 @@ export function buildAssistantBubble(
       return;
     }
     text += delta;
+    // Accepted text is committed to appear (the stream flushes it), so the row
+    // un-hides now rather than at the stream's own flush.
+    setBlank(false);
     if (stream !== null) {
       stream.writeDelta(delta);
       return;
@@ -110,6 +129,9 @@ export function buildAssistantBubble(
     stream?.end();
     stream = null;
     root.classList.remove("streaming");
+    // The wash is gone, so an empty bubble is a blank one from here on (a
+    // reserved slot whose text never arrived).
+    setBlank(root.firstChild === null);
     if (!sealed) {
       sealed = true;
       opts?.onSeal?.(root);
@@ -138,6 +160,11 @@ export function buildAssistantBubble(
       renderMarkdownInto(root, initial);
     }
   }
+
+  // The initial report. DOM truth rather than `initial === ""`: whitespace-only
+  // markdown renders no node, and the row keys on what is visible.
+  blank = !live && root.firstChild === null;
+  opts?.onBlankChange?.(blank);
 
   /** Take `full` as the text now known. Growth only; shorter is ignored. */
   const grow = (full: string): void => {
