@@ -24,7 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Message } from "./types.js";
-import { getActive, getActiveId, messagesVersion, activeSession, steerMarks } from "./store.js";
+import { getActive, getActiveId, watchActiveId, messagesVersionOf, steerMarks } from "./store.js";
 import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
@@ -234,9 +234,13 @@ export function mountChatView(): void {
   // The rail lives in the transcript's positioned outer wrapper rather than in
   // the scroller, so it stays put instead of scrolling away with the content.
   mountTurnRail($.messagesWrapOuter);
+  // The transcript's two inputs: WHICH chat is active, and THAT chat's own
+  // transcript version. Header-only updates (usage ticks, titles, modes) write
+  // the session signal but bump no version, so they never reach paint();
+  // removing the active chat repaints via the activeId write in removeChat.
   effect(() => {
-    void messagesVersion.value;
-    void activeSession.value;
+    const id = watchActiveId();
+    void messagesVersionOf(id).value;
     paint();
   });
 }

@@ -9,9 +9,9 @@
 // MESSAGES are deliberately NOT a collection: each session owns a Message[]
 // with sub-message (block/tool) streaming signals in store-signals.ts,
 // finer-grained than a per-message signal. The messages renderer subscribes
-// to `messagesVersion` (coarse "list shape changed") while the SignalMaps do
-// the per-block/per-tool fine-grained work. Streaming paths coalesce
-// renders via scheduleMessages (queueMicrotask).
+// to its chat's `messagesVersionOf` signal (coarse "list shape changed") while
+// the SignalMaps do the per-block/per-tool fine-grained work. Streaming paths
+// coalesce renders per chat via scheduleMessages (queueMicrotask).
 // ---------------------------------------------------------------------------
 
 import type {
@@ -28,7 +28,14 @@ import type {
   SteerAnchor,
   SteerMark,
 } from "./types.js";
-import { signal, computed, createCollection, batch } from "@cplieger/reactive";
+import {
+  signal,
+  computed,
+  createCollection,
+  batch,
+  SignalMap,
+  type Signal,
+} from "@cplieger/reactive";
 import {
   streamingTextSigs,
   streamingReasoningSigs,
@@ -39,72 +46,48 @@ import {
   toolCallSigKey,
 } from "./store-signals.js";
 
-// --- Messages reactivity: the renderer + task-list subscribe to this ---
-/** Message list changes: append, upsert (non-streaming), tool calls, new block. */
-export const messagesVersion = signal(0);
+// --- Messages reactivity: PER-CHAT transcript versions ---
+// One version signal per chat (`ensure(id, 0)`). The transcript effect and the
+// task-list pill subscribe to the ACTIVE chat's signal only, so a background
+// chat's stream cannot repaint the visible transcript (the multi-tab freeze
+// class), and a background consumer (the subagent page) tracks its own chat and
+// gains live updates. Per-delta paths coalesce per chat per microtask via
+// scheduleMessages; list-shape writers bump synchronously — the renderer's keyed
+// reconcile must see an append before the frame it was announced in.
+const messagesVersionSigs = new SignalMap<number>();
 
-export function emitMessages(): void {
-  messagesVersion.value = messagesVersion.peek() + 1;
+/** THIS chat's transcript version. Reading `.value` inside an effect subscribes
+ *  it to the chat's transcript changes and nothing else's. */
+export function messagesVersionOf(chatID: string): Signal<number> {
+  return messagesVersionSigs.ensure(chatID, 0);
 }
 
-/**
- * `emitMessages`, but only for the chat on screen.
+/** Bump `chatID`'s transcript version synchronously.
  *
- * The same gate `scheduleMessages` applies and for the same reason (see its
- * comment), kept as a second function rather than folded into one because the
- * TIMING is a real difference and neither caller should have to think about it.
- * The paths here change the message LIST — a message arriving, a turn's ledger
- * being stamped — which the renderer's keyed reconcile has to see before the
- * frame it was announced in, so this bump stays synchronous. `scheduleMessages`
- * defers because its callers fire per DELTA and a microtask is what collapses a
- * tick's worth of them into one repaint.
- *
- * The ungated `emitMessages` above stays exported for the two callers outside
- * this module (`store-load.ts` after a page fetch, `chat-search.ts` around a
- * reveal), both of which act on the chat the reader is looking at by
- * construction — a page fetch is an activation or a scroll-up, and a search runs
- * on the open transcript. Neither is on a per-frame path, so gating them would
- * buy nothing and cost two more files a reason to import an id they only have to
- * satisfy a guard.
- */
-function emitMessagesFor(chatID: string): void {
-  if (chatID !== activeId.peek()) {
-    return;
-  }
-  emitMessages();
+ *  List-shape writers here and the two out-of-module callers (`store-load.ts`
+ *  after a page fetch, `chat-search.ts` around a reveal) use this; per-delta
+ *  paths go through `scheduleMessages`. The timing split is real: a message
+ *  arriving must be in the DOM before the frame it was announced in, while a
+ *  tick's worth of deltas should collapse into one repaint. */
+export function bumpMessages(chatID: string): void {
+  const sig = messagesVersionSigs.ensure(chatID, 0);
+  sig.value = sig.peek() + 1;
 }
-let messagesScheduled = false;
-/**
- * Coalesce the streaming paths' "the list shape changed" bumps for ONE chat into
- * a single render on the next microtask. (The package's batch() flushes
- * synchronously, so the microtask deferral is owned here.)
- *
- * THE CHAT ID IS THE POINT, and it is required rather than optional so a new
- * call site cannot skip the question by omission. `messagesVersion` is global but
- * both of its consumers render the ACTIVE chat and nothing else — the transcript
- * effect in `messages.ts` (whose `paint()` reads `getActive()`) and the
- * task-list pill (which reads `getActive()` too) — so a bump on behalf of a
- * background chat repaints a transcript that did not change, which is the
- * expensive half of a full keyed reconcile over every turn, message and block on
- * screen. Ungated, a chat streaming in a background tab drove that repaint at SSE
- * frame rate: with N chats streaming the visible transcript was repainted N times
- * per frame, and the transcript being repainted was the largest one only by
- * coincidence. That is the multi-tab freeze.
- *
- * A background chat's DATA still lands — every caller mutates the session's
- * messages before reaching here, and this only decides whether anything repaints
- * now. Switching to that chat paints it from the mutated store: `setActive` writes
- * `activeId`, which re-derives `activeSession`, which the same effect tracks.
- * That is why the gate needs no catch-up bump of its own.
- */
+
+/** Chats with a bump parked on the next microtask. `removeChat` deletes its id
+ *  here, so a pending flush cannot re-mint the version signal it just cleared. */
+const messagesScheduled = new Set<string>();
+
+/** Coalesce one chat's per-delta bumps into a single repaint per microtask. */
 function scheduleMessages(chatID: string): void {
-  if (chatID !== activeId.peek() || messagesScheduled) {
+  if (messagesScheduled.has(chatID)) {
     return;
   }
-  messagesScheduled = true;
+  messagesScheduled.add(chatID);
   queueMicrotask(() => {
-    messagesScheduled = false;
-    messagesVersion.value = messagesVersion.peek() + 1;
+    if (messagesScheduled.delete(chatID)) {
+      bumpMessages(chatID);
+    }
   });
 }
 
@@ -152,6 +135,11 @@ export function getSessions(): Session[] {
 export function getActiveId(): string {
   return activeId.peek();
 }
+/** The active chat id as a TRACKED read: an effect calling this re-runs when the
+ *  active chat changes. `getActiveId` stays the untracked peek. */
+export function watchActiveId(): string {
+  return activeId.value;
+}
 export function getActive(): Session | undefined {
   const id = activeId.peek();
   return id === "" ? undefined : sessions.get(id);
@@ -186,9 +174,9 @@ export function setActive(id: string): void {
     return;
   }
   // Setting activeId re-derives `activeSession` (and the messages renderer,
-  // which tracks activeSession, repaints the new chat's #messages). Without
-  // this the renderer would keep the previous chat's DOM until something else
-  // bumped messagesVersion.
+  // which the transcript effect tracks via watchActiveId, repaints the new
+  // chat's #messages). Without this the renderer would keep the previous
+  // chat's DOM until something else bumped a version.
   activeId.value = id;
 }
 
@@ -212,6 +200,9 @@ export function isEmptyChat(s: Session | undefined): boolean {
 }
 
 export function setThinking(id: string, v: boolean): void {
+  if (get(id) === undefined) {
+    return;
+  }
   sessions.update(id, (s) => {
     const next: Session = {
       ...s,
@@ -231,6 +222,9 @@ export function setThinking(id: string, v: boolean): void {
     }
     return next;
   });
+  // Transcript fact: `thinking` feeds the live-turn derivation the renderer
+  // paints from, so the flip repaints the chat's transcript.
+  scheduleMessages(id);
 }
 
 /** Latch that this chat's last turn or bridge operation failed (`error` SSE).
@@ -242,6 +236,7 @@ export function setTurnFailed(id: string): void {
     return; // no-op: don't churn the session signal on a replayed error frame
   }
   sessions.update(id, (prev) => ({ ...prev, turn_failed: true }));
+  scheduleMessages(id); // transcript fact: feeds the turn-outcome derivation
 }
 
 /** Clear the failure latch without starting a turn. Only the transport-gap
@@ -257,6 +252,7 @@ export function clearTurnFailed(id: string): void {
     delete next.turn_failed;
     return next;
   });
+  scheduleMessages(id); // transcript fact
 }
 
 /** Latch that this chat's last turn finished.
@@ -276,6 +272,7 @@ export function setTurnDone(id: string): void {
     return; // no-op: don't churn the session signal on a replayed turn_ended
   }
   sessions.update(id, (prev) => ({ ...prev, turn_done: true }));
+  scheduleMessages(id); // transcript fact
 }
 
 /** Clear the finished latch. ONE caller, the transport-gap reconciler, for the
@@ -297,6 +294,7 @@ export function clearTurnDone(id: string): void {
     delete next.turn_done;
     return next;
   });
+  scheduleMessages(id); // transcript fact
 }
 
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store
@@ -439,7 +437,11 @@ export function setAgentStatus(id: string, status: string, text: string): void {
 }
 
 export function setWorkingLabel(id: string, label: string): void {
+  if (get(id)?.working_label === label) {
+    return;
+  }
   sessions.update(id, (s) => ({ ...s, working_label: label }));
+  scheduleMessages(id); // transcript fact: the resume control's fallback label
 }
 
 // --- Mid-turn steers (the dock's waiting rows + the transcript's marks) ---
@@ -505,6 +507,7 @@ export function recordSteerSent(id: string, messageID: string, text: string): vo
   const at = existing.findIndex((e) => e.id === entry.id);
   const next = at >= 0 ? existing.map((e, i) => (i === at ? entry : e)) : [...existing, entry];
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
+  scheduleMessages(id); // transcript fact: the dock row is transcript-adjacent state
 }
 
 /** Un-draw one steer row. The rollback half of `recordSteerSent`.
@@ -521,6 +524,7 @@ export function forgetSteer(id: string, steerID: string): void {
     return;
   }
   sessions.update(id, (cur) => withSteers(cur, rest));
+  scheduleMessages(id); // transcript fact
 }
 
 /** Adopt KAS's own confirmation of a steer into the dock.
@@ -556,6 +560,7 @@ export function recordSteerQueued(id: string, steer: { id: string; text: string 
   const next =
     adoptAt >= 0 ? existing.map((e, i) => (i === adoptAt ? entry : e)) : [...existing, entry];
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
+  scheduleMessages(id); // transcript fact
 }
 
 /** Promote a steer the agent has READ out of the dock and into the transcript.
@@ -605,6 +610,7 @@ export function promoteSteer(id: string, steerID: string, text: string, ack?: st
       anchor: anchorFor(s),
     };
     sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: [...marks, mark] }, rest));
+    scheduleMessages(id); // transcript fact: a mark renders inside the turn
     return;
   }
   const nextMarks = marks.map((m, i) =>
@@ -617,6 +623,7 @@ export function promoteSteer(id: string, steerID: string, text: string, ack?: st
       : m,
   );
   sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: nextMarks }, rest));
+  scheduleMessages(id); // transcript fact
 }
 
 /** Drop steers at a turn boundary: out of the dock, into the transcript as
@@ -661,6 +668,7 @@ export function dropSteers(id: string, steerIDs?: readonly string[]): void {
   sessions.update(id, (cur) =>
     withSteers(added.length > 0 ? { ...cur, steer_marks: [...marks, ...added] } : cur, rest),
   );
+  scheduleMessages(id); // transcript fact: dropped marks render in the turn
 }
 
 /** Remove every CONFIRMED waiting steer, returning a snapshot to restore from.
@@ -687,6 +695,7 @@ export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
     return [];
   }
   sessions.update(id, (cur) => withSteers(cur, rest));
+  scheduleMessages(id); // transcript fact
   return prev;
 }
 
@@ -696,6 +705,7 @@ export function restoreSteers(id: string, prev: readonly PendingSteer[]): void {
     return;
   }
   sessions.update(id, (cur) => withSteers(cur, prev));
+  scheduleMessages(id); // transcript fact
 }
 
 /** Forget the dock's contents WITHOUT promoting them. The `transport:gap` path.
@@ -709,6 +719,7 @@ export function forgetSteers(id: string): void {
     return;
   }
   sessions.update(id, (cur) => withSteers(cur, []));
+  scheduleMessages(id); // transcript fact
 }
 
 /** Where a steer read RIGHT NOW belongs: after everything the turn's assistant
@@ -731,7 +742,7 @@ function anchorFor(s: Session): SteerAnchor {
  *  A steer read before the turn produced anything belongs ABOVE that turn's
  *  first block, and until the message exists there is no id to say so with.
  *  Called from `ingestMessage`'s push branch through `sessions.update` rather
- *  than `emitMessages`, because only `sessions.update` re-derives
+ *  than a version bump, because only `sessions.update` re-derives
  *  `activeSession` — which is what the renderers' value-dedup computeds read. */
 function rebindPendingAnchors(chatID: string, msgID: string): void {
   const marks = get(chatID)?.steer_marks;
@@ -882,6 +893,10 @@ export function removeChat(id: string): void {
     // comments already say "or chat removed"; this is where that becomes true.
     clearSnapshotSeq(id);
     clearLiveTurnMessage(id);
+    // The chat's version signal and any bump parked on the next microtask go
+    // with it — a flush after this must not re-mint the signal.
+    messagesScheduled.delete(id);
+    messagesVersionSigs.clear(id);
     if (wasActive) {
       const remaining = order.filter((x) => x !== id);
       activeId.value = remaining[0] ?? "";
@@ -1002,11 +1017,11 @@ function ingestMessage(chatID: string, incoming: Message): void {
     mi.set(incoming.id, s.messages.length);
     s.messages.push(normalizeMessage(incoming));
     s.message_count = Math.max(s.message_count, s.messages.length);
-    emitMessagesFor(chatID);
+    bumpMessages(chatID);
     if (incoming.role === "assistant") {
       // A steer read before this turn produced anything is anchored at no
       // message; this is the first moment there is an id to give it. AFTER the
-      // push, and through `sessions.update` rather than `emitMessages`, because
+      // push, and through `sessions.update` rather than a version bump, because
       // the anchor has to be readable off `activeSession` by the time the
       // transcript repaints.
       rebindPendingAnchors(chatID, incoming.id);
@@ -1017,7 +1032,7 @@ function ingestMessage(chatID: string, incoming: Message): void {
   if (existing !== undefined) {
     s.messages[idx] = mergeMessage(existing, normalizeMessage(incoming));
   }
-  emitMessagesFor(chatID);
+  bumpMessages(chatID);
 }
 
 /** message_appended → merge path (was a dedup no-op that dropped the final
@@ -1091,7 +1106,7 @@ export function setTurnSummary(
     changed = true;
   }
   if (changed) {
-    emitMessagesFor(chatID);
+    bumpMessages(chatID);
   }
 }
 
@@ -1372,7 +1387,7 @@ export function setCodeReferences(chatID: string, messageID: string, refs: CodeR
     return;
   }
   msg.code_references = refs;
-  emitMessagesFor(chatID);
+  bumpMessages(chatID);
 }
 
 export function upsertToolCall(
@@ -1412,7 +1427,7 @@ export function upsertToolCall(
     s.messages.push(msg);
     s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
-    emitMessagesFor(chatID);
+    bumpMessages(chatID);
     return;
   }
   msg.tool_calls ??= [];
