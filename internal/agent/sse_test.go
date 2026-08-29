@@ -320,7 +320,7 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	// rather than the prompt slot: an agent-initiated turn holds no slot, and it is
 	// the class this replay exists for.
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-	if h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt) == 0 {
+	if h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt) == 0 {
 		t.Fatal("the fixture could not open a turn")
 	}
 

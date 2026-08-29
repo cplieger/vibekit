@@ -6,28 +6,34 @@ package command
 import (
 	"context"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// recoveryOutcome is a TurnOutcomeAccess whose awaited result and later-turn
+// recoveryOutcome is a TurnOutcomeAccess whose captured result and later-turn
 // answer the test dictates, so each clause of the gate can be moved on its own.
+// Its admission slot is a real single-holder slot, so the retry's TRY-reserve
+// contract — a competitor that won the slot abandons the retry — is exercised
+// rather than scripted.
 type recoveryOutcome struct {
-	result      vibekit.TurnResult
 	laterTurn   bool
-	awaitErr    error
+	reserved    bool
 	openedTurns []vibekit.TurnOpenSource
+	mu          sync.Mutex
 }
 
-func (o *recoveryOutcome) OpenTurn(_ context.Context, _ vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+func (o *recoveryOutcome) StartTurn(_ context.Context, _ vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	o.openedTurns = append(o.openedTurns, source)
 	return vibekit.TurnEpoch(len(o.openedTurns))
 }
 
 func (o *recoveryOutcome) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) (vibekit.TurnResult, error) {
-	return o.result, o.awaitErr
+	return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
 }
 
 func (o *recoveryOutcome) ReleaseTurn(vibekit.ChatID, vibekit.TurnEpoch) {}
@@ -37,7 +43,32 @@ func (o *recoveryOutcome) SettleTurnOnResponse(context.Context, vibekit.ChatID, 
 
 func (o *recoveryOutcome) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool { return o.laterTurn }
 
-func (o *recoveryOutcome) PrimeTurnOpen(vibekit.ChatID) bool { return false }
+func (o *recoveryOutcome) AdmissionHolderSource(vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+	return 0, false
+}
+
+func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, vibekit.ChatID, time.Duration) AdmissionOutcome {
+	if o.TryReserveTurn("", vibekit.TurnSourcePrompt) {
+		return AdmissionAcquired
+	}
+	return AdmissionStarting
+}
+
+func (o *recoveryOutcome) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.reserved {
+		return false
+	}
+	o.reserved = true
+	return true
+}
+
+func (o *recoveryOutcome) ReleaseTurnReservation(vibekit.ChatID) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.reserved = false
+}
 
 func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
 }
@@ -133,11 +164,11 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			outcome := &recoveryOutcome{result: tc.result, laterTurn: tc.laterTurn}
+			outcome := &recoveryOutcome{laterTurn: tc.laterTurn}
 			bridges := &recoveryBridges{benchDeps: newBenchDeps()}
 			p := &vibekit.PromptCommand{Text: "an ordinary question", MessageID: "m1"}
 
-			recoverEmptyTurn(t.Context(), bridges, bridges, bridges, outcome, "c1", 1, p, map[string]any{})
+			recoverEmptyTurn(t.Context(), bridges, bridges, bridges, outcome, "c1", 1, tc.result, p, map[string]any{})
 
 			fired := bridges.closed > 0
 			if fired != tc.wantFire {

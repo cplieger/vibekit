@@ -126,7 +126,7 @@ func TestAbandonInFlightTurn_MarksATurnThatNeverStarted(t *testing.T) {
 	// longer opens one itself — every fold opens one and every prompt pre-opens its
 	// own, so a terminal step never finds an idle chat with content to account for.
 	const reason = "Too many requests, please wait before trying again."
-	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	h.AbandonInFlightTurn(ctx, "c1", epoch, reason)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
@@ -261,7 +261,7 @@ func TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	ctx := t.Context()
 
-	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	_, before := h.bus.fanout.Bounds()
 	h.AbandonInFlightTurn(ctx, "c1", epoch, "Too many requests, please wait before trying again.")
 

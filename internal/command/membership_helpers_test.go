@@ -28,7 +28,7 @@ import (
 // second wiring table to maintain.
 func newTestMembership(t *testing.T, chats ChatStore) *Membership {
 	t.Helper()
-	return NewMembership(MembershipDeps{Chats: chats})
+	return NewMembership(&MembershipDeps{Chats: chats})
 }
 
 // newTabbedMembership builds a coordinator over a chat store and a REAL tab store
@@ -45,7 +45,7 @@ func newTabbedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Stor
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return NewMembership(MembershipDeps{Chats: chats, Tabs: st, Bus: bus}), st, bus
+	return NewMembership(&MembershipDeps{Chats: chats, Tabs: st, Bus: bus}), st, bus
 }
 
 // tabBus records the tabs_changed frames a coordinator emitted, under its own

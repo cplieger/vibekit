@@ -94,7 +94,7 @@ func storedToolCall(t *testing.T, dir string) vibekit.ToolCall {
 // is what writes the message to disk).
 func runTerminalTurn(t *testing.T, h *Runtime, frames ...string) {
 	t.Helper()
-	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	for _, f := range frames {
@@ -117,7 +117,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 	h, dir := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "\x1b[31mred\x1b[0m output\n")
 
-	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	// KAS releases the terminal before it reports the result. That ordering is

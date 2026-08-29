@@ -158,7 +158,7 @@ func newRacedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store
 		t.Fatalf("open tab store: %v", err)
 	}
 	bus := &tabBus{}
-	return NewMembership(MembershipDeps{
+	return NewMembership(&MembershipDeps{
 		Chats: chats, Tabs: st, Bus: bus, Teardown: &recordingTeardown{},
 	}), st, bus
 }
@@ -204,7 +204,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 		t.Fatalf("open tab store: %v", err)
 	}
 	chats := &hookedChats{InMemoryChatStore: inner}
-	mem := NewMembership(MembershipDeps{
+	mem := NewMembership(&MembershipDeps{
 		Chats: chats, Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
 	})
 	first := createChat(t, mem, "op-race")

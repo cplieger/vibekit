@@ -30,7 +30,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	epoch := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	// The pipe: the wire has already delivered the bracket and the reply, and the
@@ -91,7 +91,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	epoch := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	// No turn_end: this is the fault path where the bracket never comes, and the
@@ -140,12 +140,12 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	first := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	first := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, first)
 	h.SettleTurnOnResponse(ctx, chatID, first, 0,
 		&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
-	second := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	second := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, second)
 
 	_, before := h.bus.fanout.Bounds()
@@ -272,7 +272,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	preOpen := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
 
 	// The auto-wake's bracket pair mis-binds and closes the pre-open; the prompted

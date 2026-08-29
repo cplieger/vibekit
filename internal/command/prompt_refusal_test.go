@@ -140,10 +140,15 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 			roles := promptRolesOf(spy)
 			roles.bridges = spy
 			roles.bus = spy
+			join := &promptJoin{}
+			roles.lifecycle = join
 
-			if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err == nil {
-				t.Fatal("CmdPrompt returned no error for a failed prompt Call")
+			// The POST answers at the ack; the failure happens after it and is
+			// SSE-only, so the handler reports no error and the frame is joined on.
+			if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+				t.Fatalf("CmdPrompt = %v, want the early ack", err)
 			}
+			join.join()
 
 			var codes []vibekit.ErrorCode
 			for _, evt := range spy.events {
@@ -217,10 +222,13 @@ func TestCmdPrompt_AnAuthFailureInvalidatesTheCachedToken(t *testing.T) {
 			roles.bridges = spy
 			roles.bus = spy
 			roles.tokens = tokens
+			join := &promptJoin{}
+			roles.lifecycle = join
 
-			if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err == nil {
-				t.Fatal("CmdPrompt returned no error for a failed prompt Call")
+			if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
+				t.Fatalf("CmdPrompt = %v, want the early ack", err)
 			}
+			join.join()
 
 			if tokens.calls != tc.want {
 				t.Errorf("Invalidate called %d times, want %d", tokens.calls, tc.want)

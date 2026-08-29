@@ -48,7 +48,9 @@ const maxCommandBody = webhttp.MaxJSONBody
 // is a 500.
 type Handler func(ctx context.Context, cmd *vibekit.ClientCommand) (any, error)
 
-// statusError carries the HTTP status a handler chose for a failure.
+// statusError carries the HTTP status a handler chose for a failure, plus an
+// optional machine-readable reason the error envelope emits as its additive
+// `reason` field.
 //
 // The status rides the error per-SITE rather than being derived from the error
 // value, because the same sentinel legitimately means different statuses in
@@ -56,8 +58,9 @@ type Handler func(ctx context.Context, cmd *vibekit.ClientCommand) (any, error)
 // to attach to and a 404 when set_mode is asked to configure one. A
 // sentinel-to-status table would have to pick one and be wrong at the other.
 type statusError struct {
-	err  error
-	code int
+	err    error
+	reason string
+	code   int
 }
 
 func (e *statusError) Error() string { return e.err.Error() }
@@ -68,6 +71,14 @@ func (e *statusError) Unwrap() error { return e.err }
 // needs the same vocabulary as the handlers in this package.
 func StatusError(code int, err error) error {
 	return &statusError{code: code, err: err}
+}
+
+// StatusErrorReason is StatusError plus the machine-readable reason the error
+// envelope carries beside the prose, so a client branches on a VALUE rather
+// than on error text. One reason exists today: reasonStarting, on the prompt
+// admission refusal whose holder cannot receive a steer.
+func StatusErrorReason(code int, reason string, err error) error {
+	return &statusError{code: code, reason: reason, err: err}
 }
 
 // statusOf reports the status a handler outcome is answered with: 200 for
@@ -109,6 +120,10 @@ func (d *Dispatcher) Register(t vibekit.CommandType, h Handler) {
 // place to add future fields (e.g. code, retryable).
 type errorResponse struct {
 	Error string `json:"error"`
+	// Reason is the machine-readable refusal class, additive and usually
+	// absent; existing clients ignore it. The one value today is "starting",
+	// on the prompt admission refusal — see StatusErrorReason.
+	Reason string `json:"reason,omitempty"`
 }
 
 // writeErr writes a JSON error response at the status the handler chose.
@@ -119,7 +134,11 @@ type errorResponse struct {
 // error" while the cause sits unread in `error.data`. RPCErrorText is a no-op for
 // every ordinary Go error, so the one call covers both populations.
 func writeErr(w http.ResponseWriter, err error) {
-	webhttp.WriteJSONStatus(w, statusOf(err), errorResponse{Error: rpcerr.Text(err)})
+	resp := errorResponse{Error: rpcerr.Text(err)}
+	if se, ok := errors.AsType[*statusError](err); ok {
+		resp.Reason = se.reason
+	}
+	webhttp.WriteJSONStatus(w, statusOf(err), resp)
 }
 
 // requireChatID returns the 400 for a command that needs a chat and named none.

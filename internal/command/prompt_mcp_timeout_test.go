@@ -3,12 +3,30 @@ package command
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/testsupport"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
+
+// promptJoin is a LifecycleAccess whose in-flight count a test can join on:
+// CmdPrompt acks before its turn runs, so a test asserting on the turn's
+// effects waits for the goroutine to deregister first. TurnContext matches the
+// production derivation (detached from the request, so the goroutine survives
+// the handler's return).
+type promptJoin struct{ wg sync.WaitGroup }
+
+func (l *promptJoin) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(reqCtx))
+}
+func (l *promptJoin) InflightAdd(delta int) { l.wg.Add(delta) }
+func (l *promptJoin) InflightDone()         { l.wg.Done() }
+
+// join blocks until every in-flight turn has deregistered. Safe to call after
+// CmdPrompt returned: the registration is synchronous, before the ack.
+func (l *promptJoin) join() { l.wg.Wait() }
 
 // stalledMCPDeps is a host whose MCP readiness wait never completes, and whose
 // registry can name what it is waiting for.
@@ -51,11 +69,14 @@ func TestCmdPrompt_MCPReadinessTimeoutNamesTheServers(t *testing.T) {
 	roles := promptRolesOf(deps)
 	roles.bridges = deps
 	roles.mcp = deps
+	join := &promptJoin{}
+	roles.lifecycle = join
 	logs := captureLogs(t)
 
 	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt: %v", err)
 	}
+	join.join()
 
 	out := logs.String()
 	if !strings.Contains(out, "MCP readiness timeout") {
@@ -88,11 +109,14 @@ func TestCmdPrompt_AReadyMCPFleetIsSilent(t *testing.T) {
 	roles := promptRolesOf(deps)
 	roles.bridges = deps
 	roles.mcp = deps
+	join := &promptJoin{}
+	roles.lifecycle = join
 	logs := captureLogs(t)
 
 	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt: %v", err)
 	}
+	join.join()
 
 	if deps.asked != 0 {
 		t.Errorf("PendingSummary called %d times on a ready fleet, want 0", deps.asked)

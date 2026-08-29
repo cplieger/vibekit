@@ -93,7 +93,7 @@ func TestReplayTurnState_AFinalizingTurnDoesNotReadIdle(t *testing.T) {
 // rather than replaying it.
 func TestReplayTurnState_APrimeIsNeverServed(t *testing.T) {
 	rt, _, _ := newTestHub()
-	if rt.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrime) == 0 {
+	if rt.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime) == 0 {
 		t.Fatal("the fixture could not open a prime turn")
 	}
 	buf := rt.stageTurnBuffer(t, "c1")

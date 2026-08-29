@@ -231,13 +231,13 @@ func (rt *Runtime) stageTurnBuffer(tb testing.TB, chatID vibekit.ChatID) *buffer
 // a test of a prompt-scoped closer names the turn it is closing.
 //
 // The epoch matters: an epoch-scoped closer handed zero closes nothing, because
-// zero is also what OpenTurn answers when it refuses. A test that passed zero was
+// zero is also what StartTurn answers when it refuses. A test that passed zero was
 // exercising the take-whatever-is-open fallthrough rather than its own closer.
 func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID vibekit.ChatID) (vibekit.TurnEpoch, *buffer.Buffer) {
 	tb.Helper()
-	epoch := rt.coord.OpenTurn(tb.Context(), chatID, vibekit.TurnSourcePrompt)
+	epoch := rt.coord.StartTurn(tb.Context(), chatID, vibekit.TurnSourcePrompt)
 	if epoch == 0 {
-		tb.Fatalf("OpenTurn(%q) refused, so there is no turn to stage", chatID)
+		tb.Fatalf("StartTurn(%q) refused, so there is no turn to stage", chatID)
 	}
 	return epoch, rt.coord.TurnFoldTarget(tb.Context(), chatID)
 }

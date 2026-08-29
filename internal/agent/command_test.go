@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -29,6 +30,8 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
+	// The user message, the name and the draft clear are all persisted BEFORE
+	// the ack, so these reads race nothing.
 	c, ok := cs.Get(t.Context(), "c-test-1")
 	if !ok {
 		t.Fatal("chat not created")
@@ -45,8 +48,26 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	if c.Name != "hello" {
 		t.Errorf("auto-rename failed: name = %q, want 'hello'", c.Name)
 	}
-	if c.ACPSessionID == "" {
-		t.Errorf("acp_session_id not persisted")
+	// The session metadata is the TURN's, which runs past the ack: the spawn
+	// persists it on the goroutine, so the read polls rather than asserting a
+	// race.
+	waitForSessionID(t, cs, "c-test-1")
+}
+
+// waitForSessionID polls until the chat carries an ACP session id, failing
+// closed with a diagnostic: the prompt acks before its turn spawns the bridge,
+// so session metadata lands asynchronously.
+func waitForSessionID(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if c, ok := cs.Get(t.Context(), chatID); ok && c.ACPSessionID != "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("acp_session_id not persisted: the prompt turn never spawned its bridge")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -567,6 +588,10 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 
 // --- cmdPrompt busy ---
 
+// A second prompt during a streaming prompt turn answers the PLAIN 409 — no
+// `reason` field — because the holder is prompt-class and its bridge is live,
+// so the client's 409→steer conversion works. The fixture holds the admission
+// the way the prompt goroutine does: the reservation plus the bridge slot.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -574,9 +599,14 @@ func TestPrompt_BusyReturns409(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sb.mu.Lock()
-	sb.state = bridgePrompting
-	sb.mu.Unlock()
+	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+		t.Fatal("setup: the admission slot was already held")
+	}
+	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	if !sb.TryAcquireForPrompt() {
+		t.Fatal("setup: the bridge slot was already held")
+	}
+	t.Cleanup(sb.ReleaseAfterPrompt)
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "prompt", ChatID: "c1",
@@ -587,6 +617,9 @@ func TestPrompt_BusyReturns409(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "busy") {
 		t.Errorf("body = %q, want 'busy' error", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "starting") {
+		t.Errorf("body = %q carries the starting reason; a steerable holder answers the PLAIN 409", rec.Body.String())
 	}
 }
 

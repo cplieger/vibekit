@@ -344,24 +344,76 @@ type TokenSource interface {
 	Invalidate()
 }
 
+// AdmissionOutcome is ReserveTurnForPrompt's answer. Declared here, at the
+// consumer, like every other role vocabulary in this file: the producer is the
+// bridge coordinator, and the surface that branches on it is the prompt
+// handler's refusal arm.
+type AdmissionOutcome int
+
+const (
+	// AdmissionAcquired means the caller holds the chat's admission slot.
+	AdmissionAcquired AdmissionOutcome = iota
+	// AdmissionBusy is the holder a steer can reach: a prompt-class turn with a
+	// live bridge. Answered as the PLAIN 409, on which the client's 409→steer
+	// conversion works.
+	AdmissionBusy
+	// AdmissionStarting is every other holder — a cold spawn, a shell on a
+	// bridged or bridgeless chat, a prime. Answered as 409 with the additive
+	// `reason: "starting"`, on which the client never attempts an
+	// undeliverable steer.
+	AdmissionStarting
+)
+
 // TurnOutcomeAccess is what a prompt handler needs to run a turn's lifecycle:
-// open it, wait for its outcome, and close it — whether the engine answered or
-// the call failed.
+// admit it, open it, wait for its outcome, and close it — whether the engine
+// answered or the call failed.
 type TurnOutcomeAccess interface {
-	// OpenTurn opens the chat's turn before the call that drives it, so everything
-	// true of the turn — the model answering, the credit reading its spend is
-	// measured against, when it began — is recorded once for its whole life. The
-	// caller holds a completion handle until ReleaseTurn; zero means none opened.
+	// ReserveTurnForPrompt takes the chat's admission slot for a prompt, minting
+	// NO turn — a bare per-chat reservation, decided synchronously before any
+	// bridge exists. A held slot parks the caller up to wait (all waiters wake
+	// per state change and at bridge-ready, and at most one acquires); the
+	// refusal is keyed on the HOLDER'S SOURCE — see AdmissionOutcome.
+	ReserveTurnForPrompt(ctx context.Context, chatID vibekit.ChatID, wait time.Duration) AdmissionOutcome
+	// TryReserveTurn takes the admission slot iff it is free — the shell door's
+	// form (a `!cmd` during any held slot refuses immediately, never waits) and
+	// the empty-turn recovery's (a competing prompt that won the slot abandons
+	// the retry).
+	TryReserveTurn(chatID vibekit.ChatID, source vibekit.TurnOpenSource) bool
+	// ReleaseTurnReservation frees the admission slot, waking every waiter. The
+	// prompt goroutine owns its reservation until the turn's effects are done;
+	// the shell door defers this beside its response.
+	ReleaseTurnReservation(chatID vibekit.ChatID)
+	// AdmissionHolderSource reports who holds the chat's admission: the open
+	// turn's source when one is open, else the reservation's.
+	//
+	// A prime holder (TurnSourcePrime) is why CmdSteer reads this: a prime is
+	// vibekit's own transcript replay sent as a real session/prompt, and its
+	// frames are neither broadcast nor served nor persisted — so a steer aimed
+	// into that window was consumed by a throwaway turn and discarded, which is
+	// user data loss with nothing on screen to say so. CmdSteer refuses instead,
+	// and the client's rollback for a refused send returns the text to the
+	// composer.
+	AdmissionHolderSource(chatID vibekit.ChatID) (vibekit.TurnOpenSource, bool)
+	// StartTurn opens the chat's turn at bridge-ready, immediately before the
+	// call that drives it, so everything true of the turn — the model answering,
+	// the credit reading its spend is measured against, when it began — is
+	// recorded once for its whole life, with the bridge live (the spawn, the
+	// prime and the MCP wait are excluded from the turn's accounting). The
+	// caller holds a completion handle until ReleaseTurn; zero means none
+	// opened, and a caller answering zero must broadcast the failure and release
+	// its slots rather than proceed — with no epoch nothing would finalize.
 	//
 	// It WAITS while the chat is finalizing a previous turn, so a prompt sent during
 	// that turn's persistence does not observe an epoch as open too early.
-	OpenTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch
+	StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch
 	// AwaitTurn blocks until the named turn has finalized and reports what it
 	// did. A caller holding that turn's handle never receives
 	// vibekit.ErrNoSuchTurn.
 	AwaitTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (vibekit.TurnResult, error)
-	// ReleaseTurn gives up the handle OpenTurn issued, after which the finalized
-	// record may be dropped.
+	// ReleaseTurn gives up the handle StartTurn issued, after which the finalized
+	// record may be dropped — WITH its retained result, which is why the prompt
+	// path captures the result via AwaitTurn before any release and holds the
+	// handle until every epoch-based recovery predicate has been read.
 	ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
 	// SettleTurnOnResponse closes the named turn on the response that settled it —
 	// the LOCAL fallback, which runs only if the wire's own turn_end did not get
@@ -378,14 +430,6 @@ type TurnOutcomeAccess interface {
 	// no frame arriving: a mis-bound pre-open closes with the firing condition
 	// satisfied, and what it necessarily violates is a LATER epoch on this chat.
 	TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool
-	// PrimeTurnOpen reports whether the chat's open turn is a PRIME.
-	//
-	// A prime is vibekit's own transcript replay sent as a real session/prompt, and
-	// its frames are neither broadcast nor served nor persisted — so a steer aimed
-	// into that window was consumed by a throwaway turn and discarded, which is user
-	// data loss with nothing on screen to say so. CmdSteer refuses instead, and the
-	// client's rollback for a refused send returns the text to the composer.
-	PrimeTurnOpen(chatID vibekit.ChatID) bool
 	// FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.
 	FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
 	// AbandonInFlightTurn finalizes a turn the prompt call could not finish.

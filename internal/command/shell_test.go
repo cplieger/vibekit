@@ -103,55 +103,49 @@ func TestShellStatusLine(t *testing.T) {
 	})
 }
 
-// fakeBusyBridge is a command.Bridge whose prompt lock is always
-// contended, used to exercise the !cmd busy-guard's 409 path.
-type fakeBusyBridge struct{}
-
-func (fakeBusyBridge) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
-	return nil, nil
-}
-
-func (fakeBusyBridge) CallAt(context.Context, string, any) (*vibekit.RPCResponse, uint64, error) {
-	return nil, 0, nil
-}
-
-func (fakeBusyBridge) Notify(context.Context, string, any) error        { return nil }
-func (fakeBusyBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (fakeBusyBridge) SessionID() vibekit.SessionID                     { return "" }
-func (fakeBusyBridge) TryAcquireForPrompt() bool                        { return false }
-func (fakeBusyBridge) ReleaseAfterPrompt()                              {}
-func (fakeBusyBridge) BeginPromptCall(context.CancelFunc) uint64        { return 0 }
-func (fakeBusyBridge) EndPromptCall()                                   {}
-func (fakeBusyBridge) PromptGeneration() uint64                         { return 0 }
-func (fakeBusyBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
-
-// busyGuardDeps overrides Bridge on the bench stub to hand back a
-// bridge whose turn lock is already held.
-type busyGuardDeps struct {
+// heldAdmissionDeps overrides the admission try on the bench stub to refuse, the
+// state a chat is in while ANY holder — a prompt's blocked spawn included — owns
+// the slot.
+type heldAdmissionDeps struct {
 	*benchDeps
-	bridge Bridge
+	tried int
 }
 
-func (d *busyGuardDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
+func (d *heldAdmissionDeps) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource) bool {
+	d.tried++
+	return false
+}
 
-// TestHandleShellInterception_BusyReturns409 pins the busy-guard (MED
-// bug): when a bridge exists and its turn lock can't be acquired (a real
-// streaming turn is in flight), !cmd returns 409 so the client queue
-// drains it — instead of running and broadcasting a mid-turn turn_ended.
-// The 409 short-circuits before any ChatStore access, so the nil-store
-// bench stub is sufficient.
-func TestHandleShellInterception_BusyReturns409(t *testing.T) {
-	deps := &busyGuardDeps{benchDeps: newBenchDeps(), bridge: fakeBusyBridge{}}
+// TestHandleShellInterception_HeldAdmissionReturns409Immediately pins the shell
+// door's admission: a TRY against the same per-chat reservation a prompt takes,
+// never a wait — `!echo hi` during a prompt's blocked spawn answers 409 at
+// once. The refusal short-circuits before any ChatStore access, so the
+// nil-store bench stub is sufficient; the try counter is the load-bearing
+// assertion that the door went through the reservation rather than the bridge
+// slot, which a spawn-blocked chat does not hold.
+func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T) {
+	deps := &heldAdmissionDeps{benchDeps: newBenchDeps()}
 	cmd := &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}
 	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
+	start := time.Now()
 	_, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p)
+	elapsed := time.Since(start)
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (busy)", statusOf(err))
 	}
 	if !strings.Contains(errText(err), "busy") {
 		t.Errorf("body = %q, want it to mention busy", errText(err))
+	}
+	if deps.tried != 1 {
+		t.Errorf("TryReserveTurn called %d times, want 1: the shell door admits through the reservation", deps.tried)
+	}
+	// A TRY, never a wait: the refusal is immediate, not held for the prompt
+	// admission budget. The bound is generous — the point is "no deliberate
+	// wait", not a latency budget.
+	if elapsed > time.Second {
+		t.Errorf("refusal took %v, want an immediate answer", elapsed)
 	}
 }
 

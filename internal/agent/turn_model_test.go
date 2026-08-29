@@ -60,7 +60,7 @@ func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("hello"))
 	endTurn(t, h, "c1", epoch)
 
@@ -89,7 +89,7 @@ func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("hello"))
 	endTurn(t, h, "c1", epoch)
 
@@ -118,7 +118,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("half an answer"))
 	// A switch lands mid-turn (the fast in-session path does exactly this).
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -196,21 +196,30 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 	close(unblock)
 	<-done
 
-	c, _ := cs.Get(t.Context(), "c1")
-	var found bool
-	for i := range c.Messages {
-		if c.Messages[i].Role != vibekit.RoleAssistant {
-			continue
+	// The POST answered at the ack; the turn persists its message on its own
+	// goroutine, so the read polls for it rather than asserting a race.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c, _ := cs.Get(t.Context(), "c1")
+		var found bool
+		for i := range c.Messages {
+			if c.Messages[i].Role != vibekit.RoleAssistant {
+				continue
+			}
+			found = true
+			if got := c.Messages[i].TurnModel; got != "sonnet-4" {
+				t.Errorf("TurnModel = %q, want %q — the model the prompt was DISPATCHED "+
+					"under, not the one a switch installed before the first frame",
+					got, "sonnet-4")
+			}
 		}
-		found = true
-		if got := c.Messages[i].TurnModel; got != "sonnet-4" {
-			t.Errorf("TurnModel = %q, want %q — the model the prompt was DISPATCHED "+
-				"under, not the one a switch installed before the first frame",
-				got, "sonnet-4")
+		if found {
+			return
 		}
-	}
-	if !found {
-		t.Fatal("no assistant message was persisted for the turn")
+		if time.Now().After(deadline) {
+			t.Fatal("no assistant message was persisted for the turn")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -246,7 +255,7 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("the model got this far"))
 	h.AbandonInFlightTurn(t.Context(), "c1", epoch, "the pipe died")
 

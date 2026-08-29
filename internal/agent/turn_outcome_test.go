@@ -105,7 +105,7 @@ func TestCloseOnWireEnd_AnEmptyFailedTurnPersistsAMarker(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 
 	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError)
 
@@ -140,7 +140,7 @@ func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsNothing(t *testing.T
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 
 	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn)
 
@@ -209,7 +209,7 @@ func TestCloseOnWireEnd_APrimeBroadcastsAndPersistsNothing(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	if h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrime) == 0 {
+	if h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrime) == 0 {
 		t.Fatal("the fixture could not open a prime turn")
 	}
 	buf := h.stageTurnBuffer(t, "c1")
@@ -228,10 +228,10 @@ func TestCloseOnWireEnd_APrimeBroadcastsAndPersistsNothing(t *testing.T) {
 	}
 }
 
-// TestOpenTurn_APrimesBufferIsMuted pins the FOLD half: the frames land in the
+// TestStartTurn_APrimesBufferIsMuted pins the FOLD half: the frames land in the
 // prime's own buffer — a revised binding hands that buffer to the agent's own turn,
 // whose content it then is — and publish nothing while they are the prime's.
-func TestOpenTurn_APrimesBufferIsMuted(t *testing.T) {
+func TestStartTurn_APrimesBufferIsMuted(t *testing.T) {
 	h, _, _ := newTestHub()
 	cases := []struct {
 		name      string
@@ -252,7 +252,7 @@ func TestOpenTurn_APrimesBufferIsMuted(t *testing.T) {
 				}
 				return
 			}
-			if h.coord.OpenTurn(t.Context(), chatID, tc.source) == 0 {
+			if h.coord.StartTurn(t.Context(), chatID, tc.source) == 0 {
 				t.Fatal("the fixture could not open a turn")
 			}
 			buf := h.stageTurnBuffer(t, chatID)

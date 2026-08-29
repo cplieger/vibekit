@@ -22,7 +22,7 @@ func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	h.translateACPEvent(chatID, newTurnStartMsg())
@@ -81,7 +81,7 @@ func TestReviseTurnBinding_HandsTheBufferToTheAgentsTurn(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	preOpen := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
@@ -136,7 +136,7 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	failed := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	failed := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	h.AbandonInFlightTurn(ctx, chatID, failed, "the pipe died")
 	h.ReleaseTurn(chatID, failed)
 
@@ -146,7 +146,7 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	}
 
 	// The next prompt gets its own bracket and the wire's own outcome.
-	next := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	next := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, next)
 	h.translateACPEvent(chatID, newTurnStartMsg())
 	h.translateACPEvent(chatID, newChunkMsg("the second answer"))
@@ -247,7 +247,7 @@ func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 // The prompt-slot guard catches the turns vibekit itself prompted; this catches the
 // ones it did not, which is the class with no slot to hold. Running anyway would
 // fold the command's output into the agent's live turn.
-func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
+func TestStartTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
@@ -256,14 +256,14 @@ func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	// A turn the ENGINE started, so no prompt slot is held.
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
-	if epoch := h.OpenTurn(ctx, chatID, vibekit.TurnSourceLocalShell); epoch != 0 {
-		t.Errorf("OpenTurn(localShell) = %d, want 0 (refused) while an agent turn is open", epoch)
+	if epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourceLocalShell); epoch != 0 {
+		t.Errorf("StartTurn(localShell) = %d, want 0 (refused) while an agent turn is open", epoch)
 	}
 	// And it is allowed once that turn ends.
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
-	epoch := h.OpenTurn(ctx, chatID, vibekit.TurnSourceLocalShell)
+	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourceLocalShell)
 	if epoch == 0 {
-		t.Error("OpenTurn(localShell) still refuses on an idle chat")
+		t.Error("StartTurn(localShell) still refuses on an idle chat")
 	}
 	h.ReleaseTurn(chatID, epoch)
 }
@@ -314,7 +314,7 @@ func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	preOpen := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
 
 	// The agent's own turn arrives first, mis-binds, is revised by its content, and
@@ -364,7 +364,7 @@ func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 // set a closer can claim, so it was never finalized and never persisted, while its
 // content had already been streamed to every client and its tail folded into the
 // user's turn.
-func TestOpenTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T) {
+func TestStartTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
@@ -375,7 +375,7 @@ func TestOpenTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T)
 	h.translateACPEvent(chatID, newChunkMsg("the auto-wake got this far"))
 	agentTurn, _ := h.coord.turns.openEpoch(chatID)
 
-	epoch := h.OpenTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	c, _ := cs.Get(ctx, chatID)
