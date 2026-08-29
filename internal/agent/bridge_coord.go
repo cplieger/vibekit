@@ -143,7 +143,9 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		push:           h.push,
 		mcpRegistry:    h.mcpRegistry,
 		lifecycle:      h.lifecycle,
-		preBridgeSpawn: h.preBridgeSpawn,
+		// preBridgeSpawn is deliberately NOT copied from anywhere: the
+		// composition root installs it through SetPreBridgeSpawn after New
+		// returns, directly onto this field — its one reader.
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h.replay,
 		chatStatus:       h.bus.chatStatus.Get,
