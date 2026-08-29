@@ -52,9 +52,11 @@ func (d *benchDeps) TakePendingPerm(vibekit.ChatID, int64, vibekit.SettledBy) bo
 func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
-func (d *benchDeps) InflightAdd(int)                                  {}
-func (d *benchDeps) InflightDone()                                    {}
-func (d *benchDeps) DeleteChatState(context.Context, vibekit.ChatID)  {}
+func (d *benchDeps) InflightAdd(int)                                 {}
+func (d *benchDeps) InflightDone()                                   {}
+func (d *benchDeps) DeleteChatState(context.Context, vibekit.ChatID) {}
+func (d *benchDeps) DeleteChatStateByChain(context.Context, vibekit.ChatID, []string) {
+}
 func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)   {}
 func (d *benchDeps) KillForTurn(vibekit.ChatID)                       {}
 func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool { return true }

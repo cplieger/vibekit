@@ -479,7 +479,9 @@ class HistoryController {
           });
           return;
         }
-        openRow(row);
+        openRow(row, () => {
+          void this.refresh();
+        });
       },
       { signal },
     );
@@ -499,8 +501,12 @@ class HistoryController {
   }
 }
 
-/** Open a history row: a chat resumes, a run opens its read-only review. */
-function openRow(row: HistoryRow): void {
+/** Open a history row: a chat resumes, a run opens its read-only review.
+ *
+ *  `onGone` runs when the row's conversation turned out to be DELETED — the
+ *  retention-off close erased it after this list was fetched — so the caller
+ *  refreshes and the dead row drops out of the server-derived list. */
+function openRow(row: HistoryRow, onGone: () => void): void {
   if (row.kind === "run" && row.run !== undefined) {
     // The parent chat, when there is one, nests the run's tab under it. History
     // already carries the id, so this costs nothing and is what puts a run beside
@@ -511,7 +517,11 @@ function openRow(row: HistoryRow): void {
     return;
   }
   if (row.session !== undefined) {
-    openPreviousSession(row.session);
+    void openPreviousSession(row.session).then((outcome) => {
+      if (outcome === "gone") {
+        onGone();
+      }
+    });
   }
 }
 

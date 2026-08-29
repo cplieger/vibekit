@@ -92,7 +92,24 @@ vi.mock("./tabs-drag.js", () => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
-vi.mock("./store.js", () => ({ get: vi.fn(() => undefined) }));
+vi.mock("./store.js", () =>
+  import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
+);
+// The composer half of the close gesture (tabs.ts reaches it for the rollback's
+// draft restore); inert here, per-chat state this suite does not stage.
+vi.mock("./composer-state.js", () => ({
+  retargetComposer: vi.fn(),
+  restoreFailedSend: vi.fn(),
+  saveComposerState: vi.fn(),
+  restoreComposerState: vi.fn(),
+  flushComposerDraft: vi.fn(),
+  dropComposerState: vi.fn(),
+  seedComposerState: vi.fn(),
+  adoptRemoteComposerState: vi.fn(),
+  noteComposerText: vi.fn(),
+  initComposerState: vi.fn(),
+  _resetComposerStateForTest: vi.fn(),
+}));
 vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
@@ -716,7 +733,7 @@ describe("a failed mutation leaves the strip unchanged", () => {
     expect.assertions(4);
     tabServer.failNext("open_tab");
     const before = await rowRefs();
-    await expect(openTab({ kind: "chat", ref: "c" })).resolves.toBeUndefined();
+    await expect(openTab({ kind: "chat", ref: "c" })).resolves.toBe("failed");
     expect(hasTab("chat", "c")).toBe(false);
     expect(await rowRefs()).toEqual(before);
     expect(getActiveTabId()).toBe(tabIdFor("chat", "b"));
@@ -727,7 +744,7 @@ describe("a failed mutation leaves the strip unchanged", () => {
   it("a 409 open is refused the same way, with no row and no throw", async () => {
     expect.assertions(2);
     tabServer.failNext("open_tab", 409, "too many open");
-    await expect(openTab({ kind: "chat", ref: "c" })).resolves.toBeUndefined();
+    await expect(openTab({ kind: "chat", ref: "c" })).resolves.toBe("failed");
     expect(hasTab("chat", "c")).toBe(false);
   });
 

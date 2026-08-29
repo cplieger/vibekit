@@ -19,7 +19,9 @@ let bootSeq = 0;
 
 const dispatch = vi.fn();
 const cancelSessions = vi.fn();
-const openPreviousSession = vi.fn();
+// Resolves with an OUTCOME: openRow branches on "gone" (the retention-off 404)
+// to refresh the list, so the mock answers the ordinary arm by default.
+const openPreviousSession = vi.fn(() => Promise.resolve("opened"));
 const openRunView = vi.fn();
 const openChatTab = vi.fn();
 const searchDispatch = vi.fn(async () => ({ matches: [], scanned: 0, truncated: false }));
@@ -185,6 +187,31 @@ describe("history: previous chats and runs", () => {
       expect.objectContaining({ chat_id: "c-existing" }),
     );
     expect(openRunView).not.toHaveBeenCalled();
+  });
+
+  it("drops the row by refreshing when the reopen says the chat is GONE", async () => {
+    // Retention is off and a close deleted the conversation after this list was
+    // fetched: openPreviousSession answers "gone" (it has already said so to the
+    // reader), and the page re-fetches — the server-derived list is what drops
+    // the dead row, so nothing here has to reach into the rendered set.
+    openPreviousSession.mockResolvedValueOnce("gone");
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    const before = dispatch.mock.calls.length;
+    (c.querySelector('[data-key="s:sess_owned"]') as HTMLElement).click();
+    await vi.waitFor(() => {
+      expect(dispatch.mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
+  it("leaves the list alone when the reopen merely failed", async () => {
+    // A network failure is NOT the ephemeral face: the row may still be
+    // perfectly live, so no refresh churns the list under the reader.
+    openPreviousSession.mockResolvedValueOnce("failed");
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    const before = dispatch.mock.calls.length;
+    (c.querySelector('[data-key="s:sess_owned"]') as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(dispatch.mock.calls.length).toBe(before);
   });
 
   it("routes a run to the read-only run view, never to a chat", async () => {

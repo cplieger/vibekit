@@ -60,10 +60,11 @@ import { findSubagentInvocation } from "./subagent-slice.js";
 
 /** Chat behaviour, from chat.ts. `dot` is injected rather than derived here
  *  because the pending-ask half of it reads the decision dock, which is not a
- *  leaf module. */
+ *  leaf module. `close` is the chat's CLIENT-LOCAL teardown, whoever closed the
+ *  tab — the server's close operation owns everything beyond this device. */
 export interface ChatTabOpener {
   show: (chatID: string) => void;
-  close: (chatID: string, opts: { remote: boolean }) => void;
+  close: (chatID: string) => void;
   dot: (chatID: string) => TabDotStatus | "";
 }
 
@@ -299,11 +300,8 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         onShow: () => {
           reg.chat.show(chatID);
         },
-        // The whole-argument default matches the store's contract: a caller that
-        // omits the flag means LOCAL, which is the safe reading, since a missing
-        // flag must never suppress the server-side teardown.
-        onClose: ({ remote } = { remote: false }) => {
-          reg.chat.close(chatID, { remote });
+        onClose: () => {
+          reg.chat.close(chatID);
         },
       };
     }

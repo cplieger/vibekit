@@ -40,22 +40,32 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, 
 
 // reapChatSession removes the chat's on-disk kiro-cli/KAS session state on
 // permanent delete. cleanupChatState runs before the chat file is removed, so
-// the session chain is still readable. No-op when the reaper is unwired
-// (tests), the chat is already gone, or it never started a session.
+// the session chain is still readable. No-op when the chat is already gone or
+// it never started a session; the close escalation, whose record IS gone by
+// teardown time, resolves the chain before its commit and reaps through
+// reapSessions directly.
 //
 // Reaps the whole CHAIN, not just the current session: a chat that changed
 // session (failed session/load, model-switch fallback) has state under every
 // id it ever held, and leaving the retired ones behind makes them orphans the
 // hourly sweep has to find later.
 func (rt *Runtime) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
-	if rt.sessionReaper == nil {
-		return
-	}
 	c, ok := rt.chatStore.Get(ctx, chatID)
 	if !ok {
 		return
 	}
-	for _, id := range c.SessionChain() {
+	rt.reapSessions(c.SessionChain())
+}
+
+// reapSessions removes each session's on-disk kiro-cli/KAS state. The
+// chain-shaped half of reapChatSession: it reads no chat record, so it works
+// from a CAPTURED chain after the record is deleted. No-op when the reaper is
+// unwired (tests).
+func (rt *Runtime) reapSessions(chain []string) {
+	if rt.sessionReaper == nil {
+		return
+	}
+	for _, id := range chain {
 		rt.sessionReaper.Reap(id)
 	}
 }

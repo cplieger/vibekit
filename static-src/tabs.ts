@@ -60,7 +60,7 @@ import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 // DOM-free so the factory that produces a spec from a TabSubject can reach them
 // without reaching this module's document. This file owns the STORE and the DOM
 // that paints from them.
-import { TAB_ICONS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
+import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.js";
 import {
   registerTabsTarget,
@@ -69,7 +69,10 @@ import {
   markLocalOp,
   beginAdopt,
   adoptCommitted,
+  beginRemove,
+  removeCommitted,
   opFailed,
+  opTimedOut,
   removesPending,
   setOnRemovesSettled,
   type TabsTarget,
@@ -93,6 +96,9 @@ import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
+import { getActiveId, getSessions, setActive } from "./store.js";
+import { restoreFailedSend, retargetComposer } from "./composer-state.js";
+import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 
 // --- Types ---
@@ -417,12 +423,14 @@ function reset(subjects: readonly TabSubject[]): void {
   if (next.length > 0) {
     internal.everOpened = true;
   }
-  // Everything the snapshot does not hold is gone. The teardown runs with
-  // `remote: true` in every case: a snapshot is not this device's mutation, so
-  // re-dispatching a teardown here would kill work a second time.
+  // Everything the snapshot does not hold is gone: an authoritative list is a
+  // complete set, so the local teardown runs here for a row it dropped. A row
+  // THIS device optimistically removed is not in the projection any more, so a
+  // pending close's teardown cannot double-run from here — its machine op owns
+  // it (confirmClose).
   for (const row of before.values()) {
     forgetRow(row);
-    tearDown(row, { remote: true });
+    tearDown(row);
   }
   applyPinOrder();
 
@@ -455,12 +463,15 @@ function reset(subjects: readonly TabSubject[]): void {
 /** Apply ONE committed mutation, already version-checked by tabs-sync.
  *
  *  `local` is true when this frame echoes a mutation THIS device dispatched, and
- *  it decides one thing: whether a removal's teardown re-dispatches. A locally
- *  closed tab's teardown has not run yet (nothing renders or tears down
- *  optimistically), so this is where an owned run's cancel and a retention-off
- *  chat's delete actually go out — `remote: false`. The same frame on another
- *  device runs every LOCAL cleanup and dispatches nothing, or two screens would
- *  each kill the same work.
+ *  it gates one thing: the empty-strip respawn. A strip emptied by ANOTHER
+ *  device's close must not create a chat here.
+ *
+ *  A LOCALLY closed tab is not in the projection any more — the gesture removed
+ *  it — so this loop finds nothing to do for the echo frame, and the teardown
+ *  runs from the machine's confirmation instead (confirmClose). What lands here
+ *  is a REMOTE close's removal, whose client-local teardown runs as the row
+ *  leaves; nothing dispatches from a teardown any more, so the two paths run
+ *  the identical cleanup.
  *
  *  The three parts are applied in the order the server states them, and each is
  *  independent: `changed` is an upsert by id, `removed_ids` is the ONLY statement
@@ -489,7 +500,7 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
       lostActive = true;
     }
     forgetRow(row);
-    tearDown(row, { remote: !local });
+    tearDown(row);
   }
 
   const order = delta.order;
@@ -534,12 +545,14 @@ function upsertSubject(subject: TabSubject): void {
 /** Run a departed row's local teardown, if it has one and owns what it shows.
  *
  *  `owns: false` tears down nothing: the tab was a VIEW, and dismissing a view
- *  must not kill the work it was watching. */
-function tearDown(row: TabRow, opts: { remote: boolean }): void {
+ *  must not kill the work it was watching. The teardown is CLIENT-LOCAL and
+ *  identical whoever closed the tab — everything beyond this device is the
+ *  server's close operation — so there is no provenance flag to thread. */
+function tearDown(row: TabRow): void {
   if (!row.spec.owns) {
     return;
   }
-  row.spec.onClose?.(opts);
+  row.spec.onClose?.();
 }
 
 /** Whether the projection holds a tab with this id. */
@@ -627,6 +640,13 @@ export function adoptSubject(subject: TabSubject, name?: string): void {
   emit();
 }
 
+/** What an open resolved to. `not-found` is the one failure a caller may act
+ *  on beyond the framework's toast: the subject is GONE — a retention-off
+ *  close deleted the chat — which is a different fact from a network that
+ *  failed to answer, and folding the two made a dead History row look like a
+ *  transient error. */
+export type OpenTabOutcome = "opened" | "not-found" | "failed";
+
 /** Open a tab for something that already exists, and activate it.
  *
  *  Resolves with the row IN the projection, adopted from the RESPONSE: the
@@ -638,8 +658,10 @@ export function adoptSubject(subject: TabSubject, name?: string): void {
  *  Never rejects, and never throws at ~30 call sites. A refused open leaves the
  *  strip exactly as it was and the action framework has already raised its
  *  toast — including the one refusal with a remedy, which says "close a tab
- *  first" rather than reporting an error. */
-export async function openTab(args: OpenTabArgs): Promise<void> {
+ *  first" rather than reporting an error. The OUTCOME is for the caller that
+ *  must branch: a 404 answers `not-found`, everything else that did not open
+ *  answers `failed`. */
+export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const ref = args.ref ?? "";
   if (args.name !== undefined && args.name !== "") {
     // BEFORE the dispatch, so a frame that beats the response builds the row
@@ -650,37 +672,259 @@ export async function openTab(args: OpenTabArgs): Promise<void> {
   const opID = newOpID();
   markLocalOp(opID);
   beginAdopt(opID);
-  const reply = await openTabCommand.dispatch({
+  const outcome = await openTabCommand.dispatch({
     kind: args.kind,
     ref,
     parent: args.parent ?? "",
     owns: args.owns ?? true,
     opID,
-  });
-  if (reply === null) {
+  }).outcome;
+  if (outcome.status !== "success" || outcome.value === null) {
     // The server answered an error (nothing committed) or the dispatch gave up.
     // Nothing was painted, so the failure transition just retires the op.
     opFailed(opID);
-    return;
+    return outcome.status === "error" && outcome.error.status === 404 ? "not-found" : "failed";
   }
+  const reply = outcome.value;
   adoptSubject(reply.subject);
   adoptCommitted(opID, reply.subject, reply.version, reply.created);
   if (args.activate !== false) {
     activateTab(reply.subject.id);
   }
+  return "opened";
 }
 
-/** Close a tab and its descendants, as ONE server-side mutation.
+// --- The optimistic close ---
+
+/** Everything a close gesture must be able to undo, captured before the strip
+ *  changes. The rows are the LIVE TabRow objects — spec, name and dot ride
+ *  along — and the projection retains nothing else about a departed tab. */
+interface CapturedClose {
+  /** The closed subtree in projection order, parent first. */
+  rows: TabRow[];
+  /** The parent's index in the projection at capture, so a rollback restores
+   *  the subtree in place rather than at the end. */
+  at: number;
+  /** The name overrides the gesture's forgetRow dropped, keyed by subject. */
+  overrides: Map<string, string>;
+  /** The active tab, when it was inside the subtree; "" otherwise. What a
+   *  rollback re-activates. */
+  activeTabID: string;
+  /** The store's active chat at gesture time, when the gesture moved it; ""
+   *  otherwise. The rollback's fallback when no tab re-activation happens. */
+  storeActive: string;
+  /** Set when the server ANSWERED an error: the framework's toast already ran,
+   *  so the rollback stays quiet. A verify-settled restore has no toast of its
+   *  own and says "not confirmed" instead. */
+  refused: boolean;
+}
+
+/** A row's whole subtree — itself plus every descendant, transitively — in
+ *  projection order. The same walk expandOrder's take() runs; a cycle is
+ *  unrepresentable because Parent is set at open and never reassigned. */
+function subtreeRows(row: TabRow): TabRow[] {
+  const out: TabRow[] = [];
+  const take = (r: TabRow): void => {
+    out.push(r);
+    for (const c of childrenOf(r.subject.id)) {
+      take(c);
+    }
+  };
+  take(row);
+  return out;
+}
+
+function captureClose(row: TabRow): CapturedClose {
+  const rows = subtreeRows(row);
+  const overrides = new Map<string, string>();
+  for (const r of rows) {
+    const key = subjectKey(r.subject.kind, r.subject.ref);
+    const name = nameOverrides.get(key);
+    if (name !== undefined) {
+      overrides.set(key, name);
+    }
+  }
+  const ids = new Set(rows.map((r) => r.subject.id));
+  return {
+    rows,
+    at: state.tabs.findIndex((t) => t.subject.id === row.subject.id),
+    overrides,
+    activeTabID: ids.has(state.active) ? state.active : "",
+    storeActive: "",
+    refused: false,
+  };
+}
+
+/** The REVERSIBLE half of a close, applied at gesture time: the subtree leaves
+ *  the projection and the strip (renderDOM plays the exit), the row-scoped
+ *  forgets run, activation falls back, and the STORE's active pointer moves
+ *  with the gesture so store and projection agree throughout the window.
  *
- *  Nothing local happens here. The strip changes when the frame arrives, which is
- *  what makes a failed close leave the tab exactly where it was instead of a
- *  half-drawn row, and what makes the teardown run once per closed tab rather
- *  than once per device. Closing an id that is not open is not an error: two
- *  devices can close one tab. */
+ *  Nothing here destroys state a rollback cannot bring back: no tearDown, no
+ *  removeChat, no editor-state deletion, no run forgets. All of that is
+ *  onConfirm's (confirmClose), and the retention-off record delete is the
+ *  server's close transaction. */
+function applyGestureRemoval(c: CapturedClose): void {
+  const ids = new Set(c.rows.map((r) => r.subject.id));
+  state.tabs = state.tabs.filter((t) => !ids.has(t.subject.id));
+  for (const r of c.rows) {
+    forgetRow(r);
+  }
+  if (c.activeTabID !== "") {
+    // Reversible: a chat successor's own activation moves the store pointer,
+    // and the empty strip renders the empty-state surface (the view effect).
+    // scheduleEmpty defers itself while this remove is pending.
+    activateFirst(true);
+  }
+  syncStoreActive(c);
+  emit();
+}
+
+/** Move the store's active chat off a chat this close made tabless, mirroring
+ *  the rule removeChat applies at teardown time — run EARLY because the store
+ *  row now survives to onConfirm, and every reader keyed on getActiveId()
+ *  (create-vs-send, the composer) must see the projection's truth in the
+ *  window, never a retained row of a closed chat. */
+function syncStoreActive(c: CapturedClose): void {
+  const closedRefs = new Set(
+    c.rows
+      .filter((r) => r.subject.kind === "chat" && tabIdFor("chat", r.subject.ref) === "")
+      .map((r) => r.subject.ref),
+  );
+  const active = getActiveId();
+  if (active === "" || !closedRefs.has(active)) {
+    return;
+  }
+  c.storeActive = active;
+  // The next chat that still HAS a tab, in store order — the tab set is the
+  // truth of "still around" now that closed rows linger until confirmation.
+  const next =
+    getSessions().find((s) => !closedRefs.has(s.id) && tabIdFor("chat", s.id) !== "")?.id ?? "";
+  setActive(next);
+  retargetComposer(next);
+}
+
+/** The deferred CLIENT-LOCAL teardown, run exactly once per closed row when the
+ *  close is CONFIRMED — by its echo frame, its response, version absorption, or
+ *  an authoritative list (tabs-sync's machine owns which).
+ *
+ *  The reopen re-check: an open row with the same (kind, ref) at confirm time
+ *  means the user reopened the subject inside the window — the reopen
+ *  re-established the client state, and the server serialized the close before
+ *  the open — so the subject-scoped teardown is SKIPPED; the row-scoped forget
+ *  already ran at gesture time. */
+function confirmClose(c: CapturedClose): void {
+  // Children BEFORE parents: c.rows is the subtree in projection order (a
+  // pre-order walk, parents first), so the reverse guarantees no child's
+  // teardown runs against a parent that has already gone — the same order the
+  // remote-close path gets from the server's deepest-first removal list.
+  for (const r of [...c.rows].reverse()) {
+    if (tabIdFor(r.subject.kind, r.subject.ref) !== "") {
+      continue;
+    }
+    tearDown(r);
+  }
+}
+
+/** Restore a captured subtree: the definitive-failure rollback (the server
+ *  refused, nothing committed) and the verify-settled restore (the row is
+ *  authoritatively still open). Rows reopened under a NEW id inside the window
+ *  keep the reopened row; a restored row's `pinned` may lag one frame, absorbed
+ *  by the next frame or snapshot. */
+function rollbackClose(c: CapturedClose): void {
+  for (const [key, name] of c.overrides) {
+    nameOverrides.set(key, name);
+  }
+  const restorable = c.rows.filter(
+    (r) => !hasRow(r.subject.id) && tabIdFor(r.subject.kind, r.subject.ref) === "",
+  );
+  if (restorable.length > 0) {
+    state.tabs.splice(Math.min(Math.max(c.at, 0), state.tabs.length), 0, ...restorable);
+    internal.everOpened = true;
+    applyPinOrder();
+  }
+  // Text typed into the EMPTY-STATE composer was parked nowhere (no live
+  // chat), so it survives only through the box. Filed as the restored chat's
+  // draft BEFORE re-activation repaints the box from the draft map — via
+  // restoreFailedSend, deliberately: restoreComposerState CLEARS a draftless
+  // chat's box, the exact opposite move.
+  const restoredChat =
+    c.rows.find((r) => r.subject.id === c.activeTabID && r.subject.kind === "chat")?.subject.ref ??
+    c.storeActive;
+  if (restoredChat !== "" && state.active === "" && getActiveId() === "") {
+    const typed = $.promptInput.value;
+    if (typed !== "") {
+      restoreFailedSend(restoredChat, typed);
+    }
+  }
+  emit();
+  if (c.activeTabID !== "" && hasRow(c.activeTabID)) {
+    activateTab(c.activeTabID);
+  } else if (c.storeActive !== "" && getActiveId() === "") {
+    setActive(c.storeActive);
+    retargetComposer(c.storeActive);
+  }
+  if (!c.refused) {
+    info("Close not confirmed — the tab was restored.");
+  }
+}
+
+/** Close a tab and its descendants, as ONE server-side mutation, applied
+ *  optimistically: the strip changes AT the gesture — reversible effects only —
+ *  and the teardown waits for the machine's confirmation.
+ *
+ *  The dispatch's three endings map onto the pending-op machine's transitions:
+ *  a committed response feeds it (semantic no-op included), a DEFINITIVE error
+ *  rolls the capture back (the server refused; nothing committed), and a
+ *  TIMEOUT — no answer, the close may or may not have committed — moves it to
+ *  `verifying`, where the removal stays applied until authoritative evidence
+ *  arrives. Closing an id that is not open is not an error: two devices can
+ *  close one tab. */
 export async function closeTab(id: string): Promise<void> {
+  const row = rowOfID(id);
   const opID = newOpID();
   markLocalOp(opID);
-  await closeTabCommand.dispatch({ id, opID });
+  if (row === undefined) {
+    // Not in this projection: nothing visual to remove, so no pending op — the
+    // dispatch alone, and the server's answer is the whole story. (An unknown
+    // id is SUCCESS with an empty closed list server-side, so a definitive
+    // error here is a real refusal worth a word.)
+    const lone = await closeTabCommand.dispatch({ id, opID }).outcome;
+    if (lone.status === "error" && lone.error.code !== "timeout") {
+      toastError("Couldn't close that tab");
+    }
+    return;
+  }
+  const captured = captureClose(row);
+  beginRemove(opID, {
+    id,
+    capturedTabIDs: captured.rows.map((r) => r.subject.id),
+    onConfirm: () => {
+      confirmClose(captured);
+    },
+    rollback: () => {
+      rollbackClose(captured);
+    },
+  });
+  applyGestureRemoval(captured);
+  const outcome = await closeTabCommand.dispatch({ id, opID }).outcome;
+  if (outcome.status === "success" && outcome.value !== null) {
+    removeCommitted(opID, outcome.value.closed, outcome.value.version);
+    return;
+  }
+  if (outcome.status === "error" && outcome.error.code !== "timeout") {
+    // The server ANSWERED an error: nothing committed, so the restore is
+    // honest — and the toast is this branch's, because the action itself stays
+    // quiet (its other failure shape is inconclusive and must not claim one).
+    captured.refused = true;
+    toastError("Couldn't close that tab");
+    opFailed(opID);
+    return;
+  }
+  // No answer — the definition-level CLOSE_CONFIRM_MS elapsed (or the dispatch
+  // was aborted): the machine verifies rather than guessing in either
+  // direction.
+  opTimedOut(opID);
 }
 
 /** Pin or unpin a top-level tab.
@@ -928,6 +1172,16 @@ export function getActiveTabKind(): TabKind | null {
   return rowOfID(state.active)?.subject.kind ?? null;
 }
 
+/** The ACTIVE tab's chat ref, or "" when no tab is active or the active tab is
+ *  not a chat. The projection's answer to create-vs-send: with closes optimistic,
+ *  the chat store retains a closed chat's row until confirmation, so a decision
+ *  keyed on a retained store row would send into a chat whose tab is gone —
+ *  this reads what the strip actually shows. */
+export function activeChatRef(): string {
+  const row = rowOfID(state.active);
+  return row?.subject.kind === "chat" ? row.subject.ref : "";
+}
+
 /** The chat tabs and their current dot states, for the out-of-page attention
  *  fold (attention.ts). A pure projection read: the dot state is parked on the
  *  row, so nothing here reads the DOM and a row whose element has not been built
@@ -1054,6 +1308,14 @@ function registerModuleSubscribers(): void {
   // View / route sync.
   tabsEffect((s) => {
     if (s.tabs.length === 0 && s.active === "") {
+      // The EMPTY-STATE surface, but only once a tab has EVER opened: at boot
+      // this state is ordinary (the HTML already shows the chat view), while
+      // after a last-tab close the strip may sit here for as long as a pending
+      // remove verifies, and whatever view the closed tab showed must not
+      // linger over it.
+      if (internal.everOpened) {
+        showEmptySurface();
+      }
       return;
     }
     const active = rowOfID(s.active);
@@ -1155,6 +1417,36 @@ function showView(row: TabRow): void {
   syncSidebarButtons(row.subject.kind);
 
   pushRoute(row.spec.route);
+}
+
+/** Show the EMPTY-STATE surface: the chat view with no active chat — an empty
+ *  transcript over the composer, whose Send creates a fresh chat. Rendered when
+ *  the strip empties (a last-tab close, possibly still pending), and it HIDES
+ *  the other views without disposing anything: every dispose belongs to
+ *  confirmed teardown, so a rollback finds the closed tab's state intact.
+ *
+ *  Deliberately no pushRoute: the strip is mid-settlement, and the settlement's
+ *  own activation — the respawned chat's or the restored tab's — is what
+ *  corrects the URL. */
+function showEmptySurface(): void {
+  const target = document.querySelector(TAB_VIEWS.chat);
+  const shown = [...document.querySelectorAll(ALL_VIEWS_SELECTOR)].filter(
+    (n) => !(n as HTMLElement).classList.contains("hidden"),
+  );
+  // Same swap guard as showView: this effect re-runs on every projection
+  // mutation, and re-animating a view already on screen would fade content
+  // that never left.
+  if (shown.length !== 1 || shown[0] !== target) {
+    swapViews(() => {
+      for (const node of document.querySelectorAll(ALL_VIEWS_SELECTOR)) {
+        (node as HTMLElement).classList.add("hidden");
+      }
+      target?.classList.remove("hidden");
+      return target as HTMLElement | null;
+    });
+  }
+  $.toolbarTitle.textContent = "";
+  syncSidebarButtons(null);
 }
 
 function renderDOM(): void {
@@ -1450,7 +1742,15 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
         const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
         const self = siblings.indexOf(node);
         const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
-        successors.find((n) => n.dataset["tabId"] !== id)?.focus();
+        const successor = successors.find((n) => n.dataset["tabId"] !== id);
+        if (successor !== undefined) {
+          successor.focus();
+        } else {
+          // The LAST tab: no row survives for focus to land on, and losing it
+          // to <body> strands the keyboard user. The empty-state surface's one
+          // control is the composer, so focus goes there.
+          $.promptInput.focus();
+        }
         void closeTab(id);
         break;
       }

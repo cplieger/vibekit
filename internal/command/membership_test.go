@@ -78,19 +78,29 @@ func newFlakyMembership(t *testing.T, chats ChatStore) (*Membership, *flakyTabs,
 	return NewMembership(MembershipDeps{Chats: chats, Tabs: flaky, Bus: bus, Teardown: teardown}), flaky, bus
 }
 
-// recordingTeardown is the delete path's teardown seam. Nothing asserts on it
-// here — the ordering tests are about the two STORES — so it only has to exist so
-// the delete path does not nil-deref.
+// recordingTeardown is the delete path's teardown seam. The ordering tests
+// assert nothing on it — they are about the two STORES — while the close
+// escalation's tests read back which grade ran and what chain travelled.
 type recordingTeardown struct {
-	deleted []vibekit.ChatID
-	closed  []vibekit.ChatID
-	mu      sync.Mutex
+	deleted        []vibekit.ChatID
+	deletedByChain map[vibekit.ChatID][]string
+	closed         []vibekit.ChatID
+	mu             sync.Mutex
 }
 
 func (r *recordingTeardown) DeleteChatState(_ context.Context, id vibekit.ChatID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.deleted = append(r.deleted, id)
+}
+
+func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id vibekit.ChatID, chain []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.deletedByChain == nil {
+		r.deletedByChain = make(map[vibekit.ChatID][]string)
+	}
+	r.deletedByChain[id] = slices.Clone(chain)
 }
 
 func (r *recordingTeardown) CloseChatState(_ context.Context, id vibekit.ChatID) {

@@ -238,6 +238,30 @@ func (s *Store) List() (tabs []vibekit.TabSubject, version uint64) {
 	return slices.Clone(s.tabs), s.version
 }
 
+// Subtree returns the tab with this id plus every descendant, in the set's
+// order, or nil when id is not open. It is the SAME walk Close removes —
+// closure — exposed as a read, so a caller deciding what a close will take out
+// (the membership coordinator's retention escalation) cannot disagree with what
+// the close then takes.
+//
+// A read under stateMu like List, and a copy for List's reason: the subjects
+// hold no reference type, so element copies are the whole isolation.
+func (s *Store) Subtree(id string) []vibekit.TabSubject {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	doomed := closure(s.tabs, id)
+	if len(doomed) == 0 {
+		return nil
+	}
+	out := make([]vibekit.TabSubject, 0, len(doomed))
+	for _, t := range s.tabs {
+		if _, gone := doomed[t.ID]; gone {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // Prune is LOAD-TIME CRASH RECOVERY and NOT the live integrity mechanism. It
 // drops a tab whose subject no longer resolves and promotes a tab whose parent is
 // absent, in one mutation, and returns what it dropped.

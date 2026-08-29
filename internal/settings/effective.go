@@ -1,8 +1,10 @@
 package settings
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"maps"
 	"slices"
 
@@ -53,6 +55,33 @@ func EffectiveDefaults() vibekit.EffectiveSettings {
 		// off by standing veto, supervised and scheduled-auto-approve off (the latter
 		// fail-closed by decision), and info-level logs.
 	}
+}
+
+// RetentionEnabled reports whether chat retention keeps a closed chat's record.
+// It is the CLOSE path's read of chat_retention_days, and it FAILS TOWARD
+// KEEPING: a config.json that is present and unreadable answers ON (delete
+// nothing), an absent key or file takes DefaultChatRetentionDays (ON), days == 0
+// answers OFF (ephemeral chats, deleted on close), and any other value —
+// -1 = forever included — answers ON.
+//
+// It must never share a reader with the retention PURGE
+// (internal/composition.chatRetention), because the 0-sentinel's safe direction
+// INVERTS between the two consumers: for the purge, 0 means "purge nothing this
+// pass", so unreadable maps to 0; for the close, 0 means "delete the record
+// now", so unreadable must map to ON. One reader answering both would make a
+// malformed file either delete every chat the user asked to keep or leak a
+// record on every close, depending on which consumer it was written for.
+func RetentionEnabled(ctx context.Context, configDir string) bool {
+	days, ok, err := FieldStrict[int](ctx, configDir, KeyChatRetentionDays)
+	if err != nil {
+		slog.Error("chat retention: config.json is present but unreadable; treating retention as ON so this close deletes nothing",
+			"key", KeyChatRetentionDays, "error", err)
+		return true
+	}
+	if !ok {
+		days = DefaultChatRetentionDays
+	}
+	return days != 0
 }
 
 // EffectiveFrom resolves the stored document into the view the client reads:

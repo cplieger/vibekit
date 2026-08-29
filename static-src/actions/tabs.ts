@@ -136,6 +136,13 @@ export interface CloseTabArgs {
   opID: string;
 }
 
+/** How long a close dispatch may stay unanswered before the gesture stops
+ *  waiting and the pending-op machine VERIFIES instead (opTimedOut): the
+ *  removal stays applied, nothing restores, and one re-list per backoff tick
+ *  settles it on authoritative evidence. Definition-level so the deadline
+ *  bounds the whole retry sequence, not one attempt. */
+export const CLOSE_CONFIRM_MS = 5000;
+
 /** What the server committed for a close.
  *
  *  `closed` is a LIST because a parent and its children go as one mutation, and
@@ -153,6 +160,7 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
+  timeout: CLOSE_CONFIRM_MS,
   dedupe: (args) => joinKey("tabs.close", args.id),
   run: async ({ id, opID }, signal, ctx) => {
     const r = await transportSend(
@@ -175,7 +183,12 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
       version: body === null ? 0 : numberField(body, "version"),
     };
   },
-  error: "Couldn't close that tab",
+  // NO framework toast: the two failure shapes want opposite surfaces and the
+  // notifier cannot split them. A TIMEOUT is inconclusive — the close may have
+  // committed, so the machine VERIFIES and saying "couldn't close" would claim
+  // an outcome nobody knows — while a DEFINITIVE refusal is the close gesture's
+  // to report beside its rollback (tabs.ts), where the outcome is known.
+  error: false,
 });
 
 export interface ReorderTabsArgs {

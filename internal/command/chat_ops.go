@@ -195,6 +195,23 @@ func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingP
 	teardown.CloseChatState(ctx, chatID)
 }
 
+// deleteChatTeardown is closeChatTeardown's DELETE grade, for a chat the
+// retention-off close escalation has already erased: the same graceful turn
+// cancel first, then the delete-grade state teardown — run cancellation, bridge
+// teardown and the KAS session-chain reap, all driven from the chain captured
+// before the record went, because a record-reading teardown would silently
+// no-op on a deleted chat. Mirrors closeChatTeardown line for line so the two
+// grades cannot drift; the coordinator dispatches exactly one of them per chat.
+func deleteChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID vibekit.ChatID, sessionChain []string) {
+	perms.ClearPendingPermsForChat(chatID)
+	if sb := bridges.Bridge(chatID); sb != nil {
+		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
+			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
+		}
+	}
+	teardown.DeleteChatStateByChain(ctx, chatID, sessionChain)
+}
+
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
 func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
 	sb := bridges.Bridge(cmd.ChatID)

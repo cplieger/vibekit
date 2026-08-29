@@ -1103,17 +1103,33 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 // durable state, so killing the chat's process only PAUSES it — it must be told
 // to cancel, per run, while the owning bridge is still alive to say it.
 //
-// Best-effort throughout: a run list failure or a per-run cancel failure is
-// logged and the close proceeds. Blocking a tab close on a workflow RPC would
-// invert the gesture's meaning — the user said stop, not wait.
+// It BEGINS with a record read, so it no-ops on a deleted chat. The delete
+// grades — delete_chat's teardown, which runs before the record goes, and the
+// close escalation's, which runs after — resolve the chain themselves and call
+// CancelForSessions, which is the half that does the work.
 func (rs *Runs) CancelForChat(ctx context.Context, chatID vibekit.ChatID) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return
 	}
-	chain := make(map[string]bool, len(chat.PriorACPSessionIDs)+1)
-	chain[chat.ACPSessionID] = true
-	for _, id := range chat.PriorACPSessionIDs {
+	rs.CancelForSessions(ctx, chatID, chat.SessionChain())
+}
+
+// CancelForSessions cancels every non-terminal run launched by one of these
+// sessions. The chain-shaped half of CancelForChat: it reads no chat record, so
+// it works from a CAPTURED chain after the record is gone — the retention-off
+// close escalation's case, where the cancel runs post-commit. chatID is carried
+// for log attribution only.
+//
+// Best-effort throughout: a run list failure or a per-run cancel failure is
+// logged and the close proceeds. Blocking a tab close on a workflow RPC would
+// invert the gesture's meaning — the user said stop, not wait.
+func (rs *Runs) CancelForSessions(ctx context.Context, chatID vibekit.ChatID, sessionChain []string) {
+	if len(sessionChain) == 0 {
+		return
+	}
+	chain := make(map[string]bool, len(sessionChain))
+	for _, id := range sessionChain {
 		chain[id] = true
 	}
 	runs, err := rs.listRaw(ctx)

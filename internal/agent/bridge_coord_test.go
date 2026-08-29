@@ -791,6 +791,62 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	}
 }
 
+// TestChatTeardown_DeleteByChainReapsWithoutTheRecord is the close
+// escalation's grade: the record is already deleted when the teardown runs, so
+// the reap is driven from the chain captured before the commit. The
+// record-reading grade is the control — on a recordless chat it must leave the
+// session, which is precisely the silent no-op the chain-shaped seam bypasses.
+func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
+	cases := []struct {
+		name        string
+		teardown    func(h *Runtime, ctx context.Context, id vibekit.ChatID)
+		wantSurvive bool
+	}{
+		{
+			name: "the captured chain reaps with the record gone",
+			teardown: func(h *Runtime, ctx context.Context, id vibekit.ChatID) {
+				h.DeleteChatStateByChain(ctx, id, []string{"sess_owned"})
+			},
+			wantSurvive: false,
+		},
+		{
+			name:        "the record-reading grade no-ops without one (control)",
+			teardown:    func(h *Runtime, ctx context.Context, id vibekit.ChatID) { h.DeleteChatState(ctx, id) },
+			wantSurvive: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sessionsDir := t.TempDir()
+			sessDir := filepath.Join(sessionsDir, "hash01", "sess_owned")
+			if err := os.MkdirAll(sessDir, 0o700); err != nil {
+				t.Fatalf("mkdir session: %v", err)
+			}
+			writeSessionRecord(t, sessDir, testReaperWorkDir)
+
+			cs := newFakeChatStore()
+			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
+				WithSessionReaper(
+					kirosession.New(sessionsDir, testReaperWorkDir),
+					func(context.Context) (map[string]struct{}, bool) {
+						return map[string]struct{}{"sess_owned": {}}, true
+					},
+				))
+			cs.Bus = h
+			t.Cleanup(func() { shutdownHub(t, h) })
+
+			// NO chat record: the escalation deleted it inside the close commit.
+			tc.teardown(h, t.Context(), "c-doomed")
+
+			_, err := os.Stat(sessDir)
+			survived := err == nil
+			if survived != tc.wantSurvive {
+				t.Errorf("session survived = %v, want %v", survived, tc.wantSurvive)
+			}
+		})
+	}
+}
+
 // TestSessionLoad_HealsTheChatsRestartPausedRuns is the recovery model for
 // agent-launched runs, and the reason there is no Resume button anywhere.
 //

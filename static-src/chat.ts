@@ -33,6 +33,7 @@ import {
   renameTab,
   setTabStatus,
   setTabTooltip,
+  type OpenTabOutcome,
   type TabDotStatus,
 } from "./tabs.js";
 import { beginAdopt, adoptCommitted, opFailed } from "./tabs-sync.js";
@@ -63,14 +64,8 @@ import { labelForMode } from "./roles.js";
 import { refreshContextUI } from "./context-ui.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
-import { isRetentionEnabled } from "./retention.js";
-import {
-  createChat,
-  deleteChat as deleteChatAction,
-  forkChat,
-  setMode,
-  type CreatedChat,
-} from "./actions/chat.js";
+import { info } from "./toast.js";
+import { createChat, forkChat, setMode, type CreatedChat } from "./actions/chat.js";
 import { newOpID } from "./transport.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
@@ -103,8 +98,8 @@ export async function openChatTab(
   id: string,
   name: string,
   opts?: { activate?: boolean; parentTabID?: string },
-): Promise<void> {
-  await openTab({
+): Promise<OpenTabOutcome> {
+  return openTab({
     kind: "chat",
     ref: id,
     name,
@@ -135,61 +130,33 @@ export function chatTabDot(id: string): TabDotStatus | "" {
   return tabStatusFor(get(id), hasPendingDecision(id));
 }
 
-/** Everything closing a chat TAB does on this device, plus the one dispatch it
- *  makes when the close originated here.
+/** Everything closing a chat TAB does on this device — client-local cleanup
+ *  only, identical whoever closed the tab.
  *
- *  Extracted from `openChatTab`'s own onClose, unchanged, so the tab factory can
- *  name this behaviour without importing the tab store's spec shape. `remote` is
- *  required here rather than defaulted: the default belongs at the store boundary,
- *  where a caller can legitimately omit the flag, and defaulting it twice would be
- *  two places to get the safe reading wrong. */
-export function closeChatTab(id: string, { remote }: { remote: boolean }): void {
+ *  Run DEFERRED for a close this device dispatched (the pending-op machine's
+ *  confirmation, exactly once per closed tab) and immediately for a remote
+ *  close's applied removal. Nothing here dispatches anything: the process
+ *  teardown AND the retention-off record delete are both the server's
+ *  `close_tab` operation now, so every branch that used to decide between
+ *  keeping, dropping and deleting has converged on the one local cleanup.
+ *  `delete_chat` survives as History's delete path and nothing else's. */
+export function closeChatTab(id: string): void {
   // The draft belongs to the CHAT, not to the tab, so a pending save goes
-  // out before the teardown dispatch: a close that keeps the record keeps
-  // the unsent text with it, and a delete's tombstone then drops the save
-  // rather than racing it.
+  // out before the row drops: a close that keeps the record keeps the unsent
+  // text with it, and a retention-off close's tombstone drops the late save
+  // server-side rather than racing it.
   flushComposerDraft();
-  // The chat's unanswered asks go with the tab. Closing cancels the turn and
-  // the chat's runs server-side, so nothing here is still live — and the dock
-  // queue is keyed by chat id, so a queue left behind was resurrected by
+  // The chat's unanswered asks go with the tab. The close cancelled the turn
+  // and the chat's runs server-side, so nothing here is still live — and the
+  // dock queue is keyed by chat id, so a queue left behind was resurrected by
   // reopening the SAME id: the card came back and the tab dot said the chat
   // needed a decision that no longer existed.
   dropDecisions(id);
-  // There is no archive step any more: a closed chat is just a chat that
-  // stopped being in a tab, and "archived" is computed from its age
-  // against the retention window. So closing a tab persists nothing.
-  //
-  // Retention = 0 is the one case that still acts: it means NO retention
-  // (ephemeral chats, lost on close), which is the least-retention end of
-  // the scale — not "keep forever". Higher N = more retention.
-  // Zero-message chats were never persisted server-side, so they are
-  // dropped locally either way.
-  const s = get(id);
-  if (isRetentionEnabled()) {
-    // Closing kills the work (user decision): the turn, the chat's runs, the
-    // process. That teardown is the SERVER's now — `close_tab` runs it for every
-    // chat tab it closes, which is what `close_chat` became when the command was
-    // retired — so nothing is dispatched from here in either direction. Two
-    // commands meaning one gesture would be two things to keep in step: a client
-    // sending only `close_chat` tore the bridge down and left the tab, one sending
-    // only `close_tab` left the process.
-    //
-    // What is left is the LOCAL cleanup, and it runs whoever closed the tab: the
-    // store row, the dock queue, the composer state. The record survives;
-    // reopening session/loads it back.
-    removeChat(id);
-  } else if (s?.message_count === 0) {
-    removeChat(id);
-  } else if (remote) {
-    // Retention off means a close DELETES, and the other device already did. Drop
-    // the local row without a second delete_chat.
-    removeChat(id);
-  } else {
-    // delete_chat is a genuinely different command from close_tab — it removes the
-    // record — so this one still dispatches, and `remote` is what stops the second
-    // device sending it again.
-    deleteChat(id);
-  }
+  // The store row, whatever retention says: a closed chat is a chat that
+  // stopped being in a tab. Under retention the record survives server-side
+  // and reopening session/loads it back; with retention off the server deleted
+  // it inside the close.
+  removeChat(id);
   // Local only: a close that kept the record kept its draft with it, and
   // reopening the chat seeds the text back from the server.
   dropComposerState(id);
@@ -200,13 +167,6 @@ export function closeChatTab(id: string, { remote }: { remote: boolean }): void 
   // keystroke lands in no chat at all and is parked nowhere. Harmless when the
   // strip activates a neighbour straight after, because a retarget is idempotent.
   retargetComposer(getActiveId());
-}
-
-/** Permanently delete a chat (retention = 0, non-empty) on tab close — the
- *  "no retention" / ephemeral mode. Optimistic via the action; the SSE
- *  chat_deleted echo is a no-op once the store row is already gone. */
-function deleteChat(id: string): void {
-  void deleteChatAction.dispatch(id);
 }
 
 // --- Activation generation ---
@@ -637,10 +597,12 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
  *  behind. `resumeSession` itself stays — it is the command a future explicit
  *  "adopt a session" affordance would use, and it is still the only way a session
  *  vibekit does not own can become a chat. */
-export function openPreviousSession(row: ResumableSessionRow): void {
+export async function openPreviousSession(
+  row: ResumableSessionRow,
+): Promise<"opened" | "gone" | "failed"> {
   const chatID = row.chat_id ?? "";
   if (chatID === "") {
-    return;
+    return "failed";
   }
   const existing = get(chatID);
   if (existing === undefined) {
@@ -652,19 +614,29 @@ export function openPreviousSession(row: ResumableSessionRow): void {
     // Required, not defensive. activateChatView returns early on a missing row
     // and loadMessages refuses to write into one, so activating first renders an
     // empty chat view and stops. Only a reconnect's own loadList hid it.
-    void loadList().then(async () => {
-      // AWAITED: opening the tab is a round trip, and activateChatView is what
-      // loads the transcript into the view the tab reveals. `openChatTab` already
-      // activates, so the explicit call is the belt for a tab that was open and
-      // active already — where the activation is a no-op and this is what refetches.
-      await openChatTab(chatID, get(chatID)?.name ?? row.title);
-      activateChatView(chatID);
-    });
-    return;
+    await loadList();
   }
-  void openChatTab(chatID, existing.name).then(() => {
-    activateChatView(chatID);
-  });
+  // AWAITED: opening the tab is a round trip, and activateChatView is what
+  // loads the transcript into the view the tab reveals. `openChatTab` already
+  // activates, so the explicit call is the belt for a tab that was open and
+  // active already — where the activation is a no-op and this is what refetches.
+  const outcome = await openChatTab(chatID, get(chatID)?.name ?? row.title);
+  if (outcome === "not-found") {
+    // Retention is off and a close DELETED this conversation; the row the
+    // History page listed describes a session whose chat is gone. Said here —
+    // with the activation SKIPPED, or the reader lands on an empty transcript
+    // over a dead active pointer — and answered as "gone" so the caller drops
+    // its row. Distinct from a network failure by openTab's outcome: a failed
+    // fetch must never read as "ephemeral and deleted".
+    info("That conversation was ephemeral (retention is off) and is gone.");
+    return "gone";
+  }
+  if (outcome !== "opened") {
+    // The framework's error surface has already spoken; the row stays.
+    return "failed";
+  }
+  activateChatView(chatID);
+  return "opened";
 }
 
 /** Create a new chat pre-set to the "plan" workflow mode — the share-target
