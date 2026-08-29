@@ -353,12 +353,12 @@ func hasMessageID(c *vibekit.Chat, id string) bool {
 
 // AdmissionWait is the design's ADMISSION_WAIT_MS: the longest a prompt waits
 // for a contended admission slot before answering 409. It MUST stay below the
-// client's API timeout (30s, @cplieger/fetch API_TIMEOUT_MS) or the client
-// aborts the POST before the refusal arrives;
-// TestAdmissionWait_StaysUnderTheClientAPITimeout pins the margin. A var
-// rather than a const only so tests — this package's and the agent package's
-// integration suite — can shrink a deliberately contended wait; production
-// never writes it.
+// client's API timeout (@cplieger/fetch API_TIMEOUT_MS, pinned cross-language
+// via testdata/client_api_timeout.json) or the client aborts the POST before
+// the refusal arrives; TestAdmissionWait_StaysUnderTheClientAPITimeout pins
+// the margin. A var rather than a const only so tests — this package's and
+// the agent package's integration suite — can shrink a deliberately
+// contended wait; production never writes it.
 var AdmissionWait = 20 * time.Second
 
 // reasonStarting is the 409 refusal class whose holder cannot receive a steer:

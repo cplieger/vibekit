@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,17 +21,36 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// clientAPITimeout mirrors @cplieger/fetch's API_TIMEOUT_MS (30s), the timeout
-// every client action dispatches under. Hand-maintained, like the TS wire
-// mirrors: bump it here when the library's value moves.
-const clientAPITimeout = 30 * time.Second
+// clientAPITimeout reads the shared fixture pinning @cplieger/fetch's
+// API_TIMEOUT_MS — the timeout every client action dispatches under. The TS
+// half (static-src/api-timeout.node.test.ts) asserts the fixture equals the
+// INSTALLED library's constant, so a library bump fails that gate and forces a
+// fixture update, which this test then re-checks against AdmissionWait.
+func clientAPITimeout(t *testing.T) time.Duration {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/client_api_timeout.json")
+	if err != nil {
+		t.Fatalf("read the client API timeout fixture (its contract is described in this file): %v", err)
+	}
+	var fixture struct {
+		APITimeoutMS int `json:"api_timeout_ms"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatalf("decode testdata/client_api_timeout.json: %v", err)
+	}
+	if fixture.APITimeoutMS <= 0 {
+		t.Fatalf("client_api_timeout.json api_timeout_ms = %d, want a positive value", fixture.APITimeoutMS)
+	}
+	return time.Duration(fixture.APITimeoutMS) * time.Millisecond
+}
 
 // A contended admission wait longer than the client's own request timeout
 // would make the client abort the POST before the server's refusal arrives —
 // the user would see a network error instead of the busy answer.
 func TestAdmissionWait_StaysUnderTheClientAPITimeout(t *testing.T) {
-	if AdmissionWait >= clientAPITimeout {
-		t.Fatalf("AdmissionWait = %v, want it below the client API timeout %v", AdmissionWait, clientAPITimeout)
+	timeout := clientAPITimeout(t)
+	if AdmissionWait >= timeout {
+		t.Fatalf("AdmissionWait = %v, want it below the client API timeout %v", AdmissionWait, timeout)
 	}
 }
 
