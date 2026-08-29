@@ -59,7 +59,11 @@ import {
 import { lineDiff, stats } from "./diff.js";
 import { isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
-import { buildAssistantBubble, type AssistantBubble } from "./fundamentals/text-bubble.js";
+import {
+  buildAssistantBubble,
+  type AssistantBubble,
+  type AssistantBubbleOpts,
+} from "./fundamentals/text-bubble.js";
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
 import {
   buildSubagentBlock,
@@ -1066,20 +1070,25 @@ function mountText(
   // clears this message's slot (identity-guarded) and the registry falls back
   // to the newest surviving top-level bubble.
   const topLive = live && !st.detached && container === st.blocksEl;
-  const bubble = buildAssistantBubble(
-    initial,
-    live,
-    topLive
-      ? {
-          onSeal: (root) => {
-            if (st.topLiveEl === root) {
-              st.topLiveEl = null;
-            }
-            clearLiveAnchor(root);
-          },
-        }
-      : undefined,
-  );
+  // Top-level bubbles carry a row; subagent-body bubbles don't (the subagent
+  // header is the identity — matches the IDE's indented nesting). Created
+  // BEFORE the bubble so the builder's initial blank report lands on it.
+  const row = container === st.blocksEl ? cbs.makeRow() : null;
+  const opts: AssistantBubbleOpts = {};
+  if (topLive) {
+    opts.onSeal = (root): void => {
+      if (st.topLiveEl === root) {
+        st.topLiveEl = null;
+      }
+      clearLiveAnchor(root);
+    };
+  }
+  if (row !== null) {
+    opts.onBlankChange = (blank): void => {
+      row.classList.toggle("is-empty", blank);
+    };
+  }
+  const bubble = buildAssistantBubble(initial, live, opts);
   st.bubbles.push(bubble);
   if (live) {
     st.liveBubble = bubble;
@@ -1091,10 +1100,7 @@ function mountText(
   st.blockText.set(i, (full) => {
     bubble.setText(full);
   });
-  // Top-level bubbles carry an avatar row; subagent-body bubbles don't (the
-  // subagent header is the identity — matches the IDE's indented nesting).
-  if (container === st.blocksEl) {
-    const row = cbs.makeRow();
+  if (row !== null) {
     row.appendChild(bubble.root);
     container.appendChild(row);
   } else {

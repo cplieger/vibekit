@@ -171,18 +171,21 @@
    gesture differently. `disclosure-row.ts` forwards the click to the chevron
    button, which keeps `aria-expanded` and the keyboard path where they were.
 
-   Gated on the chevron's PRESENCE, so a claim-only card stays inert without a
-   second flag to keep in step: `TOOL_DEPTH1 === "none"` builds no toggle and no
-   details region, and a header that reveals nothing must not offer to. Bare
-   `:hover` like its four siblings rather than an `any-hover` gate — a sticky
-   hover after a tap is what every other header here already does, and the point
-   of this change is that they stop disagreeing. */
-.tool-header:has(> .tool-disclosure) {
+   Gated on `.has-disclosure`, which `buildHeader` stamps exactly when it builds
+   the chevron, so a claim-only card stays inert without a second flag to keep in
+   step: `TOOL_DEPTH1 === "none"` builds no toggle, no details region and no
+   class, and a header that reveals nothing must not offer to. A class rather
+   than `:has(> .tool-disclosure)` because this header repaints on every
+   tool_call_update while its tool streams (design §B4). Bare `:hover` like its
+   four siblings rather than an `any-hover` gate — a sticky hover after a tap is
+   what every other header here already does, and the point of this change is
+   that they stop disagreeing. */
+.tool-header.has-disclosure {
   cursor: pointer;
   user-select: none;
 }
 
-.tool-header:has(> .tool-disclosure):hover {
+.tool-header.has-disclosure:hover {
   background: var(--c-hover);
 }
 

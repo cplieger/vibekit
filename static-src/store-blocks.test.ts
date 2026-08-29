@@ -133,24 +133,27 @@ describe("block index mirroring", () => {
 });
 
 describe("a reserved slot costs no row", () => {
-  // The other half of the same defect, and it lives in CSS because the block
-  // mounter is append-only: the empty bubble IS the position its text fills into
-  // later, so it cannot be skipped at mount time. The rule under test is read out
-  // of the shipped stylesheet rather than copied here.
+  // The other half of the same defect. The block mounter is append-only: the
+  // empty bubble IS the position its text fills into later, so it cannot be
+  // skipped at mount time — the ROW hides instead. The renderer stamps
+  // `.is-empty` (the class lifecycle is pinned in messages-blocks.test.ts,
+  // driven by the bubble's own blank reports); this half proves the shipped
+  // stylesheet actually hides on it. The rule is read out of the stylesheet
+  // rather than copied here.
   let style: HTMLStyleElement;
   let host: HTMLElement;
 
-  const row = (inner: string): HTMLElement => {
+  const row = (cls: string, inner: string): HTMLElement => {
     const el = document.createElement("div");
-    el.className = "msg-row";
+    el.className = cls;
     el.innerHTML = inner;
     host.appendChild(el);
     return el;
   };
 
   beforeEach(() => {
-    const rule = /\.msg-row:has\([^{]*\{[^}]*\}/.exec(sheet);
-    expect(rule, "the empty-bubble rule is missing from css/13-messages.css").not.toBeNull();
+    const rule = /\.msg-row\.is-empty\s*\{[^}]*\}/.exec(sheet);
+    expect(rule, "the empty-row rule is missing from css/13-messages.css").not.toBeNull();
     style = document.createElement("style");
     style.textContent = rule?.[0] ?? "";
     document.head.appendChild(style);
@@ -158,18 +161,17 @@ describe("a reserved slot costs no row", () => {
     document.body.appendChild(host);
   });
 
-  it("hides a row whose settled bubble is empty", () => {
-    const el = row('<div class="message assistant"></div>');
+  it("hides a row the renderer marked empty", () => {
+    const el = row("msg-row is-empty", '<div class="message assistant"></div>');
     expect(getComputedStyle(el).display).toBe("none");
   });
 
-  it("shows the row the moment the bubble has content", () => {
-    const el = row('<div class="message assistant"><p>hi</p></div>');
-    expect(getComputedStyle(el).display).not.toBe("none");
-  });
-
-  it("keeps a live bubble visible so it can carry its caret", () => {
-    const el = row('<div class="message assistant streaming"></div>');
-    expect(getComputedStyle(el).display).not.toBe("none");
+  it("keeps an unmarked row visible, whatever its bubble holds", () => {
+    // Content-bearing and caret-carrying rows are one case to the stylesheet:
+    // no mark, no hiding. Which rows earn the mark is the renderer's contract.
+    const filled = row("msg-row", '<div class="message assistant"><p>hi</p></div>');
+    const live = row("msg-row", '<div class="message assistant streaming"></div>');
+    expect(getComputedStyle(filled).display).not.toBe("none");
+    expect(getComputedStyle(live).display).not.toBe("none");
   });
 });

@@ -637,6 +637,71 @@ describe("a mounted block picks up text that arrived after it mounted", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The row over an empty bubble carries `.is-empty`, which is what hides it
+// (css/13-messages.css). The bubble reports its own blank state — nothing
+// rendered AND not streaming — and mountText writes it onto the row, so the
+// class must track every way a bubble stops (or starts) being blank.
+// ---------------------------------------------------------------------------
+
+describe("an empty bubble's row is marked .is-empty", () => {
+  function message(blocks: Record<string, unknown>[]): Message {
+    return {
+      id: `m-empty-${String(Math.random())}`,
+      role: "assistant",
+      content: "",
+      blocks,
+      tool_calls: [],
+    } as unknown as Message;
+  }
+
+  // The row is the bubble's wrapper. Queried by relation rather than by class:
+  // the real `.msg-row` factory is injected by messages.ts (initBlockCallbacks),
+  // which this harness deliberately leaves out; messages-paint-causes.test.ts
+  // covers the fully-wired `.msg-row.is-empty` combination.
+  const rowOf = (wrap: HTMLElement): HTMLElement | null =>
+    wrap.querySelector(".message.assistant")?.parentElement ?? null;
+
+  it("marks a reserved slot's row at mount and clears it when the text lands", () => {
+    const wrap = document.createElement("div");
+    const blocks = [text("")];
+    const m = message(blocks);
+    buildAssistantBody(wrap, m, CHAT_ID, false);
+    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(true);
+
+    blocks[0]!["text"] = "the frame arrived after all.";
+    updateAssistantBody(wrap, m, CHAT_ID, false);
+    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
+  });
+
+  it("never marks a live bubble's row — the caret needs the row visible", () => {
+    const wrap = document.createElement("div");
+    const m = message([text("")]);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    expect(wrap.querySelector(".message.assistant.streaming")).not.toBeNull();
+    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
+  });
+
+  it("marks the row when a live bubble seals with nothing revealed", () => {
+    // A reserved slot whose text never arrives: the caret drops at finalize and
+    // the row must hide with it.
+    const wrap = document.createElement("div");
+    const m = message([text("")]);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
+
+    finalizeAssistantBody(m.id);
+    expect(wrap.querySelector(".message.assistant.streaming")).toBeNull();
+    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(true);
+  });
+
+  it("leaves a content-bearing row unmarked from the start", () => {
+    const wrap = document.createElement("div");
+    buildAssistantBody(wrap, message([text("hello")]), CHAT_ID, false);
+    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The streaming caret has an END, and there is exactly one of it.
 //
 // The caret is a single CSS pseudo-element on `.message.assistant.streaming`,

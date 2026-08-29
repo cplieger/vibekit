@@ -943,6 +943,7 @@ function buildTurn(t: Turn): HTMLElement {
   mountTurnFooter(card, t);
   // After the footer: Rewind lives inside it, so it must exist first.
   mountRewind(card, t);
+  syncTurnBodyless(card);
 
   // A new user turn pops the reader back to the bottom. scrollToBottom() does
   // an explicit RAF-paced scroll that lands on the new card immediately
@@ -965,6 +966,19 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   }
   mountTurnFooter(card, t);
   mountRewind(card, t);
+  syncTurnBodyless(card);
+}
+
+/** `.is-bodyless` mirrors "the card ends with an empty body" for CSS: the
+ *  header's bottom-edge treatment keys on it (29-turns.css). Called after every
+ *  build/update pass, where both facts it encodes settle — reconcile owns the
+ *  body's children and mountTurnFooter owns whether a footer follows. */
+function syncTurnBodyless(card: HTMLElement): void {
+  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+  card.classList.toggle(
+    "is-bodyless",
+    body !== null && body.firstChild === null && body.nextElementSibling === null,
+  );
 }
 
 function headerData(t: Turn): TurnHeaderData {

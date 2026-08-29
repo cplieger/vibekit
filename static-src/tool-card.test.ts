@@ -272,6 +272,8 @@ describe("the depth ladder", () => {
     });
     expect(card.querySelector(".tool-details")).toBeNull();
     expect(card.querySelector(".tool-disclosure")).toBeNull();
+    // The CSS affordance hook tracks the toggle: no toggle, no class.
+    expect(card.querySelector(".tool-header")?.classList.contains("has-disclosure")).toBe(false);
   });
 
   it("an edit gets a details region — the old tier axis gave it none", async () => {
@@ -286,6 +288,9 @@ describe("the depth ladder", () => {
     });
     expect(card.querySelector(".tool-details")).not.toBeNull();
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
+    // ...and a toggle brings the affordance class with it (14-tools.css keys
+    // cursor/hover on it).
+    expect(card.querySelector(".tool-header")?.classList.contains("has-disclosure")).toBe(true);
   });
 
   it("has no second View diff button — the subject is the link", async () => {
