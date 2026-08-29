@@ -196,6 +196,10 @@ export interface SubagentOptions {
    *  right answer for a pipeline CONTAINER: opening a stage's page shows the whole
    *  pipeline as a tree, so the driver needs no second door of its own. */
   open?: SubagentOpener;
+  /** Fired when the disclosure flips. The composition layer keys its
+   *  open-container bookkeeping on ids this view never learns, so the state
+   *  change is reported rather than read back off the DOM. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 /** The footer's link to this delegate's own page.
@@ -325,6 +329,7 @@ export function buildSubagentBlock(
     open: false,
     onToggle: (open) => {
       root.classList.toggle("collapsed", !open);
+      opts.onOpenChange?.(open);
     },
   });
   void ctl;

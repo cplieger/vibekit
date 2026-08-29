@@ -90,6 +90,11 @@ class ScrollController {
    *  arrival order on the return to Following. */
   private deferred: (() => void)[] = [];
   private stateListeners: ((s: ReadingState) => void)[] = [];
+  /** Callbacks riding the transcript MutationObserver this module already owns
+   *  (childList + subtree + characterData on `#messages`). One observer for the
+   *  container instead of one per consumer: find-in-chat's live re-run used to
+   *  duplicate it wholesale. */
+  private mutateListeners: (() => void)[] = [];
   /** Supplies the element Following should keep visible while a turn streams.
    *  Null (or a null return) falls back to the document bottom. */
   private anchorProvider: (() => HTMLElement | null) | null = null;
@@ -190,6 +195,9 @@ class ScrollController {
     const mutationObserver = new MutationObserver(() => {
       this.revalidateReadingState();
       this.autoScrollIfAnchored();
+      for (const cb of this.mutateListeners) {
+        cb();
+      }
     });
     mutationObserver.observe(this.messagesEl, {
       childList: true,
@@ -253,6 +261,20 @@ class ScrollController {
 
   onReadingStateChange(cb: (s: ReadingState) => void): void {
     this.stateListeners.push(cb);
+  }
+
+  /** Register `cb` on the transcript's own MutationObserver; returns the
+   *  unregister. Delivery keeps the observer's microtask timing, so a consumer
+   *  that mutates the transcript itself can suppress its own echo the same way
+   *  it would with an observer of its own. */
+  onTranscriptMutate(cb: () => void): () => void {
+    this.mutateListeners.push(cb);
+    return () => {
+      const at = this.mutateListeners.indexOf(cb);
+      if (at >= 0) {
+        this.mutateListeners.splice(at, 1);
+      }
+    };
   }
 
   setAnchorProvider(fn: (() => HTMLElement | null) | null): void {
@@ -727,6 +749,9 @@ export function readingState(): ReadingState {
 }
 export function onReadingStateChange(cb: (s: ReadingState) => void): void {
   getInstance().onReadingStateChange(cb);
+}
+export function onTranscriptMutate(cb: () => void): () => void {
+  return getInstance().onTranscriptMutate(cb);
 }
 export function setAnchorProvider(fn: (() => HTMLElement | null) | null): void {
   getInstance().setAnchorProvider(fn);

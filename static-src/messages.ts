@@ -23,8 +23,15 @@
 //     paint cost
 // ---------------------------------------------------------------------------
 
-import type { Message } from "./types.js";
-import { getActive, getActiveId, watchActiveId, messagesVersionOf, steerMarks } from "./store.js";
+import type { Message, Session } from "./types.js";
+import {
+  getActive,
+  getActiveId,
+  watchActiveId,
+  messagesVersionOf,
+  renderCauseOf,
+  steerMarks,
+} from "./store.js";
 import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
@@ -83,6 +90,9 @@ import {
   disposeAssistantBody,
   resetBlockRenders,
   refreshGroupHeader,
+  refreshMessageCard,
+  liveRenderIDs,
+  openContainerKeys,
   initBlockRenderer,
   getLiveAnchor,
 } from "./messages-blocks.js";
@@ -124,6 +134,12 @@ interface MessageState {
   streaming: boolean;
 }
 const messageStates = new Map<string, MessageState>();
+
+/** Ids whose MessageState is still `streaming: true` — the finalize loop's
+ *  population, so a full pass touches only what is live instead of walking
+ *  every mounted message. Maintained beside the flag: set at mount, cleared at
+ *  finalize and dispose. */
+const streamingIds = new Set<string>();
 
 /** bindLoadingState unsubs accumulated within a chat. Cleared on
  *  message removal (via reconcile.onRemove) and on chat switch. */
@@ -264,47 +280,6 @@ export function fadeInTranscript(): void {
 // The follow model's two client-side obligations (§3.4).
 // ---------------------------------------------------------------------------
 
-/** The subtask ids whose container is open RIGHT NOW, so a block carrying one
- *  contributes document height the reader can scroll to.
- *
- *  Two container kinds, and the set holds both under one key because the server
- *  stamps a step's id as `wf:<workflowId>:<nodePath>`
- *  (`internal/translate/wire.go`): reassembling that string from the run card's
- *  `data-run` and the step row's `data-node` means the caller does a plain set
- *  membership test and no second copy of `parseStepSubtask` lives here.
- *
- *  A step needs BOTH of its containers open — the card and the row inside it —
- *  because either one closed hides the step's body. A run card mounts open and a
- *  step row mounts closed (`fundamentals/run-card.ts`), so a step's blocks are
- *  unreachable until the reader opens that row. A delegate box is one container
- *  and mounts closed, always (`fundamentals/subagent-block.ts`).
- *
- *  Built once per call rather than per block: `refreshResumeLabel` runs on every
- *  paint, and this is two `querySelectorAll` passes over a subtree it is already
- *  touching, not one lookup per block in the session. */
-function expandedSubtasks(): ReadonlySet<string> {
-  const open = new Set<string>();
-  for (const box of messagesEl.querySelectorAll<HTMLElement>(".subagent-block[data-subtask]")) {
-    const id = box.dataset["subtask"];
-    if (id !== undefined && id !== "" && !box.classList.contains("collapsed")) {
-      open.add(id);
-    }
-  }
-  for (const card of messagesEl.querySelectorAll<HTMLElement>(".run-card[data-run]")) {
-    const runID = card.dataset["run"];
-    if (runID === undefined || runID === "" || card.classList.contains("collapsed")) {
-      continue;
-    }
-    for (const row of card.querySelectorAll<HTMLElement>(".run-step[data-node]")) {
-      const node = row.dataset["node"];
-      if (node !== undefined && node !== "" && !row.classList.contains("collapsed")) {
-        open.add(`wf:${runID}:${node}`);
-      }
-    }
-  }
-  return open;
-}
-
 /** Blocks the reader can REACH, which is what the resume chip counts.
  *
  *  Blocks, not messages: a single streaming turn can produce dozens of blocks,
@@ -322,11 +297,12 @@ function expandedSubtasks(): ReadonlySet<string> {
  *  number nothing on the page can account for is worse than no number.
  *
  *  A block with no `agent_subtask_id` is the parent stream: always inline, always
- *  counted. One with a subtask id counts only while its container is open, so
- *  opening a card legitimately raises the count — those blocks became reachable at
- *  that moment. */
+ *  counted. One with a subtask id counts only while its container chain is open —
+ *  `openContainerKeys` (messages-blocks.ts) owns what "open" means, including a
+ *  workflow step needing BOTH the run card and its row — so opening a card
+ *  legitimately raises the count: those blocks became reachable at that moment. */
 function blockCount(msgs: readonly Message[]): number {
-  const open = expandedSubtasks();
+  const open = openContainerKeys();
   let n = 0;
   for (const m of msgs) {
     for (const b of m.blocks ?? []) {
@@ -342,6 +318,12 @@ function blockCount(msgs: readonly Message[]): number {
 /** Blocks present when the reader last entered Reading. */
 let followBaseline = 0;
 
+/** The last FULL pass's reachable-block count. `refreshResumeLabel` runs on
+ *  chunk- and tool-cause paints too, and those causes cannot add blocks (a new
+ *  block is `shape`), so the walk happens once per full pass instead of once
+ *  per streamed delta. */
+let reachableBlocks = 0;
+
 function initFollowModel(): void {
   // Following pins to the ACTIVE TEXT BLOCK rather than the document bottom.
   // Without this, the agent streams a sentence, a 400-line diff card renders
@@ -356,7 +338,10 @@ function initFollowModel(): void {
   setAnchorProvider(getLiveAnchor);
   onReadingStateChange((next) => {
     if (next === "reading") {
-      followBaseline = blockCount(getActive()?.messages ?? []);
+      // A fresh count at the park, so the baseline and the cached count agree
+      // on what is reachable right now.
+      reachableBlocks = blockCount(getActive()?.messages ?? []);
+      followBaseline = reachableBlocks;
     }
     refreshResumeLabel();
   });
@@ -369,7 +354,7 @@ function refreshResumeLabel(): void {
     return;
   }
   const session = getActive();
-  const behind = blockCount(session?.messages ?? []) - followBaseline;
+  const behind = reachableBlocks - followBaseline;
   if (behind > 0) {
     setResumeLabel(`${String(behind)} new block${behind === 1 ? "" : "s"}`);
     return;
@@ -378,6 +363,14 @@ function refreshResumeLabel(): void {
   // claiming a count of zero.
   setResumeLabel(session?.thinking === true ? session.working_label || "Working" : "Latest");
 }
+
+/** Per-turn workflow-run ids, memoized at projection. `turnRunIDs` (turns.ts)
+ *  stays the one derivation; this is its result cached per turn per FULL pass,
+ *  so the fold pass reads a map entry instead of re-walking every turn's blocks.
+ *  The `tool` branch refreshes the owning turn's entry only — additive, because
+ *  an attached workflow id never detaches, and every structural change declares
+ *  fact/shape, which rebuilds the whole cache. */
+const turnRunIDsCache = new Map<string, string[]>();
 
 function paint(): void {
   const session = getActive();
@@ -391,12 +384,32 @@ function paint(): void {
     }
     return;
   }
+  const isChatSwitch = lastActiveId !== session.id;
+  // What the flushed version was FOR — what this pass may skip. Read after the
+  // effect's version read; untracked by design. A chat switch is always the
+  // full pass: the flushed cause describes the previous chat's delta, not the
+  // transcript this pass must now show whole.
+  const flushed = isChatSwitch ? undefined : renderCauseOf(session.id);
+  if (flushed?.cause === "chunk") {
+    // Pure text growth of MOUNTED blocks: their signal effects painted the
+    // text, so nothing mounts and nothing folds. Tail bookkeeping only.
+    refreshResumeLabel();
+    lastNewestId = session.messages[session.messages.length - 1]?.id;
+    return;
+  }
+  if (flushed?.cause === "tool" && refreshToolMessage(session, flushed.msgID)) {
+    // An existing call's update, and its card was mounted: the keyed update
+    // refreshed that one message. An absent render falls through to the full
+    // pass instead — only the full pass mounts.
+    refreshResumeLabel();
+    lastNewestId = session.messages[session.messages.length - 1]?.id;
+    return;
+  }
   // Mark genuinely-new appended messages (streaming arrival) so only
   // those get the entry animation. Chat-switches and paginated prepends
   // are silent (no animation).
   appendNewIds.clear();
   staggerIndex.clear();
-  const isChatSwitch = lastActiveId !== session.id;
   if (!isChatSwitch && lastNewestId !== undefined) {
     // Reverse scan: lastNewestId is always near the tail (set at end of
     // previous paint), so scanning backward is O(1) amortized.
@@ -427,6 +440,10 @@ function paint(): void {
     }
   }
   const turns = projectTurns(session.messages, session.thinking);
+  turnRunIDsCache.clear();
+  for (const t of turns) {
+    turnRunIDsCache.set(t.id, turnRunIDs(t));
+  }
   // The placeholder and the conversation may never share this container, and the
   // rule is enforced HERE because this is the line where content lands. Two
   // reasons it cannot be left to the activation's continuation, which removes the
@@ -443,14 +460,83 @@ function paint(): void {
     document.getElementById(CHAT_SKELETON_ID)?.remove();
   }
   reconcile(messagesEl, turns, turnSpec);
+  // ONE walk over the container's children builds the card list every full-pass
+  // consumer shares — the rail's observer and the fold pass. Filtered because
+  // unkeyed furniture (load-more, skeletons) lives beside the cards.
+  const cards: HTMLElement[] = [];
+  for (const child of messagesEl.children) {
+    if (child.classList.contains("turn")) {
+      cards.push(child as HTMLElement);
+    }
+  }
   // Tell the rail which cards exist so it can track the turn in view. Re-run per
-  // paint because the set changes as pages load and turns arrive.
-  observeTurns(messagesEl.querySelectorAll<HTMLElement>(":scope > .turn"));
-  applyFoldPass(session.id, turns);
+  // full pass because the set changes as pages load and turns arrive.
+  observeTurns(cards);
+  applyFoldPass(session.id, turns, cards);
   finalizeStreamingIfNeeded(session.messages);
+  reachableBlocks = blockCount(session.messages);
   refreshResumeLabel();
   lastNewestId = session.messages[session.messages.length - 1]?.id;
   lastActiveId = session.id;
+}
+
+/** The `tool`-cause fast path: refresh the owning message's card state through
+ *  the renderer's existing keyed update, touching no sibling. False when the
+ *  message is gone or nothing is mounted for it — the caller runs the full pass
+ *  then. */
+function refreshToolMessage(session: Session, msgID: string | undefined): boolean {
+  if (msgID === undefined) {
+    return false;
+  }
+  // Reverse scan: tool updates target recent turns.
+  let msg: Message | undefined;
+  let msgIdx = -1;
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    if (session.messages[i]?.id === msgID) {
+      msg = session.messages[i];
+      msgIdx = i;
+      break;
+    }
+  }
+  if (msg === undefined) {
+    return false;
+  }
+  // `live` exactly as the full path's keyed update passes it: the mount-time
+  // judgment frozen on the message's state.
+  const live = messageStates.get(msgID)?.streaming ?? false;
+  if (!refreshMessageCard(msgID, msg, session.id, live, steerMarks(session.id))) {
+    return false;
+  }
+  refreshTurnRunIDs(session.messages, msgIdx, msg);
+  return true;
+}
+
+/** Merge an updated message's run ids into its turn's cached list — a tool
+ *  update can attach one. Additive only; see `turnRunIDsCache`. */
+function refreshTurnRunIDs(messages: readonly Message[], msgIdx: number, m: Message): void {
+  // The owning turn's id, exactly as projectTurns assigns it: the nearest user
+  // message at or before this one, else the loaded window's first message.
+  let turnID = messages[0]?.id;
+  for (let i = msgIdx; i >= 0; i--) {
+    const t = messages[i];
+    if (t?.role === "user") {
+      turnID = t.id;
+      break;
+    }
+  }
+  if (turnID === undefined) {
+    return;
+  }
+  const cached = turnRunIDsCache.get(turnID);
+  if (cached === undefined) {
+    return; // no full pass has projected this turn yet
+  }
+  for (const tc of m.tool_calls ?? []) {
+    const id = tc.workflow_id ?? "";
+    if (id !== "" && !cached.includes(id)) {
+      cached.push(id);
+    }
+  }
 }
 
 /**
@@ -563,6 +649,7 @@ function teardownAll(): void {
   resetBlockRenders();
   clearAllBlockSigs();
   messageStates.clear();
+  streamingIds.clear();
   resetScrollState();
   resetTurnRail();
   reconcile(messagesEl, [] as Turn[], turnSpec);
@@ -632,6 +719,9 @@ const messageSpec: ReconcileSpec<Message> = {
     // isLikelyLiveStreaming already returns false for non-assistant roles.
     const liveStreaming = isLikelyLiveStreaming(m);
     messageStates.set(m.id, { el: node, streaming: liveStreaming });
+    if (liveStreaming) {
+      streamingIds.add(m.id);
+    }
     // Historical / reloaded assistant turns finalize at mount — they never
     // pass through the live-stream finalize path — so attach the copy/export
     // turn-actions row here. Live turns get it later via finalizeTurn when the
@@ -675,6 +765,7 @@ function disposeMessage(key: string): void {
   finalizeAssistantBody(key);
   disposeAssistantBody(key);
   messageStates.delete(key);
+  streamingIds.delete(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -716,20 +807,27 @@ function updateMessage(el: HTMLElement, m: Message): void {
  * Runs on every paint because eligibility changes with every new turn: the turn
  * that was second-newest becomes third-newest and folds.
  */
-function applyFoldPass(chatID: string, turns: readonly Turn[]): void {
+function applyFoldPass(
+  chatID: string,
+  turns: readonly Turn[],
+  cards: readonly HTMLElement[],
+): void {
   const wanted = new Map<string, boolean>();
   const hits = new Map<string, number>();
   for (const [i, t] of turns.entries()) {
     // A turn holding a live workflow run stays open however far back it is; see
     // isTurnOpen. `peekRunState` rather than `runState`, because this pass runs
     // inside no effect and a tracked read here would subscribe the whole fold pass
-    // to every run on screen.
-    const liveRun = turnRunIDs(t).some((id) => runIsLive(peekRunState(id)));
+    // to every run on screen. The run ids come from the projection-time cache;
+    // the derivation stays turns.ts's.
+    const liveRun = (turnRunIDsCache.get(t.id) ?? turnRunIDs(t)).some((id) =>
+      runIsLive(peekRunState(id)),
+    );
     wanted.set(t.id, isTurnOpen(chatID, t, i, turns.length, liveRun));
     hits.set(t.id, searchHitCount(t.n));
   }
   const changes: (() => void)[] = [];
-  for (const card of messagesEl.querySelectorAll<HTMLElement>(":scope > .turn")) {
+  for (const card of cards) {
     const id = card.getAttribute(KEY_ATTR);
     if (id === null) {
       continue;
@@ -1010,35 +1108,41 @@ function finalizeTurn(id: string, root: HTMLElement): void {
   }
 }
 
-/** Walk the message STATE (messageStates + the session's thinking flag), not
- *  the DOM, to decide which live turns to finalize: a streaming turn finalizes
- *  when either (a) another message arrived after it, or (b) the agent stopped
- *  thinking (turn ended). Driven from the same effect that paints, so it stays
- *  consistent with store state.
+/** Finalize every mounted message that is no longer live: the still-streaming
+ *  turn keeps its caret only while it is the LAST assistant message of a
+ *  thinking session; everything else flushes its markdown streams, seals its
+ *  reasoning traces and gains the turn-actions row. Driven from the same effect
+ *  that paints, so it stays consistent with store state.
  *
- *  It does NOT gate on `st.streaming` alone. That flag is frozen at mount time
- *  from `isLikelyLiveStreaming`, and a misjudgement is cheap to cause — any
- *  mid-turn event that clears the chat's `thinking` flag does it for the rest of
- *  the turn (the same misjudgement `syncMountedText` exists to absorb). A
- *  message recorded `streaming: false` could therefore never be finalized,
- *  while a bubble inside it built live kept its caret until the row was torn
- *  down; that is why a finished turn showed several at once. A DOM check for a
- *  surviving caret is the second door, and `finalizeAssistantBody` is
- *  idempotent, so taking it twice costs nothing. */
+ *  The population is the union of two live sets, not a walk over every mounted
+ *  message: `streamingIds` (messages mounted streaming and not yet finalized —
+ *  a live message may carry no bubble at all, so this door cannot be inferred
+ *  from the DOM), and the block renderer's `liveRenderIDs` (renders whose caret
+ *  has not drained — an earlier finalize `end()`s a bubble and the reveal's
+ *  residue keeps the caret past it, and a mid-turn misjudgement can leave a
+ *  live bubble on a message recorded `streaming: false`). Re-finalizing is
+ *  idempotent, so the second door costs nothing when it overlaps the first. */
 function finalizeStreamingIfNeeded(messages: readonly Message[]): void {
-  const lastAssistantIdx = lastAssistantIndex(messages);
+  const candidates = new Set<string>(streamingIds);
+  for (const id of liveRenderIDs()) {
+    candidates.add(id);
+  }
+  if (candidates.size === 0) {
+    return;
+  }
   const session = getActive();
   const isThinking = session?.thinking ?? false;
-  for (const [id, st] of messageStates) {
-    const stillLast = id === messages[lastAssistantIdx]?.id;
-    if (stillLast && isThinking) {
-      continue;
+  const lastID = messages[lastAssistantIndex(messages)]?.id;
+  for (const id of candidates) {
+    const st = messageStates.get(id);
+    if (st === undefined) {
+      continue; // a detached render's id — not this transcript's to finalize
     }
-    // Already finalized once: re-run only if a caret survived it.
-    if (!st.streaming && st.el.querySelector(".message.assistant.streaming") === null) {
-      continue;
+    if (id === lastID && isThinking) {
+      continue; // the live tail keeps streaming
     }
     st.streaming = false;
+    streamingIds.delete(id);
     finalizeTurn(id, st.el);
     disposeStreamingEffect(id);
   }
