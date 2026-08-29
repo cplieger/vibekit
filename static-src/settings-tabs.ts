@@ -21,7 +21,8 @@
 // ---------------------------------------------------------------------------
 
 import { signal, subscribe } from "@cplieger/reactive";
-import { $, maybeViewTransition } from "./dom.js";
+import { $ } from "./dom.js";
+import { swapViews } from "./view-swap.js";
 import type { SettingsTab } from "./router.js";
 import { pushRoute } from "./router.js";
 import { setSettingsTab as setTabRoute } from "./tabs.js";
@@ -142,7 +143,8 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
       btn?.setAttribute("tabindex", t === tab ? "0" : "-1");
     }
     select.value = tab;
-    const swap = (): void => {
+    const swap = (): HTMLElement | null => {
+      let active: HTMLElement | null = null;
       for (const panel of document.querySelectorAll<HTMLDivElement>("[data-settings-panel]")) {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const panelTab = panel.dataset["settingsPanel"]!;
@@ -151,9 +153,13 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
         panel.setAttribute("role", "tabpanel");
         panel.id = `settings-panel-${panelTab}`;
         panel.setAttribute("aria-labelledby", `settings-tab-${panelTab}`);
+        if (isActive) {
+          active = panel;
+        }
       }
+      return active;
     };
-    maybeViewTransition(swap);
+    swapViews(swap);
     // Update the page title to the active tab's label.
     const title = document.getElementById("settings-page-title");
     if (title !== null) {

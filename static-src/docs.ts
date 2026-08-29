@@ -26,7 +26,8 @@ import { defineAction, ActionError, retryNetwork, registerCleanup } from "./acti
 import { setHookEnabled } from "./actions/hooks.js";
 import { asObject, decodeArray, optStr, reqBool, reqStr } from "./validators.js";
 import { onSSE } from "./bus.js";
-import { $, maybeViewTransition } from "./dom.js";
+import { $ } from "./dom.js";
+import { swapViews } from "./view-swap.js";
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_EDIT, ICON_TRASH } from "./icons.js";
@@ -522,7 +523,8 @@ function syncTabChrome(tab: DocsTab): void {
     btn?.setAttribute("tabindex", t === tab ? "0" : "-1");
   }
   $.docsTabSelect.value = tab;
-  maybeViewTransition(() => {
+  swapViews(() => {
+    let active: HTMLElement | null = null;
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-docs-panel]")) {
       const panelTab = panel.dataset["docsPanel"] ?? "";
       const isActive = panelTab === tab;
@@ -530,7 +532,11 @@ function syncTabChrome(tab: DocsTab): void {
       panel.setAttribute("role", "tabpanel");
       panel.id = `docs-panel-${panelTab}`;
       panel.setAttribute("aria-labelledby", `docs-tab-${panelTab}`);
+      if (isActive) {
+        active = panel;
+      }
     }
+    return active;
   });
   const title = document.getElementById("docs-page-title");
   if (title !== null) {

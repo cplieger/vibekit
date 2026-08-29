@@ -141,44 +141,8 @@
   }
 }
 
-[id="chat-view"] {
-  view-transition-name: chat-view;
-}
-
-[id="settings-view"] {
-  view-transition-name: settings-view;
-}
-
-[id="git-view"] {
-  view-transition-name: git-view;
-}
-
-[id="editor-view"] {
-  view-transition-name: editor-view;
-}
-
-[id="files-view"] {
-  view-transition-name: files-view;
-}
-
-[id="history-view"] {
-  view-transition-name: history-view;
-}
-
-[id="docs-view"] {
-  view-transition-name: docs-view;
-}
-
-[id="run-view"] {
-  view-transition-name: run-view;
-}
-
 /* #files-view, #editor-view and #run-view are deliberately absent: each pins an
    inner element as its scroller and keeps a toolbar or bar pinned outside it. */
-[id="subagent-view"] {
-  view-transition-name: subagent-view;
-}
-
 [id="settings-view"],
 [id="git-view"],
 [id="history-view"],

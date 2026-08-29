@@ -6,7 +6,8 @@
 // files-picker.ts; the chat-input drag-drop overlay in files-drop.ts.
 // ---------------------------------------------------------------------------
 
-import { $, maybeViewTransition } from "./dom.js";
+import { $ } from "./dom.js";
+import { swapViews } from "./view-swap.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { getActiveTabKind, showFilesView, toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
@@ -280,11 +281,10 @@ function loadDir(): void {
       state.entryMap.set(e.name, e);
     }
     state.dirWritable = d.writable;
-    // First populate (empty list) renders WITHOUT a view transition: the
-    // view-open transition is usually still animating, and serializing a
-    // second one behind it turns the row entry into a geometry-only morph
-    // ("translate without fade"). Navigation between populated dirs keeps
-    // its crossfade.
+    // First populate (empty list) renders WITHOUT the entry fade: the
+    // view-open fade is usually still running, and a list fade would cancel
+    // it (one-slot replacement) to animate rows the CSS stagger already
+    // animates. Navigation between populated dirs keeps its fade.
     renderList({ transition: $.fbList.childElementCount > 0 });
   });
 }
@@ -353,7 +353,12 @@ function goForward(): void {
 }
 
 function loadWithTransition(): void {
-  maybeViewTransition(() => {
+  // The load is async, so this callback only STARTS the fetch and there is no
+  // incoming element to animate here — renderList() fades the list in when the
+  // new directory lands. Routing the gesture through swapViews still cancels a
+  // previous entry animation immediately: a new navigation gesture wins now,
+  // not when its response arrives.
+  swapViews(() => {
     loadDir();
   });
 }
@@ -390,7 +395,7 @@ function updateWriteButtons(): void {
 function renderList(opts: { transition?: boolean } = {}): void {
   updateNavButtons();
 
-  const swap = (): void => {
+  const swap = (): HTMLElement => {
     const sorted = sortEntries(state.entries);
     state.sortedNames = sorted.map((e) => e.name);
 
@@ -439,20 +444,18 @@ function renderList(opts: { transition?: boolean } = {}): void {
 
     updateActionButtons();
     updateRowHighlights();
+    return $.fbList;
   };
 
-  // Wrap the content swap in a view transition for a subtle crossfade
-  // when navigating between directories. Falls back to instant swap
-  // on browsers without the API.
-  //
-  // Callers that need synchronous DOM updates (e.g. createEntry, which
-  // immediately starts inline rename on the freshly-created row) pass
-  // transition: false so renderList() returns with the new DOM in
-  // place rather than scheduling the swap inside a microtask.
+  // Fade the list in when navigating between directories. Callers that must
+  // not animate pass transition: false — createEntry chains inline rename on
+  // the freshly-created row and a whole-list fade there reads as flicker, and
+  // a re-render must not cancel a running entry fade (one-slot replacement).
+  // The swap itself is synchronous on both branches.
   if (opts.transition === false) {
     swap();
   } else {
-    maybeViewTransition(swap);
+    swapViews(swap);
   }
 }
 

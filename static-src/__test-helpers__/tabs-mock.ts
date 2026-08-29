@@ -61,7 +61,6 @@ export function tabsMock(): Record<string, unknown> {
     setSettingsTab: vi.fn(),
     setGitTab: vi.fn(),
     setDocsTab: vi.fn(),
-    markBootDone: vi.fn(),
 
     // Readers, each answering "nothing".
     hasTab: vi.fn(() => false),

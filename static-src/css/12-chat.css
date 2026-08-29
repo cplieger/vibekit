@@ -45,15 +45,10 @@
   gap: var(--toolbar-gap);
   z-index: 10;
 
-  /* Own view-transition group AND own compositing layer, because two different
-     things take this bar under the view it floats over. Every view carries a
-     `view-transition-name` (16-login.css) and this did not, so it was captured
-     into the `root` group — and `::view-transition` paints groups in capture
-     order, never by z-index, so both view snapshots covered it for each swap.
-     `translateZ(0)` then holds it above the accelerated layers a loading view
-     creates and drops (its `@starting-style` fade, then one per `.skeleton`
-     row), which WebKit otherwise re-resolves by overlap testing per rebuild. */
-  view-transition-name: chat-toolbar;
+  /* Own compositing layer: `translateZ(0)` holds this bar above the
+     accelerated layers a loading view creates and drops (its @starting-style
+     fade, then one per `.skeleton` row), which WebKit otherwise re-resolves by
+     overlap testing per rebuild. */
   transform: translateZ(0);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);

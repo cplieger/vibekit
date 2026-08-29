@@ -82,7 +82,7 @@ import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $ } from "./dom.js";
-import { viewTransition as uipViewTransition } from "@cplieger/ui-primitives/view-transition";
+import { swapViews } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 import { showContextMenu } from "./context-menu.js";
@@ -1049,61 +1049,31 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
   }
 }
 
-// Boot fast-path flag: view swaps before the initial route is applied are bulk
-// restores that shouldn't animate — and each queued startViewTransition
-// serializes behind the previous one's `finished`, so N boot activations starve
-// the deep-linked view's unhide for ~N crossfades (or forever when rendering is
-// suspended). app.ts flips this right after applyInitialRoute().
-let bootDone = false;
-
-/** Mark boot restore complete — view swaps start animating from here on. */
-export function markBootDone(): void {
-  bootDone = true;
-}
-
-function viewTransition(fn: () => void): void {
-  if (!bootDone) {
-    fn();
-    return;
-  }
-  void uipViewTransition(fn);
-}
-
 function showView(row: TabRow): void {
   // Swap the visible view ONLY when it is not already the right one.
   //
-  // The effect that calls this re-runs on EVERY projection mutation, not just on
-  // an activation, so without this guard closing a tab that was not even active
-  // still queued a full hide-all-then-unhide inside a view transition. That is
-  // not merely wasteful: `viewTransition` serializes each call behind the
-  // previous one's `finished` (with a 1s watchdog ceiling), and a running
-  // transition suppresses rendering — so closing four tabs cost four crossfades
-  // the reader had to wait behind for a view that never changed. Measured on the
-  // live instance while diagnosing it: the close commands answered in 1-4ms and
-  // the POSTs arrived ~1s apart, because the strip could only repaint between
-  // transitions and the reader was pacing themselves off that.
+  // The effect that calls this re-runs on EVERY projection mutation, not just
+  // on an activation, so without this guard closing a background tab would
+  // re-run the swap for a view that never changed — cancelling and replaying
+  // the entry fade on the view the reader is already looking at. Same for a
+  // chat-to-chat switch: both rows resolve to the SAME view element, and
+  // re-animating it would fade content that never left the screen.
   //
   // Read the current state from the DOM rather than remembering the last
   // selector. Nothing else writes these classes today, so a cached answer would
   // be correct — and silently wrong the first time something did, leaving a view
   // hidden with no way back. The scan is a handful of nodes.
-  //
-  // This also skips the swap for a chat-to-chat switch, and that loses no
-  // animation: both rows resolve to the SAME view element, so the update callback
-  // toggled nothing, the transition captured two identical snapshots, and the
-  // content the reader actually sees change is re-rendered by the chat view
-  // afterwards, outside the transition entirely. It animated nothing and cost a
-  // serialized transition to do it.
   const target = document.querySelector(row.spec.view);
   const shown = [...document.querySelectorAll(ALL_VIEWS_SELECTOR)].filter(
     (n) => !(n as HTMLElement).classList.contains("hidden"),
   );
   if (shown.length !== 1 || shown[0] !== target) {
-    viewTransition(() => {
+    swapViews(() => {
       for (const node of document.querySelectorAll(ALL_VIEWS_SELECTOR)) {
         (node as HTMLElement).classList.add("hidden");
       }
       target?.classList.remove("hidden");
+      return target as HTMLElement | null;
     });
   }
 
@@ -1650,7 +1620,6 @@ export function _resetForTest(): void {
   internal.renderQueued = false;
   internal.everOpened = false;
   nameOverrides.clear();
-  bootDone = false;
   lastAnnouncedTab = "";
   // Re-register the target: a test that reset tabs-sync dropped it.
   registerTabsTarget(target);

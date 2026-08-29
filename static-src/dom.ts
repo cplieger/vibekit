@@ -17,8 +17,6 @@
 // it — `$` is never aliased on import, never destructured and never indexed.
 // ---------------------------------------------------------------------------
 
-import { viewTransition } from "@cplieger/ui-primitives/view-transition";
-
 /** Look up a DOM element by id. Throws if missing. Use this instead of
  *  bare `document.getElementById(...) as HTMLFoo` — it fails fast with a
  *  readable error rather than NPE'ing on the next property access. */
@@ -434,15 +432,3 @@ class Elements {
 }
 
 export const $ = new Elements();
-
-// --- View Transition helper ---
-
-/** Wrap a DOM swap in a queued, feature-detected view transition. Delegates to
- *  @cplieger/ui-primitives' `viewTransition`, which owns the feature detection,
- *  a serialization queue so overlapping swaps don't clash, the
- *  document.hidden fast-path, and the suspended-renderer watchdog (>= 2.1.2).
- *  Kept as a void-returning wrapper on the historical name so call sites
- *  (settings-tabs, files) and their test mocks are unchanged. */
-export function maybeViewTransition(fn: () => void): void {
-  void viewTransition(fn);
-}

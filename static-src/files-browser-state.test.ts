@@ -4,9 +4,6 @@ import { describe, it, expect, vi } from "vitest";
 // Mock the dom module to avoid element lookups.
 vi.mock("./dom.js", () => ({
   $: new Proxy({}, { get: () => document.createElement("div") }),
-  maybeViewTransition: (fn: () => void) => {
-    fn();
-  },
   el: () => document.createElement("div"),
 }));
 vi.mock("./bus.js", () => ({

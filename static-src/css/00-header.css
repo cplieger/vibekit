@@ -11,10 +11,11 @@
    `python3 scripts/css-cascade-audit.py`: it enumerates the pairs whose winner
    depends on the layer, and today all four of them are mobile layout. */
 
-/* @view-transition { navigation: auto; } — REMOVED: triggers full-page
-   bitmap snapshots on every pushState/replaceState, causing GPU memory
-   pressure and overheating on phones/tablets. Explicit startViewTransition()
-   calls in tabs.ts and files.ts handle the transitions that matter. */
+/* Document view transitions are deliberately unused: the spec makes captured
+   content non-hittable while a transition runs, and `@view-transition
+   { navigation: auto }` triggered full-page bitmap snapshots on every
+   pushState/replaceState (GPU memory pressure, overheating on phones).
+   View swaps are synchronous class swaps + a WAAPI entry fade (view-swap.ts). */
 
 @property --c-accent {
   syntax: "<color>";
