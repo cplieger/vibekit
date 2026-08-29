@@ -566,17 +566,38 @@ function formatGap(ms: number): string {
 // Navigation
 // ---------------------------------------------------------------------------
 
+/** The on-demand body build for a stub turn, injected by messages.ts at mount
+ *  (a static import back would cycle: messages.ts imports this module to mount
+ *  the rail). Inert until wired, so a rail built in a test renders without the
+ *  transcript. */
+let mountTurnBody: (chatID: string, turnID: string) => Promise<void> = () => Promise.resolve();
+
+export function initTurnRailCallbacks(cbs: {
+  mountTurnBody: (chatID: string, turnID: string) => Promise<void>;
+}): void {
+  mountTurnBody = cbs.mountTurnBody;
+}
+
 /** Jump to a turn, fetching it first when it is not resident.
  *
  *  The store holds a window, so a marker for an older turn has nothing to scroll
  *  to yet. The marker shows a pending state while the pages load rather than
  *  silently doing nothing, which is what a rail over a paginated store does if
- *  nobody thinks about it. */
+ *  nobody thinks about it.
+ *
+ *  Either way the landing turn may be a tier-3 STUB (pagination lands stubs,
+ *  and an old resident turn unmounts past the warm window), so the jump runs
+ *  the same on-demand body build the fold toggle uses. AFTER the scroll: the
+ *  build happens under a folded card, so it changes no height the jump could
+ *  care about, and the jump itself stays instant. The turn is NOT opened —
+ *  a jump onto a resident turn today lands on its folded row, and this keeps
+ *  that exactly. */
 async function jumpToTurn(s: TurnSummary): Promise<void> {
   // A turn permalink is addressable, so a ledger row, a run's launch record and
   // a search hit can all link to a precise point.
   const anchor = turnAnchorID(s.n);
   if (scrollToAnchor(anchor)) {
+    await mountTurnBody(chatID, s.id);
     return;
   }
   if (pending.has(s.n)) {
@@ -590,6 +611,7 @@ async function jumpToTurn(s: TurnSummary): Promise<void> {
       // One frame for the appended cards to lay out before scrolling to one.
       await nextFrame();
       scrollToAnchor(anchor);
+      await mountTurnBody(chatID, s.id);
     }
   } finally {
     pending.delete(s.n);

@@ -18,6 +18,17 @@ import { apiGet } from "./api-client.js";
 import { openForSearch, clearSearchOpened } from "./fold-state.js";
 import { bumpMessages } from "./store.js";
 
+/** The on-demand body build for a revealed stub turn, injected by messages.ts
+ *  at mount (a static import back would cycle: messages.ts imports this module
+ *  for the folded rows' hit counts). Inert until wired. */
+let buildRevealedTurn: (chatID: string, turnID: string) => Promise<void> = () => Promise.resolve();
+
+export function initSearchRevealBuilder(
+  cb: (chatID: string, turnID: string) => Promise<void>,
+): void {
+  buildRevealedTurn = cb;
+}
+
 /** One server-side match. Mirrors chat.SearchHit. */
 export interface SearchHit {
   message_id: string;
@@ -110,13 +121,26 @@ export async function runServerSearch(
   // alongside the matched one. Neither substitute works: a hit often lands on an
   // assistant message inside the turn, and the turn NUMBER is session-absolute
   // on the wire but window-relative in the client's projection.
+  const revealTurns = new Set<string>();
   for (const h of hits) {
     if (h.turn_message_id !== "") {
-      openForSearch(chatID, h.turn_message_id);
+      revealTurns.add(h.turn_message_id);
     }
   }
+  for (const id of revealTurns) {
+    openForSearch(chatID, id);
+  }
+  // A revealed turn may be a tier-3 stub whose body text the DOM walker cannot
+  // mark until it exists. Build each one through the transcript's on-demand
+  // entry point BEFORE the repaint below — the builds land under still-folded
+  // cards (invisible), yield between block batches, and must complete before
+  // this function resolves because the caller re-runs the walker on resolution.
+  for (const id of revealTurns) {
+    await buildRevealedTurn(chatID, id);
+  }
   // Nudge the renderer so the reveal takes effect before the DOM walker runs.
-  bumpMessages(chatID);
+  // A reveal changes which turns are open and mounted: `shape`, stated.
+  bumpMessages(chatID, "shape");
   return hits;
 }
 
@@ -130,6 +154,8 @@ export function resetServerSearch(chatID: string): void {
   countsByTurn = new Map<number, number>();
   hitTotal = 0;
   if (chatID !== "" && clearSearchOpened(chatID)) {
-    bumpMessages(chatID);
+    // The re-fold is a shape change too: turns the reveal opened fold back,
+    // and the ones it mounted past the warm window unmount.
+    bumpMessages(chatID, "shape");
   }
 }
