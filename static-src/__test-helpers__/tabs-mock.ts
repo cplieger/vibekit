@@ -73,6 +73,7 @@ export function tabsMock(): Record<string, unknown> {
     getActiveTabRoute: vi.fn(() => null),
     getActiveTabKind: vi.fn(() => null),
     activeChatRef: vi.fn(() => ""),
+    openChatRefs: vi.fn(() => []),
     cueCandidates: vi.fn(() => []),
 
     // Registration slots. `subscribeTabCues` hands back its unsubscribe so a

@@ -9,9 +9,8 @@
 import type { ResumableSessionRow } from "./types.js";
 import {
   getActiveId,
-  getActive,
   get,
-  getSessions,
+  watchSession,
   setActive,
   setModel,
   upsertHeader,
@@ -33,6 +32,7 @@ import {
   renameTab,
   setTabStatus,
   setTabTooltip,
+  openChatRefs,
   type OpenTabOutcome,
   type TabDotStatus,
 } from "./tabs.js";
@@ -302,7 +302,6 @@ export function activateChatView(id: string): void {
       void loadTurnRail(id);
     });
   }
-  refreshContextUI(session);
 }
 
 /** Fetch a message-less chat's record so its stored draft can be adopted.
@@ -668,44 +667,93 @@ function tabTooltipFor(s: Session): string {
   return `${mode} · ${doing}`;
 }
 
-/** Wire the effect() that drives tab-rename reconciliation and
- *  send-button state. Also mounts the chat view (idempotent).
+/** One open chat tab's row effect. Tracks THIS chat's per-entity signal (plus
+ *  the session set's structure, so a row landing after its tab still paints)
+ *  and the decision dock, and writes only its own row.
+ *
+ *  The dock read doubles as the subscription: a decision arriving or being
+ *  answered on a BACKGROUND chat re-runs this row — the case the dot's "input"
+ *  state exists for. */
+function chatRowEffect(chatID: string): () => void {
+  return effect(() => {
+    const s = watchSession(chatID);
+    const pendingAsk = hasPendingDecision(chatID);
+    if (s === undefined) {
+      return;
+    }
+    // ONE lookup, reused by all three writers below. They are id-keyed because
+    // the DOM row is, and a chat id is no longer that id.
+    const tabID = tabIdFor("chat", chatID);
+    if (tabID === "") {
+      return;
+    }
+    // Reconcile tab name with server auto-rename / agent focus title.
+    renameTab(tabID, s.name);
+    // Per-tab activity dot. tabStatusFor owns the precedence; the pending-ask
+    // half comes from the dock's own queue rather than the store.
+    setTabStatus(tabID, tabStatusFor(s, pendingAsk));
+    // The tooltip carries the chat's MODE and the agent's "what I'm working
+    // on", in that order. The mode half is here because the dot took the slot
+    // the per-mode role glyph used to hold, and for a BACKGROUND chat that was
+    // the only place a role read out at all — the mode pill and its picker are
+    // active-chat only. It restores the information with no element, no width
+    // and no second visual vocabulary in the 9px column. Pointer-only, so it is
+    // a convenience rather than a full replacement; a second glyph on the row
+    // was the alternative and it re-spends the width the dot just claimed,
+    // worst on mobile where the strip is a drawer.
+    setTabTooltip(tabID, tabTooltipFor(s));
+  });
+}
+
+/** The previous install's teardown. installStoreSubscribers runs once at boot;
+ *  a re-install (tests) tears the old wiring down first so row effects cannot
+ *  stack and double-write. */
+let disposeInstall: (() => void) | undefined;
+
+/** Wire the tab strip's per-open-row effects and the context bar's
+ *  active-session effect. Also mounts the chat view (idempotent).
  *  The message list is rendered via mountChatView's own effect. */
 export function installStoreSubscribers(): void {
   mountChatView();
-  effect(() => {
-    void activeSession.value;
-    const active = getActive();
+  disposeInstall?.();
+
+  // The context bar tracks the ACTIVE session only: it re-renders on the active
+  // chat's own field changes and on switches, and a background session's churn
+  // never reaches it. Covers activation (setActive re-derives activeSession)
+  // and every store write to the active chat — model switches included.
+  const disposeContext = effect(() => {
+    const active = activeSession.value;
     if (active !== undefined) {
       refreshContextUI(active);
     }
-    // getSessions() reads every session's per-entity signal, so this effect
-    // re-runs on ANY session field change (name, thinking, current_mode_id) —
-    // background chats included. That keeps a background tab's activity dot and
-    // mode icon current without needing an active-session event.
-    for (const s of getSessions()) {
-      // ONE lookup per chat, reused by all three writers below. They are id-keyed
-      // because the DOM row is, and a chat id is no longer that id.
-      const tabID = tabIdFor("chat", s.id);
-      if (tabID !== "") {
-        // Reconcile tab name with server auto-rename / agent focus title.
-        renameTab(tabID, s.name);
-        // Per-tab activity dot. tabStatusFor owns the precedence; the pending-ask
-        // half comes from the dock's own queue rather than the store, and reading
-        // it here is also what subscribes this effect to a decision arriving or
-        // being answered on a BACKGROUND chat — the case the feature exists for.
-        setTabStatus(tabID, tabStatusFor(s, hasPendingDecision(s.id)));
-        // The tooltip carries the chat's MODE and the agent's "what I'm working
-        // on", in that order. The mode half is here because the dot took the slot
-        // the per-mode role glyph used to hold, and for a BACKGROUND chat that was
-        // the only place a role read out at all — the mode pill and its picker are
-        // active-chat only. It restores the information with no element, no width
-        // and no second visual vocabulary in the 9px column. Pointer-only, so it is
-        // a convenience rather than a full replacement; a second glyph on the row
-        // was the alternative and it re-spends the width the dot just claimed,
-        // worst on mobile where the strip is a drawer.
-        setTabTooltip(tabID, tabTooltipFor(s));
+  });
+
+  // The per-open-row effect registry, synced on the tab projection's emit:
+  // row effects appear and disappear with open tabs, so a session with no open
+  // tab (closed history) is subscribed to by nothing and triggers nothing.
+  const rowEffects = new Map<string, () => void>();
+  const disposeSync = effect(() => {
+    const open = openChatRefs();
+    const openSet = new Set(open);
+    for (const [chatID, dispose] of rowEffects) {
+      if (!openSet.has(chatID)) {
+        dispose();
+        rowEffects.delete(chatID);
+      }
+    }
+    for (const chatID of open) {
+      if (!rowEffects.has(chatID)) {
+        rowEffects.set(chatID, chatRowEffect(chatID));
       }
     }
   });
+
+  disposeInstall = () => {
+    disposeSync();
+    for (const dispose of rowEffects.values()) {
+      dispose();
+    }
+    rowEffects.clear();
+    disposeContext();
+  };
 }
