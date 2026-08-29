@@ -6,7 +6,9 @@
 //
 // The cases that matter here are the ones where the old queue was wrong:
 //   - a message typed mid-turn reaches the RUNNING turn, not the next one
-//   - a 409 (a turn starting underneath the send) steers rather than buffering
+//   - a plain 409 (a turn starting underneath the send) steers rather than
+//     buffering — and a 409-starting does NOT steer, because that holder
+//     cannot receive one (it renders the busy face instead)
 //   - nothing appears on screen until the server's own frame says so
 //   - attachments degrade to path references, because a steer is a plain string
 //   - a failed send is RECOVERABLE in place: the stale error clears on the next
@@ -24,6 +26,7 @@ const {
   mockAttachmentGeneration,
   mockTypedCommand,
   mockClearAgentDown,
+  mockReportSendRefused,
   mockRestoreFailedSend,
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
@@ -33,6 +36,7 @@ const {
   mockAttachmentGeneration: vi.fn(() => 0),
   mockTypedCommand: vi.fn(() => false),
   mockClearAgentDown: vi.fn(),
+  mockReportSendRefused: vi.fn(),
   mockRestoreFailedSend: vi.fn(),
 }));
 
@@ -54,6 +58,7 @@ vi.mock("./send-state.js", () => ({
   setAgentDown: undefined,
   setSSEStatus: undefined,
   clearAgentDown: mockClearAgentDown,
+  reportSendRefused: mockReportSendRefused,
 }));
 vi.mock("./composer-state.js", () => ({
   restoreFailedSend: mockRestoreFailedSend,
@@ -277,6 +282,82 @@ describe("submitPrompt during a turn", () => {
     expect(await submitPrompt("c1", "hello")).toBe("failed");
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 0);
+  });
+});
+
+// The third 409 class: reason "starting". The admission slot is held by a cold
+// spawn, a shell or a prime — none of which can receive a steer — so this is
+// neither the steer conversion nor a pre-persist failure. The user row is
+// already persisted and rendered (persist precedes reservation server-side),
+// which is what the echo-first fake below reproduces.
+describe("submitPrompt on a 409-starting refusal", () => {
+  /** Refuse with "starting", but echo the user row first, the way the server
+   *  does: CmdPrompt persists and broadcasts the row BEFORE the admission
+   *  check, so by the time the refusal lands the echo is in the store. */
+  function startingAfterEcho(): void {
+    mockSendPromptTo.mockImplementation(
+      async (chatID: string, text: string, opts: { messageID: string }) => {
+        appendMessage(chatID, { id: opts.messageID, role: "user", content: text, ts: 1 });
+        return "starting";
+      },
+    );
+  }
+
+  it("reports failure and never attempts a steer", async () => {
+    resetStore("c1");
+    startingAfterEcho();
+
+    expect(await submitPrompt("c1", "hello")).toBe("failed");
+    expect(mockSteer).not.toHaveBeenCalled();
+  });
+
+  it("renders the holder-neutral busy face through send-state's error surface", async () => {
+    resetStore("c1");
+    startingAfterEcho();
+
+    await submitPrompt("c1", "hello");
+    expect(mockReportSendRefused).toHaveBeenCalledWith(
+      "The chat is busy right now — send again to retry",
+    );
+  });
+
+  it("does NOT restore the text — the row is persisted and on screen", async () => {
+    resetStore("c1");
+    mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
+    startingAfterEcho();
+
+    await submitPrompt("c1", "hello");
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    // The attachments rode the persisted row for the same reason.
+    expect(mockAddAttachmentTo).not.toHaveBeenCalled();
+  });
+
+  it("re-sends the same text under the same id, so the server dedupes the append", async () => {
+    resetStore("c1");
+    startingAfterEcho();
+    await submitPrompt("c1", "hello");
+    const first = sentMessageID(0);
+    expect(first).not.toBe("");
+
+    // The retry is an ordinary send (the face said "send again to retry").
+    mockSendPromptTo.mockResolvedValue("sent");
+    await submitPrompt("c1", "hello");
+    expect(sentMessageID(1)).toBe(first);
+  });
+
+  it("retries as a PROMPT, not a steer", async () => {
+    // The action's starting arm retracts the optimistic thinking (pinned in
+    // actions/chat-prompt.test.ts), so the chat reads idle here and the retry
+    // goes down the send path — the busy face said "send again", and a steer
+    // would be undeliverable against the same holder.
+    resetStore("c1");
+    startingAfterEcho();
+    await submitPrompt("c1", "hello");
+
+    mockSendPromptTo.mockResolvedValue("sent");
+    expect(await submitPrompt("c1", "hello")).toBe("sent");
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(2);
+    expect(mockSteer).not.toHaveBeenCalled();
   });
 });
 

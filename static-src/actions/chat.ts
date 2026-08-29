@@ -16,6 +16,7 @@ import {
   RETRY_STANDARD,
   transportAction,
   IDEMPOTENCY_COMMAND_FIELD,
+  API_TIMEOUT_MS,
 } from "./index.js";
 
 import type {
@@ -29,7 +30,6 @@ import type {
 import { decodeChatHeader, decodeTabSubject } from "../wire/decoders.gen.js";
 import {
   get,
-  hasMessage,
   setThinking,
   setSupervisedMode,
   removeChat,
@@ -46,7 +46,6 @@ import {
   restoreSteers,
 } from "../store.js";
 import { send as transportSend, type SendResult } from "../transport.js";
-import { clearFailure } from "../failure-notice.js";
 
 // --- chat.create ---
 // Ask the server for a NEW chat and get its id back.
@@ -640,10 +639,15 @@ export const switchModel = defineAction<
 
 // --- chat.send_prompt ---
 //
-// The most-used user mutation in the app. Posts a prompt to a chat
-// with the shared thinking + 409-queue lifecycle. Returns "sent" on
-// 2xx, "queued" on 409 (the prompt drains when the in-flight turn
-// ends), or null (= caller's "failed") on any other error.
+// The most-used user mutation in the app. Posts a prompt to a chat with the
+// shared thinking + 409 lifecycle. The server acks at ADMISSION
+// ({accepted, message_id} the moment the user row is persisted and the slot is
+// held), so the POST answers in seconds and dispatch runs at the standard API
+// timeout — turn completion is SSE-anchored and was never this POST's job.
+// Returns "sent" on the ack, "queued" on a plain 409 (a steerable turn is in
+// flight), "starting" on 409 reason:"starting" (the admission holder — a cold
+// spawn, a shell, a prime — cannot receive a steer), or null (= caller's
+// "failed") on any other error.
 //
 // `error: false`: transport.send's reportSendState defaults to true here, so
 // failure-notice.ts already raised the toast naming the reason. A second one
@@ -657,32 +661,9 @@ interface SendPromptArgs {
   attachments?: readonly unknown[];
 }
 
-/** How long a dead prompt POST waits for the user-message SSE echo
- *  before conceding failure. Covers the race where the connection died
- *  as the server accepted: the echo is usually already ingested (the
- *  turn has been streaming for the whole POST lifetime); the wait only
- *  matters when death and accept were near-simultaneous. */
-const PROMPT_ECHO_GRACE_MS = 2000;
-
-/** True when the server's message_appended echo for the given user
- *  message id is in the store — proof the prompt was accepted AND that
- *  SSE is delivering, which outranks a dead POST connection. */
-function promptEchoArrived(chatID: string, messageID: string): boolean {
-  return hasMessage(chatID, messageID);
-}
-
-/** Check for the prompt echo, allowing one grace window. */
-async function promptEchoed(chatID: string, messageID: string): Promise<boolean> {
-  if (promptEchoArrived(chatID, messageID)) {
-    return true;
-  }
-  await new Promise((resolve) => setTimeout(resolve, PROMPT_ECHO_GRACE_MS));
-  return promptEchoArrived(chatID, messageID);
-}
-
 export const sendPrompt = defineAction<
   SendPromptArgs,
-  "sent" | "queued",
+  "sent" | "queued" | "starting",
   { chatID: string; turnFailed: boolean; turnDone: boolean }
 >({
   name: "chat.send_prompt",
@@ -738,33 +719,30 @@ export const sendPrompt = defineAction<
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
         },
       },
-      { signal, reportSendState: true }, // the failure toast is the surface
+      { signal, reportSendState: true, timeoutMs: API_TIMEOUT_MS }, // the failure toast is the surface
     );
     if (r.ok) {
       return "sent";
     }
     if (r.status === 409) {
-      // A turn is in flight on this chat. Report "queued" and let the caller
-      // (prompt-queue.ts submitPrompt) buffer it. Keeping this action a pure
-      // send is what lets the drain path re-send a queued prompt without
-      // double-enqueuing it (peek → send → remove-on-sent lives in the queue).
+      if (r.reason === "starting") {
+        // The admission holder is a cold spawn, a shell or a prime — none of
+        // which can receive a steer — so this is a POST-PERSIST failure class:
+        // the user row is already persisted and rendered (persist precedes
+        // reservation server-side). Returned as a VALUE so the caller can
+        // branch on it, which means the framework's rollback never runs; the
+        // optimistic thinking is retracted here instead, because thinking left
+        // true would turn the user's retry into a steer at submit.ts's
+        // isThinking gate. The outcome latches stay cleared, as on the queued
+        // arm: the holder IS live work, and its own turn events deliver the
+        // next verdict.
+        setThinking(chatID, false);
+        return "starting";
+      }
+      // A steerable turn is in flight on this chat. Report "queued" and let
+      // the caller (submit.ts) convert it to a steer. Keeping this action a
+      // pure send is what keeps the steer decision in one place.
       return "queued";
-    }
-    // Dead POST, live SSE (P9 residue): the prompt POST is the one
-    // long-lived connection that can't carry a keepalive, so it can
-    // die (proxy reset, network flap, 15-min timeout) while the turn
-    // it started runs on fine. The POST result is NOT authoritative —
-    // completion is SSE-anchored. If the server's message_appended
-    // echo for OUR message id is in the store (now, or within a short
-    // grace window for the race where the POST died right at accept),
-    // the send succeeded: report "sent" instead of a false failure.
-    if (r.status === 0 && r.code !== "cancelled" && (await promptEchoed(chatID, messageID))) {
-      // Retract the toast transport already raised. Up to two seconds have passed
-      // (promptEchoed grants a grace window), so the notice is on screen by now,
-      // and a "send failed" sitting over a turn that is visibly streaming is worse
-      // than no notice at all.
-      clearFailure(chatID);
-      return "sent";
     }
     throw new ActionError(r.error ?? "send failed", {
       status: r.status,

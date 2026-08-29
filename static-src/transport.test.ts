@@ -1,14 +1,28 @@
 // Property-based tests for transport.ts newRequestID/newMessageID format
-// invariants. Verifies prefix, charset, uniqueness, and structural properties
-// that consumers depend on (dedup keys, URL-safe path segments, JSON keys).
+// invariants, plus behavioral tests for send() — the failed-response read
+// (error + the additive `reason` field), the 409 no-toast rule, and the global
+// hidden-abort over in-flight non-prompt requests. The send tests drive a fetch
+// fake (this repo does not use MSW here) and a stubbed EventSource for init().
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import fc from "fast-check";
+
+// Observe the failure toast without painting one: the 409 carve-out is ABOUT
+// which failures reach this surface.
+vi.mock("./failure-notice.js", () => ({
+  reportFailure: vi.fn(),
+  clearFailure: vi.fn(),
+  _resetForTest: vi.fn(),
+}));
+
+import { reportFailure } from "./failure-notice.js";
 import {
   newRequestID,
   newMessageID,
   newOpID,
   computeBackoff,
+  send,
+  init,
   BACKOFF_CAP_MS,
 } from "./transport.js";
 
@@ -317,5 +331,203 @@ describe("newOpID", () => {
   // makes minutes later. Sharing a value would tie the two windows together.
   it("is not the same value as a request id", () => {
     expect(newOpID()).not.toBe(newRequestID());
+  });
+});
+
+/** One JSON Response, the way the server's writeErr/dispatcher answers. */
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+describe("send — failed-response read", () => {
+  it("lifts `reason` beside the error string on a 409-starting refusal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(409, { error: "busy", reason: "starting" }))),
+    );
+
+    const r = await send({ type: "cancel", chat_id: "c1" });
+
+    expect(r).toEqual({ ok: false, status: 409, error: "busy", reason: "starting" });
+  });
+
+  it("carries no `reason` when the envelope has none", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(409, { error: "busy" }))),
+    );
+
+    const r = await send({ type: "cancel", chat_id: "c1" });
+
+    expect(r.status).toBe(409);
+    expect(r.error).toBe("busy");
+    expect("reason" in r).toBe(false);
+  });
+
+  it("never raises the failure toast for a 409, starting variant included", async () => {
+    // A plain 409 is the steer handshake and a 409-starting's surface is the
+    // send-error face the caller owns — neither is this toast's business.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(409, { error: "busy", reason: "starting" }))),
+    );
+
+    await send({ type: "cancel", chat_id: "c1" });
+    expect(reportFailure).not.toHaveBeenCalled();
+  });
+
+  it("still reports a non-409 failure, with the reason lifted all the same", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(503, { error: "boom", reason: "starting" }))),
+    );
+
+    const r = await send({ type: "cancel", chat_id: "c1" });
+
+    expect(r).toEqual({ ok: false, status: 503, error: "boom", reason: "starting" });
+    expect(reportFailure).toHaveBeenCalledWith("c1", "boom");
+  });
+
+  it("degrades to the bare status line on a non-JSON failure body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("gateway melted", { status: 502 }))),
+    );
+
+    const r = await send({ type: "cancel", chat_id: "c1" });
+
+    expect(r).toEqual({ ok: false, status: 502, error: "HTTP 502" });
+  });
+});
+
+// The global hidden-abort predates the early-ack prompt and SURVIVES it: the
+// prompt POST is short now, but every other in-flight request is still dropped
+// when the page has been hidden past the threshold, because iOS freezes the
+// socket underneath it and the request would otherwise dangle until the
+// 15-minute default timeout. This is the pin that the prompt-timeout change
+// did not take the mechanism with it.
+describe("hidden-abort over in-flight requests", () => {
+  /** The minimal EventSource the transport's init() can hold: init is the only
+   *  way to install the visibilitychange listener under test, and the real
+   *  constructor would open a stream against the vitest server. */
+  class FakeEventSource {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    onopen: ((e: Event) => void) | null = null;
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    onerror: ((e: Event) => void) | null = null;
+    readyState = 0;
+    url: string;
+    constructor(url: string) {
+      this.url = url;
+    }
+    close(): void {
+      this.readyState = FakeEventSource.CLOSED;
+    }
+  }
+
+  it("aborts a non-prompt request once the page was hidden past the threshold", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    // A fetch that settles only through its abort signal: the assertion below
+    // can only pass if the hidden-abort fires (nothing else rejects it, so
+    // deleting the mechanism times this test out).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: RequestInfo | URL, reqInit?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            reqInit?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            });
+          }),
+      ),
+    );
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    // visibilityState is an accessor on Document.prototype; shadow it on the
+    // instance so both transitions are observable, and restore in finally.
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+    try {
+      init(
+        () => {
+          /* no frames in this test */
+        },
+        () => {
+          /* status unobserved */
+        },
+      );
+
+      const p = send({ type: "cancel", chat_id: "c1" });
+
+      visibility = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      now += 30_000; // HIDDEN_ABORT_MS
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      expect(await p).toEqual({
+        ok: false,
+        status: 0,
+        error: "Request cancelled",
+        code: "cancelled",
+      });
+    } finally {
+      Reflect.deleteProperty(document, "visibilityState");
+    }
+  });
+
+  it("leaves the request alone when the hidden spell was shorter than the threshold", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    let aborted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, reqInit?: RequestInit) => {
+        reqInit?.signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        return Promise.resolve(jsonResponse(200, { ok: true }));
+      }),
+    );
+    let now = 2_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    let visibility: DocumentVisibilityState = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+    try {
+      init(
+        () => {
+          /* no frames in this test */
+        },
+        () => {
+          /* status unobserved */
+        },
+      );
+
+      const p = send({ type: "cancel", chat_id: "c1" });
+
+      visibility = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+      now += 29_999; // one ms short of the threshold
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      expect((await p).ok).toBe(true);
+      expect(aborted).toBe(false);
+    } finally {
+      Reflect.deleteProperty(document, "visibilityState");
+    }
   });
 });

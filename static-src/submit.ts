@@ -38,10 +38,17 @@ import {
 } from "./attachments.js";
 import { isThinking, hasMessage } from "./store.js";
 import { steerChat } from "./actions/chat.js";
-import { clearAgentDown } from "./send-state.js";
+import { clearAgentDown, reportSendRefused } from "./send-state.js";
 import { restoreFailedSend } from "./composer-state.js";
 
 export type SubmitResult = "sent" | "steered" | "failed";
+
+/** The send-error face for a 409 reason:"starting" refusal. Holder-neutral on
+ *  purpose: the admission slot may be held by a cold spawn, a shell or a prime,
+ *  and for a shell holder nothing is "starting" — the honest common claim is
+ *  busy-now-retry. Rendered through send-state's error surface; the next Send
+ *  is the retry and is also what clears it. */
+const STARTING_FACE = "The chat is busy right now — send again to retry";
 
 /** The last failed attempt, so a retry of the SAME text on the SAME chat reuses
  *  its message id.
@@ -73,7 +80,9 @@ function messageIDFor(chatID: string, text: string): string {
  * not one branch: a turn can start between reading `thinking` and the POST
  * landing, and the server answers that with 409 busy. The old code enqueued
  * there; this steers instead, because the message belongs in the turn that just
- * started rather than in the one after it.
+ * started rather than in the one after it. The steer conversion applies only to
+ * the PLAIN 409 — a 409 carrying reason:"starting" names a holder that cannot
+ * take a steer, and renders the busy face instead (see STARTING_FACE).
  *
  * On a hard failure the text AND the attachments go back to the input row, so a
  * retry is one keystroke rather than a retype; the send button surfaces the
@@ -117,8 +126,22 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
     ...(attachments.length > 0 ? { attachments } : {}),
   });
   if (result === "queued") {
-    // 409 busy: a turn started underneath us. Steer into it.
+    // Plain 409: a steerable turn started underneath us. Steer into it. The
+    // conversion is gated on the ABSENCE of the "starting" reason — that
+    // refusal's holder cannot receive a steer and takes the branch below.
     return steer(chatID, text, messageID, attachments, attachGen);
+  }
+  if (result === "starting") {
+    // 409 reason:"starting": the admission slot is held by a cold spawn, a
+    // shell or a prime, so neither a turn nor a steer can land right now. A
+    // POST-PERSIST failure class: the user row is already persisted and
+    // rendered (persist precedes reservation server-side), so recordFailure's
+    // hasMessage gate keeps the text out of the composer while still
+    // remembering the id — a re-send of the same text travels under it and the
+    // server dedupes the append.
+    recordFailure(chatID, text, messageID, attachments, attachGen);
+    reportSendRefused(STARTING_FACE);
+    return "failed";
   }
   if (result === "failed") {
     recordFailure(chatID, text, messageID, attachments, attachGen);
