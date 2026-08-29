@@ -1436,7 +1436,7 @@ export function appendChunk(
     const fullText = isReasoning
       ? (msg.blocks[blockIndex]?.thinking ?? "")
       : (msg.blocks[blockIndex]?.text ?? "");
-    blockSig.value = fullText;
+    blockSig.value = { full: fullText, delta };
     // Pure growth of a MOUNTED block: the signal effect painted the text, so
     // the paint this schedules refreshes tail bookkeeping only.
     scheduleMessages(chatID, "chunk");

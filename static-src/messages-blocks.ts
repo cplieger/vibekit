@@ -1108,8 +1108,20 @@ function mountText(
   }
   if (live && !st.detached) {
     const sig = ensureBlockTextSig(msgId, i, initial);
+    // Watermark guard (design B5): append the delta only when it bridges the
+    // accepted text to `full`; on any mismatch — a missed write, a replayed
+    // write, a rebind onto a signal that advanced while unobserved — resync
+    // from `full` instead. setText is growth-only, so a replay's resync (full
+    // == accepted) is a no-op rather than a duplication.
+    let accepted = initial.length;
     const cleanup = effect(() => {
-      bubble.setText(sig.value);
+      const v = sig.value;
+      if (accepted + v.delta.length === v.full.length) {
+        bubble.append(v.delta);
+      } else {
+        bubble.setText(v.full);
+      }
+      accepted = v.full.length;
     });
     pushLifetimeEffect(st, msgId, cleanup);
   }
@@ -1137,7 +1149,9 @@ function mountThinking(
   if (live && !st.detached) {
     const sig = ensureBlockThinkingSig(msgId, i, initial);
     const cleanup = effect(() => {
-      view.setText(sig.value);
+      // `.full`, no watermark: the reasoning view's setText appends only the
+      // tail past its own rendered text, so full text is already self-healing.
+      view.setText(sig.value.full);
     });
     pushLifetimeEffect(st, msgId, cleanup);
   }

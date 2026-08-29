@@ -2167,7 +2167,7 @@ describe("Store appendChunk repaint discipline", () => {
     const before = messagesVersionOf("ar-3").peek();
     appendChunk("ar-3", "m-1", " world", false, 0, "");
     await tick();
-    expect(blockSig.value).toBe("hello world");
+    expect(blockSig.value).toEqual({ full: "hello world", delta: " world" });
     expect(messagesVersionOf("ar-3").peek()).toBe(before + 1);
     expect(renderCauseOf("ar-3")).toEqual({ cause: "chunk" });
     clearAllBlockSigs();
@@ -2186,7 +2186,10 @@ describe("Store appendChunk repaint discipline", () => {
     const before = messagesVersionOf("ar-7").peek();
     appendChunk("ar-7", "m-1", " workflow is running.", false, 0, "");
     await tick();
-    expect(parentSig.value).toBe("The workflow is running.");
+    expect(parentSig.value).toEqual({
+      full: "The workflow is running.",
+      delta: " workflow is running.",
+    });
     expect(messagesVersionOf("ar-7").peek()).toBe(before + 1);
     expect(renderCauseOf("ar-7")).toEqual({ cause: "chunk" });
     clearAllBlockSigs();
@@ -2200,7 +2203,7 @@ describe("Store appendChunk repaint discipline", () => {
     const before = messagesVersionOf("ar-4").peek();
     appendChunk("ar-4", "m-1", " not", true, 0, "");
     await tick();
-    expect(blockSig.value).toBe("why not");
+    expect(blockSig.value).toEqual({ full: "why not", delta: " not" });
     expect(messagesVersionOf("ar-4").peek()).toBe(before + 1);
     expect(renderCauseOf("ar-4")).toEqual({ cause: "chunk" });
     clearAllBlockSigs();

@@ -17,16 +17,33 @@ export const streamingTextSigs = new SignalMap<string>();
 /** Per-message-id reasoning signal. */
 export const streamingReasoningSigs = new SignalMap<string>();
 
+/** One per-block streaming write: the block's accumulated text plus the growth
+ *  this write carries, so a consumer can append `delta` instead of re-deriving
+ *  the tail from an ever-longer `full`.
+ *
+ *  INVARIANT: the pair is meaningful only under @cplieger/reactive's
+ *  synchronous flush contract — a write re-runs every subscribed effect before
+ *  the setter returns, so a consumer observes one value per chunk with none
+ *  skipped. A batching layer between writer and effect would coalesce writes
+ *  into a value whose `delta` no longer bridges the consumer's text to `full`,
+ *  corrupting streamed prose silently. That dependency is why consumers keep a
+ *  watermark (`accepted + delta.length === full.length`) and resync from `full`
+ *  on any mismatch. */
+export interface BlockSignalValue {
+  readonly full: string;
+  readonly delta: string;
+}
+
 /** Per-(message-id, block-index) streaming text signal. Used by the
  *  block-aware renderer so each text block in a chronological assistant
  *  message subscribes only to its own deltas — chunks for block N
  *  don't trigger re-renders on block N-1. Key format: `${msgID}:${idx}`. */
-export const blockTextSigs = new SignalMap<string>();
+export const blockTextSigs = new SignalMap<BlockSignalValue>();
 
 /** Per-(message-id, block-index) streaming thinking signal. Same
  *  rationale as blockTextSigs — chronologically interleaved thinking
  *  blocks each get their own subscription. */
-export const blockThinkingSigs = new SignalMap<string>();
+export const blockThinkingSigs = new SignalMap<BlockSignalValue>();
 
 /** Per-(chat-id, tool-call-id) signal.
  *
@@ -80,16 +97,17 @@ export function ensureBlockTextSig(
   messageID: string,
   blockIndex: number,
   initial: string,
-): Signal<string> {
-  return blockTextSigs.ensure(blockKey(messageID, blockIndex), initial);
+): Signal<BlockSignalValue> {
+  // A signal minted at mount carries no growth: `initial` is already on screen.
+  return blockTextSigs.ensure(blockKey(messageID, blockIndex), { full: initial, delta: "" });
 }
 
 export function ensureBlockThinkingSig(
   messageID: string,
   blockIndex: number,
   initial: string,
-): Signal<string> {
-  return blockThinkingSigs.ensure(blockKey(messageID, blockIndex), initial);
+): Signal<BlockSignalValue> {
+  return blockThinkingSigs.ensure(blockKey(messageID, blockIndex), { full: initial, delta: "" });
 }
 
 export function clearStreamingSig(messageID: string): void {
