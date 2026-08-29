@@ -1112,6 +1112,7 @@ describe("Store message attachments (merge allowlist)", () => {
 import {
   messagesVersionOf,
   bumpMessages,
+  renderCauseOf,
   watchActiveId,
   isThinking,
   defaultUsage,
@@ -2124,14 +2125,16 @@ describe("Store appendChunk blocks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// appendChunk's repaint discipline: a mounted signal carries the delta and the
-// list must NOT repaint; with nothing mounted the list is the only channel and
-// it must. Getting this backwards is either a dropped delta or a transcript
-// that re-renders per character.
+// appendChunk's repaint discipline: a mounted signal carries the TEXT, so the
+// version bump it schedules declares cause `chunk` — the renderer's tail-
+// bookkeeping-only branch; with nothing mounted the list is the only channel,
+// so the bump declares `shape` (the full pass is what puts the text on
+// screen). Getting this backwards is either a dropped delta or a transcript
+// that re-projects per character.
 // ---------------------------------------------------------------------------
 
 describe("Store appendChunk repaint discipline", () => {
-  it("stays off the list when a streaming signal is carrying the text", async () => {
+  it("declares a chunk-cause bump when a streaming signal is carrying the text", async () => {
     resetStore("ar-1");
     appendChunk("ar-1", "m-1", "hello", false, 0, "");
     await tick();
@@ -2140,7 +2143,8 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-1", "m-1", " world", false, 0, "");
     await tick();
     expect(sig.value).toBe("hello world");
-    expect(messagesVersionOf("ar-1").peek()).toBe(before);
+    expect(messagesVersionOf("ar-1").peek()).toBe(before + 1);
+    expect(renderCauseOf("ar-1")).toEqual({ cause: "chunk" });
     clearStreamingSig("m-1");
   });
 
@@ -2152,9 +2156,10 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-2", "m-1", " world", false, 0, "");
     await tick();
     expect(messagesVersionOf("ar-2").peek()).toBe(before + 1);
+    expect(renderCauseOf("ar-2").cause).toBe("shape");
   });
 
-  it("routes the text delta to the per-block signal without repainting", async () => {
+  it("routes the text delta to the per-block signal, bumping as a chunk", async () => {
     resetStore("ar-3");
     appendChunk("ar-3", "m-1", "hello", false, 0, "");
     await tick();
@@ -2163,7 +2168,8 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-3", "m-1", " world", false, 0, "");
     await tick();
     expect(blockSig.value).toBe("hello world");
-    expect(messagesVersionOf("ar-3").peek()).toBe(before);
+    expect(messagesVersionOf("ar-3").peek()).toBe(before + 1);
+    expect(renderCauseOf("ar-3")).toEqual({ cause: "chunk" });
     clearAllBlockSigs();
   });
 
@@ -2181,7 +2187,8 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-7", "m-1", " workflow is running.", false, 0, "");
     await tick();
     expect(parentSig.value).toBe("The workflow is running.");
-    expect(messagesVersionOf("ar-7").peek()).toBe(before);
+    expect(messagesVersionOf("ar-7").peek()).toBe(before + 1);
+    expect(renderCauseOf("ar-7")).toEqual({ cause: "chunk" });
     clearAllBlockSigs();
   });
 
@@ -2194,7 +2201,8 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-4", "m-1", " not", true, 0, "");
     await tick();
     expect(blockSig.value).toBe("why not");
-    expect(messagesVersionOf("ar-4").peek()).toBe(before);
+    expect(messagesVersionOf("ar-4").peek()).toBe(before + 1);
+    expect(renderCauseOf("ar-4")).toEqual({ cause: "chunk" });
     clearAllBlockSigs();
   });
 
@@ -2326,7 +2334,7 @@ describe("Store upsertToolCall", () => {
     expect(messagesVersionOf("tc-9").peek()).toBe(before + 1);
   });
 
-  it("fans a later update through the tool's own signal without repainting", async () => {
+  it("fans a later update through the tool's own signal, bumping as a tool cause", async () => {
     resetStore("tc-10");
     upsertToolCall("tc-10", "m-1", call("t-1"), 0);
     await tick();
@@ -2335,7 +2343,10 @@ describe("Store upsertToolCall", () => {
     upsertToolCall("tc-10", "m-1", call("t-1", "completed"), 0);
     await tick();
     expect(sig.value.status).toBe("completed");
-    expect(messagesVersionOf("tc-10").peek()).toBe(before);
+    // The card's own effect paints the update; the bump carries the keyed-
+    // update address so the renderer refreshes ONE message, never the list.
+    expect(messagesVersionOf("tc-10").peek()).toBe(before + 1);
+    expect(renderCauseOf("tc-10")).toEqual({ cause: "tool", msgID: "m-1" });
     clearToolCallSig("tc-10", "t-1");
   });
 

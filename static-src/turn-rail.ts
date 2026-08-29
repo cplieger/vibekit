@@ -87,6 +87,10 @@ type Row =
 
 let root: HTMLElement | undefined;
 let summaries: TurnSummary[] = [];
+/** `summaries` indexed by the turn's opening-message id — `numberOf` resolves
+ *  a card per observer delta, so the lookup must not be a linear scan of the
+ *  index. Rebuilt wherever `summaries` is assigned. */
+let summaryByID = new Map<string, TurnSummary>();
 let chatID = "";
 let currentN = 0;
 /** The range the rail is zoomed into, set by clicking a cluster. */
@@ -132,6 +136,12 @@ function navigable(): boolean {
  *  re-render and the overwhelming majority that do not cost one comparison. */
 let renderedNavigable = false;
 
+/** The one writer of `summaries`, so the id index can never drift from it. */
+function setSummaries(next: TurnSummary[]): void {
+  summaries = next;
+  summaryByID = new Map(next.map((s) => [s.id, s]));
+}
+
 /** Mount the rail into the transcript's positioned outer wrapper. Idempotent. */
 export function mountTurnRail(host: HTMLElement): void {
   if (root !== undefined) {
@@ -170,7 +180,7 @@ export function pointTurnRail(id: string): void {
   // than carrying a stale range onto unrelated turns.
   zoom = undefined;
   pending.clear();
-  summaries = [];
+  setSummaries([]);
   currentN = 0;
   // A turn number from the previous chat is a live wrong answer, not merely a
   // stale one: `numberOf` resolves against THIS chat's summaries, so a leftover
@@ -199,13 +209,13 @@ export async function refreshTurnRail(id: string): Promise<void> {
     // than one that is briefly a turn behind.
     return;
   }
-  summaries = d.turns ?? [];
+  setSummaries(d.turns ?? []);
   render();
 }
 
 export function resetTurnRail(): void {
   chatID = "";
-  summaries = [];
+  setSummaries([]);
   currentN = 0;
   zoom = undefined;
   renderedNavigable = false;
@@ -336,7 +346,7 @@ function numberOf(card: Element): number {
   if (id === null) {
     return 0;
   }
-  return summaries.find((s) => s.id === id)?.n ?? 0;
+  return summaryByID.get(id)?.n ?? 0;
 }
 
 // ---------------------------------------------------------------------------

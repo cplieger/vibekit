@@ -54,7 +54,57 @@ import {
 // gains live updates. Per-delta paths coalesce per chat per microtask via
 // scheduleMessages; list-shape writers bump synchronously — the renderer's keyed
 // reconcile must see an append before the frame it was announced in.
+//
+// EVERY bump carries a RenderCause, declared at the BRANCH that knows what
+// changed, and the renderer branches on it instead of inferring change from
+// array identity (which is either wrong — ingestMessage replaces in place — or
+// O(resident history)). Causes MERGE upward per chat until the flush.
 const messagesVersionSigs = new SignalMap<number>();
+
+/** What a version bump was FOR — what the renderer may skip.
+ *
+ *   - `chunk`: pure text growth of a MOUNTED block; its signal effect already
+ *     painted the text, so paint refreshes tail bookkeeping only.
+ *   - `tool`: an existing tool call's update; the owning message's keyed
+ *     update refreshes its card — no projection, no reconcile.
+ *   - `fact`: a transcript fact flipped (thinking, turn latches, refusal, run
+ *     identity); full projection + reconcile (facts feed deriveOutcome/isLive).
+ *   - `shape`: the message list's structure changed; the full pass.
+ *
+ *  A store branch that mutates no rendered state declares NO cause: the
+ *  unknown-chat and snapshot-dedup returns in appendChunk, the
+ *  message-not-resident return in setCodeReferences, and setTurnSummary's
+ *  changed === false arm. */
+export type RenderCause = "chunk" | "tool" | "fact" | "shape";
+
+const CAUSE_RANK: Record<RenderCause, number> = { chunk: 0, tool: 1, fact: 2, shape: 3 };
+
+/** The per-chat cause accumulator: what the NEXT flush will paint for.
+ *  `msgID` survives only while every merged cause is `tool` for ONE message —
+ *  the keyed-update address; tool causes for two messages escalate to shape. */
+const pendingCause = new Map<string, { cause: RenderCause; msgID?: string }>();
+
+/** The cause the chat's CURRENT version was flushed with. Renderer-only read. */
+const flushedCause = new Map<string, { cause: RenderCause; msgID?: string }>();
+
+function mergeCause(chatID: string, cause: RenderCause, msgID?: string): void {
+  const cur = pendingCause.get(chatID);
+  if (cur === undefined) {
+    pendingCause.set(chatID, msgID !== undefined ? { cause, msgID } : { cause });
+    return;
+  }
+  if (cause === "tool" && cur.cause === "tool") {
+    // Two tool updates in one tick: same message stays addressable, different
+    // messages escalate — one keyed update cannot refresh two turns.
+    if (cur.msgID !== msgID) {
+      pendingCause.set(chatID, { cause: "shape" });
+    }
+    return;
+  }
+  if (CAUSE_RANK[cause] > CAUSE_RANK[cur.cause]) {
+    pendingCause.set(chatID, msgID !== undefined ? { cause, msgID } : { cause });
+  }
+}
 
 /** THIS chat's transcript version. Reading `.value` inside an effect subscribes
  *  it to the chat's transcript changes and nothing else's. */
@@ -62,31 +112,56 @@ export function messagesVersionOf(chatID: string): Signal<number> {
   return messagesVersionSigs.ensure(chatID, 0);
 }
 
-/** Bump `chatID`'s transcript version synchronously.
- *
- *  List-shape writers here and the two out-of-module callers (`store-load.ts`
- *  after a page fetch, `chat-search.ts` around a reveal) use this; per-delta
- *  paths go through `scheduleMessages`. The timing split is real: a message
- *  arriving must be in the DOM before the frame it was announced in, while a
- *  tick's worth of deltas should collapse into one repaint. */
-export function bumpMessages(chatID: string): void {
+/** The cause the current version was bumped for. `paint()` reads it (untracked)
+ *  right after reading the version; a chat switch or an absent record reads as
+ *  `shape`, the full pass. */
+export function renderCauseOf(chatID: string): { cause: RenderCause; msgID?: string } {
+  return flushedCause.get(chatID) ?? { cause: "shape" };
+}
+
+/** Flush the accumulator into a version bump. The SYNC path paints the MERGED
+ *  cause and clears it, so a pending chunk flush never inherits a later shape;
+ *  the microtask flush skips a chat whose accumulator is already empty. */
+function flushCause(chatID: string): void {
+  const merged = pendingCause.get(chatID);
+  if (merged === undefined) {
+    return;
+  }
+  pendingCause.delete(chatID);
+  messagesScheduled.delete(chatID);
+  flushedCause.set(chatID, merged);
   const sig = messagesVersionSigs.ensure(chatID, 0);
   sig.value = sig.peek() + 1;
+}
+
+/** Bump `chatID`'s transcript version synchronously.
+ *
+ *  List-shape writers here and the out-of-module callers (`store-load.ts`
+ *  after a page fetch, `chat-search.ts` around a reveal, fold-state writers,
+ *  run-store's settle path) use this; per-delta paths go through
+ *  `scheduleMessages`. The timing split is real: a message arriving must be in
+ *  the DOM before the frame it was announced in, while a tick's worth of
+ *  deltas should collapse into one repaint. */
+export function bumpMessages(chatID: string, cause: RenderCause = "shape"): void {
+  mergeCause(chatID, cause);
+  flushCause(chatID);
 }
 
 /** Chats with a bump parked on the next microtask. `removeChat` deletes its id
  *  here, so a pending flush cannot re-mint the version signal it just cleared. */
 const messagesScheduled = new Set<string>();
 
-/** Coalesce one chat's per-delta bumps into a single repaint per microtask. */
-function scheduleMessages(chatID: string): void {
+/** Coalesce one chat's per-delta bumps into a single repaint per microtask,
+ *  merging causes upward as they accumulate. */
+function scheduleMessages(chatID: string, cause: RenderCause, msgID?: string): void {
+  mergeCause(chatID, cause, msgID);
   if (messagesScheduled.has(chatID)) {
     return;
   }
   messagesScheduled.add(chatID);
   queueMicrotask(() => {
     if (messagesScheduled.delete(chatID)) {
-      bumpMessages(chatID);
+      flushCause(chatID);
     }
   });
 }
@@ -224,7 +299,7 @@ export function setThinking(id: string, v: boolean): void {
   });
   // Transcript fact: `thinking` feeds the live-turn derivation the renderer
   // paints from, so the flip repaints the chat's transcript.
-  scheduleMessages(id);
+  scheduleMessages(id, "fact");
 }
 
 /** Latch that this chat's last turn or bridge operation failed (`error` SSE).
@@ -236,7 +311,7 @@ export function setTurnFailed(id: string): void {
     return; // no-op: don't churn the session signal on a replayed error frame
   }
   sessions.update(id, (prev) => ({ ...prev, turn_failed: true }));
-  scheduleMessages(id); // transcript fact: feeds the turn-outcome derivation
+  scheduleMessages(id, "fact"); // feeds the turn-outcome derivation
 }
 
 /** Clear the failure latch without starting a turn. Only the transport-gap
@@ -252,7 +327,7 @@ export function clearTurnFailed(id: string): void {
     delete next.turn_failed;
     return next;
   });
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Latch that this chat's last turn finished.
@@ -272,7 +347,7 @@ export function setTurnDone(id: string): void {
     return; // no-op: don't churn the session signal on a replayed turn_ended
   }
   sessions.update(id, (prev) => ({ ...prev, turn_done: true }));
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Clear the finished latch. ONE caller, the transport-gap reconciler, for the
@@ -294,7 +369,7 @@ export function clearTurnDone(id: string): void {
     delete next.turn_done;
     return next;
   });
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store
@@ -441,7 +516,7 @@ export function setWorkingLabel(id: string, label: string): void {
     return;
   }
   sessions.update(id, (s) => ({ ...s, working_label: label }));
-  scheduleMessages(id); // transcript fact: the resume control's fallback label
+  scheduleMessages(id, "fact"); // the resume control's fallback label
 }
 
 // --- Mid-turn steers (the dock's waiting rows + the transcript's marks) ---
@@ -507,7 +582,7 @@ export function recordSteerSent(id: string, messageID: string, text: string): vo
   const at = existing.findIndex((e) => e.id === entry.id);
   const next = at >= 0 ? existing.map((e, i) => (i === at ? entry : e)) : [...existing, entry];
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
-  scheduleMessages(id); // transcript fact: the dock row is transcript-adjacent state
+  scheduleMessages(id, "fact"); // the dock row is transcript-adjacent state
 }
 
 /** Un-draw one steer row. The rollback half of `recordSteerSent`.
@@ -524,7 +599,7 @@ export function forgetSteer(id: string, steerID: string): void {
     return;
   }
   sessions.update(id, (cur) => withSteers(cur, rest));
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Adopt KAS's own confirmation of a steer into the dock.
@@ -560,7 +635,7 @@ export function recordSteerQueued(id: string, steer: { id: string; text: string 
   const next =
     adoptAt >= 0 ? existing.map((e, i) => (i === adoptAt ? entry : e)) : [...existing, entry];
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Promote a steer the agent has READ out of the dock and into the transcript.
@@ -610,7 +685,7 @@ export function promoteSteer(id: string, steerID: string, text: string, ack?: st
       anchor: anchorFor(s),
     };
     sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: [...marks, mark] }, rest));
-    scheduleMessages(id); // transcript fact: a mark renders inside the turn
+    scheduleMessages(id, "fact"); // a mark renders inside the turn
     return;
   }
   const nextMarks = marks.map((m, i) =>
@@ -623,7 +698,7 @@ export function promoteSteer(id: string, steerID: string, text: string, ack?: st
       : m,
   );
   sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: nextMarks }, rest));
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Drop steers at a turn boundary: out of the dock, into the transcript as
@@ -668,7 +743,7 @@ export function dropSteers(id: string, steerIDs?: readonly string[]): void {
   sessions.update(id, (cur) =>
     withSteers(added.length > 0 ? { ...cur, steer_marks: [...marks, ...added] } : cur, rest),
   );
-  scheduleMessages(id); // transcript fact: dropped marks render in the turn
+  scheduleMessages(id, "fact"); // dropped marks render in the turn
 }
 
 /** Remove every CONFIRMED waiting steer, returning a snapshot to restore from.
@@ -695,7 +770,7 @@ export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
     return [];
   }
   sessions.update(id, (cur) => withSteers(cur, rest));
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
   return prev;
 }
 
@@ -705,7 +780,7 @@ export function restoreSteers(id: string, prev: readonly PendingSteer[]): void {
     return;
   }
   sessions.update(id, (cur) => withSteers(cur, prev));
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Forget the dock's contents WITHOUT promoting them. The `transport:gap` path.
@@ -719,7 +794,7 @@ export function forgetSteers(id: string): void {
     return;
   }
   sessions.update(id, (cur) => withSteers(cur, []));
-  scheduleMessages(id); // transcript fact
+  scheduleMessages(id, "fact");
 }
 
 /** Where a steer read RIGHT NOW belongs: after everything the turn's assistant
@@ -893,9 +968,12 @@ export function removeChat(id: string): void {
     // comments already say "or chat removed"; this is where that becomes true.
     clearSnapshotSeq(id);
     clearLiveTurnMessage(id);
-    // The chat's version signal and any bump parked on the next microtask go
-    // with it — a flush after this must not re-mint the signal.
+    // The chat's version signal, its cause bookkeeping, and any bump parked on
+    // the next microtask go with it — a flush after this must not re-mint the
+    // signal.
     messagesScheduled.delete(id);
+    pendingCause.delete(id);
+    flushedCause.delete(id);
     messagesVersionSigs.clear(id);
     if (wasActive) {
       const remaining = order.filter((x) => x !== id);
@@ -1305,6 +1383,8 @@ export function appendChunk(
   // tool_call, a kind switch, or a subtask switch bumps to a new index.
   msg.blocks ??= [];
   const blockKind = isReasoning ? "thinking" : "text";
+  let newBlock = false;
+  let padRepaired = false;
   if (msg.blocks[blockIndex] === undefined) {
     padBlocks(msg.blocks, blockIndex);
     msg.blocks.push({
@@ -1312,6 +1392,7 @@ export function appendChunk(
       ...subtaskField(subtaskID),
       ...(isReasoning ? { thinking: delta } : { text: delta }),
     });
+    newBlock = true;
   } else {
     const existing = msg.blocks[blockIndex];
     // A PAD'S KIND IS A GUESS (see padBlocks), so the first real delta for the
@@ -1322,6 +1403,7 @@ export function appendChunk(
     if (isPadBlock(existing)) {
       existing.type = blockKind;
       Object.assign(existing, subtaskField(subtaskID));
+      padRepaired = true;
     }
     if (isReasoning) {
       existing.thinking = (existing.thinking ?? "") + delta;
@@ -1331,13 +1413,19 @@ export function appendChunk(
   }
 
   if (isNew) {
-    scheduleMessages(chatID);
+    // A message the store has never seen: the renderer must mount its row.
+    scheduleMessages(chatID, "shape");
     return;
   }
   if (refusalStamped) {
-    // Message-level state changed (not just a block's text): run the keyed
-    // reconcile so the refusal callout mounts on the streaming message.
-    scheduleMessages(chatID);
+    // Message-level FACT changed (not just a block's text): the refusal feeds
+    // deriveOutcome and the callout mounts on a full pass.
+    scheduleMessages(chatID, "fact");
+  }
+  if (newBlock || padRepaired) {
+    // A new block pushed, or a pad's guessed kind corrected: block STRUCTURE
+    // changed, and only the full pass mounts or re-types a block.
+    scheduleMessages(chatID, "shape");
   }
   // Fire the per-block signal (fine-grained — only the block at blockIndex
   // re-renders) before the legacy per-message signal.
@@ -1349,20 +1437,28 @@ export function appendChunk(
       ? (msg.blocks[blockIndex]?.thinking ?? "")
       : (msg.blocks[blockIndex]?.text ?? "");
     blockSig.value = fullText;
+    // Pure growth of a MOUNTED block: the signal effect painted the text, so
+    // the paint this schedules refreshes tail bookkeeping only.
+    scheduleMessages(chatID, "chunk");
   }
   if (isReasoning) {
     const sig = streamingReasoningSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.reasoning ?? "";
+      scheduleMessages(chatID, "chunk");
     } else if (blockSig === undefined) {
-      scheduleMessages(chatID);
+      // Signal-absent fallback: nothing is mounted to carry the text, so the
+      // full pass is what puts it on screen.
+      scheduleMessages(chatID, "shape");
     }
   } else {
     const sig = streamingTextSigs.get(messageID);
     if (sig !== undefined) {
       sig.value = msg.content ?? "";
+      scheduleMessages(chatID, "chunk");
     } else if (blockSig === undefined) {
-      scheduleMessages(chatID);
+      // Signal-absent fallback, as above.
+      scheduleMessages(chatID, "shape");
     }
   }
 }
@@ -1427,7 +1523,9 @@ export function upsertToolCall(
     s.messages.push(msg);
     s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
-    bumpMessages(chatID);
+    // A new message: the full pass mounts its row (synchronous — an arrival
+    // must be in the DOM before the frame that announced it).
+    bumpMessages(chatID, "shape");
     return;
   }
   msg.tool_calls ??= [];
@@ -1468,15 +1566,44 @@ export function upsertToolCall(
         ...subtaskField(call.agent_subtask_id),
       };
     }
-    scheduleMessages(chatID);
+    // First sighting of this call: a new card mounts on the full pass.
+    scheduleMessages(chatID, "shape");
     return;
   }
+  const prev = msg.tool_calls[tcIdx];
   msg.tool_calls[tcIdx] = call;
+  // Late identity attachments are STRUCTURAL, not status updates (the server
+  // attaches both ids on updates when the initial call lacked them —
+  // translate/streaming_tools.go):
+  //
+  //  - a first `agent_subtask_id` decides container MEMBERSHIP (top-level list
+  //    vs subagent box vs run step), which is the BLOCK's field, and the tool
+  //    fast path never re-homes a card — so the block updates here and the
+  //    full pass re-homes. An id never changes once set.
+  //  - a first `workflow_id` changes `turnRunIDs`, a projection/fold input, so
+  //    the fold pass must run: `fact`.
+  const subtaskAttached =
+    nonEmptyStr(call.agent_subtask_id) && !nonEmptyStr(prev?.agent_subtask_id);
+  if (subtaskAttached) {
+    const blk = msg.blocks.find((b) => b.type === "tool_use" && b.tool_call_id === call.id);
+    if (blk !== undefined) {
+      Object.assign(blk, subtaskField(call.agent_subtask_id));
+    }
+    scheduleMessages(chatID, "shape");
+  }
+  if (nonEmptyStr(call.workflow_id) && !nonEmptyStr(prev?.workflow_id)) {
+    scheduleMessages(chatID, "fact");
+  }
   const sig = toolCallSigs.get(toolCallSigKey(chatID, call.id));
   if (sig !== undefined) {
     sig.value = call;
+    // The card's own effect repaints it; the tool paint refreshes the owning
+    // turn's keyed state only — never a projection, never a mount.
+    scheduleMessages(chatID, "tool", messageID);
   } else {
-    scheduleMessages(chatID);
+    // Signal-absent fallback: nothing is mounted for this card, so the full
+    // pass is what puts its update on screen.
+    scheduleMessages(chatID, "shape");
   }
 }
 

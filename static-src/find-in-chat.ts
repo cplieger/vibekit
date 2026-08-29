@@ -43,7 +43,7 @@ import { el } from "@cplieger/reactive";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import type { PopupController } from "@cplieger/ui-primitives/popup";
 import { $, byId } from "./dom.js";
-import { jumpTo } from "./scroll.js";
+import { jumpTo, onTranscriptMutate } from "./scroll.js";
 import { runServerSearch, resetServerSearch, searchHitTotal } from "./chat-search.js";
 import { getActiveId } from "./store.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
@@ -72,7 +72,12 @@ let countEl: HTMLElement | null = null;
 let engine: FindEngine | null = null;
 let lastFocus: HTMLElement | null = null;
 let rerunTimer: ReturnType<typeof setTimeout> | undefined;
-let observer: MutationObserver | null = null;
+/** Unregister for the live re-run's ride on the transcript's shared
+ *  MutationObserver (scroll.ts owns the one observer); null while closed. */
+let unobserveTranscript: (() => void) | null = null;
+/** Engine ops in flight whose own DOM writes must not re-trigger the re-run.
+ *  A counter rather than a boolean so nested `applyEngine` calls stay safe. */
+let engineWrites = 0;
 /** Unsubscribe for the tab-change teardown, so a rebuilt module does not stack
  *  a second subscriber on the bus. */
 let unsubTab: (() => void) | null = null;
@@ -80,8 +85,8 @@ let unsubTab: (() => void) | null = null;
 /** Open state lives on the popup and NOWHERE ELSE.
  *
  *  It used to be a module boolean, and that is what made a tab switch leave the
- *  feature half-alive: hiding the view left the flag true, the MutationObserver
- *  connected, the <mark> elements welded into the transcript and every fold the
+ *  feature half-alive: hiding the view left the flag true, the mutation
+ *  registration active, the <mark> elements welded into the transcript and every fold the
  *  search had opened still open, so returning to the chat re-revealed a search
  *  mid-flight. One source of truth means every close path — the ×, Escape
  *  anywhere in the document, an outside click, the trigger, a tab switch — runs
@@ -290,21 +295,21 @@ function teardown(): void {
   updateCounter("");
 }
 
-/** Run a DOM-mutating engine op with the transcript observer disconnected, so
- *  our own <mark> writes and class toggles don't re-trigger the live-re-run
- *  observer (MutationObserver callbacks are async, so a boolean guard would
- *  race; disconnect/reconnect is deterministic). */
+/** Run a DOM-mutating engine op without our own <mark> writes and class toggles
+ *  re-triggering the live re-run (the loop would be rerun → marks → rerun at the
+ *  debounce's period). The shared observer delivers records on a microtask
+ *  queued WHILE `fn` mutates, so releasing the guard one microtask after `fn`
+ *  returns is deterministic where a synchronous flag would race the delivery —
+ *  the same guarantee the disconnect/reconnect of a privately-owned observer
+ *  used to give. */
 function applyEngine(fn: () => void): void {
-  const wasObserving = observer !== null;
-  if (wasObserving) {
-    stopObserving();
-  }
+  engineWrites++;
   try {
     fn();
   } finally {
-    if (wasObserving && isOpen()) {
-      startObserving();
-    }
+    queueMicrotask(() => {
+      engineWrites--;
+    });
   }
 }
 
@@ -366,18 +371,20 @@ function revealCurrent(): void {
 }
 
 function startObserving(): void {
-  if (observer !== null) {
+  if (unobserveTranscript !== null) {
     return;
   }
-  observer = new MutationObserver(() => {
+  unobserveTranscript = onTranscriptMutate(() => {
+    if (engineWrites > 0) {
+      return; // our own mark writes; see applyEngine
+    }
     scheduleRerun();
   });
-  observer.observe($.messages, { childList: true, subtree: true, characterData: true });
 }
 
 function stopObserving(): void {
-  observer?.disconnect();
-  observer = null;
+  unobserveTranscript?.();
+  unobserveTranscript = null;
 }
 
 /** The transcript changed (streaming, a new turn, a chat switch). Re-run the

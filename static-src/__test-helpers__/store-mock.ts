@@ -34,6 +34,9 @@ export const storeMock = {
   activeSession: computed<undefined>(() => undefined),
   bumpMessages: vi.fn(),
   watchActiveId: vi.fn(() => ""),
+  // `shape` is the real module's answer for a chat with no flushed cause, and
+  // the full-pass default keeps a spreading suite on the pre-cause paint path.
+  renderCauseOf: vi.fn(() => ({ cause: "shape" as const })),
 
   MODEL_CONTEXT_SIZES: {} as Record<string, number>,
   parseContextSize: vi.fn((): number | undefined => undefined),

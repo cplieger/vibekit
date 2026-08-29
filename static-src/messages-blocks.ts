@@ -157,6 +157,74 @@ function clearLiveAnchor(el: HTMLElement): void {
 }
 
 // ---------------------------------------------------------------------------
+// The open-container registry: which collapsible containers are open RIGHT NOW.
+//
+// Maintained where the disclosure state changes (the subagent block's toggle,
+// the run card's, the run-step row's), so the resume counter's reachability
+// test is a set read instead of two querySelectorAll passes per paint. ONE Set,
+// three key shapes:
+//
+//   sub:<subtaskID>            an open delegate box
+//   run:<workflowID>           an open run card (mounts open, so registered at build)
+//   step:<workflowID>:<path>   an open step row inside that card
+//
+// A step's blocks need BOTH of its containers open — the card and the row —
+// which is why the derived view below joins `step:` against `run:` instead of
+// exposing raw keys. DETACHED renders (the subagent page) register nothing:
+// reachability is a property of the transcript, and an open box on another tab
+// contributes no document height here.
+// ---------------------------------------------------------------------------
+
+const openContainers = new Set<string>();
+
+function setContainerOpen(key: string, open: boolean): void {
+  if (open) {
+    openContainers.add(key);
+  } else {
+    openContainers.delete(key);
+  }
+}
+
+/** The subtask ids whose container chain is open, in the id shape blocks carry:
+ *  a delegate's uuid, or `wf:<workflowId>:<nodePath>` for a workflow step. */
+export function openContainerKeys(): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const key of openContainers) {
+    if (key.startsWith("sub:")) {
+      out.add(key.slice(4));
+      continue;
+    }
+    if (key.startsWith("step:")) {
+      const rest = key.slice(5);
+      const sep = rest.indexOf(":");
+      if (sep > 0 && openContainers.has(`run:${rest.slice(0, sep)}`)) {
+        out.add(`wf:${rest}`);
+      }
+    }
+  }
+  return out;
+}
+
+/** Drop a render's container keys. `runs` prefix-deletes its step rows too. */
+function pruneContainers(st: MsgRender): void {
+  if (st.detached) {
+    return; // never registered
+  }
+  for (const subtask of st.subagents.keys()) {
+    openContainers.delete(`sub:${subtask}`);
+  }
+  for (const runID of st.runs.keys()) {
+    openContainers.delete(`run:${runID}`);
+    const prefix = `step:${runID}:`;
+    for (const key of openContainers) {
+      if (key.startsWith(prefix)) {
+        openContainers.delete(key);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Per-message render state
 // ---------------------------------------------------------------------------
 
@@ -349,6 +417,44 @@ export function updateAssistantBody(
   mountPlan(wrap, m);
 }
 
+/** The `tool`-cause fast path: refresh ONE mounted message through the same
+ *  update path a full pass would run for it, touching no other render.
+ *
+ *  Returns false when nothing is mounted for `msgID` — the caller must fall
+ *  back to a full pass then, because only the full pass mounts. Refresh-only by
+ *  construction: the wrap is resolved from the existing render, so this can
+ *  never build, re-home or re-order a card. */
+export function refreshMessageCard(
+  msgID: string,
+  m: Message,
+  chatID: string,
+  live: boolean,
+  marks: readonly SteerMark[] = [],
+): boolean {
+  const st = renders.get(msgID);
+  const wrap = st?.blocksEl.parentElement;
+  if (st === undefined || wrap === null || wrap === undefined) {
+    return false;
+  }
+  updateAssistantBody(wrap, m, chatID, live, marks);
+  return true;
+}
+
+/** Ids of renders still carrying live text: an unsealed live bubble, or any
+ *  bubble whose caret has not drained (`.streaming` is granted and revoked by
+ *  the bubble itself, so the class read IS the caret test — no subtree scan).
+ *  Detached renders report too; the transcript caller drops ids it never
+ *  mounted. */
+export function liveRenderIDs(): string[] {
+  const out: string[] = [];
+  for (const [id, st] of renders) {
+    if (st.liveBubble !== null || st.bubbles.some((b) => b.root.classList.contains("streaming"))) {
+      out.push(id);
+    }
+  }
+  return out;
+}
+
 function updateBody(
   wrap: HTMLElement,
   m: Message,
@@ -514,6 +620,7 @@ export function disposeDetachedBody(messageID: string, subtask: string): void {
  *  reconcile removes each row), and a store subscription disposed twice must not
  *  throw. */
 function disposeAll(st: MsgRender): void {
+  pruneContainers(st);
   for (const fn of st.disposers.splice(0)) {
     fn();
   }
@@ -641,6 +748,13 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
   if (sa === undefined) {
     sa = buildSubagentBlock("Subagent", live ? "in_progress" : "completed", {
       ...subagentOpenerFor(st, subtask),
+      ...(st.detached
+        ? {}
+        : {
+            onOpenChange: (open: boolean): void => {
+              setContainerOpen(`sub:${subtask}`, open);
+            },
+          }),
     });
     sa.root.dataset["subtask"] = subtask;
     st.subagents.set(subtask, sa);
@@ -746,16 +860,32 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
   // The footer link re-opens the run's tab. Injected here rather than imported by
   // the card, so `fundamentals/` keeps pointing only downward — and lazily, because
   // `run-view.ts` reaches the whole run page and the transcript must not carry it.
-  const card = buildRunCard(workflowID, name, (id, label) => {
-    void import("./run-view.js")
-      .then(({ openRunView }) => {
-        openRunView(id, label);
-      })
-      .catch(() => {
-        /* noop: the link degrades to its href on the next click */
-      });
-  });
+  const card = buildRunCard(
+    workflowID,
+    name,
+    (id, label) => {
+      void import("./run-view.js")
+        .then(({ openRunView }) => {
+          openRunView(id, label);
+        })
+        .catch(() => {
+          /* noop: the link degrades to its href on the next click */
+        });
+    },
+    st.detached
+      ? undefined
+      : (nodePath, open) => {
+          setContainerOpen(
+            nodePath === null ? `run:${workflowID}` : `step:${workflowID}:${nodePath}`,
+            open,
+          );
+        },
+  );
   st.runs.set(workflowID, card);
+  if (!st.detached) {
+    // The card mounts OPEN and the disclosure reports only later flips.
+    openContainers.add(`run:${workflowID}`);
+  }
   st.blocksEl.appendChild(card.root);
   const stop = effect(() => {
     // Two inputs on different clocks, which is why they arrive together rather than

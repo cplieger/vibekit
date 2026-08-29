@@ -170,11 +170,16 @@ interface StepRow {
  *  `name` is the best label available at creation — the recipe name from the
  *  invocation's input, or a generic one — and every later render prefers the run's
  *  own `runLabel`. `onOpen` is what the footer's link calls; injected so this
- *  `fundamentals/` view does not import the feature module that owns run tabs. */
+ *  `fundamentals/` view does not import the feature module that owns run tabs.
+ *  `onOpenChange` reports disclosure flips — `null` for the card itself, the node
+ *  path for a step row — because the composition layer keys its open-container
+ *  bookkeeping on ids this view never learns. The card mounts OPEN and rows
+ *  mount closed; only later flips are reported. */
 export function buildRunCard(
   workflowID: string,
   name: string,
   onOpen: (id: string, label: string) => void,
+  onOpenChange?: (nodePath: string | null, open: boolean) => void,
 ): RunCardView {
   const root = el("div", {
     className: "run-card",
@@ -257,6 +262,7 @@ export function buildRunCard(
     open: true,
     onToggle: (isOpen) => {
       root.classList.toggle("collapsed", !isOpen);
+      onOpenChange?.(null, isOpen);
     },
   });
 
@@ -305,6 +311,7 @@ export function buildRunCard(
       open: false,
       onToggle: (isOpen) => {
         rowRoot.classList.toggle("collapsed", !isOpen);
+        onOpenChange?.(nodePath, isOpen);
       },
     });
     row = { root: rowRoot, head: rowHead, glyph, name: nameEl2, meta, dur, body: rowBody };
