@@ -95,6 +95,12 @@ vi.mock("./store.js", () => ({
   // assert against; the module is mocked wholesale, so both are inert here.
   tabStatusFor: vi.fn(() => ""),
   clearTurnDone: vi.fn(),
+  // The activation refetch gate. Defaults TRUE — refetch, the shape every case
+  // outside the gate describe was written against; the gate describe drives
+  // both verdicts explicitly. The predicate's own truth table (residency ×
+  // loadedEpoch × syncEpoch) is store.test.ts's subject; what THIS suite owns
+  // is the routing each verdict produces.
+  transcriptStale: vi.fn(() => true),
 }));
 vi.mock("./store-load.js", () => ({ loadList: vi.fn(), loadMessages: vi.fn() }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
@@ -204,8 +210,16 @@ import {
 import { addAttachment } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
 import { get, watchSession, removeChat, setActive, upsertHeader, clearTurnDone } from "./store.js";
+import { transcriptStale } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
-import { loadTurnRail, pointTurnRail, resetScrollState, fadeInTranscript } from "./messages.js";
+import {
+  loadTurnRail,
+  pointTurnRail,
+  resetScrollState,
+  fadeInTranscript,
+  scrollToBottom,
+  setLoadMore,
+} from "./messages.js";
 import { seedComposerState } from "./composer-state.js";
 import { info } from "./toast.js";
 import { isRetentionEnabled } from "./retention.js";
@@ -219,6 +233,7 @@ beforeEach(() => {
   vi.mocked(get).mockReturnValue(undefined);
   vi.mocked(isRetentionEnabled).mockReturnValue(false);
   vi.mocked(loadMessages).mockResolvedValue(true);
+  vi.mocked(transcriptStale).mockReturnValue(true);
   activeId = "";
 });
 
@@ -1033,5 +1048,92 @@ describe("restore: opening a closed conversation from History", () => {
     expect(vi.mocked(info)).not.toHaveBeenCalled();
     expect(resetScrollState).not.toHaveBeenCalled();
     expect(loadMessages).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The activation refetch gate. activateChatView used to refetch unconditionally;
+// now the transcript-staleness verdict routes it: stale → the fetch path, with
+// the rail FORCED behind the successful load (the heal re-stamps the session
+// fresh, so the rail's own gate can no longer see the verdict); fresh → zero
+// message fetches, the view furniture re-wired, and the rail left to its own
+// record (its count arm may still fetch — that decision is turn-rail.test.ts's
+// subject, not this module's).
+// ---------------------------------------------------------------------------
+
+describe("activateChatView routes on the staleness verdict", () => {
+  function loadedChat(id: string): never {
+    return {
+      id,
+      name: "seeded",
+      model: "",
+      messages: [{ id: "m1", role: "user", ts: 1 }],
+      message_count: 1,
+      has_more: false,
+      usage: { context_size: 1 },
+      draft: "",
+    } as never;
+  }
+
+  function emptyChat(id: string): never {
+    return {
+      id,
+      name: "seeded",
+      model: "",
+      messages: [],
+      message_count: 0,
+      has_more: false,
+      usage: { context_size: 1 },
+      draft: "",
+    } as never;
+  }
+
+  it("a fresh window activates with ZERO message fetches", () => {
+    vi.mocked(get).mockReturnValue(loadedChat("c-fresh"));
+    vi.mocked(transcriptStale).mockReturnValue(false);
+
+    activateChatView("c-fresh");
+
+    expect(loadMessages).not.toHaveBeenCalled();
+    // The per-chat view furniture is still re-wired: the load-more hook and the
+    // landing scroll are activation's, not the fetch's.
+    expect(setLoadMore).toHaveBeenCalled();
+    expect(scrollToBottom).toHaveBeenCalled();
+    // The rail is handed the chat WITHOUT force: its own record decides.
+    expect(loadTurnRail).toHaveBeenCalledWith("c-fresh");
+  });
+
+  it("a stale window refetches messages, then forces the rail behind the load", async () => {
+    vi.mocked(get).mockReturnValue(loadedChat("c-stale"));
+    vi.mocked(transcriptStale).mockReturnValue(true);
+
+    activateChatView("c-stale");
+
+    expect(loadMessages).toHaveBeenCalledWith("c-stale");
+    // The rail fetch is sequenced behind the messages fetch resolving.
+    expect(loadTurnRail).not.toHaveBeenCalled();
+    await vi.mocked(loadMessages).mock.results[0]?.value;
+    expect(loadTurnRail).toHaveBeenCalledWith("c-stale", { force: true });
+  });
+
+  it("a fresh EMPTY chat skips the draft fetch too", () => {
+    // The empty branch's GET exists only to adopt the server-held draft, and a
+    // window this device already fetched yielded it; zero fetches means zero.
+    vi.mocked(get).mockReturnValue(emptyChat("c-empty-fresh"));
+    vi.mocked(transcriptStale).mockReturnValue(false);
+
+    activateChatView("c-empty-fresh");
+
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(loadTurnRail).not.toHaveBeenCalled();
+  });
+
+  it("a stale EMPTY chat fetches its record for the draft", () => {
+    vi.mocked(get).mockReturnValue(emptyChat("c-empty-stale"));
+    vi.mocked(transcriptStale).mockReturnValue(true);
+
+    activateChatView("c-empty-stale");
+
+    expect(loadMessages).toHaveBeenCalledWith("c-empty-stale");
   });
 });

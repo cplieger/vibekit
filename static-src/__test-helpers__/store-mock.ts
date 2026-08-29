@@ -121,4 +121,11 @@ export const storeMock = {
   startEvictionSweep: vi.fn(),
   stopEvictionSweep: vi.fn(),
   evictChatMessages: vi.fn(),
+
+  // The staleness gate. `transcriptStale` defaults TRUE — the always-refetch
+  // behavior every spreading suite was written against; a suite exercising the
+  // zero-fetch activation overrides it.
+  syncEpoch: vi.fn(() => 0),
+  bumpSyncEpoch: vi.fn(),
+  transcriptStale: vi.fn(() => true),
 };

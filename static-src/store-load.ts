@@ -17,6 +17,7 @@ import {
   bumpMessages,
   normalizeMessage,
   liveTurnMessage,
+  syncEpoch,
 } from "./store.js";
 
 // --- Inline decoders ---
@@ -130,8 +131,10 @@ export async function loadList(): Promise<boolean> {
       }),
       // Residency describes the carried-over `messages` window, so it travels
       // with it: dropping it here would make every reconnect read a loaded
-      // chat as never-loaded (or an evicted one as fresh).
+      // chat as never-loaded (or an evicted one as fresh). `loadedEpoch` is the
+      // other half of the same claim and travels for the same reason.
       ...(existing?.residency !== undefined && { residency: existing.residency }),
+      ...(existing?.loadedEpoch !== undefined && { loadedEpoch: existing.loadedEpoch }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
     };
     next.push(session);
@@ -168,6 +171,11 @@ export async function loadMessages(
   // to drop it — a plan or event message persisted and broadcast inside that
   // window would otherwise vanish from the transcript until the next fetch.
   const knownBefore = new Set((get(chatID)?.messages ?? []).map((m) => m.id));
+  // The epoch too, and before rather than after for the mirror-image reason: a
+  // transport gap landing while this request is in flight may have dropped
+  // events the answer predates, so the window assembled from it must not claim
+  // to have survived that gap.
+  const epochAtStart = syncEpoch();
   const d = await apiGetTyped(
     `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`,
     decodeChatGetResponseLocal,
@@ -243,8 +251,11 @@ export async function loadMessages(
     session.draft = d.draft;
     // A successful newest-page load is the ONE writer of `loaded`: the window
     // is now the server's answer, so an activation may trust it. An older-page
-    // prepend extends an already-trusted window and asserts nothing new.
+    // prepend extends an already-trusted window and asserts nothing new. The
+    // epoch stamped is the one captured before the request, so a load that
+    // raced a gap records a claim that already reads stale.
     session.residency = "loaded";
+    session.loadedEpoch = epochAtStart;
   }
   bumpMessages(chatID);
   return true;

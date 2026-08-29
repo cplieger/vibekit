@@ -42,6 +42,8 @@ import {
   type TurnSummary,
 } from "./turn-rail.js";
 import { apiGet } from "./api-client.js";
+import { setSessions, get, bumpSyncEpoch } from "./store.js";
+import type { Session } from "./types.js";
 import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnOutcome } from "./turns.js";
 
@@ -743,5 +745,175 @@ describe("which turn the rail calls current", () => {
 
     expect(io.targets.has(at(cards, 3))).toBe(false);
     expect(current()).toBe("2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The per-chat record: what makes a switch back to a loaded chat cost zero
+// fetches. The rail keeps each chat's fetched index alongside the sync epoch
+// and the message count captured BEFORE the request, and an activation fetches
+// only when that record cannot stand in — missing, from before a transport
+// gap, from before the count moved, or overruled by the caller's `force` (the
+// stale-transcript activation, whose verdict the rail cannot re-derive after
+// the messages heal re-stamps the session fresh).
+// ---------------------------------------------------------------------------
+
+describe("the rail record gates the activation fetch", () => {
+  const host = document.createElement("div");
+
+  beforeAll(() => {
+    document.body.appendChild(host);
+    // Idempotent: if a block above already mounted the rail, the element lives
+    // in that host; resolve markers from the document.
+    mountTurnRail(host);
+  });
+
+  function markers(): string[] {
+    const rail = document.querySelector<HTMLElement>(".turn-rail");
+    return [...(rail?.querySelectorAll(".rail-marker") ?? [])].map((b) => b.textContent ?? "");
+  }
+
+  function session(id: string, messageCount: number): Session {
+    return {
+      id,
+      name: id,
+      model: "",
+      acp_session_id: "",
+      current_mode_id: "",
+      available_modes: [],
+      available_models: [],
+      usage: {
+        context_pct: 0,
+        context_size: 0,
+        credits: 0,
+        turn_count: 0,
+        last_turn_ms: 0,
+        has_real_data: false,
+      },
+      message_count: messageCount,
+      messages: [],
+      has_more: false,
+      thinking: false,
+      working_label: "Thinking",
+    };
+  }
+
+  beforeEach(() => {
+    scrollable.by = 500;
+    resetTurnRail();
+    setSessions([session("c-a", 2), session("c-b", 0)]);
+    // Per-chat answers: c-a is the two-turn session under test, c-b an empty
+    // sibling — a blanket answer would paint c-b's first fetch with c-a's turns.
+    vi.mocked(apiGet).mockImplementation((path: string) =>
+      Promise.resolve(path.includes("c-a") ? { turns: [turn(1), turn(2)] } : { turns: [] }),
+    );
+  });
+
+  it("paints a recorded chat from memory, with no fetch", async () => {
+    await loadTurnRail("c-a");
+    expect(markers()).toEqual(["1", "2"]);
+
+    pointTurnRail("c-b");
+    expect(markers()).toEqual([]);
+
+    vi.mocked(apiGet).mockClear();
+    await loadTurnRail("c-a");
+    expect(markers()).toEqual(["1", "2"]);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it("force refetches even when the record is current", async () => {
+    // The caller's arm of the gate: an activation that found the TRANSCRIPT
+    // stale (eviction, first load) refetches the rail with it, however current
+    // the rail's own record looks.
+    await loadTurnRail("c-a");
+    vi.mocked(apiGet).mockClear();
+
+    await loadTurnRail("c-a", { force: true });
+    expect(apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("a moved message count invalidates the record", async () => {
+    await loadTurnRail("c-a");
+    // A background turn lands while the rail points elsewhere: SSE ingest moves
+    // the chat's count, and the record now describes an older session.
+    get("c-a")!.message_count = 3;
+    pointTurnRail("c-b");
+
+    vi.mocked(apiGet).mockClear();
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2), turn(3)] });
+    await loadTurnRail("c-a");
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(markers()).toEqual(["1", "2", "3"]);
+  });
+
+  it("a transport gap invalidates the record", async () => {
+    await loadTurnRail("c-a");
+    bumpSyncEpoch();
+
+    vi.mocked(apiGet).mockClear();
+    await loadTurnRail("c-a");
+    expect(apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("a fetch that raced a gap records a claim that already reads stale", async () => {
+    // The rail's half of the fetch-races-gap rule: the epoch is captured before
+    // the request, so an answer that may predate the gap's lost turn_endeds
+    // cannot claim to have survived it, and the next activation refetches.
+    vi.mocked(apiGet).mockImplementation(async () => {
+      bumpSyncEpoch();
+      return { turns: [turn(1), turn(2)] };
+    });
+    await loadTurnRail("c-a");
+
+    vi.mocked(apiGet).mockClear();
+    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
+    await loadTurnRail("c-a");
+    expect(apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a background refresh without painting it, so the next activation is free", async () => {
+    // The turn_ended door for a chat the rail points away from: the fetched
+    // index is recorded for that chat's next activation but must not paint over
+    // the pointed chat's rail.
+    await loadTurnRail("c-b");
+    expect(markers()).toEqual([]);
+
+    await refreshTurnRail("c-a");
+    expect(markers()).toEqual([]);
+
+    vi.mocked(apiGet).mockClear();
+    await loadTurnRail("c-a");
+    expect(markers()).toEqual(["1", "2"]);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stale record on a failed refetch, so the next activation retries", async () => {
+    await loadTurnRail("c-a");
+    get("c-a")!.message_count = 3;
+    pointTurnRail("c-b");
+
+    // The refetch the moved count demands fails; the record must not be
+    // rewritten into currency by it.
+    vi.mocked(apiGet).mockClear();
+    vi.mocked(apiGet).mockResolvedValue(null);
+    await loadTurnRail("c-a");
+    expect(apiGet).toHaveBeenCalledTimes(1);
+
+    pointTurnRail("c-b");
+    await loadTurnRail("c-a");
+    expect(apiGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders a purged chat empty rather than from its dead record", async () => {
+    await loadTurnRail("c-a");
+    expect(markers()).toEqual(["1", "2"]);
+
+    // The chat leaves the store (closed tab, deleted record) while its rail
+    // record survives; re-pointing prunes the record rather than painting it.
+    setSessions([session("c-b", 0)]);
+    pointTurnRail("c-b");
+    pointTurnRail("c-a");
+    expect(markers()).toEqual([]);
   });
 });
