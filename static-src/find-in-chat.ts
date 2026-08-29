@@ -44,8 +44,14 @@ import { createPopup } from "@cplieger/ui-primitives/popup";
 import type { PopupController } from "@cplieger/ui-primitives/popup";
 import { $, byId } from "./dom.js";
 import { jumpTo, onTranscriptMutate } from "./scroll.js";
-import { runServerSearch, resetServerSearch, searchHitTotal } from "./chat-search.js";
-import { getActiveId } from "./store.js";
+import {
+  runServerSearch,
+  resetServerSearch,
+  revealHitTurn,
+  searchHitTotal,
+} from "./chat-search.js";
+import { getActive, getActiveId } from "./store.js";
+import { loadMessages } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { createSearchShell, searchIconButton } from "./search-shell.js";
@@ -81,6 +87,27 @@ let engineWrites = 0;
 /** Unsubscribe for the tab-change teardown, so a rebuilt module does not stack
  *  a second subscriber on the bus. */
 let unsubTab: (() => void) | null = null;
+
+// ---------------------------------------------------------------------------
+// Server-hit navigation state.
+//
+// The hits themselves, kept so stepping can NAVIGATE them when the DOM walker
+// marked nothing: every occurrence can sit inside collapsed delegate bodies,
+// on a non-resident page, or in markdown the renderer never paints — and the
+// counter already admits they exist ("N in chat"), so Enter going dead on
+// them would be the overlay contradicting itself.
+// ---------------------------------------------------------------------------
+
+/** The last successful server answer, session-wide and in server order. A
+ *  failed re-fetch keeps the previous list, matching chat-search.ts's rule for
+ *  the reveal: a transient failure must not collapse the search under the
+ *  reader. */
+let serverHits: SearchHit[] = [];
+/** Position in `serverHits` while stepping drives navigation; -1 = none. */
+let hitCursor = -1;
+/** One navigation in flight at a time: paging in a hit spans awaits, and a
+ *  second Enter mid-flight would race the first's reveal and selection. */
+let navBusy = false;
 
 /** Open state lives on the popup and NOWHERE ELSE.
  *
@@ -171,6 +198,13 @@ function ensureBuilt(): void {
       return runServerSearch(getActiveId(), query, ctx.caseSensitive);
     },
     render: (hits, query) => {
+      if (hits !== null) {
+        // A fresh answer replaces the navigable set and drops the cursor: a
+        // position in the previous query's hits means nothing in this one. A
+        // null (failed fetch) keeps the previous set, same as the reveal.
+        serverHits = hits;
+        hitCursor = -1;
+      }
       if (hits === null || hits.length === 0) {
         return;
       }
@@ -291,6 +325,8 @@ function teardown(): void {
   applyEngine(() => {
     engine?.clear();
   });
+  serverHits = [];
+  hitCursor = -1;
   resetServerSearch(getActiveId());
   updateCounter("");
 }
@@ -321,6 +357,13 @@ function step(dir: 1 | -1): void {
   // first — that lands on the first match, matching native find's behaviour.
   if (engine.query !== shell.value) {
     shell.run();
+    return;
+  }
+  // No DOM mark anywhere, but the server found the text: stepping navigates
+  // the server hits instead of dying on a counter that says "N in chat".
+  // Enter-cycling with resident marks stays exactly what it was.
+  if (engine.total === 0 && serverHits.length > 0) {
+    stepServerHit(dir);
     return;
   }
   applyEngine(() => {
@@ -364,6 +407,355 @@ function revealCurrent(): void {
   // view back to the bottom while the user reads a match — but only when the
   // jump actually leaves the live edge, which is `jumpTo`'s call to make.
   jumpTo(mark, {
+    block: "center",
+    inline: "nearest",
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Server-hit navigation: the pipeline that makes a hit with no DOM mark
+// reachable. Page the message in, reveal its turn (stub build included), open
+// the delegate/reasoning chain over the matched block, re-walk, and select the
+// nearest mark — or, when the match is not in rendered text at all, select the
+// block itself and SAY so. Never a silent no-op.
+// ---------------------------------------------------------------------------
+
+/** How many older pages one navigation may fetch hunting for its message.
+ *  Generous — at 50 messages a page this is 10000 messages — because the
+ *  reader asked for exactly this hit; the cap only bounds a server that keeps
+ *  claiming `has_more` without ever delivering the message. */
+const HIT_PAGE_CAP = 200;
+
+/** Below this excerpt similarity the best candidate mark is not credibly THE
+ *  hit — the same text elsewhere in the block, not this occurrence — so
+ *  navigation falls back to selecting the block rather than claiming a
+ *  precision it does not have. Dice over word tokens; an honest match scores
+ *  well above this even with markdown syntax stripped out of the rendering,
+ *  and a wrong occurrence shares little beyond the needle itself. */
+const SIM_FLOOR = 0.3;
+
+/** How long the "look here" wash stays on a container the navigation selected
+ *  (block selection and `message`-kind hits). Past the CSS animation so the
+ *  class strip is a cleanup, not the visual cutoff; also the reduced-motion
+ *  backstop, where `animationend` never fires (settings-highlight.ts sets the
+ *  precedent). */
+const FLASH_FALLBACK_MS = 2000;
+
+function stepServerHit(dir: 1 | -1): void {
+  if (navBusy || serverHits.length === 0) {
+    return;
+  }
+  hitCursor =
+    hitCursor === -1
+      ? dir === 1
+        ? 0
+        : serverHits.length - 1
+      : (hitCursor + dir + serverHits.length) % serverHits.length;
+  const hit = serverHits[hitCursor];
+  if (hit === undefined) {
+    return;
+  }
+  navBusy = true;
+  void navigateToHit(hit).finally(() => {
+    navBusy = false;
+  });
+}
+
+/** The counter line while server hits are being stepped: the position is in
+ *  the SESSION-wide list, and the "in chat" suffix keeps the vocabulary the
+ *  counter already uses for that figure. */
+function serverHitCounter(): string {
+  return `${String(hitCursor + 1)} of ${String(serverHits.length)} in chat`;
+}
+
+/** State the one thing navigation could not do, on the live-region counter.
+ *  The next counter repaint replaces it, which is the right lifetime for a
+ *  per-hit remark. */
+function showHitNotice(suffix: string): void {
+  if (countEl !== null) {
+    countEl.textContent = `${serverHitCounter()} \u00b7 ${suffix}`;
+  }
+}
+
+async function navigateToHit(hit: SearchHit): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "" || engine === null) {
+    return;
+  }
+  if (!(await ensureHitResident(chatID, hit))) {
+    if (isOpen()) {
+      showHitNotice("could not be loaded");
+    }
+    return;
+  }
+  await revealHitTurn(chatID, hit);
+  // Closed (or switched away) while paging in: the surface this would select
+  // on is gone, and teardown already reset the reveal.
+  if (!isOpen() || shell === null) {
+    return;
+  }
+  const row = messageRowEl(hit.message_id);
+  if (row === null) {
+    showHitNotice("could not be shown");
+    return;
+  }
+  // A `message` hit locates the message, not a span in it: container
+  // navigation, scroll + brief highlight. Routing here is what makes the
+  // ranker's segment_len division unreachable for this kind — its
+  // segment_len is 0 by contract, and no zero-guard below has to know that.
+  if (hit.segment_kind === "message") {
+    selectContainer(row);
+    if (countEl !== null) {
+      countEl.textContent = serverHitCounter();
+    }
+    return;
+  }
+  const target = resolveSegmentEl(row, hit) ?? row;
+  openDisclosureChain(row, target, hit);
+  // Re-walk now that the chain is open: the marks inside it exist only after
+  // the walker can see the text.
+  applyEngine(() => {
+    engine?.search(shell?.value ?? "", shell?.caseSensitive ?? false);
+  });
+  const chosen = pickNearestMark(target, hit);
+  if (chosen === -1) {
+    // Syntax-only match (link target, emphasis marker, fence info) or a best
+    // candidate below the similarity floor: select the block and say why.
+    selectContainer(target);
+    showHitNotice("not in rendered text");
+    return;
+  }
+  applyEngine(() => {
+    engine?.setCurrent(chosen);
+  });
+  updateCounter(shell.value);
+  revealCurrent();
+}
+
+/** Page older history in until the hit's message is resident. Bounded by the
+ *  server's own `has_more`, a no-progress check, and a page cap. */
+async function ensureHitResident(chatID: string, hit: SearchHit): Promise<boolean> {
+  const resident = (): boolean =>
+    getActive()?.messages.some((m) => m.id === hit.message_id) === true;
+  for (let pages = 0; !resident(); pages++) {
+    const session = getActive();
+    if (session?.has_more !== true || session.id !== chatID || pages >= HIT_PAGE_CAP) {
+      return false;
+    }
+    const oldest = session.messages[0]?.id;
+    if (!(await loadMessages(chatID, oldest))) {
+      return false;
+    }
+    // No progress: the server answered but the window's edge did not move, so
+    // more requests would loop on the same answer.
+    if (getActive()?.messages[0]?.id === oldest) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The rendered row for a message id: reconcile keys message rows by id inside
+ *  each turn card's body. */
+function messageRowEl(messageID: string): HTMLElement | null {
+  return $.messages.querySelector<HTMLElement>(
+    `.turn-body > [data-reconcile-key="${CSS.escape(messageID)}"]`,
+  );
+}
+
+/**
+ * The rendered container of the hit's SEGMENT, resolved by
+ * (messageID, blockIndex, segment_kind) against the store's block array:
+ * tool segments carry their tool call's id (the card is addressed by
+ * `data-tool-id`), text and reasoning blocks map ordinally onto the bubbles
+ * and traces mounted in their own container (top level, or the delegate box
+ * addressed by `data-subtask`). Null — the caller falls back to the message
+ * row — for legacy blockless hits and anything the renderer did not mount.
+ */
+function resolveSegmentEl(row: HTMLElement, hit: SearchHit): HTMLElement | null {
+  const bi = hit.block_index;
+  if (bi === undefined) {
+    return null;
+  }
+  const block = getActive()?.messages.find((m) => m.id === hit.message_id)?.blocks?.[bi];
+  if (block === undefined) {
+    return null;
+  }
+  if (hit.segment_kind === "tool_title" || hit.segment_kind === "tool_output") {
+    const tid = block.tool_call_id ?? "";
+    if (tid === "") {
+      return null;
+    }
+    return row.querySelector<HTMLElement>(`[data-tool-id="${CSS.escape(tid)}"]`);
+  }
+  // content | reasoning: the Nth same-kind block of this agent maps onto the
+  // Nth mounted bubble/trace in that agent's container, because the renderer
+  // mounts blocks in chronological order per container.
+  const wantType = hit.segment_kind === "content" ? "text" : "thinking";
+  const subtask = hit.agent_subtask_id ?? "";
+  const msg = getActive()?.messages.find((m) => m.id === hit.message_id);
+  let ordinal = 0;
+  for (let i = 0; i < bi; i++) {
+    const b = msg?.blocks?.[i];
+    if (b?.type === wantType && (b.agent_subtask_id ?? "") === subtask) {
+      ordinal++;
+    }
+  }
+  const scope =
+    subtask === ""
+      ? row
+      : row.querySelector<HTMLElement>(`[data-subtask="${CSS.escape(subtask)}"]`);
+  if (scope === null) {
+    return null;
+  }
+  const selector = wantType === "text" ? ".message" : "details.reasoning-block";
+  const inScope = [...scope.querySelectorAll<HTMLElement>(selector)].filter((cand) => {
+    // Direct membership: a top-level block is not inside any delegate box, and
+    // a delegate's block belongs to ITS box, not a box nested deeper.
+    const owner = cand.closest("[data-subtask]");
+    return subtask === "" ? owner === null : owner === scope;
+  });
+  return inScope[ordinal] ?? null;
+}
+
+/**
+ * Open every closed disclosure between the hit's container and its row, so the
+ * walker can reach the text: reasoning `<details>` by the platform API, and
+ * delegate boxes / tool groups by ACTIVATING their real header — the
+ * disclosure controller behind it flips `aria-hidden` + `inert` synchronously,
+ * and going through it keeps its state agreeing with the DOM. A tool_output
+ * hit additionally opens its card's own disclosure, where the output body
+ * lives (and is often first BUILT).
+ */
+function openDisclosureChain(row: HTMLElement, target: HTMLElement, hit: SearchHit): void {
+  for (let cur: HTMLElement | null = target; cur !== null && cur !== row.parentElement;) {
+    if (cur instanceof HTMLDetailsElement && !cur.open) {
+      cur.open = true;
+    }
+    if (cur.classList.contains("subagent-block") && cur.classList.contains("collapsed")) {
+      cur.querySelector<HTMLElement>(":scope > .subagent-header")?.click();
+    }
+    if (cur.classList.contains("tool-group") && cur.classList.contains("tool-group-collapsed")) {
+      cur.querySelector<HTMLElement>(":scope > .tool-group-header")?.click();
+    }
+    if (cur === row) {
+      break;
+    }
+    cur = cur.parentElement;
+  }
+  if (hit.segment_kind === "tool_output" && target.classList.contains("tool-call")) {
+    const toggle = target.querySelector<HTMLElement>(".tool-disclosure");
+    if (toggle?.getAttribute("aria-expanded") === "false") {
+      toggle.click();
+    }
+  }
+}
+
+/**
+ * The nearest-match ranking over the target's marks, as the engine index of
+ * the winner (-1 = no credible mark). Excerpt similarity first — the server
+ * matched raw markdown and the DOM holds rendered text, so ordinals cannot be
+ * trusted across the two — then relative position (`offset / segment_len`
+ * against the mark's offset in the target's text), ties to the lowest index.
+ */
+function pickNearestMark(target: HTMLElement, hit: SearchHit): number {
+  const all = [...$.messages.querySelectorAll<HTMLElement>("mark.find-hit")];
+  const excerptTokens = tokenSet(hit.excerpt);
+  const offsets = markOffsets(target);
+  const want = hit.offset / hit.segment_len;
+  let best = -1;
+  let bestSim = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < all.length; i++) {
+    const mark = all[i];
+    if (mark === undefined || !target.contains(mark)) {
+      continue;
+    }
+    const at = offsets.marks.get(mark) ?? 0;
+    const sim = dice(excerptTokens, tokenSet(contextAround(offsets.text, at, mark)));
+    const dist = Math.abs(want - at / Math.max(1, offsets.text.length));
+    if (sim > bestSim || (sim === bestSim && dist < bestDist)) {
+      best = i;
+      bestSim = sim;
+      bestDist = dist;
+    }
+  }
+  return bestSim >= SIM_FLOOR ? best : -1;
+}
+
+/** The target's full text in document order plus each mark's start offset in
+ *  it. One walk serves every candidate. UTF-16 units rather than the server's
+ *  runes — both sides of the position comparison are RATIOS, so the skew of a
+ *  surrogate pair moves both numerators the same way. */
+function markOffsets(target: HTMLElement): { text: string; marks: Map<HTMLElement, number> } {
+  const marks = new Map<HTMLElement, number>();
+  let text = "";
+  const walk = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.nodeValue ?? "";
+      return;
+    }
+    if (node instanceof HTMLElement && node.matches("mark.find-hit")) {
+      marks.set(node, text.length);
+    }
+    for (const child of node.childNodes) {
+      walk(child);
+    }
+  };
+  walk(target);
+  return { text, marks };
+}
+
+/** The rendered-side counterpart of the server's excerpt: the text around the
+ *  mark, at the same radius the server uses (searchExcerptRadius = 60). */
+function contextAround(text: string, at: number, mark: HTMLElement): string {
+  const len = mark.textContent.length;
+  return text.slice(Math.max(0, at - 60), at + len + 60);
+}
+
+/** Word tokens for similarity: lowercased, split on anything that is not a
+ *  letter or digit — which is what strips markdown syntax (`**`, backticks,
+ *  link brackets) out of the comparison between raw and rendered text. */
+function tokenSet(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((t) => t !== ""),
+  );
+}
+
+/** Dice coefficient over two token sets: 2·|A∩B| / (|A|+|B|). */
+function dice(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) {
+    return 0;
+  }
+  let inter = 0;
+  for (const t of a) {
+    if (b.has(t)) {
+      inter++;
+    }
+  }
+  return (2 * inter) / (a.size + b.size);
+}
+
+/** Container selection: scroll it into view and flash the shared "look here"
+ *  wash (24-find.css). The class comes off on animationend, with a timer as
+ *  the reduced-motion backstop where the animation never runs. */
+function selectContainer(target: HTMLElement): void {
+  target.classList.add("find-target-flash");
+  target.addEventListener(
+    "animationend",
+    () => {
+      target.classList.remove("find-target-flash");
+    },
+    { once: true },
+  );
+  setTimeout(() => {
+    target.classList.remove("find-target-flash");
+  }, FLASH_FALLBACK_MS);
+  jumpTo(target, {
     block: "center",
     inline: "nearest",
     behavior: prefersReducedMotion() ? "auto" : "smooth",
