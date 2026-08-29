@@ -33,7 +33,7 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 
 const { mountChatView } = await import("./messages.js");
 const { CHAT_SKELETON_ID, chatSkeleton } = await import("./skeleton.js");
-const { setSessions, setActive, emitMessages } = await import("./store.js");
+const { setSessions, setActive, bumpMessages } = await import("./store.js");
 
 const messagesEl = document.getElementById("messages") as HTMLElement;
 
@@ -80,7 +80,7 @@ describe("the transcript's loading placeholder", () => {
     expect(document.getElementById(CHAT_SKELETON_ID)).not.toBeNull();
 
     activate([event("m1")]);
-    emitMessages();
+    bumpMessages("c-1");
 
     expect(document.getElementById(CHAT_SKELETON_ID)).toBeNull();
     expect(messagesEl.querySelector(".turn")).not.toBeNull();
@@ -92,7 +92,7 @@ describe("the transcript's loading placeholder", () => {
     // appended after every unkeyed sibling already in the container.
     messagesEl.appendChild(chatSkeleton());
     activate([event("m1"), event("m2")]);
-    emitMessages();
+    bumpMessages("c-1");
 
     const first = messagesEl.firstElementChild;
     expect(first?.id).not.toBe(CHAT_SKELETON_ID);
@@ -104,7 +104,7 @@ describe("the transcript's loading placeholder", () => {
     // that paint would clear the container and show nothing at all.
     messagesEl.appendChild(chatSkeleton());
     activate([]);
-    emitMessages();
+    bumpMessages("c-1");
 
     expect(document.getElementById(CHAT_SKELETON_ID)).not.toBeNull();
   });

@@ -1098,19 +1098,21 @@ describe("Store message attachments (merge allowlist)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The render signal: one bump per list change, coalesced.
+// The render signal: one bump per list change, coalesced, PER CHAT.
 //
-// `messagesVersion` is the renderer's only coarse "the list changed" input, and
-// the streaming paths deliberately do NOT bump it per delta — the per-block and
-// per-message signals carry those. So the two things worth pinning are that a
-// list change bumps it exactly once, and that several changes arriving in one
-// tick still bump it exactly once. A per-event bump would repaint the whole
-// transcript for every chunk of every turn.
+// Each chat's `messagesVersionOf` signal is the renderer's only coarse "the
+// list changed" input, and the streaming paths deliberately do NOT bump it per
+// delta — the per-block and per-message signals carry those. Worth pinning:
+// a list change bumps exactly once; several changes in one tick still bump
+// exactly once; a BACKGROUND chat's changes bump its own signal and never the
+// active chat's; and a chat removed before its deferred flush does not get its
+// version signal re-minted by the flush.
 // ---------------------------------------------------------------------------
 
 import {
-  messagesVersion,
-  emitMessages,
+  messagesVersionOf,
+  bumpMessages,
+  watchActiveId,
   isThinking,
   defaultUsage,
   setTurnFailed,
@@ -1135,33 +1137,86 @@ function tick(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
 
-describe("messagesVersion", () => {
-  it("counts up by one per explicit emit", () => {
-    const before = messagesVersion.peek();
-    emitMessages();
-    expect(messagesVersion.peek()).toBe(before + 1);
+describe("per-chat messages version", () => {
+  it("counts up by one per explicit bump, on the named chat only", () => {
+    const mine = messagesVersionOf("mv-a").peek();
+    const other = messagesVersionOf("mv-b").peek();
+    bumpMessages("mv-a");
+    expect(messagesVersionOf("mv-a").peek()).toBe(mine + 1);
+    expect(messagesVersionOf("mv-b").peek()).toBe(other);
   });
 
   it("coalesces two new messages arriving in one tick into one render", async () => {
     resetStore("mv-1");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("mv-1").peek();
     appendChunk("mv-1", "m-a", "a", false, 0, "");
     appendChunk("mv-1", "m-b", "b", false, 0, "");
     // Deferred: the coalescer owns the microtask, so nothing has repainted yet.
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("mv-1").peek()).toBe(before);
     await tick();
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("mv-1").peek()).toBe(before + 1);
   });
 
   it("schedules again once the deferred render has run", async () => {
     resetStore("mv-2");
     appendChunk("mv-2", "m-a", "a", false, 0, "");
     await tick();
-    const between = messagesVersion.peek();
+    const between = messagesVersionOf("mv-2").peek();
     appendChunk("mv-2", "m-b", "b", false, 0, "");
     await tick();
     // The guard has to reset, or the second turn of any chat never repaints.
-    expect(messagesVersion.peek()).toBe(between + 1);
+    expect(messagesVersionOf("mv-2").peek()).toBe(between + 1);
+  });
+
+  it("a background chat's stream bumps its own version, never the active chat's", async () => {
+    setSessions([makeSession("mv-fg"), makeSession("mv-bg")]);
+    setActive("mv-fg");
+    const fg = messagesVersionOf("mv-fg").peek();
+    const bg = messagesVersionOf("mv-bg").peek();
+    appendChunk("mv-bg", "m-a", "a", false, 0, "");
+    await tick();
+    expect(messagesVersionOf("mv-bg").peek()).toBe(bg + 1);
+    expect(messagesVersionOf("mv-fg").peek()).toBe(fg);
+  });
+
+  it("a chat removed before its deferred flush is skipped, not re-minted", async () => {
+    resetStore("mv-gone");
+    appendChunk("mv-gone", "m-a", "a", false, 0, "");
+    removeChat("mv-gone");
+    const fresh = messagesVersionOf("mv-gone").peek(); // a NEW signal, minted by this read
+    await tick();
+    // The parked flush must not have bumped the re-minted signal.
+    expect(messagesVersionOf("mv-gone").peek()).toBe(fresh);
+  });
+
+  it("transcript facts bump the chat's version (coalesced)", async () => {
+    resetStore("mv-fact");
+    const before = messagesVersionOf("mv-fact").peek();
+    setThinking("mv-fact", true);
+    await tick();
+    expect(messagesVersionOf("mv-fact").peek()).toBe(before + 1);
+    const mid = messagesVersionOf("mv-fact").peek();
+    setTurnFailed("mv-fact");
+    setWorkingLabel("mv-fact", "Reading files");
+    await tick();
+    // Two facts in one tick coalesce into one repaint.
+    expect(messagesVersionOf("mv-fact").peek()).toBe(mid + 1);
+  });
+
+  it("a replayed fact frame that changes nothing bumps nothing", async () => {
+    resetStore("mv-noop");
+    setTurnFailed("mv-noop");
+    await tick();
+    const before = messagesVersionOf("mv-noop").peek();
+    setTurnFailed("mv-noop"); // replay: latch already set
+    await tick();
+    expect(messagesVersionOf("mv-noop").peek()).toBe(before);
+  });
+
+  it("watchActiveId reads the active id", () => {
+    setSessions([makeSession("mv-w")]);
+    setActive("mv-w");
+    expect(watchActiveId()).toBe("mv-w");
   });
 });
 
@@ -1700,17 +1755,17 @@ describe("Store ingestMessage bookkeeping", () => {
 
   it("repaints when a message lands", () => {
     resetStore("ig-2");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ig-2").peek();
     appendMessage("ig-2", { id: "m-1", role: "user", ts: 1, content: "one" });
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ig-2").peek()).toBe(before + 1);
   });
 
   it("repaints when an existing message is merged over", () => {
     resetStore("ig-3");
     appendMessage("ig-3", { id: "m-1", role: "user", ts: 1, content: "one" });
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ig-3").peek();
     upsertMessage("ig-3", { id: "m-1", role: "user", ts: 1, content: "one (sanitized)" });
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ig-3").peek()).toBe(before + 1);
   });
 
   it("indexes messages that arrived with the session, so a replay merges", () => {
@@ -1835,69 +1890,69 @@ describe("Store setTurnSummary", () => {
 
   it("stamps the credits and repaints", () => {
     chatWithTurn("ts-2");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-2").peek();
     setTurnSummary("ts-2", { credits: 12 });
     expect(get("ts-2")?.messages[1]?.turn_credits).toBe(12);
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ts-2").peek()).toBe(before + 1);
   });
 
   it("ignores a zero credit count rather than stamping one", () => {
     chatWithTurn("ts-3");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-3").peek();
     setTurnSummary("ts-3", { credits: 0 });
     expect(get("ts-3")?.messages[1]?.turn_credits).toBeUndefined();
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ts-3").peek()).toBe(before);
   });
 
   it("stamps the elapsed time and repaints", () => {
     chatWithTurn("ts-4");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-4").peek();
     setTurnSummary("ts-4", { elapsedMs: 250 });
     expect(get("ts-4")?.messages[1]?.turn_elapsed_ms).toBe(250);
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ts-4").peek()).toBe(before + 1);
   });
 
   it("ignores a zero elapsed time", () => {
     chatWithTurn("ts-5");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-5").peek();
     setTurnSummary("ts-5", { elapsedMs: 0 });
     expect(get("ts-5")?.messages[1]?.turn_elapsed_ms).toBeUndefined();
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ts-5").peek()).toBe(before);
   });
 
   it("stamps the changed files and repaints", () => {
     chatWithTurn("ts-6");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-6").peek();
     setTurnSummary("ts-6", {
       changedFiles: { "src/parser.ts": { lines_added: 3, lines_removed: 1 } },
     });
     expect(get("ts-6")?.messages[1]?.changed_files).toEqual({
       "src/parser.ts": { lines_added: 3, lines_removed: 1 },
     });
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ts-6").peek()).toBe(before + 1);
   });
 
   it("ignores an empty changed-files map", () => {
     chatWithTurn("ts-7");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-7").peek();
     setTurnSummary("ts-7", { changedFiles: {} });
     expect(get("ts-7")?.messages[1]?.changed_files).toBeUndefined();
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ts-7").peek()).toBe(before);
   });
 
   it("stamps the model and repaints", () => {
     chatWithTurn("ts-8");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-8").peek();
     setTurnSummary("ts-8", { model: "claude-opus-5" });
     expect(get("ts-8")?.messages[1]?.turn_model).toBe("claude-opus-5");
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ts-8").peek()).toBe(before + 1);
   });
 
   it("does not repaint for a summary carrying nothing", () => {
     chatWithTurn("ts-9");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ts-9").peek();
     setTurnSummary("ts-9", {});
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ts-9").peek()).toBe(before);
   });
 });
 
@@ -2081,11 +2136,11 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-1", "m-1", "hello", false, 0, "");
     await tick();
     const sig = ensureStreamingSig("m-1", "hello");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ar-1").peek();
     appendChunk("ar-1", "m-1", " world", false, 0, "");
     await tick();
     expect(sig.value).toBe("hello world");
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ar-1").peek()).toBe(before);
     clearStreamingSig("m-1");
   });
 
@@ -2093,10 +2148,10 @@ describe("Store appendChunk repaint discipline", () => {
     resetStore("ar-2");
     appendChunk("ar-2", "m-1", "hello", false, 0, "");
     await tick();
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ar-2").peek();
     appendChunk("ar-2", "m-1", " world", false, 0, "");
     await tick();
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ar-2").peek()).toBe(before + 1);
   });
 
   it("routes the text delta to the per-block signal without repainting", async () => {
@@ -2104,11 +2159,11 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-3", "m-1", "hello", false, 0, "");
     await tick();
     const blockSig = ensureBlockTextSig("m-1", 0, "hello");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ar-3").peek();
     appendChunk("ar-3", "m-1", " world", false, 0, "");
     await tick();
     expect(blockSig.value).toBe("hello world");
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ar-3").peek()).toBe(before);
     clearAllBlockSigs();
   });
 
@@ -2122,11 +2177,11 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-7", "m-1", "I", false, 1, "sub-7");
     await tick();
     const parentSig = ensureBlockTextSig("m-1", 0, "The");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ar-7").peek();
     appendChunk("ar-7", "m-1", " workflow is running.", false, 0, "");
     await tick();
     expect(parentSig.value).toBe("The workflow is running.");
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ar-7").peek()).toBe(before);
     clearAllBlockSigs();
   });
 
@@ -2135,11 +2190,11 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-4", "m-1", "why", true, 0, "");
     await tick();
     const blockSig = ensureBlockThinkingSig("m-1", 0, "why");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ar-4").peek();
     appendChunk("ar-4", "m-1", " not", true, 0, "");
     await tick();
     expect(blockSig.value).toBe("why not");
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("ar-4").peek()).toBe(before);
     clearAllBlockSigs();
   });
 
@@ -2147,10 +2202,10 @@ describe("Store appendChunk repaint discipline", () => {
     resetStore("ar-5");
     appendChunk("ar-5", "m-1", "why", true, 0, "");
     await tick();
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ar-5").peek();
     appendChunk("ar-5", "m-1", " not", true, 0, "");
     await tick();
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ar-5").peek()).toBe(before + 1);
   });
 
   it("repaints when a refusal is stamped, so the callout can mount", async () => {
@@ -2158,7 +2213,7 @@ describe("Store appendChunk repaint discipline", () => {
     appendChunk("ar-6", "m-1", "I can't", false, 0, "");
     await tick();
     const sig = ensureStreamingSig("m-1", "I can't");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("ar-6").peek();
     appendChunk("ar-6", "m-1", " help with that", false, 0, "", 0, { category: "policy" });
     await tick();
     expect(get("ar-6")?.messages[0]?.refusal).toEqual({ category: "policy" });
@@ -2166,7 +2221,7 @@ describe("Store appendChunk repaint discipline", () => {
     expect(sig.value).toBe("I can't help with that");
     // ...but the per-block signal carries text only, so a message-level callout
     // needs the keyed reconcile as well.
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("ar-6").peek()).toBe(before + 1);
     clearStreamingSig("m-1");
   });
 
@@ -2206,9 +2261,9 @@ describe("Store upsertToolCall", () => {
 
   it("repaints when it mints one", () => {
     resetStore("tc-2");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("tc-2").peek();
     upsertToolCall("tc-2", "m-1", call("t-1"), 0);
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("tc-2").peek()).toBe(before + 1);
   });
 
   it("keeps the server's message count when it mints one", () => {
@@ -2265,10 +2320,10 @@ describe("Store upsertToolCall", () => {
     resetStore("tc-9");
     appendMessage("tc-9", { id: "m-1", role: "assistant", ts: 1, content: "", blocks: [] });
     await tick();
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("tc-9").peek();
     upsertToolCall("tc-9", "m-1", call("t-1"), 0);
     await tick();
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("tc-9").peek()).toBe(before + 1);
   });
 
   it("fans a later update through the tool's own signal without repainting", async () => {
@@ -2276,11 +2331,11 @@ describe("Store upsertToolCall", () => {
     upsertToolCall("tc-10", "m-1", call("t-1"), 0);
     await tick();
     const sig = ensureToolCallSig("tc-10", "t-1", call("t-1"));
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("tc-10").peek();
     upsertToolCall("tc-10", "m-1", call("t-1", "completed"), 0);
     await tick();
     expect(sig.value.status).toBe("completed");
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("tc-10").peek()).toBe(before);
     clearToolCallSig("tc-10", "t-1");
   });
 
@@ -2288,10 +2343,10 @@ describe("Store upsertToolCall", () => {
     resetStore("tc-11");
     upsertToolCall("tc-11", "m-1", call("t-1"), 0);
     await tick();
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("tc-11").peek();
     upsertToolCall("tc-11", "m-1", call("t-1", "completed"), 0);
     await tick();
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("tc-11").peek()).toBe(before + 1);
   });
 
   it("mints a new message rather than embedding into a resident one", () => {
@@ -2349,10 +2404,10 @@ describe("Store setCodeReferences", () => {
 
   it("attaches the attributions to the message the id names, and repaints", () => {
     chatWithTwo("cr-1");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("cr-1").peek();
     setCodeReferences("cr-1", "m-2", [{ license_name: "MIT" }]);
     expect(get("cr-1")?.messages[1]?.code_references).toEqual([{ license_name: "MIT" }]);
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("cr-1").peek()).toBe(before + 1);
   });
 
   it("is a no-op for a message that has not arrived yet", () => {
@@ -2422,8 +2477,8 @@ describe("Store steer projection, frame by frame", () => {
 // outlive the row that created it — a paginated window drops resident messages,
 // and a re-created message keeps its id. When the row itself is new, feeding
 // that leftover signal is not enough: nothing has mounted the row, so the only
-// channel that can put it on screen is the keyed reconcile behind
-// `messagesVersion`. This is the one case where the "a mounted signal carries
+// channel that can put it on screen is the keyed reconcile behind the chat's
+// version signal. This is the one case where the "a mounted signal carries
 // the delta, so stay off the list" discipline above does NOT apply.
 // ---------------------------------------------------------------------------
 
@@ -2431,13 +2486,13 @@ describe("Store appendChunk on a first sighting", () => {
   it("repaints the list even when a signal for that id is already mounted", async () => {
     resetStore("fs-1");
     const sig = ensureStreamingSig("m-unseen", "");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("fs-1").peek();
 
     appendChunk("fs-1", "m-unseen", "hello", false, 0, "");
     await tick();
 
     expect(get("fs-1")?.messages[0]?.content).toBe("hello");
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("fs-1").peek()).toBe(before + 1);
     // The leftover signal is not the channel for a row that has yet to mount.
     expect(sig.value).toBe("");
     clearStreamingSig("m-unseen");
@@ -2446,24 +2501,24 @@ describe("Store appendChunk on a first sighting", () => {
   it("repaints for a first reasoning delta with a mounted reasoning signal", async () => {
     resetStore("fs-2");
     const sig = ensureReasoningSig("m-unseen-r", "");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("fs-2").peek();
 
     appendChunk("fs-2", "m-unseen-r", "why", true, 0, "");
     await tick();
 
     expect(get("fs-2")?.messages[0]?.reasoning).toBe("why");
-    expect(messagesVersion.peek()).toBe(before + 1);
+    expect(messagesVersionOf("fs-2").peek()).toBe(before + 1);
     expect(sig.value).toBe("");
     clearReasoningSig("m-unseen-r");
   });
 });
 
 // ---------------------------------------------------------------------------
-// The coalescer's flag, read at the module's first list change.
+// The coalescer's schedule set, read at the module's first list change.
 //
-// `scheduleMessages` guards itself with a module-scope boolean so several
-// changes in one tick cost one repaint. That initial value is computed once when
-// the module is evaluated, which a static import freezes at collection time — so
+// `scheduleMessages` guards itself with a module-scope Set so several changes
+// in one tick cost one repaint. That initial state is computed once when the
+// module is evaluated, which a static import freezes at collection time — so
 // this test loads its own copy of the store, the way `platform.pwa.test.ts` does
 // for the constants it stubs a platform for. Without a fresh module the very
 // first repaint of the page is not observable at all.
@@ -2474,86 +2529,76 @@ describe("the deferred-repaint guard", () => {
     vi.resetModules();
     const store = await import("./store.js");
     store.setSessions([makeSession("boot-1")]);
-    // The chat has to be the ACTIVE one to repaint at all (see the gate below),
-    // and on the real boot path it already is: every door into a chat activates
-    // its tab before a delta can arrive for it.
     store.setActive("boot-1");
-    const before = store.messagesVersion.peek();
+    const before = store.messagesVersionOf("boot-1").peek();
 
     store.appendChunk("boot-1", "m-1", "a", false, 0, "");
     // Deferred by one microtask, so nothing has repainted yet.
-    expect(store.messagesVersion.peek()).toBe(before);
+    expect(store.messagesVersionOf("boot-1").peek()).toBe(before);
 
     await tick();
-    expect(store.messagesVersion.peek()).toBe(before + 1);
+    expect(store.messagesVersionOf("boot-1").peek()).toBe(before + 1);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Only the chat ON SCREEN repaints.
+// Each chat repaints ITSELF; the chat on screen is untouched by the rest.
 //
-// `messagesVersion` is one global signal, but both consumers render the active
-// chat and nothing else: the transcript effect (`messages.ts`, whose `paint()`
-// reads `getActive()`) and the task-list pill. So a bump on behalf of a
-// background chat is a full keyed reconcile of a transcript that did not change,
-// and it fired at SSE frame rate — once per delta, per streaming chat. With
-// several chats open that repaint ran N times per frame over whichever transcript
-// happened to be visible, which is the multi-tab freeze this gate closes.
+// Versions are per chat: a background chat's stream bumps its OWN signal, which
+// nothing on screen subscribes to — the transcript effect and the task-list
+// pill track the ACTIVE chat's signal only. That is what closes the multi-tab
+// freeze (N streaming chats used to repaint the visible transcript N times per
+// frame) without the old active-chat gate's blind spot, where a background
+// consumer (the subagent page) had no repaint channel at all.
 //
-// The tests are in pairs on purpose, because the gate has two halves and only one
-// of them is the optimisation: nothing repaints, AND the data still lands. A gate
-// that dropped the delta would be a data-loss bug wearing a performance
-// improvement's clothes.
+// The tests are in pairs on purpose: the foreground signal stays put, AND the
+// background data lands with its own bump. A gate that dropped the delta would
+// be a data-loss bug wearing a performance improvement's clothes.
 // ---------------------------------------------------------------------------
 
-describe("repaints are gated on the active chat", () => {
+describe("per-chat repaint isolation", () => {
   /** Two chats in the store, the first active. */
   function twoChats(): void {
     setSessions([makeSession("fg"), makeSession("bg")]);
     setActive("fg");
   }
 
-  it("does not repaint for a background chat's text delta", async () => {
+  it("a background text delta bumps its own chat, not the active one", async () => {
     twoChats();
-    const before = messagesVersion.peek();
+    const fg = messagesVersionOf("fg").peek();
+    const bg = messagesVersionOf("bg").peek();
 
     appendChunk("bg", "m-bg", "hello", false, 0, "");
     await tick();
 
-    expect(messagesVersion.peek()).toBe(before);
-  });
-
-  it("still records that delta, so activating the chat shows it", async () => {
-    twoChats();
-
-    appendChunk("bg", "m-bg", "hello", false, 0, "");
-    await tick();
-
-    // The mutation is unconditional; only the repaint is gated. Asserted through
-    // the blocks array rather than `content`, because the blocks are what the
-    // renderer reads.
+    expect(messagesVersionOf("fg").peek()).toBe(fg);
+    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
+    // The mutation lands too. Asserted through the blocks array rather than
+    // `content`, because the blocks are what the renderer reads.
     expect(get("bg")?.messages[0]?.blocks?.[0]?.text).toBe("hello");
     expect(get("bg")?.messages[0]?.content).toBe("hello");
   });
 
-  it("does not repaint for a background chat's reasoning delta either", async () => {
+  it("a background reasoning delta does the same", async () => {
     twoChats();
-    const before = messagesVersion.peek();
+    const fg = messagesVersionOf("fg").peek();
+    const bg = messagesVersionOf("bg").peek();
 
     appendChunk("bg", "m-bg-r", "weighing", true, 0, "");
     await tick();
 
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("fg").peek()).toBe(fg);
+    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
     expect(get("bg")?.messages[0]?.blocks?.[0]?.thinking).toBe("weighing");
   });
 
-  it("does not repaint for a background chat's tool call", async () => {
+  it("a background tool call does the same", async () => {
     twoChats();
-    const before = messagesVersion.peek();
+    const fg = messagesVersionOf("fg").peek();
+    const bg = messagesVersionOf("bg").peek();
 
     // A NEW tool call on a message the store has not seen: the path that creates
-    // the assistant message, which is the most structural change there is and so
-    // the one most likely to be exempted by mistake.
+    // the assistant message, which is the most structural change there is.
     upsertToolCall(
       "bg",
       "m-bg-t",
@@ -2562,84 +2607,71 @@ describe("repaints are gated on the active chat", () => {
     );
     await tick();
 
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("fg").peek()).toBe(fg);
+    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
     expect(get("bg")?.messages[0]?.tool_calls?.[0]?.id).toBe("tc-1");
   });
 
-  it("does not repaint for a background chat's message arriving", () => {
+  it("a background message arriving bumps its own chat synchronously", () => {
     twoChats();
-    const before = messagesVersion.peek();
+    const fg = messagesVersionOf("fg").peek();
+    const bg = messagesVersionOf("bg").peek();
 
-    // `ingestMessage`, reached through both of its doors. This is the hottest of
-    // the gated paths after the deltas themselves: `message_updated` fires on
-    // every tool-status rewrite, and the bump here is SYNCHRONOUS, so ungated it
-    // was an immediate full reconcile per frame per background chat.
+    // `ingestMessage`, reached through both of its doors. The bump here is
+    // SYNCHRONOUS: the renderer's keyed reconcile must see an arrival before
+    // the frame it was announced in.
     upsertMessage("bg", { id: "m-bg", role: "assistant", ts: 1, content: "hi" });
     appendMessage("bg", { id: "m-bg", role: "assistant", ts: 1, content: "hi there" });
 
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("fg").peek()).toBe(fg);
+    expect(messagesVersionOf("bg").peek()).toBe(bg + 2);
     expect(get("bg")?.messages[0]?.content).toBe("hi there");
   });
 
-  it("does not repaint for a background chat's turn summary", () => {
+  it("a background turn summary bumps its own chat", () => {
     twoChats();
     appendMessage("bg", { id: "m-bg", role: "assistant", ts: 1, content: "done" });
-    const before = messagesVersion.peek();
+    const fg = messagesVersionOf("fg").peek();
+    const bg = messagesVersionOf("bg").peek();
 
     setTurnSummary("bg", { credits: 4, elapsedMs: 90 });
 
-    // Cold compared with the paths above — once per turn end — and gated anyway,
-    // because "only the chat on screen repaints" is one rule rather than a table
-    // of which writes are hot enough to bother gating. The ledger it stamps is
-    // read at paint time, so the footer is correct whenever the reader arrives.
-    expect(messagesVersion.peek()).toBe(before);
+    expect(messagesVersionOf("fg").peek()).toBe(fg);
+    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
     expect(get("bg")?.messages[0]?.turn_credits).toBe(4);
     expect(get("bg")?.messages[0]?.turn_elapsed_ms).toBe(90);
   });
 
-  it("repaints for the same delta once that chat is the active one", async () => {
-    twoChats();
-    setActive("bg");
-    const before = messagesVersion.peek();
-
-    appendChunk("bg", "m-bg", "hello", false, 0, "");
-    await tick();
-
-    // The mirror of the four above: the gate keys on WHICH chat, not on some
-    // property of the delta, so every case that was skipped repaints here.
-    expect(messagesVersion.peek()).toBe(before + 1);
-  });
-
-  it("hands the switch itself to activeSession rather than a catch-up bump", async () => {
+  it("setActive bumps no version — the switch travels on the active id", async () => {
     twoChats();
     appendChunk("bg", "m-bg", "hello", false, 0, "");
     await tick();
-    const before = messagesVersion.peek();
+    const fg = messagesVersionOf("fg").peek();
+    const bg = messagesVersionOf("bg").peek();
 
     setActive("bg");
     await tick();
 
-    // `setActive` deliberately does NOT bump `messagesVersion` — it writes
-    // `activeId`, which re-derives `activeSession`, which the transcript effect
-    // tracks alongside the version. That is what makes the gate safe without a
-    // replay of the skipped bumps, so this asserts the version stayed put AND
-    // that the computed moved.
-    expect(messagesVersion.peek()).toBe(before);
+    // `setActive` writes `activeId`, which the transcript effect tracks via
+    // `watchActiveId` — so the switch repaints by re-running the effect against
+    // the new chat's signal, not by bumping anything.
+    expect(messagesVersionOf("fg").peek()).toBe(fg);
+    expect(messagesVersionOf("bg").peek()).toBe(bg);
     expect(activeSession.value?.id).toBe("bg");
     expect(activeSession.value?.messages[0]?.content).toBe("hello");
   });
 
-  it("repaints nothing at all when no chat is active", async () => {
+  it("a chat streams normally with no chat active at all", async () => {
     setSessions([makeSession("orphan")]);
     setActive("");
-    const before = messagesVersion.peek();
+    const before = messagesVersionOf("orphan").peek();
 
     appendChunk("orphan", "m-1", "hello", false, 0, "");
     await tick();
 
-    // Reachable on the boot path before a tab is activated, and correct: there is
-    // no transcript on screen to repaint. The data still lands.
-    expect(messagesVersion.peek()).toBe(before);
+    // Reachable on the boot path before a tab is activated. The chat's own
+    // version moves; there is simply no subscriber for it yet.
+    expect(messagesVersionOf("orphan").peek()).toBe(before + 1);
     expect(get("orphan")?.messages[0]?.content).toBe("hello");
   });
 });

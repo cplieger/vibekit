@@ -310,7 +310,7 @@ export function activateChatView(id: string): void {
         return;
       }
       // The turns that replace the placeholder fade in rather than cutting.
-      // loadMessages' own emitMessages paints synchronously, so they are already
+      // loadMessages' own bumpMessages paints synchronously, so they are already
       // in the DOM by the time this runs — and no frame has gone to the screen
       // between the two, which is why the swap is one transition rather than a
       // flash of both. Only when a skeleton was actually painted: a fast open has

@@ -19,7 +19,7 @@ vi.mock("./store.js", () => ({
   getSessions: () => [...sessions.values()],
   setSessions: mockSetSessions,
   rebuildMsgIndex: vi.fn(),
-  emitMessages: vi.fn(),
+  bumpMessages: vi.fn(),
   // Identity here — the block-synthesis path is covered by store.test.ts; these
   // tests assert pagination/dedupe by id.
   normalizeMessage: (m: Message) => m,

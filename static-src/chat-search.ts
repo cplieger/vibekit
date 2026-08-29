@@ -16,7 +16,7 @@
 
 import { apiGet } from "./api-client.js";
 import { openForSearch, clearSearchOpened } from "./fold-state.js";
-import { emitMessages } from "./store.js";
+import { bumpMessages } from "./store.js";
 
 /** One server-side match. Mirrors chat.SearchHit. */
 export interface SearchHit {
@@ -116,7 +116,7 @@ export async function runServerSearch(
     }
   }
   // Nudge the renderer so the reveal takes effect before the DOM walker runs.
-  emitMessages();
+  bumpMessages(chatID);
   return hits;
 }
 
@@ -130,6 +130,6 @@ export function resetServerSearch(chatID: string): void {
   countsByTurn = new Map<number, number>();
   hitTotal = 0;
   if (chatID !== "" && clearSearchOpened(chatID)) {
-    emitMessages();
+    bumpMessages(chatID);
   }
 }

@@ -14,7 +14,7 @@ import {
   get,
   getSessions,
   rebuildMsgIndex,
-  emitMessages,
+  bumpMessages,
   normalizeMessage,
   liveTurnMessage,
 } from "./store.js";
@@ -238,6 +238,6 @@ export async function loadMessages(
   if (beforeID === undefined) {
     session.draft = d.draft;
   }
-  emitMessages();
+  bumpMessages(chatID);
   return true;
 }

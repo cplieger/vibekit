@@ -44,7 +44,7 @@
 // a page that fills itself in once that chat's messages arrive.
 // ---------------------------------------------------------------------------
 
-import { el, effect } from "@cplieger/reactive";
+import { el, effect, signal } from "@cplieger/reactive";
 import { openSubagentTab } from "./tabs.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight } from "./exec-view/status.js";
@@ -55,7 +55,7 @@ import {
   finalizeDetachedBody,
   updateDetachedBody,
 } from "./messages-blocks.js";
-import { get, isThinking, messagesVersion } from "./store.js";
+import { get, isThinking, messagesVersionOf } from "./store.js";
 import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
 import { ICON_TAB_AGENT } from "./icons.js";
 import { blockShape, shapeExtends, sliceSubagent, type SubagentSlice } from "./subagent-slice.js";
@@ -73,10 +73,11 @@ function renderID(chatID: string, subtaskID: string): string {
   return `sub:${chatID}:${subtaskID}`;
 }
 
-/** The delegate on screen. Module state because ONE `#subagent-view` element serves
- *  every subagent tab, exactly as `#run-view` serves every run tab. */
-let shownChat = "";
-let shownSubtask = "";
+/** The delegate on screen, as a SIGNAL so the view effect re-runs on a tab
+ *  switch itself rather than waiting for the next store bump. ONE
+ *  `#subagent-view` element serves every subagent tab, exactly as `#run-view`
+ *  serves every run tab. */
+const shown = signal<{ chatID: string; subtaskID: string }>({ chatID: "", subtaskID: "" });
 
 /** The page, built once and re-pointed, and the delegate its render belongs to.
  *  `exec-view/` knows nothing about subagents; the adapter is what makes this a
@@ -102,8 +103,7 @@ let sealed = false;
  *  rather than mount: the previous delegate's render is dropped here and the effect
  *  below re-points itself, so a tab switch costs one teardown and no new subscription. */
 export function showSubagent(chatID: string, subtaskID: string): void {
-  shownChat = chatID;
-  shownSubtask = subtaskID;
+  shown.value = { chatID, subtaskID };
   installViewEffect();
 }
 
@@ -118,12 +118,13 @@ function installViewEffect(): void {
   }
   viewEffectInstalled = true;
   effect(() => {
+    const { chatID, subtaskID } = shown.value;
     // Structural growth — a new block, a new tool call, a loaded page of history —
-    // bumps this one signal. Read first and unconditionally, so the effect stays
-    // subscribed to it even on the passes that return early below.
-    void messagesVersion.value;
-    const chatID = shownChat;
-    const subtaskID = shownSubtask;
+    // bumps the OWNING chat's version. Tracking it per chat is what gives this
+    // page live background updates: the transcript's global bump used to fire
+    // only for the chat on screen. Read before the early return so the effect
+    // stays subscribed on the passes that bail below.
+    void messagesVersionOf(chatID).value;
     if (chatID === "" || subtaskID === "") {
       return;
     }
@@ -136,7 +137,7 @@ function installViewEffect(): void {
 
 /** Subscribe this effect to the delegate's own streaming blocks.
  *
- *  A text delta does NOT bump `messagesVersion`: the transcript's fine-grained path
+ *  A text delta does NOT bump the chat's version: the transcript's fine-grained path
  *  writes a per-(message, block) signal instead, precisely so one chunk does not
  *  repaint a whole conversation. This page has to read the same signals or a
  *  delegate's prose would arrive in jumps, whenever some structural change happened to
@@ -146,8 +147,8 @@ function installViewEffect(): void {
  *  here would change the TRANSCRIPT's behaviour: `store.appendChunk` falls back to a
  *  full repaint only while no signal exists, so creating one for a block the
  *  transcript judged settled would silence that fallback and freeze the transcript's
- *  own bubble. Reading an absent signal is safe — the fallback fires,
- *  `messagesVersion` bumps, and this effect re-runs anyway. */
+ *  own bubble. Reading an absent signal is safe — the fallback fires, the chat's
+ *  version bumps, and this effect re-runs anyway. */
 function subscribeToDeltas(slice: SubagentSlice): void {
   for (const key of slice.sourceKeys) {
     void blockTextSigs.get(key)?.value;
@@ -227,7 +228,7 @@ function mountPage(host: HTMLElement, key: string): ExecPageView {
 /** Release the page and the render it holds. Idempotent. */
 function dropPage(): void {
   if (pageKey !== "") {
-    disposeDetachedBody(pageKey, shownSubtask);
+    disposeDetachedBody(pageKey, shown.peek().subtaskID);
   }
   page?.dispose();
   page = undefined;
@@ -245,7 +246,7 @@ function dropPage(): void {
  *  slice only for the delegate the tab names, so selecting a stage in a pipeline is a
  *  request to open its own page. */
 function emptyNote(node: ExecNode): string {
-  if (node.path !== subagentPath(shownSubtask)) {
+  if (node.path !== subagentPath(shown.peek().subtaskID)) {
     return "This stage has its own page. Open it from its card in the conversation to read its transcript here.";
   }
   return inFlight(node.state)

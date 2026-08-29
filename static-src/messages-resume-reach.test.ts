@@ -57,8 +57,8 @@ import { scrollMock } from "./__test-helpers__/scroll-mock.js";
 // drift the moment the store gains one.
 //
 // The session is handed over through a PLAIN variable, not a signal, and that is
-// deliberate: `activeSession` and `messagesVersion` stay the real (untouched)
-// signals, so writing a session here cannot wake the paint effect. The subject is
+// deliberate: the active-id and per-chat version signals stay real and
+// untouched, so writing a session here cannot wake the paint effect. The subject is
 // the count, and a paint would drag the whole turn renderer in behind it for
 // nothing.
 let currentSession: TestSession | undefined;

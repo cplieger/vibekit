@@ -18,16 +18,22 @@
 // store-mock.test.ts is the drift guard: it fails when store.ts gains an export
 // this object lacks, or keeps one store.ts no longer has.
 import { vi } from "vitest";
-import { signal, computed } from "@cplieger/reactive";
+import { computed, SignalMap, type Signal } from "@cplieger/reactive";
+
+// A REAL SignalMap rather than a vi.fn(), because consumers read the returned
+// signal's `.value` and subscribe to it; a mock function there is a crash
+// waiting for the first suite whose graph wires an effect at import time.
+const versionSigs = new SignalMap<number>();
 
 export const storeMock = {
-  // The two reactive exports are REAL primitives rather than vi.fn()s, because
+  // The reactive exports are REAL primitives rather than vi.fn()s, because
   // their consumers read `.value` and subscribe to them. A mock function there
   // is a crash waiting for the first suite whose graph wires an effect at import
   // time; a signal that never changes is inert instead.
-  messagesVersion: signal(0),
+  messagesVersionOf: (chatID: string): Signal<number> => versionSigs.ensure(chatID, 0),
   activeSession: computed<undefined>(() => undefined),
-  emitMessages: vi.fn(),
+  bumpMessages: vi.fn(),
+  watchActiveId: vi.fn(() => ""),
 
   MODEL_CONTEXT_SIZES: {} as Record<string, number>,
   parseContextSize: vi.fn((): number | undefined => undefined),

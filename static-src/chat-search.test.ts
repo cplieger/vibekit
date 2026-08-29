@@ -8,7 +8,7 @@ const openForSearch = vi.fn();
 // The chat id is declared because fold-state.ts's clearSearchOpened takes one and
 // the wrapper below forwards it; a nullary mock types its own call log as empty.
 const clearSearchOpened = vi.fn((_chatID: string) => true);
-const emitMessages = vi.fn();
+const bumpMessages = vi.fn();
 
 vi.mock("./api-client.js", () => ({ apiGet: (url: string) => apiGet(url) }));
 vi.mock("./fold-state.js", () => ({
@@ -19,7 +19,7 @@ vi.mock("./fold-state.js", () => ({
   // them.
   apiGetTyped: vi.fn(),
 }));
-vi.mock("./store.js", () => ({ emitMessages: () => emitMessages() }));
+vi.mock("./store.js", () => ({ bumpMessages: (id: string) => bumpMessages(id) }));
 
 const { runServerSearch, resetServerSearch, searchHitTurns, searchHitCount, searchHitTotal } =
   await import("./chat-search.js");
@@ -74,7 +74,7 @@ describe("runServerSearch: the reveal", () => {
     expect(openForSearch).toHaveBeenCalledWith("c1", "u1");
     expect(openForSearch).toHaveBeenCalledWith("c1", "u3");
     // The renderer has to see the reveal before the DOM walker runs.
-    expect(emitMessages).toHaveBeenCalled();
+    expect(bumpMessages).toHaveBeenCalled();
   });
 
   it("records the hit turns and their counts for the rail and the folded rows", async () => {
