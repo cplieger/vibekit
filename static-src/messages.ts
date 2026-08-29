@@ -31,6 +31,7 @@ import {
   messagesVersionOf,
   renderCauseOf,
   steerMarks,
+  bumpMessages,
 } from "./store.js";
 import {
   clearStreamingSig,
@@ -78,15 +79,16 @@ import {
   type Turn,
 } from "./turns.js";
 import { peekRunState, runIsLive } from "./run-store.js";
-import { isTurnOpen, setTurnOpen } from "./fold-state.js";
+import { isTurnOpen, setTurnOpen, TURNS_WARM } from "./fold-state.js";
 import { wireRowToggle } from "./disclosure-row.js";
-import { searchHitCount } from "./chat-search.js";
+import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
   mountTurnRail,
   observeTurns,
   resetTurnRail,
   loadTurnRail,
   pointTurnRail,
+  initTurnRailCallbacks,
 } from "./turn-rail.js";
 import {
   buildAssistantBody,
@@ -255,6 +257,11 @@ export function mountChatView(): void {
   // The rail lives in the transcript's positioned outer wrapper rather than in
   // the scroller, so it stays put instead of scrolling away with the content.
   mountTurnRail($.messagesWrapOuter);
+  // The two navigation surfaces that can land on a tier-3 stub call the same
+  // on-demand build this module's own fold toggle uses. Injected — both
+  // modules are imported BY this one, so a static import back would cycle.
+  initTurnRailCallbacks({ mountTurnBody });
+  initSearchRevealBuilder(mountTurnBody);
   // The transcript's two inputs: WHICH chat is active, and THAT chat's own
   // transcript version. Header-only updates (usage ticks, titles, modes) write
   // the session signal but bump no version, so they never reach paint();
@@ -377,6 +384,42 @@ function refreshResumeLabel(): void {
  *  fact/shape, which rebuilds the whole cache. */
 const turnRunIDsCache = new Map<string, string[]>();
 
+/** What this pass wants per turn, on the two independent axes (D1): the fold
+ *  policy's open/closed, and the tier derivation's mountedness
+ *  (`open || distance < TURNS_WARM`). Computed per full pass BEFORE the
+ *  reconcile so a new card can be born in its final state, and applied to
+ *  existing cards by `applyFoldPass` — transitions run through the fold pass,
+ *  never inside the reconcile. */
+interface FoldPlan {
+  open: boolean;
+  mounted: boolean;
+}
+const foldPlan = new Map<string, FoldPlan>();
+
+function computeFoldPlan(chatID: string, turns: readonly Turn[]): void {
+  foldPlan.clear();
+  for (const [i, t] of turns.entries()) {
+    // A turn holding a live workflow run stays open however far back it is; see
+    // isTurnOpen. `peekRunState` rather than `runState`, because this runs
+    // inside the paint effect and a tracked read here would subscribe the whole
+    // transcript to every run on screen. The run ids come from the
+    // projection-time cache; the derivation stays turns.ts's.
+    const liveRun = (turnRunIDsCache.get(t.id) ?? turnRunIDs(t)).some((id) =>
+      runIsLive(peekRunState(id)),
+    );
+    const open = isTurnOpen(chatID, t, i, turns.length, liveRun);
+    const distance = turns.length - 1 - i;
+    foldPlan.set(t.id, { open, mounted: open || distance < TURNS_WARM });
+  }
+}
+
+/** Whether the current full pass mounted at least one new card. The fold pass
+ *  reads it: a pass whose cards were born already folded queues no changes, so
+ *  the `fillViewport` that used to ride the change batch needs this door too —
+ *  without it a page of born-folded stubs could leave the viewport unfilled
+ *  with no scroll event left to trigger the next fetch. */
+let paintMountedCards = false;
+
 function paint(): void {
   const session = getActive();
   if (session === undefined) {
@@ -449,6 +492,8 @@ function paint(): void {
   for (const t of turns) {
     turnRunIDsCache.set(t.id, turnRunIDs(t));
   }
+  computeFoldPlan(session.id, turns);
+  paintMountedCards = false;
   // The placeholder and the conversation may never share this container, and the
   // rule is enforced HERE because this is the line where content lands. Two
   // reasons it cannot be left to the activation's continuation, which removes the
@@ -477,7 +522,7 @@ function paint(): void {
   // Tell the rail which cards exist so it can track the turn in view. Re-run per
   // full pass because the set changes as pages load and turns arrive.
   observeTurns(cards);
-  applyFoldPass(session.id, turns, cards);
+  applyFoldPass(turns, cards);
   finalizeStreamingIfNeeded(session.messages);
   reachableBlocks = blockCount(session.messages);
   refreshResumeLabel();
@@ -806,34 +851,31 @@ function updateMessage(el: HTMLElement, m: Message): void {
 }
 
 /**
- * Fold every turn that should be folded, and unfold every turn that should not.
+ * Fold every turn that should be folded, and unfold every turn that should not
+ * — and apply the tier derivation's MOUNTEDNESS the same way (D1): a turn the
+ * fold holds open or within the warm window keeps its body; everything older
+ * is a header/footer stub whose body DOM does not exist.
  *
  * DEFERRED WHILE READING and COMPENSATED WHEN APPLIED, both mandatory. A fold
  * removes hundreds of pixels rather than tens, so content vanishing from above
  * the reader through no action of their own is the failure mode this guards —
- * which is why §3.4 makes the helper an obligation rather than a nicety.
+ * which is why §3.4 makes the helper an obligation rather than a nicety. A
+ * 2→3 unmount removes the same pixels a fold does, so it rides the same
+ * deferred, compensated batch. A body BUILD is the one transition applied
+ * synchronously here: it happens under a folded card (`display: none`), so it
+ * moves nothing the reader can see — which is what lets a search reveal build
+ * a stub's body in the paint that revealed it.
  *
  * Runs on every paint because eligibility changes with every new turn: the turn
- * that was second-newest becomes third-newest and folds.
+ * that was second-newest becomes third-newest and folds, and the turn that was
+ * fifth-newest leaves the warm window and unmounts.
  */
-function applyFoldPass(
-  chatID: string,
-  turns: readonly Turn[],
-  cards: readonly HTMLElement[],
-): void {
-  const wanted = new Map<string, boolean>();
+function applyFoldPass(turns: readonly Turn[], cards: readonly HTMLElement[]): void {
   const hits = new Map<string, number>();
-  for (const [i, t] of turns.entries()) {
-    // A turn holding a live workflow run stays open however far back it is; see
-    // isTurnOpen. `peekRunState` rather than `runState`, because this pass runs
-    // inside no effect and a tracked read here would subscribe the whole fold pass
-    // to every run on screen. The run ids come from the projection-time cache;
-    // the derivation stays turns.ts's.
-    const liveRun = (turnRunIDsCache.get(t.id) ?? turnRunIDs(t)).some((id) =>
-      runIsLive(peekRunState(id)),
-    );
-    wanted.set(t.id, isTurnOpen(chatID, t, i, turns.length, liveRun));
+  const byID = new Map<string, Turn>();
+  for (const t of turns) {
     hits.set(t.id, searchHitCount(t.n));
+    byID.set(t.id, t);
   }
   const changes: (() => void)[] = [];
   for (const card of cards) {
@@ -842,8 +884,32 @@ function applyFoldPass(
       continue;
     }
     setHitCount(card, hits.get(id) ?? 0);
-    const open = wanted.get(id) ?? true;
+    const plan = foldPlan.get(id);
+    const open = plan?.open ?? true;
+    const wantMounted = plan?.mounted ?? true;
+    const t = byID.get(id);
     const folded = card.hasAttribute("data-folded");
+    const mounted = card.querySelector(":scope > .turn-body") !== null;
+    if (wantMounted && !mounted && t !== undefined) {
+      if (folded) {
+        // Hidden build: the card is folded, so the body lands at zero height.
+        mountTurnBodySync(card, t);
+      } else {
+        // A card mid-deferral (its fold is still queued) is visible, so its
+        // build moves content; it joins the compensated batch instead.
+        changes.push(() => {
+          if (card.isConnected) {
+            mountTurnBodySync(card, t);
+          }
+        });
+      }
+    } else if (!wantMounted && mounted) {
+      changes.push(() => {
+        if (card.isConnected) {
+          unmountTurnBody(card);
+        }
+      });
+    }
     if (open === !folded) {
       continue;
     }
@@ -852,6 +918,11 @@ function applyFoldPass(
     });
   }
   if (changes.length === 0) {
+    // Born-folded cards queue nothing, so the pagination chain below still
+    // needs its trigger restored when this pass mounted cards.
+    if (paintMountedCards) {
+      fillViewport();
+    }
     return;
   }
   deferWhileReading(() => {
@@ -884,6 +955,26 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
     const chatID = getActiveId();
     if (chatID !== "") {
       setTurnOpen(chatID, t.id, open);
+    }
+    if (open && chatID !== "" && card.querySelector(":scope > .turn-body") === null) {
+      // Opening a STUB: its body does not exist yet, so the disclosure creates
+      // the region content — build it hidden (the card is still folded), then
+      // unfold through the same compensated write a resident toggle uses, and
+      // declare the shape change so the pass that follows reconverges the rail
+      // and the fold state. All in this interaction; no wait for an unrelated
+      // paint. The keyboard path lands here too: the toggle is a native
+      // button, so Enter/Space activation IS this click.
+      mountTurnBody(chatID, t.id)
+        .then(() => {
+          preserveReadingPosition(() => {
+            setCardFolded(card, false);
+          }, "content-growth");
+          bumpMessages(chatID, "shape");
+        })
+        .catch((e: unknown) => {
+          console.warn("[messages] stub body build failed", e);
+        });
+      return;
     }
     // Applied immediately and compensated: this is the reader's own action, so
     // it is not deferred, but it still must not move what they are looking at.
@@ -931,7 +1022,14 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
  *  footer (the outcome ledger). One card type for every turn — a one-word
  *  answer and a forty-tool-call refactor are the same object, differing only
  *  in how much body they have. Density comes from type scale, not from
- *  structural variation. */
+ *  structural variation.
+ *
+ *  A card is born in the residency the current pass planned for it (D1): a
+ *  tier-3 turn mounts as a header/footer STUB — no `.turn-body`, no inner
+ *  reconcile, no per-block effects — and folds at birth, which removes nothing
+ *  because the card did not exist a frame ago. Everything else builds its body
+ *  exactly as before, and its fold state stays `applyFoldPass`'s business, so
+ *  an open card's mount is byte-identical to the pre-tier renderer's. */
 function buildTurn(t: Turn): HTMLElement {
   const card = el("div", { className: "turn" });
   // No `data-outcome` on the CARD: the outcome is carried by the header dot,
@@ -945,14 +1043,20 @@ function buildTurn(t: Turn): HTMLElement {
   mountFoldToggle(header, card, t);
   card.appendChild(header);
 
-  const body = el("div", { className: "turn-body" });
-  card.appendChild(body);
-  reconcile(body, t.body, messageSpec);
+  const plan = foldPlan.get(t.id);
+  if (plan === undefined || plan.mounted) {
+    const body = el("div", { className: "turn-body" });
+    card.appendChild(body);
+    reconcile(body, t.body, messageSpec);
+  } else {
+    setCardFolded(card, true);
+  }
 
   mountTurnFooter(card, t);
   // After the footer: Rewind lives inside it, so it must exist first.
   mountRewind(card, t);
   syncTurnBodyless(card);
+  paintMountedCards = true;
 
   // A new user turn pops the reader back to the bottom. scrollToBottom() does
   // an explicit RAF-paced scroll that lands on the new card immediately
@@ -969,6 +1073,9 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   if (header !== null) {
     updateTurnHeader(header, headerData(t));
   }
+  // A stub has no body element, so the outer reconcile renders whatever
+  // mountedness the fold pass last applied; only the fold pass and the
+  // on-demand build change it.
   const body = card.querySelector<HTMLElement>(":scope > .turn-body");
   if (body !== null) {
     reconcile(body, t.body, messageSpec);
@@ -976,6 +1083,160 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   mountTurnFooter(card, t);
   mountRewind(card, t);
   syncTurnBodyless(card);
+}
+
+/** Build a card's body in place, from the turn's current projection. The
+ *  3→1/3→2 transition (search reveal, failure flip, live-run attach, a rewind
+ *  shrinking the window) — and the synchronous half of the on-demand build. */
+function mountTurnBodySync(card: HTMLElement, t: Turn): void {
+  if (card.querySelector(":scope > .turn-body") !== null) {
+    return;
+  }
+  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+  if (header === null) {
+    return;
+  }
+  const body = el("div", { className: "turn-body" });
+  header.after(body);
+  reconcile(body, t.body, messageSpec);
+  syncTurnBodyless(card);
+}
+
+/** The 2→3/1→3 transition: drop a card's body DOM and every per-message
+ *  resource behind it — the same disposal the card's own removal runs, because
+ *  a stub holds exactly what a removed card no longer does. */
+function unmountTurnBody(card: HTMLElement): void {
+  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+  if (body === null) {
+    return;
+  }
+  const rows = body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`);
+  for (const row of rows) {
+    const key = row.getAttribute(KEY_ATTR);
+    if (key !== null) {
+      disposeMessage(key);
+    }
+  }
+  body.remove();
+  syncTurnBodyless(card);
+}
+
+// ---------------------------------------------------------------------------
+// The on-demand body build (D1).
+//
+// ONE entry point for every interaction that needs a stub's body NOW rather
+// than on some later paint: the fold-toggle click on a stub (below), a rail
+// jump onto a stub turn (turn-rail.ts, injected at mount), and the search
+// reveal (chat-search.ts, injected at mount). The body is built while the card
+// is folded, so nothing the reader can see moves; opening it stays the
+// caller's business, which is what keeps the three callers' fold semantics
+// apart (a click records an override, a search reveal is transient, a rail
+// jump opens nothing).
+//
+// Heavy cold builds YIELD between block batches so a 300-block turn cannot
+// freeze the main thread on one click: `scheduler.yield()` where the platform
+// has it, a macrotask hop where it does not. Each batch re-reads the store and
+// the DOM, so a full pass that reconciled the body mid-build (its keyed update
+// mounts everything) ends the loop instead of double-mounting.
+// ---------------------------------------------------------------------------
+
+/** Blocks per synchronous slice of a cold build. The reconcile unit is the
+ *  message, so a slice takes whole messages until their block sum reaches
+ *  this; one over-budget message is still one slice, because a message row
+ *  mounts atomically. */
+const BUILD_BATCH_BLOCKS = 32;
+
+/** In-flight builds by turn id, so a second caller joins the first instead of
+ *  double-appending rows. */
+const turnBodyBuilds = new Map<string, Promise<void>>();
+
+function yieldToBrowser(): Promise<void> {
+  const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  if (sched?.yield !== undefined) {
+    return sched.yield.call(sched);
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/** Build `turnID`'s body on demand, in yielded block batches. Resolves when
+ *  the body is complete (or the moment the build stops being applicable: the
+ *  chat switched, the card left the DOM, the turn left the projection).
+ *  Idempotent while in flight, a no-op on an already-mounted turn. */
+export function mountTurnBody(chatID: string, turnID: string): Promise<void> {
+  const existing = turnBodyBuilds.get(turnID);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const build = buildTurnBodyBatches(chatID, turnID).finally(() => {
+    turnBodyBuilds.delete(turnID);
+  });
+  turnBodyBuilds.set(turnID, build);
+  return build;
+}
+
+async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<void> {
+  for (;;) {
+    const session = getActive();
+    if (session?.id !== chatID) {
+      return;
+    }
+    let card: HTMLElement | null = null;
+    for (const child of messagesEl.children) {
+      if (child.getAttribute(KEY_ATTR) === turnID) {
+        card = child as HTMLElement;
+        break;
+      }
+    }
+    if (card === null) {
+      return;
+    }
+    // Re-projected per batch rather than captured: a page load can reshape the
+    // window while a build yields, and the projection is the only truth about
+    // what this turn's body holds now.
+    const t = projectTurns(session.messages, session.thinking).find((x) => x.id === turnID);
+    if (t === undefined) {
+      return;
+    }
+    let body = card.querySelector<HTMLElement>(":scope > .turn-body");
+    if (body === null) {
+      const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+      if (header === null) {
+        return;
+      }
+      body = el("div", { className: "turn-body" });
+      header.after(body);
+    }
+    const have = body.querySelectorAll(`:scope > [${KEY_ATTR}]`).length;
+    if (have >= t.body.length) {
+      syncTurnBodyless(card);
+      return;
+    }
+    let blocks = 0;
+    let i = have;
+    while (i < t.body.length) {
+      const m = t.body[i];
+      if (m === undefined) {
+        break;
+      }
+      // The reconcile's own mount arm, replayed: same builder, same key
+      // attribute, appended in order onto rows that are already in order.
+      const node = messageSpec.mount(m);
+      node.setAttribute(KEY_ATTR, messageSpec.key(m));
+      body.appendChild(node);
+      blocks += Math.max(1, (m.blocks ?? []).length);
+      i++;
+      if (blocks >= BUILD_BATCH_BLOCKS && i < t.body.length) {
+        break;
+      }
+    }
+    if (i >= t.body.length) {
+      syncTurnBodyless(card);
+      return;
+    }
+    await yieldToBrowser();
+  }
 }
 
 /** `.is-bodyless` mirrors "the card ends with an empty body" for CSS: the

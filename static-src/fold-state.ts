@@ -29,6 +29,14 @@ import type { Turn } from "./turns.js";
 /** How many trailing turns stay open regardless of anything else. */
 const OPEN_TAIL = 2;
 
+/** How many trailing turns keep their body DOM mounted while closed — the
+ *  renderer's tier-2 "warm" window (`mounted = foldOpen || distance <
+ *  TURNS_WARM`). Beside OPEN_TAIL because the two constants describe the same
+ *  tail in the same frame (the projected window, newest last), but this one is
+ *  about MOUNTEDNESS and decides nothing about openness: the fold rule above
+ *  stays the single authority for open/closed. */
+export const TURNS_WARM = 5;
+
 /** Per-chat, per-turn overrides: `true` = the user opened it, `false` = the user
  *  folded it. Absent = follow the automatic rule.
  *

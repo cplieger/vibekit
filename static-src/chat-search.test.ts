@@ -8,7 +8,9 @@ const openForSearch = vi.fn();
 // The chat id is declared because fold-state.ts's clearSearchOpened takes one and
 // the wrapper below forwards it; a nullary mock types its own call log as empty.
 const clearSearchOpened = vi.fn((_chatID: string) => true);
-const bumpMessages = vi.fn();
+// Both arguments captured: the reveal and the re-fold declare their render
+// cause explicitly (`shape`), and the assertion needs to see it.
+const bumpMessages = vi.fn((_chatID: string, _cause?: string) => undefined);
 
 vi.mock("./api-client.js", () => ({ apiGet: (url: string) => apiGet(url) }));
 vi.mock("./fold-state.js", () => ({
@@ -19,10 +21,18 @@ vi.mock("./fold-state.js", () => ({
   // them.
   apiGetTyped: vi.fn(),
 }));
-vi.mock("./store.js", () => ({ bumpMessages: (id: string) => bumpMessages(id) }));
+vi.mock("./store.js", () => ({
+  bumpMessages: (id: string, cause?: string) => bumpMessages(id, cause),
+}));
 
-const { runServerSearch, resetServerSearch, searchHitTurns, searchHitCount, searchHitTotal } =
-  await import("./chat-search.js");
+const {
+  runServerSearch,
+  resetServerSearch,
+  searchHitTurns,
+  searchHitCount,
+  searchHitTotal,
+  initSearchRevealBuilder,
+} = await import("./chat-search.js");
 
 function hit(over: Partial<SearchHit> = {}): SearchHit {
   return {
@@ -39,6 +49,9 @@ function hit(over: Partial<SearchHit> = {}): SearchHit {
 beforeEach(() => {
   apiGet.mockReset();
   apiGet.mockResolvedValue({ hits: [] });
+  // The builder is module state; a case that injects its own must not leak it
+  // into the next.
+  initSearchRevealBuilder(() => Promise.resolve());
   resetServerSearch("c1");
 });
 
@@ -73,8 +86,43 @@ describe("runServerSearch: the reveal", () => {
     await runServerSearch("c1", "retry");
     expect(openForSearch).toHaveBeenCalledWith("c1", "u1");
     expect(openForSearch).toHaveBeenCalledWith("c1", "u3");
-    // The renderer has to see the reveal before the DOM walker runs.
-    expect(bumpMessages).toHaveBeenCalled();
+    // The renderer has to see the reveal before the DOM walker runs, and a
+    // reveal changes which turns are open and mounted: a stated shape change.
+    expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
+  });
+
+  it("builds each revealed turn's body once, before the repaint", async () => {
+    // Two hits inside ONE turn and one in another: the on-demand build runs per
+    // TURN, not per hit — a turn's body only exists once — and every build
+    // lands before the bump so the walker's re-run sees the rows.
+    apiGet.mockResolvedValue({
+      hits: [
+        hit({ turn_message_id: "u1" }),
+        hit({ message_id: "a2", turn_message_id: "u1" }),
+        hit({ message_id: "a3", turn_message_id: "u3" }),
+      ],
+    });
+    const order: string[] = [];
+    const build = vi.fn((_chatID: string, turnID: string) => {
+      order.push(`build:${turnID}`);
+      return Promise.resolve();
+    });
+    bumpMessages.mockImplementation(() => {
+      order.push("bump");
+    });
+    initSearchRevealBuilder(build);
+    await runServerSearch("c1", "retry");
+    expect(order).toEqual(["build:u1", "build:u3", "bump"]);
+    expect(build).toHaveBeenCalledWith("c1", "u1");
+    expect(build).toHaveBeenCalledWith("c1", "u3");
+  });
+
+  it("does not build for a hit the server could not resolve to a turn opener", async () => {
+    apiGet.mockResolvedValue({ hits: [hit({ turn_message_id: "" })] });
+    const build = vi.fn(() => Promise.resolve());
+    initSearchRevealBuilder(build);
+    await runServerSearch("c1", "retry");
+    expect(build).not.toHaveBeenCalled();
   });
 
   it("records the hit turns and their counts for the rail and the folded rows", async () => {
@@ -100,13 +148,17 @@ describe("runServerSearch: the reveal", () => {
     expect([...searchHitTurns()]).toEqual([2]);
   });
 
-  it("drops the reveal and the counts on reset", async () => {
+  it("drops the reveal and the counts on reset, declaring the re-fold's shape", async () => {
     apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
     await runServerSearch("c1", "retry");
+    bumpMessages.mockClear();
     resetServerSearch("c1");
     expect([...searchHitTurns()]).toEqual([]);
     expect(searchHitCount(2)).toBe(0);
     expect(clearSearchOpened).toHaveBeenCalledWith("c1");
+    // The re-fold un-mounts what the reveal mounted past the warm window: a
+    // shape change, stated at the branch that knows.
+    expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
   it("records the session-wide total, which is what the counter reports", async () => {
