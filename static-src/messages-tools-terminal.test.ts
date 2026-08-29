@@ -77,16 +77,16 @@ vi.mock("./tool-card.js", () => ({
 }));
 
 import {
-  toolSpecFor,
+  mountToolCallCard,
   updateToolCall,
   appendTerminalChunk,
   forgetTerminal,
   disposeAllToolEffects,
 } from "./messages-tools.js";
 
-/** The spec every mount in this file goes through. The chat id is part of the
+/** The mount every card in this file goes through. The chat id is part of the
  *  per-tool signal key, so a mount and its writer have to name the same one. */
-const spec = toolSpecFor("c-terminal");
+const mount = (tc: ToolCall): HTMLDivElement => mountToolCallCard("c-terminal", tc);
 
 /** A minimal ToolCall. Cast at the boundary: the wire type carries a dozen
  *  fields this seam never reads, and spelling them out would obscure the two
@@ -119,7 +119,7 @@ describe("a completion snapshot supersedes the hold", () => {
     appendTerminalChunk("term-1", "hello\n", [], 0);
     appendTerminalChunk("term-1", "world\n", [], 6);
 
-    const card = spec.mount(
+    const card = mount(
       toolCall({ terminal_id: "term-1", status: "completed", output: "hello\nworld\n" }),
     );
 
@@ -132,21 +132,21 @@ describe("a completion snapshot supersedes the hold", () => {
     // opening lines of every command are missing from the live view until
     // completion replaces the whole thing.
     appendTerminalChunk("term-2", "starting\n", [], 0);
-    const card = spec.mount(toolCall({ id: "tc-2", terminal_id: "term-2" }));
+    const card = mount(toolCall({ id: "tc-2", terminal_id: "term-2" }));
     expect(pre(card)).toBe("starting\n");
   });
 
   it("treats an empty-string output as no output", () => {
     // `output: ""` is what a pending tool call carries, and it is not a snapshot.
     appendTerminalChunk("term-3", "early\n", [], 0);
-    const card = spec.mount(toolCall({ id: "tc-3", terminal_id: "term-3", output: "" }));
+    const card = mount(toolCall({ id: "tc-3", terminal_id: "term-3", output: "" }));
     expect(pre(card)).toBe("early\n");
   });
 
   it("is idempotent — a later update carrying the same link re-flushes nothing", () => {
     appendTerminalChunk("term-4", "a\n", [], 0);
     const tc = toolCall({ id: "tc-4", terminal_id: "term-4" });
-    const card = spec.mount(tc);
+    const card = mount(tc);
     expect(pre(card)).toBe("a\n");
     // The same link arrives on every later update; the discard must be permanent
     // in both directions, so neither a re-link nor a snapshot re-flushes.
@@ -155,7 +155,7 @@ describe("a completion snapshot supersedes the hold", () => {
   });
 
   it("keeps live chunks flowing after the link, snapshot or not", () => {
-    const card = spec.mount(
+    const card = mount(
       toolCall({ id: "tc-5", terminal_id: "term-5", status: "completed", output: "snap\n" }),
     );
     appendTerminalChunk("term-5", "after\n", [], 5);
@@ -177,7 +177,7 @@ describe("the hold is a contiguous prefix", () => {
     appendTerminalChunk("term-6", "M".repeat(CAP), [], 5);
     appendTerminalChunk("term-6", "tail\n", [], 5 + CAP);
 
-    const card = spec.mount(toolCall({ id: "tc-6", terminal_id: "term-6" }));
+    const card = mount(toolCall({ id: "tc-6", terminal_id: "term-6" }));
     // "head\ntail\n" is the gap: two non-adjacent slices printed as neighbours.
     expect(pre(card)).toBe("head\n");
   });
@@ -186,14 +186,14 @@ describe("the hold is a contiguous prefix", () => {
     for (let i = 0; i < 5; i++) {
       appendTerminalChunk("term-7", `line${String(i)}\n`, [], i * 6);
     }
-    const card = spec.mount(toolCall({ id: "tc-7", terminal_id: "term-7" }));
+    const card = mount(toolCall({ id: "tc-7", terminal_id: "term-7" }));
     expect(pre(card)).toBe("line0\nline1\nline2\nline3\nline4\n");
   });
 
   it("releases an unclaimed hold on terminal_exited", () => {
     appendTerminalChunk("term-8", "orphan\n", [], 0);
     forgetTerminal("term-8");
-    const card = spec.mount(toolCall({ id: "tc-8", terminal_id: "term-8" }));
+    const card = mount(toolCall({ id: "tc-8", terminal_id: "term-8" }));
     expect(pre(card)).toBe("");
   });
 
@@ -203,9 +203,9 @@ describe("the hold is a contiguous prefix", () => {
     for (let i = 0; i < 17; i++) {
       appendTerminalChunk(`bulk-${String(i)}`, `t${String(i)}\n`, [], 0);
     }
-    const first = spec.mount(toolCall({ id: "tc-b0", terminal_id: "bulk-0" }));
+    const first = mount(toolCall({ id: "tc-b0", terminal_id: "bulk-0" }));
     expect(pre(first)).toBe("");
-    const last = spec.mount(toolCall({ id: "tc-b16", terminal_id: "bulk-16" }));
+    const last = mount(toolCall({ id: "tc-b16", terminal_id: "bulk-16" }));
     expect(pre(last)).toBe("t16\n");
   });
 });
@@ -216,7 +216,7 @@ describe("a flushed chunk keeps its styling", () => {
     // concatenation: the second chunk's spans address the accumulated stream.
     appendTerminalChunk("term-9", "ok\n", [{ start: 0, end: 2, fg: 2, bg: -1, attrs: 0 }], 0);
     appendTerminalChunk("term-9", "bad\n", [{ start: 3, end: 6, fg: 1, bg: -1, attrs: 0 }], 3);
-    const card = spec.mount(toolCall({ id: "tc-9", terminal_id: "term-9" }));
+    const card = mount(toolCall({ id: "tc-9", terminal_id: "term-9" }));
     const spans = card.querySelectorAll(".tool-output pre span");
     expect([...spans].map((s) => [s.textContent, s.className])).toEqual([
       ["ok", "ansi-green-fg"],

@@ -2,8 +2,9 @@
 // Tool-call rendering: build, update, and lifecycle management for tool cards.
 //
 // Extracted from messages.ts — the "Tool calls" section (lines 824-1133).
-// This module owns the ReconcileSpec for tool calls, the per-tool signal
-// effects, and the lifecycle finalization on turn end.
+// This module owns the tool-card slot registry (a multimap: one slot per
+// mounted render of a call), the per-tool signal effects, and the lifecycle
+// finalization on turn end.
 //
 // Defensive optional-field checks on tool-call payloads: the @typescript-eslint/no-unnecessary-condition
 // rule sees ToolCall.* fields as non-nullable from the wire types, but
@@ -17,7 +18,6 @@
 import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, clearToolCallSig, toolCallSigKey } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
-import type { ReconcileSpec } from "./reconcile.js";
 
 import {
   maybeCollapseGroup,
@@ -43,11 +43,60 @@ import { bindLoadingState } from "./actions/index.js";
  *  and carries no uniqueness guarantee across chats (the identity contract
  *  store-signals.ts documents). Bare-id keying was survivable only while a chat
  *  switch disposed the old view; with parked views resident, two chats'
- *  identical tool ids would corrupt each other's cards. */
-const toolEls = new Map<string, HTMLDivElement>();
+ *  identical tool ids would corrupt each other's cards.
+ *
+ *  A MULTIMAP, because one tool call can be rendered on TWO surfaces at once:
+ *  the chat transcript's card and the subagent page's detached card. Each
+ *  mounted render owns one slot, identified by its card element, and manages
+ *  it through its own lifetime — mounting a second render must not evict the
+ *  first (the last-writer-wins clobber this replaced left one surface's card
+ *  orphaned: live effect, no handle, unreachable by park or dispose). */
+interface ToolSlot {
+  chatID: string;
+  toolID: string;
+  card: HTMLDivElement;
+  /** The live effect's disposer, or null while suspended (view parked). */
+  cleanup: (() => void) | null;
+}
+const toolSlots = new Map<string, ToolSlot[]>();
+
+/** Every slot for one composite key. The empty array is never stored. */
+function slotsOf(chatID: string, toolID: string): ToolSlot[] {
+  return toolSlots.get(toolCallSigKey(chatID, toolID)) ?? [];
+}
+
+/** Remove one slot, running its effect. When the LAST slot for the key goes,
+ *  the shared per-tool state goes with it: the signal, the terminal links and
+ *  any parked buffer — kept while ANY render still reads them. Idempotent by
+ *  card identity, because a slot can be reached by its render's own disposer
+ *  AND by the view-level sweep. */
+function removeSlot(chatID: string, toolID: string, card: HTMLDivElement): void {
+  const key = toolCallSigKey(chatID, toolID);
+  const slots = toolSlots.get(key);
+  if (slots === undefined) {
+    return;
+  }
+  const i = slots.findIndex((s) => s.card === card);
+  if (i === -1) {
+    return;
+  }
+  const [slot] = slots.splice(i, 1);
+  slot?.cleanup?.();
+  if (slots.length > 0) {
+    return;
+  }
+  toolSlots.delete(key);
+  clearToolCallSig(chatID, toolID);
+  for (const [termID, link] of [...termToTool]) {
+    if (link.chatID === chatID && link.toolID === toolID) {
+      termToTool.delete(termID);
+      parkedTermBuffers.delete(termID);
+    }
+  }
+}
 
 /** What a terminal id resolves to: the tool call that claimed it AND the chat
- *  that owns the card, because the `toolEls` lookup needs both halves of the
+ *  that owns the card, because the slot lookup needs both halves of the
  *  composite key. The KEY stays the bare terminal id — vibekit mints terminal
  *  ids, so they are globally unique where tool ids are not. */
 interface TermLink {
@@ -102,28 +151,13 @@ const PENDING_TERMINALS_CAP = 16;
  *  lines say how it ended. */
 const LIVE_OUTPUT_CHARS_CAP = 256 * 1024;
 
-/** Per-tool-call effect cleanups, keyed on `toolCallSigKey(chatID, toolID)`.
- *  Disposed on unmount or chat-view disposal; SUSPENDED (cleanup runs, entry
- *  stays with `cleanup: null`) while the owning view is parked, so resume can
- *  find the card and re-arm without a second registry.
- *
- *  The chat and tool id the card mounted for are recorded here rather than
- *  looked up at dispose time: the tool-call signal is keyed on (chat, call),
- *  and by the time a chat switch runs the teardown the active chat is already
- *  the NEW one, so a disposal that asked for it would clear the wrong key and
- *  leak the old chat's signals. */
-interface ToolEffect {
-  chatID: string;
-  toolID: string;
-  /** The live effect's disposer, or null while suspended (view parked). */
-  cleanup: (() => void) | null;
-}
-const toolEffects = new Map<string, ToolEffect>();
-
-/** Whether a chat's transcript view is parked. Injected by messages.ts (the
- *  multiplexer) so terminal output for a parked view buffers instead of
- *  writing DOM — this module sits below messages.ts and cannot import it. */
-let _isChatParked: (chatID: string) => boolean = () => false;
+/** Whether a card sits inside a PARKED transcript view. Injected by
+ *  messages.ts (the multiplexer) so terminal output for a parked card buffers
+ *  instead of writing DOM — this module sits below messages.ts and cannot
+ *  import it. Per CARD, not per chat: the subagent page renders the same
+ *  (chat, tool) pairs outside any transcript view, and its cards stay live
+ *  while the chat's transcript is parked. */
+let _isCardParked: (card: HTMLElement) => boolean = () => false;
 
 /** Live terminal output that arrived while its card's view was PARKED, per
  *  terminal id. Drained into the card exactly once, at resume. Bounded like a
@@ -159,101 +193,95 @@ function bufferParkedChunk(termID: string, text: string, spans: TextSpan[], base
   }
 }
 
-/** Drain every parked terminal buffer owned by `chatID` into its card, once.
- *  Called by the multiplexer at unpark, after the view is active again — the
- *  replay goes through `appendTerminalChunk`, which now finds the view live
- *  and writes the card. */
-export function drainParkedTerminals(chatID: string): void {
+/** Drain every parked terminal buffer owned by `chatID` into the cards inside
+ *  the freshly unparked view, once. Writes DIRECTLY to those cards rather than
+ *  through `appendTerminalChunk`: the fan-out there would double-write a card
+ *  on another surface (the subagent page), which stayed live and already
+ *  received these chunks. */
+export function drainParkedTerminals(chatID: string, withinEl: HTMLElement): void {
   for (const [termID, buf] of [...parkedTermBuffers]) {
-    if (termToTool.get(termID)?.chatID !== chatID) {
+    const link = termToTool.get(termID);
+    if (link?.chatID !== chatID) {
       continue;
     }
     parkedTermBuffers.delete(termID);
-    for (const chunk of buf.chunks) {
-      appendTerminalChunk(termID, chunk.text, chunk.spans, chunk.base);
-    }
-  }
-}
-
-export function initToolViewCallbacks(cbs: { isChatParked: (chatID: string) => boolean }): void {
-  _isChatParked = cbs.isChatParked;
-}
-
-function disposeToolEffect(chatID: string, toolID: string): void {
-  const key = toolCallSigKey(chatID, toolID);
-  const entry = toolEffects.get(key);
-  if (entry !== undefined) {
-    entry.cleanup?.();
-    toolEffects.delete(key);
-    clearToolCallSig(entry.chatID, entry.toolID);
-  }
-  toolEls.delete(key);
-}
-
-export function disposeAllToolEffects(): void {
-  for (const entry of toolEffects.values()) {
-    entry.cleanup?.();
-    clearToolCallSig(entry.chatID, entry.toolID);
-  }
-  toolEffects.clear();
-  toolEls.clear();
-  termToTool.clear();
-  pendingChunks.clear();
-  parkedTermBuffers.clear();
-}
-
-/** The real per-view dispose for one chat's tool state: effects (live or
- *  suspended), cards, signals, terminal links and parked buffers. `withinEl`
- *  is the ownership guard — a slot whose card lives OUTSIDE the disposed view
- *  (the subagent page renders the same (chat, tool) pairs) is skipped, so
- *  disposing a chat's transcript view cannot strip the page's live cards. */
-export function disposeToolEffectsForChat(chatID: string, withinEl?: HTMLElement): void {
-  for (const [key, entry] of [...toolEffects]) {
-    if (entry.chatID !== chatID) {
-      continue;
-    }
-    const card = toolEls.get(key);
-    if (withinEl !== undefined && card !== undefined && !withinEl.contains(card)) {
-      continue;
-    }
-    entry.cleanup?.();
-    toolEffects.delete(key);
-    toolEls.delete(key);
-    clearToolCallSig(entry.chatID, entry.toolID);
-    for (const [termID, link] of [...termToTool]) {
-      if (link.chatID === chatID && link.toolID === entry.toolID) {
-        termToTool.delete(termID);
-        parkedTermBuffers.delete(termID);
+    for (const slot of slotsOf(link.chatID, link.toolID)) {
+      if (!withinEl.contains(slot.card)) {
+        continue;
+      }
+      for (const chunk of buf.chunks) {
+        writeChunkToCard(slot.card, chunk.text, chunk.spans, chunk.base);
       }
     }
   }
 }
 
+export function initToolViewCallbacks(cbs: { isCardParked: (card: HTMLElement) => boolean }): void {
+  _isCardParked = cbs.isCardParked;
+}
+
+export function disposeAllToolEffects(): void {
+  for (const slots of toolSlots.values()) {
+    for (const slot of slots) {
+      slot.cleanup?.();
+      clearToolCallSig(slot.chatID, slot.toolID);
+    }
+  }
+  toolSlots.clear();
+  termToTool.clear();
+  pendingChunks.clear();
+  parkedTermBuffers.clear();
+}
+
+/** Dispose one render's slot for a tool call, by card identity. Each surface
+ *  registers this against its own render lifetime (messages-blocks mounts it
+ *  into the render's disposers), so the transcript's card and the page's
+ *  detached card come and go independently. */
+export function disposeToolSlot(chatID: string, toolID: string, card: HTMLDivElement): void {
+  removeSlot(chatID, toolID, card);
+}
+
+/** The view-level sweep of one chat's tool state: every slot whose card lives
+ *  inside `withinEl` (the view being disposed), plus — when the last slot of a
+ *  call goes — its signal, terminal links and parked buffers. A slot whose
+ *  card lives on ANOTHER surface (the subagent page renders the same
+ *  (chat, tool) pairs) is its own render's to dispose. Overlaps the per-render
+ *  disposers harmlessly: removal is idempotent by card identity. */
+export function disposeToolEffectsForChat(chatID: string, withinEl?: HTMLElement): void {
+  for (const slots of [...toolSlots.values()]) {
+    for (const slot of [...slots]) {
+      if (slot.chatID !== chatID) {
+        continue;
+      }
+      if (withinEl !== undefined && !withinEl.contains(slot.card)) {
+        continue;
+      }
+      removeSlot(slot.chatID, slot.toolID, slot.card);
+    }
+  }
+}
+
 /** Suspend the live tool-card effects for the named calls (view parked): the
- *  effect is disposed, the card, the entry and the SIGNAL stay, so background
+ *  effect is disposed, the slot, the card and the SIGNAL stay, so background
  *  `tool_call_update`s keep landing in the store with no DOM write behind
- *  them, and resume can re-read the latest snapshot. Also stops the shared
- *  duration ticker for the message's in-progress cards — that ticker writes
- *  text into the card every second, which a parked view must never receive. */
+ *  them, and resume can re-read the latest snapshot. Only slots inside the
+ *  parking view: a card on another surface keeps its live effect. Also stops
+ *  the shared duration ticker for the suspended in-progress cards — that
+ *  ticker writes text into the card every second, which a parked view must
+ *  never receive. */
 export function suspendToolEffectsFor(
   chatID: string,
   toolIDs: readonly string[],
-  withinEl?: HTMLElement,
+  withinEl: HTMLElement,
 ): void {
   for (const toolID of toolIDs) {
-    const key = toolCallSigKey(chatID, toolID);
-    const entry = toolEffects.get(key);
-    if (entry?.cleanup === null || entry?.cleanup === undefined) {
-      continue; // unknown, or already suspended
-    }
-    const card = toolEls.get(key);
-    if (withinEl !== undefined && card !== undefined && !withinEl.contains(card)) {
-      continue; // another surface (the subagent page) owns this slot
-    }
-    entry.cleanup();
-    entry.cleanup = null;
-    if (card !== undefined) {
-      untrackInProgress(card);
+    for (const slot of slotsOf(chatID, toolID)) {
+      if (slot.cleanup === null || !withinEl.contains(slot.card)) {
+        continue; // already suspended, or another surface's slot
+      }
+      slot.cleanup();
+      slot.cleanup = null;
+      untrackInProgress(slot.card);
     }
   }
 }
@@ -261,39 +289,33 @@ export function suspendToolEffectsFor(
 /** Re-arm suspended tool-card effects (view unparked): apply the CURRENT
  *  signal snapshot to the card — everything that arrived while parked lands in
  *  one write — then subscribe again, and rejoin the duration ticker when the
- *  card is still running. Entries that are already live (a card mounted by the
+ *  card is still running. Slots that are already live (a card mounted by the
  *  catch-up paint) are left alone, so a resume pass is idempotent. */
 export function resumeToolEffectsFor(
   chatID: string,
   toolCalls: readonly ToolCall[],
-  withinEl?: HTMLElement,
+  withinEl: HTMLElement,
 ): void {
   for (const tc of toolCalls) {
-    const key = toolCallSigKey(chatID, tc.id);
-    const entry = toolEffects.get(key);
-    if (entry?.cleanup !== null) {
-      continue; // unknown, or already live (a card the catch-up paint mounted)
-    }
-    const card = toolEls.get(key);
-    if (card === undefined) {
-      continue;
-    }
-    if (withinEl !== undefined && !withinEl.contains(card)) {
-      continue;
-    }
-    const sig = ensureToolCallSig(chatID, tc.id, tc);
-    let lastApplied = sig.peek();
-    applyToolCallUpdate(card, lastApplied, chatID);
-    entry.cleanup = effect(() => {
-      const next = sig.value;
-      if (next === lastApplied) {
-        return;
+    for (const slot of slotsOf(chatID, tc.id)) {
+      if (slot.cleanup !== null || !withinEl.contains(slot.card)) {
+        continue; // already live, or another surface's slot
       }
-      applyToolCallUpdate(card, next, chatID);
-      lastApplied = next;
-    });
-    if (card.dataset["outcome"] === "running" && card.dataset["startMs"] !== undefined) {
-      trackInProgress(card);
+      const card = slot.card;
+      const sig = ensureToolCallSig(chatID, tc.id, tc);
+      let lastApplied = sig.peek();
+      applyToolCallUpdate(card, lastApplied, chatID);
+      slot.cleanup = effect(() => {
+        const next = sig.value;
+        if (next === lastApplied) {
+          return;
+        }
+        applyToolCallUpdate(card, next, chatID);
+        lastApplied = next;
+      });
+      if (card.dataset["outcome"] === "running" && card.dataset["startMs"] !== undefined) {
+        trackInProgress(card);
+      }
     }
   }
 }
@@ -301,7 +323,7 @@ export function resumeToolEffectsFor(
 /** Record a tool call's terminal link and settle anything already held for it.
  *  Idempotent: the same link arrives on every later update. `chatID` is the
  *  card's owning chat — the value is chat-bearing so `appendTerminalChunk` can
- *  compose the composite `toolEls` key from the terminal id alone.
+ *  compose the composite slot key from the terminal id alone.
  *
  *  A hold is FLUSHED only when the tool call carries no output of its own. When
  *  it does, that output is the server's whole-stream snapshot and the card has
@@ -366,16 +388,33 @@ export function appendTerminalChunk(
     holdChunk(termID, text, spans, base);
     return;
   }
-  if (_isChatParked(link.chatID)) {
-    // The card's view is parked: no DOM may move under it. The chunk waits in
-    // the bounded per-terminal buffer and lands at resume, newest-first-kept.
+  // Fan out to every mounted render of the claiming call. A card in a parked
+  // view must not move (no DOM under a parked view); one on a live surface —
+  // the active transcript, or the subagent page while the transcript is
+  // parked — takes the chunk now. Buffer ONCE when any card sat parked: the
+  // unpark drain writes those cards directly, so live cards never see a chunk
+  // twice.
+  let parked = false;
+  for (const slot of slotsOf(link.chatID, link.toolID)) {
+    if (_isCardParked(slot.card)) {
+      parked = true;
+      continue;
+    }
+    writeChunkToCard(slot.card, text, spans, base);
+  }
+  if (parked) {
     bufferParkedChunk(termID, text, spans, base);
-    return;
   }
-  const card = toolEls.get(toolCallSigKey(link.chatID, link.toolID));
-  if (card === undefined) {
-    return;
-  }
+}
+
+/** The DOM half of a live chunk: append to the card's output region, keep the
+ *  tail under the live cap. */
+function writeChunkToCard(
+  card: HTMLDivElement,
+  text: string,
+  spans: TextSpan[],
+  base: number,
+): void {
   const out = card.querySelector(".tool-output");
   if (out === null) {
     return;
@@ -464,48 +503,40 @@ export function initToolCallbacks(cbs: {
 }
 
 // ---------------------------------------------------------------------------
-// Tool-call ReconcileSpec
+// Tool-card mounting
 // ---------------------------------------------------------------------------
 
-/** The tool-card spec for one CHAT.
+/** Mount one tool call's card and register this render's slot. Every tool
+ *  call — including a subagent's nested tools — renders as a real tool card;
+ *  subagent GROUPING (the invocation → a SubagentBlock header, the nested
+ *  tools → cards inside its body) is handled one level up in
+ *  messages-blocks.ts, keyed by agent_subtask_id.
  *
- *  Per chat rather than one module-level spec, because a card's signal is keyed
- *  on (chat, call): a tool call id is backend-authored and carries no uniqueness
- *  guarantee, so the mount and its writer have to agree on the chat or the card
- *  mounts, never updates, and shows a permanently pending spinner. The
- *  RECONCILE key stays the bare id — it only has to be unique within one
- *  message's body — while the module registries key on the composite. */
-export function toolSpecFor(chatID: string): ReconcileSpec<ToolCall> {
-  return {
-    key: (tc) => tc.id,
-    mount: (tc) => mountToolCall(chatID, tc),
-    update: (el, tc) => {
-      applyToolCallUpdate(el as HTMLDivElement, tc, chatID);
-    },
-    onRemove: (_, key) => {
-      disposeToolEffect(chatID, key);
-    },
-  };
-}
-
-function mountToolCall(chatID: string, tc: ToolCall): HTMLDivElement {
-  // Every tool call — including a subagent's nested tools — renders as a
-  // real tool card. Subagent GROUPING (the invocation → a SubagentBlock
-  // header, the nested tools → cards inside its body) is handled one level
-  // up in messages-blocks.ts, keyed by agent_subtask_id, so this spec has no
-  // subagent-specific branches.
+ *  Takes the CHAT because a card's signal is keyed on (chat, call): a tool
+ *  call id is backend-authored and carries no uniqueness guarantee, so the
+ *  mount and its writer have to agree on the chat or the card mounts, never
+ *  updates, and shows a permanently pending spinner. The RECONCILE key stays
+ *  the bare id — it only has to be unique within one message's body — while
+ *  the slot registry keys on the composite. The caller owns the slot's
+ *  disposal (`disposeToolSlot` against its render lifetime); the view-level
+ *  sweep is the belt behind it. */
+export function mountToolCallCard(chatID: string, tc: ToolCall): HTMLDivElement {
   const opts = toolCardOptsFor(tc, true);
   const card = buildToolCard(opts);
   const key = toolCallSigKey(chatID, tc.id);
-  toolEls.set(key, card);
-  // After buildToolCard, deliberately: the card is what a held chunk would be
-  // appended to, and whether the hold is flushed at all depends on the output
+  const slots = toolSlots.get(key) ?? [];
+  toolSlots.set(key, slots);
+  const slot: ToolSlot = { chatID, toolID: tc.id, card, cleanup: null };
+  slots.push(slot);
+  // After buildToolCard AND after the slot is registered, deliberately: the
+  // card is what a held chunk would be appended to (the flush fans out over
+  // the slots), and whether the hold is flushed at all depends on the output
   // this build just rendered.
   linkTerminal(chatID, tc);
 
   const sig = ensureToolCallSig(chatID, tc.id, tc);
   let lastApplied = tc;
-  const cleanup = effect(() => {
+  slot.cleanup = effect(() => {
     const next = sig.value;
     if (next === lastApplied) {
       return;
@@ -513,7 +544,6 @@ function mountToolCall(chatID: string, tc: ToolCall): HTMLDivElement {
     applyToolCallUpdate(card, next, chatID);
     lastApplied = next;
   });
-  toolEffects.set(key, { chatID, toolID: tc.id, cleanup });
   return card;
 }
 

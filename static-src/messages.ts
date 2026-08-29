@@ -421,7 +421,7 @@ function resumeView(view: ChatView, session: Session): void {
     resumeMessage(view, session, m);
   }
   view.pausedStreaming.clear();
-  drainParkedTerminals(session.id);
+  drainParkedTerminals(session.id, view.el);
 }
 
 /** Per-message-id metadata kept for the duration the message is mounted. */
@@ -562,7 +562,16 @@ export function mountChatView(): void {
   // store.ts a leaf), the view registry lives in this module and this module
   // already imports store.js — routing the predicate through app.ts would add
   // an indirection with no cycle to break.
-  initToolViewCallbacks({ isChatParked: (chatID) => views.get(chatID)?.parked === true });
+  initToolViewCallbacks({
+    isCardParked: (card) => {
+      for (const v of views.values()) {
+        if (v.parked && v.el.contains(card)) {
+          return true;
+        }
+      }
+      return false;
+    },
+  });
   registerEvictionExemption((chatID) => views.has(chatID));
   // Page unload is the one production moment every view goes away at once;
   // the close/delete/LRU paths dispose per view.
