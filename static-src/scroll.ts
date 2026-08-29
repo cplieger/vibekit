@@ -60,6 +60,23 @@ const USER_SCROLL_DEBOUNCE_MS = 150;
 /** The reader's position, as a state rather than an inferred boolean. */
 export type ReadingState = "following" | "reading";
 
+/** The scroll-owned slice of a parked view's saved state: where the scroller
+ *  stood and which reading state the reader was in. The multiplexer
+ *  (messages.ts) carries it inside its ViewHandle across a park/unpark cycle;
+ *  everything else the controller holds per view (the deferred-mutation queue,
+ *  the pagination pass) is deliberately NOT saved — the pass is abandoned via
+ *  its existing cancellable hook and the catch-up paint re-derives the queue. */
+export interface ViewScrollState {
+  scrollTop: number;
+  readingState: ReadingState;
+}
+
+/** What `attach` needs to hand the scroller to a transcript view: the view
+ *  element (the observers' new root) plus the state to restore into it. */
+export interface ViewAttachHandle extends ViewScrollState {
+  el: HTMLElement;
+}
+
 /** Which geometry a mutation disturbs. The two are physically different and a
  *  helper that measures the wrong one compensates by ZERO:
  *
@@ -76,8 +93,15 @@ export type ReadingState = "following" | "reading";
 export type ShiftKind = "content-growth" | "viewport-shrink";
 
 class ScrollController {
-  private readonly messagesEl: HTMLElement;
   readonly scrollEl: HTMLElement;
+
+  /** The observers' root: the ACTIVE transcript view under the multiplexer,
+   *  or the multiplexer itself before any view has attached (which is also
+   *  what keeps the pre-multiplexer test fixtures valid — they populate
+   *  `#messages` directly and never attach a view). Every mutation callback,
+   *  the per-child ResizeObserver set and the pagination furniture key off
+   *  this element, so a parked view receives no callbacks and no furniture. */
+  private viewEl: HTMLElement;
 
   private state: ReadingState = "following";
   private userScrollingUntil = 0;
@@ -134,9 +158,18 @@ class ScrollController {
    *  chat switch cannot cancel it. */
   private pendingLoad: (() => void) | null = null;
 
+  /** The observers rooted on `viewEl`, held as fields so `attach` can re-root
+   *  them on the incoming view. ONE ResizeObserver serves the scroller AND the
+   *  view's children — the scroller entry is permanent, the child set is
+   *  re-pointed per view. */
+  private contentObserver: MutationObserver | null = null;
+  private childObserver: MutationObserver | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private observedChildren = new Set<Element>();
+
   constructor(messagesEl: HTMLElement, scrollEl: HTMLElement) {
-    this.messagesEl = messagesEl;
     this.scrollEl = scrollEl;
+    this.viewEl = messagesEl;
   }
 
   init(): void {
@@ -199,11 +232,7 @@ class ScrollController {
         cb();
       }
     });
-    mutationObserver.observe(this.messagesEl, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
+    this.contentObserver = mutationObserver;
 
     const resizeObserver = new ResizeObserver(() => {
       // Re-measured here rather than on `window.resize`: this fires AFTER layout
@@ -218,25 +247,58 @@ class ScrollController {
       this.autoScrollIfAnchored();
     });
     resizeObserver.observe(this.scrollEl);
-    const observed = new Set<Element>();
-    const reobserveChildren = (): void => {
-      const current = new Set<Element>(this.messagesEl.children);
-      for (const child of observed) {
-        if (!current.has(child)) {
-          resizeObserver.unobserve(child);
-          observed.delete(child);
-        }
+    this.resizeObserver = resizeObserver;
+    this.childObserver = new MutationObserver(() => {
+      this.reobserveChildren();
+    });
+    this.observeView(this.viewEl);
+  }
+
+  /** Root the content observers on `el`: the transcript MutationObserver, the
+   *  childList watcher behind the per-child ResizeObserver set, and that set
+   *  itself (the view's children = the turn cards, as before the multiplexer).
+   *  `attach` calls this with the incoming view; `detach` disconnects without
+   *  re-rooting, which is what makes a parked view observer-silent. */
+  private observeView(el: HTMLElement): void {
+    this.viewEl = el;
+    this.contentObserver?.disconnect();
+    this.contentObserver?.observe(el, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    this.childObserver?.disconnect();
+    this.childObserver?.observe(el, { childList: true });
+    this.reobserveChildren();
+  }
+
+  private disconnectView(): void {
+    this.contentObserver?.disconnect();
+    this.childObserver?.disconnect();
+    for (const child of this.observedChildren) {
+      this.resizeObserver?.unobserve(child);
+    }
+    this.observedChildren.clear();
+  }
+
+  private reobserveChildren(): void {
+    const observer = this.resizeObserver;
+    if (observer === null) {
+      return;
+    }
+    const current = new Set<Element>(this.viewEl.children);
+    for (const child of this.observedChildren) {
+      if (!current.has(child)) {
+        observer.unobserve(child);
+        this.observedChildren.delete(child);
       }
-      for (const child of current) {
-        if (!observed.has(child)) {
-          resizeObserver.observe(child);
-          observed.add(child);
-        }
+    }
+    for (const child of current) {
+      if (!this.observedChildren.has(child)) {
+        observer.observe(child);
+        this.observedChildren.add(child);
       }
-    };
-    reobserveChildren();
-    const childObserver = new MutationObserver(reobserveChildren);
-    childObserver.observe(this.messagesEl, { childList: true });
+    }
   }
 
   /** Write the scroller's reserved gutter to `--scrollbar-w` — the width its own
@@ -405,6 +467,39 @@ class ScrollController {
     requestAnimationFrame(() => {
       this.scrollSelfTo(this.scrollEl.scrollHeight, "instant");
     });
+  }
+
+  /** Hand the scroller to a transcript view: re-root the observers on it and
+   *  restore its saved reading state and scroll position. The unpark half of
+   *  the park/unpark pair; a freshly created view attaches with
+   *  `{scrollTop: 0, readingState: "following"}`. */
+  attach(handle: ViewAttachHandle): void {
+    this.observeView(handle.el);
+    this.userScrollingUntil = 0;
+    this.setState(handle.readingState);
+    this.scrollSelfTo(handle.scrollTop, "instant");
+  }
+
+  /** Take the scroller away from the current view: snapshot the scroll-owned
+   *  state for the view's handle, abandon the pagination pass in flight (its
+   *  completion signal and its height compensation both belong to the outgoing
+   *  transcript), drop the deferred-mutation queue (the unpark catch-up paint
+   *  re-derives every fold the queue was holding), and disconnect the
+   *  observers so the parked view can never produce a callback. */
+  detach(): ViewScrollState {
+    const snapshot: ViewScrollState = {
+      scrollTop: this.scrollEl.scrollTop,
+      readingState: this.state,
+    };
+    this.deferred = [];
+    this.abandonLoadPass();
+    this.userScrollingUntil = 0;
+    this.selfScrollTop = -1;
+    this.onLoadMore = null;
+    this.hasMoreMessages = false;
+    this.disconnectView();
+    this.setState("following");
+    return snapshot;
   }
 
   setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
@@ -621,11 +716,14 @@ class ScrollController {
     this.loadingMore = true;
     const skel = loadMoreSkeleton();
     skel.id = "load-more-skeleton";
-    const indicator = document.getElementById("load-more-indicator");
+    // Scoped to the attached view: a parked view keeps its own pagination
+    // furniture (it is that view's DOM), so a document-wide id lookup could
+    // find a sibling view's button and mount this pass's skeleton there.
+    const indicator = this.viewEl.querySelector(`[id="load-more-indicator"]`);
     if (indicator !== null) {
       indicator.replaceWith(skel);
     } else {
-      this.messagesEl.prepend(skel);
+      this.viewEl.prepend(skel);
     }
     // The content-growth instance this helper was generalised from: older
     // messages land ABOVE the reader, so the box is unchanged and scrollHeight
@@ -655,7 +753,7 @@ class ScrollController {
       observer.disconnect();
       clearTimeout(safetyTimer);
     };
-    observer.observe(this.messagesEl, { childList: true });
+    observer.observe(this.viewEl, { childList: true });
   }
 
   /** End the pagination pass in flight, so neither its observer nor its timer can
@@ -685,7 +783,10 @@ class ScrollController {
    *  messages" — an instruction rather than a control, which is unusable the
    *  moment folding makes the transcript non-scrollable. */
   private updateLoadMoreIndicator(): void {
-    const existing = document.getElementById("load-more-indicator");
+    // Scoped to the attached view — see maybeLoadMore: parked views keep their
+    // own furniture, and removing "the" indicator by document id could reach
+    // into one of them.
+    const existing = this.viewEl.querySelector(`[id="load-more-indicator"]`);
     if (!this.hasMoreMessages || this.onLoadMore === null) {
       existing?.remove();
       return;
@@ -701,7 +802,7 @@ class ScrollController {
     btn.addEventListener("click", () => {
       this.maybeLoadMore(true);
     });
-    this.messagesEl.prepend(btn);
+    this.viewEl.prepend(btn);
   }
 }
 
@@ -731,6 +832,14 @@ export function scrollableBy(): number {
 
 export function setUserScrolledUp(v: boolean): void {
   getInstance().setUserScrolledUp(v);
+}
+/** Hand the scroller to a transcript view (unpark / fresh view). */
+export function attach(handle: ViewAttachHandle): void {
+  getInstance().attach(handle);
+}
+/** Snapshot and release the current view's scroll state (park). */
+export function detach(): ViewScrollState {
+  return getInstance().detach();
 }
 export function jumpTo(target: HTMLElement, opts?: ScrollIntoViewOptions): void {
   getInstance().jumpTo(target, opts);

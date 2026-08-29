@@ -93,6 +93,24 @@
  * `anchorTop`, which is the one place that already knows what is being followed
  * and how far it may scroll. */
 [id="messages"] {
+  /* The MULTIPLEXER: one `.transcript-view` child per resident chat view, the
+   * active one carrying `.is-active`. It holds none of the column declarations
+   * — those are per-view below — but it must hand the scroller's definite
+   * height down: the views' `min-height: 100%` resolves against THIS box, and
+   * a plain auto-height block would resolve it to nothing (the percentage
+   * needs a definite base), collapsing the flex-end geometry on short chats.
+   * `height` rather than `min-height` for the same reason — a min-height-only
+   * box still measures auto for its children's percentages. Content taller
+   * than the viewport overflows this box downward into the scroller's
+   * scrollable overflow, exactly as it used to overflow the scroller itself. */
+  height: 100%;
+}
+
+/* One resident chat view. Carries ALL the column declarations the container
+ * used to hold, so inter-turn spacing, the centred cap that the prompt box and
+ * rail offset key on, and the flex-end geometry are all per-view state that
+ * parks and unparks with the chat. */
+.transcript-view {
   padding-block: var(--sp-4);
   display: flex;
   flex-direction: column;
@@ -102,6 +120,30 @@
   width: 100%;
   min-height: 100%;
   justify-content: flex-end;
+}
+
+/* Parked views keep their DOM and rendering state but cost the page nothing:
+ * content-visibility skips layout and paint of the subtree while preserving
+ * its state (the whole point over display:none), and the box's own metrics are
+ * zeroed because cv only skips the CONTENTS — the element's padding and its
+ * min-height would otherwise stack a viewport of empty space under the active
+ * view inside the shared scroller. The `inert` attribute rides along in JS
+ * (messages.ts parkView): cv:hidden removes the subtree from focus and
+ * find-in-page per spec, but cross-browser a11y exposure diverges, so the
+ * explicit attribute is the guarantee. */
+.transcript-view:not(.is-active) {
+  content-visibility: hidden;
+  min-height: 0;
+  padding-block: 0;
+}
+
+/* The BOOT skeleton is the one transcript occupant that predates any view (it
+ * mounts before the chat list loads), so it sits directly in the multiplexer
+ * and re-borrows just the centred cap. */
+[id="messages"] > .skeleton-msg-group {
+  max-width: var(--content-max-w);
+  margin-inline: auto;
+  width: 100%;
 }
 
 /* When the tab is hidden, Chrome pauses CSS animations. Animations that

@@ -22,7 +22,6 @@ vi.mock("./store-signals.js", () => ({
   streamingReasoningSigs: undefined,
   streamingTextSigs: undefined,
   toolCallSigs: undefined,
-  toolCallSigKey: undefined,
   ensureStreamingSig: undefined,
   ensureReasoningSig: undefined,
   ensureBlockTextSig: undefined,
@@ -32,12 +31,16 @@ vi.mock("./store-signals.js", () => ({
   clearReasoningSig: undefined,
   clearBlockSigsFor: undefined,
   clearAllBlockSigs: undefined,
+  // Real key composition: the module under test keys its card registry on the
+  // composite, and a key of `undefined` would collapse every entry onto one.
+  toolCallSigKey: vi.fn((chatID: string, toolID: string) => `${chatID}\u0000${toolID}`),
   ensureToolCallSig: vi.fn((_chat: string, _id: string, tc: unknown) => ({ value: tc })),
   clearToolCallSig: vi.fn(),
 }));
 vi.mock("./tool-group.js", () => ({
   maybeCollapseGroup: vi.fn(),
   formatDuration: vi.fn(() => ""),
+  trackInProgress: vi.fn(),
   untrackInProgress: vi.fn(),
 }));
 vi.mock("./tool-schema.js", () => ({
@@ -147,7 +150,7 @@ describe("a completion snapshot supersedes the hold", () => {
     expect(pre(card)).toBe("a\n");
     // The same link arrives on every later update; the discard must be permanent
     // in both directions, so neither a re-link nor a snapshot re-flushes.
-    updateToolCall(card, tc);
+    updateToolCall(card, tc, "c-terminal");
     expect(pre(card)).toBe("a\n");
   });
 

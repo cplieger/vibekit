@@ -474,13 +474,13 @@
 }
 
 /* Disable animations when the chat tab is backgrounded so content
-   renders immediately when the user switches back. `[id="messages"]` is in the
-   list for itself, not for its children: the transcript container carries
+   renders immediately when the user switches back. `.transcript-view` is in the
+   list for itself, not for its children: the transcript view carries
    `data-chat-entry` for one 200ms fade when a loading skeleton is swapped for
    the real turns (messages.ts `fadeInTranscript`), and that animation starts at
    opacity 0 — paused in a hidden tab, it would hold the whole conversation
    invisible until the reader came back. */
-:where(html[data-tab-hidden]) [id="messages"],
+:where(html[data-tab-hidden]) [id="messages"] .transcript-view,
 :where(html[data-tab-hidden]) [id="messages"] .msg-row,
 :where(html[data-tab-hidden]) [id="messages"] .tool-call,
 :where(html[data-tab-hidden]) [id="messages"] .tool-group,

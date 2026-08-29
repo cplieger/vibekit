@@ -400,13 +400,17 @@ describe("a11y: failed tool aria-expanded", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(details.getAttribute("aria-hidden")).toBe("true");
 
-    updateToolCall(card, {
-      id: "tf1",
-      title: "Running: grep",
-      kind: "other",
-      status: "failed",
-      ts: 0,
-    });
+    updateToolCall(
+      card,
+      {
+        id: "tf1",
+        title: "Running: grep",
+        kind: "other",
+        status: "failed",
+        ts: 0,
+      },
+      "c-a11y",
+    );
 
     // The failed branch auto-expands the details (expandToolDetails → the
     // disclosure controller), which must keep the toggle's aria-expanded and

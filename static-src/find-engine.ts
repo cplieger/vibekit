@@ -169,7 +169,10 @@ function unwrapMark(mark: HTMLElement): void {
 // ---------------------------------------------------------------------------
 
 export class FindEngine {
-  private readonly root: HTMLElement;
+  /** The element the walker scans. Public so a caller that re-roots per open
+   *  (the transcript's find, whose root is the ACTIVE view) can tell whether
+   *  its engine still points at the current root. */
+  readonly root: HTMLElement;
   private marks: HTMLElement[] = [];
   private current = -1;
   private lastQuery = "";

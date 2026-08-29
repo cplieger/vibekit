@@ -139,14 +139,18 @@ vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
-  scrollToBottom: vi.fn(),
-  resetScrollState: vi.fn(),
   // Needed even though no case below reaches it: activateChatView's success
   // branch calls it, so omitting it leaves a TypeError waiting for whichever
   // future test does exercise that path.
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),
   fadeInTranscript: vi.fn(),
+  // The multiplexer's surface: activation mounts transcript furniture into the
+  // active view (null here — the mock has no view, so callers fall back to
+  // $.messages), and a tab close disposes the chat's view.
+  activeTranscriptView: vi.fn(() => null),
+  transcriptViewFor: vi.fn(() => null),
+  disposeChatView: vi.fn(),
 }));
 vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
 // The composer's per-chat state owns real DOM (the textarea) and a debounced
@@ -215,10 +219,9 @@ import { loadList, loadMessages } from "./store-load.js";
 import {
   loadTurnRail,
   pointTurnRail,
-  resetScrollState,
   fadeInTranscript,
-  scrollToBottom,
   setLoadMore,
+  disposeChatView,
 } from "./messages.js";
 import { seedComposerState } from "./composer-state.js";
 import { info } from "./toast.js";
@@ -551,33 +554,34 @@ describe("the scroller on a chat switch", () => {
     });
   }
 
-  it("is handed the incoming chat before the transcript repaints", async () => {
-    // setActive re-derives activeSession, which repaints synchronously. A reset
-    // after it would leave one frame of the previous chat's controls over the
-    // new chat's transcript. The ORDER is what this asserts, and it holds inside
-    // the activation whether or not the activation itself was awaited into.
+  it("re-keys the rail before the transcript repaints", async () => {
+    // setActive re-derives activeSession, which repaints synchronously — and
+    // the paint is what parks the outgoing view and attaches the incoming one
+    // (the scroller's per-view state is the multiplexer's now, not this
+    // module's). What activation still owns is the rail: pointing it AFTER
+    // setActive would leave one frame of the previous chat's markers over the
+    // new chat's transcript.
     vi.mocked(get).mockReturnValue(chat([]));
     await activate();
-    const reset = vi.mocked(resetScrollState).mock.invocationCallOrder[0] ?? 0;
+    const rail = vi.mocked(pointTurnRail).mock.invocationCallOrder[0] ?? 0;
     const active = vi.mocked(setActive).mock.invocationCallOrder[0] ?? 0;
-    expect(reset).toBeGreaterThan(0);
-    expect(reset).toBeLessThan(active);
+    expect(rail).toBeGreaterThan(0);
+    expect(rail).toBeLessThan(active);
   });
 
-  it("is reset on a chat that has messages, without waiting for the fetch", async () => {
-    // The loaded branch resets after its own load resolves, so between the
-    // switch and the response the reader saw the previous chat's timeline and
-    // resume control over this chat's transcript.
+  it("points the rail on a chat that has messages, without waiting for the fetch", async () => {
+    // The loaded branch used to re-key the view furniture only after its own
+    // load resolved, so between the switch and the response the reader saw the
+    // previous chat's timeline over this chat's transcript.
     vi.mocked(get).mockReturnValue(chat([{ id: "m1", role: "user" }]));
     await activate();
-    expect(resetScrollState).toHaveBeenCalledTimes(1);
     expect(pointTurnRail).toHaveBeenCalledWith("c-1");
     expect(loadMessages).toHaveBeenCalledWith("c-1");
   });
 
-  it("is reset for a chat the store holds no row for", () => {
+  it("points the rail for a chat the store holds no row for", () => {
     // activateChatView returns early on a missing row and renders an empty view.
-    // The reset sits above that return, or the blank page keeps the controls.
+    // The re-point sits above that return, or the blank page keeps the markers.
     //
     // Called by NAME rather than pulled off the spec a door passed: a chat tab's
     // activation hook is the factory's, registered once by the composition root,
@@ -585,7 +589,6 @@ describe("the scroller on a chat switch", () => {
     // a second definition of it.
     vi.mocked(get).mockReturnValue(undefined);
     activateChatView("c-1");
-    expect(resetScrollState).toHaveBeenCalled();
     expect(pointTurnRail).toHaveBeenCalledWith("c-1");
   });
 });
@@ -672,6 +675,13 @@ describe("closeChatTab is the one client-local teardown", () => {
     closeChatTab("c-closed");
     expect(removeChat).toHaveBeenCalledWith("c-closed");
     expect(dropDecisions).toHaveBeenCalledWith("c-closed");
+    // The chat's transcript view — active or parked — runs the real per-view
+    // dispose, BEFORE the store row goes (the removal's repaint must not park
+    // a view this close is about to throw away).
+    expect(disposeChatView).toHaveBeenCalledWith("c-closed");
+    const disposeOrder = vi.mocked(disposeChatView).mock.invocationCallOrder[0] ?? 0;
+    const removeOrder = vi.mocked(removeChat).mock.invocationCallOrder[0] ?? 0;
+    expect(disposeOrder).toBeLessThan(removeOrder);
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });
 
@@ -1031,8 +1041,7 @@ describe("restore: opening a closed conversation from History", () => {
     expect(vi.mocked(info)).toHaveBeenCalledWith(
       "That conversation was ephemeral (retention is off) and is gone.",
     );
-    // activateChatView never ran: no scroll reset, no rail pointing, no fetch.
-    expect(resetScrollState).not.toHaveBeenCalled();
+    // activateChatView never ran: no rail pointing, no fetch.
     expect(pointTurnRail).not.toHaveBeenCalled();
     expect(loadMessages).not.toHaveBeenCalled();
   });
@@ -1046,7 +1055,7 @@ describe("restore: opening a closed conversation from History", () => {
     await expect(openPreviousSession(row)).resolves.toBe("failed");
 
     expect(vi.mocked(info)).not.toHaveBeenCalled();
-    expect(resetScrollState).not.toHaveBeenCalled();
+    expect(pointTurnRail).not.toHaveBeenCalled();
     expect(loadMessages).not.toHaveBeenCalled();
   });
 });
@@ -1095,10 +1104,10 @@ describe("activateChatView routes on the staleness verdict", () => {
     activateChatView("c-fresh");
 
     expect(loadMessages).not.toHaveBeenCalled();
-    // The per-chat view furniture is still re-wired: the load-more hook and the
-    // landing scroll are activation's, not the fetch's.
+    // The per-chat view furniture is still re-wired: the load-more hook is
+    // activation's, not the fetch's. (The landing position is the
+    // multiplexer's now — a resident view restores its own.)
     expect(setLoadMore).toHaveBeenCalled();
-    expect(scrollToBottom).toHaveBeenCalled();
     // The rail is handed the chat WITHOUT force: its own record decides.
     expect(loadTurnRail).toHaveBeenCalledWith("c-fresh");
   });

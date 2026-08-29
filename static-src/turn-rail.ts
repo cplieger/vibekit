@@ -633,13 +633,21 @@ function formatGap(ms: number): string {
 /** The on-demand body build for a stub turn, injected by messages.ts at mount
  *  (a static import back would cycle: messages.ts imports this module to mount
  *  the rail). Inert until wired, so a rail built in a test renders without the
- *  transcript. */
+ *  transcript. `activeView` scopes the anchor lookup to the ACTIVE transcript
+ *  view: turn anchors are `#turn-{n}`, and with parked views resident the same
+ *  id exists once per view, so a document-wide lookup could land on a hidden
+ *  card. */
 let mountTurnBody: (chatID: string, turnID: string) => Promise<void> = () => Promise.resolve();
+let activeView: () => HTMLElement | null = () => null;
 
 export function initTurnRailCallbacks(cbs: {
   mountTurnBody: (chatID: string, turnID: string) => Promise<void>;
+  activeView?: () => HTMLElement | null;
 }): void {
   mountTurnBody = cbs.mountTurnBody;
+  if (cbs.activeView !== undefined) {
+    activeView = cbs.activeView;
+  }
 }
 
 /** Jump to a turn, fetching it first when it is not resident.
@@ -717,7 +725,15 @@ async function loadUntilResident(s: TurnSummary): Promise<boolean> {
 }
 
 function scrollToAnchor(anchor: string): boolean {
-  const target = document.getElementById(anchor);
+  // Within the active view when one is wired: `#turn-{n}` repeats once per
+  // resident view, and document.getElementById answers in document order,
+  // which can be a PARKED view's card. The document fallback keeps rail
+  // fixtures (and the pre-multiplexer boot instant) working unscoped.
+  const root = activeView();
+  const target =
+    root !== null
+      ? root.querySelector<HTMLElement>(`[id="${CSS.escape(anchor)}"]`)
+      : document.getElementById(anchor);
   if (target === null) {
     return false;
   }

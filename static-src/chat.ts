@@ -45,11 +45,12 @@ import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import {
   mountChatView,
   setLoadMore,
-  scrollToBottom,
-  resetScrollState,
   loadTurnRail,
   pointTurnRail,
   fadeInTranscript,
+  activeTranscriptView,
+  transcriptViewFor,
+  disposeChatView,
 } from "./messages.js";
 import { addAttachment } from "./attachments.js";
 import {
@@ -153,6 +154,11 @@ export function closeChatTab(id: string): void {
   // reopening the SAME id: the card came back and the tab dot said the chat
   // needed a decision that no longer existed.
   dropDecisions(id);
+  // The chat's transcript view — active or parked — runs the real per-view
+  // dispose. Before removeChat: the store reassigning the active chat repaints
+  // synchronously, and a dead view still in the registry would be parked by
+  // that paint only to be thrown away here.
+  disposeChatView(id);
   // The store row, whatever retention says: a closed chat is a chat that
   // stopped being in a tab. Under retention the record survives server-side
   // and reopening session/loads it back; with retention off the server deleted
@@ -197,20 +203,26 @@ export function activateChatView(id: string): void {
   // it reads the outgoing chat's id, which nothing can recover afterwards.
   saveComposerState();
   const gen = ++activationGen;
-  // Re-key the two per-chat view SINGLETONS on the switch itself: before the
-  // repaint below, and before any branch or early return can skip it. Both used
-  // to be re-keyed as a side effect of a successful message load, so every path
-  // that never reaches that callback inherited the previous chat's furniture —
-  // a new chat is an empty chat and loads nothing, a failed load returns early,
-  // a purged record returns earlier still, and even a healthy switch left the
-  // rail describing the old chat until its own fetch landed.
+  // Re-key the rail on the switch itself: before the repaint below, and before
+  // any branch or early return can skip it. It used to be re-keyed as a side
+  // effect of a successful message load, so every path that never reaches that
+  // callback inherited the previous chat's markers — a new chat is an empty
+  // chat and loads nothing, a failed load returns early, a purged record
+  // returns earlier still, and even a healthy switch left the rail describing
+  // the old chat until its own fetch landed.
   //
   // Pointing the rail is the whole update here, because the rail spans the
   // SESSION: an empty chat has no turns to fetch, and a brand-new chat's id
   // exists nowhere but the tab that minted it, so asking for its turns is a
   // guaranteed 404. The loaded branch fetches for itself below.
+  //
+  // The SCROLLER is not reset here any more: the multiplexer owns per-view
+  // scroll state — the park inside setActive's repaint saves the outgoing
+  // view's, and the incoming view either restores its own (unpark) or starts
+  // fresh (a new view resets). Landing at the bottom is the replay's own
+  // behaviour: a cold view mounts its turns, and every user-triggered turn
+  // pops to the live edge, exactly as a live arrival does.
   pointTurnRail(id);
-  resetScrollState();
   setActive(id);
   restoreComposerState(id);
   ensureBound();
@@ -238,12 +250,11 @@ export function activateChatView(id: string): void {
   } else if (!transcriptStale(session)) {
     // The window is the server's answer and no gap or eviction has undermined
     // it since it was fetched, so switching back costs ZERO fetches: the
-    // repaint above already rendered it. Only the per-chat view furniture is
-    // re-wired, and the rail decides its own fetch off its record — the
-    // message count moves under background SSE ingest while the window (which
-    // tracks the tail live) stays trustworthy.
+    // repaint above already rendered it (or unparked the resident view whole).
+    // Only the per-chat view furniture is re-wired, and the rail decides its
+    // own fetch off its record — the message count moves under background SSE
+    // ingest while the window (which tracks the tail live) stays trustworthy.
     setupLoadMore(id);
-    scrollToBottom();
     void loadTurnRail(id);
   } else {
     // Hydrate messages from the server, then render.
@@ -267,7 +278,12 @@ export function activateChatView(id: string): void {
         : skeletonTiming(() => {
             skeletonPainted = true;
             const skel = chatSkeleton();
-            $.messages.appendChild(skel);
+            // Into the ACTIVE VIEW: the placeholder stands in for this chat's
+            // transcript, and the view's own column geometry (flex-end,
+            // centred cap) is what positions it. setActive above painted, so
+            // the view exists; the multiplexer fallback covers a fixture that
+            // never mounted one.
+            (activeTranscriptView() ?? $.messages).appendChild(skel);
             return () => {
               skel.remove();
             };
@@ -290,7 +306,7 @@ export function activateChatView(id: string): void {
           activateChatView(id);
         });
         retry.appendChild(btn);
-        $.messages.appendChild(retry);
+        (activeTranscriptView() ?? $.messages).appendChild(retry);
         return;
       }
       // The turns that replace the placeholder fade in rather than cutting.
@@ -311,7 +327,6 @@ export function activateChatView(id: string): void {
       const fresh = get(id);
       if (fresh !== undefined) {
         setupLoadMore(id);
-        scrollToBottom();
       }
       // The rail's index is session-wide and independent of the message window,
       // so it is its own fetch rather than something derived from what loaded.
@@ -361,9 +376,10 @@ function setupLoadMore(chatID: string): void {
           }
           void loadMessages(chatID, oldest.id).then(() => {
             // Remove the load-more skeleton — scroll.ts watches for its
-            // removal as the "load complete" signal (was previously done
-            // inside the imperative prependMessages helper).
-            document.getElementById("load-more-skeleton")?.remove();
+            // removal as the "load complete" signal. Scoped to this chat's
+            // view: with parked views resident the id can exist more than
+            // once, and this pass owns only its own chat's furniture.
+            transcriptViewFor(chatID)?.querySelector(`[id="load-more-skeleton"]`)?.remove();
             if (getActiveId() !== chatID) {
               return;
             }
