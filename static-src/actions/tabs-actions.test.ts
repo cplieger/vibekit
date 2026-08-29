@@ -170,6 +170,8 @@ describe("open_tab", () => {
     });
     expect(reply?.created).toBe(false);
     expect(reply?.subject.id).toBe("t1");
+    // The widened reply: the collection version rides to the pending-op machine.
+    expect(reply?.version).toBe(9);
   });
 
   it("collapses two dispatches 0ms apart into ONE round trip", async () => {
@@ -274,18 +276,22 @@ describe("open_tab", () => {
 // --- close_tab ---
 
 describe("close_tab", () => {
-  it("returns every id the mutation closed", async () => {
-    // A parent and its children go as ONE mutation, so this is a list.
+  it("returns every id the mutation closed, with the committed version", async () => {
+    // A parent and its children go as ONE mutation, so this is a list — and the
+    // version rides beside it for the pending-op machine.
     mockSend.mockResolvedValue(okWith({ closed: ["p", "c1", "c2"], version: 3 }) as never);
-    const closed = await closeTabCommand.dispatch({ id: "p", opID: "op-1" });
-    expect(closed).toEqual(["p", "c1", "c2"]);
+    const reply = await closeTabCommand.dispatch({ id: "p", opID: "op-1" });
+    expect(reply?.closed).toEqual(["p", "c1", "c2"]);
+    expect(reply?.version).toBe(3);
   });
 
   it("treats an empty list as a normal answer, not a failure", async () => {
     // Two devices can close one tab. Closing an id that is not open commits
-    // nothing and is not an error.
+    // nothing and is not an error — the empty list is the machine's semantic
+    // confirmation of absence.
     mockSend.mockResolvedValue(okWith({ closed: [], version: 3 }) as never);
-    expect(await closeTabCommand.dispatch({ id: "gone", opID: "op-2" })).toEqual([]);
+    const reply = await closeTabCommand.dispatch({ id: "gone", opID: "op-2" });
+    expect(reply?.closed).toEqual([]);
     expect(mockToastError).not.toHaveBeenCalled();
   });
 

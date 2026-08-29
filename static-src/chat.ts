@@ -26,6 +26,7 @@ import type { ChatHeader, Session } from "./types.js";
 import { ensureBound } from "./banner-stack.js";
 import {
   openTab,
+  adoptSubject,
   activateTab,
   tabIdFor,
   getActiveTabId,
@@ -34,6 +35,7 @@ import {
   setTabTooltip,
   type TabDotStatus,
 } from "./tabs.js";
+import { beginAdopt, adoptCommitted, opFailed } from "./tabs-sync.js";
 import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { submitPrompt } from "./submit.js";
 import { chatSkeleton } from "./skeleton.js";
@@ -62,7 +64,13 @@ import { refreshContextUI } from "./context-ui.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { isRetentionEnabled } from "./retention.js";
-import { createChat, deleteChat as deleteChatAction, forkChat, setMode } from "./actions/chat.js";
+import {
+  createChat,
+  deleteChat as deleteChatAction,
+  forkChat,
+  setMode,
+  type CreatedChat,
+} from "./actions/chat.js";
 import { newOpID } from "./transport.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
@@ -435,6 +443,26 @@ function seedChat(header: ChatHeader): void {
   }
 }
 
+/** Adopt the tab a creating command opened server-side: paint it from the
+ *  response, hand the pending-op machine what it committed, and activate it.
+ *
+ *  This is what replaced the second POST. `create_chat` and `fork_chat` write
+ *  the record and open the tab under one coordinator lock, so the reply already
+ *  carries the committed subject — dispatching `open_tab` after it was a whole
+ *  round trip to learn `created: false`. A reply with no subject (a server
+ *  composition with no tab store) has nothing to adopt, so the pending op is
+ *  retired and whatever frame may come paints the ordinary remote way. */
+function adoptCreatedTab(opID: string, created: CreatedChat): void {
+  const subject = created.subject;
+  if (subject === undefined) {
+    opFailed(opID);
+    return;
+  }
+  adoptSubject(subject, created.chat.name === "" ? NEW_CHAT_NAME : created.chat.name);
+  adoptCommitted(opID, subject, created.version, true);
+  activateTab(subject.id);
+}
+
 /** Create a new chat and open its tab. Resolves to the new chat's id, or "" when
  *  the server refused. If initialPrompt is non-empty, send it immediately.
  *
@@ -457,32 +485,31 @@ export async function createSession(initialPrompt?: string): Promise<string> {
   // Minted HERE and passed as an argument, never inside the action's run(): the
   // framework re-runs run() per retry attempt, so an op id minted in there would
   // be fresh on every attempt and the server would mint a second chat for one
-  // gesture. See transport.newOpID.
-  const header = await createChat.dispatch({ opID: newOpID(), model });
-  if (header === null) {
+  // gesture. See transport.newOpID. Registered with the pending-op machine
+  // BEFORE the dispatch, so the tabs frame the create commits correlates as this
+  // device's own however early it lands.
+  const opID = newOpID();
+  beginAdopt(opID);
+  const created = await createChat.dispatch({ opID, model });
+  if (created === null) {
     // The action framework has already raised its toast. Nothing is seeded and no
     // tab opens, which is the honest surface: there is no chat.
+    opFailed(opID);
     return "";
   }
-  seedChat(header);
-  const id = header.id;
+  seedChat(created.chat);
+  const id = created.chat.id;
   setActive(id);
   // The composer belongs to THIS chat from here, not from the activation below.
-  // `openChatTab` is a server round trip and the activation that retargets the
-  // composer is its `onShow`, so without this the box still belonged to the chat
-  // the user just left for the length of that trip — and anything typed into it
-  // was filed under that chat and flushed to the server as its draft.
+  // The activation that retargets it is the adopted tab's `onShow`, so without
+  // this the box would belong to the chat the user just left for a beat — and
+  // anything typed into it would be filed under that chat and flushed to the
+  // server as its draft.
   retargetComposer(id);
-  // AWAITED: the tab is a round trip now, and every caller of createSession
-  // addresses the chat it produced — a detached open would let a caller push a
-  // route or attach a file before the row exists.
-  //
-  // `create_chat` already opened this chat's tab server-side (the coordinator
-  // writes the record and opens the tab under one lock), so this open answers
-  // `created: false` and resolves as soon as that frame lands. It is not
-  // redundant: it is what ACTIVATES the new chat, which is the whole point of
-  // pressing New chat.
-  await openChatTab(id, header.name === "" ? NEW_CHAT_NAME : header.name);
+  // The reply carries the tab the create opened server-side, so the row is
+  // painted and ACTIVATED here, from the response — which is the whole point of
+  // pressing New chat, with no second round trip and no frame wait in the way.
+  adoptCreatedTab(opID, created);
 
   if (initialPrompt !== undefined && initialPrompt !== "") {
     setCurrentModel(model);
@@ -529,22 +556,23 @@ export async function openTangentChat(parentChatID: string): Promise<void> {
   // The fork creates the chat and MINTS its id, so the sub-tab can only open once
   // the reply lands. Before server minting the tab opened first and the dispatch
   // followed; now there is no id to open a tab for until the server answers.
-  const header = await forkChat.dispatch({ opID: newOpID(), parentChatID });
-  if (header === null) {
+  const opID = newOpID();
+  beginAdopt(opID);
+  const created = await forkChat.dispatch({ opID, parentChatID });
+  if (created === null) {
+    opFailed(opID);
     return;
   }
-  seedChat(header);
-  const id = header.id;
+  seedChat(created.chat);
+  const id = created.chat.id;
   setActive(id);
   // Same round-trip window as createSession's: the tangent is the active chat
-  // now, so the composer has to be its own before the await, not after.
+  // now, so the composer has to be its own before anything else runs.
   retargetComposer(id);
-  // The parent is resolved to its TAB, which is what a subject's `Parent` names.
-  // A parent whose tab is not open here promotes the tangent to top level, the
-  // same rule the strip applies to an orphan.
-  await openChatTab(id, header.name === "" ? NEW_CHAT_NAME : header.name, {
-    parentTabID: tabIdFor("chat", parentChatID),
-  });
+  // The reply's subject already carries the PARENT the coordinator nested the
+  // tangent under — the server resolved the parent's tab, so nothing here has
+  // to. Adopting it paints the sub-tab and activates it, with no second POST.
+  adoptCreatedTab(opID, created);
   setCurrentModel(model);
 }
 

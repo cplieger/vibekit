@@ -23,9 +23,10 @@ import type {
   PendingSteer,
   ResumableSessionRow,
   Session,
+  TabSubject,
   WorkflowRunRow,
 } from "../types.js";
-import { decodeChatHeader } from "../wire/decoders.gen.js";
+import { decodeChatHeader, decodeTabSubject } from "../wire/decoders.gen.js";
 import {
   get,
   hasMessage,
@@ -76,7 +77,7 @@ import { clearFailure } from "../failure-notice.js";
 
 export const createChat = defineAction<
   { opID: string; name?: string; model?: string },
-  ChatHeader | null
+  CreatedChat | null
 >({
   name: "chat.create",
   networkMode: "always",
@@ -103,6 +104,21 @@ export const createChat = defineAction<
   error: "Couldn't create a chat",
 });
 
+/** What a creating command committed: the chat, and the tab the coordinator
+ *  opened for it in the same operation.
+ *
+ *  `subject` and `version` are the reply-widening contract (design §A2): the
+ *  caller ADOPTS the tab from this response — paints it and activates it — so
+ *  no second `open_tab` round trip exists between pressing New chat and having
+ *  the chat on screen. `subject` is optional because the server omits it when no
+ *  tab store is wired; `version` is the collection version the open committed,
+ *  consumed by the pending-op machine and never by the event watermark. */
+export interface CreatedChat {
+  chat: ChatHeader;
+  subject?: TabSubject;
+  version: number;
+}
+
 /** Read the chat a creating command returned, or throw the way the framework
  *  expects.
  *
@@ -111,7 +127,7 @@ export const createChat = defineAction<
  *  a failure even at HTTP 200 — the caller has nothing to open. Returning null
  *  instead would make every caller re-derive that judgement, and `chat.ts` would
  *  then open a tab for an empty id. */
-function chatFromReply(r: SendResult, signal: AbortSignal, what: string): ChatHeader {
+function chatFromReply(r: SendResult, signal: AbortSignal, what: string): CreatedChat {
   if (!r.ok) {
     if (signal.aborted || r.code === "cancelled") {
       throw new ActionError("cancelled", { code: "cancelled" });
@@ -129,7 +145,18 @@ function chatFromReply(r: SendResult, signal: AbortSignal, what: string): ChatHe
       code: "missing_chat",
     });
   }
-  return decodeChatHeader(body.chat);
+  const rec = body as Record<string, unknown>;
+  const version = rec["version"];
+  return {
+    chat: decodeChatHeader(rec["chat"]),
+    ...(rec["subject"] === undefined || rec["subject"] === null
+      ? {}
+      : { subject: decodeTabSubject(rec["subject"]) }),
+    // 0 when absent or malformed: below every real version, so the machine
+    // reads the op as already covered rather than holding it for a frame the
+    // reply never named.
+    version: typeof version === "number" && Number.isFinite(version) ? version : 0,
+  };
 }
 
 // There is no `chat.close` action, and there must not be one: `close_chat` was
@@ -461,7 +488,7 @@ export const loadSessions = apiAction<
 
 export const resumeSession = defineAction<
   { opID: string; sessionID: string; name: string },
-  ChatHeader | null
+  CreatedChat | null
 >({
   name: "chat.resume_session",
   networkMode: "always",
@@ -503,7 +530,7 @@ export const resumeSession = defineAction<
 
 export const forkChat = defineAction<
   { opID: string; parentChatID: string; title?: string },
-  ChatHeader | null
+  CreatedChat | null
 >({
   name: "chat.fork",
   networkMode: "always",

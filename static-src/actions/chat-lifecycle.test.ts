@@ -191,13 +191,41 @@ describe("chat.create", () => {
     expect(typeof sent[IDEMPOTENCY_COMMAND_FIELD]).toBe("string");
   });
 
-  it("returns the chat the server minted", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
+  it("returns the chat the server minted, with the tab it opened and the version", async () => {
+    mockSend.mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        ok: true,
+        chat: header,
+        subject: {
+          id: "tb_1",
+          kind: "chat",
+          ref: "c-minted",
+          parent: "",
+          pinned: false,
+          owns: true,
+        },
+        version: 7,
+      },
+    });
     const { createChat } = await import("./chat.js");
     const got = await createChat.dispatch({ opID: "op-1" });
 
-    expect(got?.id).toBe("c-minted");
-    expect(got?.model).toBe("claude-opus-5");
+    expect(got?.chat.id).toBe("c-minted");
+    expect(got?.chat.model).toBe("claude-opus-5");
+    // The reply-widening contract: the subject and the committed version reach
+    // the caller, which is what the adoption path paints and correlates from.
+    expect(got?.subject?.id).toBe("tb_1");
+    expect(got?.version).toBe(7);
+  });
+
+  it("carries no subject when the reply omits it", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, chat: header } });
+    const { createChat } = await import("./chat.js");
+    const got = await createChat.dispatch({ opID: "op-1" });
+    expect(got?.chat.id).toBe("c-minted");
+    expect(got?.subject).toBeUndefined();
   });
 
   // A 200 the client cannot read a chat out of is a FAILURE, not a null the caller
@@ -273,7 +301,7 @@ describe("chat.resume_session", () => {
       sessionID: "sess_abc-123",
       name: "Earlier work",
     });
-    expect(got?.id).toBe("c-minted");
+    expect(got?.chat.id).toBe("c-minted");
   });
 
   // A 200 the client cannot read a chat out of is a FAILURE, not a null the caller
