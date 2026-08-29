@@ -233,6 +233,9 @@ interface PendingAdopt {
   kind: "adopt";
   opID: string;
   state: "awaiting-response" | "confirmed-awaiting-frame";
+  /** Gesture order, for the suppression override below: only an open gestured
+   *  AFTER a close may resurrect a row that close captured. */
+  seq: number;
   /** Server-minted, so set at response — which is why the op is keyed by opID. */
   id?: string;
   /** For snapshot merge-back. Set at response, with the id. */
@@ -244,6 +247,8 @@ interface PendingRemove {
   kind: "remove";
   opID: string;
   state: "awaiting-response" | "confirmed-awaiting-frame" | "verifying";
+  /** Gesture order; see PendingAdopt.seq. */
+  seq: number;
   id: string;
   capturedTabIDs: readonly string[];
   onConfirm: () => void;
@@ -257,6 +262,11 @@ type PendingOp = PendingAdopt | PendingRemove;
 
 const pendingOps = new Map<string, PendingOp>();
 
+/** Monotonic gesture order across ops of both kinds. Which of two ops the USER
+ *  performed second is a fact the op set itself cannot answer once both are
+ *  pending, and the suppression override turns on it. */
+let opSeq = 0;
+
 /** Notified whenever the LAST pending remove settles. One slot, one consumer:
  *  tabs.ts, whose deferred empty-state respawn re-arms on it. */
 let onRemovesSettled: (() => void) | null = null;
@@ -264,7 +274,7 @@ let onRemovesSettled: (() => void) | null = null;
 /** Transition 1 for an open: record the dispatch. The op has no id yet — the
  *  server mints it — so the opID is the whole correlation. */
 export function beginAdopt(opID: string): void {
-  pendingOps.set(opID, { kind: "adopt", opID, state: "awaiting-response" });
+  pendingOps.set(opID, { kind: "adopt", opID, state: "awaiting-response", seq: ++opSeq });
 }
 
 /** Transition 1 for a close: record the dispatch and the reversible removal the
@@ -275,6 +285,7 @@ export function beginRemove(opID: string, spec: PendingRemoveSpec): void {
     kind: "remove",
     opID,
     state: "awaiting-response",
+    seq: ++opSeq,
     id: spec.id,
     capturedTabIDs: spec.capturedTabIDs,
     onConfirm: spec.onConfirm,
@@ -442,25 +453,32 @@ function frameIsLocal(opID: string | undefined): boolean {
  *  IDS and never by ref: a frame re-upserting a row the reversible removal took
  *  out (a pin committed before the close, delivered after the gesture) must not
  *  resurrect it, while a remote device reopening the same chat mints a NEW tab
- *  id, which must paint unsuppressed. A pending adopt for the same (kind, ref)
- *  OVERRIDES the suppression — the user reopened locally inside the window, and
- *  open wins locally. */
+ *  id, which must paint unsuppressed.
+ *
+ *  The LOCAL reopen inside the window is the override — open wins locally —
+ *  and it is deliberately narrow: the adopt must have been gestured AFTER the
+ *  newest remove that captured the id (an open the user performed before the
+ *  close is not a reopen, and its late echo must stay suppressed or the close's
+ *  own gesture un-applies), and the frame must carry the adopt's OWN subject id
+ *  (the same-id reopen against a not-yet-processed close; a reopen the server
+ *  answered with a fresh id passes the capture test on its own). */
 function suppressChanged(changed: TabSubject): boolean {
-  let captured = false;
+  let capturedBy = -1;
   for (const op of pendingOps.values()) {
     if (op.kind === "remove" && op.capturedTabIDs.includes(changed.id)) {
-      captured = true;
-      break;
+      capturedBy = Math.max(capturedBy, op.seq);
     }
   }
-  if (!captured) {
+  if (capturedBy < 0) {
     return false;
   }
   for (const op of pendingOps.values()) {
     if (
       op.kind === "adopt" &&
+      op.seq > capturedBy &&
       op.subject?.kind === changed.kind &&
-      op.subject.ref === changed.ref
+      op.subject.ref === changed.ref &&
+      op.subject.id === changed.id
     ) {
       return false;
     }
@@ -713,5 +731,6 @@ export function _resetTabsSyncForTest(): void {
     }
   }
   pendingOps.clear();
+  opSeq = 0;
   onRemovesSettled = null;
 }

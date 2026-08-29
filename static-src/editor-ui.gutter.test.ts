@@ -35,18 +35,9 @@ vi.mock("./highlight.js", () => ({
 // The tab projection widened this graph: the tab factory reads the chat store for a
 // chat tab's display NAME, and chat.ts's store effect reads the rest. Present-but-
 // inert so real-ESM linking succeeds — no tab is materialized here.
-vi.mock("./store.js", () => ({
-  getActiveId: () => "",
-  get: vi.fn(() => undefined),
-  getActive: vi.fn(() => undefined),
-  getSessions: vi.fn(() => []),
-  tabStatusFor: vi.fn(() => ""),
-  setActive: vi.fn(),
-  removeChat: vi.fn(),
-  upsertHeader: vi.fn(),
-  clearTurnDone: vi.fn(),
-  activeSession: { value: undefined },
-}));
+vi.mock("./store.js", () =>
+  import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
+);
 
 vi.mock("./actions/editor.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this

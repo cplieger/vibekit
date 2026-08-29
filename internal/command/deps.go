@@ -199,8 +199,16 @@ type Broadcaster interface {
 // caller will forget.
 type ChatTeardown interface {
 	// DeleteChatState is the delete path: cancel the chat's runs, drop every
-	// in-memory trace, and reap the durable KAS session too.
+	// in-memory trace, and reap the durable KAS session too. It resolves runs
+	// and sessions off the chat RECORD, so it belongs to the record-first
+	// delete, where the teardown runs while the record still exists.
 	DeleteChatState(ctx context.Context, chatID vibekit.ChatID)
+	// DeleteChatStateByChain is the delete grade for a chat whose record is
+	// ALREADY GONE: the close escalation removes the record inside its commit,
+	// so the run cancel and the KAS reap are driven from the session chain
+	// captured before it. The record-reading form above would silently no-op on
+	// both.
+	DeleteChatStateByChain(ctx context.Context, chatID vibekit.ChatID, sessionChain []string)
 	// CloseChatState is the close path: the same cancel and in-memory cleanup,
 	// but it LEAVES the durable KAS session on disk so the chat can be reopened
 	// and so History can still list it.

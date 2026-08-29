@@ -811,6 +811,51 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 	}
 }
 
+// TestCancelForSessions_CancelsARunWhoseRecordIsGone is the close escalation's
+// half of the run lifecycle: the record was deleted inside the close commit, so
+// the cancel is driven from the CAPTURED session chain. The record-reading form
+// (CancelForChat) is the control — on a deleted chat it must no-op, which is
+// exactly why the chain-shaped seam exists.
+//
+// Two chains, because the membership layer captures one per doomed chat: a root
+// chat whose run hangs off a RETIRED session (the chain's whole point — the
+// current id alone would miss it), and a tangent child's single-session chain.
+func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
+	cases := []struct {
+		name   string
+		chain  []string
+		parent string
+	}{
+		{name: "root chat, run on a retired session", chain: []string{"sess-root-old", "sess-root-live"}, parent: "sess-root-old"},
+		{name: "tangent child, single-session chain", chain: []string{"sess-tangent"}, parent: "sess-tangent"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			const id = "wf_1"
+			br.callResults = map[string]json.RawMessage{
+				methodKiroWorkflowList: kasRuns(t, map[string]any{
+					"workflowId": id, "status": "running", "parentSessionId": tc.parent,
+				}),
+				methodKiroWorkflowCancel: json.RawMessage(`{}`),
+			}
+			h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+			h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+			// No chat record exists — the escalation deleted it before this runs.
+
+			h.runs.CancelForChat(t.Context(), "c-doomed")
+			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+				t.Fatal("the record-reading CancelForChat cancelled a run for a chat with no record; the control is broken")
+			}
+
+			h.runs.CancelForSessions(t.Context(), "c-doomed", tc.chain)
+			if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+				t.Errorf("the captured-chain cancel never went out; calls were %v", br.callLog())
+			}
+		})
+	}
+}
+
 // TestCancelForChat_ReportsARunListItCouldNotRead pins the one thing a tab close
 // can do when it cannot find out what to cancel.
 //

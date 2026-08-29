@@ -81,7 +81,24 @@ vi.mock("./device-view.js", () => {
 });
 // The two leaf stores the tab factory reads for a display NAME. An editor tab's
 // label is its path's last segment, so neither is consulted for this suite's tabs.
-vi.mock("./store.js", () => ({ get: vi.fn(() => undefined) }));
+vi.mock("./store.js", () =>
+  import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
+);
+// The composer half of the close gesture (tabs.ts reaches it for the rollback's
+// draft restore); inert here, per-chat state this suite does not stage.
+vi.mock("./composer-state.js", () => ({
+  retargetComposer: vi.fn(),
+  restoreFailedSend: vi.fn(),
+  saveComposerState: vi.fn(),
+  restoreComposerState: vi.fn(),
+  flushComposerDraft: vi.fn(),
+  dropComposerState: vi.fn(),
+  seedComposerState: vi.fn(),
+  adoptRemoteComposerState: vi.fn(),
+  noteComposerText: vi.fn(),
+  initComposerState: vi.fn(),
+  _resetComposerStateForTest: vi.fn(),
+}));
 vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));

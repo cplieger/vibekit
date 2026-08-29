@@ -73,7 +73,9 @@ vi.mock("./dom.js", () => ({
       get: (_t, prop: string) => {
         // tabList must be a stable, document-attached element so the real
         // renderDOM appends focusable role=tab nodes we can drive in the
-        // keyboard-navigation tests. Every other getter stays a throwaway.
+        // keyboard-navigation tests. promptInput likewise: the last-tab close
+        // moves focus to the composer, and the empty-state rollback reads the
+        // typed text out of it. Every other getter stays a throwaway.
         if (prop === "tabList") {
           let tl = document.getElementById("tab-list");
           if (tl === null) {
@@ -82,6 +84,15 @@ vi.mock("./dom.js", () => ({
             document.body.appendChild(tl);
           }
           return tl;
+        }
+        if (prop === "promptInput") {
+          let input = document.getElementById("prompt-input");
+          if (input === null) {
+            input = document.createElement("textarea");
+            input.id = "prompt-input";
+            document.body.appendChild(input);
+          }
+          return input;
         }
         return document.createElement("div");
       },
@@ -93,11 +104,32 @@ vi.mock("./tabs-drag.js", () => ({
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
-// The two leaf stores the factory reads for a DISPLAY NAME. Mocked to their empty
-// answer, so every label below is either the factory's derived default or the
-// override an opener passed — and never a chat the suite had to stage.
-vi.mock("./store.js", () => ({ get: vi.fn(() => undefined) }));
+// The two leaf stores the factory reads for a DISPLAY NAME, plus the three
+// pointer writers the optimistic close moves (getActiveId / setActive /
+// getSessions) — and everything else actions/chat.js links against, which is in
+// the graph now that tabs.ts reaches composer-state for the rollback's draft
+// restore. The COMPLETE helper, for the reason its own drift guard states: a
+// partial factory fails the whole file at link time the day store.ts grows an
+// export.
+vi.mock("./store.js", () =>
+  import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),
+);
 vi.mock("./run-store.js", () => ({ peekRunState: vi.fn(() => undefined) }));
+// The composer half of the close gesture: retargeting and the failed-send
+// restore are per-chat state this suite does not stage, so both are inert.
+vi.mock("./composer-state.js", () => ({
+  retargetComposer: vi.fn(),
+  restoreFailedSend: vi.fn(),
+  saveComposerState: vi.fn(),
+  restoreComposerState: vi.fn(),
+  flushComposerDraft: vi.fn(),
+  dropComposerState: vi.fn(),
+  seedComposerState: vi.fn(),
+  adoptRemoteComposerState: vi.fn(),
+  noteComposerText: vi.fn(),
+  initComposerState: vi.fn(),
+  _resetComposerStateForTest: vi.fn(),
+}));
 vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
@@ -122,13 +154,19 @@ import {
   tabIdForRoute,
   getActiveTabId,
   getActiveTabKind,
+  activeChatRef,
   setOnEmpty,
   setTabPinned,
   showFilesView,
   toggleFilesView,
   _resetForTest,
 } from "./tabs.js";
+import { closeTabCommand } from "./actions/tabs.js";
+import { restoreFailedSend, retargetComposer } from "./composer-state.js";
+import { info as toastInfo, error as toastErrorFn } from "./toast.js";
 import { attachDrag, setReorderCallback } from "./tabs-drag.js";
+import { $ } from "./dom.js";
+import type { OpenTabOutcome } from "./tabs.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import type { TabOpeners } from "./tab-materialize.js";
 import {
@@ -194,7 +232,7 @@ function registerOpeners(): void {
 function openChat(
   ref: string,
   opts: { activate?: boolean; parent?: string; owns?: boolean } = {},
-): Promise<void> {
+): Promise<OpenTabOutcome> {
   return openTab({ kind: "chat", ref, ...opts });
 }
 
@@ -947,7 +985,7 @@ describe("setTabDirty (editor unsaved indicator)", () => {
 
 describe("sub-tabs", () => {
   /** Open a chat nested under the tab already open for `parentRef`. */
-  function openChild(ref: string, parentRef: string): Promise<void> {
+  function openChild(ref: string, parentRef: string): Promise<OpenTabOutcome> {
     return openTab({ kind: "chat", ref, parent: chatID(parentRef) });
   }
 
@@ -1407,44 +1445,45 @@ describe("showFilesView vs toggleFilesView", () => {
 //
 // The provenance question has exactly one mechanism, and it is `op_id`: a frame
 // carrying an op this device minted is its own echo, and a frame carrying none is
-// another device's. What that decides is ONE thing — whether a removal's teardown
-// re-dispatches. Every LOCAL cleanup runs in both cases, or this device keeps a
-// store row, a dock card and composer state for a tab that is gone.
+// another device's. What that decides is WHEN the client-local teardown runs — at
+// the machine's confirmation for this device's own close, at the applied removal
+// for another device's — never WHAT it does: the teardown is identical in both
+// cases, because nothing local dispatches anything any more (the process teardown
+// and the retention-off delete are both the server's close operation).
 // ---------------------------------------------------------------------------
 
 describe("close provenance", () => {
-  it("tells the teardown the close was local when this device dispatched it", async () => {
-    expect.assertions(1);
+  it("runs the teardown exactly once for a close this device dispatched", async () => {
+    expect.assertions(2);
     await openChat("a");
     await closeTab(chatID("a"));
-    expect(openers.chatClose).toHaveBeenCalledWith("a", { remote: false });
+    await settleTabs();
+    expect(openers.chatClose).toHaveBeenCalledTimes(1);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
   });
 
-  it("tells the teardown the close came from another device", async () => {
+  it("runs the same teardown for a close from another device", async () => {
     expect.assertions(2);
     await openChat("a");
     tabServer.closeRemotely(chatID("a"));
     await settleTabs();
-    // The teardown STILL RUNS — that is the point. Only the dispatch inside it is
-    // suppressed, which is chat.ts's decision to make rather than this module's.
-    expect(openers.chatClose).toHaveBeenCalledWith("a", { remote: true });
+    // The teardown STILL RUNS — that is the point: this device keeps no store
+    // row, dock card or composer state for a tab that is gone, whoever closed it.
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
     expect(hasTab("chat", "a")).toBe(false);
   });
 
-  it("marks a cascaded child remote too, because the other device already cascaded", async () => {
+  it("tears down a remotely-cascaded child too, children first", async () => {
     expect.assertions(1);
-    const seen: { ref: string; remote: boolean }[] = [];
-    openers.chatClose.mockImplementation((ref: string, opts: { remote: boolean }) => {
-      seen.push({ ref, remote: opts.remote });
+    const seen: string[] = [];
+    openers.chatClose.mockImplementation((ref: string) => {
+      seen.push(ref);
     });
     await openChat("parent");
     await openTab({ kind: "chat", ref: "child", parent: chatID("parent") });
     tabServer.closeRemotely(chatID("parent"));
     await settleTabs();
-    expect(seen).toEqual([
-      { ref: "child", remote: true },
-      { ref: "parent", remote: true },
-    ]);
+    expect(seen).toEqual(["child", "parent"]);
   });
 });
 
@@ -1563,5 +1602,292 @@ describe("the visible view is only swapped when it actually changes", () => {
     await openChat("b");
 
     expect(document.getElementById("chat-view")?.classList.contains("hidden")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The optimistic close: reversible gesture, deferred teardown (task 11).
+//
+// The gesture applies only what a rollback can undo — the subtree leaves the
+// projection, activation falls back — while every destructive step (the spec
+// onClose teardown, and server-side the record delete) waits for the machine's
+// confirmation. These cases drive the REAL closeTab end to end over the fake
+// collection: the machine's transition table is tabs-sync.test.ts's; what is
+// pinned here is what the GESTURE does with each ending.
+// ---------------------------------------------------------------------------
+
+describe("optimistic close: the reversible gesture", () => {
+  it("removes the subtree at the gesture and defers the teardown to the frame", async () => {
+    expect.assertions(4);
+    tabServer.setMode("manual");
+    await openChats("a", "b");
+    const doomed = chatID("b");
+
+    const closing = closeTab(doomed);
+    // The row left the strip synchronously with the gesture…
+    expect(hasTab("chat", "b")).toBe(false);
+    await closing;
+    // …and the response alone (frames still held) runs NO teardown: the op is
+    // confirmed-awaiting-frame, and client-local state must survive a rollback.
+    expect(openers.chatClose).not.toHaveBeenCalled();
+
+    tabServer.flushFrames();
+    await settleTabs();
+    expect(openers.chatClose).toHaveBeenCalledTimes(1);
+    expect(openers.chatClose).toHaveBeenCalledWith("b");
+  });
+
+  it("runs the teardown exactly once, frame-first", async () => {
+    expect.assertions(2);
+    tabServer.setMode("event-first");
+    await openChats("a", "b");
+    await closeTab(chatID("b"));
+    await settleTabs();
+    expect(openers.chatClose).toHaveBeenCalledTimes(1);
+    expect(openers.chatClose).toHaveBeenCalledWith("b");
+  });
+
+  it("runs the teardown exactly once, response-first", async () => {
+    expect.assertions(2);
+    tabServer.setMode("response-first");
+    await openChats("a", "b");
+    await closeTab(chatID("b"));
+    await settleTabs();
+    expect(openers.chatClose).toHaveBeenCalledTimes(1);
+    expect(openers.chatClose).toHaveBeenCalledWith("b");
+  });
+
+  it("dispatches close_tab and nothing else — delete_chat does not exist on this path", async () => {
+    expect.assertions(2);
+    await openChats("a");
+    await closeTab(chatID("a"));
+    await settleTabs();
+    expect(tabServer.sentOfType("delete_chat")).toHaveLength(0);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+  });
+
+  it("a definitive refusal restores the chat row in place, re-activates it, and toasts", async () => {
+    expect.assertions(6);
+    await openChats("a", "b", "c");
+    activateTab(chatID("b"));
+    vi.mocked(openers.chatShow).mockClear();
+    tabServer.failNext("close_tab");
+
+    await closeTab(chatID("b"));
+
+    expect(hasTab("chat", "b")).toBe(true);
+    expect(await rowRefs()).toEqual(["a", "b", "c"]);
+    expect(getActiveTabId()).toBe(chatID("b"));
+    // The restored chat was RE-ACTIVATED (its view reloads from retained state)…
+    expect(openers.chatShow).toHaveBeenCalledWith("b");
+    // …and none of the chat's client state was torn down in between.
+    expect(openers.chatClose).not.toHaveBeenCalled();
+    expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith("Couldn't close that tab");
+  });
+
+  it("a definitive refusal leaves a dirty editor's state untouched", async () => {
+    expect.assertions(3);
+    await openChats("a");
+    await openEditorView("dirty.ts");
+    tabServer.failNext("close_tab");
+
+    await closeTab(tabIdFor("editor", "dirty.ts"));
+
+    // The editor teardown is what deletes its FileState (the unsaved buffer),
+    // so its absence IS the dirty state surviving the refused close.
+    expect(openers.editorClose).not.toHaveBeenCalled();
+    expect(hasTab("editor", "dirty.ts")).toBe(true);
+    expect(await rowRefs()).toEqual(["a", "dirty.ts"]);
+  });
+
+  it("a reopen inside the window skips the chat-scoped teardown (row-scoped forget only)", async () => {
+    expect.assertions(4);
+    tabServer.setMode("manual");
+    await openChats("a", "keep");
+
+    await closeTab(chatID("a"));
+    // Reopened from History before the close settled: the server serialized
+    // close-then-open, so the reply mints a NEW tab id for the same chat.
+    await openTab({ kind: "chat", ref: "a" });
+    expect(hasTab("chat", "a")).toBe(true);
+
+    tabServer.flushFrames();
+    await settleTabs();
+    // The close confirmed — but the subject is open again, so the chat-scoped
+    // teardown is SKIPPED: the reopen re-established the chat's client state.
+    expect(openers.chatClose).not.toHaveBeenCalled();
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(tabServer.idFor("chat", "a")).toBe(tabIdFor("chat", "a"));
+  });
+
+  it("burst closes settle independently: one confirms while the other rolls back", async () => {
+    expect.assertions(5);
+    await openChats("a", "b", "c");
+    tabServer.holdResponses();
+    const first = closeTab(chatID("a"));
+    tabServer.failNext("close_tab");
+    const second = closeTab(chatID("b"));
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(hasTab("chat", "b")).toBe(false);
+
+    tabServer.releaseResponses();
+    await Promise.all([first, second]);
+    await settleTabs();
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(hasTab("chat", "b")).toBe(true);
+    expect(openers.chatClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("children close with their parent and are restored with it, in place", async () => {
+    expect.assertions(3);
+    await openChat("before");
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    await openChat("after");
+    tabServer.failNext("close_tab");
+
+    await closeTab(chatID("p"));
+
+    expect(hasTab("chat", "p")).toBe(true);
+    expect(hasTab("chat", "c")).toBe(true);
+    expect(await rowRefs()).toEqual(["before", "p", "c", "after"]);
+  });
+});
+
+describe("optimistic close: timeout, verifying, and authoritative settlement", () => {
+  // The 5s deadline itself is definition-level (CLOSE_CONFIRM_MS on
+  // closeTabCommand) and cannot be advanced by fake timers — AbortSignal.timeout
+  // is not faked — so these cases end the dispatch the other no-answer way, a
+  // cancellation, which takes the identical opTimedOut branch. The machine's own
+  // transition table is pinned in tabs-sync.test.ts; this is the integration
+  // through the real closeTab.
+
+  /** A close whose dispatch ends with NO answer: response held, then the
+   *  in-flight dispatch canceled. The op lands in `verifying`. */
+  async function closeIntoVerifying(id: string): Promise<void> {
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    const closing = closeTab(id);
+    closeTabCommand.cancel();
+    tabServer.releaseResponses();
+    await closing;
+  }
+
+  it("settles a verifying close as CONFIRMED when the authoritative list says absent", async () => {
+    expect.assertions(4);
+    await openChats("a", "keep");
+    await closeIntoVerifying(chatID("a"));
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).not.toHaveBeenCalled();
+
+    // The server's live collection no longer holds the tab (the command
+    // committed even though its answer was lost): absent → silent confirm.
+    await listTabs();
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
+    expect(vi.mocked(toastInfo)).not.toHaveBeenCalled();
+  });
+
+  it("settles a verifying close as RESTORED when the row is authoritatively present", async () => {
+    expect.assertions(4);
+    await openChats("a", "keep");
+    const doomedTab = chatID("a");
+    await closeIntoVerifying(doomedTab);
+
+    // The authoritative list still holds the row: the close never committed.
+    const held = tabServer
+      .subjects()
+      .map((s) => ({ ...s }))
+      .concat([{ id: doomedTab, kind: "chat", ref: "a", parent: "", pinned: false, owns: true }]);
+    tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+    await listTabs();
+
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(openers.chatClose).not.toHaveBeenCalled();
+    // Restored with a notice — this arm is the machine's, not a server error's,
+    // so the ordinary failure toast stays silent.
+    expect(vi.mocked(toastInfo)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+});
+
+describe("optimistic close: the last tab and the empty-state surface", () => {
+  /** The two views the empty surface resolves against, chat hidden behind the
+   *  settings view — the state a reader is in when a singleton is active. */
+  function stageViews(): { chatView: HTMLElement; settingsView: HTMLElement } {
+    const chatView = document.createElement("div");
+    chatView.id = "chat-view";
+    chatView.setAttribute("data-tab-view", "");
+    const settingsView = document.createElement("div");
+    settingsView.id = "settings-view";
+    settingsView.setAttribute("data-tab-view", "");
+    document.body.append(chatView, settingsView);
+    return { chatView, settingsView };
+  }
+
+  it("renders the empty chat surface when the strip empties, without disposing the closed view", async () => {
+    expect.assertions(3);
+    const { chatView, settingsView } = stageViews();
+    await openTab({ kind: "settings" });
+    expect(settingsView.classList.contains("hidden")).toBe(false);
+
+    await closeTab(tabIdFor("settings"));
+    await settleTabs();
+
+    // The empty-state surface is the CHAT view (empty transcript + composer,
+    // whose Send creates a fresh chat); the departed view is hidden, not torn
+    // down — every dispose belongs to confirmed teardown.
+    expect(chatView.classList.contains("hidden")).toBe(false);
+    expect(settingsView.classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps create-vs-send on CREATE while the strip is empty", async () => {
+    expect.assertions(3);
+    await openChat("solo");
+    expect(activeChatRef()).toBe("solo");
+    tabServer.setMode("manual");
+    const closing = closeTab(chatID("solo"));
+    // The projection's active subject is what app.ts keys the decision on: with
+    // the strip empty (close still pending), Send must create a fresh chat, not
+    // send into the chat being closed — whose STORE row is still retained.
+    expect(activeChatRef()).toBe("");
+    await closing;
+    expect(activeChatRef()).toBe("");
+  });
+
+  it("rollback of a last-tab close restores the view and the empty-state composer text", async () => {
+    expect.assertions(5);
+    await openChat("solo");
+    const solo = chatID("solo");
+    vi.mocked(openers.chatShow).mockClear();
+    tabServer.failNext("close_tab");
+
+    const closing = closeTab(solo);
+    // Typed into the EMPTY-STATE composer while the close was in flight: with
+    // no live chat this text is parked nowhere but the box. (Read through the
+    // dom mock's getter, which mints the element on first access.)
+    const input = $.promptInput;
+    input.value = "half a thought";
+    await closing;
+
+    // The subtree is back, re-activated, and the typed text was filed as the
+    // restored chat's draft through the failed-send primitive (which writes the
+    // draft map and only ever an EMPTY box).
+    expect(hasTab("chat", "solo")).toBe(true);
+    expect(getActiveTabId()).toBe(solo);
+    expect(openers.chatShow).toHaveBeenCalledWith("solo");
+    expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("solo", "half a thought");
+    expect(vi.mocked(retargetComposer)).not.toHaveBeenCalled();
+  });
+
+  it("keyboard close of the last tab moves focus to the composer", async () => {
+    expect.assertions(1);
+    await openChat("solo");
+    await paint();
+    const row = rows()[0];
+    row?.focus();
+    row?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    const input = document.getElementById("prompt-input");
+    expect(document.activeElement).toBe(input);
   });
 });

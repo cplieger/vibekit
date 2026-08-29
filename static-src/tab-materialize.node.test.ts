@@ -275,18 +275,11 @@ describe("the injected behaviours receive the subject's ref", () => {
     register();
     const spec = materializeTab(subject({ kind: "chat", ref: "c-9" }));
     spec.onShow?.();
-    spec.onClose?.({ remote: true });
+    spec.onClose?.();
     expect(spies.chatShow).toHaveBeenCalledWith("c-9");
-    expect(spies.chatClose).toHaveBeenCalledWith("c-9", { remote: true });
-  });
-
-  // The default is what the store's own contract needs: a caller that omits the
-  // flag means LOCAL, because a missing flag must never suppress the server-side
-  // teardown.
-  it("chat close defaults remote to false", () => {
-    register();
-    materializeTab(subject({ kind: "chat", ref: "c-9" })).onClose?.();
-    expect(spies.chatClose).toHaveBeenCalledWith("c-9", { remote: false });
+    // The ref alone: the teardown is client-local and identical whoever closed
+    // the tab, so there is no provenance flag to thread through the factory.
+    expect(spies.chatClose).toHaveBeenCalledWith("c-9");
   });
 
   it("editor show and close", () => {

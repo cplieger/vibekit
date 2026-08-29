@@ -98,10 +98,9 @@ vi.mock("./store-load.js", () => ({ loadList: vi.fn(), loadMessages: vi.fn() }))
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
 vi.mock("./tabs.js", () => ({
-  // `openTab` resolves rather than returning void: every open is a round trip
-  // through `open_tab`, and the callers that still use it (History, push
-  // notifications) await it.
-  openTab: vi.fn(() => Promise.resolve()),
+  // `openTab` resolves with its OUTCOME: every open is a round trip through
+  // `open_tab`, and the callers that branch (History's reopen) read the string.
+  openTab: vi.fn(() => Promise.resolve("opened")),
   // The adoption path: creating commands paint their tab from the reply.
   adoptSubject: vi.fn(),
   activateTab: vi.fn(),
@@ -113,6 +112,7 @@ vi.mock("./tabs.js", () => ({
   setTabStatus: vi.fn(),
   setTabTooltip: vi.fn(),
 }));
+vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 // The chat tab's activity dot asks the dock whether this chat holds an
 // unanswered decision. Mocked so the suite does not pull in the three card
 // builders behind the real module for a boolean.
@@ -195,6 +195,7 @@ import { get, getSessions, removeChat, setActive, upsertHeader, clearTurnDone } 
 import { loadList, loadMessages } from "./store-load.js";
 import { loadTurnRail, pointTurnRail, resetScrollState, fadeInTranscript } from "./messages.js";
 import { seedComposerState } from "./composer-state.js";
+import { info } from "./toast.js";
 import { isRetentionEnabled } from "./retention.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 // `closeChat` is deliberately not imported: the command was retired, and the
@@ -629,63 +630,42 @@ describe("the transcript's loading skeleton", () => {
   });
 });
 
-describe("closeChatTab's retention gate", () => {
+describe("closeChatTab is the one client-local teardown", () => {
   // `closeChatTab` IS the tab's teardown, exported and registered once by the
-  // composition root, so it is called by name rather than pulled off a spec a door
-  // passed. `remote` is REQUIRED here: the default belongs at the store boundary,
-  // and defaulting it twice would be two places to get the safe reading wrong.
+  // composition root, so it is called by name rather than pulled off a spec a
+  // door passed. There is no retention branch and no provenance flag left in
+  // it: the process teardown AND the retention-off record delete are both the
+  // server's `close_tab` operation, so this runs the identical local cleanup
+  // whoever closed the tab and whatever retention says — `delete_chat`
+  // survives as History's delete and is never dispatched from a close.
 
-  it("persists nothing on close when retention is ENABLED (N>0), and dispatches nothing", () => {
-    // There is no archive step: "archived" is computed from the chat's age
-    // against the retention window, so the chat FILE stays exactly as it was.
-    //
-    // The PROCESS teardown is the SERVER's now — `close_tab` cancels the turn, the
-    // chat's runs and the bridge for every chat tab it closes, which is what
-    // `close_chat` became when that command was retired. Two commands meaning one
-    // gesture would be two things to keep in step: a client sending only
-    // `close_chat` tore the bridge down and left the tab, one sending only
-    // `close_tab` left the process.
+  it("cleans up locally with retention ENABLED, and dispatches nothing", () => {
     vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(true);
-    closeChatTab("c-closed", { remote: false });
+    closeChatTab("c-closed");
     expect(removeChat).toHaveBeenCalledWith("c-closed");
+    expect(dropDecisions).toHaveBeenCalledWith("c-closed");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });
 
-  // A close that came from ANOTHER DEVICE runs every LOCAL cleanup and dispatches
-  // nothing. The local half is not skipped: a store row left behind is a tab that
-  // is gone from the strip but still in the sidebar's state.
-  it("cleans up locally on a REMOTE close", () => {
-    vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
-    vi.mocked(isRetentionEnabled).mockReturnValue(true);
-    closeChatTab("c-remote", { remote: true });
-    expect(removeChat).toHaveBeenCalledWith("c-remote");
-    expect(dropDecisions).toHaveBeenCalledWith("c-remote");
-    expect(deleteChat.dispatch).not.toHaveBeenCalled();
-  });
-
-  it("does not delete remotely either when retention is off; the other device did", () => {
+  it("cleans up locally with retention DISABLED, and still dispatches nothing", () => {
+    // 0 = ephemeral: the record is gone by design — deleted INSIDE the server's
+    // close operation, exactly once, wherever the gesture happened. A second
+    // delete from here would race the one that already ran.
     vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(false);
-    closeChatTab("c-remote-eph", { remote: true });
+    closeChatTab("c-ephemeral");
+    expect(removeChat).toHaveBeenCalledWith("c-ephemeral");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
-    expect(removeChat).toHaveBeenCalledWith("c-remote-eph");
   });
 
-  it("deletes a non-empty chat permanently on close when retention is DISABLED (0 = no retention)", () => {
-    vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
-    vi.mocked(isRetentionEnabled).mockReturnValue(false);
-    closeChatTab("c-ephemeral", { remote: false });
-    // 0 = ephemeral: closing loses the chat by design (not a data-loss bug).
-    // `delete_chat` is a genuinely different command from `close_tab` — it removes
-    // the RECORD — so this one still dispatches from here.
-    expect(deleteChat.dispatch).toHaveBeenCalledWith("c-ephemeral");
-  });
-
-  it("removes a zero-message chat locally regardless of retention (never persisted)", () => {
+  it("removes a zero-message chat like any other", () => {
+    // The old message_count === 0 skip predated the coordinator writing the
+    // record before its tab; the server deletes zero-message chats like any
+    // other now, and the client has no branch to mirror.
     vi.mocked(get).mockReturnValue({ message_count: 0 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(false);
-    closeChatTab("c-empty", { remote: false });
+    closeChatTab("c-empty");
     expect(removeChat).toHaveBeenCalledWith("c-empty");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });
@@ -713,7 +693,7 @@ describe("closeChatTab's retention gate", () => {
       vi.clearAllMocks();
       vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
       vi.mocked(isRetentionEnabled).mockReturnValue(retention);
-      closeChatTab("c-closed", { remote: false });
+      closeChatTab("c-closed");
       expect(dropDecisions).toHaveBeenCalledWith("c-closed");
     }
   });
@@ -1003,8 +983,41 @@ describe("restore: opening a closed conversation from History", () => {
     // The adoption path is gone: an unclaimed row was always vibekit's own
     // utility session, and adopting it produced the blank page plus a junk chat.
     // The server no longer emits one; this is the belt-and-braces half.
-    openPreviousSession({ ...row, chat_id: "" });
+    await openPreviousSession({ ...row, chat_id: "" });
     expect(openTab).not.toHaveBeenCalled();
+    expect(loadMessages).not.toHaveBeenCalled();
+  });
+
+  it("a 404 reopen answers 'gone': ephemeral notice, NO activation", async () => {
+    // Retention is off and a close DELETED the conversation after History
+    // listed it. The open's outcome keeps the 404 distinct from a network
+    // failure, so this arm can say the truth — the chat was ephemeral — and
+    // must not activate: an activation here is an empty transcript over a dead
+    // active pointer.
+    vi.mocked(get).mockReturnValue(closedChat());
+    vi.mocked(openTab).mockResolvedValue("not-found");
+
+    await expect(openPreviousSession(row)).resolves.toBe("gone");
+
+    expect(vi.mocked(info)).toHaveBeenCalledWith(
+      "That conversation was ephemeral (retention is off) and is gone.",
+    );
+    // activateChatView never ran: no scroll reset, no rail pointing, no fetch.
+    expect(resetScrollState).not.toHaveBeenCalled();
+    expect(pointTurnRail).not.toHaveBeenCalled();
+    expect(loadMessages).not.toHaveBeenCalled();
+  });
+
+  it("a network failure answers 'failed', which is NOT the ephemeral face", async () => {
+    // A failed fetch must never read as "deleted": the row stays, the framework
+    // toast has already spoken, and nothing here claims the chat is gone.
+    vi.mocked(get).mockReturnValue(closedChat());
+    vi.mocked(openTab).mockResolvedValue("failed");
+
+    await expect(openPreviousSession(row)).resolves.toBe("failed");
+
+    expect(vi.mocked(info)).not.toHaveBeenCalled();
+    expect(resetScrollState).not.toHaveBeenCalled();
     expect(loadMessages).not.toHaveBeenCalled();
   });
 });

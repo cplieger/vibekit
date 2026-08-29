@@ -55,7 +55,21 @@ vi.mock("./send-state.js", () => ({
   setSSEStatus: undefined,
   clearAgentDown: mockClearAgentDown,
 }));
-vi.mock("./composer-state.js", () => ({ restoreFailedSend: mockRestoreFailedSend }));
+vi.mock("./composer-state.js", () => ({
+  restoreFailedSend: mockRestoreFailedSend,
+  // Present-but-inert so real-ESM linking succeeds: the tab projection reaches
+  // this module now (the close rollback), so every export has to resolve.
+  retargetComposer: vi.fn(),
+  saveComposerState: vi.fn(),
+  restoreComposerState: vi.fn(),
+  flushComposerDraft: vi.fn(),
+  dropComposerState: vi.fn(),
+  seedComposerState: vi.fn(),
+  adoptRemoteComposerState: vi.fn(),
+  noteComposerText: vi.fn(),
+  initComposerState: vi.fn(),
+  _resetComposerStateForTest: vi.fn(),
+}));
 
 import { submitPrompt } from "./submit.js";
 import { setSessions, setActive, setThinking, steerCount, appendMessage } from "./store.js";

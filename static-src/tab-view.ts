@@ -140,13 +140,15 @@ export interface TabViewSpec {
   readonly onShow?: (() => void) | undefined;
   /** Called when the tab is closed.
    *
-   *  `remote` is true when the close came from ANOTHER DEVICE. The arrangement
-   *  is server-owned, so a close on one screen removes the tab on every screen,
-   *  and the device that closed it has already run the server-side teardown.
-   *  What `remote` suppresses is only the DUPLICATE dispatch: every local
-   *  cleanup still has to run, or this device keeps a store row, a dock card and
-   *  composer state for a tab that is gone. */
-  readonly onClose?: ((opts?: { remote: boolean }) => void) | undefined;
+   *  CLIENT-LOCAL teardown only, identical on every device: the arrangement is
+   *  server-owned, and everything a close destroys beyond this device's own
+   *  state — the process, the runs, a retention-off chat's record — is the
+   *  server's close operation, run once wherever the gesture happened. So
+   *  there is nothing here to suppress per provenance, and no flag saying
+   *  whose gesture it was. For a close THIS device dispatched it runs deferred,
+   *  at the pending-op machine's confirmation; for another device's close (or a
+   *  snapshot that dropped the tab) it runs as the removal is applied. */
+  readonly onClose?: (() => void) | undefined;
   /** Whether closing this tab tears down what it shows.
    *
    *  A SUBJECT fact, copied through rather than decided here, and the factory is

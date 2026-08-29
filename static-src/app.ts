@@ -56,6 +56,7 @@ import {
   setGitTab,
   setDocsTab,
   tabIdForRoute,
+  activeChatRef,
 } from "./tabs.js";
 import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
@@ -738,7 +739,14 @@ function setupInput(): void {
   initComposerState();
   initPromptInput(
     (text: string) => {
-      if (getActiveId() === "") {
+      // Create-vs-send keys off the PROJECTION's active subject, never the
+      // chat store's pointer: with closes optimistic, the store retains a
+      // closed chat's row until the machine confirms, and the empty-state
+      // surface (strip empty, close pending) must create rather than send into
+      // the chat being closed. The two agree throughout the window — the close
+      // gesture moves the store pointer too — so this is the belt on the truth
+      // the reader can see.
+      if (activeChatRef() === "") {
         // DETACHED, and the prompt rides INSIDE the create rather than after it:
         // `createSession(text)` sends once the chat exists, so nothing here needs
         // the id. Awaiting would only delay this callback's return.

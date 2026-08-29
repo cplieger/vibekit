@@ -36,7 +36,9 @@ import { vi } from "vitest";
 export function tabsMock(): Record<string, unknown> {
   return {
     // Mutators. Async since the projection made an open a server round trip.
-    openTab: vi.fn(async () => {}),
+    // openTab answers its OUTCOME type's success value, because a mock that
+    // reports "failed" would send callers down their failure branches.
+    openTab: vi.fn(async () => "opened"),
     closeTab: vi.fn(async () => {}),
     setTabPinned: vi.fn(async () => {}),
     openEditorView: vi.fn(async () => {}),
@@ -70,6 +72,7 @@ export function tabsMock(): Record<string, unknown> {
     getActiveTabId: vi.fn(() => ""),
     getActiveTabRoute: vi.fn(() => null),
     getActiveTabKind: vi.fn(() => null),
+    activeChatRef: vi.fn(() => ""),
     cueCandidates: vi.fn(() => []),
 
     // Registration slots. `subscribeTabCues` hands back its unsubscribe so a

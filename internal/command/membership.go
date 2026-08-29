@@ -28,6 +28,17 @@ package command
 // before the record is removed leave a window where an Open succeeds and its tab
 // outlives the chat until the next restart.
 //
+// # THERE ARE TWO DELETE PATHS, and they lead with different writes
+//
+// delete_chat keeps the record-first order above. The retention-off CLOSE
+// escalation (see CloseTab) is close-first: the tab close is the commit point
+// and the record delete follows inside the same lock hold. Close-first does not
+// reopen the ordering hole, because the LOCK is the race argument — OpenTab
+// takes this same mutex, so no open can land between the tab close and the
+// record delete — and the frame order is the tiebreak: tabs_changed applying
+// the local teardown and then a no-op chat_deleted is exactly the order the
+// delete path already produces cross-device.
+//
 // # CAPACITY IS RESERVED BEFORE ANYTHING MINTS
 //
 // A create ends by opening a tab, so a full set has to refuse BEFORE the chat
@@ -75,6 +86,7 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -102,19 +114,21 @@ var (
 )
 
 // TabSet is the open-tab set as this package uses it: the four mutations plus
-// the paired read. Declared here, at the consumer, because internal/tabs exports
+// the paired reads. Declared here, at the consumer, because internal/tabs exports
 // no interface of its own — *tabs.Store is what satisfies it.
 //
 // List is in the set for two reasons beyond reading: the capacity reservation
 // needs the count, and every event needs the expanded order, which no mutation
-// returns. Both are read while mu is held, so what they see is what the mutation
-// just committed.
+// returns. Subtree is the close escalation's read — what a Close of this id
+// will remove, asked BEFORE the close commits. All are read while mu is held,
+// so what they see is what the mutation just committed.
 type TabSet interface {
 	Open(ctx context.Context, spec vibekit.OpenTab) (subject vibekit.TabSubject, created bool, version uint64, err error)
 	Close(ctx context.Context, id string) ([]vibekit.TabSubject, uint64, error)
 	Reorder(ctx context.Context, ids []string) (uint64, error)
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
 	List() ([]vibekit.TabSubject, uint64)
+	Subtree(id string) []vibekit.TabSubject
 }
 
 // chatCloser is the tab-close teardown for a CHAT tab: cancel the turn, cancel
@@ -126,6 +140,37 @@ type TabSet interface {
 // binding lives in RegisterDefaults beside the roles it composes.
 type chatCloser func(ctx context.Context, chatID vibekit.ChatID)
 
+// chatDeleter is the DELETE grade of the same teardown, for a chat the close
+// escalation has already erased: everything the record used to answer travels
+// in as the session chain captured before the commit. Same seam shape as
+// chatCloser, bound in RegisterDefaults beside it, so the two grades cannot
+// drift apart.
+type chatDeleter func(ctx context.Context, chatID vibekit.ChatID, sessionChain []string)
+
+// retentionRead answers whether chat retention is ON — whether a closed chat's
+// record is KEPT. A function seam for chatCloser's reason: the coordinator
+// needs one predicate, not the settings machinery, and the read must FAIL
+// TOWARD KEEPING (settings.RetentionEnabled, bound in RegisterDefaults). A nil
+// read means retention ON, the same safe direction.
+type retentionRead func(ctx context.Context) bool
+
+// doomedChat is one chat a retention-off close will delete: the record's id
+// and the KAS session chain, both captured under the lock while the record was
+// still readable — NOTHING that runs after the record delete may re-read it.
+type doomedChat struct {
+	chatID vibekit.ChatID
+	chain  []string
+}
+
+// closeTeardownBudget bounds the close escalation's post-commit work. The
+// teardown runs under a context DETACHED from the HTTP request
+// (context.WithoutCancel), because a client that times out or walks away must
+// not cancel roll-forward — the same reasoning as the git handlers' detached
+// scans — and WithoutCancel alone has no deadline, so this is the bound that
+// keeps an unresponsive bridge from holding the goroutine forever. Generous
+// because the run cancel is a workflow RPC per live run.
+const closeTeardownBudget = time.Minute
+
 // Membership owns every operation that spans the chat store and the tab set.
 //
 // Safe for concurrent use; the zero value is not usable, construct with
@@ -135,11 +180,13 @@ type chatCloser func(ctx context.Context, chatID vibekit.ChatID)
 // unwired ui-state store and for the same reason — a build without a config dir
 // must still work.
 type Membership struct {
-	chats     ChatStore
-	tabs      TabSet
-	bus       Broadcaster
-	teardown  ChatTeardown
-	closeChat chatCloser
+	chats      ChatStore
+	tabs       TabSet
+	bus        Broadcaster
+	teardown   ChatTeardown
+	closeChat  chatCloser
+	deleteChat chatDeleter
+	retention  retentionRead
 	// ops is the create ledger: op_id -> chat id, so a retry resolves to the chat
 	// its first attempt made. It lives HERE rather than in the handlers because
 	// resolving an op and reserving a tab slot have to happen in the same
@@ -153,27 +200,32 @@ type Membership struct {
 
 // MembershipDeps is Membership's constructor argument.
 //
-// A struct because six collaborators of five different interface types is
+// A struct because eight collaborators of seven different interface types is
 // exactly the positional argument list a transposition hides in, and because
-// TabSet and the two funcs are each independently optional-looking at a call
-// site. Every field is required except Tabs.
+// TabSet and the funcs are each independently optional-looking at a call
+// site. Every field is required except Tabs, DeleteChat and Retention — the
+// last two default to the safe direction (no escalation, retention ON).
 type MembershipDeps struct {
-	Chats     ChatStore
-	Tabs      TabSet
-	Bus       Broadcaster
-	Teardown  ChatTeardown
-	CloseChat chatCloser
+	Chats      ChatStore
+	Tabs       TabSet
+	Bus        Broadcaster
+	Teardown   ChatTeardown
+	CloseChat  chatCloser
+	DeleteChat chatDeleter
+	Retention  retentionRead
 }
 
 // NewMembership builds the coordinator.
 func NewMembership(deps MembershipDeps) *Membership {
 	return &Membership{
-		chats:     deps.Chats,
-		tabs:      deps.Tabs,
-		bus:       deps.Bus,
-		teardown:  deps.Teardown,
-		closeChat: deps.CloseChat,
-		ops:       newCreateLedger(),
+		chats:      deps.Chats,
+		tabs:       deps.Tabs,
+		bus:        deps.Bus,
+		teardown:   deps.Teardown,
+		closeChat:  deps.CloseChat,
+		deleteChat: deps.DeleteChat,
+		retention:  deps.Retention,
+		ops:        newCreateLedger(),
 	}
 }
 
@@ -344,7 +396,7 @@ func (m *Membership) OpenTab(ctx context.Context, spec vibekit.OpenTab, opID str
 }
 
 // CloseTab closes a tab and its descendants, then tears down what an owned tab
-// showed.
+// showed — and, with retention OFF, DELETES each chat the close left tabless.
 //
 // An id that is not open closes nothing and is NOT an error: two devices can
 // close the same tab, and an empty closed list already says so.
@@ -352,24 +404,53 @@ func (m *Membership) OpenTab(ctx context.Context, spec vibekit.OpenTab, opID str
 // A parent with children is ONE store mutation, so it is one version bump and
 // one event naming every removed id — which is why this returns everything that
 // went rather than a count.
+//
+// # The retention-off escalation, ordered
+//
+// Under the operation lock: (a) read the retention predicate and decide the
+// DOOMED set — the close's subtree × remaining refs × the predicate × a record
+// that exists — capturing each doomed chat's {id, session chain} while the
+// record is still readable; (b) tabs.Close, THE COMMIT POINT: from here the
+// response answers success with the closed ids, and a failed Close is
+// nothing-committed — error response, records untouched, a client rollback
+// legitimate; (c) chats.Delete each doomed record, tombstone and chat_deleted
+// broadcast inside Delete, AFTER the tabs frame. The lock is what makes
+// close-first safe (see the package doc's two-paths statement), and the brief
+// live-bridge/no-record window between (c) and the teardown below is invariant
+// 3's, closed by the delete tombstone — auto-create refuses the id.
+//
+// After the commit point there is NO rollback, only roll-forward: a record
+// delete or teardown failure logs ERROR and the close still answers success —
+// the authoritative fact is the tab close. Post-commit work therefore runs
+// under a context DETACHED from the request (a client abandoning the call must
+// not cancel roll-forward) with its own bound.
 func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vibekit.TabSubject, version uint64, err error) {
 	if m.tabs == nil {
 		return nil, 0, StatusError(http.StatusServiceUnavailable, errTabsUnavailable)
 	}
 	m.mu.Lock()
+	doomed := m.doomedChats(ctx, id)
 	closed, version, err = m.tabs.Close(ctx, id)
-	if err == nil && len(closed) > 0 {
-		m.emit(ctx, &vibekit.TabsChangedPayload{
-			RemovedIDs: subjectIDs(closed),
-			Order:      m.order(),
-			Version:    version,
-			OpID:       opID,
-		})
-	}
-	m.mu.Unlock()
 	if err != nil {
+		m.mu.Unlock()
 		return nil, 0, StatusError(http.StatusInternalServerError, err)
 	}
+	if len(closed) == 0 {
+		m.mu.Unlock()
+		return closed, version, nil
+	}
+	// COMMITTED. Everything from here rolls forward under its own bound; the
+	// request context governed the operation only UP TO the commit point.
+	rollCtx, done := context.WithTimeout(context.WithoutCancel(ctx), closeTeardownBudget)
+	defer done()
+	m.emit(rollCtx, &vibekit.TabsChangedPayload{
+		RemovedIDs: subjectIDs(closed),
+		Order:      m.order(),
+		Version:    version,
+		OpID:       opID,
+	})
+	deleted := m.deleteDoomedRecords(rollCtx, doomed)
+	m.mu.Unlock()
 
 	// The teardown runs AFTER the lock is released and after the membership fact
 	// is published. Two reasons, and the first is the load-bearing one: it issues
@@ -378,12 +459,123 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 	// block every other tab mutation. And closing the tab is what the user asked
 	// for — a teardown that fails cannot un-close it, so the tab's removal is not
 	// its to gate.
+	//
+	// EXACTLY ONE grade per chat: the DELETE grade for a chat whose record went
+	// with this close — driven from the chain captured under the lock, because
+	// the record is gone and a record-reading teardown would silently no-op —
+	// and the ordinary close grade for every other chat tab, never both. A
+	// doomed chat whose record delete FAILED is demoted to the close grade: its
+	// record survives, so reaping its sessions would strand a reopenable chat.
+	dispatched := make(map[vibekit.ChatID]bool, len(deleted))
 	for _, t := range closed {
-		if t.Kind == vibekit.TabKindChat && m.closeChat != nil {
-			m.closeChat(ctx, vibekit.ChatID(t.Ref))
+		if t.Kind != vibekit.TabKindChat {
+			continue
+		}
+		chatID := vibekit.ChatID(t.Ref)
+		if chain, isDoomed := deleted[chatID]; isDoomed {
+			if !dispatched[chatID] {
+				dispatched[chatID] = true
+				m.deleteChat(rollCtx, chatID, chain)
+			}
+			continue
+		}
+		if m.closeChat != nil {
+			m.closeChat(rollCtx, chatID)
 		}
 	}
 	return closed, version, nil
+}
+
+// doomedChats decides what a retention-off close of id will DELETE: every chat
+// whose open tabs ALL lie inside the closing subtree, whose record exists, with
+// the KAS session chain captured off that record — under the lock, before the
+// commit, because nothing that runs after the record delete may re-read it.
+//
+// Recordless chats are SKIPPED: no chats.Delete and no chat_deleted for an id
+// no device knows. Zero-message chats WITH records are doomed like any other —
+// a stated behavior change closing the orphan-record leak the client's old
+// message_count === 0 skip created under retention 0.
+//
+// Caller holds mu. The predicate is read INSIDE the lock, once per close, so
+// one operation decides against one setting.
+func (m *Membership) doomedChats(ctx context.Context, id string) []doomedChat {
+	if m.deleteChat == nil || m.retention == nil {
+		// Escalation unwired: a close can only close. Retention defaults ON —
+		// the fail-toward-keeping direction.
+		return nil
+	}
+	refs := m.tablessChatRefs(m.tabs.Subtree(id))
+	if len(refs) == 0 || m.retention(ctx) {
+		return nil
+	}
+	doomed := make([]doomedChat, 0, len(refs))
+	for _, ref := range refs {
+		chatID := vibekit.ChatID(ref)
+		c, ok := m.chats.Get(ctx, chatID)
+		if !ok {
+			continue
+		}
+		doomed = append(doomed, doomedChat{chatID: chatID, chain: c.SessionChain()})
+	}
+	return doomed
+}
+
+// tablessChatRefs returns the chat refs the close of this subtree leaves with
+// no open tab: each distinct chat ref in the subtree, minus any ref that still
+// has a chat tab OUTSIDE it. Caller holds mu, so the answer is still true when
+// the close commits.
+func (m *Membership) tablessChatRefs(subtree []vibekit.TabSubject) []string {
+	if len(subtree) == 0 {
+		return nil
+	}
+	inSubtree := make(map[string]bool, len(subtree))
+	for _, t := range subtree {
+		inSubtree[t.ID] = true
+	}
+	open, _ := m.tabs.List()
+	remaining := make(map[string]bool)
+	for _, t := range open {
+		if t.Kind == vibekit.TabKindChat && !inSubtree[t.ID] {
+			remaining[t.Ref] = true
+		}
+	}
+	var refs []string
+	seen := make(map[string]bool)
+	for _, t := range subtree {
+		if t.Kind != vibekit.TabKindChat || seen[t.Ref] || remaining[t.Ref] {
+			continue
+		}
+		seen[t.Ref] = true
+		refs = append(refs, t.Ref)
+	}
+	return refs
+}
+
+// deleteDoomedRecords removes each doomed chat's record — tombstone and
+// chat_deleted broadcast happen inside Delete — and returns the session chains
+// of the ones that actually went, keyed by chat id. A failed delete logs ERROR
+// and is left OUT of the result, which demotes that chat to the close-grade
+// teardown: the close still answers success (roll-forward), and the surviving
+// record keeps its sessions so it stays reopenable rather than becoming a
+// record whose history was reaped out from under it.
+//
+// Caller holds mu; ctx is the DETACHED roll-forward context, so a client that
+// abandoned the request cannot leave records half-deleted.
+func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []doomedChat) map[vibekit.ChatID][]string {
+	if len(doomed) == 0 {
+		return nil
+	}
+	deleted := make(map[vibekit.ChatID][]string, len(doomed))
+	for _, d := range doomed {
+		if err := m.chats.Delete(ctx, d.chatID); err != nil {
+			slog.Error("close: retention-off record delete failed after the tab close committed; the record survives with close-grade teardown",
+				"chat_id", d.chatID, keyError, err)
+			continue
+		}
+		slog.Info("chat deleted on close (retention off)", "chat_id", d.chatID)
+		deleted[d.chatID] = d.chain
+	}
+	return deleted
 }
 
 // ReorderTabs replaces the order. ids must name every open tab exactly once;

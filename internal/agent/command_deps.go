@@ -66,9 +66,23 @@ func (b bridgeRole) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
 
 // DeleteChatState tears down all in-memory state for a chat being permanently
 // deleted, cancelling its runs first and reaping its durable KAS session too.
+// The record-first delete path's grade: the chat file still exists, so the run
+// cancel and the reap both resolve the session chain off the record.
 func (rt *Runtime) DeleteChatState(ctx context.Context, chatID vibekit.ChatID) {
 	rt.runs.CancelForChat(ctx, chatID)
 	rt.cleanupChatState(ctx, chatID, true)
+}
+
+// DeleteChatStateByChain is DeleteChatState for a chat whose RECORD is already
+// gone: the close escalation deletes the record inside its commit and tears
+// down afterwards, so everything the record used to answer — which runs are
+// the chat's, which KAS sessions hold its history — travels in as the chain
+// captured before the commit. Nothing here re-reads the record; the
+// record-reading forms (CancelForChat, reapChatSession) would silently no-op.
+func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID vibekit.ChatID, sessionChain []string) {
+	rt.runs.CancelForSessions(ctx, chatID, sessionChain)
+	rt.cleanupChatState(ctx, chatID, false)
+	rt.reapSessions(sessionChain)
 }
 
 // CloseChatState tears down a chat's in-memory state WITHOUT touching its

@@ -39,7 +39,21 @@ vi.mock("../decision-dock.js", () => ({
   dropTurnDecisions: mockDropTurnDecisions,
 }));
 
-vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
+vi.mock("../attachments.js", () => ({
+  addAttachment: vi.fn(),
+  // Present-but-inert so real-ESM linking succeeds: composer-state.ts is in
+  // this graph now (the tab projection reaches it), and it imports the rest.
+  addAttachmentTo: vi.fn(),
+  attachmentGeneration: vi.fn(() => 0),
+  takeAttachments: vi.fn(() => []),
+  stashAttachments: vi.fn(),
+  flushAttachments: vi.fn(),
+  restoreAttachments: vi.fn(),
+  dropAttachments: vi.fn(),
+  seedAttachments: vi.fn(),
+  adoptRemoteAttachments: vi.fn(),
+  _resetAttachmentsForTest: vi.fn(),
+}));
 
 const mockSetAgentDown = vi.fn();
 const mockClearAgentDown = vi.fn();

@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 
+	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -40,6 +41,18 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		// command cannot drift apart.
 		CloseChat: func(ctx context.Context, chatID vibekit.ChatID) {
 			closeChatTeardown(ctx, r.Bridges, r.Perms, r.Teardown, chatID)
+		},
+		// The DELETE grade of the same teardown, for a chat the retention-off
+		// escalation erased inside the close: everything travels on the captured
+		// session chain, because the record is gone by the time this runs.
+		DeleteChat: func(ctx context.Context, chatID vibekit.ChatID, sessionChain []string) {
+			deleteChatTeardown(ctx, r.Bridges, r.Perms, r.Teardown, chatID, sessionChain)
+		},
+		// The close path's retention read, FAILING TOWARD KEEPING — deliberately
+		// not the purge's reader, whose 0-sentinel points the other way (see
+		// settings.RetentionEnabled).
+		Retention: func(ctx context.Context) bool {
+			return settings.RetentionEnabled(ctx, r.Workspace.ConfigDir)
 		},
 	})
 
