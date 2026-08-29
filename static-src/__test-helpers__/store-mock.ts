@@ -109,4 +109,15 @@ export const storeMock = {
   setEffort: vi.fn(),
   setModel: vi.fn(),
   setName: vi.fn(),
+
+  // The eviction surface. The two constants are the real values (a suite
+  // reasoning about cadence should reason about the shipped numbers), the
+  // registration returns a real unregister so composition-shaped code can
+  // wire and unwind, and the rest are inert.
+  EVICT_SWEEP_MS: 5 * 60 * 1000,
+  EVICT_IDLE_MS: 30 * 60 * 1000,
+  registerEvictionExemption: vi.fn(() => () => {}),
+  startEvictionSweep: vi.fn(),
+  stopEvictionSweep: vi.fn(),
+  evictChatMessages: vi.fn(),
 };

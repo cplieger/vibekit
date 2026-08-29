@@ -103,6 +103,37 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 	httpreply.WriteRawJSON(w, raw)
 }
 
+// handleLiveRuns: GET /api/runs/live → every live lease, projected to
+// `{workflow_id, chat_id}`.
+//
+// PRESENCE-based, over vibekit-local state only: a lease exists if and only if
+// vibekit put the run on the wire and no terminal transition released it, so
+// membership IS the non-terminal claim and no KAS call — and no utility-bridge
+// spawn — is needed to serve it. The consumer is the client's eviction sweep,
+// which must not evict a chat whose agent still has a run in flight; a chat id
+// here exempts that chat, and an empty chat id (a parentless run, or a lease
+// written before the field existed) exempts nothing.
+//
+// Staleness errs toward keeping: a missed terminal frame leaves the lease live
+// until the sweep's next boot pass releases it, which costs memory on one
+// client chat, never correctness. History's parentless-only list (session_list.go
+// toWire) is a different question about a different source and is untouched.
+func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	held := rr.runs.leaseStore().List()
+	out := vibekit.LiveRunsResponse{Runs: make([]vibekit.LiveRun, 0, len(held))}
+	for i := range held {
+		out.Runs = append(out.Runs, vibekit.LiveRun{
+			WorkflowID: held[i].WorkflowID,
+			ChatID:     held[i].ChatID,
+		})
+	}
+	webhttp.WriteJSON(w, out)
+}
+
 // status reads one run's current status via `_kiro/workflow/inspect`.
 // Returns "" when the run is unknown, which the caller turns into a 404.
 //

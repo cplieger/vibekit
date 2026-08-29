@@ -23,7 +23,8 @@
 // ---------------------------------------------------------------------------
 
 import { signal, type Signal } from "@cplieger/reactive";
-import { apiGet } from "./api-client.js";
+import { apiGet, apiGetTyped } from "./api-client.js";
+import { decodeLiveRunsResponse } from "./wire/decoders.gen.js";
 
 /** One node of KAS's execution tree, from `state.root`.
  *
@@ -222,6 +223,70 @@ export function noteRunChat(workflowID: string, chatID: string): void {
 
 export function runChatID(workflowID: string): string {
   return launchedBy.get(workflowID) ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// The live-runs inventory: which chats have a run in flight.
+//
+// The eviction sweep's exemption source — a chat whose agent has a run going
+// must keep its transcript window even while the reader is elsewhere, because
+// the run's frames stream into it. Fed by the run lifecycle events (started and
+// progress add, a terminal finish removes; a pause keeps — the run is still
+// this process's to resume), and REBUILT from `GET /api/runs/live` at boot and
+// after a transport gap, because events this client never saw (a paused run
+// across a reload, a start inside an outage) leave the event-fed view blind.
+// The server side is presence over its run leases, so a row here is exactly
+// "vibekit put this run on the wire and nothing terminal released it".
+// ---------------------------------------------------------------------------
+
+/** workflow id → launching chat id ("" for a parentless run). Distinct from
+ *  `launchedBy`, whose entries deliberately OUTLIVE a run so a finished one can
+ *  be re-opened under its parent; this map holds live runs only. */
+const liveRunChats = new Map<string, string>();
+
+/** Record a run as live. Parentless runs ("" chat) are tracked too — they
+ *  exempt no chat, but their presence mirrors the server's inventory. */
+export function noteRunLive(workflowID: string, chatID: string): void {
+  if (workflowID === "") {
+    return;
+  }
+  liveRunChats.set(workflowID, chatID);
+}
+
+/** Drop a run that reached a terminal status. */
+export function noteRunSettled(workflowID: string): void {
+  liveRunChats.delete(workflowID);
+}
+
+/** Whether any live run was launched by this chat. A scan, not an index: the
+ *  single-run rule bounds live runs to a handful, and a second map keyed by
+ *  chat would be one more thing the rebuild could leave inconsistent. */
+export function hasLiveRunForChat(chatID: string): boolean {
+  if (chatID === "") {
+    return false;
+  }
+  for (const c of liveRunChats.values()) {
+    if (c === chatID) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Rebuild the inventory from the server. A FAILED fetch keeps the event-fed
+ *  state — degrading to cautious means a stale exemption (memory), never a
+ *  wrongly-evicted live chat (correctness); the next gap or boot retries. */
+export async function rebuildLiveRuns(): Promise<void> {
+  const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse);
+  if (d === null) {
+    return;
+  }
+  liveRunChats.clear();
+  for (const r of d.runs) {
+    if (r.workflow_id !== "") {
+      liveRunChats.set(r.workflow_id, r.chat_id);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

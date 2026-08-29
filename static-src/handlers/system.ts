@@ -26,6 +26,7 @@ import { dropDecisions } from "../decision-dock.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshRetention } from "../retention.js";
+import { rebuildLiveRuns } from "../run-store.js";
 
 // The handshake states the workspace root. It is the only way the client learns
 // where the workspace is, and every relative agent path needs it to become
@@ -125,6 +126,11 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   // server deleted has already had its tabs closed by the membership
   // coordinator.
   void loadList();
+  // The live-runs inventory is event-fed, and the gap means events were lost:
+  // a run that started or settled inside the outage leaves it blind in either
+  // direction. Re-read the server's presence-based projection; a failed
+  // rebuild keeps the event-fed state (run-store.ts owns that rule).
+  void rebuildLiveRuns();
   const id = getActiveId();
   if (id !== "") {
     void loadMessages(id);

@@ -34,7 +34,10 @@ type launchOrigin struct {
 	// holding a scheduled recipe for the whole ceiling (see manualSlot).
 	slotAt     time.Time
 	scheduleID string
-	origin     runlease.Origin
+	// chatID is the launching chat for an agent's run (runStartLaunch);
+	// empty for every parentless launch. See runlease.Lease.ChatID.
+	chatID string
+	origin runlease.Origin
 }
 
 // manualLaunch is the Workflows tab's Run button and the retry path: attended,
@@ -143,6 +146,7 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 		StartedAt:  time.Now(),
 		SlotAt:     o.slotAt,
 		WorkflowID: workflowID,
+		ChatID:     o.chatID,
 		Recipe:     recipe,
 		Origin:     o.origin,
 		ScheduleID: o.scheduleID,

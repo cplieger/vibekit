@@ -260,6 +260,19 @@ export interface SteerMark {
 
 // --- Local session state (client-only projection of server chat) ---
 
+/** How much of a chat's transcript is resident client-side.
+ *
+ *  - `loaded`: a successful newest-page fetch put the paginated window here —
+ *    the ONLY writer of this value, so nothing weaker can claim it.
+ *  - `evicted`: the idle sweep dropped the window; the session ROW survives
+ *    with its header data, and activation must refetch.
+ *  - `partial`: background ingest (SSE) landed on an evicted chat, so SOME
+ *    messages are resident but the window around them is not.
+ *
+ *  Absent means the window was never loaded at all (a fresh or boot-listed
+ *  chat), which every consumer treats exactly like not-`loaded`. */
+export type MessagesResidency = "loaded" | "evicted" | "partial";
+
 export interface Session {
   id: string;
   name: string;
@@ -349,6 +362,9 @@ export interface Session {
    *  in a chat_updated frame every keystroke's worth of typing. */
   attachments?: string[];
   compaction_watermark?: string;
+  /** Client-only transcript residency; see MessagesResidency. Carried across
+   *  the header-list rebuild like every other client-only projection. */
+  residency?: MessagesResidency;
 }
 
 /** One resumable KAS session, from GET /api/sessions. Mirrors

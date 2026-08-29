@@ -15,6 +15,7 @@ import type { RunNode, RunState } from "./run-store.js";
 const fetches: string[] = [];
 let responses: (RunState | undefined)[] = [];
 let resolvers: (() => void)[] = [];
+let liveRunsReply: { runs: { workflow_id: string; chat_id: string }[] } | null = null;
 
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(async (path: string) => {
@@ -25,10 +26,13 @@ vi.mock("./api-client.js", () => ({
     const state = responses.shift();
     return state === undefined ? null : { workflowId: state.workflowId, state };
   }),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  apiGetTyped: vi.fn(),
+  // The live-runs rebuild goes through the typed GET; the decoder is the
+  // generated one and is not under test here, so the mock answers typed values
+  // directly (null is the degrade arm: non-2xx / network / decode failure).
+  apiGetTyped: vi.fn((path: string) => {
+    fetches.push(path);
+    return Promise.resolve(liveRunsReply);
+  }),
 }));
 
 const store = await import("./run-store.js");
@@ -51,6 +55,7 @@ beforeEach(() => {
   fetches.length = 0;
   responses = [];
   resolvers = [];
+  liveRunsReply = null;
   for (const id of ["r1", "r2", "r3", "r4"]) {
     store.forgetRun(id);
   }
@@ -292,5 +297,76 @@ describe("runIsLive counts a pause as live", () => {
     expect(store.runIsLive({ workflowId: "r1", status: "aborted" })).toBe(false);
     expect(store.runIsLive({ workflowId: "r1" })).toBe(false);
     expect(store.runIsLive(undefined)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The live-runs inventory: the eviction sweep's exemption source. Event-fed,
+// rebuilt from GET /api/runs/live, and degrading toward KEEPING — a stale
+// exemption costs memory, a wrongly-evicted live chat costs correctness.
+// Every case uses its own ids: the inventory is module state, like the runs it
+// describes.
+// ---------------------------------------------------------------------------
+describe("the live-runs inventory", () => {
+  it("answers by chat for runs the lifecycle events fed in", () => {
+    store.noteRunLive("wf-live-1", "chat-a");
+    expect(store.hasLiveRunForChat("chat-a")).toBe(true);
+    expect(store.hasLiveRunForChat("chat-b")).toBe(false);
+
+    store.noteRunSettled("wf-live-1");
+    expect(store.hasLiveRunForChat("chat-a")).toBe(false);
+  });
+
+  it("exempts no chat for a parentless run, and never answers for the empty chat", () => {
+    store.noteRunLive("wf-parentless", "");
+    expect(store.hasLiveRunForChat("")).toBe(false);
+    store.noteRunSettled("wf-parentless");
+  });
+
+  it("survives the render cache dropping the run's card (forgetRun)", () => {
+    // The disposed-run-card case: forgetRun is the CACHE's bound (last card
+    // unmounted), and a run does not stop being live because nothing renders
+    // it — the exemption must hold for a chat nobody is looking at, which is
+    // exactly the chat eviction considers.
+    store.noteRunLive("wf-carded", "chat-carded");
+    store.forgetRun("wf-carded");
+    expect(store.hasLiveRunForChat("chat-carded")).toBe(true);
+    store.noteRunSettled("wf-carded");
+  });
+
+  it("rebuilds from the endpoint, replacing the event-fed view", async () => {
+    // Event-fed state is stale in both directions: wf-stale settled while this
+    // client was away, wf-missed started then.
+    store.noteRunLive("wf-stale", "chat-stale");
+    liveRunsReply = {
+      runs: [
+        { workflow_id: "wf-missed", chat_id: "chat-missed" },
+        { workflow_id: "wf-parentless", chat_id: "" },
+      ],
+    };
+
+    await store.rebuildLiveRuns();
+
+    expect(fetches).toContain("/api/runs/live");
+    expect(store.hasLiveRunForChat("chat-missed")).toBe(true);
+    expect(store.hasLiveRunForChat("chat-stale")).toBe(false);
+    store.noteRunSettled("wf-missed");
+    store.noteRunSettled("wf-parentless");
+  });
+
+  it("KEEPS the event-fed state when the rebuild fails, and retries later", async () => {
+    store.noteRunLive("wf-kept", "chat-kept");
+    liveRunsReply = null; // endpoint unreachable / non-2xx / undecodable
+
+    await store.rebuildLiveRuns();
+    expect(
+      store.hasLiveRunForChat("chat-kept"),
+      "a failed rebuild must never clear to empty — degrade toward keeping",
+    ).toBe(true);
+
+    // The next rebuild (gap or boot) applies the server's answer.
+    liveRunsReply = { runs: [] };
+    await store.rebuildLiveRuns();
+    expect(store.hasLiveRunForChat("chat-kept")).toBe(false);
   });
 });

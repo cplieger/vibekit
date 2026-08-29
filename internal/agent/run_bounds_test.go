@@ -950,33 +950,42 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	}
 }
 
-// TestRunStartOrigin_ClassifiesByTheCarrier is finding 7's core, at the predicate.
+// TestRunStartLaunch_ClassifiesByTheCarrier is finding 7's core, at the predicate.
 //
 // A `run_start` frame arriving up a CHAT's bridge is an agent-launched run — KAS
 // parents a run on a chat's session only when that chat's agent asked for it — and
-// that population is excluded from the orphan sweep because the chat rehydrate's
-// resume sweep owns it. Every other carrier means the run has no chat: run-bridge
-// frames dispatch with an empty chat id, and the bridge is registered under the
-// synthetic `run:<id>`.
+// that population is excluded from the orphan sweep's cancel arm because the chat
+// rehydrate's resume sweep owns it. Every other carrier means the run has no chat:
+// run-bridge frames dispatch with an empty chat id, and the bridge is registered
+// under the synthetic `run:<id>`.
 //
 // The retired rule inferred agent origin from lease ABSENCE, which is false for
 // exactly the run that matters: a retry grants its lease after the retry call
 // returns, so a `run_start` landing first stamped OriginAgent on a parentless run
 // and the agent exclusion then made it permanently unsweepable.
-func TestRunStartOrigin_ClassifiesByTheCarrier(t *testing.T) {
+//
+// The carrier also decides the lease's CHAT: an agent's run carries the chat
+// that launched it (the live-runs projection's key), and a parentless run
+// carries none — the designed value a pre-upgrade lease row decodes to as well.
+func TestRunStartLaunch_ClassifiesByTheCarrier(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
-		chatID vibekit.ChatID
-		want   runlease.Origin
+		chatID     vibekit.ChatID
+		want       runlease.Origin
+		wantChatID string
 	}{
-		"a run bridge's frame, dispatched with no chat id": {"", runlease.OriginManual},
-		"the synthetic run chat id":                        {runChatID("wf_1"), runlease.OriginManual},
-		"a real chat id, so the chat's agent asked":        {"c-abc123", runlease.OriginAgent},
+		"a run bridge's frame, dispatched with no chat id": {"", runlease.OriginManual, ""},
+		"the synthetic run chat id":                        {runChatID("wf_1"), runlease.OriginManual, ""},
+		"a real chat id, so the chat's agent asked":        {"c-abc123", runlease.OriginAgent, "c-abc123"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := runStartOrigin(tc.chatID); got != tc.want {
-				t.Errorf("runStartOrigin(%q) = %q, want %q", tc.chatID, got, tc.want)
+			got := runStartLaunch(tc.chatID)
+			if got.origin != tc.want {
+				t.Errorf("runStartLaunch(%q).origin = %q, want %q", tc.chatID, got.origin, tc.want)
+			}
+			if got.chatID != tc.wantChatID {
+				t.Errorf("runStartLaunch(%q).chatID = %q, want %q", tc.chatID, got.chatID, tc.wantChatID)
 			}
 		})
 	}

@@ -128,6 +128,10 @@ export async function loadList(): Promise<boolean> {
       ...(existing?.agent_status_text !== undefined && {
         agent_status_text: existing.agent_status_text,
       }),
+      // Residency describes the carried-over `messages` window, so it travels
+      // with it: dropping it here would make every reconnect read a loaded
+      // chat as never-loaded (or an evicted one as fresh).
+      ...(existing?.residency !== undefined && { residency: existing.residency }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
     };
     next.push(session);
@@ -237,6 +241,10 @@ export async function loadMessages(
   // where it already sequences the rest of the activation.
   if (beforeID === undefined) {
     session.draft = d.draft;
+    // A successful newest-page load is the ONE writer of `loaded`: the window
+    // is now the server's answer, so an activation may trust it. An older-page
+    // prepend extends an already-trusted window and asserts nothing new.
+    session.residency = "loaded";
   }
   bumpMessages(chatID);
   return true;

@@ -25,6 +25,8 @@ import {
   get,
   getSessions,
   isThinking,
+  registerEvictionExemption,
+  startEvictionSweep,
 } from "./store.js";
 import { loadList } from "./store-load.js";
 import { computed, effect } from "@cplieger/reactive";
@@ -68,8 +70,8 @@ import { initEditor } from "./editor-core.js";
 import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun } from "./run-view.js";
-import { showSubagent } from "./subagent-view.js";
-import { runChatID } from "./run-store.js";
+import { showSubagent, subagentTabProjectsChat } from "./subagent-view.js";
+import { hasLiveRunForChat, rebuildLiveRuns, runChatID } from "./run-store.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, restoreFileBrowser } from "./files.js";
@@ -590,6 +592,15 @@ function initPostAuth(): void {
   initGovernance();
   // Version info (Settings → About) + git panel wiring incl. badge poll.
   initPostAuthUI();
+  // The live-runs inventory: boot is one of its two rebuild triggers (the
+  // other is transport:gap, wired in handlers/system.ts). It feeds the
+  // eviction sweep's live-run exemption, registered here beside the
+  // subagent-tab one because store.ts is a leaf and must not import
+  // run-store.ts or tabs.ts — the composition root wires what it may not.
+  void rebuildLiveRuns();
+  registerEvictionExemption(hasLiveRunForChat);
+  registerEvictionExemption(subagentTabProjectsChat);
+  startEvictionSweep();
 }
 
 function onLoginSuccess(): void {

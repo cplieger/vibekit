@@ -89,6 +89,11 @@ vi.mock("../status.js", () => ({
 }));
 vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
 
+// The live-runs inventory rebuild: the gap handler re-reads the server's
+// presence projection because the events feeding the inventory were lost.
+const mockRebuildLiveRuns = vi.fn(() => Promise.resolve());
+vi.mock("../run-store.js", () => ({ rebuildLiveRuns: mockRebuildLiveRuns }));
+
 // The shared turn teardown (turn-teardown.ts) reaches these three, and each is a
 // boundary this test has no business driving: the rail FETCHES the session-wide
 // turn index, and turn-rail.ts also pulls in scroll.ts, whose module-level
@@ -228,6 +233,17 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     setSessions([makeSession("a")]);
     fireGap();
     expect(mockLoadList).toHaveBeenCalled();
+  });
+
+  it("rebuilds the live-runs inventory from the endpoint", () => {
+    // The inventory is event-fed, and the gap means events were lost in both
+    // directions: a run that started or settled inside the outage leaves the
+    // eviction exemption blind. Re-reading the presence projection is the heal;
+    // the degrade rule (a failed rebuild keeps event-fed state) is
+    // run-store.test.ts's subject.
+    setSessions([makeSession("a")]);
+    fireGap();
+    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
   });
 
   // THE TAB RECONCILE IS GONE, and its absence is what this pins.

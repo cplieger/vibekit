@@ -76,22 +76,27 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) {
 	}
 	for i := range held {
 		l := held[i]
-		if l.Origin == runlease.OriginAgent {
-			// Chat-parented by construction: KAS parents an agent's run on the
-			// calling chat's session, so it heals WITH that chat when the user's
-			// next message rehydrates its bridge (resumeRestartPaused). This
-			// exclusion is why the sweep needs no session-chain walk.
-			continue
-		}
 		st, known := status[l.WorkflowID]
 		switch {
 		case !known || terminalRunStatus(st):
 			// Bookkeeping only: there is no run to cancel, so this is not the
 			// orphan path and records no reason. A lease outliving its run would
-			// otherwise make the recipe look busy to the backstop.
+			// otherwise make the recipe look busy to the backstop — and, since
+			// leases carry the launching chat, hold that chat exempt from client
+			// eviction for the rest of the process. Every origin, agent included:
+			// the origin exclusion below guards the CANCEL, and this arm cancels
+			// nothing.
 			slog.Info("boot: releasing the lease of a run that is over",
 				"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
 			rs.releaseLease(cctx, l.WorkflowID)
+		case l.Origin == runlease.OriginAgent:
+			// Chat-parented by construction: KAS parents an agent's run on the
+			// calling chat's session, so it heals WITH that chat when the user's
+			// next message rehydrates its bridge (resumeRestartPaused). This
+			// exclusion is why the cancel arm needs no session-chain walk, and it
+			// sits INSIDE the sweep — below the bookkeeping arm — because it
+			// exists to avoid destroying an agent's work, not to keep the lease
+			// of a run that is already over.
 		case st == runStatusPaused && rs.restartPaused(cctx, l.WorkflowID):
 			rs.clearOrphaned(cctx, &l)
 		}
