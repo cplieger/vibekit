@@ -131,7 +131,14 @@ import {
 import { attachDrag, setReorderCallback } from "./tabs-drag.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import type { TabOpeners } from "./tab-materialize.js";
-import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.js";
+import {
+  ingestTabsChanged,
+  listTabs,
+  beginRemove,
+  removeCommitted,
+  opTimedOut,
+  _resetTabsSyncForTest,
+} from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
 import type { TabKind } from "./types.js";
@@ -515,6 +522,115 @@ describe("closing the last tab", () => {
     await closeTab(chatID("mine"));
     await new Promise((r) => setTimeout(r, 700));
     expect(onEmpty).toHaveBeenCalledTimes(1);
+  });
+
+  // The empty-state respawn DEFERS while any remove is pending: the strip may be
+  // empty only because a close is still in flight, and a respawned chat would
+  // race whatever settles it. The settlement re-arms the timer — here the
+  // client-behind semantic confirmation (`closed: []`), the arm a close that
+  // another device won answers with.
+  it("defers the respawn while a remove is pending, and re-arms when it settles", async () => {
+    expect.assertions(3);
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    await openChats("held", "mine");
+
+    // An optimistic close of "held" is in flight (the machine holds its op; the
+    // gesture half that empties the strip belongs to the close task — what
+    // matters here is the PENDING REMOVE, which is the deferral's whole input).
+    const onConfirm = vi.fn();
+    beginRemove("op-held", {
+      id: chatID("held"),
+      capturedTabIDs: [chatID("held")],
+      onConfirm,
+      rollback: vi.fn(),
+    });
+    // Another device's close of the same tab lands first: the row leaves the
+    // strip, while OUR dispatch stays unanswered (a foreign frame settles no op).
+    tabServer.closeRemotely(chatID("held"));
+    await settleTabs();
+
+    // The reader closes the last tab. The strip is empty, the respawn is due —
+    // and deferred, because "held"'s remove is still pending.
+    await closeTab(chatID("mine"));
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).not.toHaveBeenCalled();
+
+    // The response finally arrives: closed [] — the other device's close won.
+    // Semantic confirmation settles the op and re-arms the respawn.
+    removeCommitted("op-held", [], tabServer.version());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).toHaveBeenCalledTimes(1);
+  });
+
+  // Same deferral, VERIFYING arm: the close got no answer at all, so the op sits
+  // in `verifying` and the respawn must keep waiting — network unavailability
+  // must not mint a chat into a strip whose last close is unconfirmed. An
+  // authoritative list settles it (absent → confirm) and the respawn proceeds.
+  it("defers the respawn while a remove is verifying, until an authoritative list settles it", async () => {
+    expect.assertions(2);
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    await openChats("held", "mine");
+    beginRemove("op-held", {
+      id: chatID("held"),
+      capturedTabIDs: [chatID("held")],
+      onConfirm: vi.fn(),
+      rollback: vi.fn(),
+    });
+    tabServer.closeRemotely(chatID("held"));
+    await settleTabs();
+    await closeTab(chatID("mine"));
+
+    // The dispatch times out: no restore, no retire — verifying.
+    opTimedOut("op-held");
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).not.toHaveBeenCalled();
+
+    // An authoritative snapshot (a gap re-list, a verify tick — one mechanism)
+    // no longer holds the row: silent confirmation, and the respawn re-arms.
+    await listTabs();
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).toHaveBeenCalledTimes(1);
+  });
+
+  // The deferral's other exit: the settlement RESTORED a row, so the strip is
+  // not empty and there is nothing to respawn.
+  it("drops the deferred respawn when the settlement restores the row", async () => {
+    expect.assertions(4);
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    await openChats("held", "mine");
+    const rollback = vi.fn();
+    beginRemove("op-held", {
+      id: chatID("held"),
+      capturedTabIDs: [chatID("held")],
+      onConfirm: vi.fn(),
+      rollback,
+    });
+    // The row leaves the PROJECTION only: a foreign frame this device should not
+    // have received (the server still holds the tab). The projection is now a
+    // version ahead, so a same-version reopen elsewhere re-aligns them.
+    tabServer.emitRaw({
+      removed_ids: [chatID("held")],
+      order: [chatID("mine")],
+      version: tabServer.version() + 1,
+    });
+    tabServer.openElsewhere({ kind: "chat", ref: "other" });
+    await settleTabs();
+    await closeTab(chatID("mine"));
+    opTimedOut("op-held");
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).not.toHaveBeenCalled();
+
+    // The authoritative list still holds "held": restore, not confirm. The strip
+    // has rows again, so the deferred respawn is DROPPED rather than re-armed.
+    await listTabs();
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(hasTab("chat", "held")).toBe(true);
+    await new Promise((r) => setTimeout(r, 700));
+    expect(onEmpty).not.toHaveBeenCalled();
   });
 });
 

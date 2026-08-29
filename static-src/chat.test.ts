@@ -29,14 +29,24 @@ const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, message
       updated_at: 0,
       message_count: 0,
     });
+    // The widened creating reply: the chat, the tab the coordinator opened for
+    // it, and the version that open committed. The fork's subject carries the
+    // PARENT the server nested it under — resolving it is no longer the client's.
+    const serverCreated = (id: string, tabID: string, parent = ""): unknown => ({
+      chat: serverHeader(id),
+      subject: { id: tabID, kind: "chat", ref: id, parent, pinned: false, owns: true },
+      version: 3,
+    });
     return {
       setModeDispatch: vi.fn(),
       // Both creating dispatches are called WITH a payload, so the fakes declare
       // that parameter: without it the mock's calls tuple is empty and the cases
       // below cannot read the argument they exist to assert on.
-      forkDispatch: vi.fn(async (_payload?: Record<string, unknown>) => serverHeader("c-forked")),
+      forkDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
+        serverCreated("c-forked", "tb_forked", "tb_parent"),
+      ),
       createDispatch: vi.fn(async (_payload?: Record<string, unknown>) =>
-        serverHeader("c-created"),
+        serverCreated("c-created", "tb_created"),
       ),
       submitPromptMock: vi.fn(),
       messagesEl: document.createElement("div"),
@@ -89,8 +99,11 @@ vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: vi.fn() }));
 vi.mock("./tabs.js", () => ({
   // `openTab` resolves rather than returning void: every open is a round trip
-  // through `open_tab` now, and chat.ts awaits it.
+  // through `open_tab`, and the callers that still use it (History, push
+  // notifications) await it.
   openTab: vi.fn(() => Promise.resolve()),
+  // The adoption path: creating commands paint their tab from the reply.
+  adoptSubject: vi.fn(),
   activateTab: vi.fn(),
   // The lookup that replaced `hasTab(chatID)`: a chat id is no longer a tab id, so
   // "" means no tab is open for that chat.
@@ -175,7 +188,7 @@ import {
   openPreviousSession,
   installStoreSubscribers,
 } from "./chat.js";
-import { openTab, tabIdFor, setTabTooltip } from "./tabs.js";
+import { openTab, adoptSubject, activateTab, tabIdFor, setTabTooltip } from "./tabs.js";
 import { addAttachment } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
 import { get, getSessions, removeChat, setActive, upsertHeader, clearTurnDone } from "./store.js";
@@ -245,27 +258,39 @@ describe("createSession is async, and what that means for its callers", () => {
 
     // The window a bare `void` would leave a dependent caller reading.
     expect(activeId).toBe("");
-    expect(vi.mocked(openTab)).not.toHaveBeenCalled();
+    expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
 
     resolveCreate({
-      id: "c-late",
-      name: "New conversation",
-      model: "auto",
-      usage: {
-        context_pct: 0,
-        context_size: 0,
-        credits: 0,
-        turn_count: 0,
-        last_turn_ms: 0,
-        has_real_data: false,
+      chat: {
+        id: "c-late",
+        name: "New conversation",
+        model: "auto",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          turn_count: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        created_at: 0,
+        updated_at: 0,
+        message_count: 0,
       },
-      created_at: 0,
-      updated_at: 0,
-      message_count: 0,
+      subject: {
+        id: "tb_late",
+        kind: "chat",
+        ref: "c-late",
+        parent: "",
+        pinned: false,
+        owns: true,
+      },
+      version: 9,
     });
     await expect(pending).resolves.toBe("c-late");
     expect(activeId).toBe("c-late");
-    expect(vi.mocked(openTab)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(adoptSubject)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(activateTab)).toHaveBeenCalledWith("tb_late");
   });
 
   // A refused create opens nothing and returns "". Opening a tab anyway is the
@@ -273,8 +298,21 @@ describe("createSession is async, and what that means for its callers", () => {
   it("opens no tab and returns the empty id when the create is refused", async () => {
     createDispatch.mockResolvedValueOnce(null);
     await expect(chatModule.createSession()).resolves.toBe("");
-    expect(vi.mocked(openTab)).not.toHaveBeenCalled();
+    expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
+    expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
     expect(activeId).toBe("");
+  });
+
+  // The tab rides the CREATE's reply: the coordinator opened it under the same
+  // lock that wrote the record, so dispatching `open_tab` afterwards was a whole
+  // round trip to learn `created: false`. The adoption replaced it.
+  it("adopts the tab from the create's reply instead of dispatching a second open", async () => {
+    await chatModule.createSession();
+    expect(vi.mocked(openTab)).not.toHaveBeenCalled();
+    const [subject, name] = vi.mocked(adoptSubject).mock.calls[0] ?? [];
+    expect(subject).toMatchObject({ id: "tb_created", kind: "chat", ref: "c-created" });
+    expect(name).toBe("New conversation");
+    expect(vi.mocked(activateTab)).toHaveBeenCalledWith("tb_created");
   });
 
   // The initial prompt rides INSIDE the create, which is why app.ts can detach that
@@ -686,45 +724,31 @@ describe("closeChatTab's retention gate", () => {
 // context is the parent's REAL context via a session fork.
 // ---------------------------------------------------------------------------
 
-/** The last open's arguments. They are SUBJECT fields now — `ref` names the chat,
- *  `parent` the tab it nests under, `owns` whether closing tears the work down —
- *  rather than a local spec carrying behaviour: `onShow` and `onClose` are the
- *  factory's, so a door has none to hand over. */
-function lastOpen(): {
-  kind: string;
-  ref: string;
-  name?: string;
-  parent?: string;
-  owns?: boolean;
-} {
-  return vi.mocked(openTab).mock.calls.at(-1)?.[0] as never;
-}
-
 describe("openTangentChat", () => {
-  /** The opaque id the projection minted for the PARENT chat's tab. A subject's
-   *  `Parent` names an open tab, so the door has to resolve the launching chat to
-   *  one — passing the chat id would name a tab nothing holds and promote the
-   *  tangent to top level. */
-  const PARENT_TAB_ID = "tb_parent";
-
   beforeEach(() => {
     vi.clearAllMocks();
     activeId = "";
     vi.mocked(get).mockReturnValue({ model: "parent-model" } as never);
-    vi.mocked(tabIdFor).mockReturnValue(PARENT_TAB_ID);
   });
 
   // ASYNC now, and the ORDER inverted with it: the fork is what mints the chat
-  // id, so the sub-tab cannot open until the reply lands. Before server minting
-  // the tab opened first and the dispatch followed.
-  it("opens the new chat as a sub-tab of its parent", async () => {
+  // id, so the sub-tab cannot exist until the reply lands — and the reply is
+  // what carries it. TANGENT PARITY with createSession: the tab is adopted from
+  // the fork's response, the second POST is gone, and the subject's PARENT is
+  // the server's nesting decision rather than a client lookup.
+  it("adopts the sub-tab from the fork's reply, parent and all, with no second POST", async () => {
     await openTangentChat("c-parent");
-    const open = lastOpen();
-    // The PARENT is a tab id, and a chat id is no longer one — so the door resolves
-    // the launching chat to its open tab through `tabIdFor`.
-    expect(open.parent).toBe(PARENT_TAB_ID);
-    expect(open.kind).toBe("chat");
-    expect(open.ref).toBe("c-forked");
+    expect(vi.mocked(openTab)).not.toHaveBeenCalled();
+    const [subject, name] = vi.mocked(adoptSubject).mock.calls[0] ?? [];
+    expect(subject).toMatchObject({
+      id: "tb_forked",
+      kind: "chat",
+      ref: "c-forked",
+      parent: "tb_parent",
+      owns: true,
+    });
+    expect(name).toBe("New conversation");
+    expect(vi.mocked(activateTab)).toHaveBeenCalledWith("tb_forked");
   });
 
   // The fork is what persists the chat AND what carries the context, so it must
@@ -751,18 +775,6 @@ describe("openTangentChat", () => {
     expect(submitPromptMock).not.toHaveBeenCalled();
   });
 
-  // It OWNS its bridge, so the tab keeps the default `owns` and its close tears
-  // the tangent down like any other chat tab. `owns: false` would be wrong — a
-  // forked session is this tab's own work, not a view over another chat's.
-  it("owns its bridge", async () => {
-    // `owns` is left at the subject's default (true): the side chat owns its own
-    // bridge, so closing its tab must tear that bridge down the way any chat tab
-    // does. `owns: false` is for a tab that only WATCHES another chat's work, and
-    // the teardown itself is the factory's rather than a callback passed here.
-    await openTangentChat("c-parent");
-    expect(lastOpen().owns).toBeUndefined();
-  });
-
   // Model, mode and effort are ALL the server's to copy off the parent record now,
   // and the row is seeded from the header the fork returned rather than from a
   // local guess — which is invariant 2 applied to creation.
@@ -778,19 +790,20 @@ describe("openTangentChat", () => {
   it("opens no tab when the fork is refused", async () => {
     forkDispatch.mockResolvedValueOnce(null);
     await openTangentChat("c-parent");
-    expect(openTab).not.toHaveBeenCalled();
+    expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
+    expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
   });
 
   it("does nothing when the parent is unknown", async () => {
     vi.mocked(get).mockReturnValue(undefined);
     await openTangentChat("c-parent");
-    expect(openTab).not.toHaveBeenCalled();
+    expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
     expect(forkDispatch).not.toHaveBeenCalled();
   });
 
   it("does nothing for an empty parent id", async () => {
     await openTangentChat("");
-    expect(openTab).not.toHaveBeenCalled();
+    expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
     expect(forkDispatch).not.toHaveBeenCalled();
   });
 });

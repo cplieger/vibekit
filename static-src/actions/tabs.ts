@@ -2,17 +2,19 @@
 // The four tab mutations. Every change to the open-tab set goes through one of
 // these; nothing else may send a tab command.
 //
-// A RESPONSE IS NOT A RENDER. Each of these returns what the server COMMITTED —
-// an id, a `created` flag, a version — and the strip is painted by the
-// `tabs_changed` frame that follows. That split is the whole design: the frame is
-// idempotent by id, so the device that asked and the device that did not take the
-// same path, and no call site can paint a row the server has not persisted.
+// A RESPONSE IS WHAT THE SERVER COMMITTED — a subject, a `closed` list, the
+// version the mutation produced — and it is what the pending-op machine
+// (tabs-sync.ts, mechanism 4) reconciles against the `tabs_changed` frame that
+// follows. The frame stays idempotent by id, so the device that asked and the
+// device that did not converge on the same rows whichever answer lands first.
 //
-// THE VERSION IN EVERY REPLY IS DIAGNOSTIC AND MUST NOT BE ADOPTED. Only an event
-// advances the local watermark (tabs-sync.ts, mechanism 1). A response-adopted
-// v+2 makes another device's in-flight v+1 read as stale, which destroys the gap
-// check permanently — so these replies deliberately do not carry the version out
-// of this module.
+// THE VERSION IN EVERY REPLY IS FOR THE MACHINE, NEVER FOR THE WATERMARK.
+// Carrying a version to the pending machine is not advancing the event
+// watermark: only an EVENT advances it (tabs-sync.ts, mechanism 1), and the
+// machine compares a reply's `committedVersion` against the watermark without
+// ever writing it there. A response-adopted v+2 makes another device's
+// in-flight v+1 read as stale, which destroys the gap check permanently — the
+// machine must never write the watermark from a response.
 //
 // WHERE `dedupe` IS AND IS NOT USED, which is a per-command decision rather than
 // a house style:
@@ -69,12 +71,16 @@ export interface OpenTabArgs {
 /** What the server committed for an open.
  *
  *  `created: false` is load-bearing, not informational: an already-open
- *  (kind, ref) commits nothing, so it bumps no version and emits NO event. A
- *  caller that waited only for the frame would wait forever, which is exactly the
- *  silent no-op this design exists to remove. */
+ *  (kind, ref) commits nothing, so it bumps no version and emits NO event. The
+ *  pending-op machine retires such an op on the spot, because no frame will ever
+ *  correlate it.
+ *
+ *  `version` is the collection version the mutation committed, consumed by the
+ *  machine and never by the watermark (see the module header). */
 export interface OpenTabReply {
   subject: TabSubject;
   created: boolean;
+  version: number;
 }
 
 export const openTabCommand = defineAction<OpenTabArgs, OpenTabReply | null>({
@@ -111,9 +117,10 @@ export const openTabCommand = defineAction<OpenTabArgs, OpenTabReply | null>({
     return {
       subject: decodeTabSubject(body["subject"]),
       // Absent is treated as NOT created, which is the conservative reading: it
-      // makes the caller wait for a frame rather than assume the row is already
-      // there, and the wait is bounded.
+      // makes the machine hold the op for a frame rather than assume one is
+      // coming, and version absorption bounds the hold.
       created: body["created"] === true,
+      version: numberField(body, "version"),
     };
   },
   // At the product limit the refusal has a remedy, and saying so is the whole
@@ -129,7 +136,18 @@ export interface CloseTabArgs {
   opID: string;
 }
 
-export const closeTabCommand = defineAction<CloseTabArgs, string[] | null>({
+/** What the server committed for a close.
+ *
+ *  `closed` is a LIST because a parent and its children go as one mutation, and
+ *  EMPTY is a normal answer rather than a failure: two devices can close one
+ *  tab, and an empty list is the machine's SEMANTIC confirmation of absence.
+ *  `version` is for the machine, never the watermark (module header). */
+export interface CloseTabReply {
+  closed: string[];
+  version: number;
+}
+
+export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>({
   name: "tabs.close",
   networkMode: "always",
   idempotencyKey: true,
@@ -150,11 +168,12 @@ export const closeTabCommand = defineAction<CloseTabArgs, string[] | null>({
     if (!r.ok) {
       throw sendFailure(r, "close that tab");
     }
-    // A LIST, because a parent and its children go as one mutation. Empty is a
-    // normal answer rather than a failure: two devices can close one tab.
     const body = asObject(r.body);
     const closed = body?.["closed"];
-    return Array.isArray(closed) ? closed.filter((v): v is string => typeof v === "string") : [];
+    return {
+      closed: Array.isArray(closed) ? closed.filter((v): v is string => typeof v === "string") : [],
+      version: body === null ? 0 : numberField(body, "version"),
+    };
   },
   error: "Couldn't close that tab",
 });
@@ -241,6 +260,14 @@ export const pinTabCommand = defineAction<PinTabArgs, boolean>({
 
 function asObject(body: unknown): Record<string, unknown> | null {
   return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
+}
+
+/** The committed version out of a reply body, 0 when absent or malformed. 0 is
+ *  below every real version, so the machine reads it as "already covered" and
+ *  never holds an op hostage to a field a fake omitted. */
+function numberField(body: Record<string, unknown>, key: string): number {
+  const v = body[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
 /** Turn a transport failure into the shape the framework's error surface reads.

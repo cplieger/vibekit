@@ -10,20 +10,20 @@
 //
 // THE INTERLEAVING IS THE SUBJECT of the first block, and it is the one property
 // no unit test reaches. An open has two answers on two channels — the command's
-// response carries the id, the `tabs_changed` frame carries the render — and they
-// race. Both orders are real traffic:
+// response carries the COMMITTED SUBJECT, the `tabs_changed` frame carries the
+// same mutation for every other device — and they race. Both orders are real
+// traffic:
 //
-//   - RESPONSE-FIRST is the common case. The continuation must not run yet: a
-//     caller that activated on the response would activate a tab whose row does
-//     not exist, which is a silent no-op and a blank view.
-//   - EVENT-FIRST happens whenever the frame beats the POST's own round trip, and
-//     it also covers the IDEMPOTENT open, where the response says `created: false`
-//     and NO frame is coming at all. A caller waiting only for the frame there
-//     waits forever.
+//   - RESPONSE-FIRST is the common case, and the response is now what PAINTS:
+//     the row is adopted from the reply and the caller's continuation runs
+//     against a row that exists, with no frame in the gesture's path at all.
+//   - EVENT-FIRST happens whenever the frame beats the POST's own round trip.
+//     The adoption then finds the row already there and upserts idempotently —
+//     one code path with the frame apply, which is what makes the echo harmless.
 //
-// One mechanism answers both (`whenOpen`), so both are driven for every subject
-// kind a door opens: a chat, an editor, a singleton, and both run forms — an
-// owned run and a review, which share one `(kind, ref)` and differ only in `owns`.
+// Both are driven for every subject kind a door opens: a chat, an editor, a
+// singleton, and both run forms — an owned run and a review, which share one
+// `(kind, ref)` and differ only in `owns`.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -275,7 +275,8 @@ describe("event-first: the frame beats the response", () => {
     await openTab(args);
 
     // Nothing was left to deliver, which is the whole difference from the other
-    // order: `whenOpen` found the row and resolved on the spot.
+    // order: the frame had already painted the row, and the response's adoption
+    // upserted the same subject idempotently.
     expect(tabServer.pendingCount()).toBe(0);
     expect(hasTab(kind, ref)).toBe(true);
     expect(getActiveTabId()).toBe(tabIdFor(kind, ref));
@@ -295,39 +296,72 @@ describe("event-first: the frame beats the response", () => {
   });
 });
 
-describe("response-first: the response beats the frame", () => {
+describe("response-first: the response beats the frame (response-adopted opens)", () => {
   it.each(SUBJECTS)(
-    "$desc does not resolve until the frame has painted it",
+    "$desc resolves with its row adopted from the response, NO frame delivered",
     async ({ args, kind, ref }) => {
       expect.assertions(6);
-      // MANUAL, so the frame lands exactly when this case says it does. The
-      // response resolves as soon as it is asked for.
+      // MANUAL, so no frame is EVER delivered inside this case: what paints is
+      // the response alone, which is the whole of the adoption contract.
       tabServer.setMode("manual");
-      let resolved = false;
-      const open = openTab(args).then(() => {
-        resolved = true;
-      });
+      await openTab(args);
 
-      // Every microtask has run and the command has answered, so the id is known
-      // here — and the row still is not. A continuation that ran now would
-      // activate a tab the projection does not hold.
-      await settleTabs();
-      expect(tabServer.sentOfType("open_tab")).toHaveLength(1);
-      expect(hasTab(kind, ref)).toBe(false);
-      expect(resolved).toBe(false);
-
-      tabServer.flushFrames();
-      await open;
+      // The row is present at dispatch resolution, activated, and painted —
+      // while the frame still sits undelivered on the server.
+      expect(tabServer.pendingCount()).toBeGreaterThanOrEqual(1);
       expect(hasTab(kind, ref)).toBe(true);
       expect(getActiveTabId()).toBe(tabIdFor(kind, ref));
+      expect(await rowRefs()).toEqual([ref === "" ? kind : ref]);
       await expectActivated(kind, ref);
+      // The activation hook ran against a row the projection already held.
+      // (expectActivated pins rowPresent for the injected kinds; the assertion
+      // count above keeps the singleton arm honest.)
+      expect(hasTab(kind, ref)).toBe(true);
     },
   );
 
-  // The dropped-frame bound (`whenOpen` RESOLVES on expiry rather than rejecting,
-  // because every continuation is an activation and activating a row the projection
-  // does not hold is already a no-op) is `tabs-sync.test.ts`'s case: driving it here
-  // would mean waiting out the production 10s.
+  it("absorbs its own echo idempotently: same row element, no re-animation", async () => {
+    expect.assertions(4);
+    tabServer.setMode("manual");
+    await openTab({ kind: "chat", ref: "c-1" });
+    const before = await rowRefs();
+    const list = document.getElementById("tab-list");
+    const node = list?.querySelector<HTMLElement>("[data-tab-id]");
+    expect(before).toEqual(["c-1"]);
+    // Let the adopted row's entry animation class settle out of the picture:
+    // what must NOT happen is the frame minting a SECOND entering row.
+    node?.classList.remove("entering");
+
+    tabServer.flushFrames();
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["c-1"]);
+    const after = list?.querySelector<HTMLElement>("[data-tab-id]");
+    // The SAME element: the frame upserted the row the adoption painted, so
+    // nothing re-entered and nothing re-animated.
+    expect(after).toBe(node);
+    expect(after?.classList.contains("entering")).toBe(false);
+  });
+
+  it("survives a re-list from before the commit, via the machine's overlay", async () => {
+    expect.assertions(3);
+    tabServer.setMode("manual");
+    await openTab({ kind: "chat", ref: "c-1" });
+
+    // The GET was already in the air when the open committed: it answers the
+    // EMPTY collection at the pre-commit version. Adopting it verbatim would
+    // unpaint the row this device just committed; the pending adopt merges it
+    // back until the watermark catches up.
+    tabServer.queueList({ tabs: [], version: 0 });
+    await listTabs();
+    expect(hasTab("chat", "c-1")).toBe(true);
+    expect(await rowRefs()).toEqual(["c-1"]);
+
+    // The frame lands late and converges the watermark; the row neither
+    // duplicates nor flickers.
+    tabServer.flushFrames();
+    await settleTabs();
+    expect(tabsVersion()).toBe(tabServer.version());
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -357,10 +391,10 @@ describe("an idempotent open", () => {
 
   // The one case where `created: false` arrives for a row that is NOT here yet: a
   // tab another mutation opened whose frame is still in flight (a `create_chat`
-  // that opened its own chat tab server-side). The wait is therefore taken when
-  // the row is missing whatever the flag says.
-  it("waits for the frame when the row is missing despite created:false", async () => {
-    expect.assertions(3);
+  // that opened its own chat tab server-side). The response carries the committed
+  // subject, so the adoption paints it on the spot — no wait, no frame needed.
+  it("paints the row from a created:false response when its frame is still in flight", async () => {
+    expect.assertions(4);
     tabServer.setMode("manual");
     // A tab the server already holds, committed without this device asking.
     await tabServer.seed({ kind: "chat", ref: "c-elsewhere" });
@@ -370,21 +404,18 @@ describe("an idempotent open", () => {
     // exactly the shape of a frame still in flight.
     expect(hasTab("chat", "c-elsewhere")).toBe(false);
 
-    let resolved = false;
-    const open = openTab({ kind: "chat", ref: "c-elsewhere" }).then(() => {
-      resolved = true;
-    });
-    await settleTabs();
-    expect(resolved).toBe(false);
+    await openTab({ kind: "chat", ref: "c-elsewhere" });
+    expect(hasTab("chat", "c-elsewhere")).toBe(true);
+    expect(getActiveTabId()).toBe(tabIdFor("chat", "c-elsewhere"));
 
-    // The frame that was in flight arrives.
+    // The frame that was in flight arrives; the upsert is idempotent.
     const subject = tabServer.subjects().find((s) => s.ref === "c-elsewhere");
     if (subject === undefined) {
       throw new Error("the collection lost the tab");
     }
     tabServer.emitRaw({ changed: subject, version: tabServer.version() });
-    await open;
-    expect(hasTab("chat", "c-elsewhere")).toBe(true);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["c-elsewhere"]);
   });
 });
 

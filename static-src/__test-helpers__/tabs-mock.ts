@@ -52,6 +52,7 @@ export function tabsMock(): Record<string, unknown> {
     // Synchronous local writes. The three sub-tab setters stay synchronous on
     // purpose: a singleton's sub-tab is not part of the shared subject, so they
     // are the correction channel rather than a mutation.
+    adoptSubject: vi.fn(),
     activateTab: vi.fn(),
     activateRestoredTab: vi.fn(),
     renameTab: vi.fn(),

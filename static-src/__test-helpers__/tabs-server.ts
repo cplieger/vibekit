@@ -17,11 +17,11 @@
 // `mode` is the whole of that:
 //
 //   - "event-first" (the default): the frame is emitted BEFORE the response
-//     resolves, so `openTab`'s `whenOpen` finds the row already there and
-//     resolves on the spot. The cheapest seeding path, and a real interleaving.
+//     resolves, so the response's adoption finds the row already there and
+//     upserts idempotently. The cheapest seeding path, and a real interleaving.
 //   - "response-first": the response resolves first and the frame is emitted one
-//     macrotask later, which is the COMMON case in production and the one that
-//     makes `whenOpen` actually wait.
+//     macrotask later, which is the COMMON case in production — the adoption
+//     paints the row and the late frame must change nothing.
 //   - "manual": nothing is emitted until a test calls `flushFrames()`. For the
 //     cases whose subject IS the gap between the two.
 // ---------------------------------------------------------------------------
@@ -326,8 +326,13 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       const existing = subjectFor(kind, ref);
       if (existing !== undefined) {
         // Commits nothing, so it emits NOTHING. `created: false` is the only
-        // signal the caller gets, which is why it is load-bearing.
-        return { ok: true, status: 200, body: { subject: existing, created: false } };
+        // signal the caller gets, which is why it is load-bearing. The version
+        // is the collection's CURRENT one, exactly as the real handler answers.
+        return {
+          ok: true,
+          status: 200,
+          body: { subject: existing, created: false, version: state.version },
+        };
       }
       const subject = commitOpen({
         kind,
@@ -336,20 +341,25 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
         owns: payload["owns"] === true,
       });
       stamp(payload);
-      return { ok: true, status: 200, body: { subject, created: true } };
+      return {
+        ok: true,
+        status: 200,
+        body: { subject, created: true, version: state.version },
+      };
     }
     case "close_tab": {
       const removed = descendants(payload["id"] as string);
       if (removed.length === 0) {
         // Closing an id that is not open is not an error: two devices can close
-        // one tab.
-        return { ok: true, status: 200, body: { closed: [] } };
+        // one tab. The EMPTY list is the client's semantic confirmation of
+        // absence, so the shape matters more than usual here.
+        return { ok: true, status: 200, body: { closed: [], version: state.version } };
       }
       state.subjects = state.subjects.filter((s) => !removed.includes(s.id));
       state.version++;
       state.pending.push({ removed_ids: removed, version: state.version });
       stamp(payload);
-      return { ok: true, status: 200, body: { closed: removed } };
+      return { ok: true, status: 200, body: { closed: removed, version: state.version } };
     }
     case "pin_tab": {
       const id = payload["id"] as string;
@@ -363,14 +373,14 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
       const before = state.subjects[at]!;
       if (before.pinned === pinned) {
-        return { ok: true, status: 200, body: { ok: true } };
+        return { ok: true, status: 200, body: { version: state.version } };
       }
       const after: TabSubject = { ...before, pinned };
       state.subjects[at] = after;
       state.version++;
       state.pending.push({ changed: after, version: state.version });
       stamp(payload);
-      return { ok: true, status: 200, body: { ok: true } };
+      return { ok: true, status: 200, body: { version: state.version } };
     }
     case "reorder_tabs": {
       const order = payload["order"] as string[];
@@ -391,7 +401,7 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       state.version++;
       state.pending.push({ order: [...order], version: state.version });
       stamp(payload);
-      return { ok: true, status: 200, body: { ok: true } };
+      return { ok: true, status: 200, body: { version: state.version } };
     }
     default:
       return { ok: true, status: 200, body: { ok: true } };
@@ -437,13 +447,12 @@ export function tabTransportMock(): {
         }
       };
       if (committed.length > 0 && state.mode === "event-first") {
-        // The frame lands BEFORE the response resolves, so `whenOpen` finds the row
-        // already there and the open resolves on the spot.
+        // The frame lands BEFORE the response resolves, so the adoption finds
+        // the row already there and upserts idempotently.
         deliver();
       } else if (committed.length > 0 && state.mode === "response-first") {
-        // The response resolves first, so the caller's continuation would run
-        // against a strip that does not hold the row — which is what `whenOpen`
-        // exists for.
+        // The response resolves first — the common production order — so the
+        // ADOPTION is what paints, and the frame lands on a row that exists.
         setTimeout(deliver, 0);
       }
       const answer = answerWith(result);

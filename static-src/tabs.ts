@@ -18,7 +18,8 @@
 //   - `tabs-sync.ts` decides WHICH frames reach here, in what order, and when a
 //     frame means "you have fallen behind, ask again". Its `TabsTarget` is the
 //     seam this file implements, and the three version rules, the serialized
-//     queue, `permute` and `whenOpen` all live there rather than here.
+//     queue, the pending-op machine and `permute` all live there rather than
+//     here.
 //
 // WHAT WENT, and why none of it can come back:
 //
@@ -64,9 +65,13 @@ import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.
 import {
   registerTabsTarget,
   permute,
-  whenOpen,
   listTabs,
   markLocalOp,
+  beginAdopt,
+  adoptCommitted,
+  opFailed,
+  removesPending,
+  setOnRemovesSettled,
   type TabsTarget,
 } from "./tabs-sync.js";
 import {
@@ -160,6 +165,10 @@ interface Callbacks {
 
 interface Internal {
   emptyTimer: ReturnType<typeof setTimeout> | null;
+  /** Whether an empty-state respawn is waiting for the pending removes to
+   *  settle. See scheduleEmpty: an empty strip whose close is still in flight
+   *  must not respawn a chat the rollback may be about to bring back. */
+  emptyDeferred: boolean;
   renderQueued: boolean;
   /** Whether a tab has ever entered the projection. The DOM subscriber keys its
    *  no-op on this rather than on an empty store, because the two differ on
@@ -174,7 +183,12 @@ interface State {
 
 const state: State = { tabs: [], active: "" };
 const callbacks: Callbacks = { onActivate: null, onEmpty: null, onClosed: null };
-const internal: Internal = { emptyTimer: null, renderQueued: false, everOpened: false };
+const internal: Internal = {
+  emptyTimer: null,
+  emptyDeferred: false,
+  renderQueued: false,
+  everOpened: false,
+};
 
 /** Names a caller supplied for a subject, keyed by `(kind, ref)` rather than by
  *  tab id — which is the whole point of the map rather than a field.
@@ -454,19 +468,7 @@ function reset(subjects: readonly TabSubject[]): void {
 function apply(delta: TabsChangedPayload, local: boolean): void {
   const changed = delta.changed;
   if (changed !== undefined) {
-    const existing = rowOfID(changed.id);
-    if (existing === undefined) {
-      insertRow(buildRow(changed));
-    } else {
-      // The SUBJECT is replaced wholesale — a pin, or any later field the server
-      // grows — while the spec, the name override and the dot stay. Nothing here
-      // may re-materialize: `owns` and `parent` are immutable after open, so the
-      // spec cannot have gone stale, and rebuilding it would re-run onShow wiring
-      // for a tab that only changed its pin.
-      existing.subject = changed;
-      existing.name = nameFor(changed, existing.spec);
-      applyPinOrder();
-    }
+    upsertSubject(changed);
   }
 
   const removed = delta.removed_ids ?? [];
@@ -508,6 +510,27 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
   emit();
 }
 
+/** Upsert one subject: the frame-apply path for `changed`, and the adoption
+ *  path's paint (adoptSubject) — ONE code path, so a frame that echoes an
+ *  adopted open finds the row already right and changes nothing, which is what
+ *  makes the adoption idempotent against its own echo.
+ *
+ *  An existing row's SUBJECT is replaced wholesale — a pin, or any later field
+ *  the server grows — while the spec, the name override and the dot stay.
+ *  Nothing here may re-materialize: `owns` and `parent` are immutable after
+ *  open, so the spec cannot have gone stale, and rebuilding it would re-run
+ *  onShow wiring for a tab that only changed its pin. */
+function upsertSubject(subject: TabSubject): void {
+  const existing = rowOfID(subject.id);
+  if (existing === undefined) {
+    insertRow(buildRow(subject));
+    return;
+  }
+  existing.subject = subject;
+  existing.name = nameFor(subject, existing.spec);
+  applyPinOrder();
+}
+
 /** Run a departed row's local teardown, if it has one and owns what it shows.
  *
  *  `owns: false` tears down nothing: the tab was a VIEW, and dismissing a view
@@ -519,14 +542,12 @@ function tearDown(row: TabRow, opts: { remote: boolean }): void {
   row.spec.onClose?.(opts);
 }
 
-/** Whether the projection holds a tab with this id. `whenOpen`'s question, and
- *  the reason it can answer the response-first and event-first interleavings with
- *  one mechanism. */
+/** Whether the projection holds a tab with this id. */
 function hasRow(id: string): boolean {
   return state.tabs.some((t) => t.subject.id === id);
 }
 
-const target: TabsTarget = { reset, apply, has: hasRow };
+const target: TabsTarget = { reset, apply };
 registerTabsTarget(target);
 
 // --- Activation (this device's alone) ---
@@ -584,12 +605,35 @@ export function activateRestoredTab(): void {
 
 // --- Mutations: every one is a dispatch ---
 
+/** Paint one subject NOW, from a command response, through the same upsert the
+ *  frame-apply path runs — so the echo frame that follows finds the row already
+ *  right and re-animates nothing.
+ *
+ *  This is the adoption half of the response/frame split: the response carries
+ *  what the server COMMITTED, so the row it names exists whether or not this
+ *  device ever receives the frame, and painting it here is what makes an open
+ *  resolve with its row present instead of awaiting a delivery the network may
+ *  owe. The pending-op machine (tabs-sync.ts) carries the same subject for
+ *  snapshot merge-back, so a re-list that raced the open cannot unpaint it.
+ *
+ *  `name` is the caller's label for a subject it just learned the identity of —
+ *  the create/fork path, where no dispatch-time override could exist because the
+ *  ref was server-minted. */
+export function adoptSubject(subject: TabSubject, name?: string): void {
+  if (name !== undefined && name !== "") {
+    nameOverrides.set(subjectKey(subject.kind, subject.ref), name);
+  }
+  upsertSubject(subject);
+  emit();
+}
+
 /** Open a tab for something that already exists, and activate it.
  *
- *  Resolves once the tab is IN the projection, so a caller's continuation runs
- *  against a row that exists. Two interleavings, one mechanism: the response
- *  usually lands first and `whenOpen` waits for the frame that paints the row;
- *  when the frame beat it, `whenOpen` resolves on the spot.
+ *  Resolves with the row IN the projection, adopted from the RESPONSE: the
+ *  reply carries the committed subject, so the row is painted and activated the
+ *  moment the server answers, with no frame round trip in the gesture's path.
+ *  The echo frame settles the pending adopt (or version absorption does, when
+ *  correlation was lost) and upserts idempotently.
  *
  *  Never rejects, and never throws at ~30 call sites. A refused open leaves the
  *  strip exactly as it was and the action framework has already raised its
@@ -598,12 +642,14 @@ export function activateRestoredTab(): void {
 export async function openTab(args: OpenTabArgs): Promise<void> {
   const ref = args.ref ?? "";
   if (args.name !== undefined && args.name !== "") {
-    // BEFORE the dispatch, so the row is built with the right label rather than
-    // rendering the factory's placeholder for a frame and then snapping.
+    // BEFORE the dispatch, so a frame that beats the response builds the row
+    // with the right label rather than rendering the factory's placeholder for a
+    // beat and then snapping.
     nameOverrides.set(subjectKey(args.kind, ref), args.name);
   }
   const opID = newOpID();
   markLocalOp(opID);
+  beginAdopt(opID);
   const reply = await openTabCommand.dispatch({
     kind: args.kind,
     ref,
@@ -612,21 +658,15 @@ export async function openTab(args: OpenTabArgs): Promise<void> {
     opID,
   });
   if (reply === null) {
+    // The server answered an error (nothing committed) or the dispatch gave up.
+    // Nothing was painted, so the failure transition just retires the op.
+    opFailed(opID);
     return;
   }
-  const id = reply.subject.id;
-  // `created: false` means this mutation committed NOTHING, so no frame is
-  // coming for it and the row is normally already here. The one case where it is
-  // not is a tab another mutation opened whose frame is still in flight — a
-  // `create_chat` that opened its own chat tab server-side is exactly that — so
-  // the wait is taken when the row is missing whatever the flag says. `whenOpen`
-  // resolves the moment the row lands and gives up on a bound, so neither branch
-  // can hang.
-  if (reply.created || !hasRow(id)) {
-    await whenOpen(id);
-  }
+  adoptSubject(reply.subject);
+  adoptCommitted(opID, reply.subject, reply.version, reply.created);
   if (args.activate !== false) {
-    activateTab(id);
+    activateTab(reply.subject.id);
   }
 }
 
@@ -955,6 +995,16 @@ function scheduleEmpty(): void {
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
+  // DEFERRED while any remove is pending or verifying: the strip may be empty
+  // only because a close is optimistic, and a respawned chat would race the
+  // rollback that could bring the closed one back — or, mid-outage, respawn
+  // against a server that still holds the tab. The removes-settled notification
+  // re-arms this; a settlement that restored rows drops the deferral instead.
+  if (removesPending()) {
+    internal.emptyDeferred = true;
+    return;
+  }
+  internal.emptyDeferred = false;
   // Longer than the closed row's exit animation on purpose: the respawned tab's
   // row must be built into an EMPTY strip, or its entry animation plays against
   // the departing row and it lands beside it until that row collapses. 500ms
@@ -967,6 +1017,19 @@ function scheduleEmpty(): void {
   }, 500);
 }
 
+/** Re-arm (or drop) a deferred empty-state respawn once the last pending remove
+ *  settles. A confirmation leaves the strip empty and the respawn proceeds; a
+ *  rollback restored rows, so there is nothing empty to answer. */
+function settleDeferredEmpty(): void {
+  if (!internal.emptyDeferred) {
+    return;
+  }
+  internal.emptyDeferred = false;
+  if (state.tabs.length === 0 && state.active === "") {
+    scheduleEmpty();
+  }
+}
+
 // --- Module subscribers ---
 
 /** The id last announced on BUS_TAB_CHANGED. Module state rather than a closure
@@ -974,11 +1037,17 @@ function scheduleEmpty(): void {
 let lastAnnouncedTab = "";
 
 function registerModuleSubscribers(): void {
-  // Clear the empty timer on any activation.
+  // The removes-settled notification, which is what un-defers scheduleEmpty.
+  setOnRemovesSettled(settleDeferredEmpty);
+
+  // Clear the empty timer (and any deferred respawn) on any activation.
   tabsEffect(() => {
-    if (state.active !== "" && internal.emptyTimer !== null) {
-      clearTimeout(internal.emptyTimer);
-      internal.emptyTimer = null;
+    if (state.active !== "") {
+      internal.emptyDeferred = false;
+      if (internal.emptyTimer !== null) {
+        clearTimeout(internal.emptyTimer);
+        internal.emptyTimer = null;
+      }
     }
   });
 
@@ -1617,6 +1686,7 @@ export function _resetForTest(): void {
     clearTimeout(internal.emptyTimer);
   }
   internal.emptyTimer = null;
+  internal.emptyDeferred = false;
   internal.renderQueued = false;
   internal.everOpened = false;
   nameOverrides.clear();

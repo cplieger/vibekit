@@ -182,10 +182,11 @@ export function restoreComposerState(chatID: string): void {
  *
  *  The save-and-restore pair as ONE call, for the places that move the store's
  *  active chat WITHOUT going through `activateChatView`. There are three, and
- *  each left a window in which `getActiveId()` named the new chat while this
- *  module still named the old one: `createSession` and `openTangentChat` set the
- *  active chat and then AWAIT a tab round trip before the activation runs, and
- *  `removeChat` reassigns it to `remaining[0]` with no activation at all.
+ *  each leaves (or left) a window in which `getActiveId()` named the new chat
+ *  while this module still named the old one: `createSession` and
+ *  `openTangentChat` set the active chat after a create round trip and before
+ *  the adopted tab's activation runs, and `removeChat` reassigns it to
+ *  `remaining[0]` with no activation at all.
  *
  *  A keystroke in that window is filed under the chat the user just left, which
  *  is both halves of one reported bug. The text disappears out of the box when
