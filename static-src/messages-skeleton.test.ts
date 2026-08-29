@@ -31,7 +31,7 @@ for (const id of [
 // mock is what every other suite in this graph uses.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
-const { mountChatView } = await import("./messages.js");
+const { mountChatView, activeTranscriptView, teardownAll } = await import("./messages.js");
 const { CHAT_SKELETON_ID, chatSkeleton } = await import("./skeleton.js");
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 
@@ -70,8 +70,14 @@ function event(id: string): unknown {
 
 beforeEach(() => {
   mountChatView();
-  messagesEl.replaceChildren();
+  // The real teardown, not a bare replaceChildren(): the multiplexer keeps a
+  // per-chat view registry, and ripping the DOM out from under it would leave
+  // the next activation painting into a detached view element.
+  teardownAll();
   activate([]);
+  // Force the paint that re-creates the view: the store's active id survives
+  // across tests, so setActive alone is a no-op write after the first one.
+  bumpMessages("c-1");
 });
 
 describe("the transcript's loading placeholder", () => {
@@ -89,12 +95,16 @@ describe("the transcript's loading placeholder", () => {
   it("never ends up above the turns, which is where reconcile would leave it", () => {
     // The failure this rules out is positional, not just co-presence: reconcile
     // walks the list backwards from `target = null`, so the newest turn is
-    // appended after every unkeyed sibling already in the container.
-    messagesEl.appendChild(chatSkeleton());
+    // appended after every unkeyed sibling already in the container. The
+    // container is the ACTIVE VIEW under the multiplexer — the activation
+    // mounts the placeholder there (chat.ts), and the turns land beside it.
+    const view = activeTranscriptView();
+    expect(view).not.toBeNull();
+    view?.appendChild(chatSkeleton());
     activate([event("m1"), event("m2")]);
     bumpMessages("c-1");
 
-    const first = messagesEl.firstElementChild;
+    const first = view?.firstElementChild;
     expect(first?.id).not.toBe(CHAT_SKELETON_ID);
     expect(first?.classList.contains("turn")).toBe(true);
   });

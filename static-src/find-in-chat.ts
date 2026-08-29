@@ -78,6 +78,15 @@ let countEl: HTMLElement | null = null;
 let engine: FindEngine | null = null;
 let lastFocus: HTMLElement | null = null;
 let rerunTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** The walker's root: the ACTIVE transcript view. Resolved by the multiplexer's
+ *  own class contract rather than an import — messages.ts sits above this
+ *  module in the graph (it injects the search reveal builder), so reaching it
+ *  statically would cycle. Falls back to the multiplexer itself for fixtures
+ *  (and the boot instant) where no view is mounted. */
+function findRoot(): HTMLElement {
+  return $.messages.querySelector<HTMLElement>(":scope > .transcript-view.is-active") ?? $.messages;
+}
 /** Unregister for the live re-run's ride on the transcript's shared
  *  MutationObserver (scroll.ts owns the one observer); null while closed. */
 let unobserveTranscript: (() => void) | null = null;
@@ -145,7 +154,7 @@ function ensureBuilt(): void {
   if (overlayEl !== null) {
     return;
   }
-  engine = new FindEngine($.messages);
+  engine = new FindEngine(findRoot());
 
   const count = el("span", {
     id: "chat-find-count",
@@ -265,6 +274,18 @@ function ensureBuilt(): void {
     isolateEscape: false,
     haspopup: "dialog",
     onOpen: () => {
+      // Re-root the walker on the ACTIVE transcript view: parked sibling views
+      // hold other chats' text, which must stay out of the count, the marks and
+      // the tab order (they are inert). The root is stable for the whole open —
+      // a tab switch closes the search (below) — so a fresh engine per open is
+      // the entire lifecycle. Falls back to the multiplexer for fixtures that
+      // never mounted a view.
+      if (engine !== null && engine.root !== findRoot()) {
+        applyEngine(() => {
+          engine?.clear();
+        });
+        engine = new FindEngine(findRoot());
+      }
       startObserving();
       // aria-pressed, not aria-expanded: find is a TOGGLE, not a disclosure of
       // this button's own content, and `.active` in this app means "this
@@ -559,7 +580,7 @@ async function ensureHitResident(chatID: string, hit: SearchHit): Promise<boolea
 /** The rendered row for a message id: reconcile keys message rows by id inside
  *  each turn card's body. */
 function messageRowEl(messageID: string): HTMLElement | null {
-  return $.messages.querySelector<HTMLElement>(
+  return findRoot().querySelector<HTMLElement>(
     `.turn-body > [data-reconcile-key="${CSS.escape(messageID)}"]`,
   );
 }
@@ -660,7 +681,7 @@ function openDisclosureChain(row: HTMLElement, target: HTMLElement, hit: SearchH
  * against the mark's offset in the target's text), ties to the lowest index.
  */
 function pickNearestMark(target: HTMLElement, hit: SearchHit): number {
-  const all = [...$.messages.querySelectorAll<HTMLElement>("mark.find-hit")];
+  const all = [...findRoot().querySelectorAll<HTMLElement>("mark.find-hit")];
   const excerptTokens = tokenSet(hit.excerpt);
   const offsets = markOffsets(target);
   const want = hit.offset / hit.segment_len;

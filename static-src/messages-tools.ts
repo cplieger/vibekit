@@ -15,11 +15,16 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
-import { ensureToolCallSig, clearToolCallSig } from "./store-signals.js";
+import { ensureToolCallSig, clearToolCallSig, toolCallSigKey } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import type { ReconcileSpec } from "./reconcile.js";
 
-import { maybeCollapseGroup, formatDuration, untrackInProgress } from "./tool-group.js";
+import {
+  maybeCollapseGroup,
+  formatDuration,
+  trackInProgress,
+  untrackInProgress,
+} from "./tool-group.js";
 import { isToolDone, type ToolKind } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview, expandToolDetails, applyOutcome } from "./tool-card.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
@@ -32,13 +37,28 @@ import { bindLoadingState } from "./actions/index.js";
 // Module state (tool-specific)
 // ---------------------------------------------------------------------------
 
-/** Tool-call DOM elements, keyed on tool_call.id. */
+/** Tool-call DOM elements, keyed on `toolCallSigKey(chatID, toolID)`.
+ *
+ *  COMPOSITE, not the bare `tool_call.id`: a tool call id is backend-authored
+ *  and carries no uniqueness guarantee across chats (the identity contract
+ *  store-signals.ts documents). Bare-id keying was survivable only while a chat
+ *  switch disposed the old view; with parked views resident, two chats'
+ *  identical tool ids would corrupt each other's cards. */
 const toolEls = new Map<string, HTMLDivElement>();
 
-/** terminal_id → tool_call.id, for routing an agent terminal's live output to
- *  the card that spawned it. Populated from ToolCall.terminal_id, which arrives
- *  on the ACP `terminal` content block. */
-const termToTool = new Map<string, string>();
+/** What a terminal id resolves to: the tool call that claimed it AND the chat
+ *  that owns the card, because the `toolEls` lookup needs both halves of the
+ *  composite key. The KEY stays the bare terminal id — vibekit mints terminal
+ *  ids, so they are globally unique where tool ids are not. */
+interface TermLink {
+  chatID: string;
+  toolID: string;
+}
+
+/** terminal_id → its claiming tool call, for routing an agent terminal's live
+ *  output to the card that spawned it. Populated from ToolCall.terminal_id,
+ *  which arrives on the ACP `terminal` content block. */
+const termToTool = new Map<string, TermLink>();
 
 /** Live chunks that arrived before a card claimed their terminal id, per id.
  *
@@ -82,42 +102,206 @@ const PENDING_TERMINALS_CAP = 16;
  *  lines say how it ended. */
 const LIVE_OUTPUT_CHARS_CAP = 256 * 1024;
 
-/** Per-tool-call effect cleanups, keyed on tool_call.id. Disposed on unmount or
- *  chat-switch.
+/** Per-tool-call effect cleanups, keyed on `toolCallSigKey(chatID, toolID)`.
+ *  Disposed on unmount or chat-view disposal; SUSPENDED (cleanup runs, entry
+ *  stays with `cleanup: null`) while the owning view is parked, so resume can
+ *  find the card and re-arm without a second registry.
  *
- *  The chat the card mounted for is recorded here rather than looked up at
- *  dispose time: the tool-call signal is keyed on (chat, call), and by the time
- *  a chat switch runs the teardown the active chat is already the NEW one, so a
- *  disposal that asked for it would clear the wrong key and leak the old chat's
- *  signals. */
+ *  The chat and tool id the card mounted for are recorded here rather than
+ *  looked up at dispose time: the tool-call signal is keyed on (chat, call),
+ *  and by the time a chat switch runs the teardown the active chat is already
+ *  the NEW one, so a disposal that asked for it would clear the wrong key and
+ *  leak the old chat's signals. */
 interface ToolEffect {
   chatID: string;
-  cleanup: () => void;
+  toolID: string;
+  /** The live effect's disposer, or null while suspended (view parked). */
+  cleanup: (() => void) | null;
 }
 const toolEffects = new Map<string, ToolEffect>();
 
-function disposeToolEffect(id: string): void {
-  const entry = toolEffects.get(id);
-  if (entry !== undefined) {
-    entry.cleanup();
-    toolEffects.delete(id);
-    clearToolCallSig(entry.chatID, id);
+/** Whether a chat's transcript view is parked. Injected by messages.ts (the
+ *  multiplexer) so terminal output for a parked view buffers instead of
+ *  writing DOM — this module sits below messages.ts and cannot import it. */
+let _isChatParked: (chatID: string) => boolean = () => false;
+
+/** Live terminal output that arrived while its card's view was PARKED, per
+ *  terminal id. Drained into the card exactly once, at resume. Bounded like a
+ *  shell scrollback: drop-OLDEST on overflow, so the resume shows the newest
+ *  output — the opposite end from `pendingChunks`' prefix hold, because a
+ *  pre-claim hold protects the OPENING lines until the authoritative snapshot
+ *  lands, while a parked buffer stands in for a live tail. */
+interface ParkedTermBuffer {
+  chunks: { text: string; spans: TextSpan[]; base: number }[];
+  /** Characters held; tracked so overflow trimming is linear. */
+  chars: number;
+}
+const parkedTermBuffers = new Map<string, ParkedTermBuffer>();
+
+/** Cap on characters buffered per parked terminal. The completion snapshot is
+ *  authoritative anyway; the buffer only bridges the parked window. */
+const PARKED_TERM_CHARS_CAP = 64 * 1024;
+
+function bufferParkedChunk(termID: string, text: string, spans: TextSpan[], base: number): void {
+  let buf = parkedTermBuffers.get(termID);
+  if (buf === undefined) {
+    buf = { chunks: [], chars: 0 };
+    parkedTermBuffers.set(termID, buf);
+  }
+  buf.chunks.push({ text, spans, base });
+  buf.chars += text.length;
+  // Whole-chunk granularity: a chunk's spans are rebased against its own text,
+  // so splitting one would mean re-deriving span offsets. A single chunk larger
+  // than the cap therefore stays whole; SSE terminal chunks are far smaller.
+  while (buf.chars > PARKED_TERM_CHARS_CAP && buf.chunks.length > 1) {
+    const dropped = buf.chunks.shift();
+    buf.chars -= dropped?.text.length ?? 0;
   }
 }
 
+/** Drain every parked terminal buffer owned by `chatID` into its card, once.
+ *  Called by the multiplexer at unpark, after the view is active again — the
+ *  replay goes through `appendTerminalChunk`, which now finds the view live
+ *  and writes the card. */
+export function drainParkedTerminals(chatID: string): void {
+  for (const [termID, buf] of [...parkedTermBuffers]) {
+    if (termToTool.get(termID)?.chatID !== chatID) {
+      continue;
+    }
+    parkedTermBuffers.delete(termID);
+    for (const chunk of buf.chunks) {
+      appendTerminalChunk(termID, chunk.text, chunk.spans, chunk.base);
+    }
+  }
+}
+
+export function initToolViewCallbacks(cbs: { isChatParked: (chatID: string) => boolean }): void {
+  _isChatParked = cbs.isChatParked;
+}
+
+function disposeToolEffect(chatID: string, toolID: string): void {
+  const key = toolCallSigKey(chatID, toolID);
+  const entry = toolEffects.get(key);
+  if (entry !== undefined) {
+    entry.cleanup?.();
+    toolEffects.delete(key);
+    clearToolCallSig(entry.chatID, entry.toolID);
+  }
+  toolEls.delete(key);
+}
+
 export function disposeAllToolEffects(): void {
-  for (const [id, entry] of toolEffects) {
-    entry.cleanup();
-    clearToolCallSig(entry.chatID, id);
+  for (const entry of toolEffects.values()) {
+    entry.cleanup?.();
+    clearToolCallSig(entry.chatID, entry.toolID);
   }
   toolEffects.clear();
   toolEls.clear();
   termToTool.clear();
   pendingChunks.clear();
+  parkedTermBuffers.clear();
+}
+
+/** The real per-view dispose for one chat's tool state: effects (live or
+ *  suspended), cards, signals, terminal links and parked buffers. `withinEl`
+ *  is the ownership guard — a slot whose card lives OUTSIDE the disposed view
+ *  (the subagent page renders the same (chat, tool) pairs) is skipped, so
+ *  disposing a chat's transcript view cannot strip the page's live cards. */
+export function disposeToolEffectsForChat(chatID: string, withinEl?: HTMLElement): void {
+  for (const [key, entry] of [...toolEffects]) {
+    if (entry.chatID !== chatID) {
+      continue;
+    }
+    const card = toolEls.get(key);
+    if (withinEl !== undefined && card !== undefined && !withinEl.contains(card)) {
+      continue;
+    }
+    entry.cleanup?.();
+    toolEffects.delete(key);
+    toolEls.delete(key);
+    clearToolCallSig(entry.chatID, entry.toolID);
+    for (const [termID, link] of [...termToTool]) {
+      if (link.chatID === chatID && link.toolID === entry.toolID) {
+        termToTool.delete(termID);
+        parkedTermBuffers.delete(termID);
+      }
+    }
+  }
+}
+
+/** Suspend the live tool-card effects for the named calls (view parked): the
+ *  effect is disposed, the card, the entry and the SIGNAL stay, so background
+ *  `tool_call_update`s keep landing in the store with no DOM write behind
+ *  them, and resume can re-read the latest snapshot. Also stops the shared
+ *  duration ticker for the message's in-progress cards — that ticker writes
+ *  text into the card every second, which a parked view must never receive. */
+export function suspendToolEffectsFor(
+  chatID: string,
+  toolIDs: readonly string[],
+  withinEl?: HTMLElement,
+): void {
+  for (const toolID of toolIDs) {
+    const key = toolCallSigKey(chatID, toolID);
+    const entry = toolEffects.get(key);
+    if (entry?.cleanup === null || entry?.cleanup === undefined) {
+      continue; // unknown, or already suspended
+    }
+    const card = toolEls.get(key);
+    if (withinEl !== undefined && card !== undefined && !withinEl.contains(card)) {
+      continue; // another surface (the subagent page) owns this slot
+    }
+    entry.cleanup();
+    entry.cleanup = null;
+    if (card !== undefined) {
+      untrackInProgress(card);
+    }
+  }
+}
+
+/** Re-arm suspended tool-card effects (view unparked): apply the CURRENT
+ *  signal snapshot to the card — everything that arrived while parked lands in
+ *  one write — then subscribe again, and rejoin the duration ticker when the
+ *  card is still running. Entries that are already live (a card mounted by the
+ *  catch-up paint) are left alone, so a resume pass is idempotent. */
+export function resumeToolEffectsFor(
+  chatID: string,
+  toolCalls: readonly ToolCall[],
+  withinEl?: HTMLElement,
+): void {
+  for (const tc of toolCalls) {
+    const key = toolCallSigKey(chatID, tc.id);
+    const entry = toolEffects.get(key);
+    if (entry?.cleanup !== null) {
+      continue; // unknown, or already live (a card the catch-up paint mounted)
+    }
+    const card = toolEls.get(key);
+    if (card === undefined) {
+      continue;
+    }
+    if (withinEl !== undefined && !withinEl.contains(card)) {
+      continue;
+    }
+    const sig = ensureToolCallSig(chatID, tc.id, tc);
+    let lastApplied = sig.peek();
+    applyToolCallUpdate(card, lastApplied, chatID);
+    entry.cleanup = effect(() => {
+      const next = sig.value;
+      if (next === lastApplied) {
+        return;
+      }
+      applyToolCallUpdate(card, next, chatID);
+      lastApplied = next;
+    });
+    if (card.dataset["outcome"] === "running" && card.dataset["startMs"] !== undefined) {
+      trackInProgress(card);
+    }
+  }
 }
 
 /** Record a tool call's terminal link and settle anything already held for it.
- *  Idempotent: the same link arrives on every later update.
+ *  Idempotent: the same link arrives on every later update. `chatID` is the
+ *  card's owning chat — the value is chat-bearing so `appendTerminalChunk` can
+ *  compose the composite `toolEls` key from the terminal id alone.
  *
  *  A hold is FLUSHED only when the tool call carries no output of its own. When
  *  it does, that output is the server's whole-stream snapshot and the card has
@@ -126,12 +310,16 @@ export function disposeAllToolEffects(): void {
  *  completed while its early chunks were still waiting for a card to claim them.
  *  The snapshot supersedes the hold; the hold is dropped either way, because a
  *  second call must not flush what the first discarded. */
-function linkTerminal(tc: ToolCall): void {
+function linkTerminal(chatID: string, tc: ToolCall): void {
   const termID = tc.terminal_id;
-  if (termID === undefined || termID === "" || termToTool.get(termID) === tc.id) {
+  if (termID === undefined || termID === "") {
     return;
   }
-  termToTool.set(termID, tc.id);
+  const existing = termToTool.get(termID);
+  if (existing?.chatID === chatID && existing.toolID === tc.id) {
+    return;
+  }
+  termToTool.set(termID, { chatID, toolID: tc.id });
   const held = pendingChunks.get(termID);
   if (held === undefined) {
     return;
@@ -147,7 +335,9 @@ function linkTerminal(tc: ToolCall): void {
 
 /** Forget a terminal that will never send more output. Called on terminal_exited
  *  so an unclaimed hold is released at the one moment the server tells us the
- *  terminal is finished, rather than waiting for the chat to be disposed. */
+ *  terminal is finished, rather than waiting for the chat to be disposed. A
+ *  parked buffer is deliberately KEPT: the card exists and its view will drain
+ *  the buffer at resume — exiting only ends the stream, not the record. */
 export function forgetTerminal(termID: string): void {
   pendingChunks.delete(termID);
 }
@@ -171,12 +361,18 @@ export function appendTerminalChunk(
   spans: TextSpan[],
   base: number,
 ): void {
-  const toolID = termToTool.get(termID);
-  if (toolID === undefined) {
+  const link = termToTool.get(termID);
+  if (link === undefined) {
     holdChunk(termID, text, spans, base);
     return;
   }
-  const card = toolEls.get(toolID);
+  if (_isChatParked(link.chatID)) {
+    // The card's view is parked: no DOM may move under it. The chunk waits in
+    // the bounded per-terminal buffer and lands at resume, newest-first-kept.
+    bufferParkedChunk(termID, text, spans, base);
+    return;
+  }
+  const card = toolEls.get(toolCallSigKey(link.chatID, link.toolID));
   if (card === undefined) {
     return;
   }
@@ -276,17 +472,18 @@ export function initToolCallbacks(cbs: {
  *  Per chat rather than one module-level spec, because a card's signal is keyed
  *  on (chat, call): a tool call id is backend-authored and carries no uniqueness
  *  guarantee, so the mount and its writer have to agree on the chat or the card
- *  mounts, never updates, and shows a permanently pending spinner. */
+ *  mounts, never updates, and shows a permanently pending spinner. The
+ *  RECONCILE key stays the bare id — it only has to be unique within one
+ *  message's body — while the module registries key on the composite. */
 export function toolSpecFor(chatID: string): ReconcileSpec<ToolCall> {
   return {
     key: (tc) => tc.id,
     mount: (tc) => mountToolCall(chatID, tc),
     update: (el, tc) => {
-      applyToolCallUpdate(el as HTMLDivElement, tc);
+      applyToolCallUpdate(el as HTMLDivElement, tc, chatID);
     },
     onRemove: (_, key) => {
-      disposeToolEffect(key);
-      toolEls.delete(key);
+      disposeToolEffect(chatID, key);
     },
   };
 }
@@ -299,11 +496,12 @@ function mountToolCall(chatID: string, tc: ToolCall): HTMLDivElement {
   // subagent-specific branches.
   const opts = toolCardOptsFor(tc, true);
   const card = buildToolCard(opts);
-  toolEls.set(tc.id, card);
+  const key = toolCallSigKey(chatID, tc.id);
+  toolEls.set(key, card);
   // After buildToolCard, deliberately: the card is what a held chunk would be
   // appended to, and whether the hold is flushed at all depends on the output
   // this build just rendered.
-  linkTerminal(tc);
+  linkTerminal(chatID, tc);
 
   const sig = ensureToolCallSig(chatID, tc.id, tc);
   let lastApplied = tc;
@@ -312,10 +510,10 @@ function mountToolCall(chatID: string, tc: ToolCall): HTMLDivElement {
     if (next === lastApplied) {
       return;
     }
-    applyToolCallUpdate(card, next);
+    applyToolCallUpdate(card, next, chatID);
     lastApplied = next;
   });
-  toolEffects.set(tc.id, { chatID, cleanup });
+  toolEffects.set(key, { chatID, toolID: tc.id, cleanup });
   return card;
 }
 
@@ -323,10 +521,10 @@ function mountToolCall(chatID: string, tc: ToolCall): HTMLDivElement {
 // Public helpers
 // ---------------------------------------------------------------------------
 
-/** Apply a ToolCall snapshot to an already-mounted card. Chat-agnostic: it reads
- *  no signal, so unlike a mount it needs no chat to key one under. */
-export function updateToolCall(el: HTMLElement, tc: ToolCall): void {
-  applyToolCallUpdate(el as HTMLDivElement, tc);
+/** Apply a ToolCall snapshot to an already-mounted card. Reads no signal; the
+ *  chat id exists to stamp the terminal link with the card's owner. */
+export function updateToolCall(el: HTMLElement, tc: ToolCall, chatID: string): void {
+  applyToolCallUpdate(el as HTMLDivElement, tc, chatID);
 }
 
 // ---------------------------------------------------------------------------
@@ -334,8 +532,8 @@ export function updateToolCall(el: HTMLElement, tc: ToolCall): void {
 // ---------------------------------------------------------------------------
 
 /** Apply a ToolCall snapshot's updatable fields to its DOM card. Idempotent. */
-function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
-  linkTerminal(tc);
+function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): void {
+  linkTerminal(chatID, tc);
   if (tc.status !== undefined) {
     applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
   }

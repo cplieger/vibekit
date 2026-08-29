@@ -1,11 +1,13 @@
 // ---------------------------------------------------------------------------
-// Message view: signal-driven reactive renderer.
+// Message view: signal-driven reactive renderer, and the transcript
+// MULTIPLEXER — `#messages` holds one `.transcript-view` per resident chat,
+// the active one live, the parked ones frozen (see the multiplexer section).
 //
-// One effect watches store.version + the active session's messages array
-// and reconciles them into $.messages by message id. Per-message factories
-// (buildUser / buildAssistant / buildEvent) own initial DOM construction;
-// per-message updaters (updateAssistant, updateEvent) own incremental
-// changes.
+// One effect watches the active chat id + that chat's messages version and
+// reconciles its messages into the ACTIVE view by message id. Per-message
+// factories (buildUser / buildAssistant / buildEvent) own initial DOM
+// construction; per-message updaters (updateAssistant, updateEvent) own
+// incremental changes.
 //
 // Assistant bodies are composed ENTIRELY from the fundamentals/ primitives by
 // the single block dispatcher in messages-blocks.ts — this module is the shell
@@ -25,6 +27,7 @@
 
 import type { Message, Session } from "./types.js";
 import {
+  get,
   getActive,
   getActiveId,
   watchActiveId,
@@ -32,13 +35,9 @@ import {
   renderCauseOf,
   steerMarks,
   bumpMessages,
+  registerEvictionExemption,
 } from "./store.js";
-import {
-  clearStreamingSig,
-  clearReasoningSig,
-  clearBlockSigsFor,
-  clearAllBlockSigs,
-} from "./store-signals.js";
+import { clearStreamingSig, clearReasoningSig, clearBlockSigsFor } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
@@ -56,6 +55,9 @@ import {
   setAnchorProvider,
   setResumeLabel,
   readingState,
+  attach as attachScroll,
+  detach as detachScroll,
+  type ReadingState,
 } from "./scroll.js";
 import {
   buildTurnHeader,
@@ -95,6 +97,8 @@ import {
   updateAssistantBody,
   finalizeAssistantBody,
   disposeAssistantBody,
+  pauseAssistantBody,
+  resumeAssistantBody,
   resetBlockRenders,
   refreshGroupHeader,
   refreshMessageCard,
@@ -106,7 +110,16 @@ import {
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
+import { registerCleanup } from "./actions/index.js";
+import {
+  disposeAllToolEffects,
+  disposeToolEffectsForChat,
+  suspendToolEffectsFor,
+  resumeToolEffectsFor,
+  drainParkedTerminals,
+  initToolCallbacks,
+  initToolViewCallbacks,
+} from "./messages-tools.js";
 import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
 import {
   attachTurnActions,
@@ -120,7 +133,7 @@ import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-export { getScrollEl, scrollToBottom, setLoadMore, resetScrollState };
+export { getScrollEl, setLoadMore };
 // Re-exported for the same reason the scroll helpers are: this module owns the
 // rail (it mounts it and feeds it the painted cards), so chat.ts reaching the
 // rail THROUGH here keeps ownership in one place instead of two modules driving
@@ -132,6 +145,284 @@ export { loadTurnRail, pointTurnRail };
 // ---------------------------------------------------------------------------
 
 const messagesEl = $.messages;
+
+// ---------------------------------------------------------------------------
+// The transcript multiplexer.
+//
+// `#messages` holds one `.transcript-view` per RESIDENT chat view; exactly one
+// carries `.is-active` and the scroller's observers. A parked view keeps its
+// DOM, its `MsgRender`s and its `messageStates` rows, with every writer that
+// could reach that DOM paused: streaming effects disposed, tool + run effects
+// suspended, clock holds released, tickers stopped, terminal output buffered.
+// The store keeps ingesting for parked chats — only rendering is frozen.
+// ---------------------------------------------------------------------------
+
+/** How many PARKED views stay resident (the active view is not counted).
+ *  Past this, the least-recently-used parked view runs the real dispose. */
+export const PARKED_VIEWS = 3;
+
+/** One resident chat view. The saved-at-park fields are meaningful only while
+ *  `parked` is true; the view→message index is deliberately NOT here — it is
+ *  the store read (`chatID` + the session's message ids ∩ `messageStates`). */
+interface ChatView {
+  chatID: string;
+  el: HTMLElement;
+  parked: boolean;
+  scrollTop: number;
+  readingState: ReadingState;
+  followBaseline: number;
+  reachableBlocks: number;
+  lastNewestId: string | undefined;
+  resumeLabel: string;
+  /** Message ids that were live-streaming when the view parked. Resume
+   *  rebuilds these bodies fresh whether or not they are still streaming: the
+   *  ones that settled while parked missed their finalizing updates (their
+   *  binding effects were disposed), so only a fresh render from the current
+   *  store is equivalent to a cold rebuild. */
+  pausedStreaming: Set<string>;
+}
+
+/** Resident views by chat id. Iteration order is the LRU order: activation
+ *  re-inserts, so the first parked entry is the eviction candidate. */
+const views = new Map<string, ChatView>();
+let activeView: ChatView | null = null;
+
+/** The active view's element, for the container consumers that mount transcript
+ *  furniture (chat.ts's skeleton and load-error retry). Null when no chat view
+ *  is active (boot, the last-tab window). */
+export function activeTranscriptView(): HTMLElement | null {
+  return activeView?.el ?? null;
+}
+
+/** A resident view's element for `chatID` — active or parked — or null. */
+export function transcriptViewFor(chatID: string): HTMLElement | null {
+  return views.get(chatID)?.el ?? null;
+}
+
+/** Where paint reconciles and the card walk runs: the active view, or the bare
+ *  multiplexer before any view exists (kept for the boot instant; nothing
+ *  renders turns there). */
+function paintRoot(): HTMLElement {
+  return activeView?.el ?? messagesEl;
+}
+
+/** The message ids this view has mounted: the session's messages ∩
+ *  `messageStates` (the design's view→message index — a store read, no second
+ *  index maintained). */
+function viewMessages(session: Session): Message[] {
+  return session.messages.filter((m) => messageStates.has(m.id));
+}
+
+/** Park the active view: pause every writer, save the handle, hide. */
+function parkView(view: ChatView): void {
+  // Focus relocation first: an inert subtree drops focus to <body> on its own,
+  // and the composer is the app's focus home.
+  const focused = document.activeElement;
+  if (focused !== null && view.el.contains(focused)) {
+    $.promptInput.focus();
+  }
+  const scroll = detachScroll();
+  view.scrollTop = scroll.scrollTop;
+  view.readingState = scroll.readingState;
+  view.followBaseline = followBaseline;
+  view.reachableBlocks = reachableBlocks;
+  view.lastNewestId = lastNewestId;
+  view.resumeLabel = $.scrollBottom.querySelector("span")?.textContent ?? "";
+  view.pausedStreaming = new Set();
+  const session = get(view.chatID);
+  if (session !== undefined) {
+    for (const m of viewMessages(session)) {
+      if (messageStates.get(m.id)?.streaming === true) {
+        view.pausedStreaming.add(m.id);
+      }
+      pauseMessage(view, m);
+    }
+  }
+  view.el.classList.remove("is-active");
+  view.el.inert = true;
+  view.parked = true;
+  if (activeView === view) {
+    activeView = null;
+  }
+}
+
+/** Make `chatID`'s view the active one, creating it when it is not resident.
+ *  Returns true when the view was UNPARKED (a catch-up paint must follow and
+ *  the pass's end must resume the view's messages). */
+function activateView(chatID: string): boolean {
+  let view = views.get(chatID);
+  const unparking = view?.parked === true;
+  if (view === undefined) {
+    view = {
+      chatID,
+      el: el("div", { className: "transcript-view" }),
+      parked: false,
+      scrollTop: 0,
+      readingState: "following",
+      followBaseline: 0,
+      reachableBlocks: 0,
+      lastNewestId: undefined,
+      resumeLabel: "",
+      pausedStreaming: new Set(),
+    };
+    messagesEl.appendChild(view.el);
+    resetScrollState();
+  } else {
+    // LRU refresh: re-insertion moves this chat to the back of the order.
+    views.delete(chatID);
+  }
+  views.set(chatID, view);
+  view.parked = false;
+  view.el.inert = false;
+  view.el.classList.add("is-active");
+  activeView = view;
+  attachScroll({ el: view.el, scrollTop: view.scrollTop, readingState: view.readingState });
+  // After attach: entering Reading recomputes the baseline from the ACTIVE
+  // session, and these are the parked chat's own numbers.
+  followBaseline = view.followBaseline;
+  reachableBlocks = view.reachableBlocks;
+  lastNewestId = view.lastNewestId;
+  if (unparking) {
+    setResumeLabel(view.resumeLabel);
+  }
+  evictParkedViews();
+  return unparking;
+}
+
+/** Dispose least-recently-used parked views past the budget. */
+function evictParkedViews(): void {
+  const parked = [...views.values()].filter((v) => v.parked);
+  for (let i = 0; i <= parked.length - 1 - PARKED_VIEWS; i++) {
+    const victim = parked[i];
+    if (victim !== undefined) {
+      disposeChatView(victim.chatID);
+    }
+  }
+}
+
+/** Dispose views whose chat left the store (close, delete, mass removal). */
+function pruneDeadViews(): void {
+  for (const chatID of [...views.keys()]) {
+    if (get(chatID) === undefined) {
+      disposeChatView(chatID);
+    }
+  }
+}
+
+/** The REAL per-view dispose: every message row's disposal (bind unbinds,
+ *  streaming effects, block renders, per-message signals, `messageStates`
+ *  pruning), the chat's tool effects through their composite keys, and the
+ *  container's removal. LRU eviction, chat close/delete and `teardownAll` all
+ *  run this — never a bare empty reconcile, which would strip render state
+ *  while leaving parked DOM behind. */
+export function disposeChatView(chatID: string): void {
+  const view = views.get(chatID);
+  if (view === undefined) {
+    return;
+  }
+  const rows = view.el.querySelectorAll<HTMLElement>(`.turn-body > [${KEY_ATTR}]`);
+  for (const row of rows) {
+    const key = row.getAttribute(KEY_ATTR);
+    if (key !== null) {
+      disposeMessage(key);
+    }
+  }
+  disposeToolEffectsForChat(chatID, view.el);
+  view.el.remove();
+  views.delete(chatID);
+  if (activeView === view) {
+    activeView = null;
+    lastActiveId = undefined;
+  }
+}
+
+/** Pause one message: dispose its live-binding effects (per-block signal
+ *  effects, streaming effects — the same registry turn end drains), finish its
+ *  reveals and suspend its run cards (messages-blocks), and suspend its
+ *  generic tool-card effects through the owning view's composite keys, which
+ *  also stops the duration ticker for its in-progress cards. `renders` maps,
+ *  DOM, and message-lifetime bookkeeping stay. */
+function pauseMessage(view: ChatView, m: Message): void {
+  disposeStreamingEffect(m.id);
+  pauseAssistantBody(m.id);
+  suspendToolEffectsFor(
+    view.chatID,
+    (m.tool_calls ?? []).map((tc) => tc.id),
+    view.el,
+  );
+}
+
+/** Resume one message after the catch-up paint. Settled messages need nothing
+ *  beyond re-arming what pause suspended — the catch-up paint's
+ *  `syncMountedText` already trued grown text. A message that was streaming at
+ *  park rebuilds its body fresh instead: its binding effects were disposed, so
+ *  every update that landed while parked (text, tool finalizations, subagent
+ *  headers) is only guaranteed to appear through a fresh render of the current
+ *  store — the B5 watermark guard makes the first live delta a clean resync. */
+function resumeMessage(view: ChatView, session: Session, m: Message): void {
+  const state = messageStates.get(m.id);
+  if (state === undefined) {
+    return;
+  }
+  if (view.pausedStreaming.has(m.id)) {
+    rebuildMessageBody(session, m, state.el);
+    return;
+  }
+  if (m.role !== "assistant") {
+    return;
+  }
+  resumeAssistantBody(m.id);
+  resumeToolEffectsFor(session.id, m.tool_calls ?? [], view.el);
+}
+
+/** Rebuild a message's body in place, keeping the row node (its reconcile key
+ *  and DOM position). The old render state goes through the same disposal an
+ *  unmount runs, minus the row itself. */
+function rebuildMessageBody(session: Session, m: Message, row: HTMLElement): void {
+  const arr = bindUnbinds.get(m.id);
+  if (arr !== undefined) {
+    for (const fn of arr) {
+      fn();
+    }
+    bindUnbinds.delete(m.id);
+  }
+  disposeStreamingEffect(m.id);
+  finalizeAssistantBody(m.id);
+  disposeAssistantBody(m.id);
+  clearBlockSigsFor(m.id);
+  // Drop the message's suspended tool entries so the fresh mount below cannot
+  // clobber-leak them; the rebuild re-creates cards, effects and signals.
+  disposeToolEffectsForChat(session.id, row);
+  row.replaceChildren();
+  const live = isLikelyLiveStreaming(m);
+  messageStates.set(m.id, { el: row, streaming: live });
+  if (live) {
+    streamingIds.add(m.id);
+  } else {
+    streamingIds.delete(m.id);
+  }
+  if (m.role === "assistant") {
+    buildAssistantBody(row, m, session.id, live, steerMarks(session.id));
+    syncCodeReferences(row, m);
+    syncRefusal(row, m);
+    if (!live) {
+      const bubble = row.querySelector<HTMLDivElement>(".message.assistant");
+      if (bubble !== null) {
+        attachTurnActions(bubble);
+      }
+    }
+  }
+}
+
+/** Resume every paused message of the freshly unparked view, then drain the
+ *  terminal output that buffered while it was parked — once. */
+function resumeView(view: ChatView, session: Session): void {
+  for (const m of viewMessages(session)) {
+    resumeMessage(view, session, m);
+  }
+  view.pausedStreaming.clear();
+  drainParkedTerminals(session.id);
+}
 
 /** Per-message-id metadata kept for the duration the message is mounted. */
 interface MessageState {
@@ -260,8 +551,22 @@ export function mountChatView(): void {
   // The two navigation surfaces that can land on a tier-3 stub call the same
   // on-demand build this module's own fold toggle uses. Injected — both
   // modules are imported BY this one, so a static import back would cycle.
-  initTurnRailCallbacks({ mountTurnBody });
+  initTurnRailCallbacks({ mountTurnBody, activeView: activeTranscriptView });
   initSearchRevealBuilder(mountTurnBody);
+  // The tool layer sits below this module, so the two facts only the
+  // multiplexer knows arrive injected: whether a chat's view is parked (its
+  // terminal output buffers then), and — registered with the store — that a
+  // RESIDENT view's chat must not have its messages evicted out from under the
+  // DOM. Registered here rather than in app.ts because, unlike the live-run
+  // and subagent-tab predicates (which the composition root wires to keep
+  // store.ts a leaf), the view registry lives in this module and this module
+  // already imports store.js — routing the predicate through app.ts would add
+  // an indirection with no cycle to break.
+  initToolViewCallbacks({ isChatParked: (chatID) => views.get(chatID)?.parked === true });
+  registerEvictionExemption((chatID) => views.has(chatID));
+  // Page unload is the one production moment every view goes away at once;
+  // the close/delete/LRU paths dispose per view.
+  registerCleanup(teardownAll);
   // The transcript's two inputs: WHICH chat is active, and THAT chat's own
   // transcript version. Header-only updates (usage ticks, titles, modes) write
   // the session signal but bump no version, so they never reach paint();
@@ -281,11 +586,14 @@ export function mountChatView(): void {
  *  it itself. Remove, reflow, re-add is what RESTARTS the animation — a second
  *  call while the first is still running otherwise does nothing at all — and the
  *  attribute is left in place afterwards because the animation's `both` fill
- *  holds the element's ordinary state, so a stale one changes nothing. */
+ *  holds the element's ordinary state, so a stale one changes nothing. Targets
+ *  the ACTIVE view: the fade belongs to the transcript being revealed, and a
+ *  parked sibling must not replay it on unpark. */
 export function fadeInTranscript(): void {
-  messagesEl.removeAttribute("data-chat-entry");
-  void messagesEl.offsetWidth;
-  messagesEl.setAttribute("data-chat-entry", "");
+  const root = paintRoot();
+  root.removeAttribute("data-chat-entry");
+  void root.offsetWidth;
+  root.setAttribute("data-chat-entry", "");
 }
 
 // ---------------------------------------------------------------------------
@@ -423,16 +731,32 @@ let paintMountedCards = false;
 function paint(): void {
   const session = getActive();
   if (session === undefined) {
-    // No session for the active id. Only clear when there is genuinely NO
-    // active chat (all closed). A transient undefined during a chat switch or
-    // a not-yet-loaded session must NOT wipe the DOM — that empty reconcile
-    // pass, immediately followed by a re-populate, was the flashing bug.
+    // No session for the active id. Only touch the views when there is
+    // genuinely NO active chat (all closed, or the last-tab window). A
+    // transient undefined during a chat switch or a not-yet-loaded session
+    // must NOT wipe the DOM — that empty reconcile pass, immediately followed
+    // by a re-populate, was the flashing bug.
     if (getActiveId() === "") {
-      teardownAll();
+      // HIDE without disposing: the last-tab window can reopen this chat, and
+      // its view unparks then. Disposal belongs to the close/delete paths
+      // (disposeChatView) — a view whose CHAT left the store runs it here.
+      pruneDeadViews();
+      if (activeView !== null) {
+        parkView(activeView);
+      }
+      lastActiveId = undefined;
     }
     return;
   }
   const isChatSwitch = lastActiveId !== session.id;
+  let unparked = false;
+  if (isChatSwitch) {
+    pruneDeadViews();
+    if (activeView !== null && activeView.chatID !== session.id) {
+      parkView(activeView);
+    }
+    unparked = activateView(session.id);
+  }
   // What the flushed version was FOR — what this pass may skip. Read after the
   // effect's version read; untracked by design. A chat switch is always the
   // full pass: the flushed cause describes the previous chat's delta, not the
@@ -494,6 +818,7 @@ function paint(): void {
   }
   computeFoldPlan(session.id, turns);
   paintMountedCards = false;
+  const root = paintRoot();
   // The placeholder and the conversation may never share this container, and the
   // rule is enforced HERE because this is the line where content lands. Two
   // reasons it cannot be left to the activation's continuation, which removes the
@@ -503,18 +828,23 @@ function paint(): void {
   // between two microtasks" is a timing property of one call order, not an
   // invariant of the renderer. Only when there is something to replace it with —
   // an empty turn list is a chat still loading, which is what the placeholder is
-  // for. Unkeyed pagination furniture (`load-more-indicator`, the load-more
-  // skeleton) is deliberately untouched: that one is mounted BESIDE real turns on
-  // purpose.
+  // for. Scoped to THIS view plus the multiplexer's own children (the boot
+  // skeleton mounts before any view exists): a parked view's skeleton is that
+  // view's own to drop at its unpark paint. Unkeyed pagination furniture
+  // (`load-more-indicator`, the load-more skeleton) is deliberately untouched:
+  // that one is mounted BESIDE real turns on purpose.
   if (turns.length > 0) {
-    document.getElementById(CHAT_SKELETON_ID)?.remove();
+    const skel = document.getElementById(CHAT_SKELETON_ID);
+    if (skel !== null && (root.contains(skel) || skel.parentElement === messagesEl)) {
+      skel.remove();
+    }
   }
-  reconcile(messagesEl, turns, turnSpec);
+  reconcile(root, turns, turnSpec);
   // ONE walk over the container's children builds the card list every full-pass
   // consumer shares — the rail's observer and the fold pass. Filtered because
   // unkeyed furniture (load-more, skeletons) lives beside the cards.
   const cards: HTMLElement[] = [];
-  for (const child of messagesEl.children) {
+  for (const child of root.children) {
     if (child.classList.contains("turn")) {
       cards.push(child as HTMLElement);
     }
@@ -528,6 +858,12 @@ function paint(): void {
   refreshResumeLabel();
   lastNewestId = session.messages[session.messages.length - 1]?.id;
   lastActiveId = session.id;
+  if (unparked && activeView !== null) {
+    // The catch-up pass above brought the DOM to the store's current state;
+    // now the paused effects come back: settled messages re-arm, the paused
+    // tail rebuilds, parked terminal output drains once.
+    resumeView(activeView, session);
+  }
 }
 
 /** The `tool`-cause fast path: refresh the owning message's card state through
@@ -683,9 +1019,21 @@ async function handleRewindClick(m: Message): Promise<void> {
   await rewindChat.dispatch({ chatID: session.id, messageID: m.id });
 }
 
-/** Clear all per-message state, e.g. when the last chat is closed (active
- *  session genuinely gone). A real session arriving repaints from scratch. */
-function teardownAll(): void {
+/** The multiplexer-wide teardown: the REAL per-view dispose applied to every
+ *  resident view — bind unbinds, streaming and tool effect disposal (composite
+ *  keys), block-render resets, per-message signal clears, `messageStates`
+ *  pruning, container removal — then the shared surfaces (scroll, rail) and
+ *  the module-global belts for state no view owns (detached renders, unclaimed
+ *  terminal holds). Runs on page unload (registered in mountChatView); the
+ *  close/delete/eviction paths dispose per view instead. Exported for the
+ *  op-set tests. */
+export function teardownAll(): void {
+  for (const chatID of [...views.keys()]) {
+    disposeChatView(chatID);
+  }
+  // Belts for what no view reaches: a detached render's effects (the subagent
+  // page shares these registries) and per-message state for rows a view walk
+  // could not see. Each is idempotent over what the view disposes already ran.
   for (const arr of bindUnbinds.values()) {
     for (const fn of arr) {
       fn();
@@ -697,12 +1045,12 @@ function teardownAll(): void {
   }
   disposeAllToolEffects();
   resetBlockRenders();
-  clearAllBlockSigs();
   messageStates.clear();
   streamingIds.clear();
   resetScrollState();
   resetTurnRail();
-  reconcile(messagesEl, [] as Turn[], turnSpec);
+  lastActiveId = undefined;
+  lastNewestId = undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -814,9 +1162,9 @@ function disposeMessage(key: string): void {
   // (cleanup only — the message row is being removed).
   finalizeAssistantBody(key);
   disposeAssistantBody(key);
-  // The row's per-block streaming signals go with it: `teardownAll` only runs
-  // when the LAST chat closes, so signals left here would outlive the message
-  // for the rest of the page.
+  // The row's per-block streaming signals go with it: nothing else clears a
+  // mounted row's signals before page teardown, so signals left here would
+  // outlive the message for the rest of the page.
   clearBlockSigsFor(key);
   messageStates.delete(key);
   streamingIds.delete(key);
@@ -1182,8 +1530,9 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
     if (session?.id !== chatID) {
       return;
     }
+    const root = paintRoot();
     let card: HTMLElement | null = null;
-    for (const child of messagesEl.children) {
+    for (const child of root.children) {
       if (child.getAttribute(KEY_ATTR) === turnID) {
         card = child as HTMLElement;
         break;
@@ -1417,7 +1766,18 @@ function finalizeStreamingIfNeeded(messages: readonly Message[]): void {
   const session = getActive();
   const isThinking = session?.thinking ?? false;
   const lastID = messages[lastAssistantIndex(messages)]?.id;
+  // THIS session's rows only: a parked chat's still-streaming tail sits in
+  // `streamingIds` too, and finalizing it from another chat's paint would
+  // write into the parked view (the freeze) and seal a turn that is not over
+  // — its own unpark decides, off the store's state then.
+  const own = new Set<string>();
+  for (const m of messages) {
+    own.add(m.id);
+  }
   for (const id of candidates) {
+    if (!own.has(id)) {
+      continue;
+    }
     const st = messageStates.get(id);
     if (st === undefined) {
       continue; // a detached render's id — not this transcript's to finalize

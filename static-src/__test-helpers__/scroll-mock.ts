@@ -5,10 +5,16 @@ import { vi } from "vitest";
 // what lets a suite drive the reading state (`readingState.mockReturnValue`) with
 // the other member of the union: inferred from the default alone, the mock's
 // return type would be the literal "following" and "reading" would not typecheck.
-import type { ReadingState } from "../scroll.js";
+import type { ReadingState, ViewScrollState } from "../scroll.js";
 
 export const scrollMock = {
   getScrollEl: vi.fn(() => document.createElement("div")),
+  // The multiplexer's park/unpark pair: detach snapshots the outgoing view's
+  // scroll state, attach re-roots the observers on the incoming view. The
+  // default snapshot is a fresh view's state so a mocked park/unpark cycle
+  // round-trips without a suite having to prime it.
+  attach: vi.fn(),
+  detach: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
   scrollToBottom: vi.fn(),
   setUserScrolledUp: vi.fn(),
   jumpTo: vi.fn(),

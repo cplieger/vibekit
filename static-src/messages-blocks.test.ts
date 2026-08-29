@@ -40,10 +40,15 @@ const {
 } = await import("./messages-blocks.js");
 const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
   await import("./store-signals.js");
+const { setActive } = await import("./store.js");
 
 /** The chat every render in this file belongs to. It is part of the per-tool
- *  signal key, so a mount and its writer have to name the same one. */
+ *  signal key, so a mount and its writer have to name the same one — and it
+ *  must be the store's ACTIVE chat: the live-anchor fallback scan only
+ *  considers the active chat's renders (a parked view's still-live bubble is
+ *  DOM the reader cannot see). */
 const CHAT_ID = "c-blocks";
+setActive(CHAT_ID);
 
 function text(t: string, subtask = ""): Record<string, unknown> {
   return { type: "text", text: t, agent_subtask_id: subtask };

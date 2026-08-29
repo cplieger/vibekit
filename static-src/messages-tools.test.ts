@@ -16,7 +16,9 @@ vi.mock("./store-signals.js", () => ({
   streamingReasoningSigs: undefined,
   streamingTextSigs: undefined,
   toolCallSigs: undefined,
-  toolCallSigKey: undefined,
+  // Real key composition: messages-tools keys its card registry on the
+  // composite at module scope, so an `undefined` here throws at import.
+  toolCallSigKey: vi.fn((chatID: string, toolID: string) => `${chatID}\u0000${toolID}`),
   ensureStreamingSig: undefined,
   ensureReasoningSig: undefined,
   ensureBlockTextSig: undefined,
@@ -32,6 +34,7 @@ vi.mock("./store-signals.js", () => ({
 vi.mock("./tool-group.js", () => ({
   maybeCollapseGroup: vi.fn(),
   formatDuration: vi.fn(() => ""),
+  trackInProgress: vi.fn(),
   untrackInProgress: vi.fn(),
 }));
 vi.mock("./tool-schema.js", () => ({

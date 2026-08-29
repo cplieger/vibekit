@@ -49,6 +49,7 @@
 import type { Message, Block, ToolCall, PlanStatus, FileChange, SteerMark } from "./types.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
+import { getActiveId } from "./store.js";
 import {
   ensureBlockTextSig,
   ensureBlockThinkingSig,
@@ -147,14 +148,18 @@ export function getLiveAnchor(): HTMLElement | null {
 }
 
 /** Identity-guarded clear: only the registered element's own seal clears the
- *  slot, then the newest still-live top-level bubble (if any) takes it back. */
+ *  slot, then the newest still-live top-level bubble (if any) takes it back.
+ *  Only the ACTIVE chat's renders are candidates: with parked views resident,
+ *  another chat's still-live bubble is DOM the reader cannot see, and a pin to
+ *  it would strand Following on a hidden element. */
 function clearLiveAnchor(el: HTMLElement): void {
   if (liveAnchor?.el !== el) {
     return;
   }
   liveAnchor = null;
+  const activeChat = getActiveId();
   for (const [id, st] of renders) {
-    if (!st.detached && st.topLiveEl !== null) {
+    if (!st.detached && st.chatID === activeChat && st.topLiveEl !== null) {
       liveAnchor = { messageID: id, el: st.topLiveEl };
     }
   }
@@ -269,6 +274,12 @@ interface MsgRender {
    *  subtask, because one card holds every step of one run — the step rows inside
    *  it are keyed by node path (see `runContainerFor`). */
   runs: Map<string, RunCardView>;
+  /** workflow id → the ARMED render effect's disposer, absent while the card is
+   *  suspended (view parked). Beside `runs` rather than inside `disposers`
+   *  because pause has to stop the effect and release the clock WITHOUT running
+   *  the card's final dispose, and resume has to re-arm exactly what pause
+   *  stopped. */
+  runEffects: Map<string, () => void>;
   /** Cleanups that live as long as the MESSAGE, not as long as the turn.
    *
    *  Separate from `pushStreamingEffect` and that separation is load-bearing: that
@@ -363,6 +374,7 @@ function buildBody(
     stagePipeline: new Map(),
     pipelineStages: new Map(),
     runs: new Map(),
+    runEffects: new Map(),
     disposers: [],
     subagentMembers: new Map(),
     detached,
@@ -547,6 +559,40 @@ export function disposeAssistantBody(msgId: string): void {
     disposeAll(st);
   }
   renders.delete(msgId);
+}
+
+/** The block-layer half of pausing a parked message: finish any reveal (a
+ *  frame loop writing into what is about to be hidden), then suspend the run
+ *  cards — their render effects stop and their clock holds release, without
+ *  the final dispose (`forgetRun` stays a real unmount's business). The
+ *  streaming and tool-card effects are the callers' registries (messages.ts,
+ *  messages-tools.ts); this covers what only the render state can reach. */
+export function pauseAssistantBody(msgId: string): void {
+  const st = renders.get(msgId);
+  if (st === undefined) {
+    return;
+  }
+  for (const b of st.bubbles) {
+    b.finishNow();
+  }
+  st.liveBubble = null;
+  for (const [workflowID, card] of st.runs) {
+    disarmRunCard(st, workflowID, card);
+  }
+}
+
+/** Re-arm a resumed message's run cards: the effect's first run re-reads the
+ *  run's cell (the store kept ingesting frames while the view was parked), and
+ *  the clock hold comes back with it. Idempotent per card, so a card the
+ *  catch-up paint already armed is left alone. */
+export function resumeAssistantBody(msgId: string): void {
+  const st = renders.get(msgId);
+  if (st === undefined) {
+    return;
+  }
+  for (const [workflowID, card] of st.runs) {
+    armRunCard(st, workflowID, card);
+  }
 }
 
 export function resetBlockRenders(): void {
@@ -891,17 +937,8 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
     openContainers.add(`run:${workflowID}`);
   }
   st.blocksEl.appendChild(card.root);
-  const stop = effect(() => {
-    // Two inputs on different clocks, which is why they arrive together rather than
-    // through two calls: `inspect` says what the run's steps are doing, and the dock
-    // says which of them is blocked on a person. The run's status cannot carry the
-    // second — KAS blocks the asking step's turn and leaves the run `running` — and
-    // both reads are signal-backed, so this one effect repaints on either.
-    card.render(runState(workflowID), runPendingAsks(workflowID));
-  });
   st.disposers.push(() => {
-    stop();
-    releaseRunClock(workflowID);
+    disarmRunCard(st, workflowID, card);
     // The store's only bound, and this is the one place that can apply it: three
     // surfaces read a run's cell and none of them is last on its own. A card
     // unmounting (chat switch, or the reconcile dropping its row) with no run tab
@@ -912,9 +949,9 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
     }
   });
   // The first read the card ever gets. Every later one arrives through the
-  // effect above, driven by the run SSE events.
+  // armed effect, driven by the run SSE events.
   invalidateRun(workflowID);
-  holdRunClock(workflowID, card);
+  armRunCard(st, workflowID, card);
   return card;
 }
 
@@ -957,26 +994,75 @@ function recipeNameOf(tc: ToolCall): string {
 // card on screen rather than one per card: N timers ticking the same second is N
 // wakeups for one repaint, and the interval stops entirely when no card is holding
 // it, so an idle transcript costs nothing.
+//
+// Holders are REFCOUNTED per workflow id: the same run can be on screen more than
+// once (a parked chat's card beside a subagent page's card of the same run), so a
+// release names WHICH card let go and the interval survives until the last one
+// does. A plain per-workflow slot let one surface's park stop the clock another
+// surface was still showing.
 // ---------------------------------------------------------------------------
 
-const clockHolders = new Map<string, RunCardView>();
+const clockHolders = new Map<string, Set<RunCardView>>();
 let clockTimer: ReturnType<typeof setInterval> | undefined;
 
 function holdRunClock(workflowID: string, card: RunCardView): void {
-  clockHolders.set(workflowID, card);
+  let holders = clockHolders.get(workflowID);
+  if (holders === undefined) {
+    holders = new Set();
+    clockHolders.set(workflowID, holders);
+  }
+  holders.add(card);
   clockTimer ??= setInterval(() => {
-    for (const c of clockHolders.values()) {
-      c.tick();
+    for (const set of clockHolders.values()) {
+      for (const c of set) {
+        c.tick();
+      }
     }
   }, 1000);
 }
 
-function releaseRunClock(workflowID: string): void {
-  clockHolders.delete(workflowID);
+function releaseRunClock(workflowID: string, card: RunCardView): void {
+  const holders = clockHolders.get(workflowID);
+  if (holders === undefined) {
+    return;
+  }
+  holders.delete(card);
+  if (holders.size === 0) {
+    clockHolders.delete(workflowID);
+  }
   if (clockHolders.size === 0 && clockTimer !== undefined) {
     clearInterval(clockTimer);
     clockTimer = undefined;
   }
+}
+
+/** Subscribe a run card to its store cell and hold the shared clock. The
+ *  suspend half is `disarmRunCard`; both are idempotent so the pause path and
+ *  the final dispose can overlap without double-releasing. */
+function armRunCard(st: MsgRender, workflowID: string, card: RunCardView): void {
+  if (st.runEffects.has(workflowID)) {
+    return;
+  }
+  const stop = effect(() => {
+    // Two inputs on different clocks, which is why they arrive together rather than
+    // through two calls: `inspect` says what the run's steps are doing, and the dock
+    // says which of them is blocked on a person. The run's status cannot carry the
+    // second — KAS blocks the asking step's turn and leaves the run `running` — and
+    // both reads are signal-backed, so this one effect repaints on either.
+    card.render(runState(workflowID), runPendingAsks(workflowID));
+  });
+  st.runEffects.set(workflowID, stop);
+  holdRunClock(workflowID, card);
+}
+
+function disarmRunCard(st: MsgRender, workflowID: string, card: RunCardView): void {
+  const stop = st.runEffects.get(workflowID);
+  if (stop === undefined) {
+    return;
+  }
+  stop();
+  st.runEffects.delete(workflowID);
+  releaseRunClock(workflowID, card);
 }
 
 function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: boolean): void {

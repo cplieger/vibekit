@@ -3,11 +3,12 @@
 //
 // A LIVE block mount mints a per-(message, block-index) signal
 // (`ensureBlockTextSig` / `ensureBlockThinkingSig` in messages-blocks.ts), and
-// until this fix nothing but `teardownAll` — the LAST chat closing — ever
-// removed the entry, so a long-lived page kept one signal per streamed block
-// forever. `disposeMessage` runs for every row the reconcile removes (message
-// removal, chat switch, turn-card discard), so it is where the signals die
-// with their message.
+// until this fix nothing but the LAST chat closing ever removed the entry, so
+// a long-lived page kept one signal per streamed block forever.
+// `disposeMessage` runs for every row that leaves the renderer for good
+// (message removal, view disposal, turn-card discard), so it is where the
+// signals die with their message. A chat SWITCH is no longer such a moment:
+// the multiplexer parks the view whole.
 //
 // The harness is messages-resume-reach.test.ts's: real store, real renderer,
 // only the scroll subsystem mocked.
@@ -92,19 +93,26 @@ describe("disposeMessage clears the row's block signals", () => {
     expect(sigs.blockTextSigs.get(sigs.blockKey(msgID, 1))).toBeUndefined();
   });
 
-  it("a chat switch clears the previous chat's signals, not the whole map", () => {
+  it("a chat switch PARKS the rows — signals survive until the view is disposed", () => {
     // A thinking tail, so the OTHER signal map is covered too.
-    const { msgID } = mountStreaming([{ type: "thinking", thinking: "mulling" } as Block]);
+    const { chat, msgID } = mountStreaming([{ type: "thinking", thinking: "mulling" } as Block]);
     expect(sigs.blockThinkingSigs.get(sigs.blockKey(msgID, 0))).toBeDefined();
     // A signal belonging to a message this renderer never mounted must survive
-    // the switch — per-message disposal, not the wholesale teardown wipe.
+    // the disposal — per-message cleanup, not the wholesale teardown wipe.
     const foreign = sigs.ensureBlockTextSig("m-foreign", 0, "kept");
 
-    // Switch to a second chat: the old chat's rows unmount.
+    // Switch to a second chat: the old chat's rows PARK with their view, and
+    // their signals park with them — a parked transcript is resident state,
+    // which is the whole point of the multiplexer (and why the store's
+    // eviction exempts it).
     const other = `c-${String(++seq)}`;
     store.setSessions([store.get(store.getActiveId())!, session(other)] as Session[]);
     store.setActive(other);
+    expect(sigs.blockThinkingSigs.get(sigs.blockKey(msgID, 0))).toBeDefined();
 
+    // The view's REAL dispose (chat close, delete, LRU eviction) is where the
+    // rows die now, and the signals die with them.
+    messages.disposeChatView(chat);
     expect(sigs.blockThinkingSigs.get(sigs.blockKey(msgID, 0))).toBeUndefined();
     expect(sigs.blockTextSigs.get(sigs.blockKey("m-foreign", 0))).toBe(foreign);
     sigs.blockTextSigs.clear(sigs.blockKey("m-foreign", 0));

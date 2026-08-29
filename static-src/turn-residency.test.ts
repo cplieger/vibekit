@@ -58,7 +58,7 @@ vi.mock("./api-client.js", async () => ({
   }),
 }));
 
-const { mountChatView, mountTurnBody } = await import("./messages.js");
+const { mountChatView, mountTurnBody, activeTranscriptView } = await import("./messages.js");
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { setTurnOpen, openForSearch, clearSearchOpened, _resetFoldStateForTest, TURNS_WARM } =
   await import("./fold-state.js");
@@ -129,7 +129,10 @@ function activate(chatID: string, messages: Msg[], thinking = false): void {
 }
 
 function card(turnID: string): HTMLElement {
-  for (const child of messagesEl.children) {
+  // The card walk roots at the ACTIVE transcript view: the multiplexer holds
+  // one view per resident chat, and this suite mints a fresh chat per case.
+  const root = activeTranscriptView() ?? messagesEl;
+  for (const child of root.children) {
     if (child.getAttribute(KEY_ATTR) === turnID) {
       return child as HTMLElement;
     }

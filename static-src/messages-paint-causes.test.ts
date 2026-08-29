@@ -65,6 +65,11 @@ const messages = await import("./messages.js");
 messages.mountChatView();
 const messagesEl = document.getElementById("messages")!;
 
+/** The active view's element — the paint root under the multiplexer. */
+function viewRoot(): HTMLElement {
+  return messages.activeTranscriptView() ?? (messagesEl as HTMLElement);
+}
+
 function user(id: string, content: string): Message {
   return { id, role: "user", ts: 1, content } as Message;
 }
@@ -118,7 +123,7 @@ function seamCounts(): Record<string, number> {
 function mount(chatID: string, msgs: Message[], thinking: boolean): HTMLElement[] {
   store.setSessions([session(chatID, msgs, thinking)]);
   store.setActive(chatID);
-  return [...messagesEl.children] as HTMLElement[];
+  return [...viewRoot().children] as HTMLElement[];
 }
 
 /** One microtask: the per-chat coalescer flushes, and the flush paints. */
@@ -144,7 +149,7 @@ describe("paint branches on the flushed render cause", () => {
 
       expect(store.renderCauseOf(chat).cause).toBe("chunk");
       expect(seamCounts()).toEqual(before);
-      const after = [...messagesEl.children];
+      const after = [...viewRoot().children];
       expect(after.length).toBe(kids.length);
       expect(after.every((el, i) => el === kids[i])).toBe(true);
       // The skip lost nothing: the mounted block's own signal carries the text.
@@ -154,7 +159,7 @@ describe("paint branches on the flushed render cause", () => {
       await flushed();
       await vi.waitFor(
         () => {
-          expect(messagesEl.querySelector(".message.assistant")?.textContent).toContain("world");
+          expect(viewRoot().querySelector(".message.assistant")?.textContent).toContain("world");
         },
         { timeout: 10_000 },
       );
@@ -197,7 +202,7 @@ describe("paint branches on the flushed render cause", () => {
     // internal path is exactly the one that does not show here.
     expect(seamCounts()).toEqual(before);
     // Sibling turn DOM identity preserved (nothing remounted anywhere).
-    const after = [...messagesEl.children];
+    const after = [...viewRoot().children];
     expect(after.every((el, i) => el === kids[i])).toBe(true);
   });
 
@@ -226,7 +231,7 @@ describe("paint branches on the flushed render cause", () => {
     // The full pass ran…
     expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
     // …and repainted that turn IN PLACE with the new text.
-    expect(messagesEl.children[0]).toBe(oldTurn);
+    expect(viewRoot().children[0]).toBe(oldTurn);
     expect(oldTurn.querySelector(".turn-req-text")?.textContent).toBe("FIRST TASK");
   });
 
@@ -250,7 +255,7 @@ describe("paint branches on the flushed render cause", () => {
     // zero rail re-observation, zero per-turn updates…
     expect(seamCounts()).toEqual(before);
     // …and the 500 cards are the SAME 500 nodes (a rebuild would mint new ones).
-    const after = [...messagesEl.children];
+    const after = [...viewRoot().children];
     expect(after.length).toBe(500);
     expect(after.every((el, i) => el === kids[i])).toBe(true);
   });
@@ -272,7 +277,7 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
 
     store.upsertMessage(chat, assistant("bl-a1", "hello"));
     await flushed();
-    const card = messagesEl.firstElementChild;
+    const card = viewRoot().firstElementChild;
     expect(card?.querySelector(":scope > .turn-body")?.childElementCount).toBe(1);
     expect(card?.classList.contains("is-bodyless")).toBe(false);
   });
@@ -283,13 +288,13 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
     // still empty paints a `.msg-row.is-empty` the stylesheet can hide.
     const chat = "bodyless-row";
     mount(chat, [user("br-u1", "go"), assistant("br-a1", "")], false);
-    const row = messagesEl.querySelector(".msg-row");
+    const row = viewRoot().querySelector(".msg-row");
     expect(row).not.toBeNull();
     expect(row?.classList.contains("is-empty")).toBe(true);
 
     store.appendChunk(chat, "br-a1", "landed", false, 0, "");
     await flushed();
-    expect(messagesEl.querySelector(".msg-row")?.classList.contains("is-empty")).toBe(false);
+    expect(viewRoot().querySelector(".msg-row")?.classList.contains("is-empty")).toBe(false);
   });
 
   it("clears it when a FOOTER arrives under a still-empty body", async () => {
@@ -303,7 +308,7 @@ describe("the bodyless turn card is marked .is-bodyless", () => {
 
     store.upsertMessage(chat, user("bf-u2", "two"));
     await flushed();
-    const cards = [...messagesEl.children] as HTMLElement[];
+    const cards = [...viewRoot().children] as HTMLElement[];
     expect(cards.length).toBe(2);
     expect(cards[0]?.querySelector(":scope > .turn-footer")).not.toBeNull();
     expect(cards[0]?.querySelector(":scope > .turn-body")?.childElementCount).toBe(0);

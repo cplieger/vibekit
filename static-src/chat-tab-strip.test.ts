@@ -71,11 +71,12 @@ vi.mock("@cplieger/ui-primitives/skeleton", () => ({
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
-  scrollToBottom: vi.fn(),
-  resetScrollState: vi.fn(),
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),
   fadeInTranscript: vi.fn(),
+  activeTranscriptView: vi.fn(() => null),
+  transcriptViewFor: vi.fn(() => null),
+  disposeChatView: vi.fn(),
 }));
 vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
 vi.mock("./composer-state.js", () => ({
