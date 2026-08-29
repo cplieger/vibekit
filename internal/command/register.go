@@ -30,7 +30,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	// client-minted id gave each of them for free — but the ledger is now inside
 	// the coordinator, because resolving an op and reserving a tab slot have to
 	// happen in one critical section.
-	mem := NewMembership(MembershipDeps{
+	mem := NewMembership(&MembershipDeps{
 		Chats:    r.Chats,
 		Tabs:     r.Tabs,
 		Bus:      r.Bus,

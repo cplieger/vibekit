@@ -107,7 +107,7 @@ func CmdSteer(ctx context.Context, bridges BridgeAccess, outcome TurnOutcomeAcce
 	if bridge == nil {
 		return nil, StatusError(http.StatusConflict, errSteerNoTurn)
 	}
-	if outcome.PrimeTurnOpen(cmd.ChatID) {
+	if source, held := outcome.AdmissionHolderSource(cmd.ChatID); held && source == vibekit.TurnSourcePrime {
 		return nil, StatusError(http.StatusConflict, errSteerPriming)
 	}
 

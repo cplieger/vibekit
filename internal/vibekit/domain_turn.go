@@ -74,6 +74,20 @@ func (s TurnOpenSource) HasUserTrigger() bool {
 	}
 }
 
+// PromptClass reports whether a turn opened by this source is a user prompt
+// vibekit dispatched — the holders a second prompt can reach with a steer once
+// the bridge is live, which is what the admission refusal arm keys on. A prime
+// is deliberately not one: a steer aimed into the prime window is consumed by
+// a throwaway turn, so its holder answers the "starting" refusal instead.
+func (s TurnOpenSource) PromptClass() bool {
+	switch s {
+	case TurnSourcePrompt, TurnSourceEmptyRetry:
+		return true
+	default:
+		return false
+	}
+}
+
 // Acknowledgeable reports whether a wire turn_start may bind to this source. Only
 // a source that sent a session/prompt qualifies: a localShell turn has no bracket
 // coming, and a wireTurnStart turn was created BY one. A binding is revisable and

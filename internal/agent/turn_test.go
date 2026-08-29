@@ -144,7 +144,7 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 // and it is the reason the waitable is a channel closed on EVERY state change.
 //
 // With the wake-up armed only where a frame folds, a finalize woke nobody: the
-// chat goes idle, no fold runs, and the user's next prompt parks in OpenTurn
+// chat goes idle, no fold runs, and the user's next prompt parks in StartTurn
 // forever and never reaches KAS.
 func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	reg := newTurnRegistry()

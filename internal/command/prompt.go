@@ -109,11 +109,20 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 // recoverEmptyTurn re-prompts a turn that ended having produced nothing:
 // recreate the session, then send the same prompt once more.
 //
-// The decision comes off the finalized TURN, never off the live buffer, and that
-// is what makes it correct: the buffer can still be withholding the turn's only
-// text when this runs, so a measurement taken here recreates a session that had
-// just answered. It stays on the prompt goroutine — see AwaitTurn.
-func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, p *vibekit.PromptCommand, params map[string]any) {
+// result is the finalized turn's CAPTURED outcome. The caller awaited it while
+// still holding the turn's completion handle — the registry drops the retained
+// result at the last release — and it keeps holding that handle until this
+// returns, so the TurnOpenedAfter read below is against a live record. The
+// decision comes off the finalized TURN, never off the live buffer: the buffer
+// can still be withholding the turn's only text when this runs, so a
+// measurement taken here recreates a session that had just answered. It stays
+// on the prompt goroutine — see AwaitTurn.
+//
+// The caller released BOTH admission holds before this runs, so the retry
+// competes like anything else and re-reserves with a TRY: a user prompt that
+// won the slot in that window abandons the retry, which is the right
+// direction — their turn is live, and the empty turn is already recorded.
+func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, result vibekit.TurnResult, p *vibekit.PromptCommand, params map[string]any) {
 	// A verb KAS answers itself produces no content BY DESIGN, so an empty turn
 	// is the correct outcome and recovery is pure damage: it would close the
 	// bridge the launched run is parented on, detach the session, badge the turn
@@ -121,11 +130,6 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	// before the outcome because the turn is genuinely empty here; the prompt TEXT
 	// is the only thing that distinguishes expected from broken.
 	if kasClaimsPromptText(p.Text) {
-		return
-	}
-	result, err := outcome.AwaitTurn(ctx, chatID, epoch)
-	if err != nil {
-		slog.Warn("empty turn check: no turn outcome", "chat_id", chatID, keyError, err)
 		return
 	}
 	// WireEnded, because a locally-closed turn's outcome is the prompt response's —
@@ -142,7 +146,20 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 			"chat_id", chatID, "epoch", epoch)
 		return
 	}
+	if !outcome.TryReserveTurn(chatID, vibekit.TurnSourceEmptyRetry) {
+		slog.Warn("empty turn: another turn was admitted during recovery, abandoning retry",
+			"chat_id", chatID)
+		return
+	}
+	defer outcome.ReleaseTurnReservation(chatID)
 	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
+	refreshRetrySession(ctx, bridges, chats, chatID)
+	retryEmptyTurnPrompt(ctx, bridges, bus, outcome, chatID, p, params)
+}
+
+// refreshRetrySession abandons the session that answered nothing: close its
+// bridge, detach the chat from it, and record why on the transcript.
+func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatStore, chatID vibekit.ChatID) {
 	bridges.CloseBridge(chatID)
 	if err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
@@ -168,6 +185,11 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	if err := chats.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)
 	}
+}
+
+// retryEmptyTurnPrompt respawns the bridge and re-sends the prompt as a turn of
+// its own. The caller holds the retry's admission reservation.
+func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, p *vibekit.PromptCommand, params map[string]any) {
 	sb2, err2 := bridges.OpenBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
@@ -178,14 +200,14 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 		}))
 		return
 	}
-	// Take the new bridge's prompt slot the same way CmdPrompt takes it, rather
-	// than asserting it with SetPrompting. OpenBridge leaves the bridge
-	// registered and IDLE, so between that return and this line a concurrent
-	// prompt can win the slot -- and an unconditional SetPrompting would then let
-	// the deferred release below flip that turn's slot to idle while it is still
-	// streaming. Losing the race means abandoning the retry, which is the right
-	// direction: the user's own new turn is live on this chat, and the empty turn
-	// it would have replaced is already recorded as interrupted.
+	// Take the new bridge's prompt slot the same way the prompt goroutine takes
+	// it, rather than asserting it with SetPrompting. OpenBridge leaves the
+	// bridge registered and IDLE, so between that return and this line a
+	// concurrent taker can win the slot -- and an unconditional SetPrompting
+	// would then let the deferred release below flip that turn's slot to idle
+	// while it is still streaming. Losing the race means abandoning the retry,
+	// which is the right direction: the empty turn this would have replaced is
+	// already recorded as interrupted.
 	if !sb2.TryAcquireForPrompt() {
 		slog.Warn("empty turn: another turn started during recovery, abandoning retry",
 			"chat_id", chatID)
@@ -194,7 +216,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	defer sb2.ReleaseAfterPrompt()
 
 	// The retry needs its own cancellable context registered as the in-flight
-	// prompt, for the same reason CmdPrompt's does: session/cancel is a
+	// prompt, for the same reason the first send's does: session/cancel is a
 	// NOTIFICATION nothing acks, so the 10s grace budget is what unblocks a turn
 	// KAS never answers. Without BeginPromptCall, sb2.promptCancel is nil,
 	// ArmCancelGrace refuses, and an unanswered retry holds this chat in
@@ -211,7 +233,13 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	// turn it replaces is already closed, so neither close can stand in for the
 	// other, and the retry's reply must not extend the message of the turn it
 	// replaced.
-	retryEpoch := outcome.OpenTurn(ctx, chatID, vibekit.TurnSourceEmptyRetry)
+	retryEpoch := outcome.StartTurn(ctx, chatID, vibekit.TurnSourceEmptyRetry)
+	if retryEpoch == 0 {
+		// Dead ctx: shutdown, or the turn context died. With no epoch nothing
+		// would finalize, so no ACP call is made.
+		slog.Warn("empty turn: the retry turn could not start", "chat_id", chatID)
+		return
+	}
 	defer outcome.ReleaseTurn(chatID, retryEpoch)
 	reply, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
@@ -323,7 +351,33 @@ func hasMessageID(c *vibekit.Chat, id string) bool {
 	return false
 }
 
-// CmdPrompt handles the prompt command.
+// AdmissionWait is the design's ADMISSION_WAIT_MS: the longest a prompt waits
+// for a contended admission slot before answering 409. It MUST stay below the
+// client's API timeout (30s, @cplieger/fetch API_TIMEOUT_MS) or the client
+// aborts the POST before the refusal arrives;
+// TestAdmissionWait_StaysUnderTheClientAPITimeout pins the margin. A var
+// rather than a const only so tests — this package's and the agent package's
+// integration suite — can shrink a deliberately contended wait; production
+// never writes it.
+var AdmissionWait = 20 * time.Second
+
+// reasonStarting is the 409 refusal class whose holder cannot receive a steer:
+// a cold spawn, a shell, or a prime. The client branches on the VALUE — it
+// renders the busy face and retries instead of converting the 409 to a steer.
+const reasonStarting = "starting"
+
+// promptAck is the prompt's EARLY acknowledgement: admission is decided
+// synchronously and the turn runs on its own goroutine, so the POST answers as
+// soon as the user message is persisted and the admission slot is held.
+type promptAck struct {
+	MessageID string `json:"message_id"`
+	Accepted  bool   `json:"accepted"`
+}
+
+// CmdPrompt handles the prompt command: validate → persist → admit → ack. The
+// turn itself — spawn, prime, MCP wait, StartTurn, the ACP call, the finalize
+// and the empty-turn recovery — runs on its own goroutine (runPromptTurn), so
+// the POST answers in the time of a disk append rather than a turn.
 func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrMissingChatID)
@@ -347,6 +401,11 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 	// the prompt, spends the credits, lets the agent write to the workspace, and
 	// then loses the whole turn at persist, since the same refusal applies there —
 	// and every one of those steps reports success.
+	//
+	// Persist precedes ADMISSION too, deliberately: a 409'd prompt leaves a
+	// persisted row exactly as an accepted one does, the idempotent-by-message-id
+	// append dedupes the client's re-send of the same text, and the client's
+	// post-persist failure discipline (no text restore) depends on the order.
 	if err := appendUserMessage(ctx, roles.chats, roles.bus, roles.workspace, cmd.ChatID, &p); err != nil {
 		if errors.Is(err, chat.ErrTombstoned) {
 			return nil, StatusError(http.StatusConflict, ErrChatNotFound)
@@ -354,40 +413,93 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
-	// 2. Ensure the bridge exists and serialize per-chat prompts. The turn
-	// runs under a context detached from the prompt POST's r.Context()
-	// (see LifecycleAccess.TurnContext): a mid-turn client disconnect must not
-	// cancel the in-flight bridge Call, or the turn fails before it can
-	// finalize and persist the assistant buffer.
-	ctx, cancel := roles.lifecycle.TurnContext(ctx)
-	defer cancel()
-	sb, err := roles.bridges.OpenBridge(ctx, cmd.ChatID, p.Model)
-	if err != nil {
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
-		return nil, StatusError(http.StatusInternalServerError, err)
+	// 2. Admission: a bare per-chat reservation, synchronous and bridge-free.
+	// Held → a bounded wait, then a refusal keyed on the holder's source.
+	if err := reservePromptAdmission(ctx, roles, cmd.ChatID); err != nil {
+		return nil, err
 	}
-	if !sb.TryAcquireForPrompt() {
-		return nil, StatusError(http.StatusConflict, errBusy)
-	}
-	defer sb.ReleaseAfterPrompt()
 
+	// 3. Register the turn in-flight BEFORE the ack goes out, so a shutdown
+	// arriving between the ack and the goroutine's first step still waits for
+	// it. The turn runs under a context detached from the prompt POST's
+	// r.Context() (see LifecycleAccess.TurnContext): the POST returns at the
+	// ack, and the turn must not die with it. The goroutine owns the cancel.
+	roles.lifecycle.InflightAdd(1)
+	turnCtx, cancel := roles.lifecycle.TurnContext(ctx)
+	go runPromptTurn(turnCtx, cancel, roles, cmd.ChatID, &p)
+	return promptAck{Accepted: true, MessageID: p.MessageID}, nil
+}
+
+// reservePromptAdmission takes the chat's admission slot for a prompt,
+// translating a refusal into the two 409 variants the client branches on: a
+// prompt-class holder with a live bridge answers the PLAIN 409 (the client's
+// 409→steer conversion works — the steer lands in KAS's buffer for the
+// in-flight or imminent turn), and every other holder answers 409 with the
+// additive reason "starting", on which the client never attempts an
+// undeliverable steer.
+func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID) error {
+	switch roles.turnOutcome.ReserveTurnForPrompt(ctx, chatID, AdmissionWait) {
+	case AdmissionAcquired:
+		return nil
+	case AdmissionBusy:
+		return StatusError(http.StatusConflict, errBusy)
+	default:
+		return StatusErrorReason(http.StatusConflict, reasonStarting, errBusy)
+	}
+}
+
+// runPromptTurn drives one ADMITTED prompt end to end, owning the reservation
+// CmdPrompt took, the turn context's cancel, and the in-flight registration;
+// every path out releases all three. Failures past the ack are SSE-only: the
+// POST has already answered, so the error frame is the one surface left.
+func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *promptRoles, chatID vibekit.ChatID, p *vibekit.PromptCommand) {
+	defer roles.lifecycle.InflightDone()
+	defer cancel()
+	sb, err := roles.bridges.OpenBridge(ctx, chatID, p.Model)
+	if err != nil {
+		roles.turnOutcome.ReleaseTurnReservation(chatID)
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
+		return
+	}
+	// The reservation already excludes every prompt and shell, so a held bridge
+	// slot here is a programming error — surfaced rather than silent, and the
+	// reservation released so the chat is not wedged behind a phantom holder.
+	if !sb.TryAcquireForPrompt() {
+		roles.turnOutcome.ReleaseTurnReservation(chatID)
+		slog.Error("prompt: bridge slot held despite an owned admission reservation", "chat_id", chatID)
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: "The prompt could not start. Send it again."}))
+		return
+	}
+	promptAdmittedTurn(ctx, roles, sb, chatID, p)
+}
+
+// promptAdmittedTurn runs the turn with both holds owned: prime, MCP wait,
+// StartTurn at bridge-ready, the ACP call, the settle, and the ordered handoff
+// into the empty-turn recovery.
+//
+// The release ORDER on the settled path is the contract: the finalized result
+// is captured via the still-held epoch handle FIRST (the registry drops the
+// retained result at the last release), then the bridge slot, then the
+// reservation — so a waiting prompt is admitted the moment the turn's effects
+// are done — then recovery arbitrates on the CAPTURED result and re-acquires
+// both holds with a try, and ReleaseTurn goes LAST so every epoch-based
+// recovery predicate reads a live record.
+func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chatID vibekit.ChatID, p *vibekit.PromptCommand) {
 	// The prompt Call gets its own cancellable context so CmdCancel's grace
 	// budget has something to trip when KAS never acks a session/cancel.
 	// Without this the Call blocks until the bridge is torn down, and the
-	// deferred ReleaseAfterPrompt above never runs.
+	// ReleaseAfterPrompt below never runs.
 	ctx, cancelPrompt := context.WithCancel(ctx)
 	defer cancelPrompt()
 	sb.BeginPromptCall(cancelPrompt)
 	defer sb.EndPromptCall()
 
-	roles.lifecycle.InflightAdd(1)
-	defer roles.lifecycle.InflightDone()
+	// Prime with history if this session has not had it yet. The "if needed"
+	// is the callee's: it owns the flag. The priming turn's own open/finalize
+	// runs HERE, between the reservation and StartTurn — the reservation is not
+	// a Turn, so the prime's lifecycle is untouched by it.
+	roles.bridges.PrimeIfNeeded(ctx, chatID)
 
-	// 3. Prime with history if this session has not had it yet. The "if needed"
-	// is the callee's: it owns the flag.
-	roles.bridges.PrimeIfNeeded(ctx, cmd.ChatID)
-
-	// 4. Send the prompt to kiro-cli.
 	if !roles.mcp.WaitForReady(ctx, 30*time.Second) {
 		// The registry distinguishes all three causes per server and holds the
 		// enabled-name census, and this is the one moment the join is worth making:
@@ -395,54 +507,78 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 		// fact the operator already has.
 		pending := roles.mcp.PendingSummary(ctx)
 		slog.Warn("MCP readiness timeout, proceeding anyway",
-			"chat_id", cmd.ChatID,
+			"chat_id", chatID,
 			"silent", pending.Silent,
 			"failed", pending.Failed,
 			"awaiting_auth", pending.AwaitingAuth)
 	}
-	// Open the turn BEFORE dispatch. Everything true of it for its whole life is
-	// captured here — the answering model, the credit reading its spend is
-	// measured against, when it began — so the accounting is the turn's own rather
-	// than something this handler carries in locals and hands over at the end.
-	// The epoch is this handler's completion handle on that turn: it is what lets
-	// the recovery below read the turn's own outcome, and releasing it is what
-	// lets the finalized record be dropped.
-	epoch := roles.turnOutcome.OpenTurn(ctx, cmd.ChatID, vibekit.TurnSourcePrompt)
-	defer roles.turnOutcome.ReleaseTurn(cmd.ChatID, epoch)
-	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
+	// Open the turn at bridge-ready, immediately before dispatch. Everything
+	// true of it for its whole life is captured here — the answering model, the
+	// credit reading its spend is measured against, when it began — with the
+	// bridge live, so the spawn, the prime and the MCP wait are excluded from
+	// the turn's accounting. The epoch is this goroutine's completion handle on
+	// that turn: it is what lets the recovery below read the turn's own outcome,
+	// and releasing it is what lets the finalized record be dropped.
+	epoch := roles.turnOutcome.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	if epoch == 0 {
+		// Dead ctx: shutdown, or a cancel during the spawn/prime/MCP window. With
+		// no epoch nothing would finalize and `thinking` would never clear, so the
+		// failure is broadcast, both holds release, and no ACP call is made.
+		sb.ReleaseAfterPrompt()
+		roles.turnOutcome.ReleaseTurnReservation(chatID)
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+			Code: vibekit.ErrCodePromptFailed, Message: "The turn was cancelled before the agent answered.",
+		}))
+		return
+	}
+	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
-	promptParams := BuildPromptParams(ctx, roles.workspace, sb, &p)
-	reply, err := callPromptWithRetry(ctx, sb, promptParams, cmd.ChatID)
+	promptParams := BuildPromptParams(ctx, roles.workspace, sb, p)
+	reply, err := callPromptWithRetry(ctx, sb, promptParams, chatID)
 	elapsed := time.Since(start)
 	if err != nil {
-		return nil, reportPromptFailure(ctx, roles, cmd.ChatID, epoch, err, elapsed)
+		reportPromptFailure(ctx, roles, chatID, epoch, err, elapsed)
+		sb.ReleaseAfterPrompt()
+		roles.turnOutcome.ReleaseTurnReservation(chatID)
+		roles.turnOutcome.ReleaseTurn(chatID, epoch)
+		return
 	}
-	slog.Info("prompt complete", "chat_id", cmd.ChatID, "elapsed", elapsed)
+	slog.Info("prompt complete", "chat_id", chatID, "elapsed", elapsed)
 
 	// Settle this turn BEFORE deciding whether it produced nothing: the close is
 	// what settles the withheld steer carry and measures the turn, and the recovery
 	// reads that measurement. Ordinarily the wire's turn_end has already closed it
 	// by the time the folder reaches this position, and the call only waits.
-	roles.turnOutcome.SettleTurnOnResponse(ctx, cmd.ChatID, epoch, reply.seq, reply.resp)
-	recoverEmptyTurn(ctx, roles.bridges, roles.chats, roles.bus, roles.turnOutcome, cmd.ChatID, epoch, &p, promptParams)
-	return responseOK, nil
+	roles.turnOutcome.SettleTurnOnResponse(ctx, chatID, epoch, reply.seq, reply.resp)
+	// Capture the result while the epoch handle is still held — the registry
+	// drops it at the last release — then free both admission holds so a
+	// waiting prompt is admitted before the recovery's own bookkeeping runs.
+	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, epoch)
+	sb.ReleaseAfterPrompt()
+	roles.turnOutcome.ReleaseTurnReservation(chatID)
+	if aErr != nil {
+		slog.Warn("empty turn check: no turn outcome", "chat_id", chatID, keyError, aErr)
+	} else {
+		recoverEmptyTurn(ctx, roles.bridges, roles.chats, roles.bus, roles.turnOutcome, chatID, epoch, result, p, promptParams)
+	}
+	roles.turnOutcome.ReleaseTurn(chatID, epoch)
 }
 
-// reportPromptFailure finalizes a turn whose prompt Call failed and returns the
-// error the POST answers with.
+// reportPromptFailure finalizes a turn whose prompt Call failed and broadcasts
+// the failure. The POST answered at the ack, so the error frame is the only
+// live surface; post-ack failures are SSE-only by design.
 //
 // ONE rendering of the cause, on every surface that carries it. Handing the raw
-// error to RespondErr instead meant RPCErrorText's fallback -- the machine triplet
-// {"errorType":...,"retryErrorType":"THROTTLING",...} -- overwrote the prose
-// promptFailureReason exists to produce. The chain is in the log line here; what
-// travels to the user is the reason.
+// error to the broadcast instead meant RPCErrorText's fallback -- the machine
+// triplet {"errorType":...,"retryErrorType":"THROTTLING",...} -- overwrote the
+// prose promptFailureReason exists to produce. The chain is in the log line
+// here; what travels to the user is the reason.
 //
-// Three surfaces take it, and they have three different lifetimes: the POST's
-// error body and the SSE frame both reach the toast (whichever arrives first wins,
-// the other dedupes), and the transcript's interrupted divider keeps it for good.
-// The divider is why the reason is computed BEFORE the finalize call --
-// AbandonInFlightTurn writes it.
-func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, err error, elapsed time.Duration) error {
+// Two surfaces take it, with two lifetimes: the SSE frame reaches the toast,
+// and the transcript's interrupted divider keeps it for good. The divider is
+// why the reason is computed BEFORE the finalize call -- AbandonInFlightTurn
+// writes it.
+func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, err error, elapsed time.Duration) {
 	slog.Error("prompt failed", "chat_id", chatID, keyError, err, "elapsed", elapsed)
 	reason := promptFailureReason(err)
 	// An auth failure is the one prompt failure whose remedy is not "send
@@ -473,7 +609,6 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, epoch, reason)
 	roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID,
 		vibekit.ErrorPayload{Code: code, Message: reason}))
-	return StatusError(http.StatusInternalServerError, errors.New(reason))
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map. Takes

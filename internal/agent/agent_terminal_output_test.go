@@ -758,9 +758,9 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	h.coord.WireTurnEnd(ctx, "c1", vibekit.StopReasonEndTurn)
 
 	// The user's next turn, with a command of its own.
-	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	if epoch == 0 {
-		t.Fatal("Setup: OpenTurn refused, so there is no turn to cancel")
+		t.Fatal("Setup: StartTurn refused, so there is no turn to cancel")
 	}
 	stageTerminal(h, "prompt-cmd", "c1")
 

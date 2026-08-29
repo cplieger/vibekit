@@ -223,6 +223,10 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.Chat
 		return nil, err
 	}
 	b, _ := v.(*sharedBridge)
+	// The bridge-ready wake: a prompt parked on the admission slot answers on
+	// its holder's source, and the bridge becoming live is the transition that
+	// changes the answer without moving any registry state.
+	bc.turns.wakeChat(chatID)
 	return b, nil
 }
 
@@ -268,7 +272,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 
 	setupErr := func(err error) error {
 		bc.bridge.mgr.removeIfSame(chatID, sb)
-		sb.state = bridgeIdle
+		sb.setState(bridgeIdle)
 		return err
 	}
 
@@ -359,7 +363,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 		sb.primeReason = primeReasonFork
 		sb.primeFrom = src
 	}
-	sb.state = bridgeIdle
+	sb.setState(bridgeIdle)
 
 	return sb, nil
 }
@@ -431,7 +435,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		slog.Error("refresh session metadata", "chat_id", chatID, "error", mErr)
 	}
 	sb.primed = true
-	sb.state = bridgeIdle
+	sb.setState(bridgeIdle)
 	// The chat is back; heal its restart-paused runs. Off the spawn path — the
 	// user's prompt must not wait behind a run-list round trip — and AFTER the
 	// state flip, so the resume's own bridge Call finds an idle bridge.
@@ -728,7 +732,7 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.C
 	// what keeps the unacknowledged set from ever holding two: the caller's own
 	// pre-open cannot happen until this turn has finalized, so a wire turn_start
 	// can only ever bind to one candidate.
-	epoch := bc.OpenTurn(ctx, chatID, vibekit.TurnSourcePrime)
+	epoch := bc.StartTurn(ctx, chatID, vibekit.TurnSourcePrime)
 	defer bc.ReleaseTurn(chatID, epoch)
 	resp, seq, err := sb.bridge.CallAt(ctx, vibekit.MethodPrompt, command.SessionParams(sb, map[string]any{
 		"prompt": []map[string]any{vibekit.TextBlock(prime)},
@@ -783,13 +787,6 @@ func (bc *BridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID vi
 // structural half of the empty-turn gate. See turnRegistry.openedAfter.
 func (bc *BridgeCoordinator) TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool {
 	return bc.turns.openedAfter(chatID, epoch)
-}
-
-// PrimeTurnOpen reports whether the chat's open turn is a PRIME.
-// Satisfies command.TurnOutcomeAccess; see it for why a steer is refused there.
-func (bc *BridgeCoordinator) PrimeTurnOpen(chatID vibekit.ChatID) bool {
-	facts, open := bc.turns.openTurns()[chatID]
-	return open && facts.Source == vibekit.TurnSourcePrime
 }
 
 // agentFinishedBody is what the agent-finished notification SAYS.

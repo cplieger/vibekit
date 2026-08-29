@@ -44,7 +44,7 @@ func startedTurnOn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.C
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.OpenTurn(t.Context(), chatID, vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), chatID, vibekit.TurnSourcePrompt)
 	buf := h.stageTurnBuffer(t, chatID)
 	buf.Started = true
 	buf.MessageID = newMessageID()
@@ -217,7 +217,7 @@ func TestFinalizeLocalShellTurn_AnnouncesTheEnd(t *testing.T) {
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
 
 	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", epoch)
 
@@ -226,10 +226,10 @@ func TestFinalizeLocalShellTurn_AnnouncesTheEnd(t *testing.T) {
 	}
 }
 
-// TestOpenTurn_LocalShellRecordsNoModel is the stated source rule: no model
+// TestStartTurn_LocalShellRecordsNoModel is the stated source rule: no model
 // answered a shell command, so a footer claiming one would be a lie about who
 // produced the output.
-func TestOpenTurn_LocalShellRecordsNoModel(t *testing.T) {
+func TestStartTurn_LocalShellRecordsNoModel(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
@@ -239,7 +239,7 @@ func TestOpenTurn_LocalShellRecordsNoModel(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
+	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
 
 	turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
 	if !won {
@@ -250,11 +250,11 @@ func TestOpenTurn_LocalShellRecordsNoModel(t *testing.T) {
 	}
 }
 
-// TestOpenTurn_CapturesTheCreditBaseline is what gives a turn its own spend. The
+// TestStartTurn_CapturesTheCreditBaseline is what gives a turn its own spend. The
 // baseline used to be a local in the prompt handler, so a turn vibekit did not
 // prompt had none at all and its credits were attributed to whatever turn came
 // next.
-func TestOpenTurn_CapturesTheCreditBaseline(t *testing.T) {
+func TestStartTurn_CapturesTheCreditBaseline(t *testing.T) {
 	h, cs, _ := newTestHub()
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
@@ -264,7 +264,7 @@ func TestOpenTurn_CapturesTheCreditBaseline(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 
 	turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
 	if !won {
@@ -298,7 +298,7 @@ func TestFinalizeTurn_MeasuresEmptinessAfterFlushingTheCarry(t *testing.T) {
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	// The turn's whole reply is still withheld: prose that merely looks like the
 	// start of a marker, so the flush releases it rather than dropping it.
 	const reply = "see the note in ["
@@ -339,7 +339,7 @@ func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
 
 	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", epoch)
 
@@ -379,7 +379,7 @@ func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
+	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
 	defer h.coord.ReleaseTurn("c1", epoch)
 
 	dead, cancel := context.WithCancel(t.Context())
@@ -396,9 +396,9 @@ func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 
 // An epoch-scoped closer handed a ZERO epoch closes nothing.
 //
-// Zero was overloaded: it meant "take whatever is open" AND it is what OpenTurn
+// Zero was overloaded: it meant "take whatever is open" AND it is what StartTurn
 // returns when it refuses, which is reachable — a user cancel landing while a
-// prompt's OpenTurn is parked on the previous turn's persistence. The prompt Call
+// prompt's StartTurn is parked on the previous turn's persistence. The prompt Call
 // then fails on the dead context and the failure path ran with epoch zero, so
 // AbandonInFlightTurn claimed the chat's open turn: an agent-initiated one, whose
 // partial it persisted under an interrupt outcome carrying ANOTHER turn's failure

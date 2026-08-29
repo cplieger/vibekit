@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -100,10 +101,26 @@ func (rt *Runtime) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
 	rt.cleanupChatState(ctx, chatID, false)
 }
 
-// OpenTurn opens the chat's turn before the call that drives it, returning the
-// epoch the caller holds a completion handle on.
-func (rt *Runtime) OpenTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
-	return rt.coord.OpenTurn(ctx, chatID, source)
+// StartTurn opens the chat's turn at bridge-ready, immediately before the call
+// that drives it, returning the epoch the caller holds a completion handle on.
+func (rt *Runtime) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+	return rt.coord.StartTurn(ctx, chatID, source)
+}
+
+// ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up
+// to wait while it is held, and keys a refusal on the holder's source.
+func (rt *Runtime) ReserveTurnForPrompt(ctx context.Context, chatID vibekit.ChatID, wait time.Duration) command.AdmissionOutcome {
+	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait)
+}
+
+// TryReserveTurn takes the chat's admission slot iff it is free.
+func (rt *Runtime) TryReserveTurn(chatID vibekit.ChatID, source vibekit.TurnOpenSource) bool {
+	return rt.coord.TryReserveTurn(chatID, source)
+}
+
+// ReleaseTurnReservation frees the chat's admission slot and wakes waiters.
+func (rt *Runtime) ReleaseTurnReservation(chatID vibekit.ChatID) {
+	rt.coord.ReleaseTurnReservation(chatID)
 }
 
 // AwaitTurn blocks until the named turn has finalized and reports what it did.
@@ -111,7 +128,7 @@ func (rt *Runtime) AwaitTurn(ctx context.Context, chatID vibekit.ChatID, epoch v
 	return rt.coord.AwaitTurn(ctx, chatID, epoch)
 }
 
-// ReleaseTurn gives up the completion handle OpenTurn issued.
+// ReleaseTurn gives up the completion handle StartTurn issued.
 func (rt *Runtime) ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
 	rt.coord.ReleaseTurn(chatID, epoch)
 }
@@ -134,9 +151,11 @@ func (rt *Runtime) TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoc
 	return rt.coord.TurnOpenedAfter(chatID, epoch)
 }
 
-// PrimeTurnOpen reports whether the chat's open turn is a prime.
-func (rt *Runtime) PrimeTurnOpen(chatID vibekit.ChatID) bool {
-	return rt.coord.PrimeTurnOpen(chatID)
+// AdmissionHolderSource reports who holds the chat's admission slot: the open
+// turn when one is open, else the reservation. The steer refusal reads the
+// prime window off it, and the prompt-refusal arm keys on it.
+func (rt *Runtime) AdmissionHolderSource(chatID vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+	return rt.coord.AdmissionHolderSource(chatID)
 }
 
 // FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.

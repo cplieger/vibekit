@@ -77,6 +77,25 @@ func (sb *sharedBridge) releaseAfterPrompt() {
 	sb.mu.Unlock()
 }
 
+// startedPastSpawn reports whether the bridge has finished starting. The
+// admission arm's "live bridge" is this, not map presence: the manager
+// registers the record before Start so concurrent opens coalesce.
+func (sb *sharedBridge) startedPastSpawn() bool {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.state != bridgeStarting
+}
+
+// setState publishes a lifecycle transition. The spawn used to write the field
+// bare — safe while nothing could hold the bridge before OpenBridge returned —
+// but the admission arm reads liveness DURING the spawn, so the write takes
+// the lock like every other state transition.
+func (sb *sharedBridge) setState(s bridgeState) {
+	sb.mu.Lock()
+	sb.state = s
+	sb.mu.Unlock()
+}
+
 // stopCancelTimerLocked disarms a pending cancel-grace timer. Caller holds mu.
 func (sb *sharedBridge) stopCancelTimerLocked() {
 	if sb.cancelTimer != nil {

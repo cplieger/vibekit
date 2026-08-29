@@ -70,7 +70,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 		Description: "Wiring the PR status poller",
 	})
 
-	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
@@ -102,7 +102,7 @@ func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 

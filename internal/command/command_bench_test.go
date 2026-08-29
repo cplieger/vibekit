@@ -14,8 +14,8 @@ import (
 
 // benchDeps is a minimal host double for benchmarking dispatch overhead.
 type benchDeps struct {
-	// primeOpen is what PrimeTurnOpen answers, so a test can put the chat in the
-	// PRIME window a steer must be refused in.
+	// primeOpen is what AdmissionHolderSource reports a prime holder for, so a
+	// test can put the chat in the PRIME window a steer must be refused in.
 	primeOpen bool
 }
 
@@ -64,12 +64,21 @@ func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary { return M
 func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)    {}
 func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)     {}
 
-// OpenTurn answers a real epoch, not zero. Zero is the REFUSAL — the local-shell
+// StartTurn answers a real epoch, not zero. Zero is the REFUSAL — the local-shell
 // source rule declines while another turn is open — so a stub returning it makes
 // every `!cmd` test 409.
-func (d *benchDeps) OpenTurn(context.Context, vibekit.ChatID, vibekit.TurnOpenSource) vibekit.TurnEpoch {
+func (d *benchDeps) StartTurn(context.Context, vibekit.ChatID, vibekit.TurnOpenSource) vibekit.TurnEpoch {
 	return 1
 }
+
+// ReserveTurnForPrompt admits every prompt: contention is a per-test double's
+// business, not the bench stub's.
+func (d *benchDeps) ReserveTurnForPrompt(context.Context, vibekit.ChatID, time.Duration) AdmissionOutcome {
+	return AdmissionAcquired
+}
+
+func (d *benchDeps) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource) bool { return true }
+func (d *benchDeps) ReleaseTurnReservation(vibekit.ChatID)                      {}
 
 func (d *benchDeps) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) (vibekit.TurnResult, error) {
 	return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
@@ -81,7 +90,15 @@ func (d *benchDeps) SettleTurnOnResponse(context.Context, vibekit.ChatID, vibeki
 
 func (d *benchDeps) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool { return false }
 
-func (d *benchDeps) PrimeTurnOpen(vibekit.ChatID) bool { return d.primeOpen }
+// AdmissionHolderSource reports a prime holder when primeOpen is set, else no
+// holder at all.
+func (d *benchDeps) AdmissionHolderSource(vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+	if d.primeOpen {
+		return vibekit.TurnSourcePrime, true
+	}
+	return 0, false
+}
+
 func (d *benchDeps) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
 }
 
@@ -113,7 +130,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.InflightDone()
 	d.DeleteChatState(t.Context(), "x")
 	d.PrimeIfNeeded(t.Context(), "x")
-	d.OpenTurn(t.Context(), "x", vibekit.TurnSourcePrompt)
+	d.StartTurn(t.Context(), "x", vibekit.TurnSourcePrompt)
 	d.ReleaseTurn("x", 0)
 }
 

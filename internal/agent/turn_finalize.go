@@ -64,7 +64,7 @@ type turnClose struct {
 	Seq uint64
 	// AnyOpen is the EXPLICIT spelling of "close whatever is open", for a closer
 	// that describes the CHAT rather than one turn. Explicit rather than a zero
-	// Epoch, because zero is ALSO what OpenTurn returns when ctx died while the chat
+	// Epoch, because zero is ALSO what StartTurn returns when ctx died while the chat
 	// was finalizing. Never set alongside Epoch.
 	AnyOpen bool
 	Closer  turnCloser
@@ -79,14 +79,19 @@ type turnStats struct {
 	ElapsedMs    float64
 }
 
-// OpenTurn opens chatID's turn, capturing what is true of it for its whole life:
-// the answering model, and the credit reading its spend is measured against. It
-// returns the epoch, on which the caller holds a completion handle until
+// StartTurn opens chatID's turn — today's full open(), run at bridge-ready
+// immediately before the ACP call, so everything true of the turn for its whole
+// life is stamped with the bridge live: the answering model (no empty-model
+// latch), and the credit reading its spend is measured against (the spawn, the
+// prime and the MCP wait are excluded from the turn's accounting). Admission is
+// NOT here: the reservation was taken synchronously (see turn_admission.go),
+// and the priming turn's own open/finalize runs between the two untouched.
+// It returns the epoch, on which the caller holds a completion handle until
 // ReleaseTurn; zero means ctx died while the chat was finalizing. It WAITS out a
 // finalize in progress, and a prompt-shaped source finding a turn the WIRE started
 // CLOSES it first — no closer can claim that turn, so opening over it would drop
 // content already streamed to clients.
-func (bc *BridgeCoordinator) OpenTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
 	if source.Acknowledgeable() {
 		if displaced, ok := bc.turns.displaceableWireTurn(chatID); ok {
 			slog.Info("a prompt displaced a live agent-initiated turn",
@@ -115,7 +120,7 @@ func (bc *BridgeCoordinator) AwaitTurn(ctx context.Context, chatID vibekit.ChatI
 	return bc.turns.await(ctx, chatID, epoch)
 }
 
-// ReleaseTurn gives up the completion handle OpenTurn issued. The finalized
+// ReleaseTurn gives up the completion handle StartTurn issued. The finalized
 // record is dropped when its last handle goes, which is what bounds retention.
 func (bc *BridgeCoordinator) ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
 	bc.turns.release(chatID, epoch)
@@ -183,7 +188,7 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.Ch
 // claimForCloser claims the turn a closer is ending. An EPOCH claims exactly that
 // turn; AnyOpen takes whatever is open, because it describes the chat. Neither
 // OPENS a turn to close it, or a bracket for an already-closed turn makes a
-// phantom. A ZERO epoch closes nothing — that is what OpenTurn returns when ctx
+// phantom. A ZERO epoch closes nothing — that is what StartTurn returns when ctx
 // died, so falling through would let a prompt failure claim a turn it never opened.
 func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID vibekit.ChatID, tc turnClose) (*Turn, bool) {
 	if tc.AnyOpen {

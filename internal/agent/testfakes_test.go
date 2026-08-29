@@ -47,6 +47,10 @@ type fakeBridge struct {
 	// assert what a spawn was actually handed (e.g. that the utility bridge
 	// gets no operator launch flags).
 	startOpts *vibekit.StartOpts
+	// startGate, when non-nil, parks Start until closed — the seam that holds a
+	// spawn OPEN, so a test of the bridge-ready transition is not saved by the
+	// forward-attach wake racing an instantaneous Start.
+	startGate chan struct{}
 	// notifsOnStart is the transcript a session/load replays. Start pushes these
 	// BEFORE it returns, which is the ordering the real bridge has and the one
 	// the settle barrier's correctness depends on — see Start.
@@ -69,7 +73,17 @@ func newFakeBridge() *fakeBridge {
 	}
 }
 
-func (b *fakeBridge) Start(_ context.Context, opts *vibekit.StartOpts) error {
+func (b *fakeBridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
+	b.mu.Lock()
+	gate := b.startGate
+	b.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	b.mu.Lock()
 	b.started = true
 	b.startOpts = opts

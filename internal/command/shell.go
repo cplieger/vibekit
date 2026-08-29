@@ -70,21 +70,16 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		return nil, StatusError(http.StatusBadRequest, errEmptyPrompt)
 	}
 
-	// Busy-guard: serialize against a real streaming turn on the same
-	// chat using the SAME per-chat bridge prompt lock CmdPrompt acquires
-	// (TryAcquireForPrompt/ReleaseAfterPrompt). If a turn is already in
-	// flight, return 409 so the client queue drains this !cmd after it —
-	// otherwise the shell path would clear thinking, drain the queue, and
-	// broadcast turn_ended in the middle of the real turn. A chat with no
-	// bridge yet has never run a turn, so !cmd runs locally with no lock
-	// (nothing to collide with); we broadcast the shell turn_ended only
-	// when we own the turn (locked) or when there is no bridge at all.
-	if sb := roles.bridges.Bridge(cmd.ChatID); sb != nil {
-		if !sb.TryAcquireForPrompt() {
-			return nil, StatusError(http.StatusConflict, errBusy)
-		}
-		defer sb.ReleaseAfterPrompt()
+	// Admission: the same per-chat reservation a prompt takes, as a TRY — never
+	// a wait. ONE mechanism serializes prompts and shells, whatever state the
+	// bridge is in: a `!cmd` during a prompt's spawn, prime, MCP wait or
+	// streaming turn refuses immediately with 409, and the client surfaces the
+	// busy answer. The turn-source rule below still refuses a shell while an
+	// AGENT-initiated turn is open, which holds no reservation.
+	if !roles.turnOutcome.TryReserveTurn(cmd.ChatID, vibekit.TurnSourceLocalShell) {
+		return nil, StatusError(http.StatusConflict, errBusy)
 	}
+	defer roles.turnOutcome.ReleaseTurnReservation(cmd.ChatID)
 
 	roles.lifecycle.InflightAdd(1)
 	defer roles.lifecycle.InflightDone()
@@ -108,9 +103,9 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 	// turn open behind it.
 	//
 	// A zero epoch is the source rule REFUSING while an agent turn is open. The
-	// prompt-slot guard above catches the turns vibekit prompted; this catches the
-	// ones it did not, which hold no slot.
-	epoch := roles.turnOutcome.OpenTurn(ctx, cmd.ChatID, vibekit.TurnSourceLocalShell)
+	// reservation above excludes the turns vibekit admitted; this catches the
+	// ones it did not, which hold no reservation.
+	epoch := roles.turnOutcome.StartTurn(ctx, cmd.ChatID, vibekit.TurnSourceLocalShell)
 	if epoch == 0 {
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}

@@ -215,8 +215,9 @@ type MembershipDeps struct {
 	Retention  retentionRead
 }
 
-// NewMembership builds the coordinator.
-func NewMembership(deps MembershipDeps) *Membership {
+// NewMembership builds the coordinator. deps travels by pointer: it is a
+// wiring record read once at construction, not a value worth copying.
+func NewMembership(deps *MembershipDeps) *Membership {
 	return &Membership{
 		chats:      deps.Chats,
 		tabs:       deps.Tabs,

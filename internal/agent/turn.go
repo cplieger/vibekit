@@ -97,11 +97,18 @@ type chatLifecycle struct {
 	// fwdGen counts the forward goroutines attached for this chat: a new bridge
 	// restarts its sequence at zero, so positions compare only within a generation.
 	fwdGen uint64
+	// reservedSource is who holds the admission slot, meaningful only while
+	// reserved is true. The reservation is NOT a Turn: it is the bare per-chat
+	// admission a prompt or shell takes before any bridge exists, and the Turn
+	// record is minted at StartTurn — see turn_admission.go.
+	reservedSource vibekit.TurnOpenSource
 	// forwardGone is whether the attached forward goroutine has exited. The
 	// position can no longer advance, so a settle waiting on one stops waiting.
 	forwardGone bool
-	state       TurnState
-	mu          sync.Mutex
+	// reserved is whether the admission slot is held.
+	reserved bool
+	state    TurnState
+	mu       sync.Mutex
 }
 
 // turnRegistry holds one lifecycle per chat.

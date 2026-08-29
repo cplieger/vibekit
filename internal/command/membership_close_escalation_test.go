@@ -63,7 +63,7 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 	if realStore, ok := tabSet.(*tabs.Store); ok {
 		h.st = realStore
 	}
-	h.mem = NewMembership(MembershipDeps{
+	h.mem = NewMembership(&MembershipDeps{
 		Chats:    store,
 		Tabs:     tabSet,
 		Bus:      bus,

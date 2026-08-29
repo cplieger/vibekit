@@ -75,7 +75,7 @@ func newFlakyMembership(t *testing.T, chats ChatStore) (*Membership, *flakyTabs,
 	flaky := &flakyTabs{Store: st}
 	bus := &tabBus{}
 	teardown := &recordingTeardown{}
-	return NewMembership(MembershipDeps{Chats: chats, Tabs: flaky, Bus: bus, Teardown: teardown}), flaky, bus
+	return NewMembership(&MembershipDeps{Chats: chats, Tabs: flaky, Bus: bus, Teardown: teardown}), flaky, bus
 }
 
 // recordingTeardown is the delete path's teardown seam. The ordering tests
@@ -418,7 +418,7 @@ func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 		t.Fatalf("open tab store: %v", err)
 	}
 	var tornDown []vibekit.ChatID
-	mem := NewMembership(MembershipDeps{
+	mem := NewMembership(&MembershipDeps{
 		Chats: store, Tabs: st, Bus: &tabBus{},
 		CloseChat: func(_ context.Context, id vibekit.ChatID) { tornDown = append(tornDown, id) },
 	})
