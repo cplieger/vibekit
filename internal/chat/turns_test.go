@@ -17,12 +17,46 @@ type outcomeFixture struct {
 	Cases []struct {
 		Name string `json:"name"`
 		Body []struct {
-			Refusal bool   `json:"refusal"`
-			Event   string `json:"event"`
+			Refusal   bool   `json:"refusal"`
+			Event     string `json:"event"`
+			Outcome   string `json:"outcome"`
+			Truncated bool   `json:"truncated"`
 		} `json:"body"`
 		Want   string `json:"want"`
 		IsLive bool   `json:"is_live"`
 	} `json:"cases"`
+	Segmentation []struct {
+		Name     string           `json:"name"`
+		Messages []fixtureMessage `json:"messages"`
+		Want     []struct {
+			ID             string `json:"id"`
+			Outcome        string `json:"outcome"`
+			AgentInitiated bool   `json:"agent_initiated"`
+		} `json:"want"`
+	} `json:"segmentation"`
+}
+
+// fixtureMessage is one persisted message in a segmentation case.
+type fixtureMessage struct {
+	Role    string `json:"role"`
+	ID      string `json:"id"`
+	Event   string `json:"event"`
+	Outcome string `json:"outcome"`
+	Refusal bool   `json:"refusal"`
+}
+
+// message builds the persisted message this fixture row describes.
+func (f fixtureMessage) message() vibekit.Message {
+	m := vibekit.Message{ID: f.ID, Role: vibekit.Role(f.Role), Content: "ok"}
+	if f.Event != "" {
+		m.EventKind = vibekit.EventKind(f.Event)
+		m.Content = ""
+	}
+	if f.Refusal {
+		m.Refusal = &vibekit.RefusalInfo{}
+	}
+	m.TurnOutcome = vibekit.TurnOutcome(f.Outcome)
+	return m
 }
 
 // TestTurnOutcomeContract is one half of a cross-language pin: turns.node.test.ts
@@ -52,10 +86,53 @@ func TestTurnOutcomeContract(t *testing.T) {
 					m.Role = vibekit.RoleEvent
 					m.EventKind = vibekit.EventKind(b.Event)
 				}
+				m.TurnOutcome = vibekit.TurnOutcome(b.Outcome)
+				m.TurnTruncated = b.Truncated
 				body = append(body, m)
 			}
 			if got := deriveTurnOutcome(body, tc.IsLive); string(got) != tc.Want {
 				t.Errorf("deriveTurnOutcome = %q, want %q", got, tc.Want)
+			}
+		})
+	}
+}
+
+// TestTurnSegmentationContract is the other half of the same cross-language pin,
+// over the BOUNDARY rule rather than the outcome rule. The two are separate
+// tables because they answer different questions: which turn a message belongs to,
+// and how that turn ended.
+func TestTurnSegmentationContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/turn_outcomes.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fx outcomeFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	if len(fx.Segmentation) == 0 {
+		t.Fatal("fixture carries no segmentation cases; a silently-empty table would pass forever")
+	}
+	for _, tc := range fx.Segmentation {
+		t.Run(tc.Name, func(t *testing.T) {
+			msgs := make([]vibekit.Message, 0, len(tc.Messages))
+			for _, fm := range tc.Messages {
+				msgs = append(msgs, fm.message())
+			}
+			got := projectTurnSummaries(msgs, false)
+			if len(got) != len(tc.Want) {
+				t.Fatalf("projectTurnSummaries produced %d turns, want %d: %+v", len(got), len(tc.Want), got)
+			}
+			for i, want := range tc.Want {
+				if got[i].ID != want.ID {
+					t.Errorf("turn %d opens on %q, want %q", i+1, got[i].ID, want.ID)
+				}
+				if got[i].AgentInitiated != want.AgentInitiated {
+					t.Errorf("turn %d agent_initiated = %v, want %v", i+1, got[i].AgentInitiated, want.AgentInitiated)
+				}
+				if string(got[i].Outcome) != want.Outcome {
+					t.Errorf("turn %d outcome = %q, want %q", i+1, got[i].Outcome, want.Outcome)
+				}
 			}
 		})
 	}

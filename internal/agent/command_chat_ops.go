@@ -29,9 +29,9 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, 
 	rt.bus.chatStatus.Clear(chatID)
 	rt.coord.CloseBridge(chatID)
 	rt.agentTerms.KillForChat(chatID)
-	rt.lifecycle.mu.Lock()
-	rt.bridge.assistantBufs.Delete(chatID)
-	rt.lifecycle.mu.Unlock()
+	// The turn records hold the buffers, so forgetting the chat's lifecycle drops
+	// its in-flight content with it. There is no second store to clear.
+	rt.coord.turns.forget(chatID)
 	if reapDurable {
 		rt.reapChatSession(ctx, chatID)
 	}

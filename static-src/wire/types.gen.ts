@@ -6,7 +6,7 @@ export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served" | "auth_token_unavailable";
 
-export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked";
+export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked" | "turn_outcome";
 
 export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
@@ -20,7 +20,7 @@ export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "
 
 export type SettledBy = "user" | "unattended";
 
-export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal";
+export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests";
 
 export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs";
 
@@ -29,6 +29,8 @@ export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 
 export type Transport = "stdio" | "http" | "sse";
+
+export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" | "failed" | "refused" | "unknown";
 
 /**
  * AccountUsage is the account/subscription usage snapshot for the
@@ -793,6 +795,26 @@ export interface Message {
   event_kind?: EventKind;
   id: string;
   /**
+ * TurnOutcome is how this turn ENDED, stamped on the message that finalized it
+ * — the last assistant message, or an EventTurnOutcome marker when the turn
+ * emitted nothing. It is the durable half of a fact that otherwise exists only
+ * on the live turn_ended SSE, so a reloaded transcript had to guess it from the
+ * event messages that happened to survive.
+ * //
+ * Its presence is also what CLOSES a turn for the two turn projections: the
+ * next assistant message or marker after it opens a new segment. A message
+ * persisted before this field existed carries none, so those turns never close
+ * and both projections behave exactly as they did.
+ */
+  turn_outcome?: TurnOutcome;
+  /**
+ * TurnStopReasonRaw is the wire's stop reason verbatim. Kept because the enum
+ * is OPEN — KAS exceeds ACP spec v1's closed union — so a value vibekit has
+ * not measured is recoverable from the record instead of flattened into
+ * `unknown`. No consumer may branch on it; TurnOutcome is what they read.
+ */
+  turn_stop_reason_raw?: StopReason;
+  /**
  * TurnModel is the model that answered this turn, stamped on the final
  * assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
  * below. It belongs on the MESSAGE and not only on the Chat because the
@@ -848,6 +870,15 @@ export interface Message {
   turn_credits?: number;
   turn_elapsed_ms?: number;
   ts: number;
+  /**
+ * TurnTruncated marks a turn the model stopped at a bound: it completed, and
+ * its answer is cut off. Stored though derivable from the raw stop reason, so
+ * the Go and TypeScript projections do not each re-implement the mapping.
+ * //
+ * Last in the struct because it is the only bool: govet's fieldalignment counts
+ * leading pointer bytes, and a bool between the strings above pads them apart.
+ */
+  turn_truncated?: boolean;
 }
 
 /**
@@ -2118,6 +2149,14 @@ export interface TurnEndedPayload {
  * (also persisted on the message; here for the live render).
  */
   refusal?: RefusalInfo;
+  /**
+ * Outcome is the turn's RESULT, and it is what a client reads. StopReason
+ * travels beside it as the wire's raw text because the enum is OPEN, and no
+ * consumer may branch on that text: an unmeasured value maps to `unknown`, and
+ * grading it from the string is how six banner codes came to decide whether a
+ * turn was over.
+ */
+  outcome?: TurnOutcome;
   stop_reason?: StopReason;
   /**
  * Model is the model that answered this turn, for the live footer render.
@@ -2127,6 +2166,8 @@ export interface TurnEndedPayload {
   model?: string;
   credits_delta?: number;
   elapsed_ms?: number;
+  /** Truncated is a turn the model stopped at a bound: completed, answer cut off. */
+  truncated?: boolean;
 }
 
 /**

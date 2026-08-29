@@ -42,6 +42,11 @@ type sessionScoped interface {
 type bridgeCaller interface {
 	// Call sends an RPC call to kiro-cli.
 	Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error)
+	// CallAt is Call plus the read loop position at which the response arrived. A
+	// prompt cannot be settled from its response alone: notifications queue on a
+	// buffered channel while a response goes straight to the waiting Call, so the
+	// wire's own turn_end is routinely still unread when the response lands.
+	CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error)
 }
 
 // sessionCaller is the commonest shape on this path: one call, addressed to the
@@ -222,7 +227,12 @@ type PendingPermAccess interface {
 	// settledBy travels with the claim because the winning take is broadcast to
 	// the surfaces that lost, and their card says who answered. From a command
 	// handler that is always vibekit.SettledByUser — a person clicked something.
-	TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool
+	//
+	// The CHAT is part of the claim because a request id is unique only within one
+	// bridge: every bridge mints ids from zero, so two chats routinely hold the
+	// same id, and an id-only claim let one chat's answer retire the other's card.
+	// Every caller here has cmd.ChatID.
+	TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool
 }
 
 // TerminalAccess is the interrupt's process half: a turn cancel must reach
@@ -326,43 +336,59 @@ type TokenSource interface {
 	Invalidate()
 }
 
-// TurnStats is a finished turn's two measurements.
-//
-// A struct because EmitTurnEndedWithStats took them as an adjacent
-// `creditsDelta, elapsedMs float64` pair — on an interface METHOD, so the
-// declaration, the two implementations and the call site could each be read
-// without the others. A transposition compiles and is silent in both
-// directions: the turn footer reports ~40,000 credits for a 40-second turn and
-// 0.04 ms of elapsed time, and both values are persisted on the message, so the
-// wrong numbers survive a reload with nothing to compare them against. No
-// runtime guard is possible — every value either field can hold is legal in the
-// other.
-type TurnStats struct {
-	// CreditsDelta is the chat's credit usage attributable to this turn.
-	CreditsDelta float64
-	// ElapsedMs is the turn's wall-clock duration in milliseconds.
-	ElapsedMs float64
-}
-
-// TurnOutcomeAccess is what a prompt handler needs to finish a turn: classify
-// it, record which model ran it, publish its stats, and abandon it when the
-// bridge died mid-flight.
+// TurnOutcomeAccess is what a prompt handler needs to run a turn's lifecycle:
+// open it, wait for its outcome, and close it — whether the engine answered or
+// the call failed.
 type TurnOutcomeAccess interface {
-	IsEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool
-	EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, stats TurnStats)
+	// OpenTurn opens the chat's turn before the call that drives it, so everything
+	// true of the turn — the model answering, the credit reading its spend is
+	// measured against, when it began — is recorded once for its whole life. The
+	// caller holds a completion handle until ReleaseTurn; zero means none opened.
+	//
+	// It WAITS while the chat is finalizing a previous turn, so a prompt sent during
+	// that turn's persistence does not observe an epoch as open too early.
+	OpenTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch
+	// AwaitTurn blocks until the named turn has finalized and reports what it
+	// did. A caller holding that turn's handle never receives
+	// vibekit.ErrNoSuchTurn.
+	AwaitTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (vibekit.TurnResult, error)
+	// ReleaseTurn gives up the handle OpenTurn issued, after which the finalized
+	// record may be dropped.
+	ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
+	// SettleTurnOnResponse closes the named turn on the response that settled it —
+	// the LOCAL fallback, which runs only if the wire's own turn_end did not get
+	// there first.
+	//
+	// seq is the read loop position the response arrived at, and the settle parks
+	// until the folder reaches it. Without that wait the fallback decides the wire
+	// never closed this turn while the wire's turn_end sits queued behind the
+	// response.
+	SettleTurnOnResponse(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, seq uint64, resp *vibekit.RPCResponse)
+	// TurnOpenedAfter reports whether any turn on the chat opened after epoch.
+	//
+	// The structural half of the empty-turn gate, and the only clause that depends on
+	// no frame arriving: a mis-bound pre-open closes with the firing condition
+	// satisfied, and what it necessarily violates is a LATER epoch on this chat.
+	TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool
+	// PrimeTurnOpen reports whether the chat's open turn is a PRIME.
+	//
+	// A prime is vibekit's own transcript replay sent as a real session/prompt, and
+	// its frames are neither broadcast nor served nor persisted — so a steer aimed
+	// into that window was consumed by a throwaway turn and discarded, which is user
+	// data loss with nothing on screen to say so. CmdSteer refuses instead, and the
+	// client's rollback for a refused send returns the text to the composer.
+	PrimeTurnOpen(chatID vibekit.ChatID) bool
+	// FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.
+	FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
 	// AbandonInFlightTurn finalizes a turn the prompt call could not finish.
 	// `reason` is the user-facing account of the failure, and it becomes the
 	// transcript's interrupted divider, so the caller renders its prose FIRST and
 	// hands the same string here that it broadcasts and returns.
-	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, reason string)
-	// LatchTurnModel records which model this turn was DISPATCHED under, before
-	// the prompt call can race a concurrent switch_model. First write wins, so
-	// the value is immutable for the turn's lifetime.
 	//
-	// It exists because the turn buffer otherwise latches on the first assistant
-	// FRAME, which can be seconds later: a fast in-session switch landing in that
-	// window stamped the new model onto an answer the previous one produced.
-	LatchTurnModel(chatID vibekit.ChatID, model string)
+	// It waits for no read loop position. The two failures that reach it — an
+	// oversize frame and a cancel-grace expiry — settle locally with the bridge and
+	// the KAS execution still alive, so no bracket is coming.
+	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string)
 }
 
 // Roles is the wiring-time role set: the host names which of its interfaces

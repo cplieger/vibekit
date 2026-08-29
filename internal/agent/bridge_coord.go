@@ -23,8 +23,11 @@ import (
 // turn finalization. Runtime delegates to this coordinator, reducing the
 // runtime's role to HTTP/SSE dispatch.
 type BridgeCoordinator struct {
-	bridge         *bridges
-	chatStore      bridgeChatRecords
+	bridge    *bridges
+	chatStore bridgeChatRecords
+	// turns is the per-chat turn lifecycle: one record per turn, and the
+	// exclusion every terminal step claims through. See turn.go.
+	turns          *turnRegistry
 	broadcast      func(ctx context.Context, e vibekit.ServerEvent)
 	translateEvent func(chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 	// push is optional: WithPush is not passed in tests, and every send site
@@ -45,6 +48,16 @@ type BridgeCoordinator struct {
 	// sweep here: a rehydrated chat is exactly the moment its runs should heal,
 	// because the chat's process dying is what paused them. Nil in tests.
 	onSessionRehydrated func(vibekit.ChatID)
+	// onTurnClosed fires from the WINNING closer, once a turn has finalized, so a
+	// registry keyed on the turn's identity learns the boundary from the lifecycle
+	// rather than from a caller that may have lost the claim. The agent-terminal
+	// registry is its one consumer: it evicts that turn's retired output.
+	//
+	// A back-edge, because the terminals are built after the coordinator; a
+	// closure over the runtime rather than the collaborator itself, so a field
+	// still nil at this literal cannot be captured. Nil in tests, which is why
+	// finalizeTurn guards it.
+	onTurnClosed func(vibekit.ChatID, vibekit.TurnEpoch)
 	// secretStorage reports whether the runtime holds a credential store, read at
 	// SPAWN time rather than captured as a bool, because newBridgeCoordinator
 	// runs before NewHub opens the store — a snapshot here would be false for
@@ -59,6 +72,11 @@ type BridgeCoordinator struct {
 	// event bus's internals, and nil-safe for tests that build a coordinator
 	// without one.
 	chatStatus func(vibekit.ChatID) vibekit.ChatStatusPayload
+	// unknownStops records the stop reasons this process has already warned about,
+	// so a wire value vibekit does not map produces one line rather than one per
+	// turn. The set of distinct values is bounded by what KAS can send, and every
+	// member is a value a human wants to see exactly once.
+	unknownStops sync.Map
 	// primeFrom notes which chat's transcript should prime a chat's FIRST
 	// session, for the tangent whose session/fork was refused (command/fork.go).
 	// Consumed by the next spawn and deleted there, so it is a handoff between
@@ -119,6 +137,7 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 	return &BridgeCoordinator{
 		bridge:         h.bridge,
 		chatStore:      h.chatStore,
+		turns:          newTurnRegistry(),
 		broadcast:      h.bus.Broadcast,
 		translateEvent: h.translateACPEvent,
 		push:           h.push,
@@ -135,6 +154,9 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 			ctx, cancel := h.lifecycle.derivedContext()
 			defer cancel()
 			h.runs.resumeInterruptedRuns(ctx, chatID)
+		},
+		onTurnClosed: func(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+			h.agentTerms.CloseTurn(chatID, epoch)
 		},
 	}
 }
@@ -587,8 +609,13 @@ type replayProjector interface {
 // goroutine per bridge.
 func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 	ch := bridge.NotifCh()
-	for msg := range ch {
-		bc.translateEvent(chatID, msg)
+	// This goroutine IS the folder, so the position it reports is the only one a
+	// local settle can order itself against. The generation is what keeps a
+	// straggler from the previous bridge — still draining a closed channel while
+	// this one attaches — from advancing a counter that restarted at zero.
+	gen := bc.turns.attachForward(chatID)
+	for n := range ch {
+		bc.consumeFrame(chatID, gen, n)
 		// Settle a session/load replay projection here rather than at Start's
 		// return: this goroutine is the one draining the frames, so its own
 		// view of the channel depth is the only sound completion signal.
@@ -604,10 +631,19 @@ func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 	if bc.replayProjection != nil {
 		bc.replayProjection.SettleReplayProjection(chatID, 0, true)
 	}
+	// No frame can advance the position now, so anything parked on one has to be
+	// told rather than left to its context. Before the death closer, so a woken
+	// settle has already deferred by the time that closer runs.
+	bc.turns.sealPosition(chatID, gen)
 
 	slog.Info("bridge exited", "chat_id", chatID)
 
-	bc.bridge.mgr.removeIfBridge(chatID, bridge)
+	// Still registered means nobody removed it, so the process died on its own
+	// rather than being torn down: the third actor closes whatever turn is still
+	// open, because no other closer is coming for it.
+	if bc.bridge.mgr.removeIfBridge(chatID, bridge) {
+		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID)
+	}
 
 	// Flush staged writes for the chat. A bridge exit (crash, or a
 	// model-switch CloseBridge) leaves the supervised fs-handler goroutine
@@ -619,6 +655,23 @@ func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 	if lastBridge {
 		bc.mcpRegistry.clearAll(bc.lifecycle.shutdownCtx)
 	}
+	// A run chat has no record and no turn lifecycle of its own beyond the
+	// position bookkeeping above, and nothing ever calls cleanupChatState for one,
+	// so its lifecycle is dropped here or it outlives the run.
+	if isRunChat(chatID) {
+		bc.turns.forget(chatID)
+	}
+}
+
+// consumeFrame translates one frame and then advances the chat's observed
+// position, whatever the frame did.
+//
+// DEFERRED, and for every frame rather than for every fold: the advance
+// acknowledges work that is done, and at least eight paths through the
+// session-update cascade consume a frame without touching a turn. See observe.
+func (bc *BridgeCoordinator) consumeFrame(chatID vibekit.ChatID, gen uint64, n vibekit.Notification) {
+	defer bc.turns.observe(chatID, gen, n.Seq)
+	bc.translateEvent(chatID, n.Msg)
 }
 
 // PrimeIfNeeded sends the chat history as an ephemeral priming prompt on the
@@ -670,11 +723,24 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.C
 	prime += history
 
 	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason, "history_from", source)
-	_, err := sb.bridge.Call(ctx, vibekit.MethodPrompt, command.SessionParams(sb, map[string]any{
+	// The prime is a real session/prompt, so it opens a real turn and closes it
+	// like any other. Then it AWAITS its own epoch before returning, and that is
+	// what keeps the unacknowledged set from ever holding two: the caller's own
+	// pre-open cannot happen until this turn has finalized, so a wire turn_start
+	// can only ever bind to one candidate.
+	epoch := bc.OpenTurn(ctx, chatID, vibekit.TurnSourcePrime)
+	defer bc.ReleaseTurn(chatID, epoch)
+	resp, seq, err := sb.bridge.CallAt(ctx, vibekit.MethodPrompt, command.SessionParams(sb, map[string]any{
 		"prompt": []map[string]any{vibekit.TextBlock(prime)},
 	}))
 	if err != nil {
 		slog.Error("prime failed", "chat_id", chatID, "error", err)
+		bc.AbandonInFlightTurn(ctx, chatID, epoch, "The priming prompt failed.")
+		return
+	}
+	bc.SettleTurnOnResponse(ctx, chatID, epoch, seq, resp)
+	if _, aErr := bc.AwaitTurn(ctx, chatID, epoch); aErr != nil {
+		slog.Warn("prime: no turn outcome", "chat_id", chatID, "error", aErr)
 	}
 }
 
@@ -702,71 +768,28 @@ func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind v
 	})
 }
 
-// TakeBuffer returns and removes the chat's assistant buffer.
-func (bc *BridgeCoordinator) TakeBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool) {
-	return bc.bridge.assistantBufs.Take(chatID)
+// SettleTurnOnResponse closes the turn named by epoch on the response that settled
+// it — once the folder has consumed everything queued behind that response, and
+// only if the wire's own turn_end did not get there first.
+//
+// seq is the read loop position the response arrived at. Zero skips the wait,
+// which is what the two paths that deliberately reach no bracket want: an oversize
+// frame and a cancel-grace expiry fail the call while the bridge stays alive.
+func (bc *BridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, seq uint64, resp *vibekit.RPCResponse) {
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptResponse, Resp: resp, Epoch: epoch, Seq: seq})
 }
 
-// EmitTurnEndedWithStats finalizes any in-flight assistant message
-// and broadcasts turn_ended with the credit delta and elapsed time.
-func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, stats command.TurnStats) {
-	stopReason := extractStopReason(resp)
-	// Read BEFORE the turn_ended broadcast below: emit() clears the chat's status
-	// as that event goes out, so a read at the push site always finds nothing. See
-	// statusDescription.
-	statusDesc := bc.statusDescription(chatID)
+// TurnOpenedAfter reports whether any turn on the chat opened after epoch — the
+// structural half of the empty-turn gate. See turnRegistry.openedAfter.
+func (bc *BridgeCoordinator) TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool {
+	return bc.turns.openedAfter(chatID, epoch)
+}
 
-	var changedFiles map[string]*vibekit.FileChange
-	var refusal *vibekit.RefusalInfo
-	var model string
-
-	if buf, ok := bc.TakeBuffer(chatID); ok && buf.Started {
-		// Settle whatever the steering-marker filter was still withholding. A
-		// carry carrying the committing prefix is an unclosed marker and is
-		// dropped; a shorter one is prose that merely looked like the start of
-		// one, and goes back into the turn. Must precede assistantTurnMessage,
-		// which is what reads the buffer into the persisted message.
-		translate.FlushSteerCarry(buf)
-		changedFiles = buf.ChangedFiles
-		refusal = buf.Refusal
-		model = buf.Model
-		if stopReason == stopReasonCancelled {
-			changed := buf.MarkCancelledToolsFailed()
-			for i := range changed {
-				bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
-			}
-		}
-
-		msg := assistantTurnMessage(buf, stats)
-		bc.persistTurn(ctx, chatID, &msg)
-	}
-
-	if stopReason == stopReasonCancelled {
-		evt := vibekit.Message{
-			ID:        newMessageID(),
-			Role:      vibekit.RoleEvent,
-			Ts:        time.Now().UnixMilli(),
-			EventKind: vibekit.EventCancelled,
-		}
-		if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
-			slog.Error("persist cancel event", "chat_id", chatID, "error", err)
-		}
-	}
-
-	if _, stillExists := bc.chatStore.Get(ctx, chatID); stillExists {
-		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID, vibekit.TurnEndedPayload{
-			StopReason:   stopReason,
-			Refusal:      refusal,
-			Model:        model,
-			CreditsDelta: stats.CreditsDelta,
-			ElapsedMs:    stats.ElapsedMs,
-			ChangedFiles: changedFiles,
-		}))
-	}
-
-	if stopReason != stopReasonCancelled {
-		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), vibekit.PushKindAgentFinished, chatID)
-	}
+// PrimeTurnOpen reports whether the chat's open turn is a PRIME.
+// Satisfies command.TurnOutcomeAccess; see it for why a steer is refused there.
+func (bc *BridgeCoordinator) PrimeTurnOpen(chatID vibekit.ChatID) bool {
+	facts, open := bc.turns.openTurns()[chatID]
+	return open && facts.Source == vibekit.TurnSourcePrime
 }
 
 // agentFinishedBody is what the agent-finished notification SAYS.
@@ -979,151 +1002,180 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibe
 	}
 }
 
-// FlushInFlightTurnOnSwitch drops the assistant buffer for chatID before a
-// bridge restart, announcing the interruption when a turn was in flight.
+// FlushInFlightTurnOnSwitch discards the chat's turn before a bridge restart,
+// announcing the interruption when a turn was in flight.
 func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID vibekit.ChatID) {
-	buf, ok := bc.TakeBuffer(chatID)
-	if !ok || !buf.Started {
-		return
-	}
-	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonInterrupted}))
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerModelSwitch, AnyOpen: true})
 }
 
 // assistantTurnMessage builds the persisted assistant message from a finished
-// buffer. Extracted so the interrupted path (AbandonInFlightTurn) and the normal
-// path (EmitTurnEndedWithStats) cannot drift: every field below exists because
-// something in the client reads it after a reload, so a second hand-written
-// literal would quietly lose one of them.
-func assistantTurnMessage(buf *buffer.Buffer, stats command.TurnStats) vibekit.Message {
+// turn's content. Extracted so the interrupted path and the normal path cannot
+// drift: every field below exists because something in the client reads it after a
+// reload, so a second hand-written literal would quietly lose one of them.
+//
+// It takes the SNAPSHOT rather than the buffer, so every field comes from ONE
+// guarded read: the eight field reads this used to make ran off the dispatch
+// goroutine, against a fold that was already past TurnFoldTarget when the closer
+// claimed.
+func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model string, c vibekit.TurnConclusion) vibekit.Message {
 	return vibekit.Message{
-		ID:        buf.MessageID,
+		ID:        snap.MessageID,
 		Role:      vibekit.RoleAssistant,
 		Ts:        time.Now().UnixMilli(),
-		Content:   buf.Content.String(),
-		Reasoning: buf.Reasoning.String(),
-		ToolCalls: buf.ToolCalls,
+		Content:   snap.Content,
+		Reasoning: snap.Reasoning,
+		ToolCalls: snap.ToolCalls,
 		// Blocks captures the chronological text/tool/thinking
 		// emission order; client renderers prefer it over
 		// Content+ToolCalls so a turn renders the way the agent
 		// actually produced it (text, tool, more text, another
 		// tool, …) rather than collapsing all text to the top.
-		Blocks: buf.Blocks,
+		Blocks: snap.Blocks,
 		// CodeReferences persists the turn's licensed-code
 		// attributions so the chip survives reload (the streamed
 		// assistant turn is never re-broadcast as message_appended).
-		CodeReferences: buf.CodeReferences,
+		CodeReferences: snap.CodeReferences,
 		// Refusal metadata (kiro-cli 2.13): stamped from the refusal
 		// explanation chunk; persisting it here is what makes the
 		// refusal callout survive reload.
-		Refusal: buf.Refusal,
+		Refusal: snap.Refusal,
 		// Turn summary (credits · elapsed · files changed) — persisted on
 		// the message so the turn footer survives reload. The same values
 		// ride the turn_ended SSE for the live render; omitempty drops the
 		// zero/nil cases (a read-only or zero-cost turn carries no footer).
 		TurnCredits:   stats.CreditsDelta,
 		TurnElapsedMs: stats.ElapsedMs,
-		ChangedFiles:  buf.ChangedFiles,
+		ChangedFiles:  snap.ChangedFiles,
 		// Which model answered, latched when the turn opened rather than read
 		// from the chat now: the chat's Model is the CURRENT one, and a footer
 		// derived from it would relabel history on every switch.
-		TurnModel: buf.Model,
+		TurnModel: model,
+		// How the turn ENDED, durable at last. A live stop reason is broadcast and
+		// never stored, so before these three a reloaded transcript derived the
+		// outcome from whichever event messages happened to survive — which reads a
+		// failed turn as completed and suppresses its footer.
+		TurnOutcome:       c.Outcome,
+		TurnStopReasonRaw: c.RawStop,
+		TurnTruncated:     c.Truncated,
 	}
 }
 
-// AbandonInFlightTurn finalizes a turn that failed before it could end, and it
-// PERSISTS the partial rather than dropping it.
+// AbandonInFlightTurn finalizes a turn whose prompt call could not finish it,
+// PERSISTING the partial rather than dropping it.
 //
-// The bug it closes: CmdPrompt's error arm returned without any call that takes
-// the assistant buffer, so the buffer survived with Started == true. The next
-// prompt's ensureTurnStarted then saw a started buffer, emitted no
-// message_created, and extended the dead turn's blocks under the dead turn's
-// message id -- one persisted assistant message holding two turns' replies,
-// with the second turn's text appearing under the first turn's header.
+// Without a call that takes the assistant buffer, that buffer survived with
+// Started == true and the next prompt extended the dead turn's blocks under the
+// dead turn's message id — one message holding two turns' replies.
 //
-// Persist rather than discard, deliberately. FlushInFlightTurnOnSwitch drops the
-// buffer, which is right for a model switch (the user asked for a different
-// answer and the old one is moot), and wrong here: the user watched this text
-// stream in, and invariant 1 says the client never shows what the server has not
-// persisted. Dropping it makes the transcript diverge on reload, which is the
-// vanishing-message class this codebase already paid for once. It also restores
-// the `interrupted` badge for this path, which vibekit-runtime.md records as a
-// casualty of deleting the .partial sidecar.
+// It waits for no read loop position: the two failures that reach it settle
+// locally with the bridge still alive, so no bracket is coming.
+func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string) {
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptFailure, Reason: reason, Epoch: epoch})
+}
+
+// FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.
+func (bc *BridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerLocalShell, Epoch: epoch})
+}
+
+// WireTurnStart is the engine's own turn_start bracket.
 //
-// `reason` is the caller's account of why the turn stopped, and it is load-bearing
-// rather than decorative: it becomes the divider's label, which is the only
-// record of the cause that outlives the page. See appendInterruptedEvent.
-func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, reason string) {
-	// A stashed reason names a MORE specific cause than the caller's, so it wins.
-	// InterruptTurn sets it when kiro-cli's tool-use security filter stopped the
-	// turn; the caller's reason then describes only the RPC failure that followed,
-	// which is the consequence rather than the cause.
-	if stashed := bc.takeInterruptReason(chatID); stashed != "" {
-		reason = stashed
+// It binds the single pending pre-open when there is one, PROVISIONALLY — the
+// bracket cannot tell a prompted turn from an agent-initiated one. Otherwise the
+// previous turn's end never arrived, so that turn closes `unknown` and a
+// wireTurnStart turn opens in its place. An acknowledged start still passes
+// through that branch rather than bypassing it: a wireTurnStart turn holds no
+// prompt slot for admission control to have refused.
+func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID vibekit.ChatID) {
+	bound, displaced := bc.turns.bindPending(chatID)
+	if !bound && displaced != 0 {
+		// A pre-open is owed this bracket while another turn is still folding, so
+		// that turn's own end never arrived. Close it and bind on the retry rather
+		// than binding over it: the pre-open's frames must not fold into the other
+		// turn's buffer.
+		bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, Epoch: displaced})
+		bound, _ = bc.turns.bindPending(chatID)
 	}
-	buf, ok := bc.TakeBuffer(chatID)
-	if !ok || !buf.Started {
-		// Nothing streamed, so there is no partial to persist and no turn to end --
-		// but the divider still lands, and that is the whole point of this branch.
-		// It is the COMMON failure: a throttle, a capacity refusal or a dead bridge
-		// answers before the first chunk. Until this branch existed such a turn
-		// appended nothing at all, so turns.ts deriveOutcome saw no marker, read the
-		// turn as `completed` and hasTurnSummary suppressed its footer -- a
-		// rate-limited turn rendered indistinguishably from a clean short answer.
-		bc.appendInterruptedEvent(ctx, chatID, reason)
+	if bound {
 		return
 	}
-	// Fail the tool calls still marked in-flight BEFORE building the message.
-	// Without this the persisted turn carries running tool cards, and a reload
-	// renders permanent spinners for work that stopped when the prompt failed --
-	// the same reason EmitTurnEndedWithStats does it on the cancel path.
-	changed := buf.MarkCancelledToolsFailed()
-	for i := range changed {
-		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
-			vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
-	}
-
-	// No stats: an abandoned turn has no credit delta to attribute and no
-	// meaningful elapsed time, so the footer is deliberately empty rather than
-	// carrying whatever the failed call happened to have consumed.
-	msg := assistantTurnMessage(buf, command.TurnStats{})
-	bc.persistTurn(ctx, chatID, &msg)
-
-	bc.appendInterruptedEvent(ctx, chatID, reason)
-	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID,
-		vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonInterrupted}))
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, AnyOpen: true})
+	model, credits := bc.turnOpenFacts(ctx, chatID, vibekit.TurnSourceWireTurnStart)
+	bc.turns.openWire(ctx, chatID, model, credits)
 }
 
-// appendInterruptedEvent records WHY a turn stopped, on the turn itself.
+// WireTurnEnd is the engine's own turn_end bracket, and the closer whose outcome
+// is the wire's rather than an inference.
 //
-// Content is what messages-events.ts renders as the boundary divider's label (its
-// labelFn falls back to the generic "Turn interrupted" on an empty one), so this
-// is the transcript's own account of the stop, and the only one that survives a
-// reload, a chat switch, or a failure on a chat the reader was not watching.
+// A turn_end for a chat with NO open turn is a no-op. Without that rule a
+// cancel-grace expiry that closed its turn locally would meet the later wire
+// bracket, and the fold-with-no-open-turn rule would manufacture a spurious
+// empty persisted turn out of it. A replayed bracket is filtered upstream, so
+// this is the live path only.
+func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason) {
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireEnd, Stop: stop, AnyOpen: true})
+}
+
+// TurnFoldTarget returns the buffer this chat's frames fold into, opening a
+// wireTurnStart turn when none is open. It is what replaced a per-chat buffer
+// created lazily on the first frame: a fold with no open turn is a turn vibekit
+// did not prompt, and it needs a record for the same reasons every other turn
+// does.
 //
-// It used to be left EMPTY for an ordinary prompt failure, on the reasoning that
-// the error frame already carried the reason. That reasoning held only for the
-// one reader looking at the one chat at the one moment: the frame lands on an
-// ephemeral client surface, so the cause was gone by the next page load and
-// absent entirely for a background chat. A throttled turn then read as "Turn
-// interrupted" with no way to learn what happened. Both writers of this event
-// now state their cause here.
-func (bc *BridgeCoordinator) appendInterruptedEvent(ctx context.Context, chatID vibekit.ChatID, reason string) {
-	evt := vibekit.Message{
-		ID:        newMessageID(),
-		Role:      vibekit.RoleEvent,
-		Ts:        time.Now().UnixMilli(),
-		EventKind: vibekit.EventInterrupted,
-		Content:   reason,
+// The CHEAP question comes first. openWire discards both facts on every call but
+// the one that actually opens a turn, and reading them is a full chat-file read
+// plus a json.Unmarshal of the whole history under the per-chat mutex — per
+// streamed delta and per tool frame. That cost scales with the TRANSCRIPT rather
+// than the frame, it contends with every persist on the same chat, and it runs on
+// the only consumer of a 256-slot channel, so a large chat could stall the read
+// loop under its own bookkeeping. The benign race is already handled: openWire
+// re-checks under the lifecycle mutex, and the facts are deliberately NOT read
+// under it — the lock order is lifecycle then chat store, never the reverse.
+func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID) *buffer.Buffer {
+	if buf, ok := bc.turns.foldTarget(chatID); ok {
+		return buf
 	}
-	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
-		slog.Error("persist interrupted event", "chat_id", chatID, "error", err)
+	model, credits := bc.turnOpenFacts(ctx, chatID, vibekit.TurnSourceWireTurnStart)
+	t := bc.turns.openWire(ctx, chatID, model, credits)
+	if t == nil {
+		// ctx died while the chat was finalizing. A throwaway buffer keeps the
+		// handler's shape rather than making every fold site nil-check: the frame is
+		// lost either way, and the process is shutting down.
+		return buffer.New()
 	}
+	return t.Buf
+}
+
+// ReviseTurnBinding acts on a frame that PROVES the open turn is the agent's own
+// rather than the prompt's: `agentInitiated` rides content frames and never the
+// bracket, so this is the only discriminator there is. See
+// turnRegistry.reclassify.
+func (bc *BridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID) {
+	bc.turns.reclassify(ctx, chatID)
+}
+
+// closeTurnOnBridgeDeath is the third actor: after Forward has exited it closes
+// any turn still open, because nothing else is going to.
+//
+// It fires only on an UNEXPECTED exit, and the discriminator is whether the
+// bridge was still registered when it died. Every teardown vibekit performs
+// itself -- CloseBridge for the model-switch fallback and the empty-turn
+// recovery, drain at shutdown -- removes the bridge from the map first and has
+// its own closer, so a deliberate stop must not also read as a death.
+func (bc *BridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID vibekit.ChatID) {
+	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerBridgeDeath, AnyOpen: true})
 }
 
 const stopReasonCancelled = vibekit.StopReasonCancelled
 
-// InterruptTurn ends a turn kiro-cli abandoned without answering it. Satisfies
-// translate.TurnInterruptAccess.
+// InterruptTurn records why kiro-cli abandoned a turn without answering it, and
+// trips that turn's prompt call so the ordinary failure path finalizes it.
+// Satisfies translate.TurnInterruptAccess.
+//
+// The cause lands on the TURN, epoch-scoped and first-wins, so it describes the
+// turn it was raised for and nothing else. It used to be stashed on the bridge,
+// where turn A's cause could survive into turn B once the prompt failure that
+// consumed it was deferred.
 //
 // The bridge is left ALIVE and the ACP session untouched: only the tool call was
 // cancelled, so tripping the prompt context releases the slot and the chat is
@@ -1131,29 +1183,30 @@ const stopReasonCancelled = vibekit.StopReasonCancelled
 // restart, and it is why the recovery costs the user one Send rather than a
 // session.
 //
-// A missing bridge or a turn that is no longer in flight is not a failure: the
-// frame can arrive after a user cancel already ended the same turn. Logged at
-// Debug so the no-op is observable without making a benign race look like one.
+// A chat with no open turn, no bridge, or a cause already claimed is not a
+// failure: the frame can arrive after a user cancel already ended the same turn.
+// Logged at Debug so the no-op is observable without making a benign race look
+// like one.
 func (bc *BridgeCoordinator) InterruptTurn(chatID vibekit.ChatID, reason string) {
+	epoch, open := bc.turns.openEpoch(chatID)
+	if !open {
+		slog.Debug("interrupt turn: no turn open", "chat_id", chatID, "reason", reason)
+		return
+	}
+	if !bc.turns.interrupt(chatID, epoch, vibekit.InterruptCause(reason)) {
+		slog.Debug("interrupt turn: another cause already claimed this turn",
+			"chat_id", chatID, "epoch", epoch, "reason", reason)
+		return
+	}
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
 		slog.Debug("interrupt turn: no bridge", "chat_id", chatID)
 		return
 	}
-	if !sb.interruptTurn(reason) {
-		slog.Debug("interrupt turn: no turn in flight, or another cause claimed it",
+	if !sb.cancelPromptCall() {
+		slog.Debug("interrupt turn: no prompt call in flight",
 			"chat_id", chatID, "reason", reason)
 	}
-}
-
-// takeInterruptReason reads and clears the interrupt reason for a chat, or
-// returns "" when the turn ended for any other cause.
-func (bc *BridgeCoordinator) takeInterruptReason(chatID vibekit.ChatID) string {
-	sb := bc.bridge.mgr.get(chatID)
-	if sb == nil {
-		return ""
-	}
-	return sb.takeInterruptReason()
 }
 
 func extractStopReason(resp *vibekit.RPCResponse) vibekit.StopReason {

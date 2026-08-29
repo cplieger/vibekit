@@ -495,61 +495,6 @@ func TestCreateHook_RejectsOversizeField(t *testing.T) {
 	}
 }
 
-// --- IsEmptyTurn ---
-
-func TestIsEmptyTurn(t *testing.T) {
-	h, _, _ := newTestHub()
-	tests := []struct {
-		resp    *vibekit.RPCResponse
-		name    string
-		chatID  vibekit.ChatID
-		seedBuf bool
-		want    bool
-	}{
-		{nil, "nil", "c1", false, false},
-		{&vibekit.RPCResponse{}, "nil result", "c1", false, false},
-		// On v3 the prompt response carries only stopReason (no content array);
-		// emptiness is decided by stopReason==end_turn AND an empty buffer.
-		{
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})},
-			"end_turn, no buffer",
-			"c1", false, true,
-		},
-		{
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})},
-			"end_turn, empty buffer",
-			"c-empty-buf", true, true,
-		},
-		{
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})},
-			"cancelled",
-			"c1", false, false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.seedBuf {
-				h.bridge.assistantBufs.GetOrInit(tt.chatID)
-			}
-			if got := h.isEmptyTurn(tt.resp, tt.chatID); got != tt.want {
-				t.Errorf("isEmptyTurn = %v, want %v", got, tt.want)
-			}
-		})
-	}
-
-	// Regression: a streamed turn with buffered content must NOT be treated as
-	// empty (the v3 prompt response is content-less for every turn, so the
-	// buffer is the only content signal).
-	t.Run("end_turn, buffer has content", func(t *testing.T) {
-		buf := h.bridge.assistantBufs.GetOrInit("c-with-content")
-		buf.Content.WriteString("hello from stream")
-		resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-		if h.isEmptyTurn(resp, "c-with-content") {
-			t.Error("expected false for streamed turn with buffered content")
-		}
-	})
-}
-
 // --- MergeLastExchange ---
 
 func TestPrompt_ShellInterception_HappyPath(t *testing.T) {

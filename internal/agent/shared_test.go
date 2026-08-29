@@ -10,12 +10,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/v2/sse"
 )
@@ -210,4 +212,179 @@ func captureLogs(t *testing.T) *logCapture {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	return out
+}
+
+// --- Turn buffer helpers ---
+
+// stageTurnBuffer returns the buffer this chat's frames fold into, opening a
+// wireTurnStart turn when none is open — the test-side equivalent of the first
+// frame of a turn vibekit did not prompt arriving.
+//
+// It replaced a per-chat buffer store the tests reached into directly. There is
+// no store any more: a buffer belongs to the turn record that installed it.
+func (rt *Runtime) stageTurnBuffer(tb testing.TB, chatID vibekit.ChatID) *buffer.Buffer {
+	tb.Helper()
+	return rt.coord.TurnFoldTarget(tb.Context(), chatID)
+}
+
+// stagePromptTurn opens a PROMPT turn and hands back its epoch and its buffer, so
+// a test of a prompt-scoped closer names the turn it is closing.
+//
+// The epoch matters: an epoch-scoped closer handed zero closes nothing, because
+// zero is also what OpenTurn answers when it refuses. A test that passed zero was
+// exercising the take-whatever-is-open fallthrough rather than its own closer.
+func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID vibekit.ChatID) (vibekit.TurnEpoch, *buffer.Buffer) {
+	tb.Helper()
+	epoch := rt.coord.OpenTurn(tb.Context(), chatID, vibekit.TurnSourcePrompt)
+	if epoch == 0 {
+		tb.Fatalf("OpenTurn(%q) refused, so there is no turn to stage", chatID)
+	}
+	return epoch, rt.coord.TurnFoldTarget(tb.Context(), chatID)
+}
+
+// liveTurnBuffer returns the chat's open turn's buffer, or nil when no turn is
+// open. What the NEXT turn would read, which is what a released-buffer assertion
+// is about.
+func (rt *Runtime) liveTurnBuffer(chatID vibekit.ChatID) *buffer.Buffer {
+	facts, open := rt.coord.turns.openTurns()[chatID]
+	if !open {
+		return nil
+	}
+	return facts.Buf
+}
+
+// --- session_info_update builders ---
+
+// newSessionInfoMsg builds a session_info_update carrying one `_meta.kiro` block.
+//
+// session_info_update is a CARRIER: 22+ sub-kinds multiplex through it, and
+// vibekit dispatches on which sub-BLOCK is present rather than on the kind
+// string. So the builder takes the block, and each helper below fills the one
+// member its frame is about — which is also what stops a test asserting on a
+// shape KAS does not send.
+func newSessionInfoMsg(kiro map[string]any) *vibekit.RPCResponse {
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "session_info_update",
+		"_meta":         map[string]any{"kiro": kiro},
+	})
+	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
+	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+}
+
+// newTurnStartMsg is the wire's own turn_start bracket, which KAS emits for every
+// turn including one vibekit never prompted.
+func newTurnStartMsg() *vibekit.RPCResponse {
+	return newSessionInfoMsg(map[string]any{"kind": "turn_start", "turnStart": true})
+}
+
+// newTurnEndMsg is the wire's own turn_end bracket, carrying the outcome no local
+// closer can know.
+func newTurnEndMsg(stop string) *vibekit.RPCResponse {
+	return newSessionInfoMsg(map[string]any{
+		"kind":    "turn_end",
+		"turnEnd": map[string]any{"stopReason": stop},
+	})
+}
+
+// newTurnCompletionMsg is a metering frame: it consumes a notification and folds
+// NOTHING into any turn, which is the shape a settle bounded by folds alone parks
+// behind forever.
+func newTurnCompletionMsg() *vibekit.RPCResponse {
+	return newSessionInfoMsg(map[string]any{
+		"kind":                "turn_completion",
+		"promptTurnSummaries": []map[string]any{{"unit": "credit", "usage": 0.01}},
+		"elapsedTime":         float64(1200),
+	})
+}
+
+// newReplayedTurnEndMsg is a turn_end from a session/load replay: stored history,
+// not something happening now.
+func newReplayedTurnEndMsg(stop string) *vibekit.RPCResponse {
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "session_info_update",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"replay":  true,
+			"kind":    "turn_end",
+			"turnEnd": map[string]any{"stopReason": stop},
+		}},
+	})
+	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
+	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+}
+
+// newAgentInitiatedChunkMsg is a content frame carrying the ONE flag that can
+// tell a prompted turn from an agent-initiated one. It rides content and never
+// the bracket, which is why acknowledgement is provisional.
+func newAgentInitiatedChunkMsg(text string) *vibekit.RPCResponse {
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "agent_message_chunk",
+		"content":       map[string]any{"type": "text", "text": text},
+		"_meta":         map[string]any{"kiro": map[string]any{"agentInitiated": true}},
+	})
+	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
+	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+}
+
+// --- sequence helpers ---
+
+// waitForParkedSettle blocks until the settle for epoch has recorded the position
+// it is waiting for, so a test can prove the settle is PARKED before it lets the
+// folder move.
+//
+// It polls the registry's own state rather than sleeping: what makes the
+// discriminator below sharp is that no frame has been consumed yet, and a sleep
+// would only make that likely.
+func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, want uint64) {
+	tb.Helper()
+	lc := reg.lifecycleFor(chatID)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		lc.mu.Lock()
+		t := lc.turnLocked(epoch)
+		parked := t != nil && t.NeedSeq == want
+		lc.mu.Unlock()
+		if parked {
+			return
+		}
+		runtime.Gosched()
+	}
+	tb.Fatalf("the settle for epoch %d never recorded NeedSeq %d, so it is not parked", epoch, want)
+}
+
+// payloadsOfType decodes every buffered event of one type and returns its
+// payload.
+//
+// Generic over the payload so a caller reads the FIELD it cares about rather
+// than a decoded map: the assertions this backs are about a stop reason and a
+// count, and a map lookup would pass on a renamed field.
+func payloadsOfType[T any](tb testing.TB, events []sse.ReplayEvent, want vibekit.EventType) []T {
+	tb.Helper()
+	var out []T
+	for _, e := range events {
+		var env struct {
+			Type    vibekit.EventType `json:"type"`
+			Payload T                 `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
+			tb.Fatalf("unmarshal event: %v", err)
+		}
+		if env.Type == want {
+			out = append(out, env.Payload)
+		}
+	}
+	return out
+}
+
+// hasAssistantContent reports whether the chat holds an assistant message
+// carrying want.
+func hasAssistantContent(c *vibekit.Chat, want string) bool {
+	if c == nil {
+		return false
+	}
+	for i := range c.Messages {
+		if c.Messages[i].Role == vibekit.RoleAssistant && strings.Contains(c.Messages[i].Content, want) {
+			return true
+		}
+	}
+	return false
 }

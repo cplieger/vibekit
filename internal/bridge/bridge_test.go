@@ -474,7 +474,7 @@ func TestCall_HappyPath(t *testing.T) {
 	// Simulate readLoop dispatching a successful response.
 	b.pendingMu.Lock()
 	var id int64
-	var ch chan *vibekit.RPCResponse
+	var ch chan pendingReply
 	for k, v := range b.pending {
 		id = k
 		ch = v
@@ -486,7 +486,7 @@ func TestCall_HappyPath(t *testing.T) {
 	successResp := &vibekit.RPCResponse{}
 	raw := json.RawMessage(`{"ok":true}`)
 	successResp.Result = raw
-	ch <- successResp
+	ch <- pendingReply{resp: successResp}
 
 	select {
 	case r := <-done:
@@ -524,7 +524,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 
 	b.pendingMu.Lock()
 	var id int64
-	var ch chan *vibekit.RPCResponse
+	var ch chan pendingReply
 	for k, v := range b.pending {
 		id = k
 		ch = v
@@ -536,7 +536,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 	errResp := &vibekit.RPCResponse{
 		Error: &vibekit.RPCError{Code: -32600, Message: "invalid request"},
 	}
-	ch <- errResp
+	ch <- pendingReply{resp: errResp}
 
 	select {
 	case r := <-done:
@@ -577,14 +577,14 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 
 	// Simulate readLoop drain: send bridgeExitedResp to the pending channel.
 	b.pendingMu.Lock()
-	var ch chan *vibekit.RPCResponse
+	var ch chan pendingReply
 	for _, v := range b.pending {
 		ch = v
 		break
 	}
 	b.pendingMu.Unlock()
 
-	ch <- bridgeExitedResp
+	ch <- pendingReply{resp: bridgeExitedResp}
 
 	select {
 	case r := <-done:
@@ -627,8 +627,8 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 		pr, pw, _ := os.Pipe()
 		br := &Bridge{
 			stdout:  newFrameReader(bufio.NewReaderSize(pr, stdoutBufSize)),
-			pending: make(map[int64]chan *vibekit.RPCResponse),
-			notifCh: make(chan *vibekit.RPCResponse, 1024),
+			pending: make(map[int64]chan pendingReply),
+			notifCh: make(chan vibekit.Notification, 1024),
 			done:    make(chan struct{}),
 		}
 
@@ -636,7 +636,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 		// We'll write msgCount messages total: alternate resp/notif.
 		const msgCount = 500
 		for id := int64(1); id <= msgCount/2; id++ {
-			br.pending[id] = make(chan *vibekit.RPCResponse, 1)
+			br.pending[id] = make(chan pendingReply, 1)
 		}
 
 		// Write all messages into the pipe, then close to signal EOF.
@@ -1150,7 +1150,7 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 
 			// Inject error response.
 			b.pendingMu.Lock()
-			var ch chan *vibekit.RPCResponse
+			var ch chan pendingReply
 			for _, v := range b.pending {
 				ch = v
 				break
@@ -1160,7 +1160,7 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 			errResp := &vibekit.RPCResponse{
 				Error: &vibekit.RPCError{Code: tc.code, Message: tc.message},
 			}
-			ch <- errResp
+			ch <- pendingReply{resp: errResp}
 
 			select {
 			case r := <-done:
@@ -1216,8 +1216,8 @@ func BenchmarkBridgeRespond(b *testing.B) {
 	br := &Bridge{
 		stdin:   pw,
 		done:    make(chan struct{}),
-		pending: make(map[int64]chan *vibekit.RPCResponse),
-		notifCh: make(chan *vibekit.RPCResponse, 16),
+		pending: make(map[int64]chan pendingReply),
+		notifCh: make(chan vibekit.Notification, 16),
 	}
 
 	ctx := b.Context()
@@ -1280,8 +1280,8 @@ func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
 func readLoopBridge(r io.Reader) *Bridge {
 	return &Bridge{
 		stdout:  newFrameReader(bufio.NewReaderSize(r, stdoutBufSize)),
-		pending: make(map[int64]chan *vibekit.RPCResponse),
-		notifCh: make(chan *vibekit.RPCResponse, 1),
+		pending: make(map[int64]chan pendingReply),
+		notifCh: make(chan vibekit.Notification, 1),
 		done:    make(chan struct{}),
 	}
 }
@@ -1393,7 +1393,7 @@ func driveSessionCall(
 			return sent, callErr
 		default:
 		}
-		var ch chan *vibekit.RPCResponse
+		var ch chan pendingReply
 		b.pendingMu.Lock()
 		for id, v := range b.pending {
 			ch = v
@@ -1402,7 +1402,7 @@ func driveSessionCall(
 		}
 		b.pendingMu.Unlock()
 		if ch != nil {
-			ch <- answer
+			ch <- pendingReply{resp: answer}
 			answer = &vibekit.RPCResponse{Result: json.RawMessage(`{}`)}
 			continue
 		}
@@ -1605,7 +1605,7 @@ func TestDrainPendingAndClose_ReportsTheStrandedCalls(t *testing.T) {
 		c := capture.Default(t)
 		b := New("/nonexistent", "/work")
 		for _, id := range []int64{1, 2} {
-			b.pending[id] = make(chan *vibekit.RPCResponse, 1)
+			b.pending[id] = make(chan pendingReply, 1)
 		}
 
 		b.drainPendingAndClose()

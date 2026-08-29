@@ -78,7 +78,7 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 	if len(refs) == 0 {
 		return
 	}
-	buf := t.buffers.GetOrInit(chatID)
+	buf := t.buffers.TurnFoldTarget(ctx, chatID)
 	// Only attach to an in-flight turn. References fire mid-completion (the
 	// model must generate the licensed code first), so by the time one
 	// arrives the assistant buffer is Started with a message id. Dropping a
@@ -88,7 +88,7 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 		return
 	}
 	all := buf.AppendCodeReferences(refs)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
 		MessageID:  buf.MessageID,
 		References: all,
 	}))

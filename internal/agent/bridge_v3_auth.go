@@ -49,16 +49,16 @@ const (
 func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroGetAccessToken:
-		// kiroauth.Token can perform a blocking (<=15s) SSO-OIDC refresh
-		// under a mutex, so answering synchronously here stalls the forward
-		// goroutine (translateACPEvent) and backs up this chat's ACP event
-		// processing. Dispatch async under inflight (so Shutdown drains it)
-		// with a FRESH runtime-scoped context — the per-event ctx is cancelled
-		// by translateACPEvent's defer the moment it returns, which would
-		// make Bridge.Respond drop the token write (C1). getAccessToken is
-		// answered on the forward goroutine, after Start() returns, so the
-		// bridge is already registered in the manager; respondBridge (used
-		// by respondKiroAccessToken) resolves it the same as the sync path.
+		// kiroauth.Token can block under a mutex for as long as
+		// kiroauth.cliTimeout while the CLI refreshes SSO-OIDC, so answering
+		// synchronously here stalls the forward goroutine (translateACPEvent)
+		// and backs up this chat's ACP event processing. Dispatch async under
+		// inflight (so Shutdown drains it) with a FRESH runtime-scoped context
+		// — the per-event ctx is cancelled by translateACPEvent's defer the
+		// moment it returns, which would make Bridge.Respond drop the token
+		// write. getAccessToken is answered on the forward goroutine, after
+		// Start() returns, so the bridge is already registered in the manager;
+		// respondBridge resolves it the same as the sync path.
 		in.lifetime.inflight.Go(func() {
 			actx, cancel := in.lifetime.derivedContext()
 			defer cancel()
@@ -128,8 +128,8 @@ func isSafeExternalURL(u string) bool {
 // It exists so readiness can report a dead sign-in without probing identity.
 // /api/health is a lock and two field reads per request and must stay that way —
 // asking kiro-cli whether it still holds a token is a subprocess spawn, and
-// kiroauth.Token can block up to 15s on an SSO-OIDC refresh under a mutex, so a
-// probe on the health path would turn a monitor's poll into a process launch.
+// kiroauth.Token can block under a mutex for as long as kiroauth.cliTimeout, so
+// a probe on the health path would turn a monitor's poll into a process launch.
 // The vend already happens on the session-creation critical path, so the fact is
 // free to observe there; nothing else has to go looking for it.
 //

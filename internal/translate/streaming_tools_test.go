@@ -2,6 +2,7 @@ package translate
 
 import (
 	"bytes"
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -379,32 +380,86 @@ func TestToolCallUpdate_IndexBoundaryGuard(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_DiffPresentRecordsAndAppends pins that an update
-// carrying a diff appends it to the tool call's Diffs and records it
-// through the LineTracker.
+// TestToolCallUpdate_DiffPresentRecordsAndAppends pins the ledger gate: a diff
+// always lands on the card, and only a `completed` tool feeds the changed-file
+// ledger and the line tracker. Dropping the status check makes the in-progress
+// case record, which is what counted a streaming write's partial diffs.
 func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
-	tr, rec, deps, _, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-		"toolCallId": "tc-1",
-		"status":     "in_progress",
-		"content": []map[string]any{
-			{"type": "diff", "path": "a.go", "oldText": "x", "newText": "y"},
-		},
-	}), FrameAttribution{})
-	buf := deps.bufStore.GetOrInit(chatID)
-	idx := buf.ToolCallIndex["tc-1"]
-	if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
-		t.Fatalf("ToolCalls[%d].Diffs len = %d, want 1 (diff must be appended when present)", idx, got)
-	}
-	if got := buf.ToolCalls[idx].Diffs[0].Path; got != "a.go" {
-		t.Errorf("Diffs[0].Path = %q, want %q", got, "a.go")
-	}
-	if rec.calls != 1 {
-		t.Errorf("RecordFromDiffs calls = %d, want 1 (must record when a diff is present)", rec.calls)
-	}
-	if got := len(rec.lastDiffs); got != 1 {
-		t.Errorf("RecordFromDiffs received %d diffs, want 1", got)
-	}
+	t.Run("InProgressAppendsWithoutRecording", func(t *testing.T) {
+		tr, rec, deps, _, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "in_progress",
+			"content": []map[string]any{
+				{"type": "diff", "path": "a.go", "oldText": "x", "newText": "y\n"},
+			},
+		}), FrameAttribution{})
+		buf := deps.bufStore.GetOrInit(chatID)
+		idx := buf.ToolCallIndex["tc-1"]
+		if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
+			t.Fatalf("in_progress: ToolCalls[%d].Diffs len = %d, want 1 (diff must be appended when present)", idx, got)
+		}
+		if got := buf.ToolCalls[idx].Diffs[0].Path; got != "a.go" {
+			t.Errorf("in_progress: Diffs[0].Path = %q, want %q", got, "a.go")
+		}
+		if rec.calls != 0 {
+			t.Errorf("in_progress: RecordFromDiffs calls = %d, want 0 (only a completed tool changed a file)", rec.calls)
+		}
+		if _, ok := buf.ChangedFiles["a.go"]; ok {
+			t.Error("in_progress: ChangedFiles[a.go] present, want absent (nothing has reached disk yet)")
+		}
+	})
+	t.Run("CompletedRecordsOnce", func(t *testing.T) {
+		tr, rec, deps, _, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "completed",
+			"content": []map[string]any{
+				{"type": "diff", "path": "a.go", "oldText": "x\n", "newText": "y\n"},
+			},
+		}), FrameAttribution{})
+		buf := deps.bufStore.GetOrInit(chatID)
+		idx := buf.ToolCallIndex["tc-1"]
+		if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
+			t.Fatalf("completed: ToolCalls[%d].Diffs len = %d, want 1", idx, got)
+		}
+		if rec.calls != 1 {
+			t.Errorf("completed: RecordFromDiffs calls = %d, want 1 (must record when the tool succeeded)", rec.calls)
+		}
+		if got := len(rec.lastDiffs); got != 1 {
+			t.Errorf("completed: RecordFromDiffs received %d diffs, want 1", got)
+		}
+		fc, ok := buf.ChangedFiles["a.go"]
+		if !ok {
+			t.Fatal("completed: ChangedFiles[a.go] missing; the diff was not tracked")
+		}
+		if fc.LinesAdded != 1 {
+			t.Errorf("completed: LinesAdded = %d, want 1 (counted once, not once per frame)", fc.LinesAdded)
+		}
+	})
+	t.Run("FailedDoesNotEnterTheLedger", func(t *testing.T) {
+		// The write tool's catch emits a diff with a real path and the text it meant
+		// to write, so a failed write claimed a file changed when nothing did.
+		tr, rec, deps, _, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "failed",
+			"content": []map[string]any{
+				{"type": "diff", "path": "locked.go", "oldText": "", "newText": "package x\n"},
+			},
+		}), FrameAttribution{})
+		buf := deps.bufStore.GetOrInit(chatID)
+		idx := buf.ToolCallIndex["tc-1"]
+		if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
+			t.Fatalf("failed: ToolCalls[%d].Diffs len = %d, want 1 (the card still shows what it tried)", idx, got)
+		}
+		if rec.calls != 0 {
+			t.Errorf("failed: RecordFromDiffs calls = %d, want 0", rec.calls)
+		}
+		if _, ok := buf.ChangedFiles["locked.go"]; ok {
+			t.Error("failed: ChangedFiles[locked.go] present, want absent (the write failed)")
+		}
+	})
 }
 
 // TestToolCallUpdate_SubSessionGate pins that SubSessionID is set from
@@ -862,6 +917,134 @@ func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 	}
 	if got.WorkflowID != "wf_first" {
 		t.Errorf("ToolCall.WorkflowID after a second id arrived = %q, want %q", got.WorkflowID, "wf_first")
+	}
+}
+
+// The message KAS's write tool throws when a remote-$schema JSON write is refused
+// outside Autopilot. Verbatim from the 2.20.1 bundle, because the reason reaching
+// the card unaltered is the property under test.
+const remoteJSONSchemaReason = "Cannot use this tool to write a Remote JSON Schema in Supervised mode. " +
+	"Switch to Autopilot mode to allow this write."
+
+// TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput drives the frame the
+// guard really produces: status failed, the reason as a bare JSON string in
+// rawOutput, and a diff block whose path is "" because the throw beat resolveFile.
+// KAS's edit arm puts a diff in the content blocks and the reason in none of them,
+// so rawOutput is the only channel the reason travels on — without the fold the
+// card's details region opens onto nothing at all.
+func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
+	tr, _, deps, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "failed",
+		"rawOutput":  remoteJSONSchemaReason,
+		"content": []map[string]any{
+			{"type": "diff", "path": "", "newText": "{\"$schema\":\"https://example.test/s.json\"}\n"},
+		},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Output != remoteJSONSchemaReason {
+		t.Errorf("ToolCall.Output on a failed edit = %q, want the reason %q", got.Output, remoteJSONSchemaReason)
+	}
+	// The same frame pins that a path-less diff still contributes nothing: it is
+	// the whole content set here, so if it rendered the card would claim a change.
+	if len(got.Diffs) != 0 {
+		t.Errorf("ToolCall.Diffs = %+v, want none (a diff with no path names no file)", got.Diffs)
+	}
+	buf := deps.bufStore.GetOrInit(chatID)
+	if len(buf.ChangedFiles) != 0 {
+		t.Errorf("ChangedFiles = %v, want empty (the write threw before it reached a path)", buf.ChangedFiles)
+	}
+}
+
+// TestHandleToolCallUpdate_FailedKeepsExistingOutput pins the `Output == ""` half
+// of the gate. A failed execute tool has printed its own output, and that is what
+// the reader needs; dropping the guard would append KAS's error text to it or
+// overwrite it.
+func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
+	tr, _, _, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "failed",
+		"rawOutput":  "Command exited with status 1",
+		"content": []map[string]any{
+			{"type": "content", "content": map[string]any{"type": "text", "text": "FAIL: 2 tests failed"}},
+		},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Output != "FAIL: 2 tests failed\n" {
+		t.Errorf("ToolCall.Output = %q, want the command's own output alone", got.Output)
+	}
+}
+
+// TestHandleToolCallUpdate_CompletedIgnoresRawOutput pins the status half of the
+// gate, which is what keeps this a failure-reason reader rather than the general
+// structured-output channel the content blocks own. `run_workflow` succeeds with
+// an OBJECT in rawOutput, so a dropped gate puts its JSON on the card.
+func TestHandleToolCallUpdate_CompletedIgnoresRawOutput(t *testing.T) {
+	tr, _, _, events, chatID := primeToolCall(t)
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc-1",
+		"status":     "completed",
+		"rawOutput": map[string]any{
+			"message":    "Workflow 'wf_9' started successfully. Status: running.",
+			"workflowId": "wf_9",
+			"status":     "running",
+		},
+	}), FrameAttribution{})
+
+	got, ok := lastToolCallUpdate(t, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	if got.Output != "" {
+		t.Errorf("ToolCall.Output on a completed tool = %q, want empty (nothing is read from a success)", got.Output)
+	}
+	if strings.Contains(got.Output, "workflowId") {
+		t.Errorf("ToolCall.Output = %q, want no run_workflow payload in it", got.Output)
+	}
+}
+
+// TestRawOutputFailureText is the decode on its own: a bare string, then an
+// object's error or message, and "" for everything else. The negative rows are
+// what keep the read narrow — each is a shape KAS really sends on some tool, and
+// none of them may become a card's output.
+func TestRawOutputFailureText(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"a bare string, which is what the write tool sends", `"lock is held by another process"`, "lock is held by another process"},
+		{"an object with error", `{"error":"ENOSPC: no space left on device"}`, "ENOSPC: no space left on device"},
+		{"an object with message", `{"message":"policy refused the write"}`, "policy refused the write"},
+		{"error wins over message", `{"error":"the cause","message":"the summary"}`, "the cause"},
+		{"a whitespace-only string", `"   "`, ""},
+		{"an empty string", `""`, ""},
+		{"a number", `42`, ""},
+		{"an array", `["a","b"]`, ""},
+		{"an object with a non-string error", `{"error":{"code":13}}`, ""},
+		{"run_workflow's success object", `{"workflowId":"wf_9","status":"running"}`, ""},
+		{"malformed json", `{`, ""},
+		{"absent", ``, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := rawOutputFailureText(json.RawMessage(c.raw)); got != c.want {
+				t.Errorf("rawOutputFailureText(%s) = %q, want %q", c.raw, got, c.want)
+			}
+		})
 	}
 }
 

@@ -54,6 +54,15 @@ var notificationPrefix = regexp.MustCompile(`^\s*\[notification/(info|success|wa
 var (
 	// errSteerNoTurn is the refusal for a steer with no turn to join.
 	errSteerNoTurn = errors.New("nothing is running to steer — send this as a prompt instead")
+	// errSteerPriming refuses a steer aimed into the PRIME window.
+	//
+	// A prime is vibekit's own transcript replay, sent as a real session/prompt: its
+	// frames are neither broadcast nor persisted, so a steer delivered into it was
+	// consumed by a turn nobody ever sees and silently discarded. A refusal is what
+	// makes that visible, and the client's refused-send rollback puts the text back
+	// in the composer. It is brief — PrimeIfNeeded awaits its own epoch before the
+	// real prompt is sent — so "wait" is advice the user can act on.
+	errSteerPriming = errors.New("the session is still loading its history — send this again in a moment")
 	// errSteerDropped maps KAS's `{queued: false}`.
 	errSteerDropped = errors.New("the turn ended before this could be delivered — send it as a prompt instead")
 	// errSteerLooksLikeNotification refuses the sniffing collision above.
@@ -74,7 +83,7 @@ var (
 // precondition — a steer with no turn to join would sit in KAS's buffer until
 // some later turn happened to pick it up, which is a worse outcome than a clear
 // refusal. The client only reaches this path while a turn is streaming.
-func CmdSteer(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSteer(ctx context.Context, bridges BridgeAccess, outcome TurnOutcomeAccess, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -97,6 +106,9 @@ func CmdSteer(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientComm
 	bridge := bridges.Bridge(cmd.ChatID)
 	if bridge == nil {
 		return nil, StatusError(http.StatusConflict, errSteerNoTurn)
+	}
+	if outcome.PrimeTurnOpen(cmd.ChatID) {
+		return nil, StatusError(http.StatusConflict, errSteerPriming)
 	}
 
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteer, SessionParams(bridge, map[string]any{

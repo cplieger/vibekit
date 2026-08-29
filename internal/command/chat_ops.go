@@ -211,7 +211,7 @@ func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermA
 	// rather than here. Losing the take means somebody else answered, which is
 	// not this request's failure to report as one: 409 with a code the client
 	// can explain.
-	if !perms.TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
+	if !perms.TakePendingPerm(cmd.ChatID, p.RequestID, vibekit.SettledByUser) {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
 	// A turn approval answers on the SAME reply, with per-file decisions in

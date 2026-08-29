@@ -86,24 +86,52 @@ func (rt *Runtime) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
 	rt.cleanupChatState(ctx, chatID, false)
 }
 
-// IsEmptyTurn checks if a prompt response is an empty turn.
-func (rt *Runtime) IsEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool {
-	return rt.isEmptyTurn(resp, chatID)
+// OpenTurn opens the chat's turn before the call that drives it, returning the
+// epoch the caller holds a completion handle on.
+func (rt *Runtime) OpenTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+	return rt.coord.OpenTurn(ctx, chatID, source)
 }
 
-// EmitTurnEndedWithStats broadcasts turn_ended with usage stats, and closes
-// the chat's terminal-attribution turn: terminals created after this belong
-// to the NEXT turn.
-func (rt *Runtime) EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, stats command.TurnStats) {
-	rt.coord.EmitTurnEndedWithStats(ctx, chatID, resp, stats)
-	rt.agentTerms.AdvanceTurn(chatID)
+// AwaitTurn blocks until the named turn has finalized and reports what it did.
+func (rt *Runtime) AwaitTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (vibekit.TurnResult, error) {
+	return rt.coord.AwaitTurn(ctx, chatID, epoch)
 }
 
-// AbandonInFlightTurn finalizes a turn that failed before it could end, and
-// closes its terminal-attribution turn on the way out. It mirrors
-// EmitTurnEndedWithStats' AdvanceTurn call for the same reason: the terminals
-// this turn created must not be attributed to the next one.
-func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, reason string) {
-	rt.coord.AbandonInFlightTurn(ctx, chatID, reason)
-	rt.agentTerms.AdvanceTurn(chatID)
+// ReleaseTurn gives up the completion handle OpenTurn issued.
+func (rt *Runtime) ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+	rt.coord.ReleaseTurn(chatID, epoch)
+}
+
+// SettleTurnOnResponse closes the turn on the response that settled it — once the
+// folder has consumed everything queued behind that response, and only if the
+// wire's own turn_end did not close it first.
+//
+// It no longer advances the terminal registry's boundary, and neither does any
+// other caller: the WINNING closer publishes it from inside finalizeTurn
+// (BridgeCoordinator.onTurnClosed). A wrapper here could only speak for the
+// prompt path, which is exactly why an agent-initiated turn's terminals used to
+// stay attributed to the next prompted turn.
+func (rt *Runtime) SettleTurnOnResponse(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, seq uint64, resp *vibekit.RPCResponse) {
+	rt.coord.SettleTurnOnResponse(ctx, chatID, epoch, seq, resp)
+}
+
+// TurnOpenedAfter reports whether any turn on the chat opened after epoch.
+func (rt *Runtime) TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool {
+	return rt.coord.TurnOpenedAfter(chatID, epoch)
+}
+
+// PrimeTurnOpen reports whether the chat's open turn is a prime.
+func (rt *Runtime) PrimeTurnOpen(chatID vibekit.ChatID) bool {
+	return rt.coord.PrimeTurnOpen(chatID)
+}
+
+// FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.
+func (rt *Runtime) FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+	rt.coord.FinalizeLocalShellTurn(ctx, chatID, epoch)
+}
+
+// AbandonInFlightTurn finalizes a turn that failed before it could end. The
+// terminal boundary rides the finalizer, as SettleTurnOnResponse records.
+func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string) {
+	rt.coord.AbandonInFlightTurn(ctx, chatID, epoch, reason)
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"log/slog"
 	"slices"
 	"sync"
@@ -9,9 +10,9 @@ import (
 )
 
 // pendingPermsTracker tracks permission_needed events that haven't been
-// resolved yet. Keyed by request_id. Replayed on every new SSE
-// connection so permissions survive reconnects even if the ring buffer
-// has wrapped. Owns its own mutex to avoid contending with Runtime.mu.
+// resolved yet. Keyed by CHAT and request id together — see permKey. Replayed
+// on every new SSE connection so permissions survive reconnects even if the ring
+// buffer has wrapped. Owns its own mutex to avoid contending with Runtime.mu.
 //
 // THERE IS DELIBERATELY NO TTL, and the reason is a measurement rather than a
 // preference, because a 5-minute expiry was added here once and had to come out.
@@ -47,23 +48,50 @@ import (
 // archive). A handful of
 // structs per live chat, freed when that chat's turn ends.
 type pendingPermsTracker struct {
-	perms map[int64]vibekit.ServerEvent
+	perms map[permKey]vibekit.ServerEvent
 	mu    sync.Mutex
 }
 
-func newPendingPermsTracker() *pendingPermsTracker {
-	return &pendingPermsTracker{perms: make(map[int64]vibekit.ServerEvent)}
+// permKey is a pending decision's identity: the chat that owns it, plus the ACP
+// request id it will be answered on.
+//
+// THE PAIR, never the id alone. A request id comes from its own bridge's
+// `nextID atomic.Int64`, there is one bridge per chat, and every bridge starts at
+// zero — so two live chats minting request 7 in the same window is the ordinary
+// case rather than a race. Keyed process-wide on the int64, the second Add
+// overwrote the first chat's card, and a Take from EITHER chat then retired
+// whichever entry had survived: one request lost its only answer path while the
+// engine held it open, so that chat's turn waited forever for a response nothing
+// would send, and the other chat's answer went out against a request it had never
+// been asked.
+//
+// The chat is enough; a bridge generation is not needed. A replacement bridge
+// restarts its ids at zero, but every path that replaces one first drops the
+// chat's entries (CmdCancel, the tab-close teardown, cleanupChatState), so a
+// stale entry cannot be waiting for the new bridge's id 1.
+type permKey struct {
+	chat vibekit.ChatID
+	id   int64
 }
 
-// Add records a permission_needed event.
+func newPendingPermsTracker() *pendingPermsTracker {
+	return &pendingPermsTracker{perms: make(map[permKey]vibekit.ServerEvent)}
+}
+
+// Add records a permission_needed event under its own chat's id.
+//
+// The chat comes off the event rather than from a second parameter: the event is
+// the thing being tracked, its ChatID is what the answer will arrive carrying,
+// and it is already what ClearForChat matches on — so a caller cannot file a card
+// under one chat and have it replayed to another.
 func (t *pendingPermsTracker) Add(id int64, evt vibekit.ServerEvent) {
 	t.mu.Lock()
-	t.perms[id] = evt
+	t.perms[permKey{chat: evt.ChatID, id: id}] = evt
 	t.mu.Unlock()
 }
 
-// TakeIfPresent claims a request: it deletes the entry and returns it, and
-// reports false when the request was already answered by somebody else.
+// TakeIfPresent claims one chat's request: it deletes the entry and returns it,
+// and reports false when the request was already answered by somebody else.
 //
 // The lock spans BOTH the lookup and the delete, which is the whole point. It
 // replaces a Has-then-Remove pair whose window let two surfaces each see the
@@ -71,21 +99,25 @@ func (t *pendingPermsTracker) Add(id int64, evt vibekit.ServerEvent) {
 // the unattended floor's deadline. The agent server discards the second answer
 // silently, so before this the winner was decided there rather than here.
 //
-// Presence is the ONLY test. See the type comment for why there is no age check:
-// the agent server holds a stdio request open until it is answered, so a request
-// still in this map is still answerable however old it is.
+// The CHAT is part of the claim for permKey's reason: an id alone can name a live
+// request on a different chat.
+//
+// Presence is the ONLY other test. See the type comment for why there is no age
+// check: the agent server holds a stdio request open until it is answered, so a
+// request still in this map is still answerable however old it is.
 //
 // The returned event is the tracked permission_needed / elicitation_needed /
 // user_input_needed frame, which is what lets the caller announce WHICH kind of
 // decision was settled without holding a second index.
-func (t *pendingPermsTracker) TakeIfPresent(id int64) (vibekit.ServerEvent, bool) {
+func (t *pendingPermsTracker) TakeIfPresent(chatID vibekit.ChatID, id int64) (vibekit.ServerEvent, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	evt, ok := t.perms[id]
+	k := permKey{chat: chatID, id: id}
+	evt, ok := t.perms[k]
 	if !ok {
 		return vibekit.ServerEvent{}, false
 	}
-	delete(t.perms, id)
+	delete(t.perms, k)
 	return evt, true
 }
 
@@ -95,9 +127,9 @@ func (t *pendingPermsTracker) ClearForChat(chatID vibekit.ChatID) {
 		return
 	}
 	t.mu.Lock()
-	for id, evt := range t.perms {
-		if evt.ChatID == chatID {
-			delete(t.perms, id)
+	for k := range t.perms {
+		if k.chat == chatID {
+			delete(t.perms, k)
 		}
 	}
 	t.mu.Unlock()
@@ -124,19 +156,25 @@ func (t *pendingPermsTracker) ClearForChat(chatID vibekit.ChatID) {
 // reason a reader could see. The one sequence that matters is the whole queue's,
 // and it covers permission, elicitation and structured-question cards alike
 // because all three are tracked here under the same id space.
+//
+// The chat is the TIE-BREAK, not a grouping: ids are per bridge, so two chats can
+// hold the same id and sorting on the id alone would leave those two in Go's
+// randomized map order — the very thing this ordering exists to remove.
 func (t *pendingPermsTracker) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
 	t.mu.Lock()
-	ids := make([]int64, 0, len(t.perms))
-	for id, evt := range t.perms {
-		if chatFilter != "" && evt.ChatID != "" && evt.ChatID != chatFilter {
+	keys := make([]permKey, 0, len(t.perms))
+	for k := range t.perms {
+		if chatFilter != "" && k.chat != "" && k.chat != chatFilter {
 			continue
 		}
-		ids = append(ids, id)
+		keys = append(keys, k)
 	}
-	slices.Sort(ids)
-	result := make([]vibekit.ServerEvent, 0, len(ids))
-	for _, id := range ids {
-		result = append(result, t.perms[id])
+	slices.SortFunc(keys, func(a, b permKey) int {
+		return cmp.Or(cmp.Compare(a.id, b.id), cmp.Compare(a.chat, b.chat))
+	})
+	result := make([]vibekit.ServerEvent, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, t.perms[k])
 	}
 	t.mu.Unlock()
 	return result
@@ -153,6 +191,11 @@ func (b *bus) ClearPendingPermsForChat(chatID vibekit.ChatID) {
 // take also announces itself (decision_settled), which retires the card every
 // OTHER surface is still showing.
 //
+// It takes the CHAT as well as the request id, because an id is unique only
+// within one bridge — see permKey. A command carries its chat_id, so the caller
+// always has it, and passing it is what stops one chat's answer resolving
+// another's request.
+//
 // Every answer path goes through here, and the order is the contract: TAKE
 // first, then send the answer to kiro-cli. A handler that responded first and
 // retired the entry afterwards left a window in which a second tab read the same
@@ -164,8 +207,8 @@ func (b *bus) ClearPendingPermsForChat(chatID vibekit.ChatID) {
 // ("this request is now settled") told to two audiences, and splitting them
 // would let a new answer path claim a request while leaving every other surface
 // showing a live card for it.
-func (b *bus) TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool {
-	evt, ok := b.pendingPerms.TakeIfPresent(requestID)
+func (b *bus) TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool {
+	evt, ok := b.pendingPerms.TakeIfPresent(chatID, requestID)
 	if !ok {
 		return false
 	}

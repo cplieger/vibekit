@@ -227,7 +227,10 @@ point this test at its new home rather than guessing from the local cache.`, ent
 //
 // A Renovate bump arrives BEFORE the version is deployed anywhere, so the pin
 // failure normally has to be answered against a bundle that is not on the volume
-// yet. Fetch and unpack one without touching the running install:
+// yet. Check `ls ~/.local/share/kiro-cli/kas/` first though: a bump that has
+// already shipped in the image leaves the pinned bundle unpacked there, and then
+// the ~720 MB fetch below buys nothing. Fetch and unpack one only when the
+// pinned version is genuinely absent, without touching the running install:
 //
 //	curl -fsSLO https://desktop-release.q.us-east-1.amazonaws.com/<version>/kirocli-x86_64-linux.zip
 //	unzip -q kirocli-x86_64-linux.zip
@@ -312,11 +315,80 @@ This is stage 2 of the capability gate and it is local-only by design; stage 1
 (TestInitializeDeclaresExactly) needs no bundle and gates CI.`, active, pattern)
 	}
 	slices.Sort(matches)
-	raw, err := os.ReadFile(matches[0])
+	read := pristineBundle(matches[0])
+	raw, err := os.ReadFile(read)
 	if err != nil {
-		t.Fatalf("read bundle %s: %v", matches[0], err)
+		t.Fatalf("read bundle %s: %v", read, err)
 	}
-	return string(raw), matches[0]
+	return string(raw), read
+}
+
+// pristineBundle returns the .orig sibling of path when one exists, and path
+// itself otherwise.
+//
+// The local kiro-cli patches rewrite acp-server.js IN PLACE and keep the
+// unpatched bundle beside it as .orig; four of the nine live in that very file.
+// Without this preference every census read and every -update regeneration
+// treats a locally modified bundle as upstream — and a patched machine is the
+// only kind that can produce these fixtures, since the glob finds nothing in CI.
+func pristineBundle(path string) string {
+	orig := path + ".orig"
+	if fi, err := os.Stat(orig); err == nil && fi.Mode().IsRegular() {
+		return orig
+	}
+	return path
+}
+
+// TestBundleSource_PrefersThePristineSibling pins the .orig preference, which is
+// the difference between reading upstream and reading our own patches.
+func TestBundleSource_PrefersThePristineSibling(t *testing.T) {
+	const active = "9.9.9"
+	live := fakeBundle(t, active, "patched")
+	orig := live + ".orig"
+	if err := os.WriteFile(orig, []byte("pristine"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", orig, err)
+	}
+
+	src, path := bundleSource(t, active)
+	if src != "pristine" {
+		t.Errorf("bundleSource(%q) read %q, want %q (the .orig sibling)", active, src, "pristine")
+	}
+	if path != orig {
+		t.Errorf("bundleSource(%q) path = %q, want %q", active, path, orig)
+	}
+}
+
+// TestBundleSource_FallsBackToTheLiveBundle covers the unpatched machine, where
+// there is no .orig to prefer.
+func TestBundleSource_FallsBackToTheLiveBundle(t *testing.T) {
+	const active = "9.9.9"
+	live := fakeBundle(t, active, "stock")
+
+	src, path := bundleSource(t, active)
+	if src != "stock" {
+		t.Errorf("bundleSource(%q) read %q, want %q", active, src, "stock")
+	}
+	if path != live {
+		t.Errorf("bundleSource(%q) path = %q, want %q", active, path, live)
+	}
+}
+
+// fakeBundle writes content to a stand-in agent-server bundle for version active
+// under a scratch HOME, and returns its path.
+func fakeBundle(t *testing.T, active, content string) string {
+	t.Helper()
+	home := t.TempDir()
+	dir := filepath.Join(home, ".local", "share", "kiro-cli", "kas",
+		active+"-0000", "node_modules", "@kiro", "agent", "dist", "server")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	path := filepath.Join(dir, "acp-server.js")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	t.Setenv("HOME", home)
+	return path
 }
 
 // jsFuncBody returns the balanced-brace run that starts at the brace at index

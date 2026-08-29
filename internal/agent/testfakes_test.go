@@ -17,9 +17,12 @@ import (
 // --- Fake ACP bridge ---
 
 type fakeBridge struct {
-	notifCh     chan *vibekit.RPCResponse
-	callResults map[string]json.RawMessage
-	callErrs    map[string]error
+	notifCh chan vibekit.Notification
+	// deliveredSeq stamps each delivered frame, the way the real read loop does, so
+	// a test can drive the sequence the parked settle waits for.
+	deliveredSeq uint64
+	callResults  map[string]json.RawMessage
+	callErrs     map[string]error
 	// callRPCErrs makes Call return a REPLY carrying a JSON-RPC error, which is
 	// how KAS actually refuses: the transport succeeds and the reason travels
 	// in-band. callErrs is the other channel — the transport itself failing.
@@ -62,7 +65,7 @@ func newFakeBridge() *fakeBridge {
 	return &fakeBridge{
 		sessionID: "fake-sess-" + time.Now().Format("150405.000"),
 		modelID:   "fake-model",
-		notifCh:   make(chan *vibekit.RPCResponse, 16),
+		notifCh:   make(chan vibekit.Notification, 16),
 	}
 }
 
@@ -91,7 +94,7 @@ func (b *fakeBridge) Start(_ context.Context, opts *vibekit.StartOpts) error {
 		return nil
 	}
 	for _, n := range notifs {
-		b.notifCh <- n
+		b.deliver(n)
 	}
 	return nil
 }
@@ -154,9 +157,30 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 	// arrive after the caller's Call begins (the forward goroutine moves them
 	// to responseCh). notifCh is buffered, so this doesn't block.
 	for _, text := range chunks {
-		b.notifCh <- newChunkMsg(text)
+		b.deliver(newChunkMsg(text))
 	}
 	return &vibekit.RPCResponse{Result: res}, nil
+}
+
+// deliver stamps the next sequence on a frame and pushes it, exactly as the real
+// read loop does. Stamping in the fake rather than counting on the far side is
+// the same reason production does it here: a counter incremented on receipt skews
+// silently.
+func (b *fakeBridge) deliver(msg *vibekit.RPCResponse) {
+	b.mu.Lock()
+	b.deliveredSeq++
+	seq := b.deliveredSeq
+	b.mu.Unlock()
+	b.notifCh <- vibekit.Notification{Msg: msg, Seq: seq}
+}
+
+// CallAt is Call plus the read loop position at which the response arrived.
+func (b *fakeBridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+	resp, err := b.Call(ctx, method, params)
+	b.mu.Lock()
+	seq := b.deliveredSeq
+	b.mu.Unlock()
+	return resp, seq, err
 }
 
 // paramsFor returns the params captured for the most recent Call to method.
@@ -314,11 +338,11 @@ func (b *fakeBridge) lastEffort() string {
 	return b.effort
 }
 
-func (b *fakeBridge) NotifCh() <-chan *vibekit.RPCResponse { return b.notifCh }
+func (b *fakeBridge) NotifCh() <-chan vibekit.Notification { return b.notifCh }
 
 // newNoopBridge returns a zero-value fakeBridge suitable for benchmarks
 // where the bridge is never actually called. Replaces the former stubBridge type.
-func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan *vibekit.RPCResponse)} }
+func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan vibekit.Notification)} }
 
 // --- Fake ChatStore (delegates to testsupport.RecordingChatStore) ---
 

@@ -150,7 +150,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 		}
 	}
 	// No transcript, which is the half the drop got right.
-	if h.bridge.assistantBufs.Get("run:wf_1") != nil {
+	if h.liveTurnBuffer("run:wf_1") != nil {
 		t.Error("a step chunk opened an assistant buffer for the synthetic chat id")
 	}
 	// Still silent on the unhandled-notification line: that line is how a frame
@@ -344,23 +344,42 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	}
 }
 
+// epochStub is a controllable turn-epoch reader: what turnRegistry.currentEpoch
+// answers, without a lifecycle to drive. A chat absent from the map, or holding
+// zero, is idle.
+type epochStub struct {
+	cur map[vibekit.ChatID]vibekit.TurnEpoch
+}
+
+func (e *epochStub) read(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+	epoch := e.cur[chatID]
+	return epoch, epoch != 0
+}
+
 // TestKillForTurn_ScopedToTheOpenTurn pins the interrupt gate's scope (§5.6
 // R3): a cancel kills the CURRENT turn's terminals and leaves a background
 // command an earlier turn started on purpose alone.
+//
+// The boundary between the two turns here is a turn CLOSING and another OPENING,
+// which is what the epoch expresses and what the ordinal it replaced could not:
+// that ordinal was advanced by the prompt path alone, so a turn the wire started
+// left it where it was and its terminals stayed attributed to the next turn.
 func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
-	at := bareTerminals()
+	ep := &epochStub{cur: map[vibekit.ChatID]vibekit.TurnEpoch{"c1": 7, "c2": 3}}
+	at := newAgentTerminals(nil, nil, nil, ep.read)
 	add := func(id string, chat vibekit.ChatID) {
+		epoch := at.turnEpochOf(chat)
 		at.mu.Lock()
 		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
-		term.turnSeq = at.currentTurn(chat)
+		term.epoch = epoch
 		at.terms[id] = term
 		at.byChatID[chat] = append(at.byChatID[chat], id)
 		at.mu.Unlock()
 	}
 
-	add("t1-old", "c1") // turn 0
-	at.AdvanceTurn("c1")
-	add("t2-cur", "c1") // turn 1, the open turn
+	add("t1-old", "c1") // turn 7's background command
+	ep.cur["c1"] = 8    // turn 7 closed and turn 8 opened
+	add("t2-cur", "c1") // turn 8, the open turn
 	add("t2-cur-b", "c1")
 	add("other-chat", "c2")
 
@@ -388,9 +407,8 @@ func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 // TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals (the
 // overwhelmingly common case) touches nothing.
 func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
-	at := bareTerminals()
-	at.AdvanceTurn("c1")
-	at.KillForTurn("c1") // must not panic or create entries
+	at := newAgentTerminals(nil, nil, nil, (&epochStub{}).read) // every chat idle
+	at.KillForTurn("c1")                                        // must not panic or create entries
 	at.mu.Lock()
 	defer at.mu.Unlock()
 	if len(at.terms) != 0 || len(at.byChatID["c1"]) != 0 {

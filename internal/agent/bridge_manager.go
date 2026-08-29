@@ -117,26 +117,6 @@ func (bm *bridgeManager) close(chatID vibekit.ChatID) {
 	}
 }
 
-// promptingChatIDs returns the chats whose bridge currently holds the
-// prompt slot (state == bridgePrompting) — i.e. exactly the chats a
-// new prompt would 409 on, which is the authoritative "busy" set the
-// connect-time turn_state replay synthesizes from. Locking shape:
-// bm.mu for the map, per-bridge mu for state.
-func (bm *bridgeManager) promptingChatIDs() []vibekit.ChatID {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-	var out []vibekit.ChatID
-	for id, sb := range bm.bridges {
-		sb.mu.Lock()
-		prompting := sb.state == bridgePrompting
-		sb.mu.Unlock()
-		if prompting {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
 // count returns the number of active bridges.
 func (bm *bridgeManager) count() int {
 	bm.mu.Lock()

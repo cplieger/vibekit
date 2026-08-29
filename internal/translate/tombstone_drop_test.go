@@ -48,9 +48,6 @@ func lateWrites() map[string]func(*Translator, context.Context, vibekit.ChatID) 
 				Params: mustJSONCtx(map[string]any{"requestedAgent": "nope", "fallbackAgent": "vibe"}),
 			})
 		},
-		"persist v3 turn summary": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
-			tr.persistTurnSummary(ctx, id, []promptTurnSummary{{Unit: meteringUnitCredit, Usage: 0.5}}, 1200, false)
-		},
 		"persist v3 usage": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
 			tr.HandleUsageUpdate(ctx, id, mustJSONCtx(map[string]any{"size": 100, "used": 50}))
 		},

@@ -246,10 +246,11 @@ type utilityBridge interface {
 	// handshake ONLY; the subprocess's lifetime comes from StartOpts.Lifetime,
 	// which is REQUIRED.
 	Start(ctx context.Context, opts *vibekit.StartOpts) error
-	// NotifCh yields incoming ACP notifications. Closes when the subprocess
-	// exits. The forward goroutine must be draining it BEFORE Start: on v3
-	// session/new blocks until the host answers requests that arrive here.
-	NotifCh() <-chan *vibekit.RPCResponse
+	// NotifCh yields incoming ACP notifications, each carrying the read loop's
+	// sequence for it. Closes when the subprocess exits. The forward goroutine must
+	// be draining it BEFORE Start: on v3 session/new blocks until the host answers
+	// requests that arrive here.
+	NotifCh() <-chan vibekit.Notification
 }
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat: all 15
@@ -284,6 +285,12 @@ type ACPBridge interface {
 	// prompt path repair a level KAS changed on its own without paying for a call
 	// per prompt. SetModel clears that cache, so a post-swap call always asserts.
 	EnsureEffort(ctx context.Context, level string) error
+	// CallAt is Call plus the read loop position at which the response arrived, for
+	// a caller that has to order a LOCAL decision against the notifications still
+	// queued behind that response. The prompt paths are the only callers: a turn
+	// settled from its response alone would decide the wire never closed it while
+	// the wire's turn_end sat unread in the channel.
+	CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error)
 }
 
 // ACPBridgeFactory creates new ACPBridge instances. The runtime calls it once per

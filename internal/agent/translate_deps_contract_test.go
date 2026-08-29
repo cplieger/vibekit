@@ -85,8 +85,8 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 
 	t.Run("buffers_and_lines_are_wired", func(t *testing.T) {
 		r := newRoles(t)
-		if r.Buffers.GetOrInit("c1") == nil {
-			t.Error("Buffers.GetOrInit returned nil")
+		if r.Buffers.TurnFoldTarget(t.Context(), "c1") == nil {
+			t.Error("Buffers.TurnFoldTarget returned nil")
 		}
 		r.Lines.RecordFromDiffs("c1", nil, 0, "")
 	})

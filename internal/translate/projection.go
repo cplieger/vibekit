@@ -159,6 +159,13 @@ type Projection struct {
 
 	userPending bool
 	turnOpen    bool
+	// dropNextTurn is set when flushUser drops a prime preamble: the bracket that
+	// opens next is the prime's own turn, and its reply is as invisible as its
+	// prompt. Consumed by openTurn.
+	dropNextTurn bool
+	// turnPrimed is whether the OPEN turn is a prime's, so closeTurn discards it
+	// rather than emitting an assistant message.
+	turnPrimed bool
 }
 
 // NewProjection returns an empty Projection. newID must produce unique
@@ -314,6 +321,12 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 	}
 	switch u.Meta.Kiro.Kind {
 	case "turn_start":
+		// Close, THEN flush the pending user text, THEN open. A start with a turn
+		// already open means the previous end never arrived: opening without
+		// closing discards that turn's whole reply, and flushing first emits the
+		// orphaned reply after the NEXT prompt's user message, attributing it to
+		// the wrong turn. Messages() runs the same two in the same order.
+		p.closeTurn()
 		p.flushUser()
 		p.openTurn()
 	case "turn_end":
@@ -397,6 +410,10 @@ func (p *Projection) openTurn() {
 	p.turnOpen = true
 	p.turnID = ""
 	p.turnStart = 0
+	// A prime's user message was just dropped, so the bracket opening now is the
+	// prime's own turn. Consumed here so the flag cannot outlive one turn.
+	p.turnPrimed = p.dropNextTurn
+	p.dropNextTurn = false
 }
 
 // adoptTurnIdentity gives the open turn the id and timestamp of the first
@@ -426,7 +443,14 @@ func (p *Projection) closeTurn() {
 	p.turnOpen = false
 	b := p.buf
 	p.buf = nil
-	if b == nil {
+	primed := p.turnPrimed
+	p.turnPrimed = false
+	if b == nil || primed {
+		// A prime's ANSWER goes with its preamble. The prime instructs the model to
+		// reply with one short line confirming it is caught up, and that reply
+		// replays as an ordinary bracketed turn — so filtering only the user half
+		// left "Got it, I'm caught up" in the transcript as an agent-initiated
+		// segment, which the live path publishes and persists nowhere.
 		return
 	}
 	// Settle anything the marker filter still withheld before the emptiness
@@ -477,6 +501,17 @@ func (p *Projection) flushUser() {
 	p.userText, p.userID, p.userTs = "", "", 0
 	p.userPending = false
 	if text == "" {
+		return
+	}
+	// A PRIME is vibekit's own transcript replay, sent as a real session/prompt, so
+	// KAS persists it and replays it here like anything the user typed. Dropped
+	// rather than rendered: the live path publishes and persists none of a prime's
+	// frames, so keeping it here would make a resumed session the ONE place the
+	// priming preamble shows up as conversation.
+	if IsPrimePreamble(text) {
+		// The prime's own TURN goes too: see closeTurn. The bracket that opens next
+		// is the prime's, because the user message precedes turn_start on this wire.
+		p.dropNextTurn = true
 		return
 	}
 	p.messages = append(p.messages, vibekit.Message{

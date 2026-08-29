@@ -176,6 +176,48 @@ func TestHandleRunStepFrame_DropsAnOrphanUpdate(t *testing.T) {
 	}
 }
 
+// TestApplyRunToolUpdate_FailedTakesReason pins the reason fold on the run path.
+// run-step-blocks.ts force-opens a failed step's card exactly as the transcript
+// does, onto the same region, so a step whose reason rides rawOutput is blank
+// there for the same reason and is fixed by the same fold.
+func TestApplyRunToolUpdate_FailedTakesReason(t *testing.T) {
+	t.Parallel()
+	var events []vibekit.ServerEvent
+	tr := New(rolesOf(capturing(&events)))
+
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"title":      "Write config",
+			"kind":       "edit",
+			"status":     "in_progress",
+		}))
+	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call_update", "wf_1",
+		[]string{"seq", "coder"}, map[string]any{
+			"toolCallId": "t1",
+			"status":     "failed",
+			"rawOutput":  "lock is held by another process",
+			"content": []any{map[string]any{
+				"type": "diff", "path": "", "newText": "{}\n",
+			}},
+		}))
+
+	got := runSteps(t, events)
+	if len(got) != 2 {
+		t.Fatalf("got %d run_step events, want 2 (a create and a folded update)", len(got))
+	}
+	final := got[1].ToolCall
+	if final == nil {
+		t.Fatal("the update carried no tool call")
+	}
+	if final.Status != vibekit.ToolFailed {
+		t.Fatalf("status = %q, want failed", final.Status)
+	}
+	if final.Output != "lock is held by another process" {
+		t.Errorf("output = %q, want the failure reason off rawOutput", final.Output)
+	}
+}
+
 // TestHandleRunStepFrame_ForgetsAFinishedRunsTools pins the accumulator's BOUND.
 // It lives in the step registry so `run_complete` — the frame KAS's own
 // notification bridge unsubscribes on — drops a run's tool calls along with its

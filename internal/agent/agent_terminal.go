@@ -58,10 +58,16 @@ type agentTerminal struct {
 	ansi   *ansitext.Parser
 	chatID vibekit.ChatID
 	signal string
-	// turnSeq is the chat's turn sequence at creation — which TURN spawned
-	// this terminal. What lets an interrupt kill the turn's own processes
-	// without touching a background command an earlier turn left running.
-	turnSeq  uint64
+	// epoch is the turn that spawned this terminal — the chat's open turn at
+	// create time. What lets an interrupt kill the turn's own processes without
+	// touching a background command an earlier turn left running.
+	//
+	// The TURN's own identity, not a parallel count. It was `turnSeq`, an ordinal
+	// this type kept for itself and advanced from two Runtime wrappers on the
+	// prompt path, so no turn the wire started ever advanced it: an
+	// agent-initiated turn's terminals shared an ordinal with the NEXT prompted
+	// turn, and cancelling that turn killed the earlier one's processes.
+	epoch    vibekit.TurnEpoch
 	exitCode int
 	mu       sync.Mutex
 }
@@ -208,11 +214,13 @@ type agentTerminals struct {
 	// each holds at most one ring (64 KiB), so the peak is the turn's terminal
 	// count times that.
 	retired map[string]retiredOutput
-	// turnSeq is each chat's CURRENT turn ordinal, incremented at every
-	// turn end. A terminal stamps the value at creation, so "this turn's
-	// terminals" is a comparison rather than bookkeeping the create path
-	// has to remember to do.
-	turnSeq map[vibekit.ChatID]uint64
+	// currentEpoch reads which turn a chat's activity belongs to right now, so a
+	// terminal is stamped with the LIFECYCLE's identity rather than with a count
+	// this type keeps in parallel. A function rather than the registry, because
+	// reading one epoch is the only thing this type wants from the turn
+	// lifecycle — and because the coordinator that owns that lifecycle is built
+	// before this type, so the dependency runs one way.
+	currentEpoch func(vibekit.ChatID) (vibekit.TurnEpoch, bool)
 	// broadcast publishes a terminal's lifecycle and output frames. A function
 	// rather than the event bus, because emitting is the only thing this type
 	// wants from it and a one-field dependency stated as a func cannot grow.
@@ -242,22 +250,26 @@ type agentTerminals struct {
 // every silent command would file a false alarm and the signal would be worth
 // nothing.
 type retiredOutput struct {
-	raw     string
-	chatID  vibekit.ChatID
-	turnSeq uint64
+	raw    string
+	chatID vibekit.ChatID
+	// epoch is the turn that spawned the terminal, or zero when the chat had no
+	// turn open at the time. A zero is evicted by the chat's NEXT turn close
+	// whichever turn that is, so an unowned record is still bounded.
+	epoch vibekit.TurnEpoch
 }
 
 func newAgentTerminals(bridges *bridgeManager, lc *lifetime,
 	broadcast func(context.Context, vibekit.ServerEvent),
+	currentEpoch func(vibekit.ChatID) (vibekit.TurnEpoch, bool),
 ) *agentTerminals {
 	return &agentTerminals{
-		terms:     make(map[string]*agentTerminal),
-		byChatID:  make(map[vibekit.ChatID][]string),
-		retired:   make(map[string]retiredOutput),
-		turnSeq:   make(map[vibekit.ChatID]uint64),
-		bridges:   bridges,
-		lifecycle: lc,
-		broadcast: broadcast,
+		terms:        make(map[string]*agentTerminal),
+		byChatID:     make(map[vibekit.ChatID][]string),
+		retired:      make(map[string]retiredOutput),
+		bridges:      bridges,
+		lifecycle:    lc,
+		broadcast:    broadcast,
+		currentEpoch: currentEpoch,
 	}
 }
 
@@ -271,7 +283,7 @@ func (at *agentTerminals) retire(id string, term *agentTerminal) {
 	if term == nil || term.output == nil {
 		return
 	}
-	at.retired[id] = retiredOutput{raw: term.rawOutput(), chatID: term.chatID, turnSeq: term.turnSeq}
+	at.retired[id] = retiredOutput{raw: term.rawOutput(), chatID: term.chatID, epoch: term.epoch}
 }
 
 // peekRetired returns a retired terminal's raw output WITHOUT consuming the
@@ -293,40 +305,59 @@ func (at *agentTerminals) peekRetired(id string) (string, bool) {
 	return rec.raw, true
 }
 
-// AdvanceTurn marks a chat's turn boundary. Called at turn end, so every
-// terminal created since the LAST call belongs to the turn now closing —
-// nothing creates agent terminals outside a turn.
+// CloseTurn evicts the output records of the turn that just closed.
 //
-// It is also when retired output records are evicted. A turn ends only after
-// every tool call in it has settled, so any record still here has had its chance
-// to be adopted; holding it longer would grow with the session.
-func (at *agentTerminals) AdvanceTurn(chatID vibekit.ChatID) {
+// Called by the WINNING closer, from inside finalizeTurn, and that is the whole
+// point of the change: the ordinal this replaced was advanced by two Runtime
+// wrappers on the prompt path, so a turn the wire started — an auto-wake, an
+// agent-initiated turn, a turn closed by bridge death or a model switch — never
+// advanced it at all. Its terminals stayed attributed to a turn that had ended,
+// which is what let a later cancel kill them.
+//
+// A turn ends only after every tool call in it has settled, so any record still
+// here has had its chance to be adopted; holding it longer would grow with the
+// session. Epochs are monotonic per chat, so `<=` also collects a record left
+// behind by an earlier turn that never closed, and a ZERO epoch (a terminal
+// created while the chat had no turn open) is collected by whichever turn closes
+// next — an unowned record must still be bounded.
+func (at *agentTerminals) CloseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
 	at.mu.Lock()
-	closing := at.turnSeq[chatID]
-	at.turnSeq[chatID]++
 	for id, rec := range at.retired {
-		if rec.chatID == chatID && rec.turnSeq <= closing {
+		if rec.chatID == chatID && rec.epoch <= epoch {
 			delete(at.retired, id)
 		}
 	}
 	at.mu.Unlock()
 }
 
-// currentTurn reads a chat's turn ordinal. Callers hold at.mu.
-func (at *agentTerminals) currentTurn(chatID vibekit.ChatID) uint64 {
-	return at.turnSeq[chatID]
+// turnEpochOf reads which turn a chat's activity belongs to right now, or zero
+// when the chat is idle. Nil-safe: a terminals registry built without the reader
+// attributes nothing, which is the honest answer for a runtime that has no turn
+// lifecycle either.
+func (at *agentTerminals) turnEpochOf(chatID vibekit.ChatID) vibekit.TurnEpoch {
+	if at.currentEpoch == nil {
+		return 0
+	}
+	epoch, _ := at.currentEpoch(chatID)
+	return epoch
 }
 
-// KillForTurn kills the terminals the CURRENT (still-open) turn created and
-// leaves every other chat process alone. The interrupt gate (§5.6 R3): turn
-// cancel used to tear down nothing — `KillForChat`'s only callers are the
-// delete/close paths — so cancelling mid-`npm test` left the command running,
-// owned by nobody, streaming into a turn that no longer existed. Scoped to
-// the turn rather than the chat deliberately: KillForChat here would also
-// kill a background command an EARLIER turn started on purpose.
+// KillForTurn kills the terminals the chat's CURRENT turn created and leaves
+// every other chat process alone. The interrupt gate (§5.6 R3): turn cancel used
+// to tear down nothing — `KillForChat`'s only callers are the delete/close paths
+// — so cancelling mid-`npm test` left the command running, owned by nobody,
+// streaming into a turn that no longer existed. Scoped to the turn rather than
+// the chat deliberately: KillForChat here would also kill a background command an
+// EARLIER turn started on purpose.
+//
+// An idle chat kills nothing, and a terminal that was created while the chat was
+// idle (epoch zero) is never this turn's to kill.
 func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
+	cur := at.turnEpochOf(chatID)
+	if cur == 0 {
+		return
+	}
 	at.mu.Lock()
-	cur := at.currentTurn(chatID)
 	ids := at.byChatID[chatID]
 	var doomed []*agentTerminal
 	kept := ids[:0]
@@ -335,7 +366,7 @@ func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
 		if !ok {
 			continue
 		}
-		if term.turnSeq != cur {
+		if term.epoch != cur {
 			kept = append(kept, id)
 			continue
 		}
@@ -674,6 +705,12 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.Chat
 
 	termID := newMessageID() // reuse the ID generator for unique terminal IDs
 
+	// Which turn owns this terminal, read BEFORE at.mu is taken: the reader
+	// reaches the turn lifecycle's own mutex, and taking that under at.mu would
+	// give this type two lock orders (the finalizer calls CloseTurn with the
+	// lifecycle mutex already released).
+	epoch := at.turnEpochOf(chatID)
+
 	// Register the terminal in the maps and broadcast terminal_created
 	// BEFORE starting the pump/exit goroutines. emit() assigns monotonic
 	// event ids in call order, and those goroutines emit terminal_output /
@@ -683,7 +720,7 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.Chat
 	// leave the tab stuck "running". Registering + broadcasting first
 	// guarantees terminal_created is ordered ahead of any output/exit event.
 	at.mu.Lock()
-	term.turnSeq = at.currentTurn(chatID)
+	term.epoch = epoch
 	at.terms[termID] = term
 	at.byChatID[chatID] = append(at.byChatID[chatID], termID)
 	at.mu.Unlock()

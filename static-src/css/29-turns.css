@@ -151,8 +151,32 @@
   background: var(--c-yellow);
 }
 
+/* A cancel is a stop the USER asked for, so it joins interrupted's family rather
+ * than earning a hue of its own — the same reading `.tool-icon.is-warn` takes for
+ * a stopped run. The label and tooltip are what separate the two. */
+.turn-header[data-outcome="cancelled"] .turn-dot {
+  background: var(--c-yellow);
+}
+
 .turn-header[data-outcome="failed"] .turn-dot {
   background: var(--c-red);
+}
+
+/* A model refusal takes the refusal callout's own hue (see `.refusal-callout` in
+ * 13-messages.css), which is red for the model declining and NOT the amber a
+ * POLICY refusal gets — the model made a decision, the tool did not fail to run.
+ * Sharing failed's hue is fine at 0.5rem: the header's label and tooltip carry the
+ * distinction in words, which is the same reason completed hides its dot. */
+.turn-header[data-outcome="refused"] .turn-dot {
+  background: var(--c-red);
+}
+
+/* `unknown` keeps the neutral dot ON PURPOSE, and states it so the next reader
+ * knows it was decided rather than forgotten: an end vibekit could not read has no
+ * honest hue, and the meaningful contrast is against completed, which hides the dot
+ * entirely. Something not-clean happened here and nothing explains it. */
+.turn-header[data-outcome="unknown"] .turn-dot {
+  background: var(--c-text-tertiary);
 }
 
 .turn-ts {
@@ -400,7 +424,22 @@
   color: var(--c-text-secondary);
 }
 
+/* A cancel washes like an interrupt: both are a turn that stopped rather than
+ * finished, and the ledger's own words say which. */
+.turn-footer[data-outcome="cancelled"] {
+  background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-bg-tertiary));
+  color: var(--c-text-secondary);
+}
+
 .turn-footer[data-outcome="failed"] {
+  background: color-mix(in srgb, var(--c-red) 12%, var(--c-bg-tertiary));
+  color: var(--c-text-secondary);
+}
+
+/* A model refusal takes the refusal callout's quiet red wash rather than the
+ * amber a POLICY refusal gets: the model decided, nothing malfunctioned, and the
+ * remedy is a different prompt or a different model. */
+.turn-footer[data-outcome="refused"] {
   background: color-mix(in srgb, var(--c-red) 12%, var(--c-bg-tertiary));
   color: var(--c-text-secondary);
 }
@@ -466,9 +505,29 @@
   background: var(--c-yellow);
 }
 
+.turn-footer[data-outcome="cancelled"] .turn-ledger-glyph {
+  border-color: var(--c-yellow);
+  background: var(--c-yellow);
+}
+
 .turn-footer[data-outcome="failed"] .turn-ledger-glyph {
   border-color: var(--c-red);
   background: var(--c-red);
+}
+
+.turn-footer[data-outcome="refused"] .turn-ledger-glyph {
+  border-color: var(--c-red);
+  background: var(--c-red);
+}
+
+/* FILLED and neutral, not the default green ring. The glyph's resting state is a
+ * green ring meaning "clean", so before this rule an unknown, cancelled or refused
+ * turn carried the mark of a clean one — the one direction a status glyph must
+ * never fail in. Neutral because an end vibekit could not read has no honest hue,
+ * and filled because the ring is reserved for a turn that finished cleanly. */
+.turn-footer[data-outcome="unknown"] .turn-ledger-glyph {
+  border-color: var(--c-text-tertiary);
+  background: var(--c-text-tertiary);
 }
 
 /* The ledger's chevron. Was two rotated borders — its own third technique, with
@@ -717,12 +776,16 @@
 }
 
 .rail-marker[data-outcome="interrupted"],
-.rail-cluster[data-outcome="interrupted"] {
+.rail-cluster[data-outcome="interrupted"],
+.rail-marker[data-outcome="cancelled"],
+.rail-cluster[data-outcome="cancelled"] {
   color: var(--c-yellow);
 }
 
 .rail-marker[data-outcome="failed"],
-.rail-cluster[data-outcome="failed"] {
+.rail-cluster[data-outcome="failed"],
+.rail-marker[data-outcome="refused"],
+.rail-cluster[data-outcome="refused"] {
   color: var(--c-red);
 }
 

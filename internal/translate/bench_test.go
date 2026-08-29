@@ -14,7 +14,7 @@ import (
 // specific behaviors (e.g. onBroadcast to capture events).
 type baseDeps struct {
 	store       ChatRecords
-	bufStore    *buffer.Store
+	bufStore    *turnBuffers
 	lineTracker *buffer.LineTracker
 	onBroadcast func(context.Context, vibekit.ServerEvent)
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
@@ -45,6 +45,9 @@ type baseDeps struct {
 	// which the real registry reports as ok — the distinction the miss warning
 	// keys on.
 	terminals map[string]termRendered
+	// brackets records every turn-lifecycle call, so a test can assert which
+	// bracket a frame drove without a turn registry behind it.
+	brackets []turnBracket
 }
 
 // termRendered is one terminal's rendered output in the stub registry.
@@ -56,7 +59,7 @@ type termRendered struct {
 func newBaseDeps() *baseDeps {
 	return &baseDeps{
 		store:       nopChatRecords{},
-		bufStore:    buffer.NewStore(),
+		bufStore:    newTurnBuffers(),
 		lineTracker: buffer.NewLineTracker(),
 		terminals:   map[string]termRendered{},
 	}
@@ -93,9 +96,58 @@ func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, ms
 	return d.store.UpsertTurnPlan(ctx, chatID, msg)
 }
 
-func (d *baseDeps) GetOrInit(chatID vibekit.ChatID) *buffer.Buffer {
+func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID vibekit.ChatID) *buffer.Buffer {
 	return d.bufStore.GetOrInit(chatID)
 }
+
+// The three turn-bracket operations, recorded rather than performed: the host
+// owns the turn lifecycle, and what this package is responsible for is calling
+// the right one on the right frame.
+func (d *baseDeps) WireTurnStart(_ context.Context, chatID vibekit.ChatID) {
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "start"})
+}
+
+func (d *baseDeps) WireTurnEnd(_ context.Context, chatID vibekit.ChatID, stop vibekit.StopReason) {
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop})
+}
+
+func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID vibekit.ChatID) {
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "revise"})
+}
+
+// turnBracket is one recorded turn-lifecycle call.
+type turnBracket struct {
+	chat vibekit.ChatID
+	kind string
+	stop vibekit.StopReason
+}
+
+// turnBuffers stands in for the host's per-turn buffers: one buffer per chat,
+// created on first fold. It is NOT what production does — there a fold with no
+// open turn opens a wireTurnStart turn, and the buffer belongs to that turn's
+// record — but the property this package is responsible for is the same either
+// way: a fold gets somewhere to land, and the same somewhere for the rest of the
+// turn.
+type turnBuffers struct {
+	bufs map[vibekit.ChatID]*buffer.Buffer
+}
+
+func newTurnBuffers() *turnBuffers {
+	return &turnBuffers{bufs: map[vibekit.ChatID]*buffer.Buffer{}}
+}
+
+func (tb *turnBuffers) GetOrInit(chatID vibekit.ChatID) *buffer.Buffer {
+	if b, ok := tb.bufs[chatID]; ok {
+		return b
+	}
+	b := buffer.New()
+	tb.bufs[chatID] = b
+	return b
+}
+
+func (tb *turnBuffers) Get(chatID vibekit.ChatID) *buffer.Buffer { return tb.bufs[chatID] }
+
+func (tb *turnBuffers) Delete(chatID vibekit.ChatID) { delete(tb.bufs, chatID) }
 
 func (d *baseDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
 	d.lineTracker.RecordFromDiffs(chatID, diffs, turn, kind)
@@ -124,6 +176,39 @@ type turnInterrupt struct {
 
 func (d *baseDeps) InterruptTurn(chatID vibekit.ChatID, reason string) {
 	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, reason})
+}
+
+// AccumulateSpend and StageConversationTurnSummary stand in for the host's
+// per-turn accounting. The double writes the chat's usage directly, which is what
+// the host does for a frame that reaches it with no turn open — the only state a
+// translate fixture can be in, since the turn record lives on the host.
+func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID vibekit.ChatID, credits float64) {
+	if credits <= 0 {
+		return
+	}
+	d.mutateUsage(ctx, chatID, func(u *vibekit.Usage) {
+		u.Credits += credits
+		u.HasRealData = true
+	})
+}
+
+func (d *baseDeps) StageConversationTurnSummary(ctx context.Context, chatID vibekit.ChatID, elapsedMs float64) {
+	d.mutateUsage(ctx, chatID, func(u *vibekit.Usage) {
+		u.TurnCount++
+		if elapsedMs > 0 {
+			u.LastTurnMs = elapsedMs
+		}
+	})
+}
+
+func (d *baseDeps) mutateUsage(ctx context.Context, chatID vibekit.ChatID, apply func(*vibekit.Usage)) {
+	_ = d.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		apply(&c.Usage)
+		return true
+	})
 }
 
 func (d *baseDeps) WorkDir() string { return "/tmp" }

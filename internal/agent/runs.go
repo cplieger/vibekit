@@ -69,7 +69,7 @@ type runTranslator interface {
 // runPermClaimer is the pending-decision tracker as the unattended floor uses
 // it: claim a request so exactly one surface answers it.
 type runPermClaimer interface {
-	TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool
+	TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool
 }
 
 // Runs exposes the run surface to the composition root, which starts the orphan

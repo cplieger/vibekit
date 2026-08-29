@@ -90,8 +90,8 @@ type Bridge struct {
 	stdin        io.WriteCloser
 	modes        atomic.Pointer[[]vibekit.SessionMode]
 	stdout       *frameReader
-	pending      map[int64]chan *vibekit.RPCResponse
-	notifCh      chan *vibekit.RPCResponse
+	pending      map[int64]chan pendingReply
+	notifCh      chan vibekit.Notification
 	done         chan struct{}
 	models       atomic.Pointer[[]vibekit.SessionModel]
 	// servedModels is every model id session/new advertised, UNFILTERED. models
@@ -132,13 +132,18 @@ type Bridge struct {
 	// does not persist the ids, so session/new and session/load must send the
 	// SAME set or a resumed chat silently changes posture. Holding them on the
 	// bridge rather than reading a setting per call is what guarantees that.
-	presets     []string
-	nextID      atomic.Int64
-	stopOnce    sync.Once
-	mu          sync.Mutex
-	writeMu     sync.Mutex
-	pendingMu   sync.Mutex
-	enableHooks bool
+	presets []string
+	// deliveredSeq counts the notifications readLoop has pushed onto notifCh, and is
+	// the sequence stamped on each one. Touched only by readLoop's goroutine — it is
+	// published on the frame itself and on the reply to a pending request, never
+	// read across the boundary.
+	deliveredSeq uint64
+	nextID       atomic.Int64
+	stopOnce     sync.Once
+	mu           sync.Mutex
+	writeMu      sync.Mutex
+	pendingMu    sync.Mutex
+	enableHooks  bool
 	// secretStorage gates the `_meta.kiro.secretStorage` declaration in
 	// initialize (StartOpts.SecretStorage). Immutable after Start, like
 	// enableHooks.
@@ -186,8 +191,8 @@ func New(cliPath, workDir string, opts ...Option) *Bridge {
 	b := &Bridge{
 		cliPath: cliPath,
 		workDir: workDir,
-		pending: make(map[int64]chan *vibekit.RPCResponse),
-		notifCh: make(chan *vibekit.RPCResponse, 256),
+		pending: make(map[int64]chan pendingReply),
+		notifCh: make(chan vibekit.Notification, 256),
 		done:    make(chan struct{}),
 	}
 	for _, o := range opts {
@@ -266,8 +271,9 @@ func (b *Bridge) ServedModels() []string {
 	return nil
 }
 
-// NotifCh returns the channel of incoming ACP notifications from the bridge subprocess.
-func (b *Bridge) NotifCh() <-chan *vibekit.RPCResponse { return b.notifCh }
+// NotifCh returns the channel of incoming ACP notifications from the bridge
+// subprocess, each carrying the read loop's sequence for it.
+func (b *Bridge) NotifCh() <-chan vibekit.Notification { return b.notifCh }
 
 // SetModel performs an in-session model swap via session/set_config_option
 // (configId "model") — the v3 (KAS) replacement for the removed

@@ -66,8 +66,15 @@ export const ROW_PITCH_PX = MARKER_MIN_PX + 4;
 /** Outcome severity, worst first. A cluster reports its worst member, because a
  *  range containing one failure is a range you want to look at. */
 const SEVERITY: Record<TurnOutcome, number> = {
-  failed: 3,
-  interrupted: 2,
+  failed: 6,
+  // A refusal is not a malfunction, so it ranks below `failed` — but it is a turn
+  // that produced no work, so it outranks every state that did.
+  refused: 5,
+  interrupted: 4,
+  // An end vibekit could not read is not a success, and it is the one state a
+  // reader should look at BECAUSE nothing explains it.
+  unknown: 3,
+  cancelled: 2,
   running: 1,
   completed: 0,
 };

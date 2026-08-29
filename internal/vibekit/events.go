@@ -42,6 +42,23 @@ const (
 	// refusal (content_filtered): the refusal explanation streamed as the last
 	// assistant chunk, tagged with _meta.kiro.refusal (vibekit.RefusalInfo).
 	StopReasonRefusal StopReason = "refusal"
+	// StopReasonUnknown is a turn whose end vibekit had to infer. Its one producer
+	// is a wire turn_start arriving with the previous turn still open: that turn's
+	// own end never came, so nothing on the wire says why it stopped.
+	StopReasonUnknown StopReason = "unknown"
+	// StopReasonError is KAS's own value for a turn the backend failed, and it is
+	// one of the two reasons this enum is OPEN: ACP spec v1's union is closed at
+	// five values and KAS exceeds it.
+	StopReasonError StopReason = "error"
+	// StopReasonContentFiltered is the raw spelling of a refusal. It reaches the
+	// same outcome as StopReasonRefusal; both are the model declining rather than
+	// anything malfunctioning.
+	StopReasonContentFiltered StopReason = "content_filtered"
+	// StopReasonMaxTokens and StopReasonMaxTurnRequests are a turn stopped at a
+	// bound. The work that was allowed COMPLETED, and the answer is cut off, which
+	// is what TurnConclusion.Truncated carries.
+	StopReasonMaxTokens       StopReason = "max_tokens"
+	StopReasonMaxTurnRequests StopReason = "max_turn_requests"
 )
 
 // SSE event type constants. Using these instead of bare string literals

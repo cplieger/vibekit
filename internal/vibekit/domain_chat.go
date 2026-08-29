@@ -36,6 +36,16 @@ const (
 	// of the transcript rather than a fleeting banner. Content carries the
 	// violated safety properties. See translate/safety.go.
 	EventInfraSafetyBlocked EventKind = "infra_safety_blocked"
+	// EventTurnOutcome is the CARRIER for a turn that emitted nothing: with no
+	// assistant message, there is nowhere else to stamp TurnOutcome, so a failed or
+	// refused empty turn would read `completed` on reload and be absent from the
+	// turn index entirely.
+	//
+	// Persisted only when no other marker already carries the outcome — a cancel
+	// and an interrupt append their own — and only for an outcome that is not
+	// `completed`, which is what the derivation answers by default anyway. A row
+	// that changes no reading is a row the transcript does not need.
+	EventTurnOutcome EventKind = "turn_outcome"
 )
 
 // ToolKind identifies the category of a tool invocation. Values are
@@ -406,6 +416,22 @@ type Message struct {
 	Reasoning string    `json:"reasoning,omitempty"`
 	EventKind EventKind `json:"event_kind,omitempty"`
 	ID        string    `json:"id"`
+	// TurnOutcome is how this turn ENDED, stamped on the message that finalized it
+	// — the last assistant message, or an EventTurnOutcome marker when the turn
+	// emitted nothing. It is the durable half of a fact that otherwise exists only
+	// on the live turn_ended SSE, so a reloaded transcript had to guess it from the
+	// event messages that happened to survive.
+	//
+	// Its presence is also what CLOSES a turn for the two turn projections: the
+	// next assistant message or marker after it opens a new segment. A message
+	// persisted before this field existed carries none, so those turns never close
+	// and both projections behave exactly as they did.
+	TurnOutcome TurnOutcome `json:"turn_outcome,omitempty"`
+	// TurnStopReasonRaw is the wire's stop reason verbatim. Kept because the enum
+	// is OPEN — KAS exceeds ACP spec v1's closed union — so a value vibekit has
+	// not measured is recoverable from the record instead of flattened into
+	// `unknown`. No consumer may branch on it; TurnOutcome is what they read.
+	TurnStopReasonRaw StopReason `json:"turn_stop_reason_raw,omitempty"`
 	// TurnModel is the model that answered this turn, stamped on the final
 	// assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
 	// below. It belongs on the MESSAGE and not only on the Chat because the
@@ -450,6 +476,13 @@ type Message struct {
 	TurnCredits   float64 `json:"turn_credits,omitempty"`
 	TurnElapsedMs float64 `json:"turn_elapsed_ms,omitempty"`
 	Ts            int64   `json:"ts"`
+	// TurnTruncated marks a turn the model stopped at a bound: it completed, and
+	// its answer is cut off. Stored though derivable from the raw stop reason, so
+	// the Go and TypeScript projections do not each re-implement the mapping.
+	//
+	// Last in the struct because it is the only bool: govet's fieldalignment counts
+	// leading pointer bytes, and a bool between the strings above pads them apart.
+	TurnTruncated bool `json:"turn_truncated,omitempty"`
 }
 
 // Usage is a chat's last-known context and billing snapshot.

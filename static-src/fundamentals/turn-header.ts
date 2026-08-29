@@ -41,7 +41,10 @@ export interface TurnHeaderData {
 const OUTCOME_LABEL: Record<TurnOutcome, string> = {
   running: "Running",
   completed: "Completed",
+  cancelled: "Cancelled",
   interrupted: "Interrupted",
+  refused: "Refused",
+  unknown: "Unknown",
   failed: "Failed",
 };
 
@@ -51,7 +54,10 @@ const OUTCOME_LABEL: Record<TurnOutcome, string> = {
 const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
   running: "This turn is still running",
   completed: "This turn finished normally",
+  cancelled: "You stopped this turn",
   interrupted: "This turn was interrupted before it finished",
+  refused: "The model declined to continue",
+  unknown: "This turn's end could not be read",
   failed: "This turn failed",
 };
 

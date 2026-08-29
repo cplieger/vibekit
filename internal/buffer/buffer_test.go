@@ -318,7 +318,7 @@ func TestMarkCancelledToolsFailed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := &Buffer{ToolCalls: tt.tools}
-			changed := buf.MarkCancelledToolsFailed()
+			_, changed := buf.MarkCancelledToolsFailed()
 			if len(changed) != tt.wantLen {
 				t.Errorf("changed = %d, want %d", len(changed), tt.wantLen)
 			}
@@ -329,7 +329,7 @@ func TestMarkCancelledToolsFailed(t *testing.T) {
 			}
 			// Idempotent: second call returns nil.
 			if tt.wantLen > 0 {
-				if got := buf.MarkCancelledToolsFailed(); len(got) != 0 {
+				if _, got := buf.MarkCancelledToolsFailed(); len(got) != 0 {
 					t.Errorf("second call returned %d, want 0", len(got))
 				}
 			}

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -108,8 +107,9 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Start a turn: one chunk then end.
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("finished"))
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -119,7 +119,7 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 		t.Errorf("message mismatch: %+v", c.Messages[0])
 	}
 	// Buffer should be cleared.
-	if h.bridge.assistantBufs.Get("c1") != nil {
+	if h.liveTurnBuffer("c1") != nil {
 		t.Errorf("buffer not cleared after turn_ended")
 	}
 }
@@ -128,7 +128,8 @@ func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 || c.Messages[0].Role != vibekit.RoleEvent || c.Messages[0].EventKind != vibekit.EventCancelled {
@@ -140,7 +141,8 @@ func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 0 {
@@ -153,9 +155,10 @@ func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Simulate a tool call in progress.
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
 	// Cancel the turn.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	// Should have the assistant message + the cancelled event.
@@ -196,7 +199,7 @@ func TestMarkCancelledToolsFailed(t *testing.T) {
 			{ID: "tc3", Status: vibekit.ToolPending},
 		},
 	}
-	changed := buf.MarkCancelledToolsFailed()
+	_, changed := buf.MarkCancelledToolsFailed()
 	if len(changed) != 2 {
 		t.Fatalf("changed = %d, want 2", len(changed))
 	}
@@ -216,6 +219,7 @@ func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Send a thought chunk.
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	raw := mustJSON(t, map[string]any{
 		"sessionUpdate": "agent_thought_chunk",
 		"content":       map[string]any{"type": "text", "text": "Let me think..."},
@@ -226,7 +230,7 @@ func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 	})
 
 	// End the turn.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -245,6 +249,7 @@ func TestToolCallDurationMs(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Send a tool call.
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
 
 	// Send a tool call update with completed status.
@@ -260,7 +265,7 @@ func TestToolCallDurationMs(t *testing.T) {
 	})
 
 	// End the turn and check the persisted tool call has a duration.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -283,8 +288,9 @@ func TestEmitTurnEnded_DifferentChatID(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	// Start a turn on a different chat ID to exercise the chatID parameter.
+	epoch := h.OpenTurn(t.Context(), "c2", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c2", newChunkMsg("hello from c2"))
-	h.EmitTurnEndedWithStats(t.Context(), "c2", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), "c2", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 
 	c, _ := cs.Get(t.Context(), "c2")
 	if len(c.Messages) != 1 {

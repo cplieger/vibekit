@@ -36,7 +36,7 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 	// Taker: claim entries for chat-1.
 	wg.Go(func() {
 		for i := range N {
-			tracker.TakeIfPresent(int64(i))
+			tracker.TakeIfPresent("chat-1", int64(i))
 		}
 	})
 
@@ -83,7 +83,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 		for range answerers {
 			wg.Go(func() {
 				<-start
-				got, ok := tracker.TakeIfPresent(id)
+				got, ok := tracker.TakeIfPresent("chat-1", id)
 				if !ok {
 					return
 				}
@@ -101,7 +101,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 		if n := wins.Load(); n != 1 {
 			t.Fatalf("round %d: %d answerers claimed one request, want exactly 1", round, n)
 		}
-		if _, ok := tracker.TakeIfPresent(id); ok {
+		if _, ok := tracker.TakeIfPresent("chat-1", id); ok {
 			t.Fatalf("round %d: request still claimable after being taken", round)
 		}
 	}

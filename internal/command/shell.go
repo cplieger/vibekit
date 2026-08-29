@@ -102,6 +102,20 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		return nil, StatusError(http.StatusConflict, ErrChatNotFound)
 	}
 
+	// The shell turn is a turn like any other, so it opens one: without a record
+	// its end was a broadcast nothing owned, and a second closer could produce
+	// another. Opened after the user message lands, so a refused record leaves no
+	// turn open behind it.
+	//
+	// A zero epoch is the source rule REFUSING while an agent turn is open. The
+	// prompt-slot guard above catches the turns vibekit prompted; this catches the
+	// ones it did not, which hold no slot.
+	epoch := roles.turnOutcome.OpenTurn(ctx, cmd.ChatID, vibekit.TurnSourceLocalShell)
+	if epoch == 0 {
+		return nil, StatusError(http.StatusConflict, errBusy)
+	}
+	defer roles.turnOutcome.ReleaseTurn(cmd.ChatID, epoch)
+
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
 	start := time.Now()
 
@@ -146,7 +160,7 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 	}
 	if _, stillExists := roles.chats.Get(ctx, cmd.ChatID); stillExists {
 		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
+		roles.turnOutcome.FinalizeLocalShellTurn(ctx, cmd.ChatID, epoch)
 	}
 	return responseOK, nil
 }

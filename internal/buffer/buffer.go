@@ -1,8 +1,9 @@
-// Package buffer provides the per-chat assistant turn buffering subsystem.
+// Package buffer provides the per-turn assistant content buffer.
 //
-// Buffer accumulates streaming deltas per chat until turn_ended writes
-// the finalized assistant message to the chat file. Store is a
-// concurrency-safe map of per-chat buffers.
+// A Buffer accumulates streaming deltas until the turn's closer takes it and
+// writes the finalized assistant message to the chat file. One per TURN, owned by
+// the turn record that installed it — there is no per-chat store, because a
+// buffer keyed by chat outlives the turn that filled it.
 package buffer
 
 import (
@@ -20,6 +21,16 @@ import (
 // 50 rows with generous ANSI escapes and is well below container
 // memory limits.
 const DefaultOutputCap = 64 * 1024
+
+// New returns an empty buffer ready to fold a turn's frames into.
+//
+// One per TURN, installed when the turn opens, which is what stops a partial
+// reply outliving the turn that produced it: the previous shape created a buffer
+// lazily on the first frame and keyed it by chat, so a turn nothing closed left
+// its buffer behind for the next turn's frames to extend.
+func New() *Buffer {
+	return &Buffer{ToolStartTimes: make(map[string]int64)}
+}
 
 // Buffer accumulates streaming deltas per chat until turn_ended
 // writes the finalized assistant message to the chat file.
@@ -39,6 +50,10 @@ const DefaultOutputCap = 64 * 1024
 // outside this package races Snapshot, and did — measured with -race on
 // go1.27.0, Buffer.MessageID written at translate/streaming_tools.go:436 against
 // Snapshot's read here. Add a guarded method rather than a field write.
+//
+// A turn's CLOSER does not run on the dispatch loop either, so it reads through
+// TakeTurn rather than through the fields: the fold that was already past
+// TurnFoldTarget when the claim landed keeps appending while the closer reads.
 type Buffer struct {
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
@@ -90,6 +105,11 @@ type Buffer struct {
 	chunkSeq int64
 	mu       sync.Mutex
 	Started  bool
+	// muted is a turn whose frames must reach no client: a PRIME's. They still FOLD
+	// here — a revised binding hands this buffer to the agent's own turn, which
+	// unmutes it — but nothing published from them may reach a browser, or the
+	// priming preamble renders as conversation and vanishes on the next reload.
+	muted bool
 	// overCap latches once the turn has exceeded maxBufferBytes, so the
 	// truncation notice and its log line are emitted exactly once. Frames keep
 	// arriving after the cap is hit, and one notice per frame would be a second
@@ -128,6 +148,23 @@ func (buf *Buffer) StartTurn(messageID string) bool {
 	return true
 }
 
+// SetMuted records whether this turn's frames may be published. Set at open from
+// the turn's SOURCE, and cleared when a revised binding hands the buffer to a turn
+// that may publish.
+func (buf *Buffer) SetMuted(muted bool) {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	buf.muted = muted
+}
+
+// Muted reports whether this turn's frames may be published. Read by the one
+// broadcast funnel in translate, so a fold site cannot forget it.
+func (buf *Buffer) Muted() bool {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	return buf.muted
+}
+
 // BufferedBytes is the turn's accumulated content plus reasoning length, for a
 // caller enforcing a byte cap on the pair.
 func (buf *Buffer) BufferedBytes() int {
@@ -136,33 +173,83 @@ func (buf *Buffer) BufferedBytes() int {
 	return buf.Content.Len() + buf.Reasoning.Len()
 }
 
-// EmittedNothing reports whether the turn has produced no content of any kind.
+// TurnContent is everything a turn's closer needs from its buffer, read in ONE
+// critical section.
 //
-// All FOUR accumulators, not just Content and ToolCalls: a turn that streamed
-// only thinking (an agent_thought_chunk with no agent_message_chunk and no tool
-// call) has emitted something, and Blocks is counted because it is the canonical
-// chronological array the client renders from, so a future block kind that lands
-// in neither builder still counts.
+// One read rather than eight, because the closers run on the settling goroutine
+// while the dispatch loop may still be folding a frame that was already past
+// TurnFoldTarget when the claim landed: field-by-field reads race a
+// strings.Builder and three slices, and can persist a torn Content as the turn's
+// final text. Slices and maps are COPIES for the same reason.
+type TurnContent struct {
+	ChangedFiles map[string]*vibekit.FileChange
+	Refusal      *vibekit.RefusalInfo
+	// MessageID is the id the streamed message went out under, and the id the
+	// persisted message keeps.
+	MessageID      string
+	Model          string
+	Content        string
+	Reasoning      string
+	ToolCalls      []vibekit.ToolCall
+	Blocks         []vibekit.Block
+	CodeReferences []vibekit.CodeReference
+	// Started is whether a message id was minted and a message_created went out.
+	// Not the same question as EmittedNothing: a turn whose every delta was
+	// withheld still started, and its empty message is the outcome's carrier.
+	Started bool
+	// EmittedNothing is whether the turn produced no content of any kind.
+	//
+	// All FOUR accumulators, not just Content and ToolCalls: a turn that streamed
+	// only thinking (an agent_thought_chunk with no agent_message_chunk and no
+	// tool call) has emitted something, and Blocks is counted because it is the
+	// canonical chronological array the client renders from, so a future block
+	// kind that lands in neither builder still counts.
+	//
+	// Deliberately NOT the same predicate as Snapshot's early return, which tests
+	// three of these four and omits Blocks. Snapshot is asking "is there a message
+	// worth sending"; this asks "did the model produce anything at all". Unifying
+	// them would change what Snapshot returns for a turn holding only a tool-use
+	// block, which is a wire question, not a locking one.
+	EmittedNothing bool
+}
+
+// TakeTurn returns the turn's whole content as of one instant.
 //
-// This lives here rather than at its caller because the four fields are exported
-// and documented "guarded by mu", and the caller read them from a DIFFERENT
-// goroutine than the dispatch loop that appends to them — a mutex every method
-// in this file takes and one caller bypassed through the field. The answer is
-// only meaningful as of one instant anyway, so it has to be computed under the
-// same lock that makes the four fields agree with each other.
+// The buffer is not reset: the turn record owns it and is dropped with the turn,
+// so there is nothing to reclaim and a second closer losing the claim must still
+// read the same thing.
 //
-// Deliberately NOT the same predicate as Snapshot's early return, which tests
-// three of these four and omits Blocks. Snapshot is asking "is there a message
-// worth sending"; this asks "did the model produce anything at all". Unifying
-// them would change what Snapshot returns for a turn holding only a tool-use
-// block, which is a wire question, not a locking one.
-func (buf *Buffer) EmittedNothing() bool {
+// ChangedFiles is copied DEEP, because a shallow map clone shares its
+// *FileChange values and TrackFileChanges mutates them in place — the closer
+// would then marshal a counter the folder is still incrementing. Refusal is
+// shared deliberately: it is written once and never mutated after.
+func (buf *Buffer) TakeTurn() TurnContent {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	return buf.Content.Len() == 0 &&
-		buf.Reasoning.Len() == 0 &&
-		len(buf.ToolCalls) == 0 &&
-		len(buf.Blocks) == 0
+	var changed map[string]*vibekit.FileChange
+	if buf.ChangedFiles != nil {
+		changed = make(map[string]*vibekit.FileChange, len(buf.ChangedFiles))
+		for path, fc := range buf.ChangedFiles {
+			copied := *fc
+			changed[path] = &copied
+		}
+	}
+	return TurnContent{
+		ChangedFiles:   changed,
+		Refusal:        buf.Refusal,
+		MessageID:      buf.MessageID,
+		Model:          buf.Model,
+		Content:        buf.Content.String(),
+		Reasoning:      buf.Reasoning.String(),
+		ToolCalls:      slices.Clone(buf.ToolCalls),
+		Blocks:         slices.Clone(buf.Blocks),
+		CodeReferences: slices.Clone(buf.CodeReferences),
+		Started:        buf.Started,
+		EmittedNothing: buf.Content.Len() == 0 &&
+			buf.Reasoning.Len() == 0 &&
+			len(buf.ToolCalls) == 0 &&
+			len(buf.Blocks) == 0,
+	}
 }
 
 // AppendToolCall records a newly opened tool call and returns its index, keeping
@@ -446,19 +533,23 @@ func (buf *Buffer) ComputeDuration(toolCallID string) int {
 	return int(time.Now().UnixMilli() - start)
 }
 
-// MarkCancelledToolsFailed sets all in-progress tool calls to failed.
-// Called on cancel so the client doesn't show stuck spinners.
-func (buf *Buffer) MarkCancelledToolsFailed() []vibekit.ToolCall {
+// MarkCancelledToolsFailed sets all in-progress tool calls to failed and returns
+// the turn's message id alongside them. Called on cancel so the client doesn't
+// show stuck spinners.
+//
+// The id travels WITH the calls because the caller broadcasts each one keyed by
+// it; reading it separately would be an unguarded field read off the dispatch
+// goroutine, which is the contract this type states at the top of the file.
+func (buf *Buffer) MarkCancelledToolsFailed() (messageID string, changed []vibekit.ToolCall) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	var changed []vibekit.ToolCall
 	for i := range buf.ToolCalls {
 		if buf.ToolCalls[i].Status == vibekit.ToolInProgress || buf.ToolCalls[i].Status == vibekit.ToolPending {
 			buf.ToolCalls[i].Status = vibekit.ToolFailed
 			changed = append(changed, buf.ToolCalls[i])
 		}
 	}
-	return changed
+	return buf.MessageID, changed
 }
 
 // Snapshot returns the in-flight turn as an vibekit.Message plus the chunk-sequence

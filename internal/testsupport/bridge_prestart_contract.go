@@ -12,7 +12,7 @@ import (
 // widths, up to 15 methods — and a contract suite has no business naming a
 // method it does not exercise.
 type ACPPreStartBridge interface {
-	NotifCh() <-chan *vibekit.RPCResponse
+	NotifCh() <-chan vibekit.Notification
 	Stop()
 	CurrentMode() string
 	Modes() []vibekit.SessionMode

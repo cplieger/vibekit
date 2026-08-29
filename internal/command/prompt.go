@@ -49,6 +49,18 @@ func validatePromptPayload(cmd *vibekit.ClientCommand) (vibekit.PromptCommand, i
 // knob nothing turns is a knob a reader has to check.
 const promptRetryDelay = 2 * time.Second
 
+// promptReply is a session/prompt response and the read loop position at which it
+// arrived.
+//
+// The position travels with the response because the turn's local settle has to
+// order itself against the notifications still queued behind it: a settle that
+// reads the response alone decides the wire never closed the turn while the
+// wire's own turn_end is three frames back in the channel.
+type promptReply struct {
+	resp *vibekit.RPCResponse
+	seq  uint64
+}
+
 // retry re-invokes fn up to maxAttempts more times, promptRetryDelay apart, for
 // as long as shouldRetry keeps saying yes. The delay is FIXED — there is no
 // backoff, and the name used to claim one.
@@ -58,7 +70,7 @@ const promptRetryDelay = 2 * time.Second
 // Stop was never called, so the reuse this used to do (NewTimer, defer Stop,
 // Reset per iteration) bought nothing but a redundant re-arm on the first pass.
 // At maxAttempts of 2 against a 2s delay the allocation is not measurable.
-func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, fn func() (*vibekit.RPCResponse, error)) (*vibekit.RPCResponse, error) {
+func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, fn func() (promptReply, error)) (promptReply, error) {
 	result, err := fn()
 	if err == nil || !shouldRetry(err) {
 		return result, err
@@ -81,31 +93,54 @@ func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, f
 // second attempt can actually fix. The class is logged either way, because the
 // old single-boolean version logged "prompt retry" for a dead bridge and nothing
 // at all for a throttle, which is exactly backwards from what a reader needs.
-func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID vibekit.ChatID) (*vibekit.RPCResponse, error) {
+func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID vibekit.ChatID) (promptReply, error) {
 	return retry(ctx, 2, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
 		slog.Warn("prompt failure",
 			"chat_id", chatID, "class", class.String(), "retry", retry, keyError, err)
 		return retry
-	}, func() (*vibekit.RPCResponse, error) {
-		return sb.Call(ctx, vibekit.MethodPrompt, params)
+	}, func() (promptReply, error) {
+		resp, seq, err := sb.CallAt(ctx, vibekit.MethodPrompt, params)
+		return promptReply{resp: resp, seq: seq}, err
 	})
 }
 
-// recoverEmptyTurn handles empty turn recovery: recreate session and retry.
-func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse {
+// recoverEmptyTurn re-prompts a turn that ended having produced nothing:
+// recreate the session, then send the same prompt once more.
+//
+// The decision comes off the finalized TURN, never off the live buffer, and that
+// is what makes it correct: the buffer can still be withholding the turn's only
+// text when this runs, so a measurement taken here recreates a session that had
+// just answered. It stays on the prompt goroutine — see AwaitTurn.
+func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, p *vibekit.PromptCommand, params map[string]any) {
 	// A verb KAS answers itself produces no content BY DESIGN, so an empty turn
 	// is the correct outcome and recovery is pure damage: it would close the
 	// bridge the launched run is parented on, detach the session, badge the turn
 	// interrupted, and re-send the verb — a second run for one request. Checked
-	// before IsEmptyTurn because the buffer state is genuinely empty here; the
-	// prompt TEXT is the only thing that distinguishes expected from broken.
+	// before the outcome because the turn is genuinely empty here; the prompt TEXT
+	// is the only thing that distinguishes expected from broken.
 	if kasClaimsPromptText(p.Text) {
-		return resp
+		return
 	}
-	if !outcome.IsEmptyTurn(resp, chatID) {
-		return resp
+	result, err := outcome.AwaitTurn(ctx, chatID, epoch)
+	if err != nil {
+		slog.Warn("empty turn check: no turn outcome", "chat_id", chatID, keyError, err)
+		return
+	}
+	// WireEnded, because a locally-closed turn's outcome is the prompt response's —
+	// nothing richer than end_turn or cancelled, and nothing at all on a fault — so
+	// re-prompting on it is re-prompting on a guess.
+	//
+	// EmittedNothing, measured after the steer carry was settled back in, or a turn
+	// whose only final text resembled a steering acknowledgement reads as empty.
+	if !result.WireEnded || result.Stop != vibekit.StopReasonEndTurn || !result.EmittedNothing {
+		return
+	}
+	if outcome.TurnOpenedAfter(chatID, epoch) {
+		slog.Info("empty turn: a later turn opened on this chat, so the binding was not ours",
+			"chat_id", chatID, "epoch", epoch)
+		return
 	}
 	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
 	bridges.CloseBridge(chatID)
@@ -141,7 +176,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 			Code:    vibekit.ErrCodeRecoveryFailed,
 			Message: "Session refresh failed: " + rpcerr.Text(err2),
 		}))
-		return resp
+		return
 	}
 	// Take the new bridge's prompt slot the same way CmdPrompt takes it, rather
 	// than asserting it with SetPrompting. OpenBridge leaves the bridge
@@ -154,7 +189,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	if !sb2.TryAcquireForPrompt() {
 		slog.Warn("empty turn: another turn started during recovery, abandoning retry",
 			"chat_id", chatID)
-		return resp
+		return
 	}
 	defer sb2.ReleaseAfterPrompt()
 
@@ -171,16 +206,25 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	defer sb2.EndPromptCall()
 
 	params[vibekit.KeySessionID] = sb2.SessionID()
-	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
+	// The retry is a turn of its own — its own epoch, its own buffer, its own
+	// bracket — and is closed on every path out of here. Its source says so: the
+	// turn it replaces is already closed, so neither close can stand in for the
+	// other, and the retry's reply must not extend the message of the turn it
+	// replaced.
+	retryEpoch := outcome.OpenTurn(ctx, chatID, vibekit.TurnSourceEmptyRetry)
+	defer outcome.ReleaseTurn(chatID, retryEpoch)
+	reply, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
+		reason := promptFailureReason(retryErr)
+		outcome.AbandonInFlightTurn(ctx, chatID, retryEpoch, reason)
 		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeRecoveryFailed,
-			Message: "Retry prompt failed: " + rpcerr.Text(retryErr),
+			Message: "Retry prompt failed: " + reason,
 		}))
-		return resp
+		return
 	}
-	return retryResp
+	outcome.SettleTurnOnResponse(ctx, chatID, retryEpoch, reply.seq, reply.resp)
 }
 
 // supervisedDefaultSetting reads the settings-wide Supervised default applied to
@@ -356,38 +400,31 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 			"failed", pending.Failed,
 			"awaiting_auth", pending.AwaitingAuth)
 	}
-	var creditsBeforeTurn float64
-	if ch, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
-		creditsBeforeTurn = ch.Usage.Credits
-		// Latch the answering model HERE, at dispatch, not on the turn's first
-		// frame. The bridge is up and its model persisted by this point, and
-		// switch_model's fast path can land any time from now on — including
-		// before the old model has emitted anything, which is precisely when the
-		// first-frame read attributed one model's answer to another.
-		roles.turnOutcome.LatchTurnModel(cmd.ChatID, ch.Model)
-	}
+	// Open the turn BEFORE dispatch. Everything true of it for its whole life is
+	// captured here — the answering model, the credit reading its spend is
+	// measured against, when it began — so the accounting is the turn's own rather
+	// than something this handler carries in locals and hands over at the end.
+	// The epoch is this handler's completion handle on that turn: it is what lets
+	// the recovery below read the turn's own outcome, and releasing it is what
+	// lets the finalized record be dropped.
+	epoch := roles.turnOutcome.OpenTurn(ctx, cmd.ChatID, vibekit.TurnSourcePrompt)
+	defer roles.turnOutcome.ReleaseTurn(cmd.ChatID, epoch)
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()
 	promptParams := BuildPromptParams(ctx, roles.workspace, sb, &p)
-	resp, err := callPromptWithRetry(ctx, sb, promptParams, cmd.ChatID)
+	reply, err := callPromptWithRetry(ctx, sb, promptParams, cmd.ChatID)
 	elapsed := time.Since(start)
 	if err != nil {
-		return nil, reportPromptFailure(ctx, roles, cmd.ChatID, err, elapsed)
+		return nil, reportPromptFailure(ctx, roles, cmd.ChatID, epoch, err, elapsed)
 	}
 	slog.Info("prompt complete", "chat_id", cmd.ChatID, "elapsed", elapsed)
 
-	// Empty turn recovery.
-	resp = recoverEmptyTurn(ctx, roles.bridges, roles.chats, roles.bus, roles.turnOutcome, cmd.ChatID, resp, &p, promptParams)
-
-	// Compute credit delta for the turn summary.
-	var creditsDelta float64
-	if ch, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
-		creditsDelta = ch.Usage.Credits - creditsBeforeTurn
-	}
-	roles.turnOutcome.EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, TurnStats{
-		CreditsDelta: creditsDelta,
-		ElapsedMs:    float64(elapsed.Milliseconds()),
-	})
+	// Settle this turn BEFORE deciding whether it produced nothing: the close is
+	// what settles the withheld steer carry and measures the turn, and the recovery
+	// reads that measurement. Ordinarily the wire's turn_end has already closed it
+	// by the time the folder reaches this position, and the call only waits.
+	roles.turnOutcome.SettleTurnOnResponse(ctx, cmd.ChatID, epoch, reply.seq, reply.resp)
+	recoverEmptyTurn(ctx, roles.bridges, roles.chats, roles.bus, roles.turnOutcome, cmd.ChatID, epoch, &p, promptParams)
 	return responseOK, nil
 }
 
@@ -405,7 +442,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 // the other dedupes), and the transcript's interrupted divider keeps it for good.
 // The divider is why the reason is computed BEFORE the finalize call --
 // AbandonInFlightTurn writes it.
-func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, err error, elapsed time.Duration) error {
+func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, err error, elapsed time.Duration) error {
 	slog.Error("prompt failed", "chat_id", chatID, keyError, err, "elapsed", elapsed)
 	reason := promptFailureReason(err)
 	// An auth failure is the one prompt failure whose remedy is not "send
@@ -433,7 +470,7 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 	// under this dead turn's message id: one persisted assistant message
 	// holding two turns' replies. The partial is persisted rather than
 	// dropped -- see AbandonInFlightTurn for why that direction.
-	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, reason)
+	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, epoch, reason)
 	roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID,
 		vibekit.ErrorPayload{Code: code, Message: reason}))
 	return StatusError(http.StatusInternalServerError, errors.New(reason))
@@ -530,30 +567,20 @@ var validationErrorNames = []string{
 	"DocumentCountExceeded",
 }
 
-// authErrorNames are the backend's own names for a request it refused because
-// the CREDENTIAL was not usable. Measured off the KAS 2.20.0 bundle: the first
-// four are the error classes it throws, the five upper-case entries are the name
-// codes its own auth predicate keys on.
+// authErrorNames are the backend's own names for a request it refused because the
+// CREDENTIAL was not usable — the classes it throws plus the name codes its own auth
+// predicate keys on, measured off the KAS 2.20.0 bundle. A name survives a reworded
+// message; the prose markers below matched none of the backend's eight auth messages.
 //
-// A NAME rather than the surrounding prose, for the same reason
-// validationErrorNames is a name list: it comes from a closed set the backend
-// stamps as `error.data.errorType`, so it survives a reworded message. Measured
-// against the bundle, the prose markers below matched NONE of the backend's eight
-// auth messages — they were written against AWS SDK exception-name fragments
-// ("ExpiredToken" against a class called TokenExpiredError, "unauthorized"
-// against "not authorized").
-//
-// Deliberately EXCLUDED, though it sits in the same family:
-// ModelRegistryAccessDeniedError. Its message is that the account does not have
-// access, which is an entitlement fact rather than a sign-in problem — signing in
-// again does not fix it, so a Sign in banner would be advice that cannot work.
-// This narrows rather than widens: it is the one auth-shaped class the old
-// AccessDenied marker could reach.
+// ModelRegistryAccessDeniedError is deliberately absent: upstream tells that user the
+// ACCOUNT lacks model access, which no sign-in fixes, so a Sign in banner would be
+// advice that cannot work.
 var authErrorNames = []string{
 	"TokenInvalidError",
 	"TokenExpiredError",
 	"AuthRefreshFailedError",
 	"ModelRegistryUnauthenticatedError",
+	"AccessDeniedError",
 	"MISSING_TOKEN",
 	"MALFORMED_TOKEN",
 	"INVALID_AUTH",

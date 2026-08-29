@@ -316,11 +316,12 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	// A pending ask that predates this connection.
 	h.bus.pendingPerms.Add(9, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
 		vibekit.PermissionNeededPayload{RequestID: 9}))
-	// And a chat mid-turn, which is what synthesizes turn_state.
-	sb := &sharedBridge{bridge: br, state: bridgeIdle}
-	h.bridge.mgr.insert("c1", sb)
-	if !sb.tryAcquireForPrompt() {
-		t.Fatal("the fixture could not put the chat into a prompting state")
+	// And a chat with an OPEN TURN, which is what synthesizes turn_state. The turn
+	// rather than the prompt slot: an agent-initiated turn holds no slot, and it is
+	// the class this replay exists for.
+	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	if h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt) == 0 {
+		t.Fatal("the fixture could not open a turn")
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)

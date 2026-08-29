@@ -87,6 +87,15 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
     labelFn: (c) => (c ? c : "Turn interrupted"),
   },
   cancelled: { kind: "skip" },
+  // The outcome marker is a CARRIER, not a divider. It exists because a turn that
+  // emitted nothing has no assistant message to stamp `turn_outcome` on, so the
+  // record needs a row to hold it — and the turn card already renders that outcome
+  // as its own tint, glyph and label. A second visible line saying the same thing
+  // would be the one case where an empty turn is louder than a full one.
+  //
+  // A `skip` is still a MESSAGE: it opens the turn, so the transcript shows a
+  // headerless card with the failure on its footer rather than nothing at all.
+  turn_outcome: { kind: "skip" },
 } satisfies Record<EventKind, EventRenderStrategy>;
 
 // ---------------------------------------------------------------------------

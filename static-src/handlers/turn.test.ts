@@ -351,7 +351,7 @@ describe("turn_ended side effects", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
 
-    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", outcome: "completed" });
     expect(get("chat-1")?.agent_status).toBeUndefined();
     expect(tabStatusFor(get("chat-1"))).toBe("done");
   });
@@ -363,7 +363,7 @@ describe("turn_ended side effects", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
 
-    fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled" });
+    fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled", outcome: "cancelled" });
     expect(tabStatusFor(get("chat-1"))).toBe("idle");
   });
 
@@ -380,8 +380,38 @@ describe("turn_ended side effects", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
 
-    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", outcome: "completed" });
     expect(tabStatusFor(get("chat-1"))).toBe("done");
+  });
+
+  // The OUTCOME decides, not the stop reason, and this is what that buys: a turn
+  // that streamed an answer and then failed used to latch `done` — everything but
+  // a cancel did — so a failure the reader was not watching showed a green
+  // "finished" dot. The server now says how the turn ended and the dot follows it.
+  it("latches FAILED, not done, for a turn that failed after streaming", () => {
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "error", outcome: "failed" });
+    expect(tabStatusFor(get("chat-1"))).toBe("failed");
+  });
+
+  it("latches failed for a refusal, which produced no work", () => {
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "refusal", outcome: "refused" });
+    expect(tabStatusFor(get("chat-1"))).toBe("failed");
+  });
+
+  it("latches neither for an outcome nothing could read", () => {
+    // `unknown` is a turn whose end vibekit had to infer. Claiming either a green
+    // finish or a red failure would be inventing a verdict the wire did not give.
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "who_knows", outcome: "unknown" });
+    expect(tabStatusFor(get("chat-1"))).toBe("idle");
   });
 
   it("still prefers the agent's own verdict where it lands", () => {
@@ -391,7 +421,7 @@ describe("turn_ended side effects", () => {
 
     // A finished turn that left a question behind is a chat that WANTS something,
     // not a chat that is done, and the agent is the only thing that knows which.
-    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", outcome: "completed" });
     expect(tabStatusFor(get("chat-1"))).toBe("waiting");
   });
 
@@ -525,12 +555,32 @@ describe("error handler", () => {
       setSessions([makeSession("chat-1", { thinking: true })]);
       setActive("chat-1");
       fireSSE("error", "chat-1", { code, message: "boom" });
-      expect(get("chat-1")?.thinking).toBe(false);
       expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom");
       expect(mockSetAgentDown).not.toHaveBeenCalled();
       expect(mockShowBanner).not.toHaveBeenCalled();
     },
   );
+
+  // NO error code touches the turn lifecycle, and the deleted predicate that used
+  // to decide it — `ERROR_ROUTES[code].surface !== "banner"` — is why: an error's
+  // VISUAL TREATMENT decided whether the turn was over. Six banner codes therefore
+  // never ended one (`auth_token_unavailable` among them, leaving the composer on
+  // Cancel forever), while a toast-surfaced error cleared `thinking` mid-turn and
+  // froze the transcript at its first chunk. The server ends every turn exactly
+  // once now, so an error is a report.
+  it.each([
+    "prompt_failed",
+    "bridge_start_failed",
+    "rate_limit",
+    "auth_token_unavailable",
+    "mystery_code",
+  ])("leaves the turn lifecycle alone for %s, whatever its surface", (code) => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code, message: "something happened" });
+    expect(get("chat-1")?.thinking).toBe(true);
+    expect(tabStatusFor(get("chat-1"))).not.toBe("failed");
+  });
 
   // The one code that DOES earn the button's alert face: kiro-cli could not be
   // spawned, so this chat has no ACP connection behind it and the icon is a true
@@ -539,7 +589,6 @@ describe("error handler", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "bridge_start_failed", message: "spawn failed" });
-    expect(get("chat-1")?.thinking).toBe(false);
     expect(mockSetAgentDown).toHaveBeenCalledWith("spawn failed");
     expect(mockReportFailure).not.toHaveBeenCalled();
   });
@@ -563,7 +612,6 @@ describe("error handler", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "mystery_code", message: "huh" });
-    expect(get("chat-1")?.thinking).toBe(false);
     expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "huh");
   });
 

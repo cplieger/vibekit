@@ -16,7 +16,6 @@ import { setWorkspaceRoot } from "../workspace.js";
 import {
   getSessions,
   getActiveId,
-  setThinking,
   setAgentStatus,
   setCurrentMode,
   forgetSteers,
@@ -25,7 +24,7 @@ import {
 } from "../store.js";
 import { dropDecisions } from "../decision-dock.js";
 import { loadList, loadMessages } from "../store-load.js";
-import { drainModelSwitchQueue } from "../model-switcher.js";
+import { clearTurnState } from "../turn-teardown.js";
 import { refreshRetention } from "../retention.js";
 
 // The handshake states the workspace root. It is the only way the client learns
@@ -67,25 +66,17 @@ onSSE("settings_updated", () => {
 });
 
 onBus(BUS_TRANSPORT_GAP, (_gap) => {
-  // Whole-store reconcile:
-  //   1. Clear the local `thinking` flag on every chat. We lost the
-  //      turn_ended/error events that would normally clear it, so the
-  //      send button would otherwise stay "busy" forever. This is the
-  //      safe DEFAULT for chats the server says nothing about; the
-  //      chats that ARE genuinely mid-turn get an authoritative
-  //      turn_state event in the same connect replay (synthesized
-  //      per busy chat, handlers/messages.ts), which re-sets thinking
-  //      and restores the streaming transcript — so the old
-  //      "false-idle until the next event" window collapses to the
-  //      same replay burst.
-  //   2. Reload the header list so name / usage / mode changes we
-  //      missed during the outage reconcile.
-  //   3. If a chat is active, reload its messages from scratch so
-  //      streaming tails and tool-call updates heal.
+  // Whole-store reconcile, and the shape is UNLATCHING: a gap says the replay ring
+  // no longer covers what this client missed, so every claim it can no longer
+  // support comes down and the connect replay in the same burst re-establishes
+  // whatever is still true (one authoritative `turn_state` per chat with an open
+  // turn, the whole pending-ask set, a retained waiting status). What it must NOT
+  // do is assert an outcome: nothing here knows how anything finished.
+  //   1. Per chat: unlatch the claims, then run the shared turn teardown.
+  //   2. Reload the header list so name / usage / mode changes reconcile.
+  //   3. If a chat is active, reload its messages from scratch so streaming
+  //      tails and tool-call updates heal.
   for (const s of getSessions()) {
-    if (s.thinking) {
-      setThinking(s.id, false);
-    }
     // Agent-declared status is as untrustworthy as `thinking` after a
     // gap: the clearing chat_status may be among the dropped events.
     setAgentStatus(s.id, "", "");
@@ -118,10 +109,12 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     // rows for the rest of that turn. Recovering them is a server change (a
     // per-busy-bridge `steer_queued` replay) and is recorded as a follow-up.
     forgetSteers(s.id);
-    // Same reasoning for a queued mid-turn model switch: its drain rides
-    // turn_ended, which we missed during the gap. Fire it for the now-idle
-    // chat so the switch isn't stranded behind a stuck ".pending" pill.
-    drainModelSwitchQueue(s.id);
+    // Everything a gap and a turn ending agree on: thinking, both in-flight
+    // markers, the transient banners, a stranded model switch, the rail and the
+    // dot. The gap door spelled this itself and was short by four effects, which
+    // is what left a rate-limit banner over a finished turn and a chunk watermark
+    // that dropped the next turn's early deltas.
+    clearTurnState(s.id);
   }
   // There is no tab reconcile here any more, and its absence is the point. This
   // loop used to close any chat tab whose session had left GET /api/chats —

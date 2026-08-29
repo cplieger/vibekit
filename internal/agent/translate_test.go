@@ -35,7 +35,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 		t.Errorf("missing events %v; got %v", missing, gotTypes)
 	}
 
-	buf := h.bridge.assistantBufs.GetOrInit("c1")
+	buf := h.stageTurnBuffer(t, "c1")
 	if !buf.Started || buf.Content.String() != "hello " {
 		t.Errorf("buffer = %+v content=%q", buf.Started, buf.Content.String())
 	}
@@ -46,16 +46,16 @@ func TestTranslateACPEvent_SecondChunkReusesMessageID(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent("c1", newChunkMsg("one"))
-	firstID := h.bridge.assistantBufs.GetOrInit("c1").MessageID
+	firstID := h.stageTurnBuffer(t, "c1").MessageID
 
 	h.translateACPEvent("c1", newChunkMsg("two"))
-	secondID := h.bridge.assistantBufs.GetOrInit("c1").MessageID
+	secondID := h.stageTurnBuffer(t, "c1").MessageID
 
 	if firstID != secondID {
 		t.Errorf("message_id changed between chunks: %q → %q", firstID, secondID)
 	}
-	if h.bridge.assistantBufs.GetOrInit("c1").Content.String() != "onetwo" {
-		t.Errorf("buffer content = %q, want 'onetwo'", h.bridge.assistantBufs.GetOrInit("c1").Content.String())
+	if h.stageTurnBuffer(t, "c1").Content.String() != "onetwo" {
+		t.Errorf("buffer content = %q, want 'onetwo'", h.stageTurnBuffer(t, "c1").Content.String())
 	}
 }
 
@@ -180,7 +180,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 					Params: mustJSON(t, map[string]any{"update": raw}),
 				})
 			}
-			buf := h.bridge.assistantBufs.GetOrInit("c1")
+			buf := h.stageTurnBuffer(t, "c1")
 			tc.assert(t, buf)
 		})
 	}
@@ -297,7 +297,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 			})
 			// Pre-seed a tool call for tool_call_update to find.
 			if p.name == "tool_call_update" {
-				buf := h.bridge.assistantBufs.GetOrInit("bench")
+				buf := h.stageTurnBuffer(b, "bench")
 				buf.Started = true
 				buf.MessageID = "msg-bench"
 				buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tc-bench-1", Status: vibekit.ToolPending})
