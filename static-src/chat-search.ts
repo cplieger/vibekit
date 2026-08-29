@@ -29,15 +29,38 @@ export function initSearchRevealBuilder(
   buildRevealedTurn = cb;
 }
 
-/** One server-side match. Mirrors chat.SearchHit. */
+/** Which span of a message a hit landed in. `message` is the filter-only kind:
+ *  a query with filters and no free text locates the MESSAGE, not a span in it. */
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_output" | "message";
+
+/** One server-side match. Mirrors chat.SearchHit — HAND-MAINTAINED, not
+ *  wiregen (the generated namespace's SearchHit name is taken by the tools
+ *  type); chat-search.node.test.ts pins the two against one shared fixture.
+ *
+ *  Position is segment-relative: `offset` indexes runes inside the one segment
+ *  named by `segment_kind` + `block_index`, never a concatenation of the
+ *  message. */
 export interface SearchHit {
+  /** The matched segment's block position in the message's chronological
+   *  blocks array. Absent for messages persisted before blocks existed and for
+   *  `message`-kind hits. */
+  block_index?: number;
   message_id: string;
   /** The matched turn's opening message id — what the fold state keys on. */
   turn_message_id: string;
   excerpt: string;
   role: string;
+  segment_kind: SegmentKind;
+  /** Subtask id of the agent that produced the matched segment; absent for the
+   *  top-level agent. What lets navigation open the right delegate's chain. */
+  agent_subtask_id?: string;
   turn: number;
+  /** Rune offset of the match inside its segment. */
   offset: number;
+  /** The segment's rune length: the denominator for a relative position,
+   *  carried so the client never re-derives the server's segmentation. Zero
+   *  for `message`-kind hits. */
+  segment_len: number;
 }
 
 /** The turn numbers holding hits for the current query, for the timeline rail
@@ -158,4 +181,23 @@ export function resetServerSearch(chatID: string): void {
     // and the ones it mounted past the warm window unmount.
     bumpMessages(chatID, "shape");
   }
+}
+
+/**
+ * Reveal ONE hit's turn on demand: open it for search, build its body if it is
+ * a stub, and repaint. What hit NAVIGATION runs before it can select anything,
+ * mirroring `runServerSearch`'s reveal per turn — needed again there because a
+ * hit can be paged in AFTER the search ran (its turn arrived as a folded stub
+ * the original reveal never saw), and a reader can re-fold a revealed turn and
+ * then step onto its hit. Idempotent on an already-revealed turn.
+ */
+export async function revealHitTurn(chatID: string, hit: SearchHit): Promise<void> {
+  if (chatID === "" || hit.turn_message_id === "") {
+    return;
+  }
+  openForSearch(chatID, hit.turn_message_id);
+  await buildRevealedTurn(chatID, hit.turn_message_id);
+  // Same stated cause as the search-wide reveal: which turns are open and
+  // mounted changed. `shape`.
+  bumpMessages(chatID, "shape");
 }

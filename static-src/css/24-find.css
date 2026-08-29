@@ -464,6 +464,45 @@ mark.find-hit-current {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 45%, transparent);
 }
 
+/* Container selection, for the hits that have no mark to land on: a `message`
+   hit locates a whole message, and a match the renderer never painted (a link
+   target, an emphasis marker, a collapsed tool output drawn as pixels) lands on
+   its block. Same "look here" grammar as the settings deep-link flash
+   (17-settings.css): a pulse, stripped on animationend with a timer backstop.
+   `scroll-margin` for the same floating-bar clearance the marks get. */
+@keyframes find-target-flash {
+  0%,
+  100% {
+    outline-color: transparent;
+    background-color: transparent;
+  }
+
+  15%,
+  55% {
+    outline-color: var(--c-accent);
+    background-color: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  }
+}
+
+.find-target-flash {
+  border-radius: var(--r-sm);
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  animation: find-target-flash 1.6s var(--ease-standard);
+  scroll-margin-block: 20vh;
+}
+
+/* A flash is a "look here" cue, not information: a reader who has asked for no
+   motion still gets the scroll, and a steady ring instead of a pulsing one.
+   The class is stripped on a timer as well as on animationend, so suppressing
+   the animation here cannot leave the ring on permanently. */
+@media (prefers-reduced-motion: reduce) {
+  .find-target-flash {
+    outline-color: var(--c-accent);
+    animation: none;
+  }
+}
+
 /* Mobile: 44px touch targets and 16px input to defeat iOS focus-zoom.
    In THIS file rather than 50-mobile.css on purpose — an unlayered feature slice
    outranks `@layer mobile` whatever the specificity, so a rule for this surface

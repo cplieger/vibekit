@@ -25,6 +25,12 @@ vi.mock("./scroll.js", () => ({
 // browser — an ESM module namespace is not configurable, so the assignment
 // throws — and this suite needs to see one call that the DOM cannot show.
 vi.mock("./chat-search.js", { spy: true });
+// Same treatment for the store and the pagination entry point: the navigation
+// tests hand them a fixture chat, and everything else calls through to the
+// real implementations (whose defaults — no active chat — are what the
+// overlay tests always ran against).
+vi.mock("./store.js", { spy: true });
+vi.mock("./store-load.js", { spy: true });
 
 import { FindEngine, formatCount } from "./find-engine.js";
 import type * as ModFindInChat from "./find-in-chat.js";
@@ -672,5 +678,541 @@ describe("Ctrl-F overlay", () => {
     close();
     close();
     expectFullyTornDown("double close");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-hit navigation.
+//
+// When the DOM walker marked NOTHING and the server found the text anyway —
+// every occurrence inside collapsed delegate bodies, on a non-resident page,
+// or in markdown the renderer never paints — stepping navigates the server
+// hits instead of going dead under a counter that says "N in chat". Each case
+// asserts the navigated-to state AND that failure states something on the
+// aria-live counter, never a silent no-op.
+// ---------------------------------------------------------------------------
+
+import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import type { Session } from "./types.js";
+import type { SearchHit } from "./chat-search.js";
+import type * as ModChatSearch from "./chat-search.js";
+import type * as ModStore from "./store.js";
+import type * as ModStoreLoad from "./store-load.js";
+import type * as ModScroll from "./scroll.js";
+
+describe("server-hit navigation", () => {
+  let onHotkey: (e: KeyboardEvent) => void;
+  let chatSearch: typeof ModChatSearch;
+  let store: typeof ModStore;
+  let storeLoad: typeof ModStoreLoad;
+  let scroll: typeof ModScroll;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    bootSeq++;
+    document.body.innerHTML = `
+      <div id="chat-view" data-tab-view>
+        <button type="button" id="find-btn" class="icon-btn" aria-pressed="false"></button>
+        <div id="messages-wrap-outer">
+          <div id="messages-wrap"><div id="messages"></div></div>
+        </div>
+        <textarea id="prompt-input"></textarea>
+      </div>
+      <div id="shell-panel" class="hidden"></div>`;
+    const mod = (await import(
+      /* @vite-ignore */ `./find-in-chat.ts?boot=${bootSeq}`
+    )) as typeof ModFindInChat;
+    onHotkey = mod.handleFindHotkey;
+    chatSearch = await import("./chat-search.js");
+    store = await import("./store.js");
+    storeLoad = await import("./store-load.js");
+    scroll = await import("./scroll.js");
+  });
+
+  function ctrlF(): KeyboardEvent {
+    return new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true });
+  }
+
+  function typeAndEnter(value: string): void {
+    const input = document.getElementById("chat-find-input") as HTMLInputElement;
+    input.value = value;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  }
+
+  function countText(): string {
+    return document.getElementById("chat-find-count")?.textContent ?? "";
+  }
+
+  function serverHit(over: Partial<SearchHit> = {}): SearchHit {
+    return {
+      message_id: "a1",
+      turn_message_id: "u1",
+      excerpt: "…retry…",
+      role: "assistant",
+      segment_kind: "content",
+      turn: 1,
+      offset: 0,
+      segment_len: 24,
+      ...over,
+    };
+  }
+
+  /** Stage a chat the navigation can read: an ACTIVE id and a live session
+   *  object (tests mutate it to simulate pagination). */
+  function stageChat(messages: unknown[], hasMore = false): Session {
+    const session = { id: "c1", messages, has_more: hasMore } as unknown as Session;
+    vi.mocked(store.getActiveId).mockReturnValue("c1");
+    vi.mocked(store.getActive).mockReturnValue(session);
+    return session;
+  }
+
+  /** Arm the search half: the server answer, the session total the counter
+   *  reads, and an inert reveal (each test that needs a building reveal
+   *  overrides it). */
+  function stageHits(hits: SearchHit[]): void {
+    vi.mocked(chatSearch.runServerSearch).mockResolvedValue(hits);
+    vi.mocked(chatSearch.searchHitTotal).mockReturnValue(hits.length);
+    vi.mocked(chatSearch.revealHitTurn).mockResolvedValue(undefined);
+  }
+
+  /** A production-shaped turn card. `bodyHTML === null` builds a tier-3 STUB:
+   *  header only, no `.turn-body` — what pagination prepends and what the
+   *  reveal has to build before anything inside it can be marked. */
+  function mountTurnCard(turnID: string, bodyHTML: string | null): HTMLElement {
+    const card = document.createElement("div");
+    card.setAttribute("data-reconcile-key", turnID);
+    card.innerHTML = `<div class="turn-header">turn</div>`;
+    if (bodyHTML !== null) {
+      const body = document.createElement("div");
+      body.className = "turn-body";
+      body.innerHTML = bodyHTML;
+      card.appendChild(body);
+    }
+    document.getElementById("messages")?.appendChild(card);
+    return card;
+  }
+
+  /** Wire a fixture delegate box through the REAL disclosure primitive, the
+   *  way messages-blocks.ts does: collapsed, `aria-hidden` + `inert` on the
+   *  body, opened by activating the header. */
+  function wireSubagentBox(box: HTMLElement): void {
+    const header = box.querySelector<HTMLElement>(".subagent-header");
+    const body = box.querySelector<HTMLElement>(".subagent-body");
+    if (header === null || body === null) {
+      throw new Error("fixture box missing header/body");
+    }
+    createDisclosure(header, body, {
+      open: false,
+      onToggle: (open) => {
+        box.classList.toggle("collapsed", !open);
+      },
+    });
+  }
+
+  async function openAndSearch(query: string): Promise<void> {
+    onHotkey(ctrlF());
+    typeAndEnter(query);
+    // The server answer landed and the walker still has nothing: the counter
+    // reports the session figure, which is the state navigation starts from.
+    await vi.waitFor(() => {
+      expect(countText()).toContain("in chat");
+    });
+    // The counter is painted by the QUERY callback synchronously; the shell's
+    // render — which records the navigable hits — lands a few microtask hops
+    // later (the async query's promise adoption). One macrotask turn drains
+    // them all before the test steps.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
+
+  it("steps into a collapsed delegate inside a stub turn, end to end", async () => {
+    stageChat([
+      { id: "u1", role: "user", content: "find it" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [
+          { type: "tool_use", tool_call_id: "t-sub", agent_subtask_id: "sub-1" },
+          { type: "text", text: "delegate found the retry backoff", agent_subtask_id: "sub-1" },
+        ],
+      },
+    ]);
+    // The transcript holds ONE stub turn: no body at all until the reveal.
+    mountTurnCard("u1", null);
+    const theHit = serverHit({
+      excerpt: "delegate found the retry backoff",
+      segment_kind: "content",
+      agent_subtask_id: "sub-1",
+      block_index: 1,
+      offset: 19,
+      segment_len: 32,
+    });
+    stageHits([theHit]);
+    // The reveal is what builds a stub's body (mountTurnBody in production);
+    // here it mounts the delegate box, wired through the real disclosure —
+    // collapsed, aria-hidden, inert — exactly the state the walker prunes.
+    vi.mocked(chatSearch.revealHitTurn).mockImplementation(() => {
+      const card = document.querySelector('[data-reconcile-key="u1"]');
+      if (card !== null && card.querySelector(".turn-body") === null) {
+        const body = document.createElement("div");
+        body.className = "turn-body";
+        body.innerHTML = `
+          <div data-reconcile-key="a1" class="msg-row">
+            <div class="assistant-blocks">
+              <div class="subagent-block collapsed" data-subtask="sub-1">
+                <div class="subagent-header">Subagent</div>
+                <div class="subagent-body"><div class="message assistant">delegate found the retry backoff</div></div>
+              </div>
+            </div>
+          </div>`;
+        card.appendChild(body);
+        const box = body.querySelector<HTMLElement>(".subagent-block");
+        if (box !== null) {
+          wireSubagentBox(box);
+        }
+      }
+      return Promise.resolve();
+    });
+
+    await openAndSearch("retry");
+    expect(countText()).toBe("1 in chat");
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+
+    typeAndEnter("retry"); // step: no DOM mark anywhere -> navigate the hit
+    await vi.waitFor(() => {
+      expect(document.querySelector(".subagent-body mark.find-hit-current")).not.toBeNull();
+    });
+    // The chain was opened through the real primitive, not force-styled.
+    const body = document.querySelector(".subagent-body");
+    expect(body?.getAttribute("aria-hidden")).toBe("false");
+    expect(document.querySelector(".subagent-block")?.classList.contains("collapsed")).toBe(false);
+    // The reveal ran against the stub before selection.
+    expect(vi.mocked(chatSearch.revealHitTurn)).toHaveBeenCalledWith("c1", theHit);
+    // The counter flips from the session figure to a navigable position, and
+    // the selected mark is what got scrolled to.
+    expect(countText()).toBe("1 of 1");
+    const mark = document.querySelector("mark.find-hit-current");
+    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(mark, expect.anything());
+  });
+
+  it("selects the block and says so for a syntax-only hit (match not in rendered text)", async () => {
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [{ type: "text", text: "see [docs](https://retry.example) for more" }],
+      },
+    ]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">
+           <div class="message assistant">see docs for more</div>
+         </div>
+       </div>`,
+    );
+    // The hit is the link TARGET: real markdown, never rendered as text.
+    stageHits([
+      serverHit({
+        excerpt: "see [docs](https://retry.example) for more",
+        block_index: 0,
+        offset: 19,
+        segment_len: 43,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+
+    const bubble = document.querySelector(".message.assistant");
+    await vi.waitFor(() => {
+      expect(bubble?.classList.contains("find-target-flash")).toBe(true);
+    });
+    // Stated on the live-region counter, never a silent no-op.
+    expect(countText()).toBe("1 of 1 in chat \u00b7 not in rendered text");
+    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(bubble, expect.anything());
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+  });
+
+  it("navigates a message hit to the message container (scroll + brief highlight)", async () => {
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      { id: "a1", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t1" }] },
+    ]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">tool card furniture</div>
+       </div>`,
+    );
+    // The filter-only contract: one synthetic hit locating the MESSAGE —
+    // offset 0, zero segment length, no block index. Container navigation is
+    // what keeps the ranker's segment_len division unreachable for this kind.
+    stageHits([
+      serverHit({
+        excerpt: "List files a.go b.go",
+        segment_kind: "message",
+        offset: 0,
+        segment_len: 0,
+      }),
+    ]);
+
+    await openAndSearch("role:assistant");
+    typeAndEnter("role:assistant");
+
+    const row = document.querySelector('[data-reconcile-key="a1"]');
+    await vi.waitFor(() => {
+      expect(row?.classList.contains("find-target-flash")).toBe(true);
+    });
+    expect(countText()).toBe("1 of 1 in chat");
+    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(row, expect.anything());
+    // Nothing was marked: the hit names no span, so no mark could be honest.
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+  });
+
+  // The reasoning trace whose markdown the server matched is LONGER than what
+  // the walker sees rendered, and the needle occurs twice. The excerpt is the
+  // discriminator: its window surrounds the SECOND occurrence, so similarity
+  // must pick mark #2 even though mark #1 comes first in document order.
+  const TRACE =
+    "Enable retry on the uploader so flaky links recover without operator " +
+    "attention and keep the queue draining smoothly overnight. When the " +
+    "budget empties the retry gives up and files an alert instead.";
+
+  it("nearest-match picks the occurrence whose context matches the excerpt", async () => {
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      { id: "a1", role: "assistant", blocks: [{ type: "thinking", thinking: TRACE }] },
+    ]);
+    const card = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">
+           <details class="reasoning-block msg-reasoning">
+             <summary class="reasoning-summary">Reasoning</summary>
+             <blockquote class="reasoning-body"></blockquote>
+           </details>
+         </div>
+       </div>`,
+    );
+    // Text content set programmatically so the fixture cannot drift from the
+    // TRACE the hit's coordinates are computed against.
+    const quote = card.querySelector(".reasoning-body");
+    if (quote !== null) {
+      quote.textContent = TRACE;
+    }
+    const secondAt = TRACE.lastIndexOf("retry");
+    stageHits([
+      serverHit({
+        excerpt: "When the budget empties the retry gives up and files an alert instead.",
+        segment_kind: "reasoning",
+        block_index: 0,
+        offset: secondAt,
+        segment_len: TRACE.length,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    // The closed <details> hid the trace from the walker entirely.
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
+
+    typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
+    });
+    // The chain opened the reasoning disclosure…
+    expect(document.querySelector<HTMLDetailsElement>("details.reasoning-block")?.open).toBe(true);
+    // …and the SECOND occurrence is the one selected.
+    const marks = [...document.querySelectorAll("mark.find-hit")];
+    expect(marks[1]?.classList.contains("find-hit-current")).toBe(true);
+    expect(marks[0]?.classList.contains("find-hit-current")).toBe(false);
+    expect(countText()).toBe("2 of 2");
+  });
+
+  it("falls back to relative position when the excerpt cannot discriminate", async () => {
+    // Both occurrences share one short context (the excerpt window covers the
+    // whole trace), so similarity ties and offset/segment_len decides.
+    const short = "retry then retry";
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      { id: "a1", role: "assistant", blocks: [{ type: "thinking", thinking: short }] },
+    ]);
+    const card = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">
+           <details class="reasoning-block msg-reasoning">
+             <summary class="reasoning-summary">Reasoning</summary>
+             <blockquote class="reasoning-body"></blockquote>
+           </details>
+         </div>
+       </div>`,
+    );
+    const quote = card.querySelector(".reasoning-body");
+    if (quote !== null) {
+      quote.textContent = short;
+    }
+    stageHits([
+      serverHit({
+        excerpt: short,
+        segment_kind: "reasoning",
+        block_index: 0,
+        offset: 11,
+        segment_len: short.length,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
+    });
+    const marks = [...document.querySelectorAll("mark.find-hit")];
+    expect(marks[1]?.classList.contains("find-hit-current")).toBe(true);
+  });
+
+  it("declines a mark below the similarity floor: block selection, stated", async () => {
+    // A STALE hit: the trace re-rendered since the search answered, so the
+    // needle still occurs but nothing around it matches the excerpt. Selecting
+    // that mark would claim a precision the ranker does not have.
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [{ type: "thinking", thinking: "the retry lives here in this trace" }],
+      },
+    ]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks">
+           <details class="reasoning-block msg-reasoning">
+             <summary class="reasoning-summary">Reasoning</summary>
+             <blockquote class="reasoning-body">the retry lives here in this trace</blockquote>
+           </details>
+         </div>
+       </div>`,
+    );
+    stageHits([
+      serverHit({
+        excerpt: "completely unrelated words sharing nothing with that trace",
+        segment_kind: "reasoning",
+        block_index: 0,
+        offset: 4,
+        segment_len: 34,
+      }),
+    ]);
+
+    await openAndSearch("retry");
+    typeAndEnter("retry");
+
+    const details = document.querySelector("details.reasoning-block");
+    await vi.waitFor(() => {
+      expect(details?.classList.contains("find-target-flash")).toBe(true);
+    });
+    expect(countText()).toBe("1 of 1 in chat \u00b7 not in rendered text");
+    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(details, expect.anything());
+  });
+
+  it("pages older history in until the hit's message is resident", async () => {
+    const session = stageChat([{ id: "u9", role: "user", content: "recent" }], true);
+    stageHits([
+      serverHit({
+        excerpt: "the old answer",
+        segment_kind: "message",
+        offset: 0,
+        segment_len: 0,
+      }),
+    ]);
+    vi.mocked(storeLoad.loadMessages).mockImplementation((_chatID, _beforeID) => {
+      session.messages = [
+        { id: "u1", role: "user", content: "old" },
+        { id: "a1", role: "assistant", content: "the old answer" },
+        ...session.messages,
+      ] as Session["messages"];
+      session.has_more = false;
+      return Promise.resolve(true);
+    });
+    // The paged-in turn arrives as a stub; the reveal is what mounts it.
+    vi.mocked(chatSearch.revealHitTurn).mockImplementation(() => {
+      if (document.querySelector('[data-reconcile-key="u1"]') === null) {
+        mountTurnCard("u1", `<div data-reconcile-key="a1" class="msg-row">the old answer</div>`);
+      }
+      return Promise.resolve();
+    });
+
+    await openAndSearch("role:assistant");
+    typeAndEnter("role:assistant");
+
+    await vi.waitFor(() => {
+      expect(
+        document
+          .querySelector('[data-reconcile-key="a1"]')
+          ?.classList.contains("find-target-flash"),
+      ).toBe(true);
+    });
+    // Paged from the resident window's edge, exactly once.
+    expect(vi.mocked(storeLoad.loadMessages)).toHaveBeenCalledExactlyOnceWith("c1", "u9");
+    expect(countText()).toBe("1 of 1 in chat");
+  });
+
+  it("states it when the hit's page cannot be loaded", async () => {
+    stageChat([{ id: "u9", role: "user", content: "recent" }], false);
+    stageHits([serverHit({ segment_kind: "message", offset: 0, segment_len: 0 })]);
+
+    await openAndSearch("role:assistant");
+    typeAndEnter("role:assistant");
+
+    await vi.waitFor(() => {
+      expect(countText()).toBe("1 of 1 in chat \u00b7 could not be loaded");
+    });
+    expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
+  });
+
+  it("states it when the revealed turn still holds no row for the message", async () => {
+    // The reveal resolved but the projection no longer holds the message (a
+    // rewind, an eviction race): stepping must SAY so, not shrug.
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      { id: "a1", role: "assistant", blocks: [] },
+    ]);
+    mountTurnCard("u1", null);
+    stageHits([serverHit({ segment_kind: "message", offset: 0, segment_len: 0 })]);
+
+    await openAndSearch("role:assistant");
+    typeAndEnter("role:assistant");
+
+    await vi.waitFor(() => {
+      expect(countText()).toBe("1 of 1 in chat \u00b7 could not be shown");
+    });
+  });
+
+  it("keeps Enter-cycling on resident marks when any exist, however many hits the server found", async () => {
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry retry" }] },
+    ]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks"><div class="message assistant">retry retry</div></div>
+       </div>`,
+    );
+    stageHits([serverHit(), serverHit({ message_id: "a9", turn_message_id: "u9" })]);
+
+    onHotkey(ctrlF());
+    typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
+    });
+    vi.mocked(chatSearch.revealHitTurn).mockClear();
+    typeAndEnter("retry"); // steps the MARKS, not the server hits
+    expect(countText()).toBe("2 of 2");
+    expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
   });
 });

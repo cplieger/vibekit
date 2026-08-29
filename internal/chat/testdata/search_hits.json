@@ -1,0 +1,139 @@
+{
+  "_comment": [
+    "The SearchHit wire shape, as a real Search() reply both languages must agree on.",
+    "",
+    "chat.SearchHit is deliberately NOT wiregen-registered (the generated namespace's",
+    "SearchHit name is taken by the tools type), so the TypeScript mirror in",
+    "static-src/chat-search.ts is hand-maintained. This file is what keeps the two",
+    "spellings honest: TestSearchHitWireContract (Go) asserts the real search output",
+    "marshals to exactly these bytes, and chat-search.node.test.ts (TypeScript)",
+    "decodes every hit through the mirror type and pins the field-level invariants",
+    "(segment kinds, segment-relative RUNE offsets, message-kind zero contract).",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestSearchHitWireContract",
+    "then re-run the TS half: npx vitest --run chat-search.node.test.ts (from static-src/)."
+  ],
+  "queries": [
+    {
+      "name": "free text hits every segment kind",
+      "query": "retry",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "message_id": "u1",
+          "turn_message_id": "u1",
+          "excerpt": "Where does the retry backoff live? The naïve loop calls retry twice.",
+          "role": "user",
+          "segment_kind": "content",
+          "turn": 1,
+          "offset": 15,
+          "segment_len": 68
+        },
+        {
+          "message_id": "u1",
+          "turn_message_id": "u1",
+          "excerpt": "Where does the retry backoff live? The naïve loop calls retry twice.",
+          "role": "user",
+          "segment_kind": "content",
+          "turn": 1,
+          "offset": 56,
+          "segment_len": 68
+        },
+        {
+          "block_index": 0,
+          "message_id": "a1",
+          "turn_message_id": "u1",
+          "excerpt": "The retry semantics differ per client.",
+          "role": "assistant",
+          "segment_kind": "reasoning",
+          "turn": 1,
+          "offset": 4,
+          "segment_len": 38
+        },
+        {
+          "block_index": 1,
+          "message_id": "a1",
+          "turn_message_id": "u1",
+          "excerpt": "The **retry** helper lives in fetch.go; wrap the call in retry(ctx).",
+          "role": "assistant",
+          "segment_kind": "content",
+          "turn": 1,
+          "offset": 6,
+          "segment_len": 68
+        },
+        {
+          "block_index": 1,
+          "message_id": "a1",
+          "turn_message_id": "u1",
+          "excerpt": "The **retry** helper lives in fetch.go; wrap the call in retry(ctx).",
+          "role": "assistant",
+          "segment_kind": "content",
+          "turn": 1,
+          "offset": 57,
+          "segment_len": 68
+        },
+        {
+          "block_index": 2,
+          "message_id": "a1",
+          "turn_message_id": "u1",
+          "excerpt": "Read retry.go",
+          "role": "assistant",
+          "segment_kind": "tool_title",
+          "turn": 1,
+          "offset": 5,
+          "segment_len": 13
+        },
+        {
+          "block_index": 2,
+          "message_id": "a1",
+          "turn_message_id": "u1",
+          "excerpt": "func retry(ctx context.Context) error",
+          "role": "assistant",
+          "segment_kind": "tool_output",
+          "turn": 1,
+          "offset": 5,
+          "segment_len": 37
+        },
+        {
+          "block_index": 3,
+          "message_id": "a1",
+          "turn_message_id": "u1",
+          "excerpt": "The delegate traced the retry path end to end.",
+          "role": "assistant",
+          "segment_kind": "content",
+          "agent_subtask_id": "sub-1",
+          "turn": 1,
+          "offset": 24,
+          "segment_len": 46
+        }
+      ]
+    },
+    {
+      "name": "filter only lists matching messages",
+      "query": "role:assistant",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "message_id": "a1",
+          "turn_message_id": "u1",
+          "excerpt": "Read retry.go func retry(ctx context.Context) error",
+          "role": "assistant",
+          "segment_kind": "message",
+          "turn": 1,
+          "offset": 0,
+          "segment_len": 0
+        },
+        {
+          "message_id": "a2",
+          "turn_message_id": "u2",
+          "excerpt": "List files a.go b.go",
+          "role": "assistant",
+          "segment_kind": "message",
+          "turn": 2,
+          "offset": 0,
+          "segment_len": 0
+        }
+      ]
+    }
+  ]
+}

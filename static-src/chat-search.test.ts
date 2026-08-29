@@ -28,6 +28,7 @@ vi.mock("./store.js", () => ({
 const {
   runServerSearch,
   resetServerSearch,
+  revealHitTurn,
   searchHitTurns,
   searchHitCount,
   searchHitTotal,
@@ -40,8 +41,10 @@ function hit(over: Partial<SearchHit> = {}): SearchHit {
     turn_message_id: "u1",
     excerpt: "…retry…",
     role: "assistant",
+    segment_kind: "content",
     turn: 2,
     offset: 0,
+    segment_len: 24,
     ...over,
   };
 }
@@ -206,5 +209,49 @@ describe("runServerSearch: the reveal", () => {
     apiGet.mockResolvedValue({ hits: [hit({ turn_message_id: "" })] });
     await runServerSearch("c1", "retry");
     expect(openForSearch).not.toHaveBeenCalled();
+  });
+});
+
+describe("revealHitTurn: the per-hit reveal navigation runs before selecting", () => {
+  it("opens the hit's turn, builds its body, and then declares the shape change", async () => {
+    const order: string[] = [];
+    openForSearch.mockImplementation((_chatID: string, id: string) => {
+      order.push(`open:${id}`);
+    });
+    const build = vi.fn((_chatID: string, turnID: string) => {
+      order.push(`build:${turnID}`);
+      return Promise.resolve();
+    });
+    bumpMessages.mockImplementation(() => {
+      order.push("bump");
+    });
+    initSearchRevealBuilder(build);
+    await revealHitTurn("c1", hit({ turn_message_id: "u7" }));
+    // Same ordering contract as the search-wide reveal: the body must exist
+    // before the repaint that unfolds it, and the bump is the stated `shape`.
+    expect(order).toEqual(["open:u7", "build:u7", "bump"]);
+    expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
+  });
+
+  it("does nothing for a hit with no turn opener", async () => {
+    // The beforeEach reset already bumped once; this test asserts the CALL
+    // BELOW adds nothing.
+    bumpMessages.mockClear();
+    const build = vi.fn(() => Promise.resolve());
+    initSearchRevealBuilder(build);
+    await revealHitTurn("c1", hit({ turn_message_id: "" }));
+    expect(openForSearch).not.toHaveBeenCalled();
+    expect(build).not.toHaveBeenCalled();
+    expect(bumpMessages).not.toHaveBeenCalled();
+  });
+
+  it("does nothing without an active chat", async () => {
+    bumpMessages.mockClear();
+    const build = vi.fn(() => Promise.resolve());
+    initSearchRevealBuilder(build);
+    await revealHitTurn("", hit());
+    expect(openForSearch).not.toHaveBeenCalled();
+    expect(build).not.toHaveBeenCalled();
+    expect(bumpMessages).not.toHaveBeenCalled();
   });
 });
