@@ -39,6 +39,12 @@ func replayFrame(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string, ext
 	return kind, mustJSON(t, u)
 }
 
+// pair packs replayFrame's two returns into the shape ingestAll takes, so a
+// frame list reads as one line per frame.
+func pair(kind vibekit.ACPUpdateKind, raw json.RawMessage) [2]any {
+	return [2]any{kind, raw}
+}
+
 // ingestAll feeds a sequence of (kind, raw) pairs into a fresh Projection.
 func ingestAll(p *Projection, frames [][2]any) {
 	for _, f := range frames {
@@ -854,5 +860,149 @@ func TestProjection_ToolCallCarriesItsOwnTimestamp(t *testing.T) {
 				t.Errorf("turn Ts = %d, want %d (the first content frame's time)", got[0].Ts, turnMilli)
 			}
 		})
+	}
+}
+
+// TestProjection_SecondTurnStartClosesTheFirstTurn is the missing-turn_end case,
+// and the operation ORDER in ingestInfo is what it pins.
+//
+// Two starts with no end between them is the agent-initiated class: the previous
+// turn's bracket never arrived. Opening without closing threw the first turn's
+// whole reply away, because openTurn assigns a fresh buffer and nothing else ever
+// reads the old one. Flushing the pending user text BEFORE closing gets it wrong
+// the other way: the orphaned reply is then emitted after the next prompt's user
+// message, so the transcript attributes it to the turn that follows it.
+func TestProjection_SecondTurnStartClosesTheFirstTurn(t *testing.T) {
+	f := func(kind vibekit.ACPUpdateKind, text, sub string) [2]any {
+		k, raw := replayFrame(t, kind, text, sub, nil)
+		return [2]any{k, raw}
+	}
+	p := NewProjection(seqIDs())
+	ingestAll(p, [][2]any{
+		f(replayUserChunkKind, "first prompt", ""),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_start"),
+		f(vibekit.ACPUpdateAgentChunk, "ONE", ""),
+		// No turn_end: the first turn's bracket never closed.
+		f(replayUserChunkKind, "second prompt", ""),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_start"),
+		f(vibekit.ACPUpdateAgentChunk, "TWO", ""),
+		f(vibekit.ACPUpdateSessionInfo, "", "turn_end"),
+	})
+	got := p.Messages()
+
+	want := []struct {
+		role    vibekit.Role
+		content string
+	}{
+		{vibekit.RoleUser, "first prompt"},
+		{vibekit.RoleAssistant, "ONE"},
+		{vibekit.RoleUser, "second prompt"},
+		{vibekit.RoleAssistant, "TWO"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("projected %d messages, want %d:\n%s", len(got), len(want), dumpMessages(got))
+	}
+	for i := range want {
+		if got[i].Role != want[i].role || got[i].Content != want[i].content {
+			t.Errorf("message %d = %s %q, want %s %q",
+				i, got[i].Role, got[i].Content, want[i].role, want[i].content)
+		}
+	}
+}
+
+// TestProjection_DropsThePrimePreamble pins the reload half of the prime's
+// suppression.
+//
+// The prime is a real session/prompt, so KAS persists it and replays it exactly
+// like something the user typed. The live path publishes and persists none of a
+// prime's frames, so without this filter a resumed session would be the ONE place
+// the preamble — and the whole transcript it carries — renders as conversation.
+func TestProjection_DropsThePrimePreamble(t *testing.T) {
+	p := NewProjection(seqIDs())
+	frames := []struct {
+		kind vibekit.ACPUpdateKind
+		raw  json.RawMessage
+	}{}
+	add := func(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
+		frames = append(frames, struct {
+			kind vibekit.ACPUpdateKind
+			raw  json.RawMessage
+		}{kind, raw})
+	}
+	add(replayFrame(t, replayUserChunkKind, PrimePreambleSwitch+"\n\nUSER: hello", "", nil))
+	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil))
+	add(replayFrame(t, vibekit.ACPUpdateAgentChunk, "Understood.", "", nil))
+	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil))
+	add(replayFrame(t, replayUserChunkKind, "what did I ask?", "", nil))
+	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil))
+	add(replayFrame(t, vibekit.ACPUpdateAgentChunk, "You asked hello.", "", nil))
+	add(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil))
+	for _, f := range frames {
+		p.Ingest(f.kind, f.raw)
+	}
+
+	got := p.Messages()
+	for i := range got {
+		if strings.Contains(got[i].Content, PrimePreambleSwitch) {
+			t.Fatalf("the priming preamble was projected as message %d (%s): %q",
+				i, got[i].Role, got[i].Content)
+		}
+	}
+	// The real conversation is untouched: the user's own question and the reply to
+	// it both survive, so the filter is not eating the transcript with the preamble.
+	var users []string
+	for i := range got {
+		if got[i].Role == vibekit.RoleUser {
+			users = append(users, got[i].Content)
+		}
+	}
+	if len(users) != 1 || users[0] != "what did I ask?" {
+		t.Errorf("projected user messages = %q, want exactly the real prompt", users)
+	}
+}
+
+// TestProjection_DropsThePrimesOwnReply is the other half of the prime's reload
+// suppression, and the half the preamble filter left behind.
+//
+// The prime instructs the model to absorb the transcript silently and reply with
+// one short line confirming it is caught up. That reply is a real turn on the
+// wire, so it replays as an ordinary bracketed assistant turn with no user
+// message in front of it — which, on a transcript with durable outcomes, opens a
+// headerless agent-initiated SEGMENT reading "Got it, I'm caught up" as
+// conversation. The live path broadcasts and persists nothing of a prime, so the
+// resumed session was again the one place any of it showed up.
+func TestProjection_DropsThePrimesOwnReply(t *testing.T) {
+	p := NewProjection(seqIDs())
+	frames := [][2]any{
+		pair(replayFrame(t, replayUserChunkKind, PrimePreambleReload+"\n\nUSER: hello", "", nil)),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)),
+		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "Got it, I'm caught up.", "", nil)),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
+		// The real conversation resumes, and must be untouched — the drop is scoped
+		// to the ONE turn the dropped preamble opened, not to everything after it.
+		pair(replayFrame(t, replayUserChunkKind, "what did I ask?", "", nil)),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)),
+		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "You asked hello.", "", nil)),
+		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
+	}
+	ingestAll(p, frames)
+
+	got := p.Messages()
+	want := []struct {
+		role    vibekit.Role
+		content string
+	}{
+		{role: vibekit.RoleUser, content: "what did I ask?"},
+		{role: vibekit.RoleAssistant, content: "You asked hello."},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("projected %d messages, want %d (the prime's turn is invisible):\n%s",
+			len(got), len(want), dumpMessages(got))
+	}
+	for i := range want {
+		if got[i].Role != want[i].role || got[i].Content != want[i].content {
+			t.Errorf("message %d = %s %q, want %s %q",
+				i, got[i].Role, got[i].Content, want[i].role, want[i].content)
+		}
 	}
 }

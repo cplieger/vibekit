@@ -36,10 +36,37 @@ import (
 // packages now name *chat.Store directly through their own narrow interface,
 // and an interface is satisfied without either side knowing the other exists.
 
-// BufferAccess is the consumer-side interface for buffer store access.
-// Narrows the coupling: translate only needs GetOrInit.
+// BufferAccess is where a frame's content folds: the OPEN TURN's buffer.
+//
+// It used to be a per-chat store with a lazy create, and the replacement is the
+// point rather than a rename. A buffer keyed by chat outlives the turn that
+// filled it, so a turn nothing closed left its content behind for the next turn's
+// frames to extend; and a fold arriving with no turn open is a turn vibekit did
+// not prompt, which needs a record for the same reasons every other turn does.
 type BufferAccess interface {
-	GetOrInit(chatID vibekit.ChatID) *buffer.Buffer
+	// TurnFoldTarget returns the chat's open turn's buffer, opening a
+	// wireTurnStart turn when none is open. Never nil.
+	TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID) *buffer.Buffer
+}
+
+// TurnBoundary is the wire's own turn bracket, which KAS emits for EVERY turn —
+// agent-initiated included — and which reached nothing on the live path before.
+//
+// Three operations rather than two, because acknowledgement is PROVISIONAL: the
+// bracket carries no correlation key and no agentInitiated flag, so a binding to
+// a pre-opened prompt turn has to be revisable by the first frame that can
+// discriminate.
+type TurnBoundary interface {
+	// WireTurnStart binds the bracket to the pending pre-open, or closes a turn
+	// whose own end never arrived and opens one the engine started.
+	WireTurnStart(ctx context.Context, chatID vibekit.ChatID)
+	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op
+	// when no turn is open.
+	WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason)
+	// ReviseTurnBinding undoes a provisional binding on a frame carrying
+	// agentInitiated: the started turn was the agent's, and the pre-open is still
+	// owed its own bracket.
+	ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID)
 }
 
 // LineRecorder is the consumer-side interface for line tracking.
@@ -84,8 +111,10 @@ type Roles struct {
 	Bus Broadcaster
 	// Chats is the chat store at 4 methods.
 	Chats ChatRecords
-	// Buffers is the in-flight assistant-message store at 1 method.
+	// Buffers is where a frame's content folds: the open turn's buffer.
 	Buffers BufferAccess
+	// Turns is the wire's own turn bracket.
+	Turns TurnBoundary
 	// Lines is the changed-line tracker at 1 method.
 	Lines LineRecorder
 	// PendingPerms registers an unanswered decision for reconnect replay.
@@ -107,6 +136,8 @@ type Roles struct {
 	RunBounds  RunBoundsAccess
 	// TurnInterrupt ends a turn kiro-cli abandoned without answering.
 	TurnInterrupt TurnInterruptAccess
+	// Metering is the per-turn accounting a turn_completion frame writes.
+	Metering TurnMetering
 	// WorkDir is the workspace root. A VALUE: it is a process constant, so there
 	// is nothing to substitute and no reason for a method. Last because a
 	// trailing string ends fieldalignment's leading-pointer count early.
@@ -208,6 +239,7 @@ type Translator struct {
 	bus           Broadcaster
 	chats         ChatRecords
 	buffers       BufferAccess
+	turns         TurnBoundary
 	lines         LineRecorder
 	pendingPerms  PendingPermAdder
 	respond       Responder
@@ -220,6 +252,7 @@ type Translator struct {
 	runOrigin     RunOriginAccess
 	runBounds     RunBoundsAccess
 	turnInterrupt TurnInterruptAccess
+	metering      TurnMetering
 	newMsgID      func() string
 	// steps maps a workflow step's ACP session id to its run and node. Fed from
 	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
@@ -233,6 +266,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		bus:           r.Bus,
 		chats:         r.Chats,
 		buffers:       r.Buffers,
+		turns:         r.Turns,
 		lines:         r.Lines,
 		pendingPerms:  r.PendingPerms,
 		respond:       r.Respond,
@@ -246,6 +280,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		runOrigin:     r.RunOrigin,
 		runBounds:     r.RunBounds,
 		turnInterrupt: r.TurnInterrupt,
+		metering:      r.Metering,
 		steps:         newStepRegistry(),
 	}
 	for _, o := range opts {
@@ -343,4 +378,25 @@ type RunBoundsAccess interface {
 // result.
 type TurnInterruptAccess interface {
 	InterruptTurn(chatID vibekit.ChatID, reason string)
+}
+
+// TurnMetering is the per-turn accounting a turn_completion frame writes, and it
+// is TWO operations because the frame carries two facts with different owners.
+//
+// The split is what lets a workflow STEP's frame through: its credits are spent
+// by the chat that launched it, so they accumulate there, while the conversation
+// turn count and duration are the conversation's and a step must not move them.
+// Before the split one blanket gate dropped a step's frame whole, so a
+// twenty-step run reported no cost at all on the chat that paid for it.
+//
+// Staging belongs on the host because it belongs on the open TURN: several frames
+// can describe one turn, and only the host holds the record they sum onto.
+type TurnMetering interface {
+	// AccumulateSpend adds a turn_completion's credit spend, cumulatively, for
+	// every frame — step or not.
+	AccumulateSpend(ctx context.Context, chatID vibekit.ChatID, credits float64)
+	// StageConversationTurnSummary records a conversation turn's reported
+	// duration, accumulating rather than overwriting so several frames for one
+	// turn sum.
+	StageConversationTurnSummary(ctx context.Context, chatID vibekit.ChatID, elapsedMs float64)
 }

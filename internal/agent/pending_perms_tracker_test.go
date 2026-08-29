@@ -136,8 +136,8 @@ func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 	}
 	// The surviving chat's answers are still accepted, which is what the entries
 	// are for.
-	if _, ok := tracker.TakeIfPresent(2); !ok {
-		t.Error("TakeIfPresent(2) = false: another chat's clear took chat-2's entry")
+	if _, ok := tracker.TakeIfPresent("chat-2", 2); !ok {
+		t.Error(`TakeIfPresent("chat-2", 2) = false: another chat's clear took chat-2's entry`)
 	}
 }
 
@@ -157,5 +157,63 @@ func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T)
 	want := []int64{1, 2}
 	if got := listIDs(t, tracker.List("")); !slices.Equal(got, want) {
 		t.Errorf("List(\"\") = %v after ClearForChat(\"\"), want %v", got, want)
+	}
+}
+
+// TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID is the identity space
+// the tracker is keyed on, and the case an id-only map could not represent.
+//
+// Request ids are minted per BRIDGE (`nextID atomic.Int64`, one bridge per chat,
+// every one starting at zero), so two live chats holding request 7 at the same
+// time is ordinary rather than a race. Keyed on the id alone the second Add
+// silently overwrote the first chat's card, so: chat 1's dialog was replayed to
+// chat 2 on reconnect, an answer from EITHER chat retired the single surviving
+// entry, and whichever request lost had no answer path left at all while the
+// engine still held it open — a turn wedged for the whole life of the bridge.
+func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
+	t.Parallel()
+	tracker := newPendingPermsTracker()
+	const shared = int64(7)
+	tracker.Add(shared, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-1",
+		vibekit.PermissionNeededPayload{RequestID: shared, Title: "chat-1 asked"}))
+	tracker.Add(shared, vibekit.NewEvent(vibekit.EventUserInputNeeded, "chat-2",
+		vibekit.UserInputNeededPayload{RequestID: shared, Question: "chat-2 asked"}))
+
+	// Each chat's replay carries its OWN card, not the other's.
+	for _, tc := range []struct {
+		chat vibekit.ChatID
+		want vibekit.EventType
+	}{
+		{chat: "chat-1", want: vibekit.EventPermissionNeeded},
+		{chat: "chat-2", want: vibekit.EventUserInputNeeded},
+	} {
+		got := tracker.List(tc.chat)
+		if len(got) != 1 {
+			t.Fatalf("List(%q) returned %d cards, want 1", tc.chat, len(got))
+		}
+		if got[0].Type != tc.want {
+			t.Errorf("List(%q) card type = %q, want %q: the other chat's request "+
+				"overwrote this one", tc.chat, got[0].Type, tc.want)
+		}
+	}
+
+	// chat-1 answers. chat-2's request must still be answerable: it was never
+	// asked, and nothing else can answer it for that chat.
+	evt, ok := tracker.TakeIfPresent("chat-1", shared)
+	if !ok {
+		t.Fatal(`TakeIfPresent("chat-1", 7) refused a pending request`)
+	}
+	if evt.ChatID != "chat-1" {
+		t.Errorf("chat-1's claim returned chat %q's event", evt.ChatID)
+	}
+	if _, ok := tracker.TakeIfPresent("chat-2", shared); !ok {
+		t.Error(`TakeIfPresent("chat-2", 7) = false after chat-1 answered: chat-2's ` +
+			"turn now waits forever for a response nothing can send")
+	}
+	// And a claim naming the wrong chat resolves nothing at all.
+	tracker.Add(shared, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-3",
+		vibekit.PermissionNeededPayload{RequestID: shared}))
+	if _, ok := tracker.TakeIfPresent("chat-4", shared); ok {
+		t.Error(`TakeIfPresent("chat-4", 7) succeeded against chat-3's request`)
 	}
 }

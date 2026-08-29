@@ -13,14 +13,17 @@
 // ---------------------------------------------------------------------------
 
 import type { Message, FileChange } from "./types.js";
+import type { TurnOutcome } from "./wire/types.gen.js";
 
 /** A turn's result, as scannable colour down the transcript.
  *
- *  Derived from PERSISTED data only. `stop_reason` rides the live `turn_ended`
- *  SSE and is never stored, so a reloaded transcript cannot read it — the
- *  event messages and the refusal marker are what survive, and they are what
- *  this keys on. */
-export type TurnOutcome = "running" | "completed" | "interrupted" | "failed";
+ *  RE-EXPORTED from the generated wire types rather than declared here: the rule
+ *  that produces it is implemented in both languages, so a hand-written union
+ *  would be a second enumeration of one vocabulary with nothing holding the two
+ *  spellings together — the shared fixture pins the BEHAVIOUR and cannot pin a
+ *  name. `running` is the one member that is never persisted; every other value
+ *  arrives on the message that finalized its turn. */
+export type { TurnOutcome };
 
 export interface Turn {
   /** Reconcile key: the id of the turn's first message. Stable across
@@ -103,9 +106,10 @@ const COMMAND_KINDS = new Set(["execute", "shell", "command"]);
  *  last one. */
 export function projectTurns(messages: readonly Message[], thinking: boolean): Turn[] {
   const turns: Turn[] = [];
+  let closed = false;
   for (const m of messages) {
     const open = turns[turns.length - 1];
-    if (m.role === "user" || open === undefined) {
+    if (m.role === "user" || open === undefined || opensHeaderlessTurn(m, closed)) {
       turns.push({
         id: m.id,
         n: turns.length + 1,
@@ -115,9 +119,11 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
         outcome: "completed",
         rewindTo: undefined,
       });
+      closed = m.turn_outcome !== undefined;
       continue;
     }
     open.body.push(m);
+    closed = closed || m.turn_outcome !== undefined;
   }
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
@@ -131,6 +137,30 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
     t.rewindTo = turns[i + 1]?.trigger;
   }
   return turns;
+}
+
+/** Is this the first persisted message of a turn with NO user trigger?
+ *
+ *  The boundary rule, and reviewers caught it wrong in BOTH directions, which is
+ *  why it is pinned by the shared fixture rather than described. A turn's
+ *  outcome-bearing message CLOSES it (there is exactly one per turn — the message
+ *  that finalized it), so after that a non-user message belongs to a turn nothing
+ *  triggered.
+ *
+ *  Too narrow — only an empty turn's marker opens one — puts a NON-empty
+ *  agent-initiated turn's outcome in the previous turn's body, which can flip a
+ *  completed turn to failed on reload. Too broad — any non-user message opens one
+ *  — splits a prompted empty turn that has a user message to attach to, and splits
+ *  an interrupt divider off the turn it describes. Hence both clauses: after a
+ *  close, and only an assistant message or an outcome marker.
+ *
+ *  A transcript persisted before `turn_outcome` existed carries none, so its turns
+ *  never close and this projects exactly as it always did. */
+function opensHeaderlessTurn(m: Message, prevClosed: boolean): boolean {
+  if (!prevClosed) {
+    return false;
+  }
+  return m.role === "assistant" || m.turn_outcome !== undefined;
 }
 
 /** A turn's outcome from its persisted body.
@@ -169,6 +199,13 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
 function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
   let interrupted = false;
   for (const m of t.body) {
+    // The DURABLE outcome, when the turn carries one: since P9 the message that
+    // finalized a turn records the wire's own verdict, so a reloaded transcript
+    // reads it instead of inferring one from whichever markers survived. The
+    // inference below is the fallback for every turn persisted before that.
+    if (m.turn_outcome !== undefined) {
+      return m.turn_outcome;
+    }
     if (m.refusal !== undefined) {
       return "failed";
     }

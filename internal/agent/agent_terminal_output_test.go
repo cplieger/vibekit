@@ -350,8 +350,9 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 	}
 
 	// The turn boundary is the eviction point: every tool call in the turn has
-	// settled by then, so a record still here has had its chance.
-	h.agentTerms.AdvanceTurn("c1")
+	// settled by then, so a record still here has had its chance. The boundary is
+	// an EPOCH now, published by the closer that finalized that turn.
+	h.agentTerms.CloseTurn("c1", h.agentTerms.turnEpochOf("c1")+1)
 	if _, _, ok := h.agentTerms.Output(termID); ok {
 		t.Error("the record survived the turn boundary, so it grows with the session")
 	}
@@ -588,22 +589,21 @@ func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
 }
 
 // A terminal that outlives the turn it was created in still has its record
-// evicted at the next boundary. Eviction compares the record's CREATION turn
+// evicted at the next boundary. Eviction compares the record's OWNING EPOCH
 // against the turn now closing, so a command released two turns after it started
 // must not leave its bytes behind — that is the growth the boundary exists to
 // stop, and the existing same-turn case cannot see it.
-func TestAdvanceTurn_EvictsARecordCreatedInAnEarlierTurn(t *testing.T) {
+func TestCloseTurn_EvictsARecordCreatedInAnEarlierTurn(t *testing.T) {
 	t.Parallel()
 	at := bareTerminals()
 
-	at.AdvanceTurn("c1") // the chat is now past its first turn
 	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
 	at.mu.Lock()
-	term.turnSeq = at.currentTurn("c1") // what termCreate records
+	term.epoch = 2 // what termCreate stamps: the chat's open turn
 	at.mu.Unlock()
 	term.output.Write([]byte("slow\n"))
 
-	at.AdvanceTurn("c1") // the command is still running across the boundary
+	at.CloseTurn("c1", 2) // turn 2 ends while the command runs on
 
 	at.mu.Lock()
 	at.retire("t1", term)
@@ -612,9 +612,9 @@ func TestAdvanceTurn_EvictsARecordCreatedInAnEarlierTurn(t *testing.T) {
 		t.Fatal("Setup: the record was not retired, so the eviction below asserts nothing")
 	}
 
-	at.AdvanceTurn("c1")
+	at.CloseTurn("c1", 3)
 	if raw, ok := at.peekRetired("t1"); ok {
-		t.Errorf("peekRetired(t1) = (%q, true) after the boundary, want it evicted;"+
+		t.Errorf("peekRetired(t1) = (%q, true) after turn 3 closed, want it evicted;"+
 			" a record from an earlier turn grows with the session", raw)
 	}
 }
@@ -666,8 +666,10 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 	})
 
 	t.Run("one_terminal_killed", func(t *testing.T) {
-		at := bareTerminals()
+		at := newAgentTerminals(nil, nil, nil,
+			(&epochStub{cur: map[vibekit.ChatID]vibekit.TurnEpoch{"c1": 4}}).read)
 		term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
+		term.epoch = 4 // this turn's, so the cancel is its to take
 		at.terms["t1"] = term
 		at.byChatID["c1"] = []string{"t1"}
 
@@ -715,4 +717,62 @@ func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 				" want no undeliverable-refusal line", got)
 		}
 	})
+}
+
+// stageTerminal registers a terminal the way termCreate does: read the chat's
+// current turn, then insert. The attribution itself is production code
+// (turnEpochOf); what is duplicated here is only the map write, which every
+// terminal fixture in this package already does.
+func stageTerminal(h *Runtime, id string, chatID vibekit.ChatID) {
+	epoch := h.agentTerms.turnEpochOf(chatID)
+	h.agentTerms.mu.Lock()
+	defer h.agentTerms.mu.Unlock()
+	term := newAgentTerminal(&exec.Cmd{}, chatID, 64)
+	term.epoch = epoch
+	h.agentTerms.terms[id] = term
+	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], id)
+}
+
+// TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals is defect H1 at the
+// place it actually hurts, and the case the ordinal this replaced could not see.
+//
+// The registry used to keep its own turn count, advanced from two Runtime
+// wrappers on the PROMPT path. So no turn the wire started ever advanced it: an
+// agent-initiated turn opened, spawned a `npm run dev`, closed on its own
+// turn_end — and the count stayed where it was, which means the next prompted
+// turn shared it. Cancelling that prompt then killed a background process the
+// user never asked to stop, and the transcript said nothing about it.
+//
+// Nothing here mentions the terminal registry's boundary: the whole point is
+// that the WINNING closer publishes it, so a turn vibekit did not prompt moves
+// the boundary exactly as a prompted one does.
+func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
+	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
+	ctx := t.Context()
+
+	// A turn vibekit did not prompt: the first frame of the bracket opens it.
+	h.stageTurnBuffer(t, "c1")
+	stageTerminal(h, "agent-bg", "c1")
+
+	// It ends on the wire's own bracket — no prompt wrapper anywhere on this path.
+	h.coord.WireTurnEnd(ctx, "c1", vibekit.StopReasonEndTurn)
+
+	// The user's next turn, with a command of its own.
+	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	if epoch == 0 {
+		t.Fatal("Setup: OpenTurn refused, so there is no turn to cancel")
+	}
+	stageTerminal(h, "prompt-cmd", "c1")
+
+	h.agentTerms.KillForTurn("c1")
+
+	h.agentTerms.mu.Lock()
+	defer h.agentTerms.mu.Unlock()
+	if _, ok := h.agentTerms.terms["agent-bg"]; !ok {
+		t.Error("cancelling the user's turn killed the AGENT-initiated turn's terminal: " +
+			"that background command was not this cancel's to take")
+	}
+	if _, ok := h.agentTerms.terms["prompt-cmd"]; ok {
+		t.Error("the cancelled turn's own terminal survived the interrupt")
+	}
 }

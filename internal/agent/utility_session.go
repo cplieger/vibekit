@@ -382,10 +382,14 @@ type utilityChunkPayload struct {
 // reassigns us.bridge can't make this goroutine answer on the wrong pipe.
 // forward takes NO locks: the hooks callbacks are immutable and the chunk
 // send is non-blocking, so a held session mutex can never deadlock it.
-func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan *vibekit.RPCResponse, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan vibekit.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
-	for msg := range notifCh {
+	for n := range notifCh {
+		// The read-loop sequence rides every frame and this goroutine ignores it:
+		// the utility session opens no turn, so nothing here has a local decision to
+		// order against the frames still queued.
+		msg := n.Msg
 		switch {
 		case msg.ID != nil:
 			us.answerHostRequest(bridge, msg)

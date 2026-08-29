@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -322,8 +321,9 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
+	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
+	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	select {
 	case body := <-fp.sends:
@@ -366,13 +366,13 @@ func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	buf := h.bridge.assistantBufs.GetOrInit("c1")
+	epoch, buf := h.stagePromptTurn(t, "c1")
 	buf.Started = true
 	buf.MessageID = "m-asst"
 
 	logs := captureLogs(t)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
+	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	got := logs.String()
 	if strings.Contains(got, "persist assistant turn") {
@@ -832,5 +832,36 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 				br.callLog())
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// TurnFoldTarget reads the chat store only when it has to OPEN a turn, not on
+// every folded frame.
+//
+// It opened by asking for the two facts a turn records at open — the answering
+// model and the credit baseline — and that read is chat.Store.Get: a per-chat
+// mutex, a whole-file read and a json.Unmarshal of the entire message history,
+// per streamed delta and per tool frame. The cost scales with the TRANSCRIPT
+// rather than the frame, it contends with every persist on the same chat, and it
+// runs on the only consumer of a 256-slot channel, so a long conversation could
+// stall the read loop under its own bookkeeping. No benchmark could see it: the
+// fold target in the translate benchmarks is a fake over a local map.
+func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	const chatID vibekit.ChatID = "c1"
+	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	// The first frame has no turn to fold into, so it opens one and pays for the facts.
+	h.coord.TurnFoldTarget(ctx, chatID)
+	before := cs.Gets.Load()
+
+	for range 20 {
+		h.coord.TurnFoldTarget(ctx, chatID)
+	}
+
+	if got := cs.Gets.Load(); got != before {
+		t.Errorf("chat reads = %d after 20 folded frames, want %d: the fold path reads and "+
+			"unmarshals the whole chat file per frame", got-before, 0)
 	}
 }

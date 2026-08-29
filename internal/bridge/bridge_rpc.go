@@ -33,9 +33,25 @@ var frameTooLargeResp = &vibekit.RPCResponse{
 	Error: &vibekit.RPCError{Code: vibekit.RPCCodeInternal, Message: vibekit.ErrFrameTooLarge.Error()},
 }
 
+// pendingReply is the answer to one of our requests plus the read loop's position
+// at the instant it arrived.
+//
+// The response goes straight to the waiting Call while the notifications that
+// preceded it are still queued, so the response alone says nothing about what the
+// consumer has folded. Bundled rather than read back afterwards, so the capture is
+// the moment the response landed.
+type pendingReply struct {
+	resp *vibekit.RPCResponse
+	seq  uint64
+}
+
+// sendNotif stamps the next sequence on a frame and delivers it. Called only
+// from readLoop, which is what makes the unsynchronized counter sound: one
+// writer, and the value is published on the frame.
 func (b *Bridge) sendNotif(msg *vibekit.RPCResponse) {
+	b.deliveredSeq++
 	select {
-	case b.notifCh <- msg:
+	case b.notifCh <- vibekit.Notification{Msg: msg, Seq: b.deliveredSeq}:
 	case <-b.done:
 	}
 }
@@ -134,9 +150,13 @@ func (b *Bridge) drainPendingAndClose() {
 func (b *Bridge) failPending(resp *vibekit.RPCResponse) int {
 	b.pendingMu.Lock()
 	n := len(b.pending)
+	// The sequence is the read loop's own count, so a failure carries it too: a
+	// settle woken by an oversize-frame failure must not wait for a position the
+	// dropped frame took with it.
+	reply := pendingReply{resp: resp, seq: b.deliveredSeq}
 	for id, ch := range b.pending {
 		select {
-		case ch <- resp:
+		case ch <- reply:
 		default:
 		}
 		delete(b.pending, id)
@@ -180,7 +200,10 @@ func (b *Bridge) dispatch(msg *vibekit.RPCResponse) {
 		}
 		b.pendingMu.Unlock()
 		if ok {
-			ch <- msg
+			// The position captured here is every notification readLoop has already
+			// delivered, which is exactly the bound the settle for this response has
+			// to reach before it may decide the turn was never closed on the wire.
+			ch <- pendingReply{resp: msg, seq: b.deliveredSeq}
 		}
 	case msg.ID != nil:
 		// Request FROM kiro-cli (fs/read_text_file, terminal/*);
@@ -224,48 +247,60 @@ func (b *Bridge) deregisterPending(id int64) {
 // cancellation via Notify("session/cancel", ...). Shutdown ordering is
 // enforced by Stop → readLoop fanout; no in-Call timeout is needed.
 func (b *Bridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
+	resp, _, err := b.CallAt(ctx, method, params)
+	return resp, err
+}
+
+// CallAt is Call plus the read loop position at which the response arrived.
+//
+// Only a caller that has to ORDER a local decision against the frames still in
+// flight needs it — the prompt paths, whose turn cannot be settled locally until
+// the consumer has folded everything that preceded the response. Everything else
+// takes Call.
+func (b *Bridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
 	id := b.nextID.Add(1)
 	req := vibekit.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
-	ch := make(chan *vibekit.RPCResponse, 1)
+	ch := make(chan pendingReply, 1)
 	b.pendingMu.Lock()
 	b.pending[id] = ch
 	b.pendingMu.Unlock()
 	data, err := json.Marshal(req)
 	if err != nil {
 		b.deregisterPending(id)
-		return nil, err
+		return nil, 0, err
 	}
 	data = append(data, '\n')
 	if writeErr := b.writeFrame(data); writeErr != nil {
 		b.deregisterPending(id)
-		return nil, &vibekit.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
+		return nil, 0, &vibekit.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
 	select {
-	case resp := <-ch:
+	case reply := <-ch:
+		resp := reply.resp
 		if resp == bridgeExitedResp {
-			return nil, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
+			return nil, reply.seq, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
 		}
 		if resp == frameTooLargeResp {
 			// NOT retryable: the same prompt would very likely produce the same
 			// oversize payload, so retries buy a re-run of an expensive turn and
 			// the same failure. See vibekit.ErrFrameTooLarge.
-			return nil, &vibekit.TransportError{Err: vibekit.ErrFrameTooLarge, Retryable: false}
+			return nil, reply.seq, &vibekit.TransportError{Err: vibekit.ErrFrameTooLarge, Retryable: false}
 		}
 		if resp.Error != nil {
 			// Classify "not idle" at the bridge layer so callers can
 			// use errors.Is(err, vibekit.ErrNotIdle) without string matching.
 			if resp.Error.Code == vibekit.RPCCodeNotIdle {
-				return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, vibekit.ErrNotIdle)
+				return resp, reply.seq, fmt.Errorf("ACP error %d: %w", resp.Error.Code, vibekit.ErrNotIdle)
 			}
-			return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
+			return resp, reply.seq, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
 		}
-		return resp, nil
+		return resp, reply.seq, nil
 	case <-b.done:
 		b.deregisterPending(id)
-		return nil, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
+		return nil, 0, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
 	case <-ctx.Done():
 		b.deregisterPending(id)
-		return nil, ctx.Err()
+		return nil, 0, ctx.Err()
 	}
 }
 

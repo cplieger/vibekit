@@ -14,6 +14,19 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// emit publishes an event describing frames that folded into buf, unless that turn
+// is MUTED (buffer.Buffer.muted owns why).
+//
+// One funnel rather than a check at each of the eight turn-content broadcast
+// sites: the version that enumerated sites is the version that left three leaks.
+// An event that does not describe folded content goes straight to the bus.
+func (t *Translator) emit(ctx context.Context, buf *buffer.Buffer, evt vibekit.ServerEvent) {
+	if buf != nil && buf.Muted() {
+		return
+	}
+	t.bus.Broadcast(ctx, evt)
+}
+
 // maxBufferBytes caps the per-turn content buffer at 32 MiB. Prevents
 // OOM from a pathological agent turn (e.g. cat of a large binary).
 // kiro-cli has its own output limits, so this is defense-in-depth.
@@ -29,7 +42,14 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != vibekit.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
-	buf := t.buffers.GetOrInit(chatID)
+	// The ONE discriminator there is, and it must run before the buffer is read:
+	// a revision hands the folded buffer to the agent's own turn and gives the
+	// pre-open a fresh one, so a target taken first would fold this frame into the
+	// wrong turn.
+	if chunk.Meta.Kiro.AgentInitiated {
+		t.turns.ReviseTurnBinding(ctx, chatID)
+	}
+	buf := t.buffers.TurnFoldTarget(ctx, chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
 
 	// A workflow STEP's frames arrive on this chat's connection with an EMPTY
@@ -76,7 +96,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 		// response usually arrives as its own delta, which is exactly the case
 		// that returns early, so a broadcast placed after it would never fire
 		// for the common shape.
-		t.broadcastSteerAcks(ctx, chatID, acks)
+		t.broadcastSteerAcks(ctx, chatID, buf, acks)
 		if text == "" {
 			// The whole delta is either withheld as a marker candidate or was a
 			// marker in full. Returning here rather than broadcasting an empty
@@ -116,7 +136,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	} else {
 		refusal = nil
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:      buf.MessageID,
 			Delta:          text,
@@ -153,12 +173,12 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 // Text is deliberately EMPTY on this frame. The steer's own text lives in KAS's
 // buffer, not here, so the honest payload carries only what this layer learned;
 // the client merges by id and never overwrites the text it already holds.
-func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, acks []steerAck) {
+func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, acks []steerAck) {
 	for _, ack := range acks {
 		if ack.SteerID == "" || ack.Text == "" {
 			continue
 		}
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
+		t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: ack.SteerID,
 			Ack:     ack.Text,
 		}))
@@ -186,7 +206,7 @@ func (t *Translator) announceTruncation(
 	blockIndex, seq := buf.AppendTextDelta(notice, subtask)
 	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
 		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:  buf.MessageID,
 			Delta:      notice,
@@ -224,6 +244,14 @@ func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
 func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p ACPPlanWire
 	if json.Unmarshal(raw, &p) != nil {
+		return
+	}
+	// A plan is turn CONTENT, so it takes the turn's fold target and obeys the same
+	// mute every other content frame obeys. This row is PERSISTED rather than
+	// broadcast, which is why the emit funnel could not cover it: a prime that
+	// emitted a plan wrote a transcript row while every other frame of that turn was
+	// suppressed, so the one turn guaranteed to leave no trace left this one.
+	if buf := t.buffers.TurnFoldTarget(ctx, chatID); buf != nil && buf.Muted() {
 		return
 	}
 	msg := vibekit.Message{

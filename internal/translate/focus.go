@@ -92,6 +92,23 @@ const PrimePreambleTangent = "This conversation is a tangent branched off anothe
 // first, so a preamble missing from this list becomes a chat title.
 var primePreambles = []string{PrimePreambleSwitch, PrimePreambleReload, PrimePreambleTangent}
 
+// IsPrimePreamble reports whether text opens with a priming preamble.
+//
+// A prime is a real session/prompt, so KAS persists and replays it like any other
+// user message; without this the replay projection renders vibekit's own transcript
+// replay as something the user said, on every resumed session.
+//
+// A PREFIX test on the same table the focus-title filter reads, so the two cannot
+// disagree about what a prime looks like.
+func IsPrimePreamble(text string) bool {
+	for _, preamble := range primePreambles {
+		if strings.HasPrefix(text, preamble) {
+			return true
+		}
+	}
+	return false
+}
+
 // derivedTitleEllipsis matches KAS's SESSION_TITLE_ELLIPSIS.
 const derivedTitleEllipsis = "..."
 

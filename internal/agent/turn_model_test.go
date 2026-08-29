@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -45,10 +44,10 @@ func turnEndedModel(t *testing.T, h *Runtime) (model string, present bool) {
 	return "", false
 }
 
-func endTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID) {
+func endTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
 	t.Helper()
-	h.EmitTurnEndedWithStats(t.Context(), chatID,
-		&vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), chatID, epoch, 0,
+		&vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 }
 
 func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
@@ -61,8 +60,9 @@ func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
+	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("hello"))
-	endTurn(t, h, "c1")
+	endTurn(t, h, "c1", epoch)
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -89,8 +89,9 @@ func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
+	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("hello"))
-	endTurn(t, h, "c1")
+	endTurn(t, h, "c1", epoch)
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if got := c.Messages[0].TurnModel; got != "" {
@@ -117,6 +118,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
+	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("half an answer"))
 	// A switch lands mid-turn (the fast in-session path does exactly this).
 	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
@@ -126,7 +128,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 		t.Fatalf("switch model: %v", err)
 	}
 	h.translateACPEvent("c1", newChunkMsg(" continued"))
-	endTurn(t, h, "c1")
+	endTurn(t, h, "c1", epoch)
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if got := c.Messages[0].TurnModel; got != "sonnet-4" {
@@ -244,8 +246,9 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
+	epoch := h.coord.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("the model got this far"))
-	h.AbandonInFlightTurn(t.Context(), "c1", "the pipe died")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, "the pipe died")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	var found bool

@@ -99,7 +99,7 @@ func truncationNotices(t *testing.T, contentLen, chunks int) int {
 	t.Helper()
 	const chatID vibekit.ChatID = "c1"
 	deps, events, _ := depsWithStore(t, chatID)
-	buf := deps.GetOrInit(chatID)
+	buf := deps.bufStore.GetOrInit(chatID)
 	buf.Content.WriteString(strings.Repeat("a", contentLen))
 	buf.Started = true
 	buf.MessageID = "cap-mid"
@@ -374,6 +374,76 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 			if e.Type == vibekit.EventMessageChunk && e.Payload.(vibekit.MessageChunkPayload).Refusal != nil {
 				t.Error("untagged chunk must not carry refusal")
 			}
+		}
+	})
+}
+
+// TestHandleAssistantChunk_AMutedTurnFoldsButPublishesNothing pins the FOLD half of
+// the prime's source policy.
+//
+// A prime is a real session/prompt carrying the transcript, so its reply is real
+// text on this wire. Revision 4 suppressed only the finalizer's persist and left
+// three leaks, all reachable: the chunks were BROADCAST live and then vanished on
+// the next reload, which is the vanishing-message class this codebase has already
+// paid for. The frames still fold — a revised binding hands this buffer to the
+// agent's own turn, whose content it then legitimately is, and that turn unmutes
+// it — so the assertion is "folded AND silent", not "dropped".
+func TestHandleAssistantChunk_AMutedTurnFoldsButPublishesNothing(t *testing.T) {
+	d := newBaseDeps()
+	var events []vibekit.EventType
+	d.onBroadcast = func(_ context.Context, evt vibekit.ServerEvent) {
+		events = append(events, evt.Type)
+	}
+	tr := New(rolesOf(d))
+	d.bufStore.GetOrInit("c1").SetMuted(true)
+
+	tr.HandleAssistantChunk(t.Context(), "c1", mustJSON(t, map[string]any{
+		"content": map[string]any{"type": "text", "text": "Caught up."},
+	}), false)
+
+	if len(events) != 0 {
+		t.Errorf("a muted turn published %v; the priming preamble would render as conversation", events)
+	}
+	if got := d.bufStore.GetOrInit("c1").Content.String(); got != "Caught up." {
+		t.Errorf("the frame did not fold: content = %q", got)
+	}
+}
+
+// TestHandlePlan_AMutedTurnPersistsNothing is the persistence half of the prime's
+// fold-time policy, and the leak the emit funnel could not reach.
+//
+// The funnel covers BROADCAST. A plan is different in kind: HandlePlan writes
+// straight to the chat store, so a prime that emitted a plan wrote a durable
+// transcript row while every other frame of that same turn was suppressed — an
+// invisible turn leaving user-visible data behind, which is exactly what "neither
+// broadcast nor served nor persisted" rules out.
+//
+// Both directions are asserted, because a gate that swallowed every plan would
+// pass a one-sided test while deleting the feature.
+func TestHandlePlan_AMutedTurnPersistsNothing(t *testing.T) {
+	t.Run("MutedSkipsThePersist", func(t *testing.T) {
+		rec := &recStore{}
+		d := newBaseDeps()
+		d.store = rec
+		tr := New(rolesOf(d), withIDGenerator(func() string { return "id" }))
+		d.bufStore.GetOrInit("c1").SetMuted(true)
+
+		tr.HandlePlan(t.Context(), "c1", json.RawMessage(`{"entries":[{"content":"step"}]}`))
+
+		if rec.upsertCalls != 0 {
+			t.Errorf("a muted turn's plan wrote %d transcript rows, want 0", rec.upsertCalls)
+		}
+	})
+	t.Run("AnOrdinaryTurnStillPersists", func(t *testing.T) {
+		rec := &recStore{}
+		d := newBaseDeps()
+		d.store = rec
+		tr := New(rolesOf(d), withIDGenerator(func() string { return "id" }))
+
+		tr.HandlePlan(t.Context(), "c1", json.RawMessage(`{"entries":[{"content":"step"}]}`))
+
+		if rec.upsertCalls != 1 {
+			t.Errorf("UpsertTurnPlan calls = %d, want 1: the gate must not swallow every plan", rec.upsertCalls)
 		}
 	})
 }

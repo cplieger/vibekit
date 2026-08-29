@@ -46,7 +46,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(vibekit.CmdCreateChat, bind1(mem, CmdCreateChat))
 	d.Register(vibekit.CmdResumeSession, bind1(mem, CmdResumeSession))
 	d.Register(vibekit.CmdCompact, bind1(r.Bridges, CmdCompact))
-	d.Register(vibekit.CmdSteer, bind1(r.Bridges, CmdSteer))
+	d.Register(vibekit.CmdSteer, bind2(r.Bridges, r.TurnOutcome, CmdSteer))
 	d.Register(vibekit.CmdSteerClear, bind1(r.Bridges, CmdSteerClear))
 	d.Register(vibekit.CmdCreateHook, bind1(r.Workspace, CmdCreateHook))
 

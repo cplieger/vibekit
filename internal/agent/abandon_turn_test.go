@@ -39,14 +39,14 @@ func TestAbandonInFlightTurn_ReleasesTheBuffer(t *testing.T) {
 	ctx := t.Context()
 
 	// Start a turn the way streaming does, then abandon it.
-	buf := h.bridge.assistantBufs.GetOrInit("c1")
+	epoch, buf := h.stagePromptTurn(t, "c1")
 	buf.Started = true
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1", "the pipe died")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, "the pipe died")
 
-	if _, ok := h.coord.TakeBuffer("c1"); ok {
+	if h.liveTurnBuffer("c1") != nil {
 		t.Error("the assistant buffer survived AbandonInFlightTurn; the next turn " +
 			"would extend this dead turn's blocks under its message id")
 	}
@@ -68,13 +68,13 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	ctx := t.Context()
 
 	const partial = "the model got this far before the pipe died"
-	buf := h.bridge.assistantBufs.GetOrInit("c1")
+	epoch, buf := h.stagePromptTurn(t, "c1")
 	buf.Started = true
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString(partial)
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(ctx, "c1", "the pipe died")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, "the pipe died")
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -121,8 +121,13 @@ func TestAbandonInFlightTurn_MarksATurnThatNeverStarted(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	ctx := t.Context()
 
+	// The prompt pre-opens its turn before the call that drives it, so a refusal
+	// answering before the first chunk still has a turn to close. The closer no
+	// longer opens one itself — every fold opens one and every prompt pre-opens its
+	// own, so a terminal step never finds an idle chat with content to account for.
 	const reason = "Too many requests, please wait before trying again."
-	h.AbandonInFlightTurn(ctx, "c1", reason)
+	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, reason)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -159,12 +164,12 @@ func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
 	ctx := t.Context()
 
 	const reason = "The model is at capacity. (request req-9)"
-	buf := h.bridge.assistantBufs.GetOrInit("c1")
+	epoch, buf := h.stagePromptTurn(t, "c1")
 	buf.Started = true
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1", reason)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, reason)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -196,8 +201,10 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 
 	// Stage a turn the way streaming does, then interrupt it the way the sentinel
 	// detector does — through the coordinator, so the wiring is exercised rather
-	// than the bridge's method in isolation.
-	buf := h.bridge.assistantBufs.GetOrInit("c1")
+	// than the bridge's method in isolation. The turn record is what the cause
+	// lands on now, so the fixture opens one: a chat with no turn open has nothing
+	// to interrupt, which is the benign race InterruptTurn declines.
+	epoch, buf := h.stagePromptTurn(t, "c1")
 	buf.Started = true
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("about to call a tool")
@@ -220,7 +227,7 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 		t.Error("InterruptTurn left the prompt context live")
 	}
 
-	h.AbandonInFlightTurn(ctx, "c1", callers)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, callers)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -234,5 +241,39 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 		t.Errorf("divider content = %q, want the stashed %q — the caller's %q describes "+
 			"the RPC failure the filter caused, not the stop itself",
 			divider.Content, stashed, callers)
+	}
+}
+
+// TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted is the OTHER half of the
+// unstarted branch, and the half that was missing.
+//
+// The branch above persists the divider so a reload reads the turn as
+// interrupted. It returned before broadcasting anything, so the LIVE client was
+// told nothing at all — and it has no second door: `endsTurn` is deleted and the
+// error handler deliberately touches no turn state, so the server's turn_ended is
+// the only thing that clears `thinking`, restores Send, drops the transient
+// banner, clears the snapshot watermark and refreshes the rail.
+//
+// This is the commonest failure path there is (a throttle, an auth expiry, a
+// capacity refusal, a bridge that dies before the first chunk), so the wedge it
+// left was a spinning composer on an idle server until the tab was reloaded.
+func TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted(t *testing.T) {
+	h, _ := hubForFSTest(t, t.TempDir())
+	ctx := t.Context()
+
+	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	_, before := h.bus.fanout.Bounds()
+	h.AbandonInFlightTurn(ctx, "c1", epoch, "Too many requests, please wait before trying again.")
+
+	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, before), vibekit.EventTurnEnded)
+	if len(ends) != 1 {
+		t.Fatalf("turn_ended count = %d, want exactly 1: a turn that produced nothing "+
+			"still ended, and the client clears its own state on nothing else", len(ends))
+	}
+	if ends[0].Outcome != vibekit.TurnOutcomeInterrupted {
+		t.Errorf("outcome = %q, want %q", ends[0].Outcome, vibekit.TurnOutcomeInterrupted)
+	}
+	if ends[0].StopReason != vibekit.StopReasonInterrupted {
+		t.Errorf("stop reason = %q, want %q", ends[0].StopReason, vibekit.StopReasonInterrupted)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -47,7 +48,13 @@ type RecordingChatStore struct {
 		Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 	}
 	Chats map[vibekit.ChatID]*vibekit.Chat
-	mu    sync.Mutex
+	// Gets counts Get calls, for a test whose subject is how OFTEN the store is
+	// read rather than what it answers. The real store's Get is a per-chat mutex,
+	// a whole-file read and a json.Unmarshal of the entire history, so a caller
+	// that makes one per streamed frame is a defect no assertion on the ANSWER can
+	// see.
+	Gets atomic.Int64
+	mu   sync.Mutex
 }
 
 // NewRecordingChatStore returns a ready-to-use RecordingChatStore.
@@ -57,6 +64,7 @@ func NewRecordingChatStore() *RecordingChatStore {
 
 // Get returns a copy of the stored chat for id, or (nil, false) if not found.
 func (s *RecordingChatStore) Get(_ context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+	s.Gets.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.Chats[id]

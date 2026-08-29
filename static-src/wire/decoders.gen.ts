@@ -6,17 +6,18 @@ import type { AccountUsage, AccountUsageBreakdown, AgentNoticePayload, ApprovalF
 const ALWAYS_ALLOW_BLOCKS = ["unparseable"] as const;
 const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
 const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "model_not_served", "auth_token_unavailable"] as const;
-const EVENT_KINDS = ["interrupted", "cancelled", "model_switched", "compacted", "compaction_failed", "infra_safety_blocked"] as const;
+const EVENT_KINDS = ["interrupted", "cancelled", "model_switched", "compacted", "compaction_failed", "infra_safety_blocked", "turn_outcome"] as const;
 const FORGE_KINDS = ["github", "gitlab", "gitea", "codeberg"] as const;
 const PLAN_STATUSS = ["pending", "in_progress", "completed"] as const;
 const ROLES = ["user", "assistant", "event"] as const;
 const RUN_PROGRESS_KINDS = ["node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued"] as const;
 const SAFETY_STATUSS = ["idle", "formalizing", "evaluating", "blocked", "error"] as const;
 const SETTLED_BYS = ["user", "unattended"] as const;
-const STOP_REASONS = ["end_turn", "cancelled", "interrupted", "refusal"] as const;
+const STOP_REASONS = ["end_turn", "cancelled", "interrupted", "refusal", "unknown", "error", "content_filtered", "max_tokens", "max_turn_requests"] as const;
 const TAB_KINDS = ["chat", "editor", "run", "subagent", "settings", "git", "files", "history", "docs"] as const;
 const TOOL_KINDS = ["execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"] as const;
 const TOOL_STATUSS = ["pending", "in_progress", "completed", "failed"] as const;
+const TURN_OUTCOMES = ["running", "completed", "cancelled", "interrupted", "failed", "refused", "unknown"] as const;
 
 export const decodeAccountUsage: Decoder<AccountUsage> = (v) => {
   const o = asObject(v, "$.account_usage");
@@ -530,6 +531,8 @@ export const decodeMessage: Decoder<Message> = (v) => {
   const reasoning = o["reasoning"] === null ? undefined : optStr(o, "reasoning", "$.message");
   if (reasoning !== undefined) out.reasoning = reasoning;
   if (o["event_kind"] !== undefined && o["event_kind"] !== null) out.event_kind = reqOneOf(o, "event_kind", EVENT_KINDS, "$.message");
+  if (o["turn_outcome"] !== undefined && o["turn_outcome"] !== null) out.turn_outcome = reqOneOf(o, "turn_outcome", TURN_OUTCOMES, "$.message");
+  if (o["turn_stop_reason_raw"] !== undefined && o["turn_stop_reason_raw"] !== null) out.turn_stop_reason_raw = reqOneOf(o, "turn_stop_reason_raw", STOP_REASONS, "$.message");
   const turnModel = o["turn_model"] === null ? undefined : optStr(o, "turn_model", "$.message");
   if (turnModel !== undefined) out.turn_model = turnModel;
   if (o["tool_calls"] !== undefined && o["tool_calls"] !== null) out.tool_calls = decodeArray(o["tool_calls"], decodeToolCall, "$.message.tool_calls");
@@ -542,6 +545,8 @@ export const decodeMessage: Decoder<Message> = (v) => {
   if (turnCredits !== undefined) out.turn_credits = turnCredits;
   const turnElapsedMs = o["turn_elapsed_ms"] === null ? undefined : optNum(o, "turn_elapsed_ms", "$.message");
   if (turnElapsedMs !== undefined) out.turn_elapsed_ms = turnElapsedMs;
+  const turnTruncated = o["turn_truncated"] === null ? undefined : optBool(o, "turn_truncated", "$.message");
+  if (turnTruncated !== undefined) out.turn_truncated = turnTruncated;
   return out;
 };
 
@@ -1320,6 +1325,7 @@ export const decodeTurnEndedPayload: Decoder<TurnEndedPayload> = (v) => {
   };
   if (o["changed_files"] !== undefined && o["changed_files"] !== null) out.changed_files = decodeRecord(o["changed_files"], decodeFileChange, "$.turn_ended_payload.changed_files");
   if (o["refusal"] !== undefined && o["refusal"] !== null) out.refusal = decodeRefusalInfo(o["refusal"]);
+  if (o["outcome"] !== undefined && o["outcome"] !== null) out.outcome = reqOneOf(o, "outcome", TURN_OUTCOMES, "$.turn_ended_payload");
   if (o["stop_reason"] !== undefined && o["stop_reason"] !== null) out.stop_reason = reqOneOf(o, "stop_reason", STOP_REASONS, "$.turn_ended_payload");
   const model = o["model"] === null ? undefined : optStr(o, "model", "$.turn_ended_payload");
   if (model !== undefined) out.model = model;
@@ -1327,6 +1333,8 @@ export const decodeTurnEndedPayload: Decoder<TurnEndedPayload> = (v) => {
   if (creditsDelta !== undefined) out.credits_delta = creditsDelta;
   const elapsedMs = o["elapsed_ms"] === null ? undefined : optNum(o, "elapsed_ms", "$.turn_ended_payload");
   if (elapsedMs !== undefined) out.elapsed_ms = elapsedMs;
+  const truncated = o["truncated"] === null ? undefined : optBool(o, "truncated", "$.turn_ended_payload");
+  if (truncated !== undefined) out.truncated = truncated;
   return out;
 };
 

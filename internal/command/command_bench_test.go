@@ -13,7 +13,11 @@ import (
 )
 
 // benchDeps is a minimal host double for benchmarking dispatch overhead.
-type benchDeps struct{}
+type benchDeps struct {
+	// primeOpen is what PrimeTurnOpen answers, so a test can put the chat in the
+	// PRIME window a steer must be refused in.
+	primeOpen bool
+}
 
 func newBenchDeps() *benchDeps { return &benchDeps{} }
 
@@ -42,27 +46,45 @@ func (d *benchDeps) Bridge(vibekit.ChatID) Bridge                   { return nil
 func (d *benchDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
-func (d *benchDeps) CloseBridge(vibekit.ChatID)                    {}
-func (d *benchDeps) ClearPendingPermsForChat(vibekit.ChatID)       {}
-func (d *benchDeps) TakePendingPerm(int64, vibekit.SettledBy) bool { return true }
+func (d *benchDeps) CloseBridge(vibekit.ChatID)                                    {}
+func (d *benchDeps) ClearPendingPermsForChat(vibekit.ChatID)                       {}
+func (d *benchDeps) TakePendingPerm(vibekit.ChatID, int64, vibekit.SettledBy) bool { return true }
 func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
-func (d *benchDeps) InflightAdd(int)                                       {}
-func (d *benchDeps) InflightDone()                                         {}
-func (d *benchDeps) DeleteChatState(context.Context, vibekit.ChatID)       {}
-func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)        {}
-func (d *benchDeps) KillForTurn(vibekit.ChatID)                            {}
-func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool      { return true }
-func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary      { return MCPPendingSummary{} }
-func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)         {}
-func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)          {}
-func (d *benchDeps) IsEmptyTurn(*vibekit.RPCResponse, vibekit.ChatID) bool { return false }
-func (d *benchDeps) EmitTurnEndedWithStats(context.Context, vibekit.ChatID, *vibekit.RPCResponse, TurnStats) {
+func (d *benchDeps) InflightAdd(int)                                  {}
+func (d *benchDeps) InflightDone()                                    {}
+func (d *benchDeps) DeleteChatState(context.Context, vibekit.ChatID)  {}
+func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)   {}
+func (d *benchDeps) KillForTurn(vibekit.ChatID)                       {}
+func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool { return true }
+func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary { return MCPPendingSummary{} }
+func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)    {}
+func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)     {}
+
+// OpenTurn answers a real epoch, not zero. Zero is the REFUSAL — the local-shell
+// source rule declines while another turn is open — so a stub returning it makes
+// every `!cmd` test 409.
+func (d *benchDeps) OpenTurn(context.Context, vibekit.ChatID, vibekit.TurnOpenSource) vibekit.TurnEpoch {
+	return 1
 }
 
-func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID, string) {}
-func (d *benchDeps) LatchTurnModel(vibekit.ChatID, string)                       {}
+func (d *benchDeps) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) (vibekit.TurnResult, error) {
+	return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
+}
+
+func (d *benchDeps) ReleaseTurn(vibekit.ChatID, vibekit.TurnEpoch) {}
+func (d *benchDeps) SettleTurnOnResponse(context.Context, vibekit.ChatID, vibekit.TurnEpoch, uint64, *vibekit.RPCResponse) {
+}
+
+func (d *benchDeps) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool { return false }
+
+func (d *benchDeps) PrimeTurnOpen(vibekit.ChatID) bool { return d.primeOpen }
+func (d *benchDeps) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
+}
+
+func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, string) {
+}
 
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called
 // with zero-value arguments without panicking.
@@ -84,12 +106,13 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.Broadcast(t.Context(), vibekit.ServerEvent{})
 	d.CloseBridge("x")
 	d.ClearPendingPermsForChat("x")
-	d.TakePendingPerm(0, vibekit.SettledByUser)
+	d.TakePendingPerm("x", 0, vibekit.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.DeleteChatState(t.Context(), "x")
 	d.PrimeIfNeeded(t.Context(), "x")
-	d.LatchTurnModel("x", "sonnet-4")
+	d.OpenTurn(t.Context(), "x", vibekit.TurnSourcePrompt)
+	d.ReleaseTurn("x", 0)
 }
 
 // TestBenchDeps_Contract documents which methods intentionally return nil
@@ -119,15 +142,20 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.Broadcast(t.Context(), vibekit.ServerEvent{})
 		d.CloseBridge("x")
 		d.ClearPendingPermsForChat("x")
-		d.TakePendingPerm(0, vibekit.SettledByUser)
+		d.TakePendingPerm("x", 0, vibekit.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
 		d.DeleteChatState(t.Context(), "x")
 		d.PrimeIfNeeded(t.Context(), "x")
-		if d.IsEmptyTurn(nil, "x") {
-			t.Error("IsEmptyTurn should be false")
+		if _, err := d.AwaitTurn(t.Context(), "x", 0); err == nil {
+			t.Error("AwaitTurn on the stub should report no such turn")
 		}
-		d.EmitTurnEndedWithStats(t.Context(), "x", nil, TurnStats{})
+		d.ReleaseTurn("x", 0)
+		d.SettleTurnOnResponse(t.Context(), "x", 0, 0, nil)
+		d.FinalizeLocalShellTurn(t.Context(), "x", 0)
+		if d.TurnOpenedAfter("x", 0) {
+			t.Error("TurnOpenedAfter on the stub should report false")
+		}
 		if _, err := d.OpenBridge(t.Context(), "x", ""); err != nil {
 			t.Errorf("OpenBridge returned error: %v", err)
 		}

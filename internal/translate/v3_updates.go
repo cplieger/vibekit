@@ -81,6 +81,13 @@ type sessionInfoKiroBlock struct {
 	// Focus is the kind=="focus_update" block: the agent's
 	// self-declared title/description/status (see focus.go).
 	Focus *focusUpdate `json:"focus"`
+	// TurnStart and TurnEnd are the wire's own turn bracket, which KAS emits for
+	// EVERY turn including one vibekit never prompted. Both are dispatched on
+	// BLOCK presence like focus and summarization, rather than on the kind string:
+	// KAS's legacyFields gives turn_end a nested object and turn_start a flat
+	// `true`, so a pointer is what makes presence readable.
+	TurnStart *bool         `json:"turnStart"`
+	TurnEnd   *turnEndBlock `json:"turnEnd"`
 	// The steering sub-kinds' fields, FLAT beside Kind rather than in a
 	// sub-block of their own. That is not a modelling choice here: KAS's
 	// buildSessionInfoUpdate spreads the update object straight into
@@ -116,6 +123,12 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	}
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow]())
 	return nil
+}
+
+// turnEndBlock is the kind=="turn_end" sub-block. stopDetails is pinned upstream
+// and has never been observed, so it is not decoded — see the design's F2.
+type turnEndBlock struct {
+	StopReason string `json:"stopReason"`
 }
 
 // promptTurnSummary is one metering line of a turn-end summary.
@@ -167,6 +180,18 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 	if attr.SubSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
 		return
 	}
+	// The wire's own turn bracket, and it is dispatched HERE — after the
+	// attribution gate — deliberately. Pre-gate, every workflow step's turn_start
+	// would close the launching chat's live turn: a run of twenty steps would end
+	// the conversation's turn twenty times.
+	if u.Meta.Kiro.TurnStart != nil {
+		t.turns.WireTurnStart(ctx, chatID)
+		return
+	}
+	if e := u.Meta.Kiro.TurnEnd; e != nil {
+		t.turns.WireTurnEnd(ctx, chatID, vibekit.StopReason(e.StopReason))
+		return
+	}
 	// Agent focus updates (title / description / status) ride here as
 	// kind=="focus_update" frames; see focus.go for the adoption rules.
 	if f := u.Meta.Kiro.Focus; f != nil {
@@ -216,8 +241,10 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 // nothing about whether vibekit consumes the kind — most of these are
 // ignored on purpose.
 var knownSessionInfoKinds = map[string]struct{}{
-	"turn_start": {}, "turn_end": {}, "turn_completion": {},
-	"context_usage": {}, "summarization_separator": {}, "summary_message": {},
+	// turn_start and turn_end are ABSENT because both are CONSUMED now, so a
+	// bracket kind reaching this table means its sub-block did not decode.
+	"turn_completion": {},
+	"context_usage":   {}, "summarization_separator": {}, "summary_message": {},
 	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
 	"user_message_id_assigned": {}, "focus_update": {}, "display_error": {},
 	"pending_interaction": {}, "interaction_resolved": {}, "recap": {},
@@ -283,20 +310,20 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.C
 	}
 }
 
-// persistTurnSummary folds a turn-end metering summary into the chat's
-// usage: one more turn, the turn's wall time, and the credit spend summed
-// over the summary's credit lines. Credits ACCUMULATE here; the absolute
-// usage_update.cost channel (persistUsage) keeps overwrite precedence if
-// KAS ever ships both — an absolute value arriving after an increment
-// simply corrects it.
-// persistTurnSummary folds one turn's metering into the chat's usage.
+// persistTurnSummary routes one turn-end metering frame to the two operations it
+// carries.
 //
 // `step` says the metering came from a workflow STEP rather than from a turn of
-// the conversation, and it splits the three fields by what each one means:
-// CREDITS are real account spend the user is owed a readout of, so they
-// accumulate either way; TurnCount and LastTurnMs describe the CONVERSATION, so
-// a step must not touch them — twenty steps would otherwise report a four-message
-// chat as twenty-four turns and overwrite "last turn" with an unrelated duration.
+// the conversation, and it splits the frame by what each fact means: CREDITS are
+// real account spend the chat that launched the step is owed a readout of, so
+// they accumulate either way; the turn count and duration describe the
+// CONVERSATION, so a step must not touch them — twenty steps would otherwise
+// report a four-message chat as twenty-four turns and overwrite "last turn" with
+// an unrelated duration.
+//
+// Credits ACCUMULATE; the absolute usage_update.cost channel (persistUsage) keeps
+// overwrite precedence if KAS ever ships both — an absolute value arriving after
+// an increment simply corrects it.
 func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
@@ -310,27 +337,9 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 		// because the alternative is a spend line that silently stops counting.
 		censusMeteringUnit(summaries[i].Unit)
 	}
-	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		if !step {
-			c.Usage.TurnCount++
-			if elapsedMs > 0 {
-				c.Usage.LastTurnMs = elapsedMs
-			}
-		}
-		if credits > 0 {
-			c.Usage.Credits += credits
-			c.Usage.HasRealData = true
-		}
-		return true
-	})
-	if errors.Is(err, chat.ErrTombstoned) {
-		return
-	}
-	if err != nil {
-		slog.Error("persist v3 turn summary", "chat_id", chatID, "error", err)
+	t.metering.AccumulateSpend(ctx, chatID, credits)
+	if !step {
+		t.metering.StageConversationTurnSummary(ctx, chatID, elapsedMs)
 	}
 }
 

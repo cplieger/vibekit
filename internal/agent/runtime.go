@@ -169,9 +169,8 @@ func (lt *lifetime) InflightDone() {
 // process-lifetime mutex at its three readers and by nothing at its writer. It is
 // utilityLease now, which owns its own lock — see utility_lease.go.
 type bridges struct {
-	factory       ACPBridgeFactory
-	mgr           *bridgeManager
-	assistantBufs *buffer.Store
+	factory ACPBridgeFactory
+	mgr     *bridgeManager
 }
 
 // bus groups Runtime fields related to SSE transport, replay,
@@ -395,9 +394,8 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// are assigned below; those assignments are the honest back-edges, in one
 	// place, instead of a back-pointer that hides them.
 	bridgeP := &bridges{
-		factory:       factory,
-		mgr:           newBridgeManager(factory),
-		assistantBufs: buffer.NewStore(),
+		factory: factory,
+		mgr:     newBridgeManager(factory),
 	}
 	sseP := &bus{
 		fanout:       sseHub,
@@ -450,7 +448,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
-	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast)
+	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast, h.coord.turns.currentEpoch)
 	// A settled session/load replay becomes the chat's transcript. Assigned here
 	// (not in the struct literal) because it is a method value on the fully-built
 	// Runtime; see load_projection.go.

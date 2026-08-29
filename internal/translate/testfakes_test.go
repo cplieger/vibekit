@@ -3,7 +3,6 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -73,9 +72,11 @@ type hostDouble interface {
 	RunOriginAccess
 	RunBoundsAccess
 	TurnInterruptAccess
+	TurnMetering
 	ChatRecords
 	Responder
-	GetOrInit(chatID vibekit.ChatID) *buffer.Buffer
+	BufferAccess
+	TurnBoundary
 	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
 	MCPRecorder() MCPRecorder
 	SetGovernance(state vibekit.GovernanceStatePayload)
@@ -92,6 +93,7 @@ func rolesOf(d hostDouble) *Roles {
 		Bus:           d,
 		Chats:         d,
 		Buffers:       d,
+		Turns:         d,
 		Lines:         d,
 		PendingPerms:  d,
 		Respond:       d,
@@ -105,5 +107,6 @@ func rolesOf(d hostDouble) *Roles {
 		RunOrigin:     d,
 		RunBounds:     d,
 		TurnInterrupt: d,
+		Metering:      d,
 	}
 }

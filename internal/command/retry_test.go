@@ -32,13 +32,13 @@ var errRetryable = errors.New("retryable")
 
 // countingFn returns a fn that fails with errRetryable until the nth call
 // (1-based), which succeeds. n <= 0 never succeeds.
-func countingFn(succeedOn int, calls *int) func() (*vibekit.RPCResponse, error) {
-	return func() (*vibekit.RPCResponse, error) {
+func countingFn(succeedOn int, calls *int) func() (promptReply, error) {
+	return func() (promptReply, error) {
 		*calls++
 		if succeedOn > 0 && *calls >= succeedOn {
-			return &vibekit.RPCResponse{}, nil
+			return promptReply{resp: &vibekit.RPCResponse{}}, nil
 		}
-		return nil, errRetryable
+		return promptReply{}, errRetryable
 	}
 }
 
@@ -80,10 +80,10 @@ func TestRetry_StopsAtTheFirstSuccess(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		calls := 0
 		start := time.Now()
-		resp, err := retry(t.Context(), 3, alwaysRetry, countingFn(2, &calls))
+		reply, err := retry(t.Context(), 3, alwaysRetry, countingFn(2, &calls))
 
-		if err != nil || resp == nil {
-			t.Fatalf("retry() = (%v, %v), want a response and no error", resp, err)
+		if err != nil || reply.resp == nil {
+			t.Fatalf("retry() = (%v, %v), want a response and no error", reply.resp, err)
 		}
 		if calls != 2 {
 			t.Errorf("retry() called fn %d times, want 2 (it succeeded on the second)", calls)
@@ -166,6 +166,11 @@ type countingCaller struct {
 func (c *countingCaller) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
 	c.calls++
 	return nil, c.err
+}
+
+func (c *countingCaller) CallAt(context.Context, string, any) (*vibekit.RPCResponse, uint64, error) {
+	c.calls++
+	return nil, 0, c.err
 }
 
 // TestCallPromptWithRetry_LadderPerClass asserts the ladder through the REAL

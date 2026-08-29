@@ -45,6 +45,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -194,8 +195,10 @@ func (t *Translator) broadcastRunTool(
 //
 // The folds that DO carry over are the ones describing the tool itself, and they
 // follow the chat path's order and its rules: a nullish title or kind must not
-// wipe the create's value, and the terminal link is adopted before the status so a
-// frame carrying both does not look up an id the call does not have yet.
+// wipe the create's value, the terminal link is adopted before the status so a
+// frame carrying both does not look up an id the call does not have yet, and a
+// failed tool's reason is taken off rawOutput because run-step-blocks.ts opens a
+// failed step's card onto the same region a chat's failed card opens onto.
 func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	if tu.Title != "" {
 		tc.Title = tu.Title
@@ -211,6 +214,11 @@ func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content
 	}
 	if content.output != "" {
 		tc.Output += content.output
+	}
+	if tc.Status == vibekit.ToolFailed && tc.Output == "" {
+		if reason := rawOutputFailureText(tu.RawOutput); reason != "" {
+			tc.Output = sanitize.Output(reason)
+		}
 	}
 	if len(tu.Locations) > 0 {
 		tc.Locations = tu.Locations

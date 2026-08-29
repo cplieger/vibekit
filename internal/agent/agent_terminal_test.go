@@ -26,7 +26,11 @@ import (
 // reaches a collaborator through this fixture nil-panics, and that is the right
 // failure — it says the test left the half this fixture serves and wants the
 // wired one from newTestHub.
-func bareTerminals() *agentTerminals { return newAgentTerminals(nil, nil, nil) }
+// bareTerminals is a registry with no collaborators: no bridges, no lifetime, no
+// broadcast, and no turn-epoch reader. An absent reader attributes every terminal
+// to epoch zero, which the eviction rule collects at the next close whichever
+// turn that is — so a test that cares about attribution wires the reader.
+func bareTerminals() *agentTerminals { return newAgentTerminals(nil, nil, nil, nil) }
 
 func TestRingBuffer(t *testing.T) {
 	r := newByteRing(10)

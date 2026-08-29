@@ -160,6 +160,12 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
 	"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
+	// TurnOutcome is registered for the same reason TabKind is, and it is the
+	// stronger case: the rule producing it is implemented in BOTH languages
+	// (internal/chat's deriveTurnOutcome and turns.ts's), so a hand-written union
+	// on the client is a second enumeration of one vocabulary that the shared
+	// fixture pins the BEHAVIOUR of and nothing pins the SPELLING of.
+	"TurnOutcome":      {},
 	"SafetyStatus":     {},
 	"RunProgressKind":  {},
 	"DecisionKind":     {},

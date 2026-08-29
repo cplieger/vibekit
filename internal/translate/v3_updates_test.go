@@ -231,7 +231,10 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 		wantWarn bool
 	}{
 		{name: "a kind KAS added since this was written", kind: "quantum_entanglement_update", wantWarn: true},
-		{name: "known and deliberately ignored", kind: "turn_start", wantWarn: false},
+		// display_error, not turn_start: the brackets are CONSUMED now, so a
+		// bracket kind arriving with no sub-block to dispatch on is a decode miss
+		// worth a Warn rather than an expected drop.
+		{name: "known and deliberately ignored", kind: "display_error", wantWarn: false},
 		{name: "known compaction marker", kind: "summarization_separator", wantWarn: false},
 		{name: "known, carries the persisted permission history", kind: "pending_interaction", wantWarn: false},
 		{name: "reaches the wire via SessionInfoEmitter, not a build call site", kind: "repositories_update", wantWarn: false},

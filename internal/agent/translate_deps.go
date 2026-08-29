@@ -50,9 +50,12 @@ func (rs *Runs) IsScheduled(workflowID string) bool {
 // panic on the first session update.
 func (rt *Runtime) translateRoles() *translate.Roles {
 	return requireWired(&translate.Roles{
-		Bus:          rt.bus,
-		Chats:        rt.chatStore,
-		Buffers:      rt.bridge.assistantBufs,
+		Bus:   rt.bus,
+		Chats: rt.chatStore,
+		// The coordinator, not a buffer store: a frame folds into the OPEN TURN's
+		// buffer, and a fold with no turn open has to open one.
+		Buffers:      rt.coord,
+		Turns:        rt.coord,
 		Lines:        rt.lines,
 		PendingPerms: rt.bus,
 		// rt, not the coordinator: BridgeRespond resolves the reply bridge from
@@ -70,6 +73,7 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		// The coordinator, not rt: ending a turn needs the chat's bridge and its
 		// in-flight prompt cancel, which are the coordinator's to reach.
 		TurnInterrupt: rt.coord,
+		Metering:      rt.coord,
 	})
 }
 

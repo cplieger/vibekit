@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -95,12 +94,13 @@ func storedToolCall(t *testing.T, dir string) vibekit.ToolCall {
 // is what writes the message to disk).
 func runTerminalTurn(t *testing.T, h *Runtime, frames ...string) {
 	t.Helper()
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	for _, f := range frames {
 		h.translateACPEvent("c1", sessionUpdate(t, f))
 	}
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{})
 }
 
 const completedWithTerminal = `{"sessionUpdate":"tool_call_update","toolCallId":"tc-1",` +
@@ -117,6 +117,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 	h, dir := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "\x1b[31mred\x1b[0m output\n")
 
+	epoch := h.OpenTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	// KAS releases the terminal before it reports the result. That ordering is
@@ -125,7 +126,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 		t.Fatal("release reported the terminal was not present")
 	}
 	h.translateACPEvent("c1", sessionUpdate(t, completedWithTerminal))
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{}, command.TurnStats{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{})
 
 	tc := storedToolCall(t, dir)
 	if tc.Output != "red output\n" {
@@ -187,13 +188,20 @@ func TestPersistedToolCall_TerminalOutputBeatsAContentFragment(t *testing.T) {
 }
 
 // TestPersistedToolCall_SurvivesTheTurnBoundary pins the eviction timing. The
-// retired record is dropped at AdvanceTurn, so adoption has exactly until turn
-// end to happen — and turn end is also when the message is written. If the
-// eviction ever moved earlier, this is the test that would catch it, because
-// the file is written from the same call that evicts.
+// retired record is dropped when the turn's own closer finalizes it, so adoption
+// has exactly until turn end to happen — and turn end is also when the message is
+// written. If the eviction ever moved earlier, this is the test that would catch
+// it, because the file is written from the same call that evicts.
 func TestPersistedToolCall_SurvivesTheTurnBoundary(t *testing.T) {
 	h, dir := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "kept\n")
+	// KAS's own release, which lands about 3ms after create and long before the
+	// completion that needs the bytes. Without it nothing ever enters `retired`,
+	// and the eviction assertion at the end of this test is vacuous — it was,
+	// which is why the boundary's eviction had no failing test.
+	if _, ok := h.agentTerms.release("term-1"); !ok {
+		t.Fatal("Setup: release found no terminal, so nothing is retired to evict")
+	}
 
 	runTerminalTurn(t, h, completedWithTerminal)
 
@@ -206,6 +214,6 @@ func TestPersistedToolCall_SurvivesTheTurnBoundary(t *testing.T) {
 	remaining := len(h.agentTerms.retired)
 	h.agentTerms.mu.Unlock()
 	if remaining != 0 {
-		t.Errorf("retired records after turn end = %d, want 0 (AdvanceTurn must evict)", remaining)
+		t.Errorf("retired records after turn end = %d, want 0 (the finalizer must evict)", remaining)
 	}
 }

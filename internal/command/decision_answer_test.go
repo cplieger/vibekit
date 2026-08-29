@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,13 +36,17 @@ type takeDeps struct {
 	*benchDeps
 	bridge Bridge
 	takes  []int64
-	takeOK bool
+	// takeChats is the chat each claim named, so a handler that drops it is
+	// visible: an id-only claim can retire another chat's card.
+	takeChats []vibekit.ChatID
+	takeOK    bool
 }
 
 func (d *takeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
 
-func (d *takeDeps) TakePendingPerm(requestID int64, _ vibekit.SettledBy) bool {
+func (d *takeDeps) TakePendingPerm(chatID vibekit.ChatID, requestID int64, _ vibekit.SettledBy) bool {
 	d.takes = append(d.takes, requestID)
+	d.takeChats = append(d.takeChats, chatID)
 	return d.takeOK
 }
 
@@ -127,6 +132,14 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			}
 			if len(bridge.responds) != 1 || bridge.responds[0] != decisionRequestID {
 				t.Errorf("answers = %v, want exactly [%d]", bridge.responds, decisionRequestID)
+			}
+			// The claim names the command's OWN chat. A request id is unique only
+			// within one bridge, and every bridge mints from zero, so a claim that
+			// dropped the chat would retire whichever chat's card happened to be
+			// stored under that id — resolving one chat's dialog from another's
+			// answer and leaving the real request with no answer path at all.
+			if !slices.Equal(deps.takeChats, []vibekit.ChatID{"c1"}) {
+				t.Errorf("claimed chats = %v, want [c1]", deps.takeChats)
 			}
 		})
 	}

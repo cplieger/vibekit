@@ -28,6 +28,21 @@ type RPCResponse struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
+// Notification is one frame a bridge delivered, carrying the monotonic
+// sequence its read loop stamped on it.
+//
+// The sequence travels WITH the frame rather than being recounted by the consumer:
+// a counter incremented on receipt skews the moment a frame is dropped or filtered
+// between the two goroutines, silently, because both keep rising. A local settle
+// compares its captured position against the one the consumer has REACHED, so both
+// numbers have to come from one source (Dijkstra and Scholten, EWD687a).
+type Notification struct {
+	Msg *RPCResponse
+	// Seq is the read loop's count of frames delivered up to and including this
+	// one. Monotonic per bridge and restarting at zero for a new one.
+	Seq uint64
+}
+
 // RPCError is a JSON-RPC 2.0 error object.
 type RPCError struct {
 	// Data is the optional member JSON-RPC allows for implementation-defined

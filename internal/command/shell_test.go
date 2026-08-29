@@ -110,6 +110,11 @@ type fakeBusyBridge struct{}
 func (fakeBusyBridge) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
 	return nil, nil
 }
+
+func (fakeBusyBridge) CallAt(context.Context, string, any) (*vibekit.RPCResponse, uint64, error) {
+	return nil, 0, nil
+}
+
 func (fakeBusyBridge) Notify(context.Context, string, any) error        { return nil }
 func (fakeBusyBridge) Respond(context.Context, int64, any, error) error { return nil }
 func (fakeBusyBridge) SessionID() vibekit.SessionID                     { return "" }

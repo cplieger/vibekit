@@ -37,7 +37,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
-	buf := t.buffers.GetOrInit(chatID)
+	buf := t.buffers.TurnFoldTarget(ctx, chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
 	// A workflow STEP's tool frames carry KAS's own agentSubtaskId (or none),
 	// while the step's TEXT is keyed by its nodePath — so without this override
@@ -67,9 +67,9 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		buf.TrackFileChanges(diffs, isNew)
 		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCall, chatID,
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCall, chatID,
 		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }
 
@@ -108,7 +108,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 		return
 	}
 	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
-	buf := t.buffers.GetOrInit(chatID)
+	buf := t.buffers.TurnFoldTarget(ctx, chatID)
 	// A COPY, folded locally and written back, because the fold below reaches the
 	// terminal registry, the line tracker and the event bus — none of which may
 	// run under the buffer's mutex.
@@ -118,7 +118,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	}
 	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
 	buf.SetToolCall(idx, &tc)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
 }
 
 // parseToolUpdateContent extracts the sanitized output delta, any file diffs,
@@ -229,9 +229,7 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 		tc.TerminalID = content.terminalID
 	}
 	t.applyToolCallStatus(ctx, chatID, buf, tc, tu)
-	if content.output != "" {
-		tc.Output += content.output
-	}
+	applyToolCallOutput(tc, tu, content)
 	if len(tu.Locations) > 0 {
 		tc.Locations = tu.Locations
 	}
@@ -255,6 +253,24 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
 	mergeToolMeta(tc, tu)
+}
+
+// applyToolCallOutput folds an update's output text onto the card.
+//
+// A failed tool's reason rides `rawOutput` and nothing else: for an edit KAS puts
+// a diff in the content blocks and the reason in no block at all. Gated on an
+// empty Output so a command's own output wins — the status fold ran first, so
+// adoptTerminalOutput may already have filled it.
+func applyToolCallOutput(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
+	if content.output != "" {
+		tc.Output += content.output
+	}
+	if tc.Status != vibekit.ToolFailed || tc.Output != "" {
+		return
+	}
+	if reason := rawOutputFailureText(tu.RawOutput); reason != "" {
+		tc.Output = sanitize.Output(reason)
+	}
 }
 
 // applyToolCallStatus folds an update's status in, and on a terminal status
@@ -281,13 +297,21 @@ func (t *Translator) applyToolCallStatus(
 		tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
 	}
 	t.adoptTerminalOutput(chatID, tc)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelThinking}))
 }
 
-// applyToolCallDiffs appends an update's diffs and records the file changes they
-// describe. Split out of applyToolCallUpdate to keep that function readable as a
-// list of per-field folds.
+// applyToolCallDiffs appends an update's diffs to the card and, once the tool has
+// SUCCEEDED, records the file changes they describe.
+//
+// The ledger — buf.ChangedFiles behind the turn footer's changed_files, and the
+// editor's line gutter — states what reached disk, so only a `completed` status
+// feeds it. KAS repeats a write's diff block on every streaming frame, on the
+// supervised approval frame, and from the write tool's own catch (buildDiffInput
+// with the text it meant to write), so tracking each arrival counted partial
+// streams and claimed a file changed when the write failed. The card keeps every
+// diff: a pending write's is what a reader approves, a failed one's is what it
+// tried to do.
 func (t *Translator) applyToolCallDiffs(
 	chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, diffs []vibekit.ToolDiff,
 ) {
@@ -295,6 +319,9 @@ func (t *Translator) applyToolCallDiffs(
 		return
 	}
 	tc.Diffs = append(tc.Diffs, diffs...)
+	if tc.Status != vibekit.ToolCompleted {
+		return
+	}
 	buf.TrackFileChanges(diffs, false)
 	t.lines.RecordFromDiffs(chatID, diffs, buf.ToolCallCount(), string(tc.Kind))
 }
@@ -518,6 +545,6 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatI
 			buf.SetModel(c.Model)
 		}
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
 		vibekit.Message{ID: buf.MessageID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

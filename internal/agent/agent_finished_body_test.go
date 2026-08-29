@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -71,8 +70,9 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 		Description: "Wiring the PR status poller",
 	})
 
+	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
+	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	select {
 	case body := <-fp.sends:
@@ -102,8 +102,9 @@ func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
+	epoch := h.OpenTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
+	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	select {
 	case <-fp.sends:

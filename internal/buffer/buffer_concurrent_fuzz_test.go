@@ -151,14 +151,14 @@ func TestBuffer_EmittedNothingIsRaceFreeAgainstAppenders(t *testing.T) {
 	// stays false once the writers are done.
 	wg.Go(func() {
 		for range writers * iterations {
-			_ = buf.EmittedNothing()
+			_ = buf.TakeTurn().EmittedNothing
 		}
 	})
 
 	wg.Wait()
 
-	if buf.EmittedNothing() {
-		t.Error("EmittedNothing() = true after 800 appends, want false")
+	if buf.TakeTurn().EmittedNothing {
+		t.Error("TakeTurn().EmittedNothing = true after 800 appends, want false")
 	}
 }
 
@@ -181,12 +181,12 @@ func TestBuffer_EmittedNothingCountsEachAccumulator(t *testing.T) {
 	for name, emit := range cases {
 		t.Run(name, func(t *testing.T) {
 			buf := &Buffer{}
-			if !buf.EmittedNothing() {
-				t.Fatal("fresh buffer: EmittedNothing() = false, want true")
+			if !buf.TakeTurn().EmittedNothing {
+				t.Fatal("fresh buffer: TakeTurn().EmittedNothing = false, want true")
 			}
 			emit(buf)
-			if buf.EmittedNothing() {
-				t.Errorf("after emitting %s: EmittedNothing() = true, want false", name)
+			if buf.TakeTurn().EmittedNothing {
+				t.Errorf("after emitting %s: TakeTurn().EmittedNothing = true, want false", name)
 			}
 		})
 	}

@@ -131,22 +131,26 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 	// own staging queue. A turn approval IS a permission request, so the replay
 	// above already covers it — which is the same reason it needed no new event.
 
-	// Synthesize turn_state for every busy chat (P6): the in-flight
-	// assistant message accumulated so far plus the authoritative
-	// busy signal, so a client connecting mid-turn renders the
-	// streaming transcript immediately and never has to guess at
-	// thinking state.
-	if err := rt.replayTurnState(writeEvent, chatFilter); err != nil {
+	// Synthesize turn_state for every chat with an OPEN TURN (P8): the in-flight
+	// assistant message accumulated so far plus the authoritative busy signal, so
+	// a client connecting mid-turn renders the streaming transcript immediately
+	// and never has to guess at thinking state.
+	//
+	// ONE read of the open-turn set serves both replays below, so the busy chats
+	// the second one skips are exactly the chats the first one described.
+	open := rt.coord.turns.openTurns()
+	if err := rt.replayTurnState(writeEvent, chatFilter, open); err != nil {
 		return err
 	}
 	// Then the chats that are NOT busy but are waiting on a person. turn_state
-	// cannot carry those: it is emitted per PROMPTING bridge, and its client
-	// handler sets `thinking`, which is false for a chat whose turn has ended.
-	return rt.replayWaitingStatus(writeEvent, chatFilter)
+	// cannot carry those: its client handler sets `thinking`, which is false for a
+	// chat whose turn has ended.
+	return rt.replayWaitingStatus(writeEvent, chatFilter, open)
 }
 
 // replayWaitingStatus emits a chat_status event for every chat the agent left
-// waiting on a person, skipping the busy ones replayTurnState already covered.
+// waiting on a person, skipping the ones with a turn open that replayTurnState
+// already covered.
 //
 // This is the other half of "the amber dot survives turn end". The client renders
 // waiting_on_user as a dot that outlives the turn, but until this existed the
@@ -154,19 +158,21 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 // joining later, saw a blank dot on the one chat that actually wanted them. That
 // is the state a person picking work up on another screen most needs to see.
 //
-// It replays a real chat_status rather than stretching turn_state, because the
-// two mean different things — turn_state asserts a turn is RUNNING — and the
-// client already has a handler for this one.
-func (rt *Runtime) replayWaitingStatus(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
-	busy := make(map[vibekit.ChatID]struct{})
-	for _, id := range rt.bridge.mgr.promptingChatIDs() {
-		busy[id] = struct{}{}
-	}
+// It replays a real chat_status rather than stretching turn_state, because the two
+// mean different things: turn_state asserts a turn is RUNNING.
+func (rt *Runtime) replayWaitingStatus(
+	writeFn func(vibekit.ServerEvent) error,
+	chatFilter vibekit.ChatID,
+	open map[vibekit.ChatID]openTurnFacts,
+) error {
 	for id, p := range rt.bus.chatStatus.Snapshot() {
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
-		if _, isBusy := busy[id]; isBusy {
+		// A PRIME's chat is skipped here too, even though turn_state withholds it:
+		// the turn is genuinely running, so re-asserting a status the agent declared
+		// before it would describe the wrong turn.
+		if _, busy := open[id]; busy {
 			continue
 		}
 		if p.Status != vibekit.ChatStatusWaitingOnUser {
@@ -179,19 +185,26 @@ func (rt *Runtime) replayWaitingStatus(writeFn func(vibekit.ServerEvent) error, 
 	return nil
 }
 
-// replayTurnState emits one synthesized turn_state event per busy chat
-// (bridge holding the prompt slot). The snapshot may be absent for a turn that
-// hasn't produced content yet — the event still goes out as a bare busy signal
-// (the client sets thinking without touching messages). Gating on the prompting
-// state, not on snapshot presence, is what keeps a finished turn from ever being
-// resurrected: an idle chat is never replayed.
+// replayTurnState emits one synthesized turn_state event per chat with an open
+// turn. An absent snapshot still goes out as a bare busy signal.
 //
-// The in-flight message comes straight from the chat's assistant buffer, which
-// is the same object the live stream and the turn-end persist read. There is no
-// separate replica to drift from it.
-func (rt *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
-	for _, id := range rt.bridge.mgr.promptingChatIDs() {
+// Reading the TURN rather than the prompt slot is what makes an agent-initiated
+// turn visible at all: that turn holds no slot, so a client reconnecting during
+// one was told nothing and rendered idle over a live transcript.
+//
+// A PRIME turn is never served: its frames are a transcript replay vibekit sent
+// itself, so serving them would render the preamble as conversation and then lose
+// it on the next reload.
+func (rt *Runtime) replayTurnState(
+	writeFn func(vibekit.ServerEvent) error,
+	chatFilter vibekit.ChatID,
+	open map[vibekit.ChatID]openTurnFacts,
+) error {
+	for id, facts := range open {
 		if chatFilter != "" && id != chatFilter {
+			continue
+		}
+		if facts.Source == vibekit.TurnSourcePrime {
 			continue
 		}
 		status := rt.bus.chatStatus.Get(id)
@@ -199,13 +212,11 @@ func (rt *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chat
 			Status:      status.Status,
 			Description: status.Description,
 		}
-		if buf := rt.bridge.assistantBufs.Get(id); buf != nil {
-			if msg, seq, ok := buf.Snapshot(); ok {
-				payload.Message = &msg
-				payload.ChunkSeq = seq
-			} else {
-				payload.ChunkSeq = seq
-			}
+		if msg, seq, ok := facts.Buf.Snapshot(); ok {
+			payload.Message = &msg
+			payload.ChunkSeq = seq
+		} else {
+			payload.ChunkSeq = seq
 		}
 		if err := writeFn(vibekit.NewEvent(vibekit.EventTurnState, id, payload)); err != nil {
 			return err

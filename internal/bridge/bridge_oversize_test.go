@@ -17,8 +17,8 @@ import (
 // pendingCall registers one pending request id and returns its channel, the way
 // Call does. Lets a test observe what readLoop hands a waiter without standing up
 // a subprocess.
-func pendingCall(b *Bridge, id int64) chan *vibekit.RPCResponse {
-	ch := make(chan *vibekit.RPCResponse, 1)
+func pendingCall(b *Bridge, id int64) chan pendingReply {
+	ch := make(chan pendingReply, 1)
 	b.pendingMu.Lock()
 	b.pending[id] = ch
 	b.pendingMu.Unlock()
@@ -39,8 +39,8 @@ func TestReadLoop_OversizeFrameFailsPendingCalls(t *testing.T) {
 
 	select {
 	case got := <-ch:
-		if got != frameTooLargeResp {
-			t.Fatalf("pending call got %#v, want the frameTooLargeResp sentinel", got)
+		if got.resp != frameTooLargeResp {
+			t.Fatalf("pending call got %#v, want the frameTooLargeResp sentinel", got.resp)
 		}
 	default:
 		t.Fatal("pending call was left waiting after an oversize frame; Call has no deadline, so it would hang forever")
@@ -58,14 +58,17 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 	b := readLoopBridge(strings.NewReader(
 		huge + "\n" + `{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n",
 	))
-	b.notifCh = make(chan *vibekit.RPCResponse, 4)
+	b.notifCh = make(chan vibekit.Notification, 4)
 
 	b.readLoop()
 
 	select {
-	case msg := <-b.notifCh:
-		if msg == nil || msg.Method != vibekit.MethodSessionUpdate {
-			t.Fatalf("notification after the oversize frame = %#v, want session/update", msg)
+	case n := <-b.notifCh:
+		if n.Msg == nil || n.Msg.Method != vibekit.MethodSessionUpdate {
+			t.Fatalf("notification after the oversize frame = %#v, want session/update", n.Msg)
+		}
+		if n.Seq != 1 {
+			t.Errorf("stamped sequence = %d, want 1: the DROPPED frame is not delivered, so it takes no sequence", n.Seq)
 		}
 	default:
 		t.Fatal("the frame after an oversize one never reached dispatch; the stream did not resynchronise")

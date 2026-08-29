@@ -320,12 +320,25 @@ describe("turnAnchorID", () => {
 // language fails here.
 // ---------------------------------------------------------------------------
 
+interface FixtureMessage {
+  role?: string;
+  id?: string;
+  event?: string;
+  outcome?: string;
+  refusal?: boolean;
+}
+
 interface OutcomeFixture {
   cases: {
     name: string;
-    body: { refusal?: boolean; event?: string }[];
+    body: { refusal?: boolean; event?: string; outcome?: string; truncated?: boolean }[];
     is_live: boolean;
     want: string;
+  }[];
+  segmentation: {
+    name: string;
+    messages: FixtureMessage[];
+    want: { id: string; agent_initiated: boolean; outcome: string }[];
   }[];
 }
 
@@ -341,18 +354,67 @@ describe("the turn-outcome contract shared with the Go implementation", () => {
 
   it.each(fx.cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
     const body: Message[] = c.body.map((b, i) => {
+      const extra: Partial<Message> = {};
+      if (b.outcome !== undefined) {
+        extra.turn_outcome = b.outcome as NonNullable<Message["turn_outcome"]>;
+      }
+      if (b.truncated === true) {
+        extra.turn_truncated = true;
+      }
       if (b.event !== undefined) {
-        return event(`e${String(i)}`, b.event);
+        return { ...event(`e${String(i)}`, b.event), ...extra } as Message;
       }
       if (b.refusal === true) {
-        return assistant(`a${String(i)}`, { refusal: {} } as Partial<Message>);
+        return assistant(`a${String(i)}`, { refusal: {}, ...extra } as Partial<Message>);
       }
-      return assistant(`a${String(i)}`);
+      return assistant(`a${String(i)}`, extra);
     });
     // projectTurns applies `is_live` to the LAST turn only, so a single turn
     // built from a trigger plus this body reproduces the Go call exactly.
     const turns = projectTurns([user("u1", "req"), ...body], c.is_live);
     expect(turns).toHaveLength(1);
     expect(turns[0]?.outcome).toBe(c.want);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The BOUNDARY half of the same pin, over the same fixture.
+//
+// Where the table above asks how a turn ended, this asks which turn a message
+// belongs to. Reviewers caught the rule wrong in both directions — too narrow
+// puts a non-empty agent-initiated turn's outcome in the previous turn's body,
+// too broad splits a prompted empty turn off its own prompt — so both languages
+// answer the same cases rather than describing the rule twice.
+// ---------------------------------------------------------------------------
+
+describe("the turn-segmentation contract shared with the Go implementation", () => {
+  const raw = readFileSync(new URL(FIXTURE_PATH, import.meta.url), "utf8");
+  const fx = JSON.parse(raw) as OutcomeFixture;
+
+  it("carries segmentation cases (an empty table would pass forever)", () => {
+    expect(fx.segmentation.length).toBeGreaterThan(0);
+  });
+
+  it.each(fx.segmentation.map((c) => [c.name, c] as const))("%s", (_name, c) => {
+    const msgs: Message[] = c.messages.map((fm) => {
+      const extra: Partial<Message> = {};
+      if (fm.outcome !== undefined) {
+        extra.turn_outcome = fm.outcome as NonNullable<Message["turn_outcome"]>;
+      }
+      if (fm.refusal === true) {
+        (extra as { refusal?: unknown }).refusal = {};
+      }
+      if (fm.role === "user") {
+        return { ...user(fm.id ?? "", "req"), ...extra } as Message;
+      }
+      if (fm.role === "event") {
+        return { ...event(fm.id ?? "", fm.event ?? ""), ...extra } as Message;
+      }
+      return assistant(fm.id ?? "", extra);
+    });
+    const turns = projectTurns(msgs, false);
+    expect(turns.map((t) => t.id)).toEqual(c.want.map((w) => w.id));
+    expect(turns.map((t) => t.trigger === undefined)).toEqual(c.want.map((w) => w.agent_initiated));
+    expect(turns.map((t) => t.outcome)).toEqual(c.want.map((w) => w.outcome));
   });
 });

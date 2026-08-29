@@ -9,6 +9,7 @@ package translate
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -138,6 +139,13 @@ type ACPKiroBlock struct {
 	// `params._meta` — `params` carries only `sessionId` and `update`.
 	Workflow *ACPWorkflowMeta `json:"workflow"`
 	HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
+	// AgentInitiated marks a turn the ENGINE started — an auto-wake after a workflow
+	// run it launched, or a cross-session notification at warning severity.
+	//
+	// It rides CONTENT frames and never the bracket, which is why acknowledgement
+	// has to be provisional; and a zero-content or tool-only auto-wake never sends
+	// one, which is why the empty-turn gate cannot rest on it alone.
+	AgentInitiated bool `json:"agentInitiated"`
 }
 
 // acpKiroBlockShadow strips the UnmarshalJSON method so the real decode can run
@@ -337,7 +345,6 @@ type ACPApprovalFile struct {
 
 // ACPToolCallWire is the wire shape for tool_call session updates.
 type ACPToolCallWire struct {
-	Meta       ACPKiroMeta               `json:"_meta"`
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
 	Kind       vibekit.ToolKind          `json:"kind"`
@@ -345,6 +352,9 @@ type ACPToolCallWire struct {
 	RawInput   json.RawMessage           `json:"rawInput"`
 	Locations  []vibekit.ToolLocation    `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
+	// Meta trails because ACPKiroBlock ends in a bool, and fieldalignment counts
+	// LEADING pointer bytes. Field order carries no other meaning here.
+	Meta ACPKiroMeta `json:"_meta"`
 }
 
 // ACPToolCallUpdateWire is the wire shape for tool_call_update session
@@ -355,7 +365,6 @@ type ACPToolCallWire struct {
 // textual output already arrives through the `content` blocks below and
 // the domain ToolCall has no general structured-output field.
 type ACPToolCallUpdateWire struct {
-	Meta       ACPKiroMeta               `json:"_meta"`
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
 	Kind       vibekit.ToolKind          `json:"kind"`
@@ -363,9 +372,12 @@ type ACPToolCallUpdateWire struct {
 	RawOutput  json.RawMessage           `json:"rawOutput"`
 	Locations  []vibekit.ToolLocation    `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
+	// Meta trails because ACPKiroBlock ends in a bool, and fieldalignment counts
+	// LEADING pointer bytes. Field order carries no other meaning here.
+	Meta ACPKiroMeta `json:"_meta"`
 }
 
-// ACPRawOutput is the ONE field this client reads out of a tool call's
+// ACPRawOutput is the whole of what this client reads out of a tool call's
 // `rawOutput`, which KAS types as `unknown` and fills with whatever the tool
 // returned: an object here, a bare string or a number elsewhere.
 //
@@ -382,8 +394,13 @@ type ACPToolCallUpdateWire struct {
 // for a non-object, a missing field or malformed JSON, so a tool whose output is
 // a string costs one failed unmarshal and nothing else. Do NOT widen this into a
 // general structured-output channel; the content blocks are that channel.
+//
+// `error`/`message` are the second read, and rawOutputFailureText below states
+// the gate that keeps it from being that widening.
 type ACPRawOutput struct {
 	WorkflowID string `json:"workflowId"`
+	Error      string `json:"error"`
+	Message    string `json:"message"`
 }
 
 // rawOutputWorkflowID extracts the workflow id a `run_workflow` invocation
@@ -398,6 +415,37 @@ func rawOutputWorkflowID(raw json.RawMessage) string {
 		return ""
 	}
 	return out.WorkflowID
+}
+
+// rawOutputFailureText extracts the reason a FAILED tool call reports, or "" when
+// rawOutput is absent, malformed, neither a string nor an object, or carries no
+// text.
+//
+// Callers must gate on the terminal status being `failed` and on nothing else
+// having produced output. That gate is what keeps this from widening rawOutput
+// into the general structured-output channel the content blocks own: for a failed
+// edit KAS puts a DIFF in the content blocks and the reason nowhere else, so on
+// that path there is no content channel to prefer.
+//
+// A bare string first, then an object's `error` or `message`, because KAS sends
+// `event.output ?? event.errorMessage` and a tool's output is an object on some
+// tools and a plain string on most.
+func rawOutputFailureText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	var out ACPRawOutput
+	if json.Unmarshal(raw, &out) != nil {
+		return ""
+	}
+	if out.Error != "" {
+		return strings.TrimSpace(out.Error)
+	}
+	return strings.TrimSpace(out.Message)
 }
 
 // ACPPlanWire is the wire shape for plan session updates.

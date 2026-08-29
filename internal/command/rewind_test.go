@@ -46,6 +46,14 @@ func (b *recordingBridge) Call(_ context.Context, method string, params any) (*v
 	return &vibekit.RPCResponse{Result: raw}, nil
 }
 
+// CallAt exists because the prompt paths order a local settle against the read
+// loop position. This double is not on a prompt path, so it reports position zero
+// — which is what "no ordering to wait for" means.
+func (b *recordingBridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+	resp, err := b.Call(ctx, method, params)
+	return resp, 0, err
+}
+
 func (b *recordingBridge) Notify(context.Context, string, any) error        { return nil }
 func (b *recordingBridge) Respond(context.Context, int64, any, error) error { return nil }
 func (b *recordingBridge) SessionID() vibekit.SessionID                     { return b.sessionID }

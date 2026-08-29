@@ -191,7 +191,7 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 			if stopped {
 				return
 			}
-			freshBr.notifCh <- frames[i]
+			freshBr.deliver(frames[i])
 		}
 	}()
 
@@ -400,7 +400,7 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 // just been clicked on painted itself back off from the pre-write read and stayed
 // wrong until the page was reloaded.
 func TestForward_RoutesPolicyNotifications(t *testing.T) {
-	notifCh := make(chan *vibekit.RPCResponse, 2)
+	notifCh := make(chan vibekit.Notification, 2)
 	responseCh := make(chan utilityChunkPayload, 4)
 	done := make(chan struct{})
 
@@ -415,8 +415,8 @@ func TestForward_RoutesPolicyNotifications(t *testing.T) {
 	}}
 
 	go us.forward(nil, notifCh, responseCh, done)
-	notifCh <- &vibekit.RPCResponse{Method: methodV3PolicyChanged}
-	notifCh <- &vibekit.RPCResponse{Method: methodV3PolicyError}
+	notifCh <- vibekit.Notification{Msg: &vibekit.RPCResponse{Method: methodV3PolicyChanged}, Seq: 1}
+	notifCh <- vibekit.Notification{Msg: &vibekit.RPCResponse{Method: methodV3PolicyError}, Seq: 2}
 	close(notifCh)
 
 	select {

@@ -39,16 +39,6 @@ type sharedBridge struct {
 	promptCancel context.CancelFunc
 	cancelTimer  *time.Timer
 
-	// interruptReason names the cause when this turn is being ended by
-	// interruptTurn rather than by the user or by a failed call. Read once by the
-	// teardown, which puts it on the transcript's divider. Empty means the turn
-	// ended for one of the ordinary causes, so an ordinary cause is the default
-	// and no caller has to clear it.
-	//
-	// A string, so its pointer word sits inside the pointer-bearing prefix above
-	// for govet fieldalignment — same constraint as primeReason below.
-	interruptReason string
-
 	// primeReason is a string, so its pointer word must sit inside the
 	// pointer-bearing prefix above for govet fieldalignment.
 	primeReason primeReason
@@ -111,6 +101,10 @@ func (sb *sharedBridge) stopCancelTimerLocked() {
 
 func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
 	return sb.bridge.Call(ctx, method, params)
+}
+
+func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+	return sb.bridge.CallAt(ctx, method, params)
 }
 
 func (sb *sharedBridge) Notify(ctx context.Context, method string, params any) error {
@@ -200,29 +194,19 @@ func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelFunc, b
 	return sb.promptCancel, true
 }
 
-// interruptTurn ends the in-flight turn and records why, for a cause that is
-// neither a user cancel nor a failed call: kiro-cli abandoning a turn without
-// answering it (see translate/interrupt_marker.go).
+// cancelPromptCall trips the in-flight prompt's context so the blocked Call
+// returns and the ordinary failure path finalizes the turn. Reports whether
+// there was a call to trip.
 //
-// Refuses on the same three conditions as shouldTripCancelGrace, plus a fourth
-// that makes this a ONE-SHOT per turn. Two writers can reach a turn's cancel at
-// once — a user pressing Cancel and the filter firing in the same window — and
-// the generation guard stops cross-turn damage without deciding which of them
-// gets the attribution. First writer wins, so a reason cannot be overwritten by
-// a later one, and a user cancel that got there first is not relabelled as a
-// filter stop. run_bounds.go's claimTermination is the same rule at run scope,
-// and it exists because a bound rewriting a deliberate stop is what it looked
-// like before.
-//
-// Returns whether the interrupt was taken, so a caller can log the no-op rather
-// than assume it landed.
-func (sb *sharedBridge) interruptTurn(reason string) bool {
+// It no longer records WHY: the cause lives on the turn record, epoch-scoped and
+// first-wins, so this answers only the bridge's half of an interruption. Refuses
+// when the chat is not prompting or no prompt context is registered.
+func (sb *sharedBridge) cancelPromptCall() bool {
 	sb.mu.Lock()
-	if sb.state != bridgePrompting || sb.promptCancel == nil || sb.interruptReason != "" {
+	if sb.state != bridgePrompting || sb.promptCancel == nil {
 		sb.mu.Unlock()
 		return false
 	}
-	sb.interruptReason = reason
 	cancel := sb.promptCancel
 	sb.mu.Unlock()
 	// Outside the lock: cancel runs arbitrary registered funcs, and holding a
@@ -230,21 +214,6 @@ func (sb *sharedBridge) interruptTurn(reason string) bool {
 	// someone else's callback.
 	cancel()
 	return true
-}
-
-// takeInterruptReason returns and clears the reason this turn was interrupted,
-// or "" when it ended for any other cause.
-//
-// Take rather than read, because the value describes ONE turn: leaving it set
-// would relabel the next turn's ordinary failure with this turn's cause. Cleared
-// on the read rather than at turn start so the two orderings that matter — the
-// teardown reading it, and the next turn arming its own — cannot race for it.
-func (sb *sharedBridge) takeInterruptReason() string {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	reason := sb.interruptReason
-	sb.interruptReason = ""
-	return reason
 }
 
 // claimPriming reports whether the caller won the right to prime this session,

@@ -9,7 +9,18 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, setActive, get, recordSteerQueued, steerCount } from "../store.js";
+import {
+  setSessions,
+  setActive,
+  get,
+  recordSteerQueued,
+  steerCount,
+  noteLiveTurnMessage,
+  liveTurnMessage,
+  setTurnDone,
+  setTurnFailed,
+  tabStatusFor,
+} from "../store.js";
 import { workspaceRoot, _resetForTest as resetWorkspace, setWorkspaceRoot } from "../workspace.js";
 import type { Session } from "../types.js";
 
@@ -39,6 +50,10 @@ vi.mock("../tabs.js", () => ({
   toggleSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
+  // Reached through turn-teardown.ts, which the gap handler now shares with the
+  // turn_ended door. A no-op rather than present-but-undefined: the gap handler
+  // CALLS it once per session, so undefined would throw rather than link.
+  setTabStatus: vi.fn(),
 }));
 
 vi.mock("../settings.js", () => ({
@@ -73,6 +88,35 @@ vi.mock("../status.js", () => ({
   updateContextBar: undefined,
 }));
 vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
+
+// The shared turn teardown (turn-teardown.ts) reaches these three, and each is a
+// boundary this test has no business driving: the rail FETCHES the session-wide
+// turn index, and turn-rail.ts also pulls in scroll.ts, whose module-level
+// initialisation demands a real #messages scroller.
+const mockRefreshTurnRail = vi.fn(() => Promise.resolve());
+vi.mock("../turn-rail.js", () => ({
+  refreshTurnRail: mockRefreshTurnRail,
+  pointTurnRail: vi.fn(),
+  mountTurnRail: undefined,
+  resetTurnRail: undefined,
+  observeTurns: undefined,
+  ROW_PITCH_PX: 28,
+}));
+const mockDrainModelSwitchQueue = vi.fn();
+vi.mock("../model-switcher.js", () => ({
+  drainModelSwitchQueue: mockDrainModelSwitchQueue,
+  initModelSwitcher: undefined,
+  queueModelSwitch: undefined,
+  switchModel: undefined,
+}));
+const mockOnTurnEnded = vi.fn();
+vi.mock("../banner-stack.js", () => ({
+  onTurnEnded: mockOnTurnEnded,
+  showBanner: vi.fn(),
+  dismissBanner: undefined,
+  clearBanners: undefined,
+  mountBannerStack: undefined,
+}));
 
 // Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
 // both transport:gap and mode_changed.
@@ -302,5 +346,51 @@ describe("mode_changed handler", () => {
     setSessions([makeSession("chat-1", { current_mode_id: "build" })]);
     fireSSE("mode_changed", "", { mode_id: "plan" });
     expect(get("chat-1")?.current_mode_id).toBe("build");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P10: the gap door and the turn_ended door share ONE outcome-independent core.
+//
+// The gap reconciler was a second independent spelling of that teardown and was
+// short by four effects — the transient banners, both in-flight markers and the
+// rail — so a reconnect left a rate-limit banner over a finished turn, a chunk
+// watermark that dropped the next turn's early deltas, and a live-message marker
+// that made a later refetch keep a message the chat file already held.
+// ---------------------------------------------------------------------------
+
+describe("the gap reconcile runs the shared turn teardown", () => {
+  beforeEach(() => {
+    mockRefreshTurnRail.mockClear();
+    mockOnTurnEnded.mockClear();
+    mockDrainModelSwitchQueue.mockClear();
+  });
+
+  it("clears the in-flight marker, the banners and the rail for every chat", () => {
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    noteLiveTurnMessage("chat-1", "m-live");
+
+    fireGap();
+
+    expect(liveTurnMessage("chat-1")).toBeUndefined();
+    expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-1");
+    expect(mockRefreshTurnRail).toHaveBeenCalledWith("chat-1");
+    expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-1");
+    // And every chat, not only the active one: a gap describes the connection.
+    expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-2");
+  });
+
+  it("latches NEITHER outcome, because a gap is not an outcome", () => {
+    // The documented asymmetry, and the reason the core is outcome-INDEPENDENT: a
+    // gap says the replay ring no longer covers what this client missed, so it can
+    // assert nothing about how anything finished. It UNLATCHES instead.
+    setSessions([makeSession("chat-1"), makeSession("chat-2")]);
+    setTurnDone("chat-1");
+    setTurnFailed("chat-2");
+
+    fireGap();
+
+    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+    expect(tabStatusFor(get("chat-2"))).toBe("idle");
   });
 });

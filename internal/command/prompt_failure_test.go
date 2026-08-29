@@ -166,12 +166,16 @@ func TestClassifyPromptFailure(t *testing.T) {
 			}),
 			want: classFatal,
 		},
-		"access denied is not a throttle": {
+		// A bare AccessDenied is AUTH, and it is the one member of this family whose
+		// remedy is a sign-in: upstream's own text for it says to check your
+		// authentication. The name is what separates it from its ModelRegistry
+		// sibling below, whose text says the account lacks access.
+		"access denied is auth, and is not a throttle": {
 			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Access denied.", mappedErrorData{
 				ErrorType:      "AccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
-			want: classFatal,
+			want: classAuth,
 		},
 		// A MAPPED auth error is graded by its name too, not only by
 		// retryErrorType: on this code the machine name is the field, and every
@@ -183,9 +187,10 @@ func TestClassifyPromptFailure(t *testing.T) {
 			}),
 			want: classAuth,
 		},
-		// The one auth-shaped class deliberately left OUT of the table: the
-		// account does not have access to those models, which no sign-in fixes,
-		// so it must not earn a Sign in banner.
+		// The one auth-shaped class deliberately left OUT of the table: upstream's
+		// own text says the account does not have access to those models, which no
+		// sign-in fixes, so it must not earn a Sign in banner. Exact-name matching
+		// on this path is what keeps it out while its bare sibling above is in.
 		"an entitlement refusal is not auth": {
 			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "…this account does not have access to them.", mappedErrorData{
 				ErrorType:      "ModelRegistryAccessDeniedError",

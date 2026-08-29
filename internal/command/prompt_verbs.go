@@ -5,10 +5,10 @@ package command
 // `session/prompt` inspects the text and handles a few verbs ITSELF, answering
 // `stopReason: end_turn` without ever invoking the model. Nothing streams, so
 // the turn produces no content — which is indistinguishable from a dead turn by
-// the only signal isEmptyTurn has, and that misreading is expensive: recovery
-// closes the bridge the launched run is parented on, detaches the ACP session,
-// records the turn as interrupted, and re-sends the verb, which launches a
-// SECOND run. Measured on `/goal` (kiro-cli 2.18.1).
+// the only signal the empty-turn recovery has, and that misreading is expensive:
+// recovery closes the bridge the launched run is parented on, detaches the ACP
+// session, records the turn as interrupted, and re-sends the verb, which launches
+// a SECOND run. Measured on `/goal` (kiro-cli 2.18.1).
 //
 // `/goal` is currently the only member, and it is a member only because vibekit
 // sends the `goal` setting at the connection door (see internal/kascap). With

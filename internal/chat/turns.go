@@ -14,10 +14,10 @@ const turnFirstLineMax = 120
 // projectTurnSummaries groups a chat's flat message list into the session-wide
 // turn index the timeline rail draws from.
 //
-// A user message opens a turn; everything else joins the open turn, or opens a
-// headerless one when there is none. That last case is not an edge: an
-// agent-initiated turn (a run-completion wake) legitimately has no user row to
-// promote, and fabricating one would put words in the user's mouth.
+// A user message opens a turn, and so does the first message of a turn with no
+// user trigger — see opensHeaderlessTurn, which owns that predicate. Without it an
+// agent-initiated turn's reply landed in the PREVIOUS turn's body and took its
+// outcome with it.
 //
 // `thinking` marks the LAST turn as running, and is the caller's knowledge — a
 // persisted chat file cannot tell whether a bridge is mid-turn right now.
@@ -30,9 +30,10 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 	// the wire shape must not carry a turn's content.
 	out := make([]vibekit.TurnSummary, 0, 8)
 	bodies := make([][]vibekit.Message, 0, 8)
+	closed := false
 	for i := range msgs {
 		m := &msgs[i]
-		if m.Role == vibekit.RoleUser || len(out) == 0 {
+		if m.Role == vibekit.RoleUser || len(out) == 0 || opensHeaderlessTurn(m, closed) {
 			var body []vibekit.Message
 			if m.Role != vibekit.RoleUser {
 				body = append(body, *m)
@@ -48,9 +49,11 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 			}
 			out = append(out, summary)
 			bodies = append(bodies, body)
+			closed = m.TurnOutcome != ""
 			continue
 		}
 		bodies[len(bodies)-1] = append(bodies[len(bodies)-1], *m)
+		closed = closed || m.TurnOutcome != ""
 	}
 	for i := range out {
 		out[i].Outcome = deriveTurnOutcome(bodies[i], thinking && i == len(out)-1)
@@ -58,19 +61,37 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 	return out
 }
 
+// opensHeaderlessTurn reports whether m is the first persisted message of a turn
+// with no user trigger. Derivable from a flat list because a turn's
+// outcome-bearing message closes it (Message.TurnOutcome, one per turn).
+//
+// Both clauses are load-bearing, and reviewers got the rule wrong in both
+// directions: without the close test a prompted empty turn's marker is split off
+// its own prompt, and without the assistant-or-marker test an interrupted divider
+// is split off the turn it describes.
+func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
+	if !prevClosed {
+		return false
+	}
+	return m.Role == vibekit.RoleAssistant || m.TurnOutcome != ""
+}
+
 // deriveTurnOutcome reads a turn's outcome off its persisted body.
 //
-// Persisted data only: a turn's stop reason rides the live turn_ended SSE and is
-// never stored, so a reloaded transcript cannot see it. The refusal marker and
-// the inline event messages are what survive, and they are what this keys on.
+// The DURABLE outcome first; the marker derivation below is the fallback for every
+// turn persisted before that field existed, where the refusal marker and the
+// inline event messages are all that survived.
 //
-// A terminal marker beats isLive deliberately. `thinking` can legitimately still
-// be true for the last turn when the next turn's stream has already opened, so
-// trusting it over a marker would repaint a finished failure as in-progress.
+// A terminal answer beats isLive deliberately: `thinking` can still be true for
+// the last turn when the next turn's stream has opened, so trusting it would
+// repaint a finished failure as in-progress.
 func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
 	interrupted := false
 	for i := range body {
 		m := &body[i]
+		if m.TurnOutcome != "" {
+			return m.TurnOutcome
+		}
 		if m.Refusal != nil {
 			return vibekit.TurnOutcomeFailed
 		}

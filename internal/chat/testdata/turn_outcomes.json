@@ -102,6 +102,153 @@
       "body": [{ "event": "compacted" }],
       "is_live": false,
       "want": "completed"
+    },
+    {
+      "name": "a durable outcome is read, not inferred",
+      "body": [{ "outcome": "failed" }],
+      "is_live": false,
+      "want": "failed"
+    },
+    {
+      "name": "a durable outcome beats the running flag",
+      "body": [{ "outcome": "failed" }],
+      "is_live": true,
+      "want": "failed"
+    },
+    {
+      "name": "a cancelled turn says cancelled, not interrupted",
+      "body": [{ "event": "cancelled", "outcome": "cancelled" }],
+      "is_live": false,
+      "want": "cancelled"
+    },
+    {
+      "name": "a refusal recorded on the wire says refused",
+      "body": [{ "refusal": true, "outcome": "refused" }],
+      "is_live": false,
+      "want": "refused"
+    },
+    {
+      "name": "an unmapped stop reason says unknown rather than failed",
+      "body": [{ "outcome": "unknown" }],
+      "is_live": false,
+      "want": "unknown"
+    },
+    {
+      "name": "a truncated turn still completed",
+      "body": [{ "outcome": "completed", "truncated": true }],
+      "is_live": false,
+      "want": "completed"
+    },
+    {
+      "name": "a legacy turn with no durable outcome still derives from its markers",
+      "body": [{ "event": "interrupted" }],
+      "is_live": false,
+      "want": "interrupted"
+    }
+  ],
+  "_segmentation_comment": [
+    "The BOUNDARY rule, and reviewers caught it wrong in both directions, so it is",
+    "pinned rather than described. A user message opens a turn; so does the first",
+    "persisted message of a turn with NO user trigger, which is derivable because a",
+    "turn's outcome-bearing message closes it.",
+    "",
+    "Too narrow (only an empty turn's marker opens one) puts a non-empty",
+    "agent-initiated turn's outcome in the PREVIOUS turn's body, which can flip a",
+    "completed turn to failed on reload. Too broad (any non-user message opens one)",
+    "splits a prompted empty turn that has a user message to attach to.",
+    "",
+    "`messages` is the flat persisted list. `want` is one entry per expected turn:",
+    "its opening message id, whether it has a user trigger, and its outcome."
+  ],
+  "segmentation": [
+    {
+      "name": "a prompted non-empty turn is one segment",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "a prompted EMPTY turn is not split off from its own prompt",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "event", "id": "e1", "event": "turn_outcome", "outcome": "failed" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "failed" }]
+    },
+    {
+      "name": "a non-empty agent-initiated turn's outcome does not land on the previous turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "outcome": "failed" }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "a2", "agent_initiated": true, "outcome": "failed" }
+      ]
+    },
+    {
+      "name": "an EMPTY agent-initiated turn is its own turn and appears in the index",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "event", "id": "e1", "event": "turn_outcome", "outcome": "failed" }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "e1", "agent_initiated": true, "outcome": "failed" }
+      ]
+    },
+    {
+      "name": "an EMPTY agent-initiated COMPLETED turn is its own turn and appears in the index",
+      "_comment": [
+        "`completed` is the derivation's default, which is why the marker is skipped",
+        "for a PROMPTED empty turn: its user message already represents it. A turn with",
+        "no trigger has nothing else at all, so skipping the marker there deleted the",
+        "turn — absent from the transcript and from the rail, while the live client had",
+        "been told it ended. The skip is therefore semantic (a persisted trigger",
+        "already represents this turn), never `outcome == completed`."
+      ],
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "event", "id": "e1", "event": "turn_outcome", "outcome": "completed" }
+      ],
+      "want": [
+        { "id": "u1", "agent_initiated": false, "outcome": "completed" },
+        { "id": "e1", "agent_initiated": true, "outcome": "completed" }
+      ]
+    },
+    {
+      "name": "an interrupt divider stays with the turn it describes",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "interrupted" },
+        { "role": "event", "id": "e1", "event": "interrupted" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "interrupted" }]
+    },
+    {
+      "name": "two agent-initiated turns in a row are two turns",
+      "messages": [
+        { "role": "assistant", "id": "a1", "outcome": "completed" },
+        { "role": "assistant", "id": "a2", "outcome": "failed" }
+      ],
+      "want": [
+        { "id": "a1", "agent_initiated": true, "outcome": "completed" },
+        { "id": "a2", "agent_initiated": true, "outcome": "failed" }
+      ]
+    },
+    {
+      "name": "a legacy transcript with no durable outcomes segments as it always did",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1" },
+        { "role": "assistant", "id": "a2" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
     }
   ]
 }
