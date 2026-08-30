@@ -837,14 +837,13 @@ function paint(): void {
   // between two microtasks" is a timing property of one call order, not an
   // invariant of the renderer. Only when there is something to replace it with —
   // an empty turn list is a chat still loading, which is what the placeholder is
-  // for. Scoped to THIS view plus the multiplexer's own children (the boot
-  // skeleton mounts before any view exists): a parked view's skeleton is that
-  // view's own to drop at its unpark paint. Unkeyed pagination furniture
+  // for. Scoped to THIS view: a parked view's skeleton is that view's own to
+  // drop at its unpark paint. Unkeyed pagination furniture
   // (`load-more-indicator`, the load-more skeleton) is deliberately untouched:
   // that one is mounted BESIDE real turns on purpose.
   if (turns.length > 0) {
     const skel = document.getElementById(CHAT_SKELETON_ID);
-    if (skel !== null && (root.contains(skel) || skel.parentElement === messagesEl)) {
+    if (skel !== null && root.contains(skel)) {
       skel.remove();
     }
   }

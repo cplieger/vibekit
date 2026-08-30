@@ -61,7 +61,6 @@ import {
 import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
-import { chatSkeleton } from "./skeleton.js";
 import type { Route } from "./router.js";
 import { refreshPickerIfVisible, setPickerModels, initModelPicker } from "./picker.js";
 import { setStatus, refreshRuntimeLine } from "./status.js";
@@ -478,7 +477,6 @@ async function checkAuthAndStart(): Promise<void> {
     return;
   }
 
-  dismissLoadingScreen();
   initPostAuth();
 
   // Degraded-runtime probe (kiro-cli missing → app-global banner);
@@ -496,9 +494,6 @@ async function checkAuthAndStart(): Promise<void> {
   // (enabled) whenever /api/settings is the slower of them.
   const retentionReady = refreshRetention();
 
-  const skel = chatSkeleton();
-  $.messages.appendChild(skel);
-
   suppressPush(true);
   // If share-target intends to create a session (e.g. ?agent=planner),
   // skip the default empty-state createSession so we don't end up with
@@ -515,7 +510,6 @@ async function checkAuthAndStart(): Promise<void> {
     // to land on, and holding them longer would delay the busy dot for no gain.
     // See transport.ts holdUntilHydrated.
     transport.markHydrated();
-    skel.remove();
     if (!ok || getSessions().length === 0) {
       if (!ok) {
         // Surface the boot failure BEFORE falling back to the empty state, so the
@@ -555,7 +549,6 @@ async function checkAuthAndStart(): Promise<void> {
     activateRestoredTab();
   } catch {
     transport.markHydrated();
-    skel.remove();
     toastError("Couldn't load your chats.", {
       label: "Reload",
       onClick: () => {
@@ -572,6 +565,15 @@ async function checkAuthAndStart(): Promise<void> {
 
   await applyShareTarget();
   applyInitialRoute();
+  // The splash comes down only now, with the restored tab's content already
+  // painted underneath it (the app root is visibility:hidden, which preserves
+  // layout, so activation and scroll measurement ran normally behind it).
+  // Dropping it at auth-resolved left the transcript container covering the
+  // chat-list load with a top-aligned boot skeleton — the one transcript
+  // occupant that predated any view. That skeleton is deleted with this
+  // ordering; the per-view skeleton still covers any message fetch that
+  // outlives the splash.
+  dismissLoadingScreen();
   // Boot restores are done — view swaps animate from here on (B3).
   markBootDone();
 }

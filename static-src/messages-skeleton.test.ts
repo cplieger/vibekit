@@ -82,7 +82,12 @@ beforeEach(() => {
 
 describe("the transcript's loading placeholder", () => {
   it("is dropped by the paint that brings in the first turn", () => {
-    messagesEl.appendChild(chatSkeleton());
+    // Into the ACTIVE VIEW, the placeholder's one home: chat.ts mounts it
+    // there during a cold activation. (The boot-time mount into the bare
+    // multiplexer is gone — the splash now covers the boot restore.)
+    const view = activeTranscriptView();
+    expect(view).not.toBeNull();
+    view?.appendChild(chatSkeleton());
     expect(document.getElementById(CHAT_SKELETON_ID)).not.toBeNull();
 
     activate([event("m1")]);
@@ -112,7 +117,7 @@ describe("the transcript's loading placeholder", () => {
   it("survives a paint that produces no turns, because that is what it is for", () => {
     // An empty turn list is a chat still loading. Dropping the placeholder on
     // that paint would clear the container and show nothing at all.
-    messagesEl.appendChild(chatSkeleton());
+    activeTranscriptView()?.appendChild(chatSkeleton());
     activate([]);
     bumpMessages("c-1");
 

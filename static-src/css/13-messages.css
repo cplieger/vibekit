@@ -137,15 +137,6 @@
   padding-block: 0;
 }
 
-/* The BOOT skeleton is the one transcript occupant that predates any view (it
- * mounts before the chat list loads), so it sits directly in the multiplexer
- * and re-borrows just the centred cap. */
-[id="messages"] > .skeleton-msg-group {
-  max-width: var(--content-max-w);
-  margin-inline: auto;
-  width: 100%;
-}
-
 /* When the tab is hidden, Chrome pauses CSS animations. Animations that
    start at opacity:0 would trap new elements invisible until the tab is
 /* data-tab-hidden animation override moved to end of file (specificity ordering) */
