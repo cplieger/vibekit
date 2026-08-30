@@ -661,6 +661,13 @@ interface SendPromptArgs {
   attachments?: readonly unknown[];
 }
 
+/** Latch snapshots for in-flight sends, keyed by message id. The `starting`
+ *  arm is a returned VALUE, so the framework's rollback never runs for it —
+ *  yet it is a failure that started no turn, and it must restore exactly what
+ *  the rollback would: the previous turn's verdict stands until new work
+ *  actually opens. Written by optimistic(), consumed on every terminal arm. */
+const latchSnapshots = new Map<string, { turnFailed: boolean; turnDone: boolean }>();
+
 export const sendPrompt = defineAction<
   SendPromptArgs,
   "sent" | "queued" | "starting",
@@ -669,7 +676,7 @@ export const sendPrompt = defineAction<
   name: "chat.send_prompt",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
-  optimistic: ({ chatID }) => {
+  optimistic: ({ chatID, messageID }) => {
     // The two outcome latches are captured because setThinking(true) CLEARS
     // them: starting a turn is what invalidates the previous turn's verdict. A
     // rollback means no turn started, so restoring `thinking: false` alone
@@ -682,10 +689,12 @@ export const sendPrompt = defineAction<
       turnFailed: s?.turn_failed === true,
       turnDone: s?.turn_done === true,
     };
+    latchSnapshots.set(messageID, { turnFailed: snapshot.turnFailed, turnDone: snapshot.turnDone });
     setThinking(chatID, true);
     return snapshot;
   },
-  rollback: (_args, op) => {
+  rollback: (args, op) => {
+    latchSnapshots.delete(args.messageID);
     if (op !== undefined) {
       setThinking(op.chatID, false);
       if (op.turnFailed) {
@@ -722,6 +731,7 @@ export const sendPrompt = defineAction<
       { signal, reportSendState: true, timeoutMs: API_TIMEOUT_MS }, // the failure toast is the surface
     );
     if (r.ok) {
+      latchSnapshots.delete(messageID);
       return "sent";
     }
     if (r.status === 409) {
@@ -731,17 +741,30 @@ export const sendPrompt = defineAction<
         // the user row is already persisted and rendered (persist precedes
         // reservation server-side). Returned as a VALUE so the caller can
         // branch on it, which means the framework's rollback never runs; the
-        // optimistic thinking is retracted here instead, because thinking left
-        // true would turn the user's retry into a steer at submit.ts's
-        // isThinking gate. The outcome latches stay cleared, as on the queued
-        // arm: the holder IS live work, and its own turn events deliver the
-        // next verdict.
+        // full optimistic write is undone here instead. Thinking retracted,
+        // because thinking left true would turn the user's retry into a steer
+        // at submit.ts's isThinking gate — and the outcome latches RESTORED,
+        // because no turn started: the previous verdict stands until the
+        // holder's own turn actually opens, which is also what every other
+        // device still shows. setThinking(true) at the turn-open event then
+        // clears them everywhere together.
         setThinking(chatID, false);
+        const snap = latchSnapshots.get(messageID);
+        if (snap?.turnFailed === true) {
+          setTurnFailed(chatID);
+        }
+        if (snap?.turnDone === true) {
+          setTurnDone(chatID);
+        }
+        latchSnapshots.delete(messageID);
         return "starting";
       }
       // A steerable turn is in flight on this chat. Report "queued" and let
       // the caller (submit.ts) convert it to a steer. Keeping this action a
-      // pure send is what keeps the steer decision in one place.
+      // pure send is what keeps the steer decision in one place. Nothing to
+      // restore: the live turn's own open is what cleared the latches, and
+      // that truth outlives this refused send.
+      latchSnapshots.delete(messageID);
       return "queued";
     }
     throw new ActionError(r.error ?? "send failed", {
