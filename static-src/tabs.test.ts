@@ -149,6 +149,7 @@ import {
   closeTab,
   activateTab,
   renameTab,
+  setTabTooltip,
   hasTab,
   tabIdFor,
   tabIdForRoute,
@@ -774,6 +775,33 @@ describe("renameTab and the name a row renders", () => {
     await settleTabs();
     await paint();
     expect(rows()[0]?.querySelector(".tab-name")?.textContent).toBe("Nightly sweep");
+  });
+});
+
+describe("setTabTooltip and the title a row carries", () => {
+  it("sets and clears the row's title", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    await paint();
+    setTabTooltip(chatID("a"), "Code · reading files");
+    expect(rows()[0]?.title).toBe("Code · reading files");
+    setTabTooltip(chatID("a"), "");
+    expect(rows()[0]?.hasAttribute("title")).toBe(false);
+  });
+
+  // The tooltip is parked on the row like the dot: the per-row store effect
+  // rewrites it only when that chat's own inputs churn, so a rebuild that
+  // dropped it would leave the row tooltipless until then — hours, for an
+  // idle chat.
+  it("survives a re-list, which rebuilds every row", async () => {
+    expect.assertions(1);
+    await openChat("a");
+    setTabTooltip(chatID("a"), "Code · reading files");
+    // A version two past local: the sync layer stops applying and re-lists.
+    tabServer.emitRaw({ version: tabServer.version() + 2 });
+    await settleTabs();
+    await paint();
+    expect(rows()[0]?.title).toBe("Code · reading files");
   });
 });
 

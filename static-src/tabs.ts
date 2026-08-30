@@ -120,16 +120,20 @@ export type { TabDotStatus, TabViewSpec };
  *  `parentId`) is immutable after open, which is exactly why `pinned` is not
  *  among them and is read from the subject instead.
  *
- *  `name` and `dotStatus` are the two mutable local fields, and each has a
- *  reason. A name because six run sites and two chat sites legitimately know a
- *  better label than a subject can carry (see tab-materialize.ts's header). A dot
- *  because it is LIVE state derived from a chat's or a run's current condition,
- *  which no persisted record may claim. */
+ *  `name`, `dotStatus` and `tooltip` are the three mutable local fields, and
+ *  each has a reason. A name because six run sites and two chat sites
+ *  legitimately know a better label than a subject can carry (see
+ *  tab-materialize.ts's header). A dot and a tooltip because both are LIVE
+ *  state derived from a chat's or a run's current condition, which no
+ *  persisted record may claim — parked on the row so a rebuild repaints them
+ *  (the per-row store effect rewrites only on its own inputs, and a DOM
+ *  rebuild is not one of them). */
 interface TabRow {
   subject: TabSubject;
   spec: TabViewSpec;
   name: string;
   dotStatus?: TabDotStatus | undefined;
+  tooltip?: string | undefined;
 }
 
 /** What `openTab` needs. `kind` plus `ref` names the subject; everything else is
@@ -1095,10 +1099,20 @@ function recordDotStatus(id: string, status: TabDotStatus | ""): void {
 }
 
 /** Set (or clear, with "") a tab's hover tooltip. Used for the agent's
- *  self-declared "what I'm working on" description on chat tabs. Direct DOM write
- *  like setTabStatus — reapplied by the store effect after any re-render, so
- *  transient loss on rebuild self-heals the same way the status dot does. */
+ *  self-declared "what I'm working on" description on chat tabs. Recorded on
+ *  the row like the dot, and for the dot's reason: the per-row store effect
+ *  rewrites only when its own inputs change, so a rebuilt element would
+ *  otherwise sit tooltipless until that chat next churns — createTabEl
+ *  repaints from the row instead. */
 export function setTabTooltip(id: string, text: string): void {
+  const row = rowOfID(id);
+  if (row !== undefined) {
+    if (text === "") {
+      delete row.tooltip;
+    } else {
+      row.tooltip = text;
+    }
+  }
   const node = elementOf(id);
   if (node === null) {
     return;
@@ -1659,6 +1673,13 @@ function createTabEl(row: TabRow): HTMLElement {
   // A sub-tab is not independently draggable: its position is its parent's.
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
   attachTabInteraction(node, id, row.subject.parent === "");
+
+  // The parked tooltip, repainted like the dot: the store effect will not
+  // rewrite it until this chat's own inputs churn, and a rebuilt row must not
+  // sit tooltipless until then.
+  if (row.tooltip !== undefined) {
+    node.title = row.tooltip;
+  }
 
   // Right-click context menu for chat tabs: pin/unpin, then export (md/json).
   // Non-chat tabs keep the native browser menu.
