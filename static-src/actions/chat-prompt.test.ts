@@ -6,7 +6,8 @@
 //   ack            → "sent" (thinking stays true; SSE owns the turn from here)
 //   plain 409      → "queued" (a steerable turn is in flight; submit.ts steers)
 //   409 "starting" → "starting" (the holder cannot take a steer; thinking is
-//                    retracted so the retry is a PROMPT, not a steer)
+//                    retracted so the retry is a PROMPT, not a steer, and the
+//                    outcome latches are restored — no turn started)
 //   anything else  → null (rollback restores thinking + the outcome latches)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -151,12 +152,34 @@ describe("sendPrompt — the three-way 409 split", () => {
     expect(setThinking).toHaveBeenLastCalledWith("c1", false);
   });
 
-  it("leaves the outcome latches alone on 'starting' — the holder IS live work", async () => {
-    // Same treatment as "queued": the slot holder (spawn/shell/prime) is
-    // running, and its own turn events deliver the next verdict, so the
-    // previous turn's cleared verdict is not restored.
+  it("restores the outcome latches on 'starting' — no turn started", async () => {
+    // The refused send must be state-neutral on the glance surfaces: a red
+    // tab dot from the previous turn's failure stands until the holder's own
+    // turn actually opens (setThinking(true) at that event clears it on every
+    // device together). Leaving the optimistic clear in place erased the
+    // failure mark with a send that did not happen.
     mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
     mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy", reason: "starting" });
+
+    await sendPrompt.dispatch(args);
+
+    expect(setTurnFailed).toHaveBeenCalledWith("c1");
+    expect(setTurnDone).not.toHaveBeenCalled();
+  });
+
+  it("restores nothing on 'starting' when there was nothing latched", async () => {
+    mockGet.mockReturnValue({ id: "c1", model: "m1" });
+    mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy", reason: "starting" });
+
+    await sendPrompt.dispatch(args);
+
+    expect(setTurnFailed).not.toHaveBeenCalled();
+    expect(setTurnDone).not.toHaveBeenCalled();
+  });
+
+  it("leaves the latches cleared on 'queued' — the live turn's open is the truth", async () => {
+    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
+    mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy" });
 
     await sendPrompt.dispatch(args);
 
