@@ -9,6 +9,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibekit/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibekit)
 [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/vibekit/releases)
 
+<!-- hub-overview BEGIN -->
 A browser-based front-end for the **Kiro CLI**: chat with an AI coding agent from any device, with a live terminal, a file editor, and git/forge workflows in the same tab.
 
 Vibekit runs `kiro-cli` as an Agent Client Protocol (ACP) subprocess and wraps it in a full workspace UI. The **server is the single source of truth**: every action is persisted and echoed to every connected client over Server-Sent Events, so a conversation open on your phone and your desktop stays in sync.
@@ -27,6 +28,7 @@ Vibekit controls an agent that can run shell commands and read and write your fi
 - keep the published port on loopback or a private network.
 
 Signing in from the UI authenticates **kiro-cli to AWS** (the agent's identity); it is not a gate on vibekit itself.
+<!-- hub-overview END -->
 
 ## Run
 
