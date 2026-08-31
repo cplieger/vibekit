@@ -36,8 +36,8 @@
 //     forwarded to, so the header's own listener sees a control and stops.
 //   - A click that ends a text SELECTION. A reader dragging a prompt out of a
 //     turn header and having the turn fold shut under the cursor is worse than
-//     a small chevron, and it is the failure mode that decides where the
-//     surface stops (see the `skip` hook's one caller).
+//     a small chevron, and it is what keeps the turn header's prompt text
+//     selectable while the whole band stays the fold's target.
 // ---------------------------------------------------------------------------
 
 /** Anything inside a header row that owns its own click.
@@ -49,22 +49,12 @@ const OWNS_ITS_CLICK =
   "a[href],area[href],button,input,select,textarea,summary,label," +
   "[role=button],[role=link],[role=checkbox],[role=menuitem],[contenteditable]";
 
-export interface DisclosureRowOptions {
-  /** Consulted per click with the clicked element. Return `true` to leave the
-   *  click alone — for a region of the row that is not part of the toggle. */
-  skip?: (target: Element) => boolean;
-}
-
-/** Make every part of `row` activate `control`, except a nested control, a
- *  click that ends a selection inside the row, and whatever `skip` claims.
+/** Make every part of `row` activate `control`, except a nested control and a
+ *  click that ends a selection inside the row.
  *
  *  `control` keeps the disclosure: it carries `aria-expanded`, it is what Tab
  *  reaches, and it is what the stylesheet keys the chevron's rotation off. */
-export function wireRowToggle(
-  row: HTMLElement,
-  control: HTMLElement,
-  opts: DisclosureRowOptions = {},
-): void {
+export function wireRowToggle(row: HTMLElement, control: HTMLElement): void {
   row.addEventListener("click", (e: Event) => {
     const target = e.target;
     if (!(target instanceof Element)) {
@@ -77,9 +67,6 @@ export function wireRowToggle(
       return;
     }
     if (hasSelectionIn(row)) {
-      return;
-    }
-    if (opts.skip?.(target) === true) {
       return;
     }
     control.click();

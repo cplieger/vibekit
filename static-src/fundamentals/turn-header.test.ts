@@ -5,7 +5,6 @@ import {
   buildTurnHeader,
   updateTurnHeader,
   initTurnHeaderCallbacks,
-  clickFoldsTurn,
   type TurnHeaderData,
 } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
@@ -318,77 +317,5 @@ describe("the request's attachments", () => {
     const h = buildTurnHeader(data({ attachments: [shot] }));
     updateTurnHeader(h, data({ request: undefined, attachments: [] }));
     expect(attachmentPaths(h)).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// clickFoldsTurn — where the fold's hit target stops.
-//
-// Asserted against a REAL header from buildTurnHeader rather than a hand-built
-// fixture, so a renamed class fails here instead of silently shrinking the
-// surface back to the chevron. `messages.ts` wires this into
-// `wireRowToggle`'s `skip`; 29-turns.css marks the same region with the cursor
-// and the hover fill.
-// ---------------------------------------------------------------------------
-
-describe("clickFoldsTurn", () => {
-  const partsOf = (h: HTMLElement) => ({
-    row: h.querySelector<HTMLElement>(".turn-head-row")!,
-    chevron: h.querySelector<HTMLElement>(".turn-fold-toggle")!,
-    n: h.querySelector<HTMLElement>(".turn-n")!,
-    ts: h.querySelector<HTMLElement>(".turn-ts")!,
-    copy: h.querySelector<HTMLElement>(".turn-copy-req")!,
-    req: h.querySelector<HTMLElement>(".turn-req")!,
-    text: h.querySelector<HTMLElement>(".turn-req-text")!,
-  });
-
-  it("open: the meta row and everything in it folds the turn", () => {
-    const h = buildTurnHeader(data());
-    const p = partsOf(h);
-    for (const [name, el] of Object.entries({
-      row: p.row,
-      chevron: p.chevron,
-      n: p.n,
-      ts: p.ts,
-      copy: p.copy,
-    })) {
-      expect(clickFoldsTurn(el, false), name).toBe(true);
-    }
-  });
-
-  it("open: the request keeps its own click", () => {
-    const h = buildTurnHeader(data({ request: "a prompt worth selecting" }));
-    const p = partsOf(h);
-    expect(clickFoldsTurn(p.req, false)).toBe(false);
-    expect(clickFoldsTurn(p.text, false)).toBe(false);
-  });
-
-  it("open: the header band itself is not the surface", () => {
-    // The band's own padding sits outside the meta row, and the cursor does not
-    // claim it — so neither does the toggle.
-    const h = buildTurnHeader(data());
-    expect(clickFoldsTurn(h, false)).toBe(false);
-  });
-
-  it("folded: the whole band re-expands, request included", () => {
-    const h = buildTurnHeader(data({ request: "a prompt" }));
-    const p = partsOf(h);
-    for (const [name, el] of Object.entries({
-      header: h,
-      row: p.row,
-      req: p.req,
-      text: p.text,
-      chevron: p.chevron,
-    })) {
-      expect(clickFoldsTurn(el, true), name).toBe(true);
-    }
-  });
-
-  // The show-more and Copy are real buttons, so wireRowToggle skips them by KIND
-  // before this predicate is consulted. Pinned here so the division of labour is
-  // visible: this function decides regions, not controls.
-  it("does not attempt to exempt controls — that is wireRowToggle's job", () => {
-    const h = buildTurnHeader(data());
-    expect(clickFoldsTurn(partsOf(h).copy, false)).toBe(true);
   });
 });

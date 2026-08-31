@@ -63,7 +63,6 @@ import {
   buildTurnHeader,
   updateTurnHeader,
   initTurnHeaderCallbacks,
-  clickFoldsTurn,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -1346,16 +1345,13 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
       syncTurnFace(card, fresh);
     }, "content-growth");
   });
-  // The band activates that button, so folding a turn is not a 16x16 target.
-  // Copy, the show-more, an attachment pill and a linkified path inside the
-  // request all keep their own click — `wireRowToggle` skips a control by kind.
-  // The band activates that button, so folding a turn is no longer a 16x16
-  // target. Where the surface STOPS is `clickFoldsTurn`'s call, next to the
-  // header it describes; the cursor and hover fill in 29-turns.css mark exactly
-  // the region it admits, in both states.
-  wireRowToggle(header, btn, {
-    skip: (target) => !clickFoldsTurn(target, card.hasAttribute("data-folded")),
-  });
+  // The band activates that button, so folding a turn is not a 16x16 target —
+  // the WHOLE header, both states, matching the tool and delegate cards. Copy,
+  // the show-more, an attachment pill and a linkified path inside the request
+  // all keep their own click, and a drag that selects the prompt keeps its
+  // selection — `wireRowToggle` skips a control by kind and a click that ends
+  // a selection. The cursor and hover wash in 29-turns.css mark the surface.
+  wireRowToggle(header, btn);
 }
 
 /** Show how many search hits a turn holds, so scanning the folded list tells the

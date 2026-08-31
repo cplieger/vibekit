@@ -85,6 +85,25 @@
   border-start-end-radius: calc(var(--r) - 1px);
 }
 
+/* The WHOLE band folds and re-expands the turn, `.turn-req` included, in BOTH
+   states — one gesture wherever the reader clicks it, matching the tool and
+   delegate cards (it used to admit only the meta row while open, which read as
+   the target shrinking when a turn was expanded). Copy, the show-more,
+   attachment pills and linkified paths keep their own click, and a drag that
+   selects the prompt keeps its selection — `disclosure-row.ts` skips controls
+   by kind and clicks that end a selection. A running turn has no fold, so no
+   pointer and no wash. */
+.turn:not([data-running]) > .turn-header {
+  cursor: pointer;
+}
+
+.turn:not([data-running]) > .turn-header:hover {
+  /* As a LAYER, per the interaction-ladder contract (01-tokens.css): written
+     into `background` the wash would REPLACE this band's tertiary tint with a
+     15% film over the card, so the header would lose its tint on hover. */
+  background-image: var(--layer-hover);
+}
+
 /* Meta row: number, outcome dot, time, then the action slot pushed right. */
 .turn-head-row {
   display: flex;
@@ -100,19 +119,11 @@
      secondary and stays distinct on weight and the mono face. */
   color: var(--c-text-secondary);
 
-  /* The row FOLDS THE TURN — the fold's hit target is this whole band, not the
-     chevron sitting at its start. `disclosure-row.ts` forwards the click to
-     `.turn-fold-toggle`, which keeps the button, its label and its focus ring.
-     `user-select: none` is scoped to this row on purpose: `.turn-req` below
-     holds the user's own prompt and stays selectable. */
-  cursor: pointer;
+  /* The header FOLDS THE TURN, so this row inherits its pointer. `user-select:
+     none` is scoped to this row on purpose: `.turn-req` below holds the user's
+     own prompt and stays selectable (a drag there keeps its selection — the
+     header's click forwarder skips a click that ends one). */
   user-select: none;
-  border-radius: var(--r-sm);
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.turn-head-row:hover {
-  background: var(--c-hover);
 }
 
 .turn-n {
@@ -462,11 +473,11 @@
 
 /* The collapsed turn's FACE: input in the header (laid out exactly as when
    open), output here — run-card duplicates above the prose, the final answer
-   in full (real markdown, default type, no clamp: readability is the point of
-   the face), and a failed turn's error text. A CARD-level child sitting where
-   the body was, so the ledger footer below it keeps its open-state layout and
-   credits/model/duration survive the fold. Its background is the body's, which
-   is what separates it from the tinted header above and ledger strip below. */
+   (real markdown, default type, clamped below), and a failed turn's error
+   text. A CARD-level child sitting where the body was, so the ledger footer
+   below it keeps its open-state layout and credits/model/duration survive the
+   fold. Its background is the body's, which is what separates it from the
+   tinted header above and ledger strip below. */
 .turn-face {
   display: flex;
   flex-direction: column;
@@ -494,6 +505,23 @@
 .turn-face:last-child {
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
+}
+
+/* THE FACE CLAMP. Three lines, then an ellipsis — the answer-side twin of the
+ * request's `.turn-req-text[data-clamped]` above, and what makes the fold a
+ * fold. Unclamped, a folded card was routinely TALLER than its open neighbour
+ * (measured live: 573px and 634px "collapsed" cards beside a 220px open one),
+ * so the chevron flipped and nothing visibly changed — reported as "collapse
+ * does not work". Reading the full answer is what expanding is for; the fold
+ * shows enough to recognise the turn by. Clamped on the prose root and the
+ * error text alike; the run cards between them stay whole (already compact,
+ * and a live run's card is the one thing a fold must not hide). */
+.turn-face-prose,
+.turn-face-error {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .turn-face-error {
@@ -1006,25 +1034,6 @@
    (or the footer's) top edge; one line belongs to the element below. */
 .turn[data-folded] > .turn-header {
   border-bottom: 0;
-}
-
-/* The WHOLE band re-expands the turn, `.turn-req` included — matching what the
-   `skip` hook in messages.ts allows in each state. Open, `.turn-req` is the
-   prompt a reader selects and it keeps its own click; Copy, the show-more and
-   attachment pills keep theirs in both states (`clickFoldsTurn` skips
-   controls), so the band is a target without eating its own actions. */
-.turn[data-folded] > .turn-header {
-  cursor: pointer;
-}
-
-.turn[data-folded] > .turn-header:hover {
-  background: var(--c-hover);
-}
-
-/* One fill, not two: the meta row's own hover would composite a second
-   translucent overlay on top of the header's and paint that half darker. */
-.turn[data-folded] .turn-head-row:hover {
-  background: none;
 }
 
 /* The fold toggle: a bare hit target holding the shared `.disclosure-chevron`
