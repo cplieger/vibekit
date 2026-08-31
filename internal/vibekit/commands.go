@@ -314,7 +314,7 @@ func (e EffortLevel) Valid() bool {
 	if len(e) == 0 || len(e) > 32 {
 		return false
 	}
-	for i := 0; i < len(e); i++ {
+	for i := range len(e) {
 		c := e[i]
 		switch {
 		case c >= 'a' && c <= 'z':
