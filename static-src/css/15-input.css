@@ -407,7 +407,10 @@
    * characters. Dimmer than the name so the pill still reads name-first. */
   & .pill-model-effort {
     flex-shrink: 0;
-    color: var(--c-text-tertiary);
+    /* Secondary, not tertiary: this readout also renders on the pill's accent
+       fill (expanded/selected), where tertiary measures under the 4.5:1 text
+       floor (axe color-contrast, phone pass 2026-08-31). */
+    color: var(--c-text-secondary);
   }
 
   &.switching {
@@ -1213,6 +1216,58 @@
 
   .send-btn {
     min-width: var(--btn-h);
+  }
+
+  /* The textarea's resting band matches the pill row under it (the pills sit at
+     --btn-h through the hit-target floor), so the composer reads as two equal
+     rows instead of a short line over a tall one. The padding derives from this
+     variable, so one declaration moves the whole band. */
+  [id="prompt-input"] {
+    --composer-rest-h: var(--btn-h);
+  }
+
+  /* A popup card must fit the screen it is on. The width cap keeps an anchored
+     card from running off the right edge; the height caps trade the fixed
+     16rem for the visible viewport (dvh, so the iOS toolbars are already
+     subtracted), which is what kept the effort row reachable under the
+     keyboardless viewport but clipped it off-screen with the composer low. */
+  .pill-expand-content {
+    max-inline-size: calc(100dvw - 2 * var(--sp-3));
+  }
+
+  .pill-model-list {
+    max-block-size: min(26rem, 55dvh);
+  }
+
+  /* Rows a finger picks: the floor the pill row already has, plus the body
+     type step — 11px labels on 21px rows were a pointer design, and 12px is
+     still a caption on a phone. */
+  .pill-model-item,
+  .pill-role-item,
+  .chat-opt-btn {
+    min-block-size: var(--btn-h);
+    font-size: var(--fs-md);
+  }
+
+  /* The pill row WRAPS instead of eating its labels: five controls in 356px
+     ellipsized the mode pill to one character. Wrapped, every label renders
+     whole and every target keeps the floor. */
+  .prompt-pills {
+    flex-wrap: wrap;
+  }
+
+  .effort-row {
+    gap: var(--sp-2);
+  }
+
+  /* The five tiers share the row's width instead of shrink-wrapping 11px
+     labels; 2.25rem clears comfortable-tap territory inside a card whose
+     neighbouring rows are 2.75rem, without the row reading as five buttons
+     stacked two lines tall. */
+  .effort-btn {
+    flex: 1 1 0;
+    min-block-size: 2.25rem;
+    font-size: var(--fs-sm);
   }
 }
 

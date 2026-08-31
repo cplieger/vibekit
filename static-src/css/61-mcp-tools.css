@@ -334,7 +334,10 @@
   .diff-ask-btn,
   .send-btn,
   .mcp-modal-tab,
-  .upload-progress-cancel
+  .upload-progress-cancel,
+  .list-row-name,
+  .history-delete,
+  .git-repo-section-header
 ) {
   min-width: 24px;
   min-height: 24px;
@@ -355,7 +358,10 @@
     .diff-ask-btn,
     .send-btn,
     .mcp-modal-tab,
-    .upload-progress-cancel
+    .upload-progress-cancel,
+    .list-row-name,
+    .history-delete,
+    .git-repo-section-header
   ) {
     min-width: 44px;
     min-height: 44px;
