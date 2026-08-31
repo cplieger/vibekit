@@ -421,6 +421,38 @@
   flex-direction: row;
 }
 
+/* The collapsed turn's FACE: input in the header, output here — run cards
+   above the prose, the final answer in full (no clamp, by design), a failed
+   turn's error text. The footer stacks the face above the ledger strip. */
+.turn[data-folded] > .turn-footer[data-face] {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.turn-face {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-block-end: var(--sp-2);
+}
+
+.turn-face-error {
+  color: var(--c-red);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+}
+
+/* The face's full prose supersedes the one-line fold summary. The span stays
+   in the DOM for the face-less fold (a turn with no answer and no runs). */
+.turn-footer[data-face] > .turn-fold-summary {
+  display: none;
+}
+
+/* An active turn cannot be collapsed, so it offers no fold affordance. */
+.turn[data-running] .turn-fold-toggle {
+  display: none;
+}
+
 .turn-footer[data-outcome="interrupted"] {
   background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-bg-tertiary));
   color: var(--c-text-secondary);

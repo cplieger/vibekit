@@ -44,8 +44,8 @@ describe("a11y: tool-group header keyboard and aria", () => {
     document.body.removeChild(group);
   });
 
-  it("maybeCollapseGroup sets aria-expanded=false", async () => {
-    const { buildToolGroupShell, maybeCollapseGroup } = await import("./tool-group.js");
+  it("autoCollapseGroup sets aria-expanded=false", async () => {
+    const { buildToolGroupShell, autoCollapseGroup } = await import("./tool-group.js");
     const group = buildToolGroupShell();
     document.body.appendChild(group);
 
@@ -65,7 +65,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
     const header = group.querySelector(".tool-group-header")!;
     expect(header.getAttribute("aria-expanded")).toBe("true");
 
-    maybeCollapseGroup(group.querySelector(".tool-call")!);
+    autoCollapseGroup(group);
     expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
     expect(header.getAttribute("aria-expanded")).toBe("false");
 

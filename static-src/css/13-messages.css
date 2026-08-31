@@ -727,20 +727,19 @@
 
 /* Reasoning/thinking block (collapsible).
  *
- * ONE bar, on the disclosure ROOT, sitting on `.turn-body`'s own content edge —
- * the same left edge the prose text and every evidence card start from, so the
- * trace reads as a subelement of the reply rather than as something outdented
- * from it.
+ * NO bar and no indent (user ruling, 2026-08-30): the trace sits flush on
+ * `.turn-body`'s own content edge — the same left edge the prose text and
+ * every evidence card start from. Subordination is carried by the ink token
+ * (`--c-text-aside`), the italic, and the smaller type step; an accent
+ * border-inline-start read as decoration and pushed the block off the
+ * shared measure.
  *
- * It used to carry TWO. This rule bordered `.reasoning-body` in `--c-border`,
- * while a legacy `.reasoning-block` rule in 61-mcp-tools.css ("Wave 1")
- * bordered the ROOT in `--c-accent` and added `padding-left: 0.75rem`. Later
- * source order made the legacy rule win, so a trace rendered as an accent bar,
- * 14px of gap, a second grey bar, then text — with the accent bar 16px left of
- * the prose and the text 12px right of it. The accent bar also smothered the
- * `.streaming` accent-mix this file used to set on the body's border, by being
- * permanently at full strength; the breathing pulse dot on the summary is the
- * live affordance now. */
+ * History, kept because it keeps being re-proposed: this rule used to carry
+ * an accent bar, and before that TWO bars — a `--c-border` one on
+ * `.reasoning-body` plus a legacy `.reasoning-block` rule in 61-mcp-tools.css
+ * ("Wave 1") bordering the ROOT in `--c-accent` with `padding-left: 0.75rem`.
+ * Later source order made the legacy rule win, so a trace rendered as an
+ * accent bar, 14px of gap, a second grey bar, then text. */
 .reasoning-block {
   max-width: var(--content-max-w);
 
@@ -749,7 +748,6 @@
    * reasoning trace 20px from its neighbours while every other block sits at
    * 12px. The container owns block spacing; see `.msg-wrap`. */
   margin: 0;
-  border-inline-start: 2px solid var(--c-accent);
   font-size: var(--fs-sm);
   color: var(--c-text-aside);
 
@@ -758,38 +756,21 @@
    * graphic needs, for the model's whole reasoning. Worse, an `opacity` is
    * invisible to both contrast gates (the token graph and the stylesheet), so the
    * number the tools reported was never the number on screen. Subordination is
-   * carried by the ink token, the italic, the smaller step and this bar. */
+   * carried by the ink token, the italic and the smaller step. */
 
   /* No height transition: same per-chunk flicker reasoning as the
    * streaming bubble — let height track content instantly. The
    * details<>summary native open/close animation is still visible. */
 }
 
-/* Live-streaming reasoning block (open + actively receiving chunks): a subtle
- * breath on the summary so the user sees the model is actively thinking. It used
- * to read "accent left-border + subtle breath"; the border half was the
- * `.reasoning-body` accent-mix that the legacy full-strength accent bar made
- * invisible, and the bar is now the block's one border, so the dot is the whole
- * live affordance. Conditioned on `.streaming` (set by buildReasoning for a live
- * trace and removed in `seal()`) — NOT on `[open]`, because `[open]` flips back
- * to true whenever the user re-expands a finalized thinking trace and we don't
- * want the "actively thinking" pulse to come back for a completed turn.
- *
- * Motion is the ONLY channel here, which is fine because it is not the only
- * channel the row has: the label reads "Thinking…" until `seal()` rewrites it,
- * so nothing is carried by the animation alone (WCAG 1.4.1 is about colour, and
- * the same argument applies to a lone animated marker). `40-a11y.css` collapses
- * every `*::before` animation under `prefers-reduced-motion: reduce`, so this
- * dot goes still there without a rule of its own. */
-.msg-reasoning.streaming > .reasoning-summary::before {
-  content: "";
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-inline-end: var(--sp-1);
-  border-radius: 50%;
-  background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
-}
+/* NOTE: no animation may return to a reasoning selector. A breathing accent
+ * disc used to sit here (`.msg-reasoning.streaming > .reasoning-summary::before`,
+ * `vk-breathe`); it was removed by user ruling — a pulsing dot is reserved to
+ * TABS and workflow-agent surfaces, which report work the reader cannot see.
+ * A live trace is already on screen: it mounts open, its text grows, and its
+ * label reads "Thinking…" until `seal()` rewrites it, which is enough.
+ * `reasoning-live-cue.test.ts` fails if a reasoning selector grows an
+ * animation again. */
 
 /* The summary row: chevron + label, on one line. `display: flex` and
  * `list-style: none` are load-bearing — without them the native `<details>`
@@ -857,14 +838,14 @@
   white-space: nowrap;
 }
 
-/* The trace itself. Indented from the bar by its own padding, which is what
- * makes it read as content INSIDE the disclosure. No border of its own — see
- * `.reasoning-block` above for why there is exactly one bar. */
+/* The trace itself. Flush on the block's own left edge — the shared measure —
+ * with block-only padding; the inline indent left with the bar (see
+ * `.reasoning-block` above). */
 .reasoning-body {
   max-height: 300px;
   overflow-y: auto;
   margin: 0;
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) 0;
   font-style: italic;
   white-space: pre-wrap;
 }

@@ -80,9 +80,14 @@ function messageIDFor(chatID: string, text: string): string {
  * not one branch: a turn can start between reading `thinking` and the POST
  * landing, and the server answers that with 409 busy. The old code enqueued
  * there; this steers instead, because the message belongs in the turn that just
- * started rather than in the one after it. The steer conversion applies only to
- * the PLAIN 409 — a 409 carrying reason:"starting" names a holder that cannot
- * take a steer, and renders the busy face instead (see STARTING_FACE).
+ * started rather than in the one after it.
+ *
+ * The conversion runs BOTH ways, bounded: a plain-409 prompt becomes a steer,
+ * and a steer refused with reason `no_turn` (the chat was idle by the time it
+ * landed — stale thinking, or the turn ended mid-flight) becomes the prompt it
+ * should have been. Each hop spends one unit of a shared budget, so a chat
+ * churning turn boundaries faster than the round trips ends at the busy face
+ * instead of looping.
  *
  * On a hard failure the text AND the attachments go back to the input row, so a
  * retry is one keystroke rather than a retype; the send button surfaces the
@@ -118,9 +123,25 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   const messageID = messageIDFor(chatID, text);
 
   if (isThinking(chatID)) {
-    return steer(chatID, text, messageID, attachments, attachGen);
+    return steer(chatID, text, messageID, attachments, attachGen, CONVERT_BUDGET);
   }
+  return prompt(chatID, text, messageID, attachments, attachGen, CONVERT_BUDGET);
+}
 
+/** How many prompt⇄steer conversions one submit may make. Two allows the honest
+ *  double race (steer → the turn is gone → prompt → a new turn started → steer)
+ *  and stops there. */
+const CONVERT_BUDGET = 2;
+
+/** Post one prompt, converting a plain 409 into a steer while budget remains. */
+async function prompt(
+  chatID: string,
+  text: string,
+  messageID: string,
+  attachments: readonly unknown[],
+  attachGen: number,
+  convertBudget: number,
+): Promise<SubmitResult> {
   const result = await sendPromptTo(chatID, text, {
     messageID,
     ...(attachments.length > 0 ? { attachments } : {}),
@@ -129,7 +150,12 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
     // Plain 409: a steerable turn started underneath us. Steer into it. The
     // conversion is gated on the ABSENCE of the "starting" reason — that
     // refusal's holder cannot receive a steer and takes the branch below.
-    return steer(chatID, text, messageID, attachments, attachGen);
+    if (convertBudget > 0) {
+      return steer(chatID, text, messageID, attachments, attachGen, convertBudget - 1);
+    }
+    recordFailure(chatID, text, messageID, attachments, attachGen);
+    reportSendRefused(STARTING_FACE);
+    return "failed";
   }
   if (result === "starting") {
     // 409 reason:"starting": the admission slot is held by a cold spawn, a
@@ -145,17 +171,24 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   }
   if (result === "failed") {
     recordFailure(chatID, text, messageID, attachments, attachGen);
-  } else {
-    lastFailed = undefined;
+    return "failed";
   }
-  return result === "sent" ? "sent" : "failed";
+  lastFailed = undefined;
+  return "sent";
 }
 
-/** Post one steer.
+/** Post one steer, converting a `no_turn` refusal into a prompt while budget
+ * remains.
  *
- * No local record is kept. The chip appears when KAS's `steer_queued` frame
- * comes back, which is what makes the row correct on every device and after a
- * reconnect rather than only on the tab that typed it.
+ * The refusal branch reads the outcome's CODE, never error prose: the server
+ * stamps reason `no_turn` on every there-is-nothing-to-join refusal (idle chat,
+ * shell holder, the turn ending mid-flight), and that class means the message
+ * should have been a prompt all along. The action's rollback has already
+ * un-drawn the optimistic chip by the time the outcome resolves, so the
+ * conversion leaves nothing behind.
+ *
+ * Every other failure surfaces through the send-error face with the server's
+ * own words — the action carries `error: false`, so this is the one surface.
  */
 async function steer(
   chatID: string,
@@ -163,18 +196,25 @@ async function steer(
   messageID: string,
   attachments: readonly unknown[],
   attachGen: number,
+  convertBudget: number,
 ): Promise<SubmitResult> {
-  const ok = await steerChat.dispatch({
+  const outcome = await steerChat.dispatch({
     chatID,
     text: withAttachmentPaths(text, attachments),
     messageID,
-  });
-  if (ok === undefined) {
-    recordFailure(chatID, text, messageID, attachments, attachGen);
-    return "failed";
+  }).outcome;
+  if (outcome.status === "success") {
+    lastFailed = undefined;
+    return "steered";
   }
-  lastFailed = undefined;
-  return "steered";
+  if (outcome.status === "error" && outcome.error.code === "no_turn" && convertBudget > 0) {
+    return prompt(chatID, text, messageID, attachments, attachGen, convertBudget - 1);
+  }
+  recordFailure(chatID, text, messageID, attachments, attachGen);
+  if (outcome.status === "error") {
+    reportSendRefused(outcome.error.message);
+  }
+  return "failed";
 }
 
 /** Fold attachment paths into the steer text.

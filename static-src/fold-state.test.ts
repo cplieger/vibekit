@@ -26,17 +26,17 @@ beforeEach(() => {
 });
 
 describe("the automatic rule", () => {
-  // Two rather than one: the previous turn is usually the context for the
-  // current request, so folding it would force an expand on nearly every read.
-  it("keeps exactly the last two turns open", () => {
+  // ONE: a turn auto-collapses when the next turn starts, and not before — the
+  // collapsed face (header + answer) is what keeps the previous turn readable.
+  it("keeps exactly the last turn open", () => {
     const list = turns(6);
     const open = list.map((t, i) => isTurnOpen("c1", t, i, list.length));
-    expect(open).toEqual([false, false, false, false, true, true]);
+    expect(open).toEqual([false, false, false, false, false, true]);
   });
 
-  it("keeps everything open when there are only two turns", () => {
+  it("folds the first of two turns", () => {
     const list = turns(2);
-    expect(list.map((t, i) => isTurnOpen("c1", t, i, list.length))).toEqual([true, true]);
+    expect(list.map((t, i) => isTurnOpen("c1", t, i, list.length))).toEqual([false, true]);
   });
 
   it("keeps a single turn open", () => {
@@ -44,13 +44,12 @@ describe("the automatic rule", () => {
   });
 });
 
-describe("sticky failure", () => {
-  // Errors are the last thing that should hide themselves, so this is checked
-  // BEFORE the position rule rather than after — a failure stays open however
-  // far back it is.
-  it.each(["failed", "interrupted"] as const)("never auto-folds a %s turn", (outcome) => {
+describe("outcome and position", () => {
+  // A failed turn folds like any other once the next turn starts: the collapsed
+  // face carries the error as the turn's output, so folding hides nothing.
+  it.each(["failed", "interrupted"] as const)("auto-folds a settled %s turn", (outcome) => {
     const list = [turn("bad", outcome), ...turns(10)];
-    expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
+    expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(false);
   });
 
   it("keeps a running turn open wherever it sits", () => {
@@ -63,42 +62,20 @@ describe("sticky failure", () => {
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(false);
   });
 
-  // The reader outranks the stickiness: a failure they deliberately folded away
+  // An ACTIVE turn cannot be collapsed: the rule outranks even an explicit
+  // override, so a stale recorded fold cannot hide a live stream.
+  it("ignores a recorded fold while the turn is running", () => {
+    const t = turn("live", "running");
+    setTurnOpen("c1", t.id, false);
+    expect(isTurnOpen("c1", t, 0, 10)).toBe(true);
+  });
+
+  // The reader outranks a SETTLED failure: one they deliberately folded away
   // stays folded, or the UI is arguing with them.
   it("lets the reader fold a failed turn anyway", () => {
     const t = turn("bad", "failed");
     setTurnOpen("c1", t.id, false);
     expect(isTurnOpen("c1", t, 0, 10)).toBe(false);
-  });
-});
-
-// A workflow run is initiated in a turn and then outlives it: `run_workflow`
-// returns as soon as the run is CREATED, so the turn completes while the run
-// carries on for minutes. Its own outcome therefore says nothing about whether
-// there is still something to watch, and the tail rule would fold away the only
-// surface showing it.
-describe("a live workflow run keeps its turn open", () => {
-  it("holds an old completed turn open while its run is still going", () => {
-    const list = [turn("launched"), ...turns(10)];
-    expect(isTurnOpen("c1", list[0]!, 0, list.length, true)).toBe(true);
-  });
-
-  it("lets that same turn fold once the run is over", () => {
-    const list = [turn("launched"), ...turns(10)];
-    expect(isTurnOpen("c1", list[0]!, 0, list.length, false)).toBe(false);
-  });
-
-  it("defaults to false, so no caller is silently opted in", () => {
-    const list = [turn("launched"), ...turns(10)];
-    expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(false);
-  });
-
-  // Same precedence as the sticky failure above: the reader wins. A run they
-  // folded away stays folded rather than springing back open on the next paint.
-  it("lets the reader fold it anyway", () => {
-    const t = turn("launched");
-    setTurnOpen("c1", t.id, false);
-    expect(isTurnOpen("c1", t, 0, 10, true)).toBe(false);
   });
 });
 
@@ -109,7 +86,7 @@ describe("the reader's own choice", () => {
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
   });
 
-  it("folds a recent turn against the two-newest rule", () => {
+  it("folds the newest turn by the reader's choice", () => {
     const list = turns(6);
     setTurnOpen("c1", list[5]!.id, false);
     expect(isTurnOpen("c1", list[5]!, 5, list.length)).toBe(false);

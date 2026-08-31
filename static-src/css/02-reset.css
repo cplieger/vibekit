@@ -56,8 +56,18 @@
     color: var(--c-text-tertiary);
   }
 
+  /* `text-wrap: wrap` resets the inherited `text-wrap-style` on editable
+     controls (body sets `pretty` below). The UA's `white-space: pre-wrap` on a
+     textarea resets only the MODE half of the shorthand, so `pretty` still
+     reaches the STYLE half — and Safari 26 implements `pretty` as
+     whole-paragraph line-break optimization re-run on every keystroke, which
+     visibly re-wraps the draft while typing: words jump to the next line
+     before the current one is full, jump back as more text lands, and lines
+     end with large gaps. A single-line input never wraps, so the reset is
+     free there. */
   :where(input, textarea, select) {
     caret-color: var(--c-accent);
+    text-wrap: wrap;
   }
 
   :is(
@@ -135,7 +145,24 @@
   body {
     font-family: var(--font-sans);
     font-size: var(--fs-base);
-    background: var(--c-bg-primary);
+
+    /* Two-tone canvas: sidebar color for the first --sidebar-w (with the
+       sidebar's 1px border at its edge), page color after it. Every box in
+       the app is pinned to the LAYOUT viewport (`#app` fixed inset 0, the
+       sidebar fixed top/bottom 0), and iPadOS 26 standalone mode keeps the
+       home-indicator/keyboard band OUTSIDE that viewport — so below
+       `bottom: 0` only the document canvas paints. A flat primary canvas
+       showed as a primary-colored strip under the secondary sidebar column.
+       The gradient tiles the whole physical screen, so the band continues
+       each column's own color whatever the OS decides the viewport is.
+       50-mobile.css resets this to flat primary where the sidebar is an
+       off-canvas drawer. */
+    background: linear-gradient(
+      to right,
+      var(--c-bg-secondary) calc(var(--sidebar-w) - 1px),
+      var(--c-border) calc(var(--sidebar-w) - 1px) var(--sidebar-w),
+      var(--c-bg-primary) var(--sidebar-w)
+    );
     color: var(--c-text-primary);
 
     /* dvh tracks the visual viewport on mobile (100vh includes the region

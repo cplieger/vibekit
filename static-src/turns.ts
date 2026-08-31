@@ -335,3 +335,54 @@ function firstSentence(t: Turn, max = 80): string {
 export function turnAnchorID(n: number): string {
   return `turn-${String(n)}`;
 }
+
+/** The turn's final answer: the last non-empty TOP-LEVEL text block across the
+ *  turn's messages. A collapsed turn's face renders it in full — input in the
+ *  header, this in the footer. Delegate prose (a non-empty subtask id) is a
+ *  delegate's report, not the turn's answer, so it never qualifies. */
+export function turnFaceProse(t: Turn): string {
+  for (let i = t.body.length - 1; i >= 0; i--) {
+    const m = t.body[i];
+    if (m?.role !== "assistant") {
+      continue;
+    }
+    const blocks = m.blocks ?? [];
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const b = blocks[j];
+      if (b?.type !== "text" || (b.agent_subtask_id ?? "") !== "") {
+        continue;
+      }
+      const text = (b.text ?? "").trim();
+      if (text !== "") {
+        return text;
+      }
+    }
+  }
+  return "";
+}
+
+/** What a collapsed FAILED or INTERRUPTED turn shows as its output: the last
+ *  event row's text — the error is the turn's real result. Falls back to the
+ *  event kind's own words when the row carries no prose, and to "" for a turn
+ *  that ended cleanly (the face shows the answer instead). */
+export function turnFaceError(t: Turn): string {
+  const o = t.outcome;
+  if (o !== "failed" && o !== "interrupted" && o !== "cancelled" && o !== "refused") {
+    return "";
+  }
+  for (let i = t.body.length - 1; i >= 0; i--) {
+    const m = t.body[i];
+    if (m?.role !== "event") {
+      continue;
+    }
+    const text = (m.content ?? "").trim();
+    if (text !== "") {
+      return text;
+    }
+    const kind = (m.event_kind ?? "").replaceAll("_", " ");
+    if (kind !== "") {
+      return kind.charAt(0).toUpperCase() + kind.slice(1);
+    }
+  }
+  return "";
+}

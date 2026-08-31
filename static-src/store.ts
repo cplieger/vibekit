@@ -559,6 +559,43 @@ export function clearTurnDone(id: string): void {
   scheduleMessages(id, "fact");
 }
 
+/** Re-derive the outcome latches from the PERSISTED record: the newest message
+ *  carrying a `turn_outcome` says how this chat's last turn ended, and the
+ *  latches are re-set from it exactly as the live `turn_ended` handler would
+ *  have set them.
+ *
+ *  The latches are client memory, so every page load and every transport gap
+ *  dropped them — and a chat with a live workflow floods the replay ring with
+ *  step frames, which made every reconnect on such a chat a gap. The measured
+ *  symptom was a finished turn's green dot falling to the hollow idle ring the
+ *  moment the connection blinked, on exactly the chats doing background work.
+ *  The outcome IS durable (persisted at finalize, survives reload), so the
+ *  latch can be too: called after every newest-page message load, which is the
+ *  gap door's own heal path and every activation.
+ *
+ *  Refuses to overwrite: a live turn (`thinking`) invalidates every prior
+ *  verdict, and a latch already set is newer than anything the page carries.
+ *  `cancelled`/`interrupted`/`unknown` latch nothing, matching the live
+ *  handler. */
+export function relatchTurnVerdict(id: string): void {
+  const s = get(id);
+  if (s === undefined || s.thinking || s.turn_done === true || s.turn_failed === true) {
+    return;
+  }
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const outcome = s.messages[i]?.turn_outcome;
+    if (outcome === undefined) {
+      continue;
+    }
+    if (outcome === "completed") {
+      setTurnDone(id);
+    } else if (outcome === "failed" || outcome === "refused") {
+      setTurnFailed(id);
+    }
+    return;
+  }
+}
+
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store
  *  effect (chat.ts) and the turn_ended / error handlers, so no two writers can
  *  disagree about what a chat's dot means.

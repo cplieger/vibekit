@@ -37,6 +37,7 @@ const {
   getLiveAnchor,
   disposeAssistantBody,
   resetBlockRenders,
+  buildDetachedBody,
 } = await import("./messages-blocks.js");
 const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
   await import("./store-signals.js");
@@ -154,6 +155,13 @@ describe("subagent grouping is keyed by subtask id, NOT by contiguity", () => {
 // ---------------------------------------------------------------------------
 
 describe("a workflow run's steps render inside the launch that started them", () => {
+  // The card registry is TRANSCRIPT-scoped now (one box per run per chat), and
+  // every render in this file shares one chat id — so without a reset each case
+  // would route its blocks into the card a previous case's render still hosts.
+  beforeEach(() => {
+    resetBlockRenders();
+  });
+
   const launch = (id: string, wf: string): ToolCall =>
     ({
       id,
@@ -277,6 +285,121 @@ describe("a workflow run's steps render inside the launch that started them", ()
     // AND the reconcile removes each row.
     disposeAssistantBody(lastMsgID);
     disposeAssistantBody(lastMsgID);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ONE RUN CARD PER TRANSCRIPT, not per message. The server folds a run's later
+// frames into a NEW assistant message per turn-segment, so the per-message key
+// this registry replaced rebuilt the card in every segment: the reported
+// symptom was the workflow box twice in the launching turn and twice more in
+// the next one — four identical boxes in two turns, all reading one store
+// cell. A later message's steps route into the card the first message built;
+// step rows are keyed by node path, so the routing lands in the right row.
+// ---------------------------------------------------------------------------
+
+describe("one run card per transcript, not per message", () => {
+  beforeEach(() => {
+    resetBlockRenders();
+  });
+
+  const launch = (id: string, wf: string): ToolCall =>
+    ({
+      id,
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      workflow_id: wf,
+    }) as unknown as ToolCall;
+
+  function renderMsg(
+    blocks: Record<string, unknown>[],
+    toolCalls: ToolCall[] = [],
+    chatID = CHAT_ID,
+  ): { wrap: HTMLElement; id: string } {
+    const wrap = document.createElement("div");
+    const id = `m-${String(Math.random())}`;
+    buildAssistantBody(
+      wrap,
+      { id, role: "assistant", content: "", blocks, tool_calls: toolCalls } as unknown as Message,
+      chatID,
+      false,
+    );
+    return { wrap, id };
+  }
+
+  it("routes a later message's step into the launching message's card", () => {
+    const a = renderMsg([toolUse("t1")], [launch("t1", "wf_seg")]);
+    const b = renderMsg([text("second segment work", "wf:wf_seg:wf_seg/deploy")]);
+
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+    const body = a.wrap.querySelector(
+      '.run-card .run-step[data-node="wf_seg/deploy"] .run-step-body',
+    );
+    expect(body?.textContent).toContain("second segment work");
+  });
+
+  it("is order-independent across messages: the launch binds into a step-built card", () => {
+    const b = renderMsg([text("early frame", "wf:wf_race:wf_race/lint")]);
+    const a = renderMsg([toolUse("t2")], [launch("t2", "wf_race")]);
+
+    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
+  });
+
+  it("scopes the card to the CHAT: another chat's render builds its own", () => {
+    const a = renderMsg([toolUse("t3")], [launch("t3", "wf_x")]);
+    const other = renderMsg([text("elsewhere", "wf:wf_x:wf_x/step")], [], "c-other-chat");
+
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(other.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+  });
+
+  it("a detached render neither adopts the transcript's card nor donates its own", () => {
+    // Adopting would MOVE the card's DOM node out of the transcript and into
+    // the page; donating would anchor the transcript's card in a render
+    // messages.ts has never heard of. Both directions, one isolation rule.
+    const detachedFirst = document.createElement("div");
+    buildDetachedBody(
+      detachedFirst,
+      {
+        id: "m-det",
+        role: "assistant",
+        content: "",
+        blocks: [text("page view", "wf:wf_det:wf_det/build")],
+      } as unknown as Message,
+      CHAT_ID,
+      "sub-1",
+      false,
+    );
+    const a = renderMsg([toolUse("t4")], [launch("t4", "wf_det")]);
+    const detachedSecond = document.createElement("div");
+    buildDetachedBody(
+      detachedSecond,
+      {
+        id: "m-det2",
+        role: "assistant",
+        content: "",
+        blocks: [text("page view again", "wf:wf_det:wf_det/build")],
+      } as unknown as Message,
+      CHAT_ID,
+      "sub-2",
+      false,
+    );
+
+    expect(detachedFirst.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+    expect(detachedSecond.querySelectorAll(".run-card")).toHaveLength(1);
+  });
+
+  it("releases the host slot on dispose, so a later message rebuilds the card", () => {
+    const a = renderMsg([toolUse("t5")], [launch("t5", "wf_re")]);
+    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
+
+    disposeAssistantBody(a.id);
+    const c = renderMsg([text("resumed frames", "wf:wf_re:wf_re/build")]);
+    expect(c.wrap.querySelectorAll(".run-card")).toHaveLength(1);
   });
 });
 
@@ -1056,5 +1179,167 @@ describe("getLiveAnchor", () => {
     expect(live).toHaveLength(2);
     expect(live[1]?.closest(".subagent-body")).toBeNull();
     expect(getLiveAnchor()).toBe(live[1]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which thinking block mounts OPEN, and what closes it.
+//
+// A live trace mounts open ("Thinking…") while it is the last block of its OWN
+// lane — the server extends the newest block of the delta's own subtask, so
+// lane-tail is what wires its growth signal. DISCLOSURE is the append rule's:
+// ANYTHING posted after it in its container seals it (collapse + label flip) —
+// text, a tool group, a delegate's box, a steer note, another trace — because
+// the wire carries no thinking-ended signal, so the next element's arrival is
+// the end signal. The turn's finalize seals a trace nothing followed.
+// ---------------------------------------------------------------------------
+
+describe("thinking blocks mount open per LANE and seal on the next sibling", () => {
+  function thinking(t: string, subtask = ""): Record<string, unknown> {
+    return { type: "thinking", thinking: t, agent_subtask_id: subtask };
+  }
+
+  function liveMsg(blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): Message {
+    return {
+      id: `m-think-${String(Math.random())}`,
+      role: "assistant",
+      content: "",
+      blocks,
+      tool_calls: toolCalls,
+    } as unknown as Message;
+  }
+
+  function traces(wrap: HTMLElement): HTMLDetailsElement[] {
+    return [...wrap.querySelectorAll<HTMLDetailsElement>("details.msg-reasoning")];
+  }
+
+  function labelOf(d: HTMLDetailsElement | undefined): string {
+    return d?.querySelector(".reasoning-label")?.textContent ?? "";
+  }
+
+  it("mounts the tail thinking block of a live message open", () => {
+    const wrap = document.createElement("div");
+    buildAssistantBody(wrap, liveMsg([thinking("weighing")]), CHAT_ID, true);
+    const [t] = traces(wrap);
+    expect(t?.open).toBe(true);
+    expect(labelOf(t)).toBe("Thinking…");
+  });
+
+  it("seals the parent trace when a delegate's box mounts after it", () => {
+    // The parent's trace is at index 0, the delegate's prose at index 1. The
+    // delegate box landing in the parent's container is "something posted
+    // after", so the trace closes — even though the parent's lane may still be
+    // growing (the wiring stays live; disclosure is the append rule's).
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      liveMsg([thinking("parent trace"), text("delegate prose", "sub-A")]),
+      CHAT_ID,
+      true,
+    );
+    const [t] = traces(wrap);
+    expect(t?.open).toBe(false);
+    expect(labelOf(t)).not.toBe("Thinking…");
+  });
+
+  it("seals the trace and starts a NEW tool group below it when a tool call follows", () => {
+    // The pileup fix: tool cards used to keep joining the group ABOVE the
+    // trace, so a think→tool loop rendered as one stack of cards over a pile
+    // of traces that read as consecutive thinking blocks.
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      liveMsg(
+        [toolUse("t1"), thinking("weighing"), toolUse("t2")],
+        [call("t1", "Read File"), call("t2", "Write File")],
+      ),
+      CHAT_ID,
+      true,
+    );
+    const kinds = [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) => {
+      if (e.classList.contains("tool-group")) {
+        return `group(${String(e.querySelectorAll(".tool-call").length)})`;
+      }
+      if (e.matches("details.msg-reasoning")) {
+        return "trace";
+      }
+      return "other";
+    });
+    expect(kinds).toEqual(["group(1)", "trace", "group(1)"]);
+    expect(traces(wrap)[0]?.open).toBe(false);
+  });
+
+  it("seals the trace when a step-first run card mounts after it", () => {
+    // No launch tool call in the store yet: the step's frame alone creates the
+    // card (order independence), and the card landing is what closes the trace.
+    const wrap = document.createElement("div");
+    buildAssistantBody(
+      wrap,
+      liveMsg([thinking("planning"), text("step prose", "wf:wf_9:wf_9/build")]),
+      CHAT_ID,
+      true,
+    );
+    const [t] = traces(wrap);
+    expect(t?.open).toBe(false);
+  });
+
+  it("mounts a trace with a later same-lane sibling sealed", () => {
+    // Both top-level: the text block after it is the lane's newer content, so
+    // the trace is settled however live the message is.
+    const wrap = document.createElement("div");
+    buildAssistantBody(wrap, liveMsg([thinking("first"), text("the answer")]), CHAT_ID, true);
+    const [t] = traces(wrap);
+    expect(t?.open).toBe(false);
+  });
+
+  it("seals the open trace when the next thinking block spawns in its container", () => {
+    const wrap = document.createElement("div");
+    const blocks: Record<string, unknown>[] = [thinking("first")];
+    const m = liveMsg(blocks);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    expect(traces(wrap)[0]?.open).toBe(true);
+
+    blocks.push(thinking("second"));
+    updateAssistantBody(wrap, m, CHAT_ID, true);
+
+    const all = traces(wrap);
+    expect(all).toHaveLength(2);
+    expect(all[0]?.open).toBe(false);
+    expect(labelOf(all[0])).toBe("Thinking completed");
+    expect(all[1]?.open).toBe(true);
+    expect(labelOf(all[1])).toBe("Thinking…");
+  });
+
+  it("leaves a delegate's own open trace alone when the parent thinks", () => {
+    // Different containers: the delegate's trace lives in its card's body, the
+    // parent's at top level, and neither seals the other.
+    const wrap = document.createElement("div");
+    const blocks: Record<string, unknown>[] = [thinking("delegate trace", "sub-A")];
+    const m = liveMsg(blocks);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+
+    blocks.push(thinking("parent trace"));
+    updateAssistantBody(wrap, m, CHAT_ID, true);
+
+    const all = traces(wrap);
+    expect(all).toHaveLength(2);
+    for (const t of all) {
+      expect(t.open).toBe(true);
+    }
+  });
+
+  it("finalize seals every open trace", () => {
+    const wrap = document.createElement("div");
+    const blocks: Record<string, unknown>[] = [
+      thinking("delegate trace", "sub-A"),
+      thinking("parent trace"),
+    ];
+    const m = liveMsg(blocks);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    finalizeAssistantBody(m.id);
+    for (const t of traces(wrap)) {
+      expect(t.open).toBe(false);
+      expect(labelOf(t)).toBe("Thinking completed");
+    }
   });
 });

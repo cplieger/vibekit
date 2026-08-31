@@ -101,6 +101,10 @@ export type TypedCommand =
   // is how a sent or abandoned draft is cleared.
   | { type: "set_draft"; chat_id: string; payload: { text: string } }
   | { type: "set_mode"; chat_id: string; payload: { mode_id: string } }
+  // A message delivered INTO the running turn (`_session/steer`). Typed here
+  // for the steer action's custom runner — the wire shape every other sender
+  // (the framework's loose TransportCommand) already produces.
+  | { type: "steer"; chat_id: string; payload: { text: string; message_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
   | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } }

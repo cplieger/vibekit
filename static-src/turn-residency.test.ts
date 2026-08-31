@@ -181,7 +181,8 @@ describe("the mounted derivation", () => {
     const id = chatID();
     activate(id, plainTurns(8));
     // 8 turns: distances 7..0. Warm = distance < 5 (indices 4..8 by 1-based
-    // turn number); the fold's tail keeps the newest two OPEN as well.
+    // turn number); the fold's tail keeps only the NEWEST turn open — a turn
+    // auto-collapses when the next one starts.
     for (const [n, mounted, folded] of [
       [1, false, true],
       [2, false, true],
@@ -189,7 +190,7 @@ describe("the mounted derivation", () => {
       [4, true, true],
       [5, true, true],
       [6, true, true],
-      [7, true, false],
+      [7, true, true],
       [8, true, false],
     ] as const) {
       expect(hasBody(`u${String(n)}`), `turn ${String(n)} body`).toBe(mounted);
@@ -222,15 +223,15 @@ describe("the mounted derivation", () => {
     expect(isFolded("u1")).toBe(false);
   });
 
-  it("keeps a failed turn mounted at any distance", () => {
+  it("folds and eventually unmounts a failed turn like any other — the face carries the error", () => {
     const id = chatID();
     const failed: Msg = { ...asst("a1"), refusal: { category: "safety" } };
     activate(id, [user("u1"), failed, ...plainTurns(10).slice(2)]);
-    expect(hasBody("u1")).toBe(true);
-    expect(isFolded("u1")).toBe(false);
+    expect(hasBody("u1")).toBe(false);
+    expect(isFolded("u1")).toBe(true);
   });
 
-  it("keeps a turn holding a live workflow run mounted at any distance", async () => {
+  it("folds a turn holding a live workflow run — the face carries a duplicate card", async () => {
     const id = chatID();
     runStatus.set("wf-live", "running");
     invalidateRun("wf-live");
@@ -253,8 +254,9 @@ describe("the mounted derivation", () => {
       ],
     };
     activate(id, [user("u1"), launcher, ...plainTurns(10).slice(2)]);
-    expect(hasBody("u1")).toBe(true);
-    expect(isFolded("u1")).toBe(false);
+    expect(isFolded("u1")).toBe(true);
+    // The collapsed face renders the run's card in the footer, body or none.
+    expect(card("u1").querySelector(":scope > .turn-footer .turn-face .run-card")).not.toBeNull();
   });
 
   it("keeps the streaming turn mounted and open", () => {

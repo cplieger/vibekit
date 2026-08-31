@@ -5,11 +5,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Message, Session } from "./types.js";
 
-const { sessions, liveIDs, mockApiGetTyped, mockSetSessions, epoch } = vi.hoisted(() => ({
+const {
+  sessions,
+  liveIDs,
+  mockApiGetTyped,
+  mockSetSessions,
+  mockBumpMessages,
+  mockRelatch,
+  epoch,
+} = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
   liveIDs: new Map<string, string>(),
   mockApiGetTyped: vi.fn(),
   mockSetSessions: vi.fn(),
+  mockBumpMessages: vi.fn(),
+  mockRelatch: vi.fn(),
   // The store's transport sync epoch, controllable so a case can land a "gap"
   // at an exact point in the fetch lifecycle.
   epoch: { n: 0 },
@@ -22,7 +32,10 @@ vi.mock("./store.js", () => ({
   getSessions: () => [...sessions.values()],
   setSessions: mockSetSessions,
   rebuildMsgIndex: vi.fn(),
-  bumpMessages: vi.fn(),
+  bumpMessages: mockBumpMessages,
+  // The outcome relatch loadMessages owes a newest-page load. A fn so the
+  // wiring cases below can assert the call and its ordering against bump.
+  relatchTurnVerdict: mockRelatch,
   syncEpoch: () => epoch.n,
   // Identity here — the block-synthesis path is covered by store.test.ts; these
   // tests assert pagination/dedupe by id.
@@ -390,5 +403,53 @@ describe("loadedEpoch", () => {
     await loadList();
     const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
     expect(passed[0]?.loadedEpoch).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The outcome relatch: a newest-page load re-derives the turn latches from the
+// persisted record it just applied. The latches are client memory, dropped by
+// every gap and absent on every fresh page, while turn_outcome is durable —
+// this call is the heal path that stopped a finished turn's green dot falling
+// to the hollow idle ring whenever the connection blinked.
+// ---------------------------------------------------------------------------
+
+describe("loadMessages outcome relatch", () => {
+  it("relatches after a newest-page load, once the window is settled", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+    });
+
+    await loadMessages("c1");
+    expect(mockRelatch).toHaveBeenCalledExactlyOnceWith("c1");
+    // After bumpMessages: the repaint and the dot must read one settled window.
+    const bumpOrder = mockBumpMessages.mock.invocationCallOrder[0] ?? Infinity;
+    const relatchOrder = mockRelatch.mock.invocationCallOrder[0] ?? 0;
+    expect(relatchOrder).toBeGreaterThan(bumpOrder);
+  });
+
+  it("does not relatch on an older-page prepend", async () => {
+    // A scroll-up extends the window; it says nothing new about how the last
+    // turn ended, and relatching from mid-history would be wrong anyway.
+    seedSession("c1", [msg("m2", 2)]);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+    });
+
+    await loadMessages("c1", "m2");
+    expect(mockRelatch).not.toHaveBeenCalled();
+  });
+
+  it("does not relatch on a failed load", async () => {
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue(null);
+
+    await loadMessages("c1");
+    expect(mockRelatch).not.toHaveBeenCalled();
   });
 });

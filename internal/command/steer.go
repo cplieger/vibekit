@@ -77,12 +77,23 @@ var (
 	)
 )
 
+// reasonNoTurn is the 409 refusal class for a steer with no turn to join —
+// whether the chat is idle, its holder is a local shell turn no session/prompt
+// backs, or the turn ended while the steer was in flight. The client branches
+// on the VALUE: it retries the text as an ordinary prompt, which is what the
+// message should have been.
+const reasonNoTurn = "no_turn"
+
 // CmdSteer delivers a message into the RUNNING turn.
 //
-// Requires a live bridge, and unlike most session verbs that is not merely a
-// precondition — a steer with no turn to join would sit in KAS's buffer until
-// some later turn happened to pick it up, which is a worse outcome than a clear
-// refusal. The client only reaches this path while a turn is streaming.
+// Requires a live bridge AND a holder whose turn actually drains the steering
+// buffer, and neither is merely a precondition: KAS queues a steer for ANY live
+// session, so one delivered to an idle chat — or into a `!cmd` shell turn no
+// session/prompt backs — would sit in the buffer until some later turn happened
+// to pick it up, with the chip stuck "queued" and no reply coming. That is a
+// worse outcome than a clear refusal the client can convert back to a prompt.
+// A wire-started turn IS steerable: the engine's own turn drains the buffer at
+// its next node boundary like any prompted one.
 func CmdSteer(ctx context.Context, bridges BridgeAccess, outcome TurnOutcomeAccess, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -105,9 +116,13 @@ func CmdSteer(ctx context.Context, bridges BridgeAccess, outcome TurnOutcomeAcce
 
 	bridge := bridges.Bridge(cmd.ChatID)
 	if bridge == nil {
-		return nil, StatusError(http.StatusConflict, errSteerNoTurn)
+		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
 	}
-	if source, held := outcome.AdmissionHolderSource(cmd.ChatID); held && source == vibekit.TurnSourcePrime {
+	source, held := outcome.AdmissionHolderSource(cmd.ChatID)
+	switch {
+	case !held, source == vibekit.TurnSourceLocalShell:
+		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
+	case source == vibekit.TurnSourcePrime:
 		return nil, StatusError(http.StatusConflict, errSteerPriming)
 	}
 
@@ -135,9 +150,10 @@ func CmdSteer(ctx context.Context, bridges BridgeAccess, outcome TurnOutcomeAcce
 		// `dropped: "epoch_changed"` means the turn boundary moved while KAS was
 		// persisting: the turn this was meant for has ended, so the message never
 		// reached the model. 409 rather than 502 — nothing broke, the window closed,
-		// and the client's answer is to send it as an ordinary prompt.
+		// and the client's answer is to send it as an ordinary prompt, which the
+		// no_turn reason tells it to do by itself.
 		slog.Info("steer dropped", "chat", cmd.ChatID, "reason", result.Dropped)
-		return nil, StatusError(http.StatusConflict, errSteerDropped)
+		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerDropped)
 	}
 
 	// No event is broadcast here. KAS answers a successful steer with its own

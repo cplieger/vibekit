@@ -40,6 +40,7 @@ import {
   setTurnFailed,
   setTurnDone,
   recordSteerSent,
+  recordSteerQueued,
   forgetSteer,
   steerIDFor,
   dropConfirmedSteers,
@@ -345,7 +346,7 @@ export const compactChat = transportAction<{ chatID: string }>({
  *  subprocess, KAS's own buffer append and an SSE fan-out before anything
  *  appeared, with the text gone and nothing in its place.
  *
- *  A refusal (409 when the turn ended mid-flight, 400 on a
+ *  A refusal (409 when the turn ended mid-flight or the chat is idle, 400 on a
  *  `[notification/...]` prefix) UN-DRAWS the row, in the same gesture that puts
  *  the text back in the composer. So a lost message is reported rather than
  *  implied: this is not the vanishing-bubble shape, where a bubble appeared and
@@ -353,28 +354,59 @@ export const compactChat = transportAction<{ chatID: string }>({
  *
  *  The optimistic row is keyed by the DERIVED steer id (`steer-<messageID>`,
  *  `internal/vibekit/commands.go:329-330`), which is what makes the reconcile a
- *  plain by-id merge. The POST's reply does carry the authoritative id, but
- *  `TransportSendResult` has no body, so it is unreachable here; `store.ts`'s
- *  `recordSteerQueued` keeps an exact-text fallback for that reason.
+ *  plain by-id merge.
  *
- *  The error toast is the server's own words. Both refusals it can return are
- *  specific and actionable — the turn ended, or the text opens with a
- *  `[notification/...]` prefix KAS would reclassify — so restating them here
- *  would only make them vaguer.
+ *  A CUSTOM runner rather than `transportAction`, for the response body: the
+ *  200 carries the authoritative `steer_id`, and adopting it here confirms the
+ *  chip on the POST's own round trip — the SSE `steer_queued` used to be the
+ *  ONLY confirmation, so a dropped stream left every sent steer stuck at
+ *  "Sending" while KAS held the message. The runner also lifts the envelope's
+ *  `reason` into the ActionError's code, which is what lets submit.ts convert
+ *  a `no_turn` refusal back into the prompt it should have been.
+ *
+ *  `error: false`: submit.ts owns the failure surface. A `no_turn` refusal is
+ *  retried as a prompt, so a toast saying "send this as a prompt instead"
+ *  would narrate the thing the client is already doing; every other refusal
+ *  renders through the send-error face with the server's own words.
  */
-export const steerChat = transportAction<
+export const steerChat = defineAction<
   { chatID: string; text: string; messageID: string },
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument: the run consumes the POST body itself, so there is no result for a caller
+  void,
   { chatID: string; steerID: string }
 >({
   name: "chat.steer",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
-  command: ({ chatID, text, messageID }) => ({
-    type: "steer",
-    chat_id: chatID,
-    payload: { text, message_id: messageID },
-  }),
+  error: false,
+  run: async ({ chatID, text, messageID }, signal, ctx) => {
+    const cmd: Parameters<typeof transportSend>[0] = {
+      type: "steer",
+      chat_id: chatID,
+      payload: { text, message_id: messageID },
+    };
+    if (ctx?.idempotencyKey !== undefined) {
+      // The key rides the command object under the framework's field name, the
+      // same shape its own adapter sends; transport.send lifts it into the
+      // Idempotency-Key header. Attached through the Record cast the reader
+      // uses, because the field is deliberately not a typed-command member.
+      (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD] = ctx.idempotencyKey;
+    }
+    const r: SendResult = await transportSend(cmd, { signal, reportSendState: false });
+    if (!r.ok) {
+      const opts: { status: number; code?: string } = { status: r.status };
+      const code = r.reason ?? r.code;
+      if (code !== undefined) {
+        opts.code = code;
+      }
+      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, opts);
+    }
+    const steerID = steerIDOf(r.body);
+    if (steerID !== "") {
+      recordSteerQueued(chatID, { id: steerID, text });
+    }
+  },
   optimistic: ({ chatID, text, messageID }) => {
     recordSteerSent(chatID, messageID, text);
     return { chatID, steerID: steerIDFor(messageID) };
@@ -387,6 +419,16 @@ export const steerChat = transportAction<
     forgetSteer(chatID, steerIDFor(messageID));
   },
 });
+
+/** The `steer_id` off the steer response body, or "" when the body carries
+ *  none — an older server whose reply the SSE frame then covers. */
+function steerIDOf(body: unknown): string {
+  if (body === null || typeof body !== "object") {
+    return "";
+  }
+  const id = (body as Record<string, unknown>)["steer_id"];
+  return typeof id === "string" ? id : "";
+}
 
 /** Drop every steer KAS is still holding for this chat (`_session/steer/clear`).
  *

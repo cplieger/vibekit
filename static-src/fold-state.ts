@@ -26,8 +26,9 @@ import { LS_TURN_FOLDS_KEY } from "./ls-keys.js";
 import { readPerChat, writePerChat } from "./per-chat-store.js";
 import type { Turn } from "./turns.js";
 
-/** How many trailing turns stay open regardless of anything else. */
-const OPEN_TAIL = 2;
+/** How many trailing turns stay open regardless of anything else. ONE: a turn
+ *  auto-collapses when the next turn starts, and not before. */
+const OPEN_TAIL = 1;
 
 /** How many trailing turns keep their body DOM mounted while closed — the
  *  renderer's tier-2 "warm" window (`mounted = foldOpen || distance <
@@ -110,14 +111,14 @@ function persist(chatID: string): void {
  *  `hasLiveRun` is passed rather than derived, for the same reason `pendingAsk` is
  *  passed into `tabStatusFor`: the answer needs the run store and the message list,
  *  and this module must stay a pure fold-state rule that knows about neither. */
-export function isTurnOpen(
-  chatID: string,
-  t: Turn,
-  index: number,
-  total: number,
-  hasLiveRun = false,
-): boolean {
+export function isTurnOpen(chatID: string, t: Turn, index: number, total: number): boolean {
   load();
+  // A running turn is the one being watched, and it CANNOT be collapsed — the
+  // rule outranks even an explicit override, so a stale recorded fold cannot
+  // hide a live stream.
+  if (t.outcome === "running") {
+    return true;
+  }
   const explicit = overrides.get(chatID)?.[t.id];
   if (explicit !== undefined) {
     return explicit;
@@ -125,26 +126,9 @@ export function isTurnOpen(
   if (searchOpened.get(chatID)?.has(t.id) === true) {
     return true;
   }
-  // Sticky failure. Checked BEFORE the tail rule rather than after, so a failed
-  // turn stays open no matter how far back it is.
-  if (t.outcome === "failed" || t.outcome === "interrupted") {
-    return true;
-  }
-  // A running turn is the one being watched.
-  if (t.outcome === "running") {
-    return true;
-  }
-  // A turn holding a LIVE WORKFLOW RUN, however far back it is. Its own outcome is
-  // long settled: `run_workflow` returns as soon as the run is created, so the turn
-  // completes while the run carries on for minutes, and the tail rule would fold
-  // the only surface still showing the work. Sticky like a failure, and for the
-  // same reason — the thing the reader needs is not where the tail rule looks.
-  //
-  // This rule exists only because a run's card lives in a turn. If a run's home
-  // ever moves out of the transcript, delete it with the card.
-  if (hasLiveRun) {
-    return true;
-  }
+  // No sticky-open for failed turns and no sticky-open for live runs: the
+  // collapsed face carries both (the error text as the turn's output, and a
+  // duplicate run card above the prose), so folding hides neither.
   return index >= total - OPEN_TAIL;
 }
 

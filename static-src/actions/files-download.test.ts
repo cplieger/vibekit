@@ -43,9 +43,12 @@ describe("downloadFiles action", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const revokeURL = vi.fn();
-    const createURL = vi.fn().mockReturnValue("blob:fake-url");
-    vi.stubGlobal("URL", { ...URL, createObjectURL: createURL, revokeObjectURL: revokeURL });
+    // Spy on the two statics; never replace the global URL. `{ ...URL }` copies
+    // no static method (they are non-enumerable) and yields a non-constructible
+    // object, which hangs `@vitest/coverage-v8` in Browser Mode forever — the
+    // run reports its tests green and then never exits.
+    const createURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake-url");
+    const revokeURL = vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
 
     const clickSpy = vi.fn();
     const removeSpy = vi.fn();
@@ -72,6 +75,7 @@ describe("downloadFiles action", () => {
     expect(JSON.parse(opts.body as string)).toEqual({ paths: ["dir/a.txt", "dir/b.txt"] });
     expect(clickSpy).toHaveBeenCalledOnce();
     expect(removeSpy).toHaveBeenCalledOnce();
+    expect(createURL).toHaveBeenCalledOnce();
     expect(revokeURL).toHaveBeenCalledWith("blob:fake-url");
   });
 
@@ -93,9 +97,8 @@ describe("downloadFiles action", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const revokeURL = vi.fn();
-    const createURL = vi.fn().mockReturnValue("blob:fake-url");
-    vi.stubGlobal("URL", { ...URL, createObjectURL: createURL, revokeObjectURL: revokeURL });
+    const createURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fake-url");
+    const revokeURL = vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
 
     const clickSpy = vi.fn();
     vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
@@ -131,8 +134,8 @@ describe("downloadFiles action", () => {
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(fakeBlob) }),
     );
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
-    vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:x", revokeObjectURL: () => {} });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:x");
+    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
     vi.spyOn(document, "createElement").mockReturnValue({
       href: "",
       download: "",

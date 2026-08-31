@@ -2,10 +2,13 @@
 // The cues a live thinking trace carries, and the one it carries once sealed.
 //
 // While it streams: it mounts EXPANDED with text growing into
-// `.reasoning-body`, its label reads "Thinking…", and a breathing accent disc
-// pulses on the summary row — one CSS rule
-// (`.msg-reasoning.streaming > .reasoning-summary::before`) switched on by the
-// `streaming` class `buildReasoning` sets for a live trace and `seal()` removes.
+// `.reasoning-body` and its label reads "Thinking…" — that is the whole live
+// affordance. There is deliberately NO pulsing disc and NO animation on any
+// reasoning selector: a pulsing dot is reserved to TABS and workflow-agent
+// surfaces, which report work the reader cannot see, and a live trace is
+// already on screen (user ruling, `vibekit-ui.md` "GPU compositing").
+// `buildReasoning` still sets the `streaming` class for a live trace (state
+// bookkeeping `seal()` removes); no stylesheet may hang an animation off it.
 // Once sealed the disclosure folds shut and the label becomes "Thinking
 // completed", so the collapsed row is all the reader is left with.
 //
@@ -13,9 +16,8 @@
 // than part of it, so every assertion here on the label's exact text has to keep
 // holding — that is the property the two elements exist to give.
 //
-// Two halves, because the pulse has two halves. The DOM half runs the real
-// builder for the class; the SOURCE half reads the shipped stylesheet for the
-// rule, since the test page links no app stylesheet (see
+// The DOM half runs the real builder; a SOURCE half reads the shipped
+// stylesheet to pin that no reasoning selector carries an animation (see
 // __test-helpers__/css-rules.ts).
 //
 // The last describe is a third kind and says why it has to be: two of the
@@ -25,7 +27,7 @@
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import fc from "fast-check";
-import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+import { allRules, loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: vi.fn(),
@@ -37,28 +39,29 @@ vi.mock("./scroll.js", () => ({
 import { buildReasoning } from "./fundamentals/reasoning.js";
 
 describe("a live reasoning block's cues", () => {
-  it("mounts open, labelled, pulsing, and counted", () => {
+  it("mounts open, labelled, marked streaming, and counted", () => {
     const r = buildReasoning("weighing the options", true);
     expect(r.root.open).toBe(true);
     expect(r.root.querySelector(".reasoning-label")?.textContent).toBe("Thinking…");
-    // The class the pulse rule is conditioned on. Asserted here and the rule
-    // asserted below, because either half alone is a dot that never appears.
+    // State bookkeeping only: the class marks a live trace and seal() removes
+    // it. No stylesheet may animate off it — pinned by the source describe
+    // below.
     expect(r.root.classList.contains("streaming")).toBe(true);
     // The count rides BESIDE the label, never inside it: the label is the state
     // and stays exactly the state (see "the summary's word count" below).
     expect(r.root.querySelector(".reasoning-count")?.textContent).toBe("3 words");
   });
 
-  it("drops the pulse when the trace seals", () => {
+  it("drops the streaming mark when the trace seals", () => {
     const r = buildReasoning("weighing the options", true);
     r.seal();
     // `[open]` flips back to true whenever the reader re-expands a finished
-    // trace, which is why the pulse hangs off this class instead.
+    // trace, which is why live state hangs off this class instead.
     expect(r.root.classList.contains("streaming")).toBe(false);
     expect(r.root.querySelector(".reasoning-label")?.textContent).toBe("Thinking completed");
   });
 
-  it("never pulses a replayed trace, which mounts settled and collapsed", () => {
+  it("never marks a replayed trace, which mounts settled and collapsed", () => {
     const r = buildReasoning("weighing the options", false);
     expect(r.root.classList.contains("streaming")).toBe(false);
     expect(r.root.open).toBe(false);
@@ -203,26 +206,28 @@ describe("the count and the summary's accessible name", () => {
   });
 });
 
-describe("13-messages.css pulses a live thinking trace", () => {
+describe("13-messages.css keeps reasoning still and flush", () => {
   const css = loadCSS("13-messages.css");
 
-  it("breathes an accent disc on the streaming summary row", () => {
-    // The other half of the DOM assertion above. Conditioned on `.streaming`
-    // rather than `[open]`, and scoped to `.msg-reasoning` so the
-    // compaction-summary disclosure — which shares `.reasoning-block` — never
-    // grows one.
-    const rule = ruleContaining(css, ".msg-reasoning.streaming > .reasoning-summary::before");
-    expect(rule.body).toMatch(/content:\s*""/u);
-    expect(rule.body).toMatch(/background:\s*var\(--c-accent\)/u);
-    expect(rule.body).toMatch(/animation:\s*vk-breathe/u);
-    expect(rule.body).toMatch(/border-radius:\s*50%/u);
+  it("hangs no animation off any reasoning selector", () => {
+    // The ruling this pins: a pulsing dot is reserved to TABS and
+    // workflow-agent surfaces. A live trace is on screen already — it mounts
+    // open with its text growing and its label reading "Thinking…" — so no
+    // reasoning rule may carry an animation, a ::before disc included.
+    const reasoningRules = allRules(css).filter((r) => r.selector.includes("reasoning"));
+    expect(reasoningRules.length).toBeGreaterThan(5);
+    for (const r of reasoningRules) {
+      expect(r.body, `animation in rule "${r.selector}"`).not.toMatch(/animation/u);
+    }
   });
 
-  it("does not condition the pulse on [open]", () => {
-    // `[open]` flips back to true when the reader re-expands a finished trace, so
-    // an `[open]`-keyed pulse would say "actively thinking" about a completed
-    // turn. The DOM half of this is the seal assertion above.
-    expect(css).not.toMatch(/\.reasoning-block\[open\][^{]*::before/u);
+  it("draws no accent bar and no indent on the block", () => {
+    // The purple border-inline-start and the body's inline padding were
+    // removed by user ruling (2026-08-30): the trace sits flush on the
+    // turn body's content edge like every other block.
+    expect(ruleContaining(css, ".reasoning-block").body).not.toMatch(/border/u);
+    const body = ruleContaining(css, ".reasoning-body").body;
+    expect(body).toMatch(/padding:\s*var\(--sp-2\)\s+0/u);
   });
 });
 
@@ -350,9 +355,9 @@ describe("the count's alignment and digit metrics, computed", () => {
 });
 
 describe("the shared breathe keyframe", () => {
-  it("exists in 03-base.css for this consumer and its ten siblings", () => {
-    // The tab dot, the run pip, the streaming code fence, … and the reasoning
-    // pulse above. One keyframe, many rules.
+  it("exists in 03-base.css for its consumers", () => {
+    // The tab dot, the run pip, the streaming code fence, and friends. One
+    // keyframe, many rules — none of them a reasoning selector (pinned above).
     expect(loadCSS("03-base.css")).toContain("@keyframes vk-breathe");
   });
 });

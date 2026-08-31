@@ -9,6 +9,13 @@
       margin-inline-start: 0;
     }
 
+    /* The sidebar is an off-canvas drawer here, so the desktop two-tone canvas
+       (02-reset.css body) would paint a secondary column under the chat area.
+       Flat page color; the drawer paints its own background when open. */
+    body {
+      background: var(--c-bg-primary);
+    }
+
     /* The drawer slides on TRANSFORM, not on `left`. `left` is a layout
        property, so the old `transition: left` re-laid-out and repainted a
        full-viewport-width element on every frame of every open and close —

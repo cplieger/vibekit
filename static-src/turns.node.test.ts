@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { projectTurns, turnLedger, turnAnchorID, turnRunIDs } from "./turns.js";
+import {
+  projectTurns,
+  turnLedger,
+  turnAnchorID,
+  turnRunIDs,
+  turnFaceProse,
+  turnFaceError,
+} from "./turns.js";
 import type { Message } from "./types.js";
 
 function user(id: string, content: string, ts = 1000): Message {
@@ -416,5 +423,84 @@ describe("the turn-segmentation contract shared with the Go implementation", () 
     expect(turns.map((t) => t.id)).toEqual(c.want.map((w) => w.id));
     expect(turns.map((t) => t.trigger === undefined)).toEqual(c.want.map((w) => w.agent_initiated));
     expect(turns.map((t) => t.outcome)).toEqual(c.want.map((w) => w.outcome));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The collapsed turn's FACE content: input in the header, these in the footer.
+// ---------------------------------------------------------------------------
+
+describe("turnFaceProse", () => {
+  function blocks(id: string, bs: Record<string, unknown>[]): Message {
+    return assistant(id, { blocks: bs } as unknown as Partial<Message>);
+  }
+
+  it("takes the last non-empty top-level text block", () => {
+    const t = projectTurns(
+      [
+        user("u1", "q"),
+        blocks("a1", [
+          { type: "text", text: "working on it" },
+          { type: "tool_use", tool_call_id: "t1" },
+          { type: "text", text: "the final answer" },
+        ]),
+      ],
+      false,
+    )[0];
+    expect(t === undefined ? "" : turnFaceProse(t)).toBe("the final answer");
+  });
+
+  it("skips a delegate's prose — a delegate's report is not the turn's answer", () => {
+    const t = projectTurns(
+      [
+        user("u1", "q"),
+        blocks("a1", [
+          { type: "text", text: "the parent's answer" },
+          { type: "text", text: "delegate report", agent_subtask_id: "sub-A" },
+        ]),
+      ],
+      false,
+    )[0];
+    expect(t === undefined ? "" : turnFaceProse(t)).toBe("the parent's answer");
+  });
+
+  it("answers empty for a turn with no prose at all", () => {
+    const t = projectTurns(
+      [user("u1", "q"), blocks("a1", [{ type: "tool_use", tool_call_id: "t1" }])],
+      false,
+    )[0];
+    expect(t === undefined ? "x" : turnFaceProse(t)).toBe("");
+  });
+});
+
+describe("turnFaceError", () => {
+  it("takes the last event row's text on a failed turn", () => {
+    const msgs = [
+      user("u1", "q"),
+      { ...event("e1", "cancelled"), content: "the bridge died" } as Message,
+      assistant("a1", { turn_outcome: "failed" }),
+    ];
+    const t = projectTurns(msgs, false)[0];
+    expect(t === undefined ? "" : turnFaceError(t)).toBe("the bridge died");
+  });
+
+  it("falls back to the event kind's own words when the row carries no prose", () => {
+    const msgs = [
+      user("u1", "q"),
+      event("e1", "compaction_failed"),
+      assistant("a1", { turn_outcome: "interrupted" }),
+    ];
+    const t = projectTurns(msgs, false)[0];
+    expect(t === undefined ? "" : turnFaceError(t)).toBe("Compaction failed");
+  });
+
+  it("answers empty for a clean turn — the face shows the answer instead", () => {
+    const msgs = [
+      user("u1", "q"),
+      event("e1", "model_switched"),
+      assistant("a1", { turn_outcome: "completed" }),
+    ];
+    const t = projectTurns(msgs, false)[0];
+    expect(t === undefined ? "x" : turnFaceError(t)).toBe("");
   });
 });

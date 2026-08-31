@@ -29,7 +29,7 @@
 // ---------------------------------------------------------------------------
 
 import { setThinking, clearSnapshotSeq, clearLiveTurnMessage, get, tabStatusFor } from "./store.js";
-import { setTabStatus } from "./tabs.js";
+import { setTabStatus, tabIdFor } from "./tabs.js";
 import { hasPendingDecision } from "./decision-dock.js";
 import { onTurnEnded } from "./banner-stack.js";
 import { drainModelSwitchQueue } from "./model-switcher.js";
@@ -55,5 +55,8 @@ export function clearTurnState(chatID: string): void {
   // is what left the switch stranded behind a stuck `.pending` pill.
   drainModelSwitchQueue(chatID);
   // Last: the dot is derived from everything above plus the caller's own latches.
-  setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
+  // The TAB id, resolved from the subject — setTabStatus takes the opaque
+  // server-minted id, and this call passed the CHAT id for months, a silent
+  // no-op masked by the chat row effect repainting on the same signal churn.
+  setTabStatus(tabIdFor("chat", chatID), tabStatusFor(get(chatID), hasPendingDecision(chatID)));
 }

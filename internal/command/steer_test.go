@@ -92,6 +92,9 @@ func TestCmdSteer_RefusesWithNoLiveTurn(t *testing.T) {
 	if !strings.Contains(errText(err), "send this as a prompt") {
 		t.Errorf("body %s does not point the caller at the prompt path", errText(err))
 	}
+	if reasonOf(err) != reasonNoTurn {
+		t.Errorf("reason = %q, want %q", reasonOf(err), reasonNoTurn)
+	}
 }
 
 // `queued:false` means the turn boundary moved while KAS was persisting, so the
@@ -112,6 +115,11 @@ func TestCmdSteer_MapsAnEpochDropToAConflict(t *testing.T) {
 	}
 	if !strings.Contains(errText(err), "turn ended") {
 		t.Errorf("body %s does not name the cause", errText(err))
+	}
+	// Same class as the idle refusal: the turn is gone, so the client's answer
+	// is the prompt path, and the reason is what lets it take that path itself.
+	if reasonOf(err) != reasonNoTurn {
+		t.Errorf("reason = %q, want %q", reasonOf(err), reasonNoTurn)
 	}
 }
 
@@ -293,8 +301,11 @@ func TestCmdSteer_RefusedWhileAPrimeIsOpen(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
 	deps := &bridgeDeps{
-		storeDeps: &storeDeps{benchDeps: &benchDeps{primeOpen: true}, store: store},
-		bridge:    b,
+		storeDeps: &storeDeps{
+			benchDeps: &benchDeps{holder: vibekit.TurnSourcePrime, holderOpen: true},
+			store:     store,
+		},
+		bridge: b,
 	}
 	host := hostDouble(deps)
 
@@ -305,5 +316,93 @@ func TestCmdSteer_RefusedWhileAPrimeIsOpen(t *testing.T) {
 	}
 	if b.callCount != 0 {
 		t.Error("a steer reached the wire during the prime window, so its text was swallowed by a throwaway turn")
+	}
+	// NOT the no_turn class: retrying as a prompt lands in the busy face, and
+	// the honest advice here is "wait a moment", which only the prose carries.
+	if reasonOf(err) == reasonNoTurn {
+		t.Error("the prime refusal carries no_turn; the client would convert a wait into a prompt")
+	}
+}
+
+// reasonOf reads the machine-readable refusal class off a handler error, the
+// same field writeErr lifts into the envelope.
+func reasonOf(err error) string {
+	if se, ok := errors.AsType[*statusError](err); ok {
+		return se.reason
+	}
+	return ""
+}
+
+// An IDLE chat with a live bridge is the trap the holder check exists for: KAS
+// queues a steer for any live session, so without the refusal the message sat
+// in the buffer forever — chip stuck "queued", no reply ever coming. The
+// refusal happens BEFORE the wire and names the no_turn class, which is what
+// lets the client convert the send back into the prompt it should have been.
+func TestCmdSteer_RefusesAnIdleChatBeforeTheWire(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
+	deps := &bridgeDeps{
+		storeDeps: &storeDeps{benchDeps: &benchDeps{}, store: store},
+		bridge:    b,
+	}
+	host := hostDouble(deps)
+
+	_, err := CmdSteer(t.Context(), host, host, steerReq(t, "c1", "hello", "m-1"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
+	}
+	if reasonOf(err) != reasonNoTurn {
+		t.Errorf("reason = %q, want %q", reasonOf(err), reasonNoTurn)
+	}
+	if b.callCount != 0 {
+		t.Error("the steer reached KAS's buffer; the refusal must happen before the call")
+	}
+}
+
+// A `!cmd` shell turn holds the slot with no session/prompt behind it, so a
+// steer delivered during one has no turn to drain it — same limbo as the idle
+// chat, same refusal class.
+func TestCmdSteer_RefusesAShellHolder(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
+	deps := &bridgeDeps{
+		storeDeps: &storeDeps{
+			benchDeps: &benchDeps{holder: vibekit.TurnSourceLocalShell, holderOpen: true},
+			store:     store,
+		},
+		bridge: b,
+	}
+	host := hostDouble(deps)
+
+	_, err := CmdSteer(t.Context(), host, host, steerReq(t, "c1", "hello", "m-1"))
+
+	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonNoTurn {
+		t.Errorf("status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonNoTurn)
+	}
+	if b.callCount != 0 {
+		t.Error("the steer reached the wire during a shell turn")
+	}
+}
+
+// A turn the ENGINE started (agent-initiated, a workflow fold target) is a real
+// running turn: its next node boundary drains the steering buffer exactly as a
+// prompted turn's does, so it must stay steerable.
+func TestCmdSteer_AllowsAWireStartedTurn(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
+	deps := &bridgeDeps{
+		storeDeps: &storeDeps{
+			benchDeps: &benchDeps{holder: vibekit.TurnSourceWireTurnStart, holderOpen: true},
+			store:     store,
+		},
+		bridge: b,
+	}
+	host := hostDouble(deps)
+
+	_, err := CmdSteer(t.Context(), host, host, steerReq(t, "c1", "hello", "m-1"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Errorf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 }
