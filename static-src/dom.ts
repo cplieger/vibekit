@@ -319,9 +319,6 @@ class Elements {
   get docsTabBar(): HTMLElement {
     return byId("docs-tab-bar");
   }
-  get docsTabSelect(): HTMLSelectElement {
-    return byId("docs-tab-select");
-  }
 
   // Editor
   get editorContent(): HTMLTextAreaElement {
@@ -388,9 +385,6 @@ class Elements {
   // Settings tab bar (mobile dropdown + desktop segmented control)
   get settingsTabBar(): HTMLDivElement {
     return byId("settings-tab-bar");
-  }
-  get settingsTabSelect(): HTMLSelectElement {
-    return byId("settings-tab-select");
   }
 
   // MCP modal (shared by add + edit)

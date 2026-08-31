@@ -1,17 +1,19 @@
 // ---------------------------------------------------------------------------
-// Turn actions: copy / export buttons attached after streaming finalizes.
+// Turn actions: the copy / source / export buttons in the turn FOOTER.
 //
-// Extracted from messages.ts — the "Turn actions" section (lines 1363-1468).
+// One row per turn, right-aligned beside the ledger summary, identical whether
+// the turn is open or folded — the footer is the one region that survives the
+// fold, so actions that operate on the whole turn live there rather than on an
+// assistant bubble inside the (foldable) body.
 // ---------------------------------------------------------------------------
 
 // Defensive null/undefined checks on DOM lookups that the type system
 // claims are guaranteed non-null but can race with reconcile passes.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
-import type { Message } from "./types.js";
+import type { Turn } from "./turns.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_SOURCE, ICON_LINK, ICON_EXPORT } from "./icons.js";
 import { getActive, getActiveId } from "./store.js";
-import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import { copyClipboard } from "./actions/messages.js";
 import { downloadChatExport } from "./chat-export.js";
 import { el } from "@cplieger/reactive";
@@ -22,6 +24,10 @@ import { el } from "@cplieger/reactive";
 
 /** Tracks active "copied" animation timers per button. */
 const copyTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+/** The turn each footer's actions operate on, refreshed every paint so click
+ *  handlers read current data rather than a mount-time snapshot. */
+const footerTurns = new WeakMap<HTMLElement, Turn>();
 
 // ---------------------------------------------------------------------------
 // Callbacks injected by messages.ts
@@ -71,36 +77,22 @@ function copyAndAnimate(btn: HTMLButtonElement, text: string): void {
 // Public
 // ---------------------------------------------------------------------------
 
-export function attachTurnActions(contentEl: HTMLDivElement): void {
-  const wrap = contentEl.closest<HTMLElement>(".msg-wrap");
-  // Idempotent: exactly one turn-actions row per assistant turn, whether it
-  // was attached on live-stream finalize or on a historical/reloaded mount.
-  // Guard at the wrap level (the row is appended to the wrap, not right after
-  // contentEl) so block-mode turns with trailing tool/thinking blocks aren't
-  // double-decorated.
-  if (wrap !== null && wrap.querySelector(":scope > .turn-actions") !== null) {
+/** Mount the action buttons into the turn's footer, once per footer element,
+ *  and refresh the turn snapshot the handlers read. Buttons appear only once
+ *  the turn has settled with something to copy — a running turn's footer (rare:
+ *  ledger data lands at turn end) stays actions-free, matching the old
+ *  finalize-time attachment. */
+export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t: Turn): void {
+  footerTurns.set(footer, t);
+  if (footer.querySelector(":scope > .turn-actions-buttons") !== null) {
     return;
   }
-  if (contentEl.nextElementSibling?.classList.contains("turn-actions")) {
-    return;
-  }
-  const msgID = wrap?.getAttribute(RECONCILE_KEY) ?? "";
-  const session = getActive();
-  const msg = session?.messages.find((m) => m.id === msgID);
-  const markdown = turnMarkdown(msg, wrap, contentEl);
-  if (markdown.trim() === "") {
+  if (t.outcome === "running" || turnMarkdown(t).trim() === "") {
     return;
   }
 
-  const chatID = getActiveId();
-
-  const rightSlot = el("span", { className: "turn-actions-buttons" });
-  const row = el(
-    "div",
-    { className: "turn-actions" },
-    el("span", { className: "turn-actions-summary" }),
-    rightSlot,
-  );
+  const slot = el("span", { className: "turn-actions-buttons" });
+  const current = (): Turn => footerTurns.get(footer) ?? t;
 
   const makeBtn = (
     svgMarkup: string,
@@ -123,175 +115,188 @@ export function attachTurnActions(contentEl: HTMLDivElement): void {
     return btn;
   };
 
-  rightSlot.appendChild(
+  slot.appendChild(
     makeBtn(ICON_COPY, "Copy as text", (btn) => {
-      copyAndAnimate(btn, turnPlainText(wrap, contentEl));
+      copyAndAnimate(btn, turnPlainText(card, current()));
     }),
   );
-  rightSlot.appendChild(
+  slot.appendChild(
     makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
-      copyAndAnimate(btn, markdown);
+      copyAndAnimate(btn, turnMarkdown(current()));
     }),
   );
   const srcBtn = makeBtn(ICON_SOURCE, "View markdown source", (btn) => {
-    // Re-resolved at click time rather than reusing the `markdown` captured
-    // above: the row attaches once and is idempotent, so a later
+    // Re-resolved at click time rather than captured at mount: a later
     // message_appended carrying the server's sanitized content would otherwise
     // leave a stale source behind an unchanging button.
-    toggleRawSource(wrap, contentEl, msgID, markdown, btn);
+    toggleTurnSource(card, turnMarkdown(current()), btn);
   });
+  srcBtn.classList.add("turn-action-src");
   srcBtn.setAttribute("aria-pressed", "false");
-  rightSlot.appendChild(srcBtn);
-  if (chatID !== "") {
-    rightSlot.appendChild(
-      makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
+  slot.appendChild(srcBtn);
+  slot.appendChild(
+    makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
+      const chatID = getActiveId();
+      if (chatID !== "") {
         copyAndAnimate(btn, chatID);
-      }),
-    );
-    rightSlot.appendChild(
-      makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
-        downloadChatExport(chatID, session?.name ?? "", "json");
-      }),
-    );
-  }
+      }
+    }),
+  );
+  slot.appendChild(
+    makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
+      const chatID = getActiveId();
+      if (chatID !== "") {
+        downloadChatExport(chatID, getActive()?.name ?? "", "json");
+      }
+    }),
+  );
 
-  if (wrap !== null && wrap !== undefined) {
-    wrap.appendChild(row);
+  // Before the Rewind button when one exists, so the destructive action keeps
+  // the far edge to itself; grid placement pins the columns either way.
+  const rewind = footer.querySelector<HTMLElement>(":scope > .turn-rewind");
+  if (rewind !== null) {
+    rewind.before(slot);
   } else {
-    contentEl.insertAdjacentElement("afterend", row);
+    footer.appendChild(slot);
   }
 }
 
-/** Class of the raw-source view. One per assistant turn. */
+/** Class of the raw-source view. One per turn surface. */
 const RAW_CLASS = "turn-raw";
 
+/** Drop any raw-source view and restore the rendered regions. Called when the
+ *  fold state changes: the raw view belongs to the surface it was opened on
+ *  (body or face), and the OTHER surface renders fresh — leaving the button
+ *  latched against a surface that no longer shows raw would make it lie. */
+export function resetTurnSourceView(card: HTMLElement): void {
+  const raws = card.querySelectorAll(`.${RAW_CLASS}`);
+  if (raws.length === 0) {
+    return;
+  }
+  for (const raw of raws) {
+    raw.remove();
+  }
+  for (const region of renderedRegions(card)) {
+    region.classList.remove("hidden");
+  }
+  const btn = card.querySelector<HTMLButtonElement>(
+    ":scope > .turn-footer > .turn-actions-buttons > .turn-action-src",
+  );
+  if (btn !== null) {
+    setSrcButtonState(btn, false);
+  }
+}
+
 /**
- * Show the reply's markdown SOURCE in place of its rendering, and back.
+ * Show the turn's markdown SOURCE in place of its rendering, and back.
  *
- * The WHOLE rendered body swaps — tool cards, reasoning traces and subagent
- * boxes included, not just the text bubbles. The source is one document, so
- * every word the model wrote arrives at the top of it, while evidence that was
- * interleaved with that prose keeps its own position; a half-swap therefore
- * showed the same turn in two different orders at once. Showing only the source
- * answers the question the button asks: what did the model actually emit.
+ * The WHOLE rendered output swaps — on the OPEN body that is every
+ * `.assistant-blocks` region (tool cards, reasoning traces and subagent boxes
+ * included), on the folded FACE it is the prose bubble. The source is one
+ * document, so every word the model wrote arrives at the top of it; a
+ * half-swap would show the same turn in two different orders at once.
  *
- * Three mechanical constraints decide the shape:
+ * Mechanics carried over from the per-message version:
  *
  *   - The raw view is a SIBLING that gets ADDED, never a replacement of the
- *     rendered children. `messageSpec.update` runs `updateAssistantBody` on
- *     every repaint — including every streamed chunk of a LATER turn — so a
- *     toggle that replaced the body would be silently undone.
- *   - Exactly one of the two carries `.hidden` (`display: none !important`,
- *     40-a11y.css), because find-in-chat's walker prunes `.hidden` subtrees.
- *     Hiding with `opacity` or `visibility` would leave both in the tree and
- *     double-count every match.
- *   - The CONTAINER hides, never its children one by one. A block that arrives
- *     after the toggle (a late `tool_call_update` growing the message) lands
- *     inside an already-hidden region, so the raw view stays clean with no
- *     bookkeeping; per-child hiding would leak that block into it. `.hidden`
- *     beats `.assistant-blocks`'s `display: contents` on the `!important`, and
- *     because that container generates no box either way, the source occupies
- *     exactly the position and measure of the prose it stands in for.
- *
- * The plan card, the licensed-code footnote and the refusal callout are wrap
- * SIBLINGS of the block region rather than members of it, and they stay put:
- * none is rendered from `blocks[]`, the swap does not reorder them, and the
- * refusal callout carries the turn's only Rewind and Switch-model controls.
+ *     rendered children: `updateAssistantBody` runs on every repaint and would
+ *     silently undo a replacement.
+ *   - Exactly one of the two carries `.hidden` (`display: none !important`),
+ *     because find-in-chat's walker prunes `.hidden` subtrees; `opacity` or
+ *     `visibility` would leave both in the tree and double-count matches.
+ *   - CONTAINERS hide, never children one by one, so a block arriving after
+ *     the toggle lands inside an already-hidden region.
  */
-function toggleRawSource(
-  wrap: HTMLElement | null,
-  contentEl: HTMLDivElement,
-  msgID: string,
-  fallback: string,
-  btn: HTMLButtonElement,
-): void {
-  const host = wrap ?? contentEl.parentElement;
+function toggleTurnSource(card: HTMLElement, source: string, btn: HTMLButtonElement): void {
+  const host = activeSurface(card);
   if (host === null) {
     return;
   }
-  const rendered = renderedRegions(host, contentEl);
-  let raw = host.querySelector<HTMLElement>(`.${RAW_CLASS}`);
+  const rendered = renderedRegions(card);
+  let raw = host.querySelector<HTMLElement>(`:scope > .${RAW_CLASS}`);
   if (raw === null) {
     raw = el("pre", { className: `${RAW_CLASS} hidden` });
-    const first = rendered[0];
+    const first = rendered.find((r) => r.parentElement === host);
     if (first !== undefined) {
       first.insertAdjacentElement("beforebegin", raw);
     } else {
-      host.appendChild(raw);
+      host.prepend(raw);
     }
   }
   const showRaw = raw.classList.contains("hidden");
   if (showRaw) {
-    raw.textContent = currentSource(msgID, wrap, contentEl, fallback);
+    raw.textContent = source;
   }
   raw.classList.toggle("hidden", !showRaw);
   for (const region of rendered) {
     region.classList.toggle("hidden", showRaw);
   }
-  const label = showRaw ? "View rendered reply" : "View markdown source";
-  btn.setAttribute("aria-pressed", showRaw ? "true" : "false");
+  setSrcButtonState(btn, showRaw);
+}
+
+function setSrcButtonState(btn: HTMLButtonElement, raw: boolean): void {
+  const label = raw ? "View rendered reply" : "View markdown source";
+  btn.setAttribute("aria-pressed", raw ? "true" : "false");
   btn.setAttribute("aria-label", label);
   btn.setAttribute("data-tooltip", label);
 }
 
-/** The rendered body the source stands in for: the message's block region.
- *  Queried plural rather than once because `updateAssistantBody`'s self-healing
- *  path rebuilds the region when its render state is missing, which can leave
- *  two behind; hiding only the first would leave a stray body on screen. Falls
- *  back to the bubble itself when the host carries no block region, which is the
- *  same degraded shape `attachTurnActions` handles for a missing wrap. */
-function renderedRegions(host: HTMLElement, contentEl: HTMLDivElement): HTMLElement[] {
-  const regions = [...host.querySelectorAll<HTMLElement>(":scope > .assistant-blocks")];
-  return regions.length > 0 ? regions : [contentEl];
+/** The surface the source stands in for right now: the face when folded, the
+ *  body when open. A folded stub has no body, so the face answer covers it. */
+function activeSurface(card: HTMLElement): HTMLElement | null {
+  if (card.hasAttribute("data-folded")) {
+    return card.querySelector<HTMLElement>(":scope > .turn-face");
+  }
+  return card.querySelector<HTMLElement>(":scope > .turn-body");
 }
 
-/** The message's markdown as the store holds it NOW, falling back to whatever
- *  the row captured when it attached. */
-function currentSource(
-  msgID: string,
-  wrap: HTMLElement | null,
-  contentEl: HTMLDivElement,
-  fallback: string,
-): string {
-  const msg = getActive()?.messages.find((m) => m.id === msgID);
-  const md = turnMarkdown(msg, wrap, contentEl);
-  return md.trim() === "" ? fallback : md;
+/** The rendered regions the source hides: every block region in the body plus
+ *  the face's prose bubble. Queried plural because `updateAssistantBody`'s
+ *  self-healing path can leave two block regions behind; hiding only the first
+ *  would leave a stray body on screen. */
+function renderedRegions(card: HTMLElement): HTMLElement[] {
+  return [
+    ...card.querySelectorAll<HTMLElement>(
+      ":scope > .turn-body .assistant-blocks, :scope > .turn-face > .turn-face-prose",
+    ),
+  ];
 }
 
-/** The turn's markdown, for "copy as markdown": the stored message content,
- *  or the concatenation of its text blocks, or the rendered text as a last
- *  resort. Block-mode turns can carry an empty top-level `content`, so the
- *  fallbacks keep the row attaching (and the copy correct) on those turns. */
-function turnMarkdown(
-  msg: Message | undefined,
-  wrap: HTMLElement | null,
-  contentEl: HTMLDivElement,
-): string {
-  if (msg !== undefined) {
-    if (msg.content !== undefined && msg.content !== "") {
-      return msg.content;
+/** The turn's markdown, for "copy as markdown" and the source view: every
+ *  assistant message's stored content joined in order, falling back to its
+ *  parent-authored text blocks when a block-mode message carries an empty
+ *  top-level `content`. */
+export function turnMarkdown(t: Turn): string {
+  const parts: string[] = [];
+  for (const m of t.body) {
+    if (m.role !== "assistant") {
+      continue;
     }
-    const text = (msg.blocks ?? [])
-      .map((b) => (b.type === "text" ? (b.text ?? "") : ""))
-      .filter((t) => t !== "")
-      .join("\n\n")
-      .trim();
-    if (text !== "") {
-      return text;
+    let text = m.content ?? "";
+    if (text.trim() === "") {
+      text = (m.blocks ?? [])
+        .map((b) => (b.type === "text" && (b.agent_subtask_id ?? "") === "" ? (b.text ?? "") : ""))
+        .filter((s) => s !== "")
+        .join("\n\n");
+    }
+    if (text.trim() !== "") {
+      parts.push(text);
     }
   }
-  return turnPlainText(wrap, contentEl);
+  return parts.join("\n\n");
 }
 
-/** The turn's rendered plain text, for "copy as text": every assistant bubble
- *  in the turn joined, so a block-mode turn with several text bubbles copies
- *  whole rather than just the bubble the finalize path happened to pass. */
-function turnPlainText(wrap: HTMLElement | null, contentEl: HTMLDivElement): string {
-  if (wrap !== null) {
-    const bubbles = [...wrap.querySelectorAll(".message.assistant")];
-    if (bubbles.length > 0) {
-      return bubbles.map((b) => b.textContent ?? "").join("\n\n");
-    }
+/** The turn's rendered plain text, for "copy as text": the assistant bubbles
+ *  of whichever surface is mounted (body open, face folded), falling back to
+ *  the markdown when neither holds one (a folded stub with no prose face). */
+function turnPlainText(card: HTMLElement, t: Turn): string {
+  const bubbles = [
+    ...card.querySelectorAll(
+      ":scope > .turn-body .message.assistant, :scope > .turn-face > .message.assistant",
+    ),
+  ];
+  if (bubbles.length > 0) {
+    return bubbles.map((b) => b.textContent ?? "").join("\n\n");
   }
-  return contentEl.textContent ?? "";
+  return turnMarkdown(t);
 }

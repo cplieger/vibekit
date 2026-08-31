@@ -772,8 +772,11 @@
     --c-on-accent: oklch(100% 0 none);
     --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
-    --c-green: oklch(50% 0.12 142.7deg);
-    --c-red: oklch(55% 0.15 2.8deg);
+    /* 48%/52% L, not 50%/55%: as glyph ink on the tool group's tertiary
+       surface the old values measured 4.49:1 and 4.15:1 — under the 4.5:1
+       text floor (same class of fix as --c-yellow's 49%). */
+    --c-green: oklch(48% 0.12 142.7deg);
+    --c-red: oklch(52% 0.15 2.8deg);
 
     /* The diff row surfaces, dark's reasoning inverted: step AWAY from the ink,
      * which here means lighter than the pane. Worst ink 5.70:1 on add and
@@ -785,8 +788,9 @@
     --c-diff-del-bg: oklch(94% 0.03 2.8deg);
 
     /* Deeper than the old 60%: yellow needs lower L than its siblings to
-     * read as text on white (60% was 3.1:1 as pill text; 49% is 6:1). */
-    --c-yellow: oklch(49% 0.09 86.5deg);
+     * read as text on white (60% was 3.1:1 as pill text; 49% was 6:1 there
+     * but 4.3:1 as badge ink on its own 10% tint — 47% clears both). */
+    --c-yellow: oklch(47% 0.09 86.5deg);
 
     /* THE TAB ACTIVITY DOT, at the dark block's hues exactly. Only L and C move,
      * because a pastel tuned for a near-black row is invisible on a white one —

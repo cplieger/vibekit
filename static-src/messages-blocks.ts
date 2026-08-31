@@ -58,7 +58,7 @@ import {
   clearToolCallSig,
 } from "./store-signals.js";
 import { lineDiff, stats } from "./diff.js";
-import { isToolActive } from "./tool-schema.js";
+import { isInternalToolTitle, isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
 import {
   buildAssistantBubble,
@@ -147,9 +147,34 @@ export function initBlockRenderer(c: BlockCbs): void {
 
 let liveAnchor: { messageID: string; el: HTMLElement } | null = null;
 
-/** The element Following pins to, or null for the document bottom. */
+/** The element Following pins to, or null for the document bottom.
+ *
+ *  Self-healing: a mid-turn rebuild replaces a message's render, and the OLD
+ *  bubble's seal belongs to the old render — so the slot can keep pointing at
+ *  an element no longer in the transcript, whose offsetTop/offsetHeight read 0
+ *  and pin the follow scroll to the TOP of the transcript. Measured live
+ *  (2026-08-31): a mid-stream repaint snapped scrollTop 786 → 0 while the turn
+ *  kept streaming. The registry is the truth: when the anchor is not its own
+ *  message's CURRENT top-level live bubble, re-derive from the render map,
+ *  exactly like clearLiveAnchor. */
 export function getLiveAnchor(): HTMLElement | null {
+  if (liveAnchor !== null && renders.get(liveAnchor.messageID)?.topLiveEl !== liveAnchor.el) {
+    liveAnchor = null;
+    rescanLiveAnchor();
+  }
   return liveAnchor?.el ?? null;
+}
+
+/** Point the slot at the newest still-live top-level bubble of the active
+ *  chat, or leave it null. Registration order is mount order, so the last
+ *  match is the newest. */
+function rescanLiveAnchor(): void {
+  const activeChat = getActiveId();
+  for (const [id, st] of renders) {
+    if (!st.detached && st.chatID === activeChat && st.topLiveEl !== null) {
+      liveAnchor = { messageID: id, el: st.topLiveEl };
+    }
+  }
 }
 
 /** Identity-guarded clear: only the registered element's own seal clears the
@@ -162,12 +187,7 @@ function clearLiveAnchor(el: HTMLElement): void {
     return;
   }
   liveAnchor = null;
-  const activeChat = getActiveId();
-  for (const [id, st] of renders) {
-    if (!st.detached && st.chatID === activeChat && st.topLiveEl !== null) {
-      liveAnchor = { messageID: id, el: st.topLiveEl };
-    }
-  }
+  rescanLiveAnchor();
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,6 +1218,16 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
       const tc = m.tool_calls?.find((c) => c.id === block.tool_call_id);
       if (tc === undefined) {
         return; // referenced tool call not in the store yet (out-of-order SSE)
+      }
+      // Internal engine bookkeeping (the session-boot cloud-config fetch) is
+      // suppressed server-side since 2026-08-31, so this only ever matches
+      // TRANSCRIPTS PERSISTED BEFORE THAT — where the fragment's card sits
+      // stuck at in_progress forever, because its completion frame was lost to
+      // the displacement that persisted it. Title-keyed, unlike the server's
+      // _meta.kiro.toolId key, because the persisted ToolCall carries no tool
+      // id; the title is a KAS constant, not model-composed.
+      if (isInternalToolTitle(tc.title)) {
+        return;
       }
       // A WORKFLOW LAUNCH becomes the run's card, not a tool row. The call sits
       // in the parent agent's own block stream (it has no subtask of its own), so

@@ -127,16 +127,18 @@ func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 	}
 }
 
-// An effort level outside the accepted set is dropped rather than sent, so a bad
-// persisted setting cannot turn into a failed call on the session-creation path.
-func TestNewSession_DropsInvalidEffort(t *testing.T) {
+// An effort level too malformed to be a tier id is dropped rather than sent, so
+// a corrupted persisted setting cannot turn into a failed call on the
+// session-creation path. Shape-checked only: the tier vocabulary is per model
+// and KAS's to judge, so an unknown-but-well-formed level DOES flow.
+func TestNewSession_DropsMalformedEffort(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
 	scriptPath := configOptionFake(t, logPath)
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Effort: "ultra"}); err != nil {
+	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Effort: "Ultra!"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -145,7 +147,7 @@ func TestNewSession_DropsInvalidEffort(t *testing.T) {
 		t.Fatalf("read request log: %v", err)
 	}
 	if strings.Contains(string(raw), `"configId":"effortLevel"`) {
-		t.Errorf("invalid effort reached the wire\nlog:\n%s", raw)
+		t.Errorf("malformed effort reached the wire\nlog:\n%s", raw)
 	}
 }
 

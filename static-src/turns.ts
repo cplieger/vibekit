@@ -119,11 +119,11 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
         outcome: "completed",
         rewindTo: undefined,
       });
-      closed = m.turn_outcome !== undefined;
+      closed = closesTurn(m.turn_outcome);
       continue;
     }
     open.body.push(m);
-    closed = closed || m.turn_outcome !== undefined;
+    closed = closed || closesTurn(m.turn_outcome);
   }
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
@@ -137,6 +137,18 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
     t.rewindTo = turns[i + 1]?.trigger;
   }
   return turns;
+}
+
+/** Whether an outcome value ENDS a segment. A settled outcome does; "unknown"
+ *  does not — it marks a fragment whose end never arrived (a displaced turn's
+ *  persist), and every transcript persisted before the internal-tool
+ *  suppression carries one per fresh session, between the user's message and
+ *  the real reply. Treating it as a terminator split that turn in two: the
+ *  reply opened a phantom "Agent-initiated turn" and the rail counted one turn
+ *  too many. A fragment JOINS the segment it interrupted; deriveOutcome lets
+ *  the reply's settled outcome supersede its "unknown". */
+function closesTurn(outcome: TurnOutcome | undefined): boolean {
+  return outcome !== undefined && outcome !== "unknown";
 }
 
 /** Is this the first persisted message of a turn with NO user trigger?
@@ -198,11 +210,19 @@ function opensHeaderlessTurn(m: Message, prevClosed: boolean): boolean {
  *  and the rail, not the evidence. */
 function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
   let interrupted = false;
+  let sawUnknown = false;
   for (const m of t.body) {
     // The DURABLE outcome, when the turn carries one: since P9 the message that
     // finalized a turn records the wire's own verdict, so a reloaded transcript
     // reads it instead of inferring one from whichever markers survived. The
     // inference below is the fallback for every turn persisted before that.
+    // "unknown" is a fragment's non-verdict (see closesTurn): remembered as the
+    // fallback rather than returned, because the segment usually continues into
+    // the real reply, whose settled outcome is the turn's.
+    if (m.turn_outcome === "unknown") {
+      sawUnknown = true;
+      continue;
+    }
     if (m.turn_outcome !== undefined) {
       return m.turn_outcome;
     }
@@ -219,7 +239,10 @@ function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
   if (interrupted) {
     return "interrupted";
   }
-  return isLive ? "running" : "completed";
+  if (isLive) {
+    return "running";
+  }
+  return sawUnknown ? "unknown" : "completed";
 }
 
 /** Every workflow run a turn launched, from its body's tool calls.
@@ -278,53 +301,6 @@ export function turnLedger(t: Turn): TurnLedger {
     }
   }
   return led;
-}
-
-/** What a FOLDED turn shows on its right, in priority order.
- *
- *  The row has to earn the fold, so it shows the most concrete thing the turn
- *  actually produced:
- *
- *    1. Changed filenames. If a turn touched files, that is what it was about.
- *    2. Otherwise the first sentence of the reply — cheap, honest, and for a
- *       conversational turn it IS the answer.
- *    3. Otherwise nothing, and the footer's own cost/time line carries the row.
- *       A turn that produced no files and no prose is a turn whose only fact is
- *       that it happened.
- *
- *  NO generated summaries, and that was decided on evidence rather than cost:
- *  the ONNX runtime bundled in kiro-cli is `all-MiniLM-L6-v2`, an EMBEDDING
- *  model, and `generateSummary` / `generateTitle` / `localModel` return zero hits
- *  across the whole installed surface. There is no local generative model to
- *  call. A remote call per turn would spend money and latency on a sentence the
- *  transcript already contains.
- */
-export function turnFoldSummary(t: Turn): string {
-  const led = turnLedger(t);
-  const paths = Object.keys(led.changedFiles);
-  if (paths.length > 0) {
-    const names = paths.map((p) => p.split("/").pop() ?? p).sort((a, b) => a.localeCompare(b));
-    const shown = names.slice(0, 2).join(", ");
-    return names.length > 2 ? `${shown} +${String(names.length - 2)} more` : shown;
-  }
-  return firstSentence(t);
-}
-
-/** The reply's first sentence, truncated. Reads the turn's text content, not its
- *  tool output — the answer is prose, and a tool's stdout is not a summary. */
-function firstSentence(t: Turn, max = 80): string {
-  for (const m of t.body) {
-    const text = (m.content ?? "").trim();
-    if (text === "") {
-      continue;
-    }
-    const flat = text.replace(/\s+/g, " ");
-    // A sentence end, or the whole thing if it has none.
-    const stop = /[.!?](\s|$)/.exec(flat);
-    const sentence = stop === null ? flat : flat.slice(0, stop.index + 1);
-    return sentence.length > max ? sentence.slice(0, max) + "\u2026" : sentence;
-  }
-  return "";
 }
 
 /** The stable DOM id a turn permalink targets, so `/chat/{id}#turn-{n}` can

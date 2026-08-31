@@ -397,24 +397,21 @@
      * Removing the transition lets the bubble track content size
      * instantly; the per-chunk fade-in (data-vk-chunk-enter) supplies
      * the perception of motion. */
-    &.streaming {
-      /* Subtle accent wash while streaming so the live turn is visually
-       * distinct from completed ones. Released on turn_ended via the
-       * .streaming class removal. Now the ONLY background this element ever
-       * carries, so it reads as state rather than as a bubble. */
-      background: linear-gradient(
-        180deg,
-        transparent 0%,
-        color-mix(in srgb, var(--c-accent) 8%, transparent) 100%
-      );
-      border-radius: var(--r);
-    }
+    /* No streaming wash: the live bubble used to carry an accent gradient that
+     * vanished at turn end, which read as a rendering glitch rather than state
+     * (user report, 2026-08-31). The caret below and the working pill are the
+     * "still typing" signals; text surfaces carry no background. */
 
-    /* Blinking caret at the end of the streaming bubble — a small
-     * affordance that the model is still typing. The ::after carries
-     * a 1ch space + a styled cursor character; appears only while
-     * .streaming is set. */
-    &.streaming::after {
+    /* Blinking caret LEADING the text — attached to the element the renderer
+     * is currently writing into (`data-vk-caret`, smd-renderer.ts), so it sits
+     * right after the last word instead of on its own line below the paragraph
+     * (a container ::after lands after the last BLOCK child, which is exactly
+     * the "cursor is on the next line" report). The :empty arm covers the
+     * bubble waiting on its first token, when no element exists to carry the
+     * attribute. Gated on .streaming, so stale attributes cost nothing once
+     * the bubble seals. */
+    &.streaming:empty::after,
+    &.streaming [data-vk-caret]::after {
       content: "▌";
       display: inline-block;
       margin-inline-start: 0.125rem;
@@ -758,9 +755,28 @@
    * number the tools reported was never the number on screen. Subordination is
    * carried by the ink token, the italic and the smaller step. */
 
-  /* No height transition: same per-chunk flicker reasoning as the
-   * streaming bubble — let height track content instantly. The
-   * details<>summary native open/close animation is still visible. */
+  /* No height transition ON THE BLOCK: same per-chunk flicker reasoning as
+   * the streaming bubble — let height track content instantly while open. The
+   * open/close slide lives on ::details-content below, where the computed
+   * block-size only changes at the state flip, never per chunk. */
+}
+
+/* Sealing folds shut with the same slide every other disclosure uses.
+ * `::details-content` is the platform half of a native <details> (the UA flips
+ * its content-visibility on open/close), so the close animates: block-size
+ * 0↔auto rides interpolate-size (:root), the visibility flip lands at the end
+ * of a close and the start of an open (allow-discrete). While OPEN the
+ * computed block-size stays `auto`, so streamed growth never retriggers it. */
+.reasoning-block::details-content {
+  overflow: clip;
+  block-size: 0;
+  transition:
+    block-size var(--dur-standard) var(--ease-standard),
+    content-visibility var(--dur-standard) allow-discrete;
+}
+
+.reasoning-block[open]::details-content {
+  block-size: auto;
 }
 
 /* NOTE: no animation may return to a reasoning selector. A breathing accent
@@ -1267,7 +1283,7 @@
  *
  * A sibling of the whole rendered block region rather than a replacement of it,
  * and hidden with `.hidden` rather than opacity — see the reasoning in
- * messages-turn-actions.ts toggleRawSource.
+ * messages-turn-actions.ts toggleTurnSource.
  *
  * NO `max-width`, for the same reason the rendering it stands in for has none
  * (`.message.assistant` above). It used to carry a second copy of the same

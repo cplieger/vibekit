@@ -37,6 +37,21 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
+	// Internal engine bookkeeping never reaches the transcript (user decision;
+	// KAS's own TUI hides it too). Beyond noise, the cloud-config fetch runs
+	// DURING session creation — before the prompt's turn opens — so its frame
+	// used to open a wire turn the prompt then displaced, persisting a fragment
+	// message that split the user's turn in two on every fresh session
+	// (the "Agent-initiated turn" phantom) with the tool stuck in_progress
+	// forever. Dropping the frame BEFORE ensureTurnStarted is what prevents
+	// that turn from ever opening. The update must be dropped too, and not
+	// only by the id-not-buffered fallback: TurnFoldTarget OPENS a wire turn
+	// for any frame it is asked about, so the completion arriving alone would
+	// re-create the fragment as an empty turn.
+	if isInternalTool(tc.Meta.Kiro.ToolID) {
+		t.suppressed.add(tc.ToolCallID)
+		return
+	}
 	buf := t.buffers.TurnFoldTarget(ctx, chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
 	// A workflow STEP's tool frames carry KAS's own agentSubtaskId (or none),
@@ -105,6 +120,11 @@ func toolCallFromWire(
 func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
+		return
+	}
+	// A suppressed internal tool's completion. Dropped BEFORE TurnFoldTarget,
+	// which would otherwise open a wire turn for a frame nothing renders.
+	if t.suppressed.take(tu.ToolCallID) {
 		return
 	}
 	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)

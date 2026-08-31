@@ -160,13 +160,13 @@ export function refreshGroupHeader(group: HTMLElement): void {
   const calls = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
-  const collapsed =
-    group.classList.contains(CLS_COLLAPSED) || group.classList.contains(CLS_AUTO_COLLAPSED);
   const failures = countFailures(calls);
   // The summary states the aggregate FACT and names any failure in it. It never
   // counts cards: "Read 5 files" is right, "5 tool calls" is a bug.
   const summary = summarize(calls) + (failures > 0 ? ` \u00b7 ${String(failures)} failed` : "");
-  header.textContent = collapsed ? `${summary} (collapsed)` : summary;
+  // No "(collapsed)" suffix: the group is one box whose chevron and
+  // aria-expanded already carry the state, so the word restated the chrome.
+  header.textContent = summary;
   paintGroupOutcome(group, calls, failures);
 }
 

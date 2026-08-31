@@ -73,6 +73,9 @@ export interface DomRendererData {
    *  inside `<code>` / `<pre>` because spans there break syntax
    *  highlighters that expect raw text children. */
   animateText: boolean;
+  /** The current `data-vk-caret` holder — the element the stream last wrote
+   *  text into, where the CSS caret renders. See moveCaret. */
+  caretEl?: Element | null;
 }
 
 function makeEl(tag: string): HTMLElement {
@@ -234,6 +237,24 @@ function end_token_dom(data: DomRendererData): void {
   }
 }
 
+/** The streaming caret's home: the element text last landed in carries
+ *  `data-vk-caret`, so the CSS caret (13-messages.css) renders inline after the
+ *  last word rather than on its own line after the last block — a container
+ *  `::after` is what put the cursor "on the next line". One holder at a time,
+ *  moved only when the insertion element changes; gated on `animateText`, so a
+ *  replay never pays the attribute writes. The bubble's `.streaming` class
+ *  scopes the CSS, so the attribute is inert once the bubble seals. */
+const CARET_ATTR = "data-vk-caret";
+
+function moveCaret(data: DomRendererData, target: Element): void {
+  if (!data.animateText || data.caretEl === target) {
+    return;
+  }
+  data.caretEl?.removeAttribute(CARET_ATTR);
+  target.setAttribute(CARET_ATTR, "");
+  data.caretEl = target;
+}
+
 function add_text_dom(data: DomRendererData, text: string): void {
   const parent = data.nodes[data.index];
   if (parent === null || parent === undefined) {
@@ -251,6 +272,8 @@ function add_text_dom(data: DomRendererData, text: string): void {
     img.alt = (img.alt ?? "") + text;
     return;
   }
+
+  moveCaret(data, parent);
 
   // For streaming render, wrap the text in an inline span so per-chunk
   // fade-in CSS can animate each delta as it arrives. Skipped inside

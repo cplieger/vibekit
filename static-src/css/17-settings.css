@@ -151,22 +151,29 @@
      selected one. */
 }
 
-/* Mobile tab select: native dropdown, hidden on desktop. */
-.settings-tab-select-wrap {
+/* Segment content: label by default, per-tab icon when the bar cannot fit
+   the labels. tab-bar-fit.ts measures per bar (never a breakpoint — which
+   labels fit depends on the label set) and sets .tab-bar-icons when any
+   label would truncate; one truncated label flips the WHOLE bar, because a
+   row mixing text pills and icon pills reads as broken. The label stays in
+   the DOM for the accessible name; every button also carries aria-label. */
+.settings-tab-icon {
   display: none;
+  flex-shrink: 0;
 }
 
-.settings-tab-select {
-  min-block-size: var(--btn-h);
-  width: 100%;
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  color: var(--c-text-primary);
-  font-family: var(--font-sans);
-  font-size: var(--fs-md);
-  appearance: auto; /* keep the native chevron for platform affinity */
+.tab-bar-icons .settings-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  & > .settings-tab-icon {
+    display: block;
+  }
+
+  & > .settings-tab-label {
+    display: none;
+  }
 }
 
 /* Panel body container. One panel visible at a time (others get .hidden). */
@@ -1431,17 +1438,6 @@
   margin-block: var(--sp-2);
 }
 
-/* Mobile: swap pill bar for the native select. */
-@media (width <= 40rem) {
-  .settings-tab-bar {
-    display: none;
-  }
-
-  .settings-tab-select-wrap {
-    display: block;
-  }
-}
-
 /* Account + About + Diagnostics sections on Settings → General. Flat
    inline rows: label on the left, value / action on the right, stacking
    on mobile when the container narrows past the natural wrap point. */
@@ -1506,8 +1502,7 @@ dd.governance-off {
 }
 
 /* Inline dropdown used in Settings → Custom instructions (default
-   agent picker). Mirrors .settings-tab-select styling so both lives
-   behave identically. */
+   agent picker). */
 .page-select {
   min-block-size: var(--btn-h);
   width: 100%;

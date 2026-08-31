@@ -561,6 +561,13 @@
   border-radius: var(--r);
   display: flex;
   align-items: center;
+
+  /* Center the glyph on BOTH axes: the 44px mobile hit-target floor
+     (61-mcp-tools.css) widens the box past its content, and without this the
+     icon sat at flex-start — measurably off-center in every floor-widened
+     button (sidebar footer's settings/logout/theme, reported on iPhone).
+     Content-sized desktop boxes are unaffected. */
+  justify-content: center;
   flex-shrink: 0;
   line-height: 0;
   transition:

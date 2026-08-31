@@ -626,7 +626,18 @@ class ToolsManager {
       "div",
       { className: "list-row" },
       stateDot(t),
-      chips.length > 0 ? el("span", { className: "tool-name-wrap" }, name, ...chips) : name,
+      // Chips ride their own line under the name (the Add modal's
+      // .tool-hit-chips idiom): inline after the name they started wherever
+      // the name ended, so a column of rows scattered them across as many x
+      // offsets as there were name lengths.
+      chips.length > 0
+        ? el(
+            "span",
+            { className: "tool-name-wrap" },
+            name,
+            el("span", { className: "tool-hit-chips" }, ...chips),
+          )
+        : name,
       el("span", { className: "list-row-meta" }, metaText(t)),
     ) as HTMLDivElement;
     if (t.disabled === true) {

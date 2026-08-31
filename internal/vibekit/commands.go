@@ -239,7 +239,9 @@ type RewindChatCommand struct {
 // SetEffortCommand is the payload for type="set_effort".
 // Applies a reasoning effort level to the active session.
 type SetEffortCommand struct {
-	Level EffortLevel `json:"level"` // "low" | "medium" | "high" | "xhigh" | "max"
+	// Level is a tier id from the model's own catalog ("low".."max", "none"
+	// on models that offer it). Shape-validated only; KAS owns the vocabulary.
+	Level EffortLevel `json:"level"`
 }
 
 // SetDraftCommand is the payload for type="set_draft": the composer text the
@@ -287,7 +289,9 @@ type SetModeCommand struct {
 // EffortLevel is a typed enum for reasoning effort levels.
 type EffortLevel string
 
-// Valid effort level constants.
+// Well-known effort levels, used where vibekit itself picks a tier (the
+// utility bridge's per-task effort). Not the valid set: Valid is a shape
+// check, and the per-model catalog owns which tiers exist.
 const (
 	EffortLow    EffortLevel = "low"
 	EffortMedium EffortLevel = "medium"
@@ -296,13 +300,30 @@ const (
 	EffortMax    EffortLevel = "max"
 )
 
-// Valid reports whether e is a recognised effort level.
+// Valid reports whether e is plausibly an effort-level id: a short lowercase
+// token (letter first; letters, digits or hyphens; at most 32 bytes).
+//
+// Deliberately a SHAPE check, not a closed set: the tier vocabulary is per
+// model and upstream-owned (gpt-luna ships a "none" tier the old five-member
+// enum rejected at the command boundary), so a model shipped after this build
+// must work unchanged. KAS stays the authority on which tiers a session
+// accepts — set_effort is fail-fast against the live session, and the client
+// only marks tiers the model's own catalog lists, so a shape-valid but
+// unknown level self-heals instead of persisting a lie.
 func (e EffortLevel) Valid() bool {
-	switch e {
-	case EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
-		return true
+	if len(e) == 0 || len(e) > 32 {
+		return false
 	}
-	return false
+	for i := 0; i < len(e); i++ {
+		c := e[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case i > 0 && (c == '-' || (c >= '0' && c <= '9')):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // SetSupervisedModeCommand is the payload for type="set_supervised_mode".

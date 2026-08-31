@@ -8,6 +8,7 @@ import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 import { pushRoute } from "./router.js";
 import type { GitTab } from "./router.js";
 import { setGitTab as setGitTabRoute } from "./tabs.js";
+import { fitTabBar } from "./tab-bar-fit.js";
 
 // GitTab lives in router.ts (the URL source of truth, alongside SettingsTab);
 // re-exported here so existing `import { GitTab } from "./git-tabs.js"` callers
@@ -80,17 +81,8 @@ export function initGitTabs(): void {
     });
   }
 
-  // Mobile: <select> mirroring the desktop pill bar. Hidden via CSS
-  // on wide viewports; on narrow it replaces the bar.
-  const select = document.getElementById("git-tab-select") as HTMLSelectElement | null;
-  if (select !== null) {
-    select.addEventListener("change", () => {
-      const v = select.value;
-      if (GIT_TABS.includes(v as GitTab)) {
-        setGitTab(v as GitTab);
-      }
-    });
-  }
+  // Labels swap to centered icons when the bar cannot fit them (phones).
+  fitTabBar(bar);
 
   rovingFocus(bar, "[data-git-tab]", { orientation: "horizontal" });
 
@@ -99,9 +91,6 @@ export function initGitTabs(): void {
       const btn = bar.querySelector<HTMLButtonElement>(`[data-git-tab="${t}"]`);
       btn?.classList.toggle("active", t === tab);
       btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
-    }
-    if (select !== null) {
-      select.value = tab;
     }
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-git-panel]")) {
       panel.classList.toggle("hidden", panel.dataset["gitPanel"] !== tab);

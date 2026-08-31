@@ -424,6 +424,28 @@
   }
 }
 
+/* Phone: eleven 44px controls cannot share a row with the path box — it was
+   crushed to nothing (flex-basis 4rem, min-width 0). The path takes its own
+   full-width row on top (user ask: "it needs to sit above the buttons") and
+   the buttons flow below it, wrapping. `display: contents` dissolves the
+   .fb-actions box so its buttons join the toolbar row's own wrap flow
+   instead of overflowing as one unshrinkable flex item. */
+@media (width <= 48rem) {
+  .fb-toolbar .view-toolbar-inner {
+    flex-wrap: wrap;
+    row-gap: var(--sp-1);
+  }
+
+  .fb-toolbar .fb-path {
+    order: -1;
+    flex-basis: 100%;
+  }
+
+  .fb-toolbar .fb-actions {
+    display: contents;
+  }
+}
+
 /* ==========================================================================
    Find in files
    ==========================================================================

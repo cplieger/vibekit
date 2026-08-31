@@ -256,8 +256,12 @@ type Translator struct {
 	newMsgID      func() string
 	// steps maps a workflow step's ACP session id to its run and node. Fed from
 	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
-	steps   *stepRegistry
-	workDir string // last for fieldalignment, as in Roles
+	steps *stepRegistry
+	// suppressed holds the tool-call ids of dropped internal-tool frames, so
+	// the follow-up tool_call_update is dropped BEFORE TurnFoldTarget can open
+	// a wire turn for it. See HandleToolCall and internal_tools.go.
+	suppressed *suppressedTools
+	workDir    string // last for fieldalignment, as in Roles
 }
 
 // New constructs a Translator over the roles the host supplies.
@@ -282,6 +286,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		turnInterrupt: r.TurnInterrupt,
 		metering:      r.Metering,
 		steps:         newStepRegistry(),
+		suppressed:    newSuppressedTools(),
 	}
 	for _, o := range opts {
 		o(t)

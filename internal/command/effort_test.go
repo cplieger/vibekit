@@ -147,8 +147,10 @@ func TestCmdSetEffort_ARefusedLiveSwitchIsNotPersisted(t *testing.T) {
 	}
 }
 
-func TestCmdSetEffort_RejectsAnUnknownLevel(t *testing.T) {
-	for _, level := range []string{"", "ludicrous", "LOW"} {
+func TestCmdSetEffort_RejectsAMalformedLevel(t *testing.T) {
+	// Shape only: uppercase, spaces and a leading digit are not tier ids. The
+	// vocabulary itself is per model and KAS's to judge — see the "none" test.
+	for _, level := range []string{"", "LOW", "x high", "9high"} {
 		t.Run(level, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedEmptyChat(t, store, "c1")
@@ -161,9 +163,33 @@ func TestCmdSetEffort_RejectsAnUnknownLevel(t *testing.T) {
 				t.Errorf("status = %d, want 400", statusOf(err))
 			}
 			if b.callCount != 0 {
-				t.Error("an invalid level reached the bridge")
+				t.Error("a malformed level reached the bridge")
 			}
 		})
+	}
+}
+
+func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
+	// gpt-luna ships a "none" tier the old closed five-member set rejected at
+	// this boundary — the user-visible "thinking: none throws an error". The
+	// catalog is upstream-owned, so an unknown-but-well-formed tier flows and
+	// KAS (fail-fast on the live session) stays the authority.
+	store := testsupport.NewInMemoryChatStore()
+	seedEmptyChat(t, store, "c1")
+	b := &recordingBridge{result: map[string]any{}, sessionID: "s"}
+	host := newBridgeHost(store, b)
+
+	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "none"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (err %v)", statusOf(err), err)
+	}
+	if b.callCount == 0 {
+		t.Error("the level never reached the live session")
+	}
+	c, _ := store.Get(t.Context(), "c1")
+	if c.Effort != "none" {
+		t.Errorf("Effort = %q, want %q persisted on the chat", c.Effort, "none")
 	}
 }
 
