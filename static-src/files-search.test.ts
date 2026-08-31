@@ -84,7 +84,7 @@ beforeAll(() => {
     <div class="fb-list-wrap">
       <div class="fb-list" id="fb-list"></div>
     </div>
-    <button type="button" id="fb-search-btn" aria-pressed="false"></button>`;
+    <button type="button" id="find-btn" aria-pressed="false"></button>`;
   initFilesSearch({ getSearchPath: () => searchPath, activateBrowser });
 });
 

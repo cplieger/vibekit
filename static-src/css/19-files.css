@@ -424,12 +424,23 @@
   }
 }
 
-/* Phone: eleven 44px controls cannot share a row with the path box — it was
-   crushed to nothing (flex-basis 4rem, min-width 0). The path takes its own
-   full-width row on top (user ask: "it needs to sit above the buttons") and
-   the buttons flow below it, wrapping. `display: contents` dissolves the
-   .fb-actions box so its buttons join the toolbar row's own wrap flow
-   instead of overflowing as one unshrinkable flex item. */
+/* New-file and new-folder share one mobile door but stay as two direct desktop
+   actions. `display: contents` keeps one set of real buttons, so resizing never
+   creates a second state or a second handler. */
+.fb-new-menu,
+.fb-new-actions {
+  display: contents;
+}
+
+.fb-new-trigger,
+.fb-new-label {
+  display: none;
+}
+
+/* Phone: path on row one, one non-wrapping dynamic action row below. Disabled
+   actions disappear because they cannot run; selection actions suppress Back /
+   Forward; New file + New folder collapse behind one trigger. The largest live
+   set is then seven 44px targets (332px with gaps), inside a 390px viewport. */
 @media (width <= 48rem) {
   .fb-toolbar .view-toolbar-inner {
     flex-wrap: wrap;
@@ -443,6 +454,62 @@
 
   .fb-toolbar .fb-actions {
     display: contents;
+  }
+
+  .fb-toolbar .icon-btn:disabled,
+  .fb-toolbar .view-toolbar-inner.has-selection > :is([id="fb-back"], [id="fb-forward"]),
+  .fb-new-menu[data-unavailable] {
+    display: none;
+  }
+
+  .fb-new-menu {
+    position: relative;
+    display: block;
+  }
+
+  .fb-new-trigger {
+    display: flex;
+    list-style: none;
+  }
+
+  .fb-new-trigger::-webkit-details-marker {
+    display: none;
+  }
+
+  .fb-new-menu:not([open]) > .fb-new-actions {
+    display: none;
+  }
+
+  .fb-new-menu[open] > .fb-new-actions {
+    position: absolute;
+    z-index: 20;
+    inset-inline-end: 0;
+    inset-block-end: calc(100% + var(--sp-2));
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-1);
+    min-inline-size: 10rem;
+    padding: var(--sp-2);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r);
+    background: var(--c-bg-elevated);
+    box-shadow:
+      var(--shadow-ambient),
+      0 0.5rem 1.5rem oklch(0% 0 none / 40%);
+    color: var(--c-text-secondary);
+  }
+
+  .fb-new-actions > .icon-btn {
+    justify-content: flex-start;
+    gap: var(--sp-2);
+    width: 100%;
+    padding-inline: var(--sp-2);
+  }
+
+  .fb-new-label {
+    display: inline;
+    white-space: nowrap;
   }
 }
 

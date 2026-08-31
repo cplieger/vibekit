@@ -312,6 +312,35 @@ export function turnAnchorID(n: number): string {
   return `turn-${String(n)}`;
 }
 
+/** Whether folding this turn would HIDE anything.
+ *
+ *  The face shows the turn's run cards, its final top-level prose in full and a
+ *  failed turn's error row; the fold hides everything else — tool cards,
+ *  reasoning, delegate output, intermediate prose, plan cards and event rows. A
+ *  turn with none of those (one prose answer and nothing more) folds to a face
+ *  identical to its open body, so the toggle would animate and change nothing.
+ *  The renderer offers no fold for such a turn instead of a control that lies. */
+export function turnFoldHides(t: Turn): boolean {
+  let texts = 0;
+  for (const m of t.body) {
+    if (m.role === "event" || (m.plan ?? []).length > 0) {
+      return true;
+    }
+    for (const b of m.blocks ?? []) {
+      if (b.type === "tool_use" || b.type === "thinking") {
+        return true;
+      }
+      if ((b.agent_subtask_id ?? "") !== "") {
+        return true;
+      }
+      if (b.type === "text" && (b.text ?? "").trim() !== "") {
+        texts++;
+      }
+    }
+  }
+  return texts > 1;
+}
+
 /** The turn's final answer: the last non-empty TOP-LEVEL text block across the
  *  turn's messages. A collapsed turn's face renders it in full — input in the
  *  header, this in the footer. Delegate prose (a non-empty subtask id) is a

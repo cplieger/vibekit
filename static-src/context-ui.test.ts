@@ -20,7 +20,7 @@ vi.mock("./store.js", () => ({ getActiveId: mocks.getActiveId }));
 vi.mock("./prompt-input.js", () => ({ contextFull: { value: false } }));
 vi.mock("./effort.js", () => ({ nonDefaultEffortLabel: () => "" }));
 vi.mock("./picker.js", () => ({ getCachedModels: () => [] }));
-vi.mock("./session-context.js", () => ({ getLastEffort: () => "" }));
+vi.mock("./session-context.js", () => ({ getLastEffortFor: () => "" }));
 
 import { refreshContextUI } from "./context-ui.js";
 

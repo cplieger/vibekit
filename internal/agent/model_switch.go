@@ -74,13 +74,41 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientComman
 		if err := rt.refuseUnservedModel(ctx, cmd.ChatID, chat, model); err != nil {
 			return nil, err
 		}
-		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model, rt.coord.effortFor(ctx, chat)) {
+		// A pick on a chat that has never run is a PREFERENCE, not a switch:
+		// persist it and let the first prompt's session/new carry it through the
+		// _meta.kiro door. Falling through would spawn a ~300MB bridge tree for a
+		// pill click — which is why the client used to keep this pick local-only,
+		// and the record then clobbered it back on the next header echo
+		// (set_effort's auto-persist broadcast; user report, 2026-08-31).
+		if chat.ACPSessionID == "" && len(chat.Messages) == 0 && !rt.HasLiveBridge(cmd.ChatID) {
+			rt.persistModelPick(ctx, cmd.ChatID, model)
+			return responseOK2, nil
+		}
+		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model, rt.coord.EffortForSwitch(ctx, chat, model)) {
 			rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
 			return responseOK2, nil
 		}
 	}
 
 	return rt.switchByRestart(ctx, cmd, chat, model, isSwitch)
+}
+
+// persistModelPick records a pre-session model choice on the chat record: no
+// event row (nothing was switched — the chat never ran), no usage reset, no
+// bridge. The Mutate's own broadcast carries the header every device converges
+// on. The chosen-effort clear matches PersistModelSwitch: a tier picked under
+// the previous model does not survive onto this one.
+func (rt *Runtime) persistModelPick(ctx context.Context, chatID vibekit.ChatID, model string) {
+	if err := rt.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+		if !ex {
+			return false
+		}
+		c.Model = model
+		c.Effort = ""
+		return true
+	}); err != nil {
+		slog.Error("switch_model: persist pre-session pick", "chat_id", chatID, "error", err)
+	}
 }
 
 // switchByRestart is the fallback when the in-session swap did not take: tear the
@@ -140,7 +168,7 @@ func (rt *Runtime) switchByRestart(
 		// the old bridge's exit cleanup can evict the manager entry after the new
 		// one registered, so a lookup here can answer nil or answer with a bridge
 		// that is not the session just loaded.
-		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.effortFor(ctx, chat)) {
+		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.EffortForSwitch(ctx, chat, model)) {
 			slog.Warn("model switch: the resumed session kept its own model",
 				"chat_id", cmd.ChatID, "model", model)
 		}

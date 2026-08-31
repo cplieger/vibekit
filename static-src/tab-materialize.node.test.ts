@@ -358,7 +358,7 @@ describe("names", () => {
 
   it.each([
     ["settings", "Settings"],
-    ["git", "Source Control"],
+    ["git", "Git"],
     ["files", "Files"],
     ["history", "History"],
     ["docs", "Kiro docs"],

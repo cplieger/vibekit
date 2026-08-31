@@ -58,7 +58,7 @@ onSSE("settings_updated", () => {
     // optional fields: an empty last_model is a real value meaning "nothing
     // remembered", and restoreLastModel already treats it that way.
     restoreLastModel(s.last_model);
-    restoreLastEffort(s.last_effort);
+    restoreLastEffort(s.last_effort, s.last_effort_model);
     // A theme chosen on ANOTHER device lands here, which is the behaviour the
     // retired whole-document arrangement broadcast used to carry. Safe against a
     // loop from both sides: syncSettings has just seeded the write tracker from

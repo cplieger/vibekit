@@ -39,6 +39,9 @@ type EffectiveSettings struct {
 	// the value in force for an existing chat lives on that chat's record.
 	LastModel  string `json:"last_model"`
 	LastEffort string `json:"last_effort"`
+	// LastEffortModel is the model LastEffort was picked under; the seed applies
+	// only to a chat running that model (settings.KeyLastEffortModel).
+	LastEffortModel string `json:"last_effort_model"`
 	// AgentIgnoreFiles is the ignore-file basename list the agent read filter
 	// applies. Its default is non-empty (settings.DefaultAgentIgnoreFiles), which
 	// is why an absent key must not read as the zero value: the client rendered an

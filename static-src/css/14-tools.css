@@ -172,37 +172,44 @@
   margin-inline-end: 0.25rem;
 }
 
+.tool-summary {
+  position: relative;
+  min-width: 0;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
 .tool-header {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) 0.75rem;
   min-width: 0; /* allow ellipsis on flex children */
-  transition: background var(--dur-micro) var(--ease-standard);
 }
 
-/* The WHOLE header expands the card, like the group header above it and the
-   delegated-work card below — the chevron alone was a 24x24 target at the far
-   end of a 775px row, so this row and `.tool-group-header` answered the same
-   gesture differently. `disclosure-row.ts` forwards the click to the chevron
-   button, which keeps `aria-expanded` and the keyboard path where they were.
+/* The WHOLE summary expands the card: the title row, the description or move
+   row below it, and the padding between them. `disclosure-row.ts` forwards the
+   click to the chevron button, which keeps `aria-expanded` and the keyboard
+   path where they were.
 
-   Gated on `.has-disclosure`, which `buildHeader` stamps exactly when it builds
-   the chevron, so a claim-only card stays inert without a second flag to keep in
-   step: `TOOL_DEPTH1 === "none"` builds no toggle, no details region and no
-   class, and a header that reveals nothing must not offer to. A class rather
-   than `:has(> .tool-disclosure)` because this header repaints on every
-   tool_call_update while its tool streams (design §B4). Bare `:hover` like its
-   four siblings rather than an `any-hover` gate — a sticky hover after a tap is
-   what every other header here already does, and the point of this change is
-   that they stop disagreeing. */
-.tool-header.has-disclosure {
+   Gated on `.has-disclosure`, stamped on the summary exactly when buildHeader
+   builds the chevron, so a claim-only card stays inert without a second flag to
+   keep in step. Bare `:hover` like its sibling card headers: they all keep the
+   same touch behavior, and this rule stops the title row and subtitle from
+   answering the same gesture differently. */
+.tool-summary.has-disclosure {
   cursor: pointer;
   user-select: none;
 }
 
-.tool-header.has-disclosure:hover {
+.tool-summary.has-disclosure:hover {
   background: var(--c-hover);
+}
+
+/* The absolute chevron spans the summary rather than the title row, so a
+   two-line search/fetch card centres it against the whole clickable box. The
+   header reserves its hit target plus the normal trailing gutter. */
+.tool-summary.has-disclosure > .tool-header {
+  padding-inline-end: calc(0.75rem + 1.5rem + var(--sp-2));
 }
 
 /* THE OUTCOME LIVES HERE. The per-kind glyph carries whether-it-worked by tint
@@ -425,7 +432,10 @@
  * the glyph inside it is the shared `.disclosure-chevron` — which owns the
  * centring, the size and the rotation. */
 .tool-disclosure {
-  flex-shrink: 0;
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 0.75rem;
+  translate: 0 -50%;
   display: grid;
   place-items: center;
   width: 1.5rem;

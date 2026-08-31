@@ -14,6 +14,7 @@
 
 import { describe, it, expect } from "vitest";
 import indexHtml from "../static/index.html?raw";
+import { makeExpandable } from "./pill-expand.js";
 
 // Parse only the two regions that hold expandable pills, rather than the whole
 // document: a full-document parse would make the runner chase the
@@ -66,5 +67,46 @@ describe("expandable pill markup (static/index.html)", () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+describe("expandable pill viewport clamp", () => {
+  it("shifts a right-edge card left and keeps its transform origin on the trigger", () => {
+    const slot = document.createElement("span");
+    const pill = document.createElement("button");
+    const card = document.createElement("div");
+    slot.append(pill, card);
+    document.body.appendChild(slot);
+
+    const viewportLeft = window.visualViewport?.offsetLeft ?? 0;
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    const slotLeft = viewportLeft + viewportWidth - 40;
+    const cardWidth = 192;
+    Object.defineProperty(slot, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: slotLeft }),
+    });
+    Object.defineProperty(pill, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: slotLeft, width: 40 }),
+    });
+    Object.defineProperty(card, "offsetWidth", {
+      configurable: true,
+      value: cardWidth,
+    });
+
+    const ac = new AbortController();
+    makeExpandable(pill, card, { signal: ac.signal });
+    pill.click();
+
+    const expectedLeft = viewportLeft + viewportWidth - 12 - cardWidth;
+    const expectedShift = expectedLeft - slotLeft;
+    expect(parseFloat(card.style.getPropertyValue("--pill-inline-shift"))).toBe(expectedShift);
+    expect(parseFloat(card.style.getPropertyValue("--pill-origin-x"))).toBe(
+      slotLeft + 20 - expectedLeft,
+    );
+
+    ac.abort();
+    slot.remove();
   });
 });

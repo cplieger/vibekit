@@ -78,6 +78,7 @@ import {
   turnFaceProse,
   turnFaceError,
   turnRunIDs,
+  turnFoldHides,
   type Turn,
 } from "./turns.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
@@ -707,6 +708,11 @@ const turnRunIDsCache = new Map<string, string[]>();
 interface FoldPlan {
   open: boolean;
   mounted: boolean;
+  /** Whether the header offers the fold at all. False for the newest turn
+   *  (nothing after it to get back to), a running turn, and a turn whose fold
+   *  would hide nothing — the card carries `data-no-fold` and the toggle
+   *  disappears. */
+  canFold: boolean;
 }
 const foldPlan = new Map<string, FoldPlan>();
 
@@ -715,9 +721,19 @@ function computeFoldPlan(chatID: string, turns: readonly Turn[]): void {
   turnByID.clear();
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);
-    const open = isTurnOpen(chatID, t, i, turns.length);
     const distance = turns.length - 1 - i;
-    foldPlan.set(t.id, { open, mounted: open || distance < TURNS_WARM });
+    const hides = turnFoldHides(t);
+    // A hides-nothing turn stays OPEN while its body is warm: its face would
+    // be identical to the body, so an auto-fold buys nothing and its animation
+    // reads as "something happened, nothing changed". Beyond the warm window
+    // it stubs like any other turn — the stub face IS the body's content for
+    // this class, so the swap is invisible.
+    const open = isTurnOpen(chatID, t, i, turns.length) || (!hides && distance < TURNS_WARM);
+    foldPlan.set(t.id, {
+      open,
+      mounted: open || distance < TURNS_WARM,
+      canFold: hides && i < turns.length - 1 && t.outcome !== "running",
+    });
   }
 }
 
@@ -1232,6 +1248,10 @@ function applyFoldPass(turns: readonly Turn[], cards: readonly HTMLElement[]): v
     const plan = foldPlan.get(id);
     const open = plan?.open ?? true;
     const wantMounted = plan?.mounted ?? true;
+    // The affordance tracks the plan: the previously-newest turn gains its
+    // toggle when the next turn arrives, and a turn that stops running gains
+    // or loses it by what its fold would hide.
+    card.toggleAttribute("data-no-fold", !(plan?.canFold ?? true));
     const t = byID.get(id);
     const folded = card.hasAttribute("data-folded");
     const mounted = card.querySelector(":scope > .turn-body") !== null;
@@ -1305,10 +1325,12 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
   }
   btn.dataset["bound"] = "";
   btn.addEventListener("click", () => {
-    // An ACTIVE turn cannot be collapsed: it is the one being watched, and
-    // isTurnOpen ignores overrides for it anyway, so recording one here would
-    // only spring a surprise fold at turn end.
-    if (card.hasAttribute("data-running")) {
+    // A no-fold turn's header is not a control: the newest turn is the one
+    // being read, a running one is the one being watched, and a hides-nothing
+    // turn has nothing to hide — isTurnOpen ignores overrides for the first
+    // two anyway, so recording one here would only spring a surprise fold
+    // later.
+    if (card.hasAttribute("data-no-fold")) {
       return;
     }
     const open = card.hasAttribute("data-folded");
@@ -1379,7 +1401,13 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
     card.removeAttribute("data-folded");
   }
   const header = card.querySelector<HTMLElement>(":scope > .turn-header");
-  header?.setAttribute("aria-expanded", folded ? "false" : "true");
+  // On the TOGGLE, never on the header: the band is a plain div, and a div with
+  // no role takes no `aria-expanded` (axe `aria-allowed-attr`, critical). The
+  // button is the disclosure control the keyboard reaches anyway — the band
+  // only forwards its click.
+  header
+    ?.querySelector<HTMLButtonElement>(":scope > .turn-head-row > .turn-fold-toggle")
+    ?.setAttribute("aria-expanded", folded ? "false" : "true");
 }
 
 // --- The collapsed turn's FACE ---
@@ -1491,6 +1519,9 @@ function buildTurn(t: Turn): HTMLElement {
   card.toggleAttribute("data-running", t.outcome === "running");
 
   const plan = foldPlan.get(t.id);
+  // Born with its fold affordance decided, so the toggle never flashes on a
+  // card that does not offer one. The fold pass keeps it current afterwards.
+  card.toggleAttribute("data-no-fold", !(plan?.canFold ?? true));
   if (plan === undefined || plan.mounted) {
     const body = el("div", { className: "turn-body" });
     card.appendChild(body);

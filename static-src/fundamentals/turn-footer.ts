@@ -108,8 +108,17 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
   const text = footer.querySelector<HTMLElement>(
     ":scope > .turn-ledger-summary > .turn-ledger-text",
   );
+  const line = summaryLine(d, files);
   if (text !== null) {
-    text.textContent = summaryLine(d, files);
+    text.textContent = line;
+  }
+
+  // Mobile may ellipsize the tail of a long cost/model line to keep the footer
+  // on one row. The full statement remains the control's accessible name and
+  // hover text rather than disappearing with the clipped pixels.
+  if (summary !== null) {
+    summary.title = line;
+    summary.setAttribute("aria-label", line === "" ? "Turn summary" : `Turn summary: ${line}`);
   }
 
   // The summary is only a disclosure when there is something to disclose. With

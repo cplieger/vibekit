@@ -95,6 +95,12 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
         className: "turn-fold-toggle",
         type: "button",
         "aria-label": "Expand or collapse this turn",
+        // The disclosure STATE belongs to this button, not to the band that
+        // activates it: `.turn-header` is a plain div, so `aria-expanded` there
+        // is a violation (axe `aria-allowed-attr`) rather than a nicety —
+        // `generic` allows no ARIA state at all. A card is built open, and
+        // `setCardFolded` is the one writer afterwards.
+        "aria-expanded": "true",
       },
       chevronEl(),
     ),

@@ -28,7 +28,7 @@ import {
 import { isToolDone, type ToolKind } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview, expandToolDetails, applyOutcome } from "./tool-card.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
-import { windowOutput, windowSpans } from "./strings.js";
+import { windowOutput, windowSpans, humanName } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
 import { bindLoadingState } from "./actions/index.js";
@@ -564,11 +564,11 @@ export function updateToolCall(el: HTMLElement, tc: ToolCall, chatID: string): v
 /** Apply a ToolCall snapshot's updatable fields to its DOM card. Idempotent. */
 function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): void {
   linkTerminal(chatID, tc);
-  if (tc.status !== undefined) {
-    applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
-  }
   if (tc.title !== undefined) {
     applyTitleUpdate(el, tc.title);
+  }
+  if (tc.status !== undefined) {
+    applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
   }
   if (tc.output !== undefined && tc.output !== "") {
     applyOutputUpdate(el, tc.output, tc.output_spans ?? []);
@@ -655,11 +655,23 @@ function applyStatusUpdate(
 }
 
 function applyTitleUpdate(el: HTMLDivElement, title: string): void {
+  // A disclosed skill/agent names the document that entered the prompt, not
+  // the transport tool. Keep that stronger claim through routine title frames.
+  if (el.dataset["disclosed"] !== undefined) {
+    return;
+  }
   const t = el.querySelector(".tool-title");
   if (t !== null) {
-    const display = title.startsWith("Running: ") ? title.slice(9) : title;
+    const raw = title.startsWith("Running: ") ? title.slice(9) : title;
+    const display = humanName(raw);
     t.textContent = display;
-    t.parentElement!.title = title; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const header = t.closest<HTMLElement>(".tool-header");
+    if (header !== null) {
+      header.title = display;
+    }
+    // Status updates read this field for the accessible outcome label, so the
+    // display name and the spoken name stay one value after a title change.
+    el.dataset["title"] = display;
   }
 }
 

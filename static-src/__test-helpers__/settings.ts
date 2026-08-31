@@ -23,6 +23,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     fb_path: "",
     last_model: "",
     last_effort: "",
+    last_effort_model: "",
     knowledge_enabled: true,
     tool_search_enabled: false,
     memory_enabled: false,

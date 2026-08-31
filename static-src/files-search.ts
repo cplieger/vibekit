@@ -344,13 +344,6 @@ function isOpen(): boolean {
 
 export function initFilesSearch(c: FilesSearchCtx): void {
   ctx = c;
-  $.fbSearchBtn.addEventListener("click", () => {
-    if (isOpen()) {
-      closeFilesSearch();
-    } else {
-      openFilesSearch();
-    }
-  });
 }
 
 /** Open (or refocus) the search bar.
@@ -368,7 +361,9 @@ export function openFilesSearch(): void {
   barEl.classList.remove("hidden");
   resultsEl.classList.remove("hidden");
   $.fbList.classList.add("hidden");
-  $.fbSearchBtn.setAttribute("aria-pressed", "true");
+  // The app toolbar's one contextual Find button is the only visible trigger;
+  // the duplicate button in this bottom bar is gone.
+  $.findBtn.setAttribute("aria-pressed", "true");
   shell.focus();
   shell.run();
 }
@@ -383,7 +378,7 @@ export function closeFilesSearch(): void {
   resultsEl.replaceChildren();
   lastMatches = [];
   $.fbList.classList.remove("hidden");
-  $.fbSearchBtn.setAttribute("aria-pressed", "false");
+  $.findBtn.setAttribute("aria-pressed", "false");
   shell?.setNote("");
 }
 

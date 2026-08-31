@@ -30,11 +30,14 @@
   top: 0;
   z-index: 1;
   background: var(--c-bg-primary);
-  padding-block-end: var(--sp-2);
+  padding-block: calc(0.3125rem + env(safe-area-inset-top, 0)) var(--sp-2);
 }
 
+/* The active section title follows the menu bar visually. On narrow bars the
+   labels disappear, so this line is the text replacement; desktop keeps the
+   same line and adds icons before each visible menu label. */
 .settings-title-row {
-  padding-top: calc(0.3125rem + env(safe-area-inset-top, 0));
+  order: 1;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -120,6 +123,10 @@
 .settings-tab {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   background: transparent;
   border: 1px solid transparent;
@@ -151,26 +158,18 @@
      selected one. */
 }
 
-/* Segment content: label by default, per-tab icon when the bar cannot fit
+/* Segment content: icon + label by default, icon-only when the bar cannot fit
    the labels. tab-bar-fit.ts measures per bar (never a breakpoint — which
    labels fit depends on the label set) and sets .tab-bar-icons when any
    label would truncate; one truncated label flips the WHOLE bar, because a
    row mixing text pills and icon pills reads as broken. The label stays in
    the DOM for the accessible name; every button also carries aria-label. */
 .settings-tab-icon {
-  display: none;
+  display: block;
   flex-shrink: 0;
 }
 
 .tab-bar-icons .settings-tab {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  & > .settings-tab-icon {
-    display: block;
-  }
-
   & > .settings-tab-label {
     display: none;
   }
@@ -1373,7 +1372,7 @@
   line-height: 1;
 }
 
-/* --- Source Control empty state --- */
+/* --- Git empty state --- */
 
 /* Fills the available vertical space below the page title + banner so
  * the card sits at the true center of the viewport. The parent

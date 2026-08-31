@@ -22,6 +22,12 @@ class SessionContextController {
   /** Empty means the user has never picked a level, so a new chat has nothing to
    *  open with and falls through to the model's own default tier. */
   private lastEffortCache = "";
+  /** The model lastEffort was picked under. The seed applies only to a chat
+   *  running THAT model: a tier is a judgement about one model, so carrying it
+   *  onto another overrode that model's own default (user report, 2026-08-31).
+   *  Empty (a pre-pair install) means the seed never applies, which self-heals
+   *  on the next pick. */
+  private lastEffortModelCache = "";
 
   getCurrentModel(): string {
     return this.currentModel;
@@ -55,24 +61,31 @@ class SessionContextController {
     }
   }
 
-  getLastEffort(): string {
+  getLastEffortFor(model: string): string {
+    if (model === "" || this.lastEffortModelCache !== model) {
+      return "";
+    }
     return this.lastEffortCache;
   }
-  setLastEffort(level: string): void {
+  setLastEffort(level: string, model: string): void {
     // Same redundant-write guard as setLastModel, for the same reason: the
     // settings_updated handler must not be able to patch a confirmed value back
     // and loop, and a repeat pick of the level already in force must not wake the
     // save indicator.
-    if (this.lastEffortCache === level) {
+    if (this.lastEffortCache === level && this.lastEffortModelCache === model) {
       return;
     }
     this.lastEffortCache = level;
-    void patchSettings({ last_effort: level });
+    this.lastEffortModelCache = model;
+    void patchSettings({ last_effort: level, last_effort_model: model });
   }
 
-  restoreLastEffort(level: string | undefined): void {
+  restoreLastEffort(level: string | undefined, model: string | undefined): void {
     if (level !== undefined) {
       this.lastEffortCache = level;
+    }
+    if (model !== undefined) {
+      this.lastEffortModelCache = model;
     }
   }
 }
@@ -98,16 +111,21 @@ export function restoreLastModel(id: string | undefined): void {
   instance.restoreLastModel(id);
 }
 
-export function getLastEffort(): string {
-  return instance.getLastEffort();
+/** The remembered effort level, when it was picked under `model`; "" otherwise.
+ *  The model gate is what stops a tier chosen on one model overriding another
+ *  model's default — the seed's two readers (this and the server's effortFor)
+ *  apply the same scope or the pill lies about what the session runs. */
+export function getLastEffortFor(model: string): string {
+  return instance.getLastEffortFor(model);
 }
-export function setLastEffort(level: string): void {
-  instance.setLastEffort(level);
+export function setLastEffort(level: string, model: string): void {
+  instance.setLastEffort(level, model);
 }
 
-/** Restore last_effort from settings on startup, and from the settings_updated
- *  SSE. Cache-only, like restoreLastModel: setLastEffort would patch the
- *  server-confirmed value straight back and loop at debounce speed. */
-export function restoreLastEffort(level: string | undefined): void {
-  instance.restoreLastEffort(level);
+/** Restore last_effort (+ the model it was picked under) from settings on
+ *  startup, and from the settings_updated SSE. Cache-only, like
+ *  restoreLastModel: setLastEffort would patch the server-confirmed value
+ *  straight back and loop at debounce speed. */
+export function restoreLastEffort(level: string | undefined, model: string | undefined): void {
+  instance.restoreLastEffort(level, model);
 }

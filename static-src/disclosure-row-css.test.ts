@@ -163,30 +163,29 @@ function winningBackground(el: Element): string | undefined {
   return backgroundWriters(el).at(-1)?.value;
 }
 
-describe("tool card header affordance", () => {
-  it("a header with a toggle says it is clickable", async () => {
+describe("tool card summary affordance", () => {
+  it("a summary with a toggle says its whole area is clickable", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
       buildToolCard({
         id: "css1",
-        title: "executePwsh",
-        kind: "execute",
+        title: "remote_web_search",
+        kind: "fetch",
         status: "completed",
-        input: { command: "ls" },
+        input: { query: "vibekit" },
         live: false,
       }),
     );
-    const header = card.querySelector<HTMLElement>(".tool-header")!;
-    expect(css(header, "cursor")).toBe("pointer");
-    // A drag across the row must not select its label instead of toggling —
-    // the same call every other clickable header in the app makes.
-    expect(css(header, "user-select")).toBe("none");
+    const summary = card.querySelector<HTMLElement>(".tool-summary")!;
+    expect(css(summary, "cursor")).toBe("pointer");
+    // A drag across either line must not select its label instead of toggling.
+    expect(css(summary, "user-select")).toBe("none");
     // Never `transition: all` (vibekit-ui.md); the hover fill is the only thing
     // that animates here.
-    expect(css(header, "transition-property")).toBe("background");
+    expect(css(summary, "transition-property")).toBe("background");
   });
 
-  it("a claim-only header stays inert", async () => {
+  it("a claim-only summary stays inert", async () => {
     // `readFile` has no depth 1, so it builds no toggle and no details region.
     // A pointer cursor there would advertise a control that opens nothing.
     const { buildToolCard } = await import("./tool-card.js");
@@ -200,30 +199,52 @@ describe("tool card header affordance", () => {
         live: false,
       }),
     );
-    const header = card.querySelector<HTMLElement>(".tool-header")!;
+    const summary = card.querySelector<HTMLElement>(".tool-summary")!;
     expect(card.querySelector(".tool-disclosure")).toBeNull();
-    expect(css(header, "cursor")).toBe("auto");
+    expect(css(summary, "cursor")).toBe("auto");
   });
 
-  it("hovering a toggle header lands on the shared interaction rung", async () => {
-    // `--c-hover` rather than a local color-mix: one hover vocabulary, and a
-    // translucent overlay composites over whatever fill the card has.
+  it("hovering a toggle summary paints both title and description", async () => {
+    // The hover paints their common parent, so no dead strip can remain between
+    // the title row and the description line below it.
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
       buildToolCard({
         id: "css3",
-        title: "executePwsh",
-        kind: "execute",
+        title: "remote_web_search",
+        kind: "fetch",
         status: "completed",
-        input: { command: "ls" },
+        input: { query: "vibekit" },
         live: false,
       }),
     );
-    const header = card.querySelector<HTMLElement>(".tool-header")!;
-    expect(winningBackground(header)).toBe("var(--c-hover)");
+    const summary = card.querySelector<HTMLElement>(".tool-summary")!;
+    const subtitle = card.querySelector<HTMLElement>(".tool-subtitle")!;
+    expect(summary.contains(subtitle)).toBe(true);
+    expect(winningBackground(summary)).toBe("var(--c-hover)");
+    expect(backgroundWriters(subtitle)).toEqual([]);
   });
 
-  it("nothing paints a claim-only header, hovered or not", async () => {
+  it("centres the chevron against the whole two-line summary", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = mount(
+      buildToolCard({
+        id: "css-chevron",
+        title: "remote_web_search",
+        kind: "fetch",
+        status: "completed",
+        input: { query: "vibekit" },
+        live: false,
+      }),
+    );
+    const summary = card.querySelector<HTMLElement>(".tool-summary")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    const s = summary.getBoundingClientRect();
+    const t = toggle.getBoundingClientRect();
+    expect(Math.abs(t.y + t.height / 2 - (s.y + s.height / 2))).toBeLessThanOrEqual(1);
+  });
+
+  it("nothing paints a claim-only summary", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = mount(
       buildToolCard({
@@ -235,13 +256,30 @@ describe("tool card header affordance", () => {
         live: false,
       }),
     );
-    const header = card.querySelector<HTMLElement>(".tool-header")!;
-    expect(backgroundWriters(header)).toEqual([]);
+    const summary = card.querySelector<HTMLElement>(".tool-summary")!;
+    expect(backgroundWriters(summary)).toEqual([]);
+  });
+});
+
+describe("turn action overflow", () => {
+  it("keeps secondary actions inline and the More summary hidden on desktop", () => {
+    const details = document.createElement("details");
+    details.className = "turn-actions-more";
+    const summary = document.createElement("summary");
+    summary.className = "turn-action-btn turn-action-more";
+    const secondary = document.createElement("span");
+    secondary.className = "turn-actions-secondary";
+    details.append(summary, secondary);
+    mount(details);
+
+    expect(details.open).toBe(false);
+    expect(css(summary, "display")).toBe("none");
+    expect(css(secondary, "display")).toBe("inline-flex");
   });
 });
 
 describe("turn card header affordance", () => {
-  async function turn(state: "open" | "folded" | "running"): Promise<HTMLElement> {
+  async function turn(state: "open" | "folded" | "running" | "no-fold"): Promise<HTMLElement> {
     const { buildTurnHeader } = await import("./fundamentals/turn-header.js");
     const card = document.createElement("div");
     card.className = "turn";
@@ -250,6 +288,9 @@ describe("turn card header affordance", () => {
     }
     if (state === "running") {
       card.setAttribute("data-running", "");
+    }
+    if (state === "no-fold") {
+      card.setAttribute("data-no-fold", "");
     }
     card.appendChild(
       buildTurnHeader({
@@ -289,6 +330,19 @@ describe("turn card header affordance", () => {
     const card = await turn("running");
     expect(css(card.querySelector(".turn-header")!, "cursor")).toBe("auto");
     expect(propertyWriters(card.querySelector(".turn-header")!, ["background-image"])).toEqual([]);
+    expect(css(card.querySelector(".turn-fold-toggle")!, "display")).toBe("none");
+  });
+
+  it("a no-fold turn's header claims nothing either", async () => {
+    // The newest turn, and a turn whose fold would hide nothing: the fold plan
+    // stamps `data-no-fold`, the toggle disappears, and the band stops
+    // advertising a control that would animate and change nothing (user
+    // report, 2026-08-31: turn 1's toggle "plays an animation but at the end
+    // nothing changes").
+    const card = await turn("no-fold");
+    expect(css(card.querySelector(".turn-header")!, "cursor")).toBe("auto");
+    expect(propertyWriters(card.querySelector(".turn-header")!, ["background-image"])).toEqual([]);
+    expect(css(card.querySelector(".turn-fold-toggle")!, "display")).toBe("none");
   });
 
   it("hovering the band washes it as a LAYER, keeping the tint", async () => {
@@ -369,23 +423,93 @@ describe("folded turn face", () => {
     return content;
   }
 
-  it("the answer clamps to three lines — folding visibly collapses", () => {
-    // The fold's whole point. Unclamped, a folded card was routinely TALLER
-    // than its open neighbour (measured live: 573px and 634px "collapsed"
-    // cards beside a 220px open one), so the chevron flipped and nothing
-    // visibly changed — reported as "collapse does not work" (2026-08-31).
+  it("the answer renders in full — the fold hides work, never the reply", () => {
+    // A 3-line clamp shipped here once and was overruled (user ruling,
+    // 2026-08-31): the folded turn keeps the WHOLE final answer, and the
+    // fold's compactness comes from hiding tool cards, reasoning and delegate
+    // output. A turn with none of those offers no fold at all (data-no-fold),
+    // so an unclamped face can no longer read as "collapse does not work".
     for (const kind of ["turn-face-prose", "turn-face-error"] as const) {
       const content = face(kind, 40);
-      const lineH = parseFloat(css(content, "line-height")) || 25.6;
-      expect(content.scrollHeight, `${kind}: the content overflows`).toBeGreaterThan(
-        content.clientHeight,
+      expect(content.scrollHeight, `${kind}: nothing clipped`).toBeLessThanOrEqual(
+        content.clientHeight + 1,
       );
-      expect(content.clientHeight, `${kind}: three lines tall`).toBeLessThan(4 * lineH);
     }
   });
+});
 
-  it("a short answer is not clamped into losing anything", () => {
-    const content = face("turn-face-prose", 2);
-    expect(content.scrollHeight).toBeLessThanOrEqual(content.clientHeight + 1);
+describe("prompt pill centring", () => {
+  it("centres an icon when the touch floor makes its pill wider", () => {
+    const pill = document.createElement("button");
+    pill.className = "pill";
+    pill.style.width = "44px";
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("width", "14");
+    icon.setAttribute("height", "14");
+    pill.appendChild(icon);
+    mount(pill);
+
+    const p = pill.getBoundingClientRect();
+    const i = icon.getBoundingClientRect();
+    expect(Math.abs(i.x + i.width / 2 - (p.x + p.width / 2))).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("turn body surface", () => {
+  it("uses a dedicated body token while header and footer keep their tint", () => {
+    const card = document.createElement("div");
+    card.className = "turn";
+    const header = document.createElement("div");
+    header.className = "turn-header";
+    const face = document.createElement("div");
+    face.className = "turn-face";
+    const footer = document.createElement("div");
+    footer.className = "turn-footer";
+    card.append(header, face, footer);
+    mount(card);
+
+    expect(winningBackground(card)).toBe("var(--c-turn-body)");
+    expect(winningBackground(face)).toBe("var(--c-turn-body)");
+    expect(winningBackground(header)).toBe("var(--c-bg-tertiary)");
+    expect(winningBackground(footer)).toBe("var(--c-bg-tertiary)");
+  });
+});
+
+describe("sub-page menu bars", () => {
+  it("shows icon before label until measured icon-only mode", () => {
+    const bar = document.createElement("nav");
+    bar.className = "settings-tab-bar";
+    const tab = document.createElement("button");
+    tab.className = "settings-tab";
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.classList.add("settings-tab-icon");
+    const label = document.createElement("span");
+    label.className = "settings-tab-label";
+    label.textContent = "General";
+    tab.append(icon, label);
+    bar.appendChild(tab);
+    mount(bar);
+
+    expect(css(tab, "display")).toBe("flex");
+    expect(css(icon, "display")).toBe("block");
+    expect(css(label, "display")).not.toBe("none");
+    expect(tab.firstElementChild).toBe(icon);
+
+    bar.classList.add("tab-bar-icons");
+    expect(css(icon, "display")).toBe("block");
+    expect(css(label, "display")).toBe("none");
+  });
+
+  it("places the active-section title after the menu bar", () => {
+    const header = document.createElement("header");
+    header.className = "settings-header";
+    const title = document.createElement("div");
+    title.className = "settings-title-row";
+    const bar = document.createElement("nav");
+    bar.className = "settings-tab-bar";
+    header.append(title, bar);
+    mount(header);
+
+    expect(Number(css(title, "order"))).toBeGreaterThan(Number(css(bar, "order")));
   });
 });

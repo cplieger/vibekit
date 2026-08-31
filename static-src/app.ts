@@ -103,7 +103,7 @@ import {
   closeChatTab,
   chatTabDot,
 } from "./chat.js";
-import { initModelSwitcher, applyLocalModel } from "./model-switcher.js";
+import { initModelSwitcher, pickModel } from "./model-switcher.js";
 import { setCatalogEfforts } from "./effort.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
@@ -440,7 +440,7 @@ async function checkAuthAndStart(): Promise<void> {
   const settings = await loadSettings();
   if (settings !== null) {
     restoreLastModel(settings.last_model);
-    restoreLastEffort(settings.last_effort);
+    restoreLastEffort(settings.last_effort, settings.last_effort_model);
     // The theme, from the payload already in hand. The toggle was constructed
     // during initUI against the pre-paint cache, so this is where the server's
     // choice replaces that hint — and where the cache is carried across once if
@@ -788,8 +788,10 @@ function setupInput(): void {
   initModelSwitcher();
   // The empty-chat model picker. Its visibility is derived from store state;
   // only the selection callback is injected, because it lives in
-  // model-switcher.ts, which imports picker.ts.
-  initModelPicker(applyLocalModel);
+  // model-switcher.ts, which imports picker.ts. pickModel, not applyLocalModel:
+  // a hero-picker pick must PERSIST like a pill pick, or the next header echo
+  // clobbers it back (user report, 2026-08-31).
+  initModelPicker(pickModel);
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).

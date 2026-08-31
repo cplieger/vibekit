@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Source Control status banner: a single-element, priority-routed banner
+// Git status banner: a single-element, priority-routed banner
 // that surfaces forge auth issues, gh-CLI install/login needs, and the
 // "no forges connected" prompt.
 //

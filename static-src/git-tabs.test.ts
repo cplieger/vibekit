@@ -92,6 +92,28 @@ describe("git-tabs store", () => {
     setGitTab("changes");
     expect(location.pathname).toBe("/git");
   });
+
+  it("names the active Git section below the tab bar", async () => {
+    document.body.innerHTML = `
+      <nav id="git-tab-bar">
+        <button data-git-tab="changes"></button>
+        <button data-git-tab="prs"></button>
+        <button data-git-tab="sources"></button>
+      </nav>
+      <span id="git-page-title"></span>
+      <div data-git-panel="changes"></div>
+      <div data-git-panel="prs"></div>
+      <div data-git-panel="sources"></div>`;
+    const { initGitTabs, setGitTab } = (await import(
+      /* @vite-ignore */ `./git-tabs.ts?boot=${bootSeq}`
+    )) as typeof ModGitTabs;
+
+    initGitTabs();
+    expect(document.getElementById("git-page-title")?.textContent).toBe("Changes");
+
+    setGitTab("prs");
+    expect(document.getElementById("git-page-title")?.textContent).toBe("Pull requests");
+  });
 });
 
 // Local alias matching the module's exported GitTab union, kept here so the

@@ -14,7 +14,7 @@
 // source, so a file no tab claims simply gets no row).
 //
 // The tab bar reuses the Settings idiom verbatim (pill bar at every width,
-// labels swapping to centered icons when they would truncate, deep-linkable,
+// icons before labels with measured icon-only fallback, deep-linkable,
 // roving focus), so mobile is solved on arrival rather than being a second
 // tab vocabulary.
 //
@@ -423,8 +423,8 @@ function initDocsView(): void {
       selectTab(tab);
     });
   }
-  // Labels swap to centered icons when the bar cannot fit them (six tabs
-  // never fit a phone as text).
+  // Drop every label only when one cannot fit; six labels need icon-only
+  // mode on a phone.
   fitTabBar(bar);
   rovingFocus(bar, "[data-docs-tab]", { orientation: "horizontal" });
   // Hand Ctrl-F this page's entry point. Through the LEAF registry, not the

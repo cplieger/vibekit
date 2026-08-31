@@ -500,8 +500,12 @@ describe("focus and reachability", () => {
     );
     await flushed();
 
-    // A real focusable inside the view: the turn header's fold toggle.
-    const toggle = viewOf(a).querySelector<HTMLElement>(".turn-fold-toggle, [tabindex], button");
+    // A real focusable inside the view: the header's copy button (the fold
+    // toggle is hidden on the newest turn — data-no-fold — and a display:none
+    // element refuses focus).
+    const toggle = viewOf(a).querySelector<HTMLElement>(
+      ".turn-copy-req, [tabindex], button:not(.turn-fold-toggle)",
+    );
     expect(toggle).not.toBeNull();
     toggle?.focus();
     expect(viewOf(a).contains(document.activeElement)).toBe(true);

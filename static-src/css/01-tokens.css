@@ -47,6 +47,10 @@
      * end-to-end >= 2.3:1. */
     --c-bg-primary: oklch(15% 0.022 283.9deg);
     --c-bg-secondary: oklch(27.5% 0.03 284.1deg);
+    /* The turn's prose plane. Dark keeps the established secondary rung;
+     * light overrides it near white so black prose does not sit on a grey slab.
+     * Header and footer remain tertiary and keep bracketing the turn. */
+    --c-turn-body: var(--c-bg-secondary);
     --c-bg-tertiary: oklch(35.5% 0.038 283.7deg);
 
     /* The top rung. Named for what it IS (a raised surface) rather than for one
@@ -376,10 +380,9 @@
      * states that matter does not invert the hierarchy — that was the worry, and
      * the measurement answered it. There is no trade here.
      *
-     * A SELECTED row does not use this: the dot declares its own colour, so
-     * --c-selected-fg never reaches it, and 70-selection.css switches the ring
-     * to --c-selected-muted-fg, which is the on-selected family's member for
-     * exactly this job and is already sized at 4.5:1. */
+     * A SELECTED row uses this exact value too. Selection belongs to the row,
+     * never to the status ink (user ruling, 2026-08-31): the row fill may change,
+     * while green, red, yellow and violet remain byte-identical. */
     --c-dot-idle: color-mix(in oklch, var(--c-text-primary) 51%, transparent);
 
     /* ---- Elevation ------------------------------------------------------- *
@@ -537,26 +540,6 @@
     --c-selected-red-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-red));
     --c-selected-yellow-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-yellow));
     --c-selected-blue-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-blue));
-
-    /* The DOT's four state inks join at the SHARED fraction too. They are the
-     * family's only members that are never TEXT — a 9px disc is a graphical
-     * object, so its floor is 1.4.11's 3:1 rather than 4.5:1 — and all four clear
-     * that with room to spare on the resting and hovered selected fill in both
-     * themes (worst 4.210:1, `css-contrast.py dot`). Mixing them at 56% anyway
-     * keeps ONE construction for the whole family rather than a second fraction
-     * that exists only because these four could get away with less.
-     *
-     * `waiting` has no member of its own: it takes the input ink, because the two
-     * states share one hue by design and separate on FILL (see 12-tabs.css). */
-    --c-selected-dot-working-fg: color-mix(
-      in oklch,
-      var(--c-selected-fg) 56%,
-      var(--c-dot-working)
-    );
-    --c-selected-dot-input-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-input));
-    --c-selected-dot-done-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-done));
-    --c-selected-dot-failed-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-failed));
-    --c-selected-accent-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-accent));
 
     /* ---- Derived ink ----------------------------------------------------- *
      * The label of something clickable. Named for the RULE rather than for a
@@ -748,6 +731,7 @@
      * number is that body text stays legible on every rung. */
     --c-bg-primary: oklch(98.5% 0.005 283.9deg);
     --c-bg-secondary: oklch(92% 0.01 284.1deg);
+    --c-turn-body: oklch(96.5% 0.0065 284deg);
     --c-bg-tertiary: oklch(86% 0.014 283.7deg);
     --c-bg-elevated: oklch(80% 0.018 283.6deg);
     --c-text-primary: oklch(20% 0 none);

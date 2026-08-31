@@ -218,26 +218,33 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 // --- effortFor ---
 
 // effortFor prefers the chat's own choice, falls back to the last level the user
-// picked anywhere, and refuses a level too malformed to be a tier id. Shape only:
-// the tier vocabulary is per model and KAS's to judge, so an unknown-but-well-
-// formed seed flows.
+// picked anywhere — but only when that pick was made under the chat's OWN model
+// — and refuses a level too malformed to be a tier id. Shape only: the tier
+// vocabulary is per model and KAS's to judge, so an unknown-but-well-formed seed
+// flows.
 func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 	tests := map[string]struct {
 		chatEffort string
+		chatModel  string
 		setting    string
+		seedModel  string
 		want       string
 	}{
-		"chat choice wins over the seed":    {chatEffort: "max", setting: "low", want: "max"},
-		"seed answers for an unset chat":    {chatEffort: "", setting: "xhigh", want: "xhigh"},
-		"no choice and no seed sends none":  {chatEffort: "", setting: "", want: ""},
-		"a malformed seed level is refused": {chatEffort: "", setting: "TURBO", want: ""},
-		"a well-formed unknown level flows": {chatEffort: "", setting: "none", want: "none"},
+		"chat choice wins over the seed":       {chatEffort: "max", chatModel: "m1", setting: "low", seedModel: "m1", want: "max"},
+		"seed answers for an unset chat":       {chatEffort: "", chatModel: "m1", setting: "xhigh", seedModel: "m1", want: "xhigh"},
+		"no choice and no seed sends none":     {chatEffort: "", chatModel: "m1", setting: "", seedModel: "", want: ""},
+		"a malformed seed level is refused":    {chatEffort: "", chatModel: "m1", setting: "TURBO", seedModel: "m1", want: ""},
+		"a well-formed unknown level flows":    {chatEffort: "", chatModel: "m1", setting: "none", seedModel: "m1", want: "none"},
+		"a seed picked under ANOTHER model":    {chatEffort: "", chatModel: "m2", setting: "max", seedModel: "m1", want: ""},
+		"a pairless seed (pre-pair install)":   {chatEffort: "", chatModel: "m1", setting: "max", seedModel: "", want: ""},
+		"a modelless chat never takes a seed":  {chatEffort: "", chatModel: "", setting: "max", seedModel: "m1", want: ""},
+		"the choice survives a model mismatch": {chatEffort: "high", chatModel: "m2", setting: "max", seedModel: "m1", want: "high"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			if test.setting != "" {
-				body := `{"last_effort":"` + test.setting + `"}`
+				body := `{"last_effort":"` + test.setting + `","last_effort_model":"` + test.seedModel + `"}`
 				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
 					t.Fatalf("write config.json: %v", err)
 				}
@@ -245,11 +252,52 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
 
-			got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c1", Effort: test.chatEffort})
+			got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c1", Effort: test.chatEffort, Model: test.chatModel})
 
 			if got != test.want {
-				t.Errorf("effortFor(chat=%q, last_effort=%q) = %q, want %q",
-					test.chatEffort, test.setting, got, test.want)
+				t.Errorf("effortFor(chat=%q, model=%q, last_effort=%q under %q) = %q, want %q",
+					test.chatEffort, test.chatModel, test.setting, test.seedModel, got, test.want)
+			}
+		})
+	}
+}
+
+// EffortForSwitch resolves against the TARGET model: the seed when it was picked
+// under that model, else the target's own catalog default, else nothing.
+func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
+	catalog := []vibekit.SessionModel{
+		{ID: "m1", DefaultEffortLevel: "high"},
+		{ID: "m2", DefaultEffortLevel: "medium"},
+	}
+	tests := map[string]struct {
+		setting   string
+		seedModel string
+		target    string
+		want      string
+	}{
+		"seed picked under the target wins":       {setting: "max", seedModel: "m2", target: "m2", want: "max"},
+		"seed under another model yields default": {setting: "max", seedModel: "m1", target: "m2", want: "medium"},
+		"no seed yields the target's default":     {setting: "", seedModel: "", target: "m1", want: "high"},
+		"unknown target yields nothing":           {setting: "", seedModel: "", target: "m9", want: ""},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if test.setting != "" {
+				body := `{"last_effort":"` + test.setting + `","last_effort_model":"` + test.seedModel + `"}`
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+					t.Fatalf("write config.json: %v", err)
+				}
+			}
+			h, _, _ := newTestHub()
+			h.coord.lifecycle.configDir = dir
+			chat := &vibekit.Chat{ID: "c1", Effort: "low", Model: "m1", AvailableModels: catalog}
+
+			got := h.coord.EffortForSwitch(t.Context(), chat, test.target)
+
+			if got != test.want {
+				t.Errorf("EffortForSwitch(target=%q, seed=%q under %q) = %q, want %q — the chat's own choice must never leak into a switch",
+					test.target, test.setting, test.seedModel, got, test.want)
 			}
 		})
 	}
@@ -259,12 +307,12 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 // onto the chat record, or that chat stops following the setting forever.
 func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"last_effort":"max"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"last_effort":"max","last_effort_model":"m1"}`), 0o600); err != nil {
 		t.Fatalf("write config.json: %v", err)
 	}
 	h, _, _ := newTestHub()
 	h.coord.lifecycle.configDir = dir
-	chat := &vibekit.Chat{ID: "c1"}
+	chat := &vibekit.Chat{ID: "c1", Model: "m1"}
 
 	if got := h.coord.effortFor(t.Context(), chat); got != "max" {
 		t.Fatalf("effortFor = %q, want max", got)

@@ -421,7 +421,10 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
+		// A tier chosen under m-old: it must NOT ride onto m-new (user report,
+		// 2026-08-31) — the switch resolves against the TARGET model instead.
 		c.Effort = "max"
+		c.AvailableModels = []vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "high"}}
 		return true
 	})
 	// A LIVE bridge, because the fast path returns early when there is none and
@@ -448,10 +451,10 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 	if got := br.ModelID(); got != "m-new" {
 		t.Errorf("resumed session model = %q, want %q; the restart fallback did not apply the pick", got, "m-new")
 	}
-	// And the level rides with it, because a swap can reset it: KAS reconciles the
-	// session's effort against the new model's tier list.
-	if got := br.lastEffort(); got != "max" {
-		t.Errorf("resumed session effort = %q, want %q", got, "max")
+	// And a level rides with it, because a swap can reset it: the TARGET model's
+	// own default, never the choice made under the old model.
+	if got := br.lastEffort(); got != "high" {
+		t.Errorf("resumed session effort = %q, want %q (m-new's default; the m-old choice must not leak)", got, "high")
 	}
 }
 
@@ -462,12 +465,21 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 // A chat that has never had a bridge is the only way to reach that branch. Opening
 // one stamps its session id onto the record (persistNewSessionMetadata), after
 // which every reopen is a session/load.
+// A chat that has never had a bridge NOR a session reaches this branch only with
+// history on the record (a `!cmd` shell chat): a truly empty chat takes the
+// pre-session persist instead (TestSwitchModel_PreSessionPickPersistsWithoutABridge).
 func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 	h, cs, br := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
+		// Chosen under m-old, so the fresh spawn resolves against the TARGET:
+		// its catalog default, never this value.
 		c.Effort = "max"
+		c.AvailableModels = []vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "medium"}}
+		// History with no session id: the shell-intercept shape, which is what
+		// makes the switch spawn a FRESH session rather than persist-and-return.
+		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "!ls"}}
 		return true
 	})
 
@@ -482,9 +494,51 @@ func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 	if got := br.lastEffort(); got != "" {
 		t.Errorf("effort re-applied = %q, want none on a fresh session: the session door already carried it", got)
 	}
-	// The level still reached the session, on the door rather than on a retry.
+	// The level still reached the session, on the door rather than on a retry —
+	// resolved against the TARGET model (its default), not the old chat choice.
 	opts := br.lastStartOpts()
-	if opts == nil || opts.Effort != "max" {
-		t.Errorf("StartOpts.Effort = %v, want max on the fresh spawn", opts)
+	if opts == nil || opts.Effort != "medium" {
+		t.Errorf("StartOpts.Effort = %v, want medium (m-new's default) on the fresh spawn", opts)
+	}
+}
+
+// A pick on a chat that has never run is a PREFERENCE: it persists on the record
+// with no bridge, no session and no event row, so the header echo carries the
+// pick and a later set_effort auto-persist cannot clobber it back (user report,
+// 2026-08-31: picking an effort after picking a model reverted the model).
+func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
+	h, cs, br := newTestHub()
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "m-old"
+		// A tier chosen before the model pick was chosen under m-old; the pick
+		// clears it so resolution falls to the new model's own default.
+		c.Effort = "max"
+		return true
+	})
+
+	rec := postCmd(t, h, vibekit.ClientCommand{
+		Type: "switch_model", ChatID: "c1",
+		Payload: json.RawMessage(`{"model":"m-new"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	chat, ok := cs.Get(t.Context(), "c1")
+	if !ok {
+		t.Fatal("chat gone after the pick")
+	}
+	if chat.Model != "m-new" {
+		t.Errorf("chat.Model = %q, want m-new persisted on the record", chat.Model)
+	}
+	if chat.Effort != "" {
+		t.Errorf("chat.Effort = %q, want cleared: the tier was chosen under m-old", chat.Effort)
+	}
+	if n := len(chat.Messages); n != 0 {
+		t.Errorf("messages = %d, want 0: a pre-session pick is not a switch event", n)
+	}
+	if opts := br.lastStartOpts(); opts != nil {
+		t.Errorf("a bridge was spawned for a pre-session pick: StartOpts = %+v", opts)
 	}
 }

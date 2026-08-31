@@ -46,7 +46,17 @@ const (
 	// a bare level with per-chat storage intact, reconciled against the current
 	// model's own tier list at both readers, so a level the new model does not
 	// offer falls through to that model's default rather than being sent.
-	KeyLastEffort          = "last_effort"
+	KeyLastEffort = "last_effort"
+	// KeyLastEffortModel is the model KeyLastEffort was picked under, recorded by
+	// the same click. The seed applies only when a chat runs THAT model: an
+	// explicit tier is a judgement about one model's speed/quality trade, so
+	// carrying it onto a different model made every new pick inherit the previous
+	// model's choice (user report, 2026-08-31 — "switching models must select the
+	// new model's default; the same model keeps what was selected"). Both seed
+	// readers gate on it: BridgeCoordinator.effortFor and the client's
+	// getLastEffortFor. Empty (a pre-pair install) means the seed never applies,
+	// which self-heals on the next pick.
+	KeyLastEffortModel     = "last_effort_model"
 	KeyNotifyAgentFinished = "notify_agent_finished"
 	KeyNotifyPRStatus      = "notify_pr_status"
 	KeySupervisedDefault   = "supervised_default"
@@ -272,6 +282,7 @@ var KnownKeys = map[string]struct{}{
 	KeyFBPath:               {},
 	KeyKnowledgeEnabled:     {},
 	KeyLastEffort:           {},
+	KeyLastEffortModel:      {},
 	KeyLastModel:            {},
 	KeyMemoryEnabled:        {},
 	KeyNotificationsEnabled: {},

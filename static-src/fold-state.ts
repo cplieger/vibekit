@@ -119,6 +119,13 @@ export function isTurnOpen(chatID: string, t: Turn, index: number, total: number
   if (t.outcome === "running") {
     return true;
   }
+  // The newest turn is the one being read and CANNOT be collapsed — its toggle
+  // is hidden, and the rule sits ABOVE the overrides so a fold recorded against
+  // it by an earlier build, or against a turn a rewind made newest, cannot
+  // strand the tail closed with no control left to reopen it.
+  if (index >= total - OPEN_TAIL) {
+    return true;
+  }
   const explicit = overrides.get(chatID)?.[t.id];
   if (explicit !== undefined) {
     return explicit;
@@ -129,7 +136,7 @@ export function isTurnOpen(chatID: string, t: Turn, index: number, total: number
   // No sticky-open for failed turns and no sticky-open for live runs: the
   // collapsed face carries both (the error text as the turn's output, and a
   // duplicate run card above the prose), so folding hides neither.
-  return index >= total - OPEN_TAIL;
+  return false;
 }
 
 /** Record the reader's own choice for a turn. */

@@ -19,7 +19,12 @@ import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
-import { setCurrentModel, setLastModel, getLastEffort, setLastEffort } from "./session-context.js";
+import {
+  setCurrentModel,
+  setLastModel,
+  getLastEffortFor,
+  setLastEffort,
+} from "./session-context.js";
 import { refreshPickerIfVisible, getCachedModels } from "./picker.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import {
@@ -206,7 +211,12 @@ class ModelSwitchController {
    *  which is also what makes the row correct after a tab switch rather than
    *  showing whichever chat was open when the page loaded. */
   private ensureEffortRow(list: HTMLElement): void {
-    const { levels, active } = effortVocabulary(getActive(), getCachedModels(), getLastEffort());
+    const active0 = getActive();
+    const { levels, active } = effortVocabulary(
+      active0,
+      getCachedModels(),
+      getLastEffortFor(active0?.model ?? ""),
+    );
     this.effortActive = active;
     if (this.effortRow === null) {
       this.effortRow = el("div", {
@@ -226,7 +236,7 @@ class ModelSwitchController {
         this.effortActive = effortVocabulary(
           activeSession.value,
           getCachedModels(),
-          getLastEffort(),
+          getLastEffortFor(activeSession.value?.model ?? ""),
         ).active;
         this.syncEffortActive();
       });
@@ -316,7 +326,7 @@ class ModelSwitchController {
     if ((session.effort ?? "") === level) {
       return;
     }
-    setLastEffort(level);
+    setLastEffort(level, session.model);
     void setEffortAction.dispatch({ chatID: session.id, level });
   }
 
@@ -360,7 +370,13 @@ class ModelSwitchController {
     }
     const isEmpty = isEmptyChat(session);
     if (isEmpty) {
+      // Instant local apply, PLUS the command: the record is what every header
+      // echo carries, so a pick that stays local is clobbered back the moment
+      // set_effort or set_mode auto-persists (user report, 2026-08-31 — picking
+      // an effort reverted the model). The server persists a pre-session pick
+      // without spawning a bridge.
       this.applyLocalChoice(modelID);
+      this.fire(session.id, modelID);
       return;
     }
     const switchInFlight = this.queueState.status === "switching";
@@ -450,4 +466,12 @@ export function applyLocalModel(modelID: string): void {
     setModel(session.id, modelID);
   }
   refreshPickerIfVisible(modelID);
+}
+
+/** The one door for a model pick from ANY surface (the hero picker included):
+ *  routes the local/empty/idle/mid-turn cases exactly as the pill's own list
+ *  does, so an empty-chat pick persists on the record rather than staying a
+ *  local write the next header echo clobbers. */
+export function pickModel(modelID: string): void {
+  controller.requestModelSwitch(modelID);
 }
