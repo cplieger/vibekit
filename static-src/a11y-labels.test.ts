@@ -61,19 +61,14 @@ describe("a11y: missing labels", () => {
     // Setup minimal DOM for settings-tabs
     const bar = document.createElement("div");
     bar.id = "settings-tab-bar";
-    const select = document.createElement("select");
-    select.id = "settings-tab-select";
     // ("git" removed: the Git & forges settings tab was retired.)
     const tabs = ["general", "tools", "permissions", "instructions"];
     for (const t of tabs) {
       const btn = document.createElement("button");
       btn.setAttribute("data-settings-tab", t);
       bar.appendChild(btn);
-      const opt = document.createElement("option");
-      opt.value = t;
-      select.appendChild(opt);
     }
-    document.body.append(bar, select);
+    document.body.append(bar);
 
     const { initSettingsTabs } = await import("./settings-tabs.js");
     initSettingsTabs();
@@ -90,7 +85,6 @@ describe("a11y: missing labels", () => {
     expect(toolsBtn.getAttribute("tabindex")).toBe("-1");
 
     document.body.removeChild(bar);
-    document.body.removeChild(select);
   });
 });
 

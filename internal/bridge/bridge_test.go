@@ -1909,18 +1909,35 @@ func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
 	}
 }
 
-// An unknown level never reaches the session door, for the same reason SetEffort
-// drops one: config.json is user-editable.
-func TestNewSession_OmitsAnUnknownLevelFromTheDoor(t *testing.T) {
+// A malformed level never reaches the session door, for the same reason SetEffort
+// drops one: config.json is user-editable. Shape only — an unknown-but-well-formed
+// tier flows, because the vocabulary is per model and KAS's to judge.
+func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
-		&vibekit.StartOpts{Effort: "turbo"},
+		&vibekit.StartOpts{Effort: "TURBO"},
 		&vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
 	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
 	}
 	if bytes.Contains(sent, []byte("effortLevel")) {
-		t.Errorf("an unknown level reached the wire; frames were:\n%s", sent)
+		t.Errorf("a malformed level reached the wire; frames were:\n%s", sent)
+	}
+}
+
+// A well-formed tier vibekit's own constants do not name still reaches the door:
+// gpt-luna ships a "none" tier, and a closed local set rejecting it is the bug
+// (the catalog is upstream-owned, so a model shipped after this build must work).
+func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	sent, err := runNewSession(t, b,
+		&vibekit.StartOpts{Effort: "none"},
+		&vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
+	if err != nil {
+		t.Fatalf("newSession returned error: %v", err)
+	}
+	if !bytes.Contains(sent, []byte(`"effortLevel":"none"`)) {
+		t.Errorf("a well-formed tier did not reach the session door; frames were:\n%s", sent)
 	}
 }
 
@@ -2125,10 +2142,11 @@ func TestLoadSession_SendsNoEffortWhenTheChatChoseNone(t *testing.T) {
 
 // --- bridge.go: EnsureEffort ---
 
-// A level this build does not know never reaches the wire: config.json is
-// user-editable, so the guard is at the one door every effort call goes through.
-func TestEnsureEffort_DropsAnUnknownLevel(t *testing.T) {
-	for _, level := range []string{"", "turbo", "HIGH", "max "} {
+// A malformed level never reaches the wire: config.json is user-editable, so the
+// shape guard is at the one door every effort call goes through. Well-formed
+// tiers flow whatever their name — the vocabulary is per model and KAS's.
+func TestEnsureEffort_DropsAMalformedLevel(t *testing.T) {
+	for _, level := range []string{"", "HIGH", "max ", "9max"} {
 		t.Run(level, func(t *testing.T) {
 			b := New("/nonexistent", "/work")
 			sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},

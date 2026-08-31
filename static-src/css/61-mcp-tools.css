@@ -95,43 +95,9 @@
  * node; it is the turn card's bottom band now, and it belongs beside the header
  * band it mirrors. */
 
-/* Turn actions: single row below the assistant bubble. Left slot
- * holds the turn summary (credits + elapsed); right slot holds the
- * copy/export icon buttons. Muted at rest; hover steps the ink up.
- * Styled to harmonise with the checkpoint line above (both are thin,
- * muted rows of chrome bracketing a turn).
- *
- * MUTED BY INK, not by `opacity`. It was `opacity: 0.7` over the hint ink,
- * which measured 3.088:1 dark / 2.742:1 light on the card — under AA for an
- * 11px row, and invisible to both contrast gates because one reads the token
- * graph and the other the stylesheet. The hint ink alone is 4.771 / 4.719 and
- * looks near-identical; hover lifts the INK instead of the layer, which is what
- * the child buttons already do for their own hover. */
-.turn-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-1) 0;
-  margin-block-end: var(--sp-2);
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  transition: color var(--dur-micro) var(--ease-standard);
-}
-
-.turn-actions:hover,
-.msg-wrap-assistant:hover .turn-actions {
-  color: var(--c-text-secondary);
-}
-
-.turn-actions-summary {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* Turn actions: the copy/source/export icon buttons, mounted in the turn
+ * FOOTER's middle grid column (29-turns.css owns the placement). Ink is the
+ * footer's own; each button lifts itself on hover. */
 .turn-actions-buttons {
   display: inline-flex;
   align-items: center;
@@ -329,13 +295,19 @@
   .action-pill,
   .pill,
   .tab-close,
+  .settings-tab,
+  .turn-action-btn,
+  .turn-fold-toggle,
+  .turn-rewind,
+  .turn-ledger-summary,
   .conflict-btn,
   .diff-hunk-btn,
   .diff-ask-btn,
   .send-btn,
   .mcp-modal-tab,
   .upload-progress-cancel,
-  .list-row-name,
+  button.list-row-name,
+  .list-row-btn,
   .history-delete,
   .git-repo-section-header
 ) {
@@ -353,13 +325,19 @@
     .action-pill,
     .pill,
     .tab-close,
+    .settings-tab,
+    .turn-action-btn,
+    .turn-fold-toggle,
+    .turn-rewind,
+    .turn-ledger-summary,
     .conflict-btn,
     .diff-hunk-btn,
     .diff-ask-btn,
     .send-btn,
     .mcp-modal-tab,
     .upload-progress-cancel,
-    .list-row-name,
+    button.list-row-name,
+    .list-row-btn,
     .history-delete,
     .git-repo-section-header
   ) {

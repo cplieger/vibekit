@@ -36,7 +36,6 @@ vi.mock("./view-swap.js", () => ({
 vi.mock("./dom.js", () => {
   const idFor: Record<string, string> = {
     settingsTabBar: "settings-tab-bar",
-    settingsTabSelect: "settings-tab-select",
   };
   const byIdReal = (id: string): HTMLElement => {
     const e = document.getElementById(id);
@@ -93,27 +92,22 @@ describe("settings-tabs TAB_LABELS coverage", () => {
 
 describe("settings-tabs forceSettingsTab dedup", () => {
   // Build the panel layout contract initSettingsTabs() expects: a tab bar with
-  // one button per tab, a mobile select, one panel per tab, and a page title.
+  // one button per tab, one panel per tab, and a page title.
   function buildSettingsDom(): void {
     document.body.replaceChildren();
     const bar = document.createElement("div");
     bar.id = "settings-tab-bar";
-    const select = document.createElement("select");
-    select.id = "settings-tab-select";
     for (const t of TABS) {
       const btn = document.createElement("button");
       btn.setAttribute("data-settings-tab", t);
       bar.appendChild(btn);
-      const opt = document.createElement("option");
-      opt.value = t;
-      select.appendChild(opt);
       const panel = document.createElement("div");
       panel.setAttribute("data-settings-panel", t);
       document.body.appendChild(panel);
     }
     const title = document.createElement("div");
     title.id = "settings-page-title";
-    document.body.append(bar, select, title);
+    document.body.append(bar, title);
   }
 
   beforeEach(() => {

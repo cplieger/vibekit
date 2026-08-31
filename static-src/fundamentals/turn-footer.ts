@@ -46,10 +46,6 @@ export interface TurnSummaryData {
   /** The turn's result, carried as the footer's tint so outcome is scannable
    *  down the transcript without reading a word. */
   outcome?: TurnOutcome;
-  /** What a FOLDED turn shows on its right: changed filenames, else the reply's
-   *  first sentence. Rendered always but only VISIBLE when folded, so folding is
-   *  a CSS state change rather than a re-render. */
-  foldSummary?: string;
 }
 
 /** Whether there is anything worth showing (avoid an empty footer).
@@ -96,7 +92,6 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
   });
   footer.appendChild(summary);
 
-  footer.appendChild(el("span", { className: "turn-fold-summary" }));
   footer.appendChild(el("ul", { className: "turn-ledger-files" }));
 
   updateTurnFooter(footer, d);
@@ -107,11 +102,6 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
  *  expanded file list across repaints. */
 export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void {
   footer.dataset["outcome"] = d.outcome ?? "completed";
-
-  const fold = footer.querySelector<HTMLElement>(":scope > .turn-fold-summary");
-  if (fold !== null) {
-    fold.textContent = d.foldSummary ?? "";
-  }
 
   const files = Object.entries(d.changedFiles ?? {});
   const summary = footer.querySelector<HTMLButtonElement>(":scope > .turn-ledger-summary");

@@ -297,19 +297,23 @@
               <h2 class="page-title"><span id="settings-page-title">General</span></h2>
             </div>
             <nav id="settings-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Settings tabs">
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="general">General</button>
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="tools">Tools</button>
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="permissions">Permissions</button>
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="instructions">Custom instructions</button>
+              <button type="button" class="settings-tab" role="tab" data-settings-tab="general" aria-label="General">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                <span class="settings-tab-label">General</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" data-settings-tab="tools" aria-label="Tools">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+                <span class="settings-tab-label">Tools</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" data-settings-tab="permissions" aria-label="Permissions">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span class="settings-tab-label">Permissions</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" data-settings-tab="instructions" aria-label="Custom instructions">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span class="settings-tab-label">Custom instructions</span>
+              </button>
             </nav>
-            <label class="settings-tab-select-wrap" aria-label="Settings tabs">
-              <select id="settings-tab-select" class="settings-tab-select">
-                <option value="general">General</option>
-                <option value="tools">Tools</option>
-                <option value="permissions">Permissions</option>
-                <option value="instructions">Custom instructions</option>
-              </select>
-            </label>
           </header>
 
           <!-- General: notifications + theme hooks (theme toggle lives in sidebar; nothing else needs a dedicated setting) -->
@@ -711,23 +715,31 @@
               <h2 class="page-title"><span id="docs-page-title">Steering</span></h2>
             </div>
             <nav id="docs-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Kiro document categories">
-              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-docs-tab="steering">Steering</button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="skills">Skills</button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="agents">Agents</button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="specs">Specs</button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="hooks">Hooks</button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="workflows">Workflows</button>
+              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                <span class="settings-tab-label">Steering</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="skills" aria-label="Skills">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span class="settings-tab-label">Skills</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+                <span class="settings-tab-label">Agents</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                <span class="settings-tab-label">Specs</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0020 0h-3"/></svg>
+                <span class="settings-tab-label">Hooks</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                <span class="settings-tab-label">Workflows</span>
+              </button>
             </nav>
-            <label class="settings-tab-select-wrap" aria-label="Kiro document categories">
-              <select id="docs-tab-select" class="settings-tab-select">
-                <option value="steering">Steering</option>
-                <option value="skills">Skills</option>
-                <option value="agents">Agents</option>
-                <option value="specs">Specs</option>
-                <option value="hooks">Hooks</option>
-                <option value="workflows">Workflows</option>
-              </select>
-            </label>
           </header>
           <div data-docs-panel="steering" class="list-container docs-panel"></div>
           <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
@@ -749,17 +761,19 @@
               <h2 class="page-title">Source Control</h2>
             </div>
             <nav id="git-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Source control tabs">
-              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-git-tab="changes">Changes</button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="prs">Pull requests</button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="sources">Sources</button>
+              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-git-tab="changes" aria-label="Changes">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><line x1="1.05" y1="12" x2="7" y2="12"/><line x1="17.01" y1="12" x2="22.96" y2="12"/></svg>
+                <span class="settings-tab-label">Changes</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="prs" aria-label="Pull requests">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 012 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+                <span class="settings-tab-label">Pull requests</span>
+              </button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="sources" aria-label="Sources">
+                <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+                <span class="settings-tab-label">Sources</span>
+              </button>
             </nav>
-            <label class="settings-tab-select-wrap" aria-label="Source control tabs">
-              <select id="git-tab-select" class="settings-tab-select">
-                <option value="changes">Changes</option>
-                <option value="prs">Pull requests</option>
-                <option value="sources">Sources</option>
-              </select>
-            </label>
           </header>
           <!-- Source-control status banner: at most one of forge-auth-failed,
                gh-cli-missing, forges-not-connected. Populated by

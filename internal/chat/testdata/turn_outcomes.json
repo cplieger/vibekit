@@ -134,6 +134,24 @@
       "want": "unknown"
     },
     {
+      "name": "a later settled outcome supersedes a fragment's unknown",
+      "body": [{ "outcome": "unknown" }, { "outcome": "completed" }],
+      "is_live": false,
+      "want": "completed"
+    },
+    {
+      "name": "a fragment inside a live turn reads as running",
+      "body": [{ "outcome": "unknown" }],
+      "is_live": true,
+      "want": "running"
+    },
+    {
+      "name": "an interrupt beats a fragment's unknown",
+      "body": [{ "outcome": "unknown" }, { "event": "interrupted" }],
+      "is_live": false,
+      "want": "interrupted"
+    },
+    {
       "name": "a truncated turn still completed",
       "body": [{ "outcome": "completed", "truncated": true }],
       "is_live": false,
@@ -150,12 +168,18 @@
     "The BOUNDARY rule, and reviewers caught it wrong in both directions, so it is",
     "pinned rather than described. A user message opens a turn; so does the first",
     "persisted message of a turn with NO user trigger, which is derivable because a",
-    "turn's outcome-bearing message closes it.",
+    "turn's SETTLED-outcome-bearing message closes it.",
     "",
     "Too narrow (only an empty turn's marker opens one) puts a non-empty",
     "agent-initiated turn's outcome in the PREVIOUS turn's body, which can flip a",
     "completed turn to failed on reload. Too broad (any non-user message opens one)",
     "splits a prompted empty turn that has a user message to attach to.",
+    "",
+    "An outcome of `unknown` does NOT close: it marks a fragment whose end never",
+    "arrived (a displaced wire turn's persist), and transcripts persisted before",
+    "the internal-tool suppression carry one per fresh session between the user",
+    "message and the real reply. Closing on it split that turn in two — a phantom",
+    "'Agent-initiated turn' holding the actual answer, and a rail one turn long.",
     "",
     "`messages` is the flat persisted list. `want` is one entry per expected turn:",
     "its opening message id, whether it has a user trigger, and its outcome."
@@ -168,6 +192,23 @@
         { "role": "assistant", "id": "a1", "outcome": "completed" }
       ],
       "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "a displaced boot fragment does not split its prompt's turn",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "unknown" },
+        { "role": "assistant", "id": "a2", "outcome": "completed" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "completed" }]
+    },
+    {
+      "name": "a lone fragment keeps its unknown outcome",
+      "messages": [
+        { "role": "user", "id": "u1" },
+        { "role": "assistant", "id": "a1", "outcome": "unknown" }
+      ],
+      "want": [{ "id": "u1", "agent_initiated": false, "outcome": "unknown" }]
     },
     {
       "name": "a prompted EMPTY turn is not split off from its own prompt",

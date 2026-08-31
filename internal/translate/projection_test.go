@@ -1006,3 +1006,44 @@ func TestProjection_DropsThePrimesOwnReply(t *testing.T) {
 		}
 	}
 }
+
+// TestProjection_InternalToolIsDropped pins the replay half of the
+// internal-tool suppression: KAS's log stores the session-boot cloud-config
+// fetch it announced, so without the gate a resumed chat regains the card the
+// live stream dropped — stuck at whatever status the log recorded.
+func TestProjection_InternalToolIsDropped(t *testing.T) {
+	p := NewProjection(seqIDs())
+	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+
+	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+		"toolCallId":    "cc-1",
+		"title":         "Fetching your cloud config",
+		"kind":          "other",
+		"status":        "in_progress",
+		"_meta":         map[string]any{"kiro": map[string]any{"replay": true, "toolId": "fetch_cloud_config"}},
+	}))
+	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+		"toolCallId":    "cc-1",
+		"status":        "completed",
+		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
+	}))
+	// The real reply follows, so the turn itself still projects.
+	_, chunk := replayFrame(t, vibekit.ACPUpdateAgentChunk, "hello", "", nil)
+	p.Ingest(vibekit.ACPUpdateAgentChunk, chunk)
+
+	got := p.Messages()
+	if len(got) != 1 {
+		t.Fatalf("projected %d messages, want 1:\n%s", len(got), dumpMessages(got))
+	}
+	if n := len(got[0].ToolCalls); n != 0 {
+		t.Errorf("projected %d tool calls, want 0 (internal tool must not survive a replay)", n)
+	}
+	for _, b := range got[0].Blocks {
+		if b.Type == vibekit.BlockToolUse {
+			t.Errorf("a tool_use block anchors the suppressed internal tool; blocks = %+v", got[0].Blocks)
+		}
+	}
+}

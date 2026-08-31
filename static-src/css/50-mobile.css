@@ -22,6 +22,20 @@
      Flat page color; the drawer paints its own background when open. */
   body {
     background: var(--c-bg-primary);
+    transition: background-color var(--dur-standard) var(--ease-standard);
+  }
+
+  /* iPhone PWA: the home-indicator band sits BELOW the layout viewport and
+     only the html/body canvas paints there (WKWebView derives its
+     underPageBackgroundColor from the body — no positioned element reaches
+     the band, which is why the drawer's own bottom:0 background cannot fix
+     this). The community pattern is "body background matches whatever
+     surface sits at the bottom"; our bottom surface is state-dependent, so
+     the canvas flips to the drawer color while the drawer is open, in step
+     with the slide (the transition above). Closed, the chat/composer color
+     stands. */
+  body:has([id="sidebar"].open) {
+    background: var(--c-bg-secondary);
   }
 
   /* The drawer slides on TRANSFORM, not on `left`. `left` is a layout
@@ -76,8 +90,17 @@
 
   .page-title {
     display: none;
-    padding-bottom: var(--sp-3);
-    padding-top: var(--sp-1);
+  }
+
+  /* The title ROW hides with its title, not just the title: it is the
+     desktop's clearance for the floating toolbar and the iOS status bar
+     (padding-top 0.3125rem + safe-area-inset-top), and the static
+     .chat-toolbar above already pays the inset here — leaving the empty row
+     in flow double-paid it and charged the header's flex gap on top, which
+     is the "too much padding above the tab dropdown" on git/settings/docs
+     pages. All three rows hold only the (hidden) h2. */
+  .settings-title-row {
+    display: none;
   }
 
   .chat-toolbar .mobile-only {
@@ -117,9 +140,13 @@
     width: calc(100vw - 2 * var(--sp-4));
   }
 
-  /* Toolbars: larger touch targets */
+  /* Toolbars: larger touch targets. The bottom clearance pays the LARGER of
+     the house padding or the device inset, never the sum: the 34px home-bar
+     inset is already generous clearance on its own, and adding --sp-3 on top
+     (46px total) is what read as "way too large" on iPhone (Apple's own
+     pattern is max(), keeping the padding for inset-less devices only). */
   .bottom-bar {
-    padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom, 0));
+    padding: var(--sp-3) var(--sp-4) max(var(--sp-3), env(safe-area-inset-bottom, 0));
   }
 
   /* There is no `.pill` or `#send-btn` sizing here. Both live in the unlayered

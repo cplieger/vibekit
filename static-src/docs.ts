@@ -13,9 +13,10 @@
 // (per-tab, not one budget) and the scope question (each tab names its own
 // source, so a file no tab claims simply gets no row).
 //
-// The tab bar reuses the Settings idiom verbatim (pills on desktop, a native
-// select on mobile, deep-linkable, roving focus), so mobile is solved on
-// arrival rather than being a second tab vocabulary.
+// The tab bar reuses the Settings idiom verbatim (pill bar at every width,
+// labels swapping to centered icons when they would truncate, deep-linkable,
+// roving focus), so mobile is solved on arrival rather than being a second
+// tab vocabulary.
 //
 // Row click opens the document in the file editor; the server row already
 // carries the path, so there is no resolution step here.
@@ -45,6 +46,7 @@ import { pushRoute } from "./router.js";
 import type { DocsTab } from "./router.js";
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { setDocsTab as setTabRoute, toggleDocsView } from "./tabs.js";
+import { fitTabBar } from "./tab-bar-fit.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
@@ -404,7 +406,6 @@ function initDocsView(): void {
   }
   inited = true;
   const bar = $.docsTabBar;
-  const select = $.docsTabSelect;
 
   bar.setAttribute("role", "tablist");
   bar.setAttribute("aria-label", "Kiro document categories");
@@ -422,12 +423,9 @@ function initDocsView(): void {
       selectTab(tab);
     });
   }
-  select.addEventListener("change", () => {
-    const v = select.value;
-    if (isDocsTab(v)) {
-      selectTab(v);
-    }
-  });
+  // Labels swap to centered icons when the bar cannot fit them (six tabs
+  // never fit a phone as text).
+  fitTabBar(bar);
   rovingFocus(bar, "[data-docs-tab]", { orientation: "horizontal" });
   // Hand Ctrl-F this page's entry point. Through the LEAF registry, not the
   // dispatcher: importing find-dispatch here would drag find-in-chat and
@@ -510,10 +508,6 @@ function selectTab(tab: DocsTab): void {
   activeTab.value = tab;
 }
 
-function isDocsTab(v: string): v is DocsTab {
-  return DOCS_TABS.includes(v as DocsTab);
-}
-
 function syncTabChrome(tab: DocsTab): void {
   const bar = $.docsTabBar;
   for (const t of DOCS_TABS) {
@@ -522,7 +516,6 @@ function syncTabChrome(tab: DocsTab): void {
     btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
     btn?.setAttribute("tabindex", t === tab ? "0" : "-1");
   }
-  $.docsTabSelect.value = tab;
   swapViews(() => {
     let active: HTMLElement | null = null;
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-docs-panel]")) {

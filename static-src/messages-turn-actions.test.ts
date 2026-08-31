@@ -1,4 +1,4 @@
-// The assistant turn's action row: copy, export, and the raw-markdown toggle.
+// The turn footer's action buttons: copy, export, and the raw-markdown toggle.
 //
 // The toggle's three mechanical constraints are what most of this file pins. It
 // must ADD a sibling rather than replace the rendered children, because
@@ -6,9 +6,12 @@
 // `.hidden`, because find-in-chat's walker prunes `.hidden` subtrees and would
 // otherwise count every match twice; and it must hide the block CONTAINER
 // rather than its children, so a block arriving after the toggle cannot leak
-// into the raw view.
+// into the raw view. New with the footer move: the buttons are per TURN and
+// identical open or folded, the toggle operates on whichever surface is
+// mounted (body open, face folded), and crossing the fold resets it.
 import { describe, it, expect, vi } from "vitest";
 import type { Message } from "./types.js";
+import type { Turn } from "./turns.js";
 
 const dispatch = vi.fn(
   (_text: string, opts?: { silent?: boolean; onSuccess?: () => void }): Promise<void> => {
@@ -42,9 +45,8 @@ vi.mock("./actions/messages.js", () => ({
 const downloadChatExport = vi.fn();
 vi.mock("./chat-export.js", () => ({ downloadChatExport }));
 
-const { attachTurnActions, initTurnActionCallbacks, copyWithFeedback } =
+const { mountTurnFooterActions, resetTurnSourceView, initTurnActionCallbacks, copyWithFeedback } =
   await import("./messages-turn-actions.js");
-const { KEY_ATTR } = await import("./reconcile.js");
 
 // The real injection point is messages.ts's CSP-safe <template> clone; a plain
 // element is enough here and keeps the fixture DOM readable.
@@ -57,19 +59,26 @@ initTurnActionCallbacks({
 });
 
 interface Fixture {
-  wrap: HTMLElement;
+  card: HTMLElement;
+  footer: HTMLElement;
+  body: HTMLElement;
   blocks: HTMLElement;
   bubble: HTMLDivElement;
   tool: HTMLElement;
+  turn: Turn;
 }
 
-/** The DOM shape buildAssistant + buildAssistantBody produce for one turn: a
- *  text bubble and a tool card, both inside the `.assistant-blocks` region. */
-function fixture(msg: Message, rendered = "rendered reply"): Fixture {
+/** The DOM shape buildTurn produces: a card with a body (one assistant wrap
+ *  holding a text bubble and a tool card inside its `.assistant-blocks`
+ *  region) and a ledger footer. */
+function fixture(msg: Message, rendered = "rendered reply", outcome = "completed"): Fixture {
   document.body.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "turn";
+  const body = document.createElement("div");
+  body.className = "turn-body";
   const wrap = document.createElement("div");
   wrap.className = "msg-wrap msg-wrap-assistant";
-  wrap.setAttribute(KEY_ATTR, msg.id);
   const blocks = document.createElement("div");
   blocks.className = "assistant-blocks";
   const row = document.createElement("div");
@@ -84,88 +93,149 @@ function fixture(msg: Message, rendered = "rendered reply"): Fixture {
   tool.textContent = "ran a command";
   blocks.appendChild(tool);
   wrap.appendChild(blocks);
-  document.body.appendChild(wrap);
+  body.appendChild(wrap);
+  card.appendChild(body);
+  const footer = document.createElement("div");
+  footer.className = "turn-footer";
+  card.appendChild(footer);
+  document.body.appendChild(card);
   active = { id: "c1", name: "chat", messages: [msg] };
-  return { wrap, blocks, bubble, tool };
+  const turn: Turn = {
+    id: msg.id,
+    n: 1,
+    trigger: undefined,
+    body: [msg],
+    ts: msg.ts,
+    outcome: outcome as Turn["outcome"],
+    rewindTo: undefined,
+  };
+  return { card, footer, body, blocks, bubble, tool, turn };
+}
+
+/** Fold the fixture card and give it the face a folded turn renders: the
+ *  prose bubble plus the surface the raw toggle swaps against. */
+function fold(f: Fixture, faceText = "face prose"): HTMLElement {
+  f.card.setAttribute("data-folded", "");
+  const face = document.createElement("div");
+  face.className = "turn-face";
+  const prose = document.createElement("div");
+  prose.className = "message assistant turn-face-prose";
+  prose.textContent = faceText;
+  face.appendChild(prose);
+  f.footer.before(face);
+  return face;
 }
 
 function assistant(over: Partial<Message> = {}): Message {
   return { id: "m1", role: "assistant", ts: 1, content: "# hi\n\nsource text", ...over };
 }
 
-function buttons(wrap: HTMLElement): HTMLButtonElement[] {
-  return [...wrap.querySelectorAll<HTMLButtonElement>(".turn-actions .turn-action-btn")];
+function buttons(footer: HTMLElement): HTMLButtonElement[] {
+  return [...footer.querySelectorAll<HTMLButtonElement>(".turn-actions-buttons .turn-action-btn")];
 }
 
-function sourceButton(wrap: HTMLElement): HTMLButtonElement {
-  const b = wrap.querySelector<HTMLButtonElement>(".turn-action-btn[aria-pressed]");
+function sourceButton(footer: HTMLElement): HTMLButtonElement {
+  const b = footer.querySelector<HTMLButtonElement>(".turn-action-btn[aria-pressed]");
   if (b === null) {
     throw new Error("no source toggle");
   }
   return b;
 }
 
-function raw(wrap: HTMLElement): HTMLElement | null {
-  return wrap.querySelector(".turn-raw");
+function raw(card: HTMLElement): HTMLElement | null {
+  return card.querySelector(".turn-raw");
 }
 
-describe("attachTurnActions", () => {
-  it("attaches one row with copy, markdown, source, chat id and export", () => {
+describe("mountTurnFooterActions", () => {
+  it("mounts one slot with copy, markdown, source, chat id and export", () => {
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    expect(f.wrap.querySelectorAll(".turn-actions")).toHaveLength(1);
-    expect(buttons(f.wrap)).toHaveLength(5);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    expect(f.footer.querySelectorAll(".turn-actions-buttons")).toHaveLength(1);
+    expect(buttons(f.footer)).toHaveLength(5);
   });
 
-  it("is idempotent across repeated finalize / mount passes", () => {
+  it("is idempotent across repeated paint passes", () => {
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    attachTurnActions(f.bubble);
-    attachTurnActions(f.bubble);
-    expect(f.wrap.querySelectorAll(".turn-actions")).toHaveLength(1);
-    expect(buttons(f.wrap)).toHaveLength(5);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    expect(f.footer.querySelectorAll(".turn-actions-buttons")).toHaveLength(1);
+    expect(buttons(f.footer)).toHaveLength(5);
   });
 
-  it("attaches nothing for a turn with no text at all", () => {
+  it("mounts nothing for a turn with no text at all", () => {
     const f = fixture(assistant({ content: "" }), "");
-    attachTurnActions(f.bubble);
-    expect(f.wrap.querySelector(".turn-actions")).toBeNull();
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    expect(f.footer.querySelector(".turn-actions-buttons")).toBeNull();
+  });
+
+  it("mounts nothing while the turn is still running", () => {
+    const f = fixture(assistant(), "rendered reply", "running");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    expect(f.footer.querySelector(".turn-actions-buttons")).toBeNull();
+  });
+
+  it("mounts once the turn settles, on the pass after the running one", () => {
+    const f = fixture(assistant(), "rendered reply", "running");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    mountTurnFooterActions(f.footer, f.card, { ...f.turn, outcome: "completed" });
+    expect(buttons(f.footer)).toHaveLength(5);
   });
 
   it("copies the stored markdown, not the rendered text", () => {
     const f = fixture(assistant({ content: "**bold**" }), "bold");
-    attachTurnActions(f.bubble);
-    buttons(f.wrap)[1]?.click();
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    buttons(f.footer)[1]?.click();
     expect(dispatch).toHaveBeenCalledWith("**bold**", expect.anything());
   });
 
   it("copies the rendered text for copy-as-text", () => {
     const f = fixture(assistant({ content: "**bold**" }), "bold");
-    attachTurnActions(f.bubble);
-    buttons(f.wrap)[0]?.click();
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    buttons(f.footer)[0]?.click();
     expect(dispatch).toHaveBeenCalledWith("bold", expect.anything());
+  });
+
+  it("joins a split turn's assistant messages for copy-as-markdown", () => {
+    // A mid-turn model switch splits one turn across two assistant messages;
+    // the buttons are the TURN's, so the copy carries both halves.
+    const f = fixture(assistant({ content: "first half" }));
+    const second: Message = { id: "m2", role: "assistant", ts: 2, content: "second half" };
+    f.turn.body.push(second);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    buttons(f.footer)[1]?.click();
+    expect(dispatch).toHaveBeenCalledWith("first half\n\nsecond half", expect.anything());
+  });
+
+  it("copies the face prose for copy-as-text when folded", () => {
+    const f = fixture(assistant({ content: "**bold**" }), "bold");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    f.body.remove(); // a folded stub keeps no body
+    fold(f, "face words");
+    buttons(f.footer)[0]?.click();
+    expect(dispatch).toHaveBeenCalledWith("face words", expect.anything());
   });
 });
 
 describe("the raw-markdown toggle", () => {
   it("starts closed and reports so on the button", () => {
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    expect(raw(f.wrap)).toBeNull();
-    expect(sourceButton(f.wrap).getAttribute("aria-pressed")).toBe("false");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    expect(raw(f.card)).toBeNull();
+    expect(sourceButton(f.footer).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("shows the source and hides the whole rendered body with .hidden", () => {
     const f = fixture(assistant({ content: "# hi" }));
-    attachTurnActions(f.bubble);
-    sourceButton(f.wrap).click();
-    expect(raw(f.wrap)?.textContent).toBe("# hi");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    sourceButton(f.footer).click();
+    expect(raw(f.card)?.textContent).toBe("# hi");
     // The CONTAINER hides, so prose and evidence go together. `.hidden`
     // specifically: find-in-chat prunes it, so exactly one of the two
     // renderings is searchable and matches are never double-counted.
     expect(f.blocks.classList.contains("hidden")).toBe(true);
-    expect(raw(f.wrap)?.classList.contains("hidden")).toBe(false);
-    expect(sourceButton(f.wrap).getAttribute("aria-pressed")).toBe("true");
+    expect(raw(f.card)?.classList.contains("hidden")).toBe(false);
+    expect(sourceButton(f.footer).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("takes the tool cards with it, so the raw view is source and nothing else", () => {
@@ -173,20 +243,18 @@ describe("the raw-markdown toggle", () => {
     // of it, while a tool card left behind keeps the position it had between
     // two paragraphs. Half a swap shows one turn in two orders at once.
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    sourceButton(f.wrap).click();
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    sourceButton(f.footer).click();
     expect(f.tool.closest(".hidden")).toBe(f.blocks);
-    const shown = [...f.wrap.children].filter((c) => !c.classList.contains("hidden"));
-    expect(shown.map((c) => c.className)).toEqual(["turn-raw", "turn-actions"]);
   });
 
   it("toggles back to the rendering", () => {
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    const btn = sourceButton(f.wrap);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    const btn = sourceButton(f.footer);
     btn.click();
     btn.click();
-    expect(raw(f.wrap)?.classList.contains("hidden")).toBe(true);
+    expect(raw(f.card)?.classList.contains("hidden")).toBe(true);
     expect(f.blocks.classList.contains("hidden")).toBe(false);
     expect(f.tool.closest(".hidden")).toBeNull();
     expect(btn.getAttribute("aria-pressed")).toBe("false");
@@ -196,19 +264,18 @@ describe("the raw-markdown toggle", () => {
     // The replacement shape is what a repaint undoes; this is the structural
     // guarantee that makes the toggle survive one.
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    sourceButton(f.wrap).click();
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    sourceButton(f.footer).click();
     expect(f.bubble.isConnected).toBe(true);
     expect(f.blocks.isConnected).toBe(true);
-    // Immediately before the body it stands in for, so toggling does not move
-    // the reply up or down the card.
-    expect(raw(f.wrap)?.nextElementSibling).toBe(f.blocks);
+    // Inside the body, above the messages it stands in for.
+    expect(raw(f.card)?.parentElement).toBe(f.body);
   });
 
   it("swallows a block that arrives after the toggle", () => {
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    sourceButton(f.wrap).click();
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    sourceButton(f.footer).click();
     // What updateAssistantBody does on every repaint: append newly-arrived
     // blocks into `.assistant-blocks`. Nothing here may disturb the raw view,
     // and the late block must not surface inside it — which is the whole
@@ -216,22 +283,26 @@ describe("the raw-markdown toggle", () => {
     const later = document.createElement("div");
     later.className = "tool-call";
     f.blocks.appendChild(later);
-    attachTurnActions(f.bubble);
-    expect(raw(f.wrap)).not.toBeNull();
-    expect(raw(f.wrap)?.classList.contains("hidden")).toBe(false);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    expect(raw(f.card)).not.toBeNull();
+    expect(raw(f.card)?.classList.contains("hidden")).toBe(false);
     expect(later.closest(".hidden")).toBe(f.blocks);
-    expect(f.wrap.querySelectorAll(".turn-raw")).toHaveLength(1);
-    expect(f.wrap.querySelectorAll(".turn-actions")).toHaveLength(1);
+    expect(f.card.querySelectorAll(".turn-raw")).toHaveLength(1);
+    expect(f.footer.querySelectorAll(".turn-actions-buttons")).toHaveLength(1);
   });
 
-  it("re-reads the source at click time, so a later sanitized content wins", () => {
-    // The row attaches once and is idempotent, so a source captured at attach
+  it("re-reads the source at click time, so a later refreshed turn wins", () => {
+    // The slot mounts once and is idempotent, so a source captured at mount
     // time would go stale the moment message_appended replaced the content.
     const f = fixture(assistant({ content: "streamed" }));
-    attachTurnActions(f.bubble);
-    active.messages = [assistant({ content: "server sanitized" })];
-    sourceButton(f.wrap).click();
-    expect(raw(f.wrap)?.textContent).toBe("server sanitized");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    const freshened: Turn = {
+      ...f.turn,
+      body: [assistant({ content: "server sanitized" })],
+    };
+    mountTurnFooterActions(f.footer, f.card, freshened);
+    sourceButton(f.footer).click();
+    expect(raw(f.card)?.textContent).toBe("server sanitized");
   });
 
   it("falls back to the block text when the message carries no top-level content", () => {
@@ -245,20 +316,56 @@ describe("the raw-markdown toggle", () => {
         ],
       }),
     );
-    attachTurnActions(f.bubble);
-    sourceButton(f.wrap).click();
-    expect(raw(f.wrap)?.textContent).toBe("first\n\nsecond");
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    sourceButton(f.footer).click();
+    expect(raw(f.card)?.textContent).toBe("first\n\nsecond");
   });
 
   it("renames itself so the button says what the next press does", () => {
     const f = fixture(assistant());
-    attachTurnActions(f.bubble);
-    const btn = sourceButton(f.wrap);
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    const btn = sourceButton(f.footer);
     expect(btn.getAttribute("aria-label")).toBe("View markdown source");
     btn.click();
     expect(btn.getAttribute("aria-label")).toBe("View rendered reply");
     btn.click();
     expect(btn.getAttribute("aria-label")).toBe("View markdown source");
+  });
+
+  it("swaps the FACE prose when the turn is folded", () => {
+    const f = fixture(assistant({ content: "# hi" }));
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    const face = fold(f);
+    const prose = face.querySelector(".turn-face-prose");
+    sourceButton(f.footer).click();
+    const pre = raw(f.card);
+    expect(pre?.parentElement).toBe(face);
+    expect(pre?.textContent).toBe("# hi");
+    expect(prose?.classList.contains("hidden")).toBe(true);
+    // The body's regions hide with it: one rendering at a time, everywhere.
+    expect(f.blocks.classList.contains("hidden")).toBe(true);
+  });
+
+  it("resets when the fold state changes, so the button never lies", () => {
+    const f = fixture(assistant());
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    const btn = sourceButton(f.footer);
+    btn.click();
+    expect(f.blocks.classList.contains("hidden")).toBe(true);
+    // What setCardFolded does on any fold flip.
+    resetTurnSourceView(f.card);
+    expect(raw(f.card)).toBeNull();
+    expect(f.blocks.classList.contains("hidden")).toBe(false);
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    expect(btn.getAttribute("aria-label")).toBe("View markdown source");
+  });
+
+  it("reset is a no-op when no source view is open", () => {
+    const f = fixture(assistant());
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    resetTurnSourceView(f.card);
+    expect(f.blocks.classList.contains("hidden")).toBe(false);
+    expect(sourceButton(f.footer).getAttribute("aria-pressed")).toBe("false");
   });
 });
 

@@ -107,6 +107,11 @@ type ACPKiroBlock struct {
 	Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
 	Kind           string             `json:"kind"`
 	AgentSubtaskID string             `json:"agentSubtaskId"`
+	// ToolID is KAS's machine name for a tool call (`execute_bash`,
+	// `fetch_cloud_config`, `user_input`), stamped on the tool_call frame's
+	// _meta.kiro. Unlike Title it is not model- or locale-composed, which is what
+	// makes it safe to key the internal-tool suppression on.
+	ToolID string `json:"toolId"`
 	// MessageID and Timestamp are KAS's own identity for the message
 	// record a frame belongs to. Measured on the v3 wire (probe 23,
 	// kiro-cli 2.16.0): present on user_message_chunk (a bare uuid —

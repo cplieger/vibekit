@@ -49,11 +49,11 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 			}
 			out = append(out, summary)
 			bodies = append(bodies, body)
-			closed = m.TurnOutcome != ""
+			closed = closesTurn(m.TurnOutcome)
 			continue
 		}
 		bodies[len(bodies)-1] = append(bodies[len(bodies)-1], *m)
-		closed = closed || m.TurnOutcome != ""
+		closed = closed || closesTurn(m.TurnOutcome)
 	}
 	for i := range out {
 		out[i].Outcome = deriveTurnOutcome(bodies[i], thinking && i == len(out)-1)
@@ -61,9 +61,25 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 	return out
 }
 
+// closesTurn reports whether an outcome value ENDS a segment. A settled outcome
+// does; "unknown" does not, because it marks a fragment whose end never arrived
+// — the displaced-turn persist (agent/turn_finalize.go closerWireDisplaced), a
+// bracket that never closed — and every transcript persisted before the
+// internal-tool suppression carries one such fragment per fresh session, right
+// between the user's message and the real reply. Treating the fragment as a
+// terminator split that turn in two: the reply opened a phantom
+// "Agent-initiated turn", the rail counted one turn too many, and the user's
+// input and output landed in different segments. A fragment JOINS the segment
+// it interrupted; deriveTurnOutcome lets the reply's settled outcome supersede
+// its "unknown".
+func closesTurn(outcome vibekit.TurnOutcome) bool {
+	return outcome != "" && outcome != vibekit.TurnOutcomeUnknown
+}
+
 // opensHeaderlessTurn reports whether m is the first persisted message of a turn
 // with no user trigger. Derivable from a flat list because a turn's
-// outcome-bearing message closes it (Message.TurnOutcome, one per turn).
+// outcome-bearing message closes it (Message.TurnOutcome, one settled outcome
+// per turn — closesTurn owns the fragment carve-out).
 //
 // Both clauses are load-bearing, and reviewers got the rule wrong in both
 // directions: without the close test a prompted empty turn's marker is split off
@@ -87,8 +103,16 @@ func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
 // repaint a finished failure as in-progress.
 func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
 	interrupted := false
+	sawUnknown := false
 	for i := range body {
 		m := &body[i]
+		if m.TurnOutcome == vibekit.TurnOutcomeUnknown {
+			// A fragment's non-verdict (see closesTurn). Remembered as the
+			// fallback rather than returned: the segment usually continues into
+			// the real reply, whose settled outcome is the turn's.
+			sawUnknown = true
+			continue
+		}
 		if m.TurnOutcome != "" {
 			return m.TurnOutcome
 		}
@@ -107,6 +131,9 @@ func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome 
 	}
 	if isLive {
 		return vibekit.TurnOutcomeRunning
+	}
+	if sawUnknown {
+		return vibekit.TurnOutcomeUnknown
 	}
 	return vibekit.TurnOutcomeCompleted
 }

@@ -671,6 +671,44 @@ describe("tool grouping IS contiguous, which is the contrast", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Legacy internal engine bookkeeping never mounts a card.
+//
+// KAS's session-boot cloud-config fetch is suppressed server-side at translate
+// (keyed on _meta.kiro.toolId), so a live stream never delivers one. What
+// still carries it is a transcript PERSISTED BEFORE the suppression, where the
+// call sits at in_progress forever — its completion frame was lost to the boot
+// displacement — which is the user-visible "Fetching your cloud config spinner
+// never expires". Title-keyed here: the persisted ToolCall carries no tool id,
+// and the title is a KAS constant, not model prose.
+// ---------------------------------------------------------------------------
+
+describe("legacy internal tool calls are dropped at the dispatcher", () => {
+  it("renders no card for a persisted cloud-config fetch", () => {
+    const stuck = {
+      id: "t-cc",
+      title: "Fetching your cloud config",
+      kind: "other",
+      status: "in_progress",
+    } as unknown as ToolCall;
+    const wrap = render([toolUse("t-cc")], [stuck]);
+    expect(wrap.querySelector(".tool-call")).toBeNull();
+    expect(wrap.querySelector(".tool-group")).toBeNull();
+  });
+
+  it("drops it as if it never existed, so real neighbours still group", () => {
+    const wrap = render(
+      [toolUse("t1"), toolUse("t-cc"), toolUse("t2")],
+      [
+        call("t1", "Run Command"),
+        call("t-cc", "Fetching your cloud config"),
+        call("t2", "Run Command"),
+      ],
+    );
+    expect(shape(wrap)).toEqual(["group(2)"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A mounted block tracks the store's text whether or not it was mounted live.
 //
 // The fast path for a live turn is the per-block signal effect: a chunk writes
@@ -1179,6 +1217,41 @@ describe("getLiveAnchor", () => {
     expect(live).toHaveLength(2);
     expect(live[1]?.closest(".subagent-body")).toBeNull();
     expect(getLiveAnchor()).toBe(live[1]);
+  });
+
+  it("self-heals when the registry no longer owns the anchored element", () => {
+    // resumeMessage and updateAssistantBody's self-healing path replace a
+    // message's DOM wholesale, so the registry entry for that id points at the
+    // NEW state while the anchor slot still holds the old, now-detached
+    // element. Following that element pinned the scroller to a box with no
+    // layout — the live-caught "scroll keeps snapping to the start of the
+    // turn" (instrumented mid-stream: scrollTop 786 → 0).
+    const wrap = document.createElement("div");
+    const m = liveMsg([text("prose")]);
+    buildAssistantBody(wrap, m, CHAT_ID, true);
+    expect(getLiveAnchor()).not.toBeNull();
+
+    // The same message rebuilt SETTLED into a fresh row: the registry's
+    // topLiveEl goes null while the anchor slot still names the old bubble.
+    const wrap2 = document.createElement("div");
+    buildAssistantBody(wrap2, m, CHAT_ID, false);
+    expect(getLiveAnchor()).toBeNull();
+  });
+
+  it("the self-heal falls back to another still-live message", () => {
+    const wrap = document.createElement("div");
+    const older = liveMsg([text("older, still streaming")]);
+    const newer = liveMsg([text("newer")]);
+    buildAssistantBody(wrap, older, CHAT_ID, true);
+    buildAssistantBody(wrap, newer, CHAT_ID, true);
+    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
+    expect(getLiveAnchor()).toBe(live[1]);
+
+    // The anchored (newer) message rebuilds settled elsewhere; the heal scans
+    // the registry and hands the slot back to the older live bubble.
+    const wrap2 = document.createElement("div");
+    buildAssistantBody(wrap2, newer, CHAT_ID, false);
+    expect(getLiveAnchor()).toBe(live[0]);
   });
 });
 

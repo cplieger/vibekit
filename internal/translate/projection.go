@@ -263,6 +263,14 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 	if json.Unmarshal(raw, &tc) != nil || tc.ToolCallID == "" {
 		return
 	}
+	// The live path's internal-tool suppression, applied to the replay: KAS's
+	// log stores the cloud-config fetch it announced during session creation,
+	// so without this a resumed chat regains the card the live stream dropped.
+	// The replayed update self-drops (its id is never buffered), and unlike the
+	// live path there is no TurnFoldTarget to guard against.
+	if isInternalTool(tc.Meta.Kiro.ToolID) {
+		return
+	}
 	p.ensureTurn()
 	p.adoptTurnIdentity(tc.Meta.Kiro.MessageID, tc.Meta.Kiro.Timestamp)
 	call := vibekit.ToolCall{

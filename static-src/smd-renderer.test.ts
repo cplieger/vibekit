@@ -162,3 +162,57 @@ describe("smd-renderer equations", () => {
     expect(math?.textContent).toBe("\u03b1+\u03b2");
   });
 });
+
+describe("the streaming caret attribute", () => {
+  // The CSS caret (13-messages.css) renders off `data-vk-caret`, the element
+  // text last landed in — inline after the last word, not on its own line
+  // below the paragraph, which is what a container ::after produced (user
+  // report: "the cursor seems to not lead the text output but to be on the
+  // next line").
+
+  it("marks the element receiving text while streaming", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: true });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_text(r.data, "hello");
+    const p = container.querySelector("p");
+    expect(p?.hasAttribute("data-vk-caret")).toBe(true);
+  });
+
+  it("moves with the insertion point, keeping exactly one caret", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: true });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_text(r.data, "first");
+    r.end_token(r.data);
+    r.add_token(r.data, PARAGRAPH);
+    r.add_text(r.data, "second");
+    const marked = container.querySelectorAll("[data-vk-caret]");
+    expect(marked).toHaveLength(1);
+    expect(marked[0]?.textContent).toBe("second");
+  });
+
+  it("follows into an inline element mid-paragraph", () => {
+    // Mid-inline is why the attribute cannot be a :last-child qualifier: the
+    // insertion element during a bold run is the STRONG, not the paragraph.
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: true });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_text(r.data, "plain ");
+    r.add_token(r.data, STRONG_AST);
+    r.add_text(r.data, "bold");
+    const marked = container.querySelectorAll("[data-vk-caret]");
+    expect(marked).toHaveLength(1);
+    expect(marked[0]?.tagName).toBe("STRONG");
+  });
+
+  it("writes no caret on the replay path", () => {
+    // Historical content paints flat: animateText=false gates the attribute
+    // writes, so a reloaded transcript never pays them.
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, PARAGRAPH);
+    r.add_text(r.data, "history");
+    expect(container.querySelector("[data-vk-caret]")).toBeNull();
+  });
+});

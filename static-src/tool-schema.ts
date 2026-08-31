@@ -339,3 +339,18 @@ export function disclosedClaim(d: ToolDisclosed): string {
   const kindWord = d.type === "steering" ? "steering" : "skill";
   return `Loaded ${kindWord}: ${d.display_name}`;
 }
+
+/** Display titles of KAS-internal bookkeeping announced as tool calls — the
+ *  session-boot cloud-config fetch is the one member. The server drops these
+ *  frames at translate keyed on `_meta.kiro.toolId` (the machine name), so this
+ *  list exists only for transcripts persisted BEFORE that suppression, whose
+ *  fragments carry a card stuck at in_progress forever. The persisted ToolCall
+ *  has no tool id, so the title — a KAS constant, not model text — is the only
+ *  key legacy data offers. */
+const INTERNAL_TOOL_TITLES: ReadonlySet<string> = new Set(["Fetching your cloud config"]);
+
+/** Whether a persisted tool call is internal engine bookkeeping the transcript
+ *  never renders. See INTERNAL_TOOL_TITLES. */
+export function isInternalToolTitle(title: string): boolean {
+  return INTERNAL_TOOL_TITLES.has(title);
+}

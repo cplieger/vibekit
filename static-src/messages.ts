@@ -76,7 +76,6 @@ import {
   projectTurns,
   turnLedger,
   turnAnchorID,
-  turnFoldSummary,
   turnFaceProse,
   turnFaceError,
   turnRunIDs,
@@ -125,7 +124,9 @@ import {
 } from "./messages-tools.js";
 import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
 import {
-  attachTurnActions,
+  mountTurnFooterActions,
+  resetTurnSourceView,
+  turnMarkdown,
   initTurnActionCallbacks,
   copyWithFeedback,
 } from "./messages-turn-actions.js";
@@ -408,12 +409,6 @@ function rebuildMessageBody(session: Session, m: Message, row: HTMLElement): voi
     buildAssistantBody(row, m, session.id, live, steerMarks(session.id));
     syncCodeReferences(row, m);
     syncRefusal(row, m);
-    if (!live) {
-      const bubble = row.querySelector<HTMLDivElement>(".message.assistant");
-      if (bubble !== null) {
-        attachTurnActions(bubble);
-      }
-    }
   }
 }
 
@@ -1134,17 +1129,6 @@ const messageSpec: ReconcileSpec<Message> = {
     if (liveStreaming) {
       streamingIds.add(m.id);
     }
-    // Historical / reloaded assistant turns finalize at mount — they never
-    // pass through the live-stream finalize path — so attach the copy/export
-    // turn-actions row here. Live turns get it later via finalizeTurn when the
-    // stream ends. (This is why switching away and back to a chat used to drop
-    // the buttons: re-mounted turns were finalized but never decorated.)
-    if (m.role === "assistant" && !liveStreaming) {
-      const bubble = node.querySelector<HTMLDivElement>(".message.assistant");
-      if (bubble !== null) {
-        attachTurnActions(bubble);
-      }
-    }
     return node;
   },
   update: (el, m) => {
@@ -1387,6 +1371,12 @@ function setHitCount(card: HTMLElement, n: number): void {
 }
 
 function setCardFolded(card: HTMLElement, folded: boolean): void {
+  if (card.hasAttribute("data-folded") !== folded) {
+    // The raw-source view belongs to the surface it was opened on (body or
+    // face); crossing the fold renders the other surface fresh, so the toggle
+    // resets rather than latching against a view that no longer shows raw.
+    resetTurnSourceView(card);
+  }
   if (folded) {
     card.setAttribute("data-folded", "");
   } else {
@@ -1398,10 +1388,12 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
 
 // --- The collapsed turn's FACE ---
 //
-// A collapsed turn is input + output: the header carries the request, and the
-// footer grows a face carrying the turn's result — the run cards it launched
-// (duplicates of the in-body cards, above the prose), the final answer prose in
-// full, and a failed turn's error text. Open, the body shows all of it in
+// A collapsed turn is input + output, in the OPEN layout: the header carries
+// the request exactly as when open, and a face slots in where the body was —
+// the run cards the turn launched (duplicates of the in-body cards, above the
+// prose), the final answer prose in full (real markdown, default type), and a
+// failed turn's error text. The ledger footer stays below it, unchanged, so
+// credits/model/duration survive the fold. Open, the body shows all of it in
 // place and the face does not exist, so the duplication is never visible twice.
 
 /** Face bookkeeping per CARD element: the key detects a content change (a run
@@ -1420,9 +1412,7 @@ function disposeTurnFace(card: HTMLElement): void {
   }
   turnFaces.delete(card);
   face.dispose();
-  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
-  footer?.querySelector(":scope > .turn-face")?.remove();
-  footer?.removeAttribute("data-face");
+  card.querySelector(":scope > .turn-face")?.remove();
 }
 
 /** Build or refresh the face to match the card's fold state. Idempotent per
@@ -1437,10 +1427,6 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
     return;
   }
   disposeTurnFace(card);
-  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
-  if (footer === null) {
-    return;
-  }
   const face = el("div", { className: "turn-face" });
   const disposers: (() => void)[] = [];
   for (const id of turnRunIDsCache.get(t.id) ?? turnRunIDs(t)) {
@@ -1468,8 +1454,15 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
     turnFaces.set(card, { key, dispose });
     return;
   }
-  footer.prepend(face);
-  footer.setAttribute("data-face", "");
+  // A card-level child in the body's slot, NOT inside the footer: the footer
+  // keeps its open-state grid (ledger, Rewind, file rows) untouched, and a
+  // turn with no footer at all still gets its face.
+  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
+  if (footer !== null) {
+    footer.before(face);
+  } else {
+    card.appendChild(face);
+  }
   turnFaces.set(card, { key, dispose });
 }
 
@@ -1799,21 +1792,29 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     reads: led.reads,
     models: led.models,
     outcome: t.outcome,
-    foldSummary: turnFoldSummary(t),
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
-  // A turn with a rewind target keeps its footer even when the ledger is empty:
-  // the footer is where Rewind lives, and an unstamped ledger (a turn whose
-  // usage never persisted) must not cost the reader the action.
-  if (!hasTurnSummary(data) && t.rewindTo === undefined) {
+  // The footer is also where the turn ACTIONS (copy / source / export) and
+  // Rewind live, so it stays whenever the turn has settled prose to act on or
+  // a rewind target — an unstamped ledger (a turn whose usage never persisted)
+  // must not cost the reader the buttons. Ordered so the markdown join only
+  // runs for the rare ledger-less turn.
+  const keep =
+    hasTurnSummary(data) ||
+    t.rewindTo !== undefined ||
+    (t.outcome !== "running" && turnMarkdown(t).trim() !== "");
+  if (!keep) {
     existing?.remove();
     return;
   }
-  if (existing === null) {
-    card.appendChild(buildTurnFooter(data));
+  let footer = existing;
+  if (footer === null) {
+    footer = buildTurnFooter(data);
+    card.appendChild(footer);
   } else {
-    updateTurnFooter(existing, data);
+    updateTurnFooter(footer, data);
   }
+  mountTurnFooterActions(footer, card, t);
 }
 
 // --- Assistant ---
@@ -1864,20 +1865,16 @@ function liveStateOf(m: Message): boolean {
 }
 
 /** Finalize a streamed assistant turn: flush every markdown stream + seal
- *  every reasoning trace (via the block dispatcher), then attach the
- *  copy/export turn-actions row. */
-function finalizeTurn(id: string, root: HTMLElement): void {
+ *  every reasoning trace (via the block dispatcher). The copy/export actions
+ *  live in the turn footer and mount on the paint that follows turn end. */
+function finalizeTurn(id: string, _root: HTMLElement): void {
   finalizeAssistantBody(id);
-  const bubble = root.querySelector<HTMLDivElement>(".message.assistant");
-  if (bubble !== null) {
-    attachTurnActions(bubble);
-  }
 }
 
 /** Finalize every mounted message that is no longer live: the still-streaming
  *  turn keeps its caret only while it is the LAST assistant message of a
- *  thinking session; everything else flushes its markdown streams, seals its
- *  reasoning traces and gains the turn-actions row. Driven from the same effect
+ *  thinking session; everything else flushes its markdown streams and seals its
+ *  reasoning traces. Driven from the same effect
  *  that paints, so it stays consistent with store state.
  *
  *  The population is the union of two live sets, not a walk over every mounted

@@ -255,8 +255,13 @@ describe("the mounted derivation", () => {
     };
     activate(id, [user("u1"), launcher, ...plainTurns(10).slice(2)]);
     expect(isFolded("u1")).toBe(true);
-    // The collapsed face renders the run's card in the footer, body or none.
-    expect(card("u1").querySelector(":scope > .turn-footer .turn-face .run-card")).not.toBeNull();
+    // The collapsed face is a CARD-level child sitting where the body was —
+    // above the ledger footer, never inside it, so the footer keeps its
+    // open-state row (ledger + actions + Rewind) untouched.
+    const face = card("u1").querySelector(":scope > .turn-face");
+    expect(face).not.toBeNull();
+    expect(face?.querySelector(".run-card")).not.toBeNull();
+    expect(face?.nextElementSibling?.classList.contains("turn-footer")).toBe(true);
   });
 
   it("keeps the streaming turn mounted and open", () => {

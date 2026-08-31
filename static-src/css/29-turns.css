@@ -321,6 +321,21 @@
   gap: var(--sp-3);
   padding: var(--sp-3);
   min-width: 0;
+
+  /* The fold ANIMATES: block-size 0↔auto over --dur-standard (interpolate-size
+   * is on :root) instead of a display toggle, so a turn slides shut rather than
+   * snapping. Three parts carried from the subagent body's collapse pattern
+   * (14-tools.css): content-visibility takes the folded subtree out of layout,
+   * flipped discretely at the END of a collapse and the START of an expand
+   * (allow-discrete); no contain-intrinsic-size, because the closed height is
+   * pinned to 0; and the clip sits on THIS base rule, because an expand runs
+   * after [data-folded] is gone and unclipped content would paint over the
+   * footer for the transition's length. */
+  overflow: clip;
+  transition:
+    block-size var(--dur-standard) var(--ease-standard),
+    padding-block var(--dur-standard) var(--ease-standard),
+    content-visibility var(--dur-standard) allow-discrete;
 }
 
 /* An empty body (a prompt whose turn has not started streaming) must not leave
@@ -365,25 +380,26 @@
  * bracketed. There is no separate status rail: the footer IS the rail. Moved
  * here from 61-mcp-tools.css, where it sat because the footer used to be a
  * per-message node rather than part of a card. */
-/* Two columns: the ledger on the left, the Rewind action on the right. Rewind
-   moved here from the header because this is where it reads correctly — the
-   footer closes the turn, so "Rewind" at the end of it means "go back to this
-   point", which is what it actually does. The file list spans both columns
-   beneath. Grid rather than a wrapper element so every `:scope >` selector the
-   footer's own JS uses keeps working. */
+/* Three columns: the ledger on the left, the turn actions (copy / source /
+   export) right-aligned beside it, Rewind at the far edge. The file list spans
+   all columns beneath. Grid rather than a wrapper element so every `:scope >`
+   selector the footer's own JS uses keeps working. The row is IDENTICAL open
+   and folded — the footer is the one region that survives the fold. */
 .turn-footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
+
+  /* Fades in when it lands (the ledger is stamped at turn end, so the footer
+   * arrives on a card the reader is already watching). */
+  transition: opacity var(--dur-enter) var(--ease-enter);
 
   /* ROW gap only. A column gap is charged between the tracks even when the
      second one is EMPTY — `auto` resolves to 0px but the gap beside it does not
      — so every footer without a Rewind held its readout 8px off the card's own
      gutter, while the header's action at the other end of the card sits on it.
      The inline spacing is Rewind's own margin (below), which exists exactly
-     when Rewind does. The folded row does not need the gap either:
-     `.turn-fold-summary` already carries its own `margin-inline-start`, because
-     folded the footer is a flex row rather than this grid. */
+     when Rewind does. */
   row-gap: var(--sp-1);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
@@ -395,17 +411,23 @@
   border-end-end-radius: calc(var(--r) - 1px);
 }
 
-.turn-footer > .turn-ledger-summary,
-.turn-footer > .turn-fold-summary {
+.turn-footer > .turn-ledger-summary {
   grid-column: 1;
 }
 
-.turn-footer > .turn-rewind {
+.turn-footer > .turn-actions-buttons {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
   /* The footer's inline gap, carried by the element it separates rather than by
-     the grid — see `row-gap` above. */
+     the grid — a column gap is charged even beside an empty track. */
+  margin-inline-start: var(--sp-2);
+}
+
+.turn-footer > .turn-rewind {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
   margin-inline-start: var(--sp-2);
 }
 
@@ -413,39 +435,71 @@
   grid-column: 1 / -1;
 }
 
-/* Folded, the footer is one inline strip (glyph + the turn's concrete result)
-   sitting beside the header, so it goes back to a plain row. Rewind is hidden
-   in that state, so the second column has nothing to hold. */
-.turn[data-folded] > .turn-footer {
-  display: flex;
-  flex-direction: row;
+@starting-style {
+  .turn-footer {
+    opacity: 0;
+  }
 }
 
-/* The collapsed turn's FACE: input in the header, output here — run cards
-   above the prose, the final answer in full (no clamp, by design), a failed
-   turn's error text. The footer stacks the face above the ledger strip. */
-.turn[data-folded] > .turn-footer[data-face] {
-  flex-direction: column;
-  align-items: stretch;
+/* Phone: the one-row footer cannot hold the ledger beside five 44px action
+   targets plus Rewind (the hit-target floor makes that ~280px of controls in
+   a ~358px row, which crushed the ledger to a 44px-wide column of wrapped
+   text). The ledger takes the full first row; the actions and Rewind move to
+   a second row, still right-aligned; the files list keeps spanning below. */
+@media (width <= 40rem) {
+  .turn-footer > .turn-ledger-summary {
+    grid-column: 1 / -1;
+  }
+
+  .turn-footer > .turn-actions-buttons {
+    grid-row: 2;
+  }
+
+  .turn-footer > .turn-rewind {
+    grid-row: 2;
+  }
 }
 
+/* The collapsed turn's FACE: input in the header (laid out exactly as when
+   open), output here — run-card duplicates above the prose, the final answer
+   in full (real markdown, default type, no clamp: readability is the point of
+   the face), and a failed turn's error text. A CARD-level child sitting where
+   the body was, so the ledger footer below it keeps its open-state layout and
+   credits/model/duration survive the fold. Its background is the body's, which
+   is what separates it from the tinted header above and ledger strip below. */
 .turn-face {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  padding-block-end: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--c-bg-secondary);
+
+  /* Fades up as the body slides shut, so the fold reads as one motion: work
+   * out, answer in. Transition + @starting-style rather than a keyframe so an
+   * already-mounted face (a parked view unparking) replays nothing. */
+  transition:
+    opacity var(--dur-enter) var(--ease-enter),
+    translate var(--dur-enter) var(--ease-enter);
+}
+
+@starting-style {
+  .turn-face {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+
+/* On a card with no ledger footer the face is the last child and owns the
+   card's bottom corners. */
+.turn-face:last-child {
+  border-end-start-radius: calc(var(--r) - 1px);
+  border-end-end-radius: calc(var(--r) - 1px);
 }
 
 .turn-face-error {
   color: var(--c-red);
   font-size: var(--fs-sm);
   white-space: pre-wrap;
-}
-
-/* The face's full prose supersedes the one-line fold summary. The span stays
-   in the DOM for the face-less fold (a turn with no answer and no runs). */
-.turn-footer[data-face] > .turn-fold-summary {
-  display: none;
 }
 
 /* An active turn cannot be collapsed, so it offers no fold affordance. */
@@ -486,7 +540,6 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  margin-inline-start: auto;
   padding: 0;
   background: none;
   border: 0;
@@ -589,16 +642,36 @@
   --chev-turn: 0deg;
 }
 
+/* Slides open under the summary row (block-size 0↔auto + the top margin, with
+ * the display flip riding allow-discrete): the footer GROWS rather than
+ * popping. `display: none` at rest is load-bearing beyond the animation — a
+ * zero-height grid item would still occupy a row and charge the footer's
+ * row-gap on every turn. */
 .turn-ledger-files {
   display: none;
+  block-size: 0;
+  overflow: clip;
   list-style: none;
-  margin: var(--sp-1) 0 0;
+  margin: 0;
   padding: 0;
   text-align: left;
+  transition:
+    display var(--dur-standard) allow-discrete,
+    block-size var(--dur-standard) var(--ease-standard),
+    margin-block-start var(--dur-standard) var(--ease-standard);
 }
 
 .turn-footer[data-files="open"] .turn-ledger-files {
   display: block;
+  block-size: auto;
+  margin-block-start: var(--sp-1);
+}
+
+@starting-style {
+  .turn-footer[data-files="open"] .turn-ledger-files {
+    block-size: 0;
+    margin-block-start: 0;
+  }
 }
 
 .turn-ledger-file {
@@ -917,75 +990,29 @@
 /* ==========================================================================
    The folded turn
 
-   Not a new component: it is the header and footer bands with the body removed,
-   laid out as ONE row — request on the left, outcome on the right. That is the
-   whole reason the card was given a header and a footer in the first place; the
-   collapse mechanism is built out of them rather than beside them.
+   Not a new component and not a different layout: the OPEN card with the body
+   swapped for the face. Header (meta row, then the request below it) exactly as
+   open, the face where the body was, the ledger footer unchanged beneath —
+   so collapsing changes how much a turn shows, never how a turn reads.
    ========================================================================== */
 
-.turn[data-folded] {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-
 .turn[data-folded] > .turn-body {
-  display: none;
+  block-size: 0;
+  padding-block: 0;
+  content-visibility: hidden;
 }
 
-/* Both bands lose their dividing rule and their rounding: there is one row now,
-   so a border between the halves would draw a line down the middle of it.
-
-   They also both lose their TINT, and the row carries one instead. Two tinted
-   halves in an `auto` column meant the dark area's width was whatever the
-   footer's text happened to measure — "0.08 cr · 2.5s" and "0.12 cr · 11.4s"
-   are different widths, so consecutive folded rows disagreed with each other
-   for no reason a reader could act on. One surface has one width by
-   construction. */
-.turn[data-folded] {
-  background: var(--c-bg-tertiary);
-}
-
-.turn[data-folded] > .turn-header,
-.turn[data-folded] > .turn-footer {
-  background: none;
-}
-
+/* The hidden body leaves the header's bottom rule directly against the face's
+   (or the footer's) top edge; one line belongs to the element below. */
 .turn[data-folded] > .turn-header {
   border-bottom: 0;
-  border-start-end-radius: 0;
-  min-width: 0;
 }
 
-.turn[data-folded] > .turn-footer {
-  border-top: 0;
-  border-end-start-radius: 0;
-}
-
-/* One row, one vertical rhythm: both bands take the same block padding and
-   centre their own contents, so the request text and the ledger sit on a shared
-   baseline instead of each centring inside a differently-tall half. */
-.turn[data-folded] > .turn-header,
-.turn[data-folded] > .turn-footer {
-  padding-block: var(--sp-2);
-  align-items: center;
-}
-
-/* Folded, the header is ONE line: the meta row and the request sit side by side
-   instead of stacked, and the request truncates rather than wrapping. A folded
-   row that can grow to three lines is not a folded row. */
-.turn[data-folded] > .turn-header {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-/* Folded, the WHOLE band re-expands the turn, `.turn-req` included — so the
-   cursor moves from the meta row to the header, matching what the `skip` hook in
-   messages.ts allows in each state. Open, `.turn-req` is the prompt a reader
-   selects and it keeps its own click; folded, it is one ellipsized line with
-   Copy and the show-more set to `display: none` beside it, and re-expanding is
-   exactly the click that used to need the 16x16 chevron. */
+/* The WHOLE band re-expands the turn, `.turn-req` included — matching what the
+   `skip` hook in messages.ts allows in each state. Open, `.turn-req` is the
+   prompt a reader selects and it keeps its own click; Copy, the show-more and
+   attachment pills keep theirs in both states (`clickFoldsTurn` skips
+   controls), so the band is a target without eating its own actions. */
 .turn[data-folded] > .turn-header {
   cursor: pointer;
 }
@@ -998,68 +1025,6 @@
    translucent overlay on top of the header's and paint that half darker. */
 .turn[data-folded] .turn-head-row:hover {
   background: none;
-}
-
-.turn[data-folded] .turn-req {
-  flex: 1 1 auto;
-  min-width: 0;
-  flex-direction: row;
-  align-items: center;
-}
-
-.turn[data-folded] .turn-req-text {
-  max-width: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The three-line clamp is for an OPEN header. Folded, one line is the rule and
-   the show-more would offer to grow a row whose whole point is not growing. */
-.turn[data-folded] .turn-req-text[data-clamped] {
-  display: block;
-  -webkit-line-clamp: none;
-}
-
-/* Folded, the meta row sits BESIDE the request rather than above it, so a Copy
-   button pushed to the row's end would land between the timestamp and the
-   prompt text. The row is a navigation surface when folded; expanding is what
-   offers the actions. */
-.turn[data-folded] .turn-req-more,
-.turn[data-folded] .turn-rewind,
-.turn[data-folded] .turn-copy-req,
-.turn[data-folded] .turn-ledger-files,
-/* Folded, `.turn-req` lays out as a ROW, so a pill row would sit beside the
-   prompt text and push the one line the fold exists to show off the end. Same
-   call as Copy above: the fold is a navigation surface, expanding is what offers
-   the detail. */
-.turn[data-folded] .turn-req-attachments {
-  display: none;
-}
-
-/* Folded, the ledger drops to its glyph and the concrete thing the turn
-   produced; the full aggregate is what expanding is for. */
-.turn[data-folded] .turn-ledger-text {
-  display: none;
-}
-
-.turn[data-folded] .turn-ledger-caret {
-  display: none;
-}
-
-.turn-fold-summary {
-  display: none;
-}
-
-.turn[data-folded] .turn-fold-summary {
-  display: inline;
-  margin-inline-start: var(--sp-2);
-  /* Secondary for the same reason as `.turn-head-row`: this sits in
-     `.turn-footer`, which fills with `--c-bg-tertiary`. */
-  color: var(--c-text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
 }
 
 /* The fold toggle: a bare hit target holding the shared `.disclosure-chevron`

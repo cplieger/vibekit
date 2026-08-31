@@ -93,11 +93,22 @@
   color: var(--c-text-tertiary);
 }
 
-/* Tool call grouping. Uncapped and unindented — see .tool-call. */
+/* Tool call grouping. Uncapped and unindented — see .tool-call.
+ *
+ * The GROUP is the box; its members are rows. Consecutive tool calls used to
+ * render as full bordered cards inside an invisible container, which read as
+ * "one box each" however they were grouped — the reported symptom for a run of
+ * web searches. The group now carries the chrome (border, fill, radius) and
+ * each member flattens to a separator-ruled row inside it, so five searches
+ * read as one box listing five operations. A member's own disclosure (output,
+ * diff) still opens in place. */
 .tool-group {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  overflow: hidden;
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
 }
 
@@ -106,7 +117,22 @@
 .tool-group-body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+}
+
+/* Members flatten: the group owns the chrome. The hairline separates rows from
+ * each other and the first row from the header. */
+.tool-group-body > .tool-call {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
+  animation: none;
+}
+
+/* Rows sit tighter than standalone cards: a member's claim line is one of
+ * several, not a card of its own. */
+.tool-group-body > .tool-call .tool-header {
+  padding-block: var(--sp-1);
 }
 
 .tool-group-header {
@@ -119,7 +145,6 @@
   min-height: var(--btn-h);
   display: flex;
   align-items: center;
-  border-radius: var(--r);
   font-variant-numeric: tabular-nums;
   transition:
     background var(--dur-micro),
@@ -129,15 +154,6 @@
 .tool-group-header:hover {
   color: var(--c-text-primary);
   background: var(--c-bg-tertiary);
-}
-
-/* When collapsed (either user-toggled or auto), only the header shows —
-   the card region's height collapse is the disclosure controller's (driven
-   from tool-group.ts); these classes now style just the header pill. */
-.tool-group-collapsed > .tool-group-header,
-.tool-group-auto-collapsed > .tool-group-header {
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
 }
 
 /* Open: the chevron turns down. Stated as the OPEN case rather than the
@@ -1055,6 +1071,10 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) 0;
+
+  /* Whole pills wrap to the next line on narrow screens; without this the
+     labels wrap INSIDE their pills instead. */
+  flex-wrap: wrap;
 }
 
 .action-bar-spread {
@@ -1111,7 +1131,12 @@
 
 .action-pill {
   min-width: var(--btn-h);
-  line-height: 0;
+
+  /* NOT line-height: 0 — a label that wraps at phone widths then paints its
+     second line over its first ("Update all" rendered as overlapping
+     garble). Flex centering already handles the icon; the label keeps a
+     real line box and a two-line pill just grows past min-height. */
+  line-height: 1.2;
   /* An icon-plus-label pill needs the gap and the horizontal padding that
    * `.btn` gets. Without them "Update all" rendered as `⟳Update all` with the
    * glyph welded to the first letter and the text flush against the right
@@ -1747,10 +1772,22 @@
 }
 
 .tool-name-wrap {
+  /* A column, not a row: the name on its own line, the .tool-hit-chips line
+     under it, both starting at the same x (the Add modal's rule, applied to
+     the table too — chips inline after the name land wherever it ends). */
   display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.125rem;
   min-width: 0;
+  flex: 1;
+}
+
+/* The wrap owns the flex slot, so the name inside it needs no share of the
+   row (its own flex: 1 is for the wrap-less rows). */
+.tool-name-wrap > .list-row-name {
+  flex: initial;
+  max-width: 100%;
 }
 
 /* Catalog freshness line under the Tools action bar. The error suffix

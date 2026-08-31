@@ -121,6 +121,18 @@ h3.section-title {
     padding: var(--sp-3);
     font-size: 1rem;
   }
+
+  /* List rows: one step up per tier. 12px names and 11px metadata sit under
+     Apple's ~11pt caption floor on a phone; 14px primary / 12px secondary
+     clears it without reflowing the desktop table. */
+  .list-row {
+    font-size: var(--fs-md);
+  }
+
+  .list-row-meta,
+  .tool-source-chip {
+    font-size: var(--fs-sm);
+  }
 }
 
 .textarea-wrap {
@@ -595,6 +607,14 @@ h3.section-title {
   touch-action: manipulation;
   border-radius: var(--r);
   line-height: 0;
+
+  /* Center the glyph when the box is wider than its content — the 44px
+     mobile hit-target floor (61-mcp-tools.css) widens these past padding
+     size, and an uncentered icon reads as misaligned (same fix as
+     .icon-btn). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition:
     color var(--dur-micro),
     background var(--dur-micro) var(--ease-standard);

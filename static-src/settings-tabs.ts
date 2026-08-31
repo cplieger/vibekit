@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Settings tab bar: observable store of which tab panel inside Settings
-// is active, plus DOM sync for the horizontal pill bar (desktop) and
-// native select (mobile).
+// is active, plus DOM sync for the horizontal pill bar (all widths; labels
+// swap to centered icons via tab-bar-fit.ts when they would truncate).
 //
 // Architecture mirrors tabs.ts: one state primitive, subscribers that
 // reflect state in the DOM and the URL. Any module that wants to jump
@@ -26,6 +26,7 @@ import { swapViews } from "./view-swap.js";
 import type { SettingsTab } from "./router.js";
 import { pushRoute } from "./router.js";
 import { setSettingsTab as setTabRoute } from "./tabs.js";
+import { fitTabBar } from "./tab-bar-fit.js";
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 
 export const TABS: readonly SettingsTab[] = [
@@ -92,9 +93,8 @@ export function loadSettingsTabData(tab: SettingsTab): void {
 
 // --- DOM wiring ---
 
-/** Build the tab bar (desktop pills + mobile select) and wire panel
- *  visibility. Called once from settings.ts initUI, which registers the
- *  per-tab lazy data loaders here. */
+/** Build the tab bar and wire panel visibility. Called once from
+ *  settings.ts initUI, which registers the per-tab lazy data loaders here. */
 export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => void>>): void {
   if (loaders !== undefined) {
     for (const [tab, fn] of Object.entries(loaders)) {
@@ -102,13 +102,12 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     }
   }
   const bar = $.settingsTabBar;
-  const select = $.settingsTabSelect;
 
   bar.setAttribute("role", "tablist");
   bar.setAttribute("aria-label", "Settings sections");
 
-  // Desktop: render pill buttons. The HTML has them declared statically;
-  // here we just attach click handlers and mark the initial one active.
+  // The pill buttons are declared statically in the HTML; here we just
+  // attach click handlers and mark the initial one active.
   for (const tab of TABS) {
     const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${tab}"]`);
     if (btn === null) {
@@ -123,18 +122,13 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     });
   }
 
-  // Mobile: select. Options are declared in HTML, just bind change.
-  select.addEventListener("change", () => {
-    const v = select.value;
-    if (isSettingsTab(v)) {
-      setSettingsTab(v);
-    }
-  });
+  // Labels swap to centered icons when the bar cannot fit them (phones).
+  fitTabBar(bar);
 
-  // Arrow key navigation for the desktop tab bar.
+  // Arrow key navigation for the tab bar.
   rovingFocus(bar, "[data-settings-tab]", { orientation: "horizontal" });
 
-  // Sync pill + select + panel visibility on every tab change.
+  // Sync pill + panel visibility on every tab change.
   onTabChange((tab) => {
     for (const t of TABS) {
       const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${t}"]`);
@@ -142,7 +136,6 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
       btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
       btn?.setAttribute("tabindex", t === tab ? "0" : "-1");
     }
-    select.value = tab;
     const swap = (): HTMLElement | null => {
       let active: HTMLElement | null = null;
       for (const panel of document.querySelectorAll<HTMLDivElement>("[data-settings-panel]")) {
@@ -170,11 +163,6 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     // registered loader — a harmless no-op.
     loadSettingsTabData(tab);
   });
-}
-
-/** Type guard for the narrow SettingsTab union. */
-function isSettingsTab(v: string): v is SettingsTab {
-  return TABS.includes(v as SettingsTab);
 }
 
 /** Externally force the active tab without pushing a URL — used by the

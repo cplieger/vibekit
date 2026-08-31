@@ -218,17 +218,20 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 // --- effortFor ---
 
 // effortFor prefers the chat's own choice, falls back to the last level the user
-// picked anywhere, and refuses a level this build does not know.
+// picked anywhere, and refuses a level too malformed to be a tier id. Shape only:
+// the tier vocabulary is per model and KAS's to judge, so an unknown-but-well-
+// formed seed flows.
 func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 	tests := map[string]struct {
 		chatEffort string
 		setting    string
 		want       string
 	}{
-		"chat choice wins over the seed":   {chatEffort: "max", setting: "low", want: "max"},
-		"seed answers for an unset chat":   {chatEffort: "", setting: "xhigh", want: "xhigh"},
-		"no choice and no seed sends none": {chatEffort: "", setting: "", want: ""},
-		"an unknown seed level is refused": {chatEffort: "", setting: "turbo", want: ""},
+		"chat choice wins over the seed":    {chatEffort: "max", setting: "low", want: "max"},
+		"seed answers for an unset chat":    {chatEffort: "", setting: "xhigh", want: "xhigh"},
+		"no choice and no seed sends none":  {chatEffort: "", setting: "", want: ""},
+		"a malformed seed level is refused": {chatEffort: "", setting: "TURBO", want: ""},
+		"a well-formed unknown level flows": {chatEffort: "", setting: "none", want: "none"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
