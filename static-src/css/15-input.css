@@ -1204,10 +1204,10 @@
   }
 }
 
-/* Touch sizing for the prompt row, HERE rather than in 50-mobile.css: this slice
-   is unlayered, so it is the only place a mobile override of these properties
-   wins. The heights come from the hit-target floor (61-mcp-tools.css) and are
-   deliberately absent. */
+/* Touch sizing for the prompt row, HERE rather than in 50-mobile.css: a
+   surface's mobile overrides live beside the surface (the house pattern;
+   50-mobile.css carries only the cross-surface shell rules). The heights come
+   from the hit-target floor (61-mcp-tools.css) and are deliberately absent. */
 @media (width <= 48rem) {
   .pill {
     padding: 0 var(--sp-3);

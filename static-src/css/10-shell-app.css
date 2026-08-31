@@ -1,693 +1,691 @@
-@layer components {
-  [id="sidebar"] {
-    background: var(--c-bg-secondary);
-    border-inline-end: 1px solid var(--c-border);
-    display: flex;
-    flex-direction: column;
-    padding-bottom: env(safe-area-inset-bottom, 0);
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: var(--sidebar-w);
-    z-index: 2;
-  }
+[id="sidebar"] {
+  background: var(--c-bg-secondary);
+  border-inline-end: 1px solid var(--c-border);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--sidebar-w);
+  z-index: 2;
+}
 
-  .sidebar-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: env(safe-area-inset-top, 0) var(--sp-4) 0;
-    min-height: calc(3.25rem + env(safe-area-inset-top, 0));
-    border-block-end: 1px solid var(--c-border);
-    flex-shrink: 0;
-  }
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: env(safe-area-inset-top, 0) var(--sp-4) 0;
+  min-height: calc(3.25rem + env(safe-area-inset-top, 0));
+  border-block-end: 1px solid var(--c-border);
+  flex-shrink: 0;
+}
 
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--c-accent);
+  cursor: default;
+  user-select: none;
+}
+
+.logo h1 {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  transition: color var(--dur-enter) var(--ease-enter);
+}
+
+.logo-subtitle {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-normal);
+  color: var(--c-text-tertiary);
+  margin-left: 0.15em;
+}
+
+.logo:hover h1 {
+  /* Lighter purple in dark mode, darker purple in light mode — never
+   white/black, so it stays branded. */
+  color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
+}
+
+.logo-icon {
+  flex-shrink: 0;
+  transform-origin: center;
+  transition: transform var(--dur-enter) var(--ease-enter);
+}
+
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-inline-end: -0.5rem;
+}
+
+/* settings-btn svg rules moved to end of file (specificity ordering) */
+
+.sidebar-actions {
+  display: flex;
+  gap: var(--sp-1);
+
+  /* The horizontal margin MUST equal #tab-list's padding below, or this
+   row is narrower than every tab under it and the sidebar has two left
+   edges. The two values are only coupled by this comment; change one and
+   change the other. The vertical margin is free — it is the gap to the
+   header above and to the first tab below. */
+  margin: var(--sp-2) var(--sp-1);
+  padding: 0.125rem;
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  flex-shrink: 0;
+
+  /* Separator between build and plan: a vertical line positioned in the
+   gap via ::before on the second child. Pixel-perfect because it's
+   straight 1px, not the border of a rounded button. */
+  position: relative;
+}
+
+.sidebar-action-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  justify-content: center;
+  padding: var(--sp-2) var(--sp-3);
+  /* CONCENTRIC with .sidebar-actions: inner = outer − border − inset. This was
+     `calc(var(--r) - 0.125rem)`, which subtracted the 2px padding and forgot
+     the 1px border, so the button sat at 4px where 3px shares the row's corner
+     centre. Rule and sources: web.md "A nested rounded corner". */
+  border-radius: calc(var(--r) - 1px - 0.125rem);
+  border: none;
+  background: transparent;
+  color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: var(--btn-h);
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro) var(--ease-standard);
+  position: relative;
+
+  &:hover {
+    background: var(--c-bg-tertiary);
     color: var(--c-accent);
-    cursor: default;
+  }
+
+  & svg {
+    flex-shrink: 0;
+  }
+}
+
+.sidebar-action-btn + .sidebar-action-btn::before {
+  content: "";
+  position: absolute;
+  inset-block: 0.25rem;
+  inset-inline-start: calc(var(--sp-1) / -2);
+  width: 1px;
+  background: var(--c-border);
+  pointer-events: none;
+}
+
+[id="tab-list"] {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+
+  /* .sidebar-actions above matches this value as its horizontal margin so
+   the New chat row and the tabs share one left and right edge. */
+  padding: var(--sp-1);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+
+  /* During drag: prevent text selection on iOS/iPadOS which ignores
+ * JS-set user-select on document.body. The .dragging class is added
+ * by startDrag in tabs.ts. -webkit-touch-callout covers the long-
+ * press context menu that iOS shows before user-select kicks in. */
+  &.dragging {
     user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  /* A transparent border is reserved on EVERY tab so toggling the active
+   * outline below never shifts the row. This is what the old design got wrong
+   * in miniature: it drew a 2px accent border on the active tab only and paid
+   * for it with a compensating `padding-inline-start`, so the selected row's
+   * text sat 2px off from every other row's. */
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  min-height: var(--btn-h);
+  transition:
+    background var(--dur-micro),
+    border-color var(--dur-micro),
+    opacity var(--dur-micro),
+    transform var(--dur-micro) var(--ease-standard);
+
+  &.entering {
+    animation: vk-slide-in-x var(--dur-micro) var(--ease-standard);
   }
 
-  .logo h1 {
-    font-size: var(--fs-lg);
-    font-weight: var(--fw-semibold);
-    transition: color var(--dur-enter) var(--ease-enter);
-  }
-
-  .logo-subtitle {
-    font-size: var(--fs-sm);
-    font-weight: var(--fw-normal);
-    color: var(--c-text-tertiary);
-    margin-left: 0.15em;
-  }
-
-  .logo:hover h1 {
-    /* Lighter purple in dark mode, darker purple in light mode — never
-     white/black, so it stays branded. */
-    color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));
-  }
-
-  .logo-icon {
-    flex-shrink: 0;
-    transform-origin: center;
-    transition: transform var(--dur-enter) var(--ease-enter);
-  }
-
-  .sidebar-header-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-1);
-    margin-inline-end: -0.5rem;
-  }
-
-  /* settings-btn svg rules moved to end of file (specificity ordering) */
-
-  .sidebar-actions {
-    display: flex;
-    gap: var(--sp-1);
-
-    /* The horizontal margin MUST equal #tab-list's padding below, or this
-     row is narrower than every tab under it and the sidebar has two left
-     edges. The two values are only coupled by this comment; change one and
-     change the other. The vertical margin is free — it is the gap to the
-     header above and to the first tab below. */
-    margin: var(--sp-2) var(--sp-1);
-    padding: 0.125rem;
-    background: var(--c-bg-secondary);
-    border: 1px solid var(--c-border);
-    border-radius: var(--r);
-    flex-shrink: 0;
-
-    /* Separator between build and plan: a vertical line positioned in the
-     gap via ::before on the second child. Pixel-perfect because it's
-     straight 1px, not the border of a rounded button. */
-    position: relative;
-  }
-
-  .sidebar-action-btn {
-    flex: 1 1 0;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    justify-content: center;
-    padding: var(--sp-2) var(--sp-3);
-    /* CONCENTRIC with .sidebar-actions: inner = outer − border − inset. This was
-       `calc(var(--r) - 0.125rem)`, which subtracted the 2px padding and forgot
-       the 1px border, so the button sat at 4px where 3px shares the row's corner
-       centre. Rule and sources: web.md "A nested rounded corner". */
-    border-radius: calc(var(--r) - 1px - 0.125rem);
-    border: none;
-    background: transparent;
-    color: var(--c-text-primary);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-    white-space: nowrap;
-    min-height: var(--btn-h);
-    transition:
-      background var(--dur-micro),
-      color var(--dur-micro) var(--ease-standard);
-    position: relative;
-
-    &:hover {
-      background: var(--c-bg-tertiary);
-      color: var(--c-accent);
-    }
-
-    & svg {
-      flex-shrink: 0;
-    }
-  }
-
-  .sidebar-action-btn + .sidebar-action-btn::before {
-    content: "";
-    position: absolute;
-    inset-block: 0.25rem;
-    inset-inline-start: calc(var(--sp-1) / -2);
-    width: 1px;
-    background: var(--c-border);
+  /* Every departing row gets `.exiting` (it carries the inert state and the
+   * clip), and the ANIMATION is then chosen by what the row is. Top level, and
+   * a sub-tab whose parent is leaving with it, swipe out sideways — so a parent
+   * and its whole subtree read as one block departing. */
+  &.exiting {
+    animation: slide-out 0.18s ease-in forwards;
     pointer-events: none;
+    overflow: hidden;
   }
 
-  [id="tab-list"] {
-    flex: 1;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-
-    /* .sidebar-actions above matches this value as its horizontal margin so
-     the New chat row and the tabs share one left and right edge. */
-    padding: var(--sp-1);
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-
-    /* During drag: prevent text selection on iOS/iPadOS which ignores
-   * JS-set user-select on document.body. The .dragging class is added
-   * by startDrag in tabs.ts. -webkit-touch-callout covers the long-
-   * press context menu that iOS shows before user-select kicks in. */
-    &.dragging {
-      user-select: none;
-      -webkit-touch-callout: none;
-    }
+  /* A sub-tab whose parent SURVIVES goes UP instead, back into the row it hangs
+   * off: that is where its work came from and where the reader's attention
+   * should land. renderDOM decides which of the two applies; an orphan (a
+   * sub-tab whose parent is not open here) falls to `.exiting` above, because
+   * there is no row on screen for it to merge into. */
+  &.exiting.exiting-merge {
+    animation: tab-merge-up var(--dur-standard) var(--ease-standard) forwards;
   }
 
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    padding: var(--sp-2) var(--sp-3);
-    /* A transparent border is reserved on EVERY tab so toggling the active
-     * outline below never shifts the row. This is what the old design got wrong
-     * in miniature: it drew a 2px accent border on the active tab only and paid
-     * for it with a compensating `padding-inline-start`, so the selected row's
-     * text sat 2px off from every other row's. */
-    border: 1px solid transparent;
-    border-radius: var(--r);
-    cursor: pointer;
-    font-size: var(--fs-sm);
-    color: var(--c-text-primary);
-    min-height: var(--btn-h);
-    transition:
-      background var(--dur-micro),
-      border-color var(--dur-micro),
-      opacity var(--dur-micro),
-      transform var(--dur-micro) var(--ease-standard);
-
-    &.entering {
-      animation: vk-slide-in-x var(--dur-micro) var(--ease-standard);
-    }
-
-    /* Every departing row gets `.exiting` (it carries the inert state and the
-     * clip), and the ANIMATION is then chosen by what the row is. Top level, and
-     * a sub-tab whose parent is leaving with it, swipe out sideways — so a parent
-     * and its whole subtree read as one block departing. */
-    &.exiting {
-      animation: slide-out 0.18s ease-in forwards;
-      pointer-events: none;
-      overflow: hidden;
-    }
-
-    /* A sub-tab whose parent SURVIVES goes UP instead, back into the row it hangs
-     * off: that is where its work came from and where the reader's attention
-     * should land. renderDOM decides which of the two applies; an orphan (a
-     * sub-tab whose parent is not open here) falls to `.exiting` above, because
-     * there is no row on screen for it to merge into. */
-    &.exiting.exiting-merge {
-      animation: tab-merge-up var(--dur-standard) var(--ease-standard) forwards;
-    }
-
-    /* Inactive tabs stay FLAT — no chip, no border — and lift on hover, so the
-     * only filled row in the strip is the selected one. */
-    &:not(.active):hover {
-      background: var(--c-hover);
-    }
-
-    /* The active tab is a FILLED row, not a bordered one: the whole background
-     * is accent-derived, with the fill lightened toward the text colour as a
-     * subtle edge. Adopted from web-terminal-kiro's tab vocabulary so the two
-     * apps read the same way (`--tab-active-bg` / `--tab-active-border` there).
-     *
-     * The 2px accent left-border it replaces marked selection with a sliver at
-     * one edge, which is easy to miss on a dense strip and impossible to see at
-     * all once a row is indented (a sub-tab's nesting arrow sits exactly where
-     * the border was). A fill is unambiguous at any indent. */
-    /* The active row's fill/edge/ink triple lives in 70-selection.css with
-     * every other selected surface. Its hover and press stay here: they score
-     * (0,3,0), so they still beat that file's (0,2,0) resting rule. */
-
-    /* The active tab DOES get hover feedback — it just cannot be the flat
-     * `--c-bg-hover` square the old rule used, which repainted the fill and so
-     * erased the thing marking the row selected. This is the tab-close pattern
-     * instead: a mix toward the text colour layered ON the fill, so it lifts
-     * whatever it sits on and the selection survives. Without it the selected
-     * row was the one row in the strip that did not answer the pointer, which
-     * reads as "this row is not clickable". */
-    /* The active row's whole treatment — fill, edge, ink, hover and press —
-     * lives in 70-selection.css. Its hover scores (0,3,0), exactly what the
-     * resting rule there scores once `:not(.dragging)` is counted, so a copy
-     * left here would LOSE the tie to a later file and the selected row would
-     * stop answering the pointer. That is not a hypothetical: it is what the
-     * cascade audit found when this rule was first left behind. */
-
-    /* Dragging keeps the accent outline and takes its fill elsewhere: under the
-     * active fill, --c-accent-subtle is nearly the same swatch, so a dragged
-     * active tab and a dragged inactive one looked identical. */
-    &.dragging {
-      background: var(--c-bg-tertiary);
-      outline: 1px solid var(--c-accent);
-    }
-
-    & :where(.tab-icon) {
-      cursor: grab;
-    }
-
-    &:where(.dragging) :where(.tab-icon) {
-      cursor: grabbing;
-    }
-
-    &.tab-drag-placeholder {
-      overflow: hidden;
-      opacity: 0;
-      margin: -0.0625rem 0;
-      border: 0;
-
-      /* stylelint-disable-next-line declaration-no-important -- must beat the component's own height rule while visually collapsed */
-      height: 0 !important;
-
-      /* stylelint-disable-next-line declaration-no-important -- same: collapse padding regardless of component rules */
-      padding: 0 !important;
-      min-height: 0;
-    }
-
-    &.drag-landing {
-      visibility: hidden;
-    }
+  /* Inactive tabs stay FLAT — no chip, no border — and lift on hover, so the
+   * only filled row in the strip is the selected one. */
+  &:not(.active):hover {
+    background: var(--c-hover);
   }
 
-  @keyframes slide-out {
-    /* Collapse height + padding alongside the fade so sibling tabs slide
-     up smoothly instead of jumping at animationend. Using max-height
-     with a known upper bound lets the browser interpolate height even
-     though the computed height is "auto" at rest.
+  /* The active tab is a FILLED row, not a bordered one: the whole background
+   * is accent-derived, with the fill lightened toward the text colour as a
+   * subtle edge. Adopted from web-terminal-kiro's tab vocabulary so the two
+   * apps read the same way (`--tab-active-bg` / `--tab-active-border` there).
+   *
+   * The 2px accent left-border it replaces marked selection with a sliver at
+   * one edge, which is easy to miss on a dense strip and impossible to see at
+   * all once a row is indented (a sub-tab's nesting arrow sits exactly where
+   * the border was). A fill is unambiguous at any indent. */
+  /* The active row's fill/edge/ink triple lives in 70-selection.css with
+   * every other selected surface. Its hover and press stay here: they score
+   * (0,3,0), so they still beat that file's (0,2,0) resting rule. */
 
-     It does NOT touch `margin`, and that is load-bearing rather than an
-     omission. `.tab.tab-child` carries the sub-tab indent as
-     `margin-inline-start`, so the `margin: 0` this used to open with reset the
-     indent on frame one: the row jumped a full 1rem wider and left before it
-     swiped, which is exactly what a sub-tab close looked like. The vertical
-     margins the reset was written for are gone — `#tab-list` spaces its rows
-     with `gap` now — so there is nothing left for it to collapse. */
-    0% {
-      opacity: 1;
-      transform: translateX(0);
-      max-height: 3rem;
-      padding-block: var(--sp-2);
-      border-width: 1px;
-    }
+  /* The active tab DOES get hover feedback — it just cannot be the flat
+   * `--c-bg-hover` square the old rule used, which repainted the fill and so
+   * erased the thing marking the row selected. This is the tab-close pattern
+   * instead: a mix toward the text colour layered ON the fill, so it lifts
+   * whatever it sits on and the selection survives. Without it the selected
+   * row was the one row in the strip that did not answer the pointer, which
+   * reads as "this row is not clickable". */
+  /* The active row's whole treatment — fill, edge, ink, hover and press —
+   * lives in 70-selection.css. Its hover scores (0,3,0), exactly what the
+   * resting rule there scores once `:not(.dragging)` is counted, so a copy
+   * left here would LOSE the tie to a later file and the selected row would
+   * stop answering the pointer. That is not a hypothetical: it is what the
+   * cascade audit found when this rule was first left behind. */
 
-    40% {
-      opacity: 0;
-      transform: translateX(-0.75rem);
-      max-height: 3rem;
-      padding-block: var(--sp-2);
-    }
-
-    100% {
-      opacity: 0;
-      transform: translateX(-0.75rem);
-      max-height: 0;
-      padding-block: 0;
-      border-width: 0;
-    }
-  }
-
-  /* The sub-tab exit: lift into the parent while the row collapses under it, so
-     the strip below closes the gap from the first frame instead of waiting for a
-     fade to finish. The direction is the whole message — a tangent or a run
-     folding back into the conversation it came from.
-
-     TWO STOPS ONLY, deliberately. A timing function applies to each keyframe
-     INTERVAL separately, so a mid stop would ease `max-height` twice and stutter
-     the collapse at it. Anything worth a second curve belongs in a second
-     animation, not a third stop.
-
-     The indent is untouched here for the same reason it is untouched above. */
-  @keyframes tab-merge-up {
-    from {
-      opacity: 1;
-      transform: translateY(0);
-      max-height: 3rem;
-      padding-block: var(--sp-2);
-      border-width: 1px;
-    }
-
-    to {
-      opacity: 0;
-      transform: translateY(-0.75rem);
-      max-height: 0;
-      padding-block: 0;
-      border-width: 0;
-    }
-  }
-
-  .tab-drag-ghost {
-    position: fixed;
-    z-index: 9999;
-    pointer-events: none;
-
-    /* Matches `.tab.dragging` (bg-tertiary + accent outline) so the ghost and
-     * the row it was lifted from read as one object. It used to fill with
-     * --c-accent-subtle, which was nearly the selected fill's own swatch — the
-     * same collision `.dragging` was changed to avoid. */
+  /* Dragging keeps the accent outline and takes its fill elsewhere: under the
+   * active fill, --c-accent-subtle is nearly the same swatch, so a dragged
+   * active tab and a dragged inactive one looked identical. */
+  &.dragging {
     background: var(--c-bg-tertiary);
     outline: 1px solid var(--c-accent);
-    border-radius: var(--r);
-    box-shadow:
-      var(--shadow-ambient),
-      0 0.5rem 1.25rem oklch(0% 0 none / 25%);
-    opacity: 0.92;
-
-    /* Floating effect: gentle vertical bob + slight left/right rotation,
-   * no horizontal translation. The ghost's absolute top position is
-   * driven by JS from the pointer; the animation layers a purely
-   * visual "hovering" wobble on top, applied as a translate+rotate
-   * via transform so it doesn't fight the JS-managed top/left. */
-    animation: tab-drag-float 2.2s ease-in-out infinite;
-    transform-origin: center;
-    will-change: transform;
   }
 
-  @keyframes tab-drag-float {
-    0%,
-    100% {
-      transform: translateY(0) rotate(-1.2deg);
-    }
-
-    50% {
-      transform: translateY(-3px) rotate(1.2deg);
-    }
+  & :where(.tab-icon) {
+    cursor: grab;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .tab-drag-ghost {
-      animation: none;
-    }
+  &:where(.dragging) :where(.tab-icon) {
+    cursor: grabbing;
   }
 
-  .tab-drag-indicator {
-    border-radius: var(--r);
-    background: color-mix(in srgb, var(--c-accent) 12%, transparent);
-    border: 1px dashed color-mix(in srgb, var(--c-accent) 40%, transparent);
-    animation: drag-gap-open var(--dur-micro) var(--ease-standard) forwards;
+  &.tab-drag-placeholder {
+    overflow: hidden;
+    opacity: 0;
+    margin: -0.0625rem 0;
+    border: 0;
+
+    /* stylelint-disable-next-line declaration-no-important -- must beat the component's own height rule while visually collapsed */
+    height: 0 !important;
+
+    /* stylelint-disable-next-line declaration-no-important -- same: collapse padding regardless of component rules */
+    padding: 0 !important;
+    min-height: 0;
+  }
+
+  &.drag-landing {
+    visibility: hidden;
+  }
+}
+
+@keyframes slide-out {
+  /* Collapse height + padding alongside the fade so sibling tabs slide
+   up smoothly instead of jumping at animationend. Using max-height
+   with a known upper bound lets the browser interpolate height even
+   though the computed height is "auto" at rest.
+
+   It does NOT touch `margin`, and that is load-bearing rather than an
+   omission. `.tab.tab-child` carries the sub-tab indent as
+   `margin-inline-start`, so the `margin: 0` this used to open with reset the
+   indent on frame one: the row jumped a full 1rem wider and left before it
+   swiped, which is exactly what a sub-tab close looked like. The vertical
+   margins the reset was written for are gone — `#tab-list` spaces its rows
+   with `gap` now — so there is nothing left for it to collapse. */
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+    max-height: 3rem;
+    padding-block: var(--sp-2);
+    border-width: 1px;
+  }
+
+  40% {
+    opacity: 0;
+    transform: translateX(-0.75rem);
+    max-height: 3rem;
+    padding-block: var(--sp-2);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(-0.75rem);
+    max-height: 0;
+    padding-block: 0;
+    border-width: 0;
+  }
+}
+
+/* The sub-tab exit: lift into the parent while the row collapses under it, so
+   the strip below closes the gap from the first frame instead of waiting for a
+   fade to finish. The direction is the whole message — a tangent or a run
+   folding back into the conversation it came from.
+
+   TWO STOPS ONLY, deliberately. A timing function applies to each keyframe
+   INTERVAL separately, so a mid stop would ease `max-height` twice and stutter
+   the collapse at it. Anything worth a second curve belongs in a second
+   animation, not a third stop.
+
+   The indent is untouched here for the same reason it is untouched above. */
+@keyframes tab-merge-up {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 3rem;
+    padding-block: var(--sp-2);
+    border-width: 1px;
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-0.75rem);
+    max-height: 0;
+    padding-block: 0;
+    border-width: 0;
+  }
+}
+
+.tab-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+
+  /* Matches `.tab.dragging` (bg-tertiary + accent outline) so the ghost and
+   * the row it was lifted from read as one object. It used to fill with
+   * --c-accent-subtle, which was nearly the selected fill's own swatch — the
+   * same collision `.dragging` was changed to avoid. */
+  background: var(--c-bg-tertiary);
+  outline: 1px solid var(--c-accent);
+  border-radius: var(--r);
+  box-shadow:
+    var(--shadow-ambient),
+    0 0.5rem 1.25rem oklch(0% 0 none / 25%);
+  opacity: 0.92;
+
+  /* Floating effect: gentle vertical bob + slight left/right rotation,
+ * no horizontal translation. The ghost's absolute top position is
+ * driven by JS from the pointer; the animation layers a purely
+ * visual "hovering" wobble on top, applied as a translate+rotate
+ * via transform so it doesn't fight the JS-managed top/left. */
+  animation: tab-drag-float 2.2s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+
+@keyframes tab-drag-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1.2deg);
+  }
+
+  50% {
+    transform: translateY(-3px) rotate(1.2deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-drag-ghost {
+    animation: none;
+  }
+}
+
+.tab-drag-indicator {
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--c-accent) 40%, transparent);
+  animation: drag-gap-open var(--dur-micro) var(--ease-standard) forwards;
+  height: 0;
+  opacity: 0;
+  user-select: none;
+}
+
+@keyframes drag-gap-open {
+  from {
     height: 0;
     opacity: 0;
-    user-select: none;
   }
 
-  @keyframes drag-gap-open {
-    from {
-      height: 0;
-      opacity: 0;
-    }
+  to {
+    height: var(--btn-h);
+    opacity: 1;
+  }
+}
 
-    to {
-      height: var(--btn-h);
-      opacity: 1;
-    }
+.tab-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tab-icon {
+  flex-shrink: 0;
+  color: var(--c-text-primary);
+  display: flex;
+  align-items: center;
+}
+
+.tab-close {
+  background: none;
+  border: none;
+  color: var(--c-text-secondary);
+  cursor: pointer;
+  padding: var(--sp-1);
+  flex-shrink: 0;
+  border-radius: var(--r);
+  line-height: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro) var(--ease-standard);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* On the active tab the × sits on the accent-derived fill, where the grey
+   inks sink in. Carry the row's full ink there (white in dark mode). */
+.tab.active .tab-close {
+  color: var(--c-selected-fg);
+}
+
+/* Hover lifts WHATEVER fill the × sits on — flat row, hovered row, or the
+   active tab's violet chip — instead of painting the global grey
+   --c-bg-hover square, which mismatched the accent fill and vanished
+   against an already-hovered row. Same text-mix construction as
+   --c-selected-border. */
+.tab-close:hover {
+  color: var(--c-text-primary);
+  background: color-mix(in srgb, var(--c-text-primary) 12%, transparent);
+}
+
+/* Sidebar footer */
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 0 var(--sp-4);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 3.4375rem;
+}
+
+.sidebar-email {
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+  min-width: 0;
+  flex: 1;
+
+  /* The footer's other half of the flex-centring fix in 15-input.css: this
+     address is a flex item whose box is asymmetric about its letterforms, so
+     `align-items: center` on .sidebar-footer centred the box and left the text
+     ~0.9-1.8px low depending on the OS font. `line-height: normal` used to sit
+     here, restating the default and fixing nothing — the offset carries no
+     line-height term. Trimming to the cap band is what makes the box symmetric
+     about the glyphs; the symmetric padding is the descender room the trim
+     takes away, and an email address is full of them. */
+  text-box: trim-both cap alphabetic;
+  padding-block: 0.35em;
+}
+
+.sidebar-email:hover {
+  color: var(--c-text-secondary);
+}
+
+.sidebar-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+
+.status-dot {
+  /* Status dot is a <button> but it must look like a tiny circle, NOT a pill.
+ * The .pill-expandable class (added for expand-on-click behaviour) must not
+ * drag in button chrome. Override aggressively: zero padding, no border, no
+ * background. Size + shape come from width/height + border-radius. */
+  all: unset;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--c-yellow);
+  flex-shrink: 0;
+  position: relative;
+  anchor-name: --status-dot;
+  cursor: pointer;
+  box-sizing: border-box;
+
+  /* Connecting (default/yellow): gentle breathing pulse */
+  animation: vk-breathe 2s ease-in-out infinite;
+
+  /* Connected (green): infrequent ripple ping */
+  &.connected {
+    background: var(--c-green);
+    animation: none;
   }
 
-  .tab-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .tab-icon {
-    flex-shrink: 0;
-    color: var(--c-text-primary);
-    display: flex;
-    align-items: center;
-  }
-
-  .tab-close {
-    background: none;
-    border: none;
-    color: var(--c-text-secondary);
-    cursor: pointer;
-    padding: var(--sp-1);
-    flex-shrink: 0;
-    border-radius: var(--r);
-    line-height: 0;
-    width: 1.5rem;
-    height: 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-      background var(--dur-micro),
-      color var(--dur-micro) var(--ease-standard);
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  /* On the active tab the × sits on the accent-derived fill, where the grey
-     inks sink in. Carry the row's full ink there (white in dark mode). */
-  .tab.active .tab-close {
-    color: var(--c-selected-fg);
-  }
-
-  /* Hover lifts WHATEVER fill the × sits on — flat row, hovered row, or the
-     active tab's violet chip — instead of painting the global grey
-     --c-bg-hover square, which mismatched the accent fill and vanished
-     against an already-hovered row. Same text-mix construction as
-     --c-selected-border. */
-  .tab-close:hover {
-    color: var(--c-text-primary);
-    background: color-mix(in srgb, var(--c-text-primary) 12%, transparent);
-  }
-
-  /* Sidebar footer */
-  .sidebar-footer {
-    flex-shrink: 0;
-    padding: 0 var(--sp-4);
-    display: flex;
-    align-items: center;
-    gap: var(--sp-3);
-    height: 3.4375rem;
-  }
-
-  .sidebar-email {
-    font-size: var(--fs-sm);
-    color: var(--c-text-primary);
-    font-weight: var(--fw-medium);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-decoration: none;
-    min-width: 0;
-    flex: 1;
-
-    /* The footer's other half of the flex-centring fix in 15-input.css: this
-       address is a flex item whose box is asymmetric about its letterforms, so
-       `align-items: center` on .sidebar-footer centred the box and left the text
-       ~0.9-1.8px low depending on the OS font. `line-height: normal` used to sit
-       here, restating the default and fixing nothing — the offset carries no
-       line-height term. Trimming to the cap band is what makes the box symmetric
-       about the glyphs; the symmetric padding is the descender room the trim
-       takes away, and an email address is full of them. */
-    text-box: trim-both cap alphabetic;
-    padding-block: 0.35em;
-  }
-
-  .sidebar-email:hover {
-    color: var(--c-text-secondary);
-  }
-
-  .sidebar-footer-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.125rem;
-    margin-inline-start: auto;
-    flex-shrink: 0;
-  }
-
-  .status-dot {
-    /* Status dot is a <button> but it must look like a tiny circle, NOT a pill.
-   * The .pill-expandable class (added for expand-on-click behaviour) must not
-   * drag in button chrome. Override aggressively: zero padding, no border, no
-   * background. Size + shape come from width/height + border-radius. */
-    all: unset;
-    width: 0.5rem;
-    height: 0.5rem;
+  &.connected::after {
+    content: "";
+    position: absolute;
+    inset: 0;
     border-radius: 50%;
-    background: var(--c-yellow);
-    flex-shrink: 0;
-    position: relative;
-    anchor-name: --status-dot;
-    cursor: pointer;
-    box-sizing: border-box;
-
-    /* Connecting (default/yellow): gentle breathing pulse */
-    animation: vk-breathe 2s ease-in-out infinite;
-
-    /* Connected (green): infrequent ripple ping */
-    &.connected {
-      background: var(--c-green);
-      animation: none;
-    }
-
-    &.connected::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      border-radius: 50%;
-      background: var(--c-green);
-      animation: vk-ping 4s ease-out infinite;
-    }
-
-    /* Disconnected (red): static, no animation */
-    &.error {
-      background: var(--c-red);
-      animation: none;
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--c-accent);
-      outline-offset: 3px;
-    }
+    background: var(--c-green);
+    animation: vk-ping 4s ease-out infinite;
   }
 
-  /* User button + popup */
-  .popup-anchor {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    flex-shrink: 0;
+  /* Disconnected (red): static, no animation */
+  &.error {
+    background: var(--c-red);
+    animation: none;
   }
 
-  .icon-btn {
+  &:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 3px;
+  }
+}
+
+/* User button + popup */
+.popup-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--c-text-primary);
+  cursor: pointer;
+  padding: var(--sp-2);
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 0;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro) var(--ease-standard);
+
+  &:where(:disabled) {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  &:where(:disabled:hover) {
     background: none;
-    border: none;
-    color: var(--c-text-primary);
-    cursor: pointer;
-    padding: var(--sp-2);
-    border-radius: var(--r);
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-    line-height: 0;
-    transition:
-      background var(--dur-micro),
-      color var(--dur-micro) var(--ease-standard);
-
-    &:where(:disabled) {
-      opacity: 0.3;
-      cursor: default;
-    }
-
-    &:where(:disabled:hover) {
-      background: none;
-    }
-
-    &:where(.danger) {
-      color: var(--c-red);
-    }
-
-    &:where(.danger:hover) {
-      background: color-mix(in srgb, var(--c-red) 15%, transparent);
-    }
-
-    /* `.active` and `[aria-pressed="true"]` are one state, and they used to
-       disagree eight lines apart — the first coloured only the ink, the second
-       added a fill. Both are in 70-selection.css now, carrying the same three
-       channels as every other on-state in the app. */
-
-    &:hover {
-      background: var(--c-bg-tertiary);
-    }
   }
 
-  .sidebar-close-only {
-    display: none;
-    background: none;
-    border: none;
-    color: var(--c-text-primary);
-    cursor: pointer;
-    padding: var(--sp-2);
-    border-radius: var(--r);
-    line-height: 0;
-    transition: background var(--dur-micro) var(--ease-standard);
+  &:where(.danger) {
+    color: var(--c-red);
   }
 
-  .sidebar-close-only:hover {
+  &:where(.danger:hover) {
+    background: color-mix(in srgb, var(--c-red) 15%, transparent);
+  }
+
+  /* `.active` and `[aria-pressed="true"]` are one state, and they used to
+     disagree eight lines apart — the first coloured only the ink, the second
+     added a fill. Both are in 70-selection.css now, carrying the same three
+     channels as every other on-state in the app. */
+
+  &:hover {
     background: var(--c-bg-tertiary);
   }
+}
 
-  /* Theme toggle: sun/moon vertical slide transition (subflux pattern).
+.sidebar-close-only {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--c-text-primary);
+  cursor: pointer;
+  padding: var(--sp-2);
+  border-radius: var(--r);
+  line-height: 0;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.sidebar-close-only:hover {
+  background: var(--c-bg-tertiary);
+}
+
+/* Theme toggle: sun/moon vertical slide transition (subflux pattern).
  * Both SVGs are always in the DOM; .hidden controls which is visible.
  * On toggle, the outgoing icon slides down (.theme-setting), then the
  * incoming icon appears below and slides up (removal of .theme-rising).
  * A warm/cool inset glow on the button sells the sun/moon metaphor. */
-  [id="theme-btn"] {
-    overflow: hidden;
-    transition: box-shadow 0.35s var(--ease-standard);
-  }
+[id="theme-btn"] {
+  overflow: hidden;
+  transition: box-shadow 0.35s var(--ease-standard);
+}
 
-  [id="theme-btn"] svg {
-    display: inline-block;
-    transition:
-      translate 0.35s var(--ease-enter),
-      opacity 0.25s var(--ease-enter);
-  }
+[id="theme-btn"] svg {
+  display: inline-block;
+  transition:
+    translate 0.35s var(--ease-enter),
+    opacity 0.25s var(--ease-enter);
+}
 
-  [id="theme-btn"] svg.theme-setting {
-    translate: 0 2rem;
-    opacity: 0;
-    transition:
-      translate 0.25s var(--ease-exit),
-      opacity 0.2s var(--ease-exit);
-  }
+[id="theme-btn"] svg.theme-setting {
+  translate: 0 2rem;
+  opacity: 0;
+  transition:
+    translate 0.25s var(--ease-exit),
+    opacity 0.2s var(--ease-exit);
+}
 
-  [id="theme-btn"] svg.theme-rising {
-    translate: 0 -2rem;
-    opacity: 0;
-  }
+[id="theme-btn"] svg.theme-rising {
+  translate: 0 -2rem;
+  opacity: 0;
+}
 
-  [id="theme-btn"].glow-sun {
-    box-shadow: inset 0 -0.35rem 0.75rem oklch(82% 0.16 85deg / 50%);
-  }
+[id="theme-btn"].glow-sun {
+  box-shadow: inset 0 -0.35rem 0.75rem oklch(82% 0.16 85deg / 50%);
+}
 
-  [id="theme-btn"].glow-moon {
-    box-shadow: inset 0 -0.35rem 0.75rem oklch(80% 0.05 260deg / 30%);
-  }
+[id="theme-btn"].glow-moon {
+  box-shadow: inset 0 -0.35rem 0.75rem oklch(80% 0.05 260deg / 30%);
+}
 
-  /* ========================================================================
-     THE DISCLOSURE CHEVRON — see chevron.ts for why one technique replaced
-     three. This is the whole vocabulary: the glyph is `ICON_CHEVRON_DOWN`, the
-     closed state points along the inline axis, the open state points down at the
-     body below it, and `--chev-size` is the one other knob a site turns.
+/* ========================================================================
+   THE DISCLOSURE CHEVRON — see chevron.ts for why one technique replaced
+   three. This is the whole vocabulary: the glyph is `ICON_CHEVRON_DOWN`, the
+   closed state points along the inline axis, the open state points down at the
+   body below it, and `--chev-size` is the one other knob a site turns.
 
-     Both custom properties are DECLARED here rather than left to a `var()`
-     fallback, per the no-phantom-token rule in vibekit-ui.md: a default that
-     lives only in a fallback is a literal wearing a token's name.
+   Both custom properties are DECLARED here rather than left to a `var()`
+   fallback, per the no-phantom-token rule in vibekit-ui.md: a default that
+   lives only in a fallback is a literal wearing a token's name.
 
-     Declaring them on the chevron also enforces the one hazard worth naming.
-     They inherit, so setting `--chev-turn` on an ancestor (`.turn[data-folded]`,
-     say) would rotate every nested chevron inside it. A declaration on the
-     element beats an inherited value, so a site rule has no choice but to target
-     the chevron itself — which is what every one of them does.
+   Declaring them on the chevron also enforces the one hazard worth naming.
+   They inherit, so setting `--chev-turn` on an ancestor (`.turn[data-folded]`,
+   say) would rotate every nested chevron inside it. A declaration on the
+   element beats an inherited value, so a site rule has no choice but to target
+   the chevron itself — which is what every one of them does.
 
-     It lives in `@layer components`, which per MANIFEST ranks BELOW every
-     unlayered feature file, so 14-tools, 29-turns, 17-settings, 22-git and
-     61-mcp each override size and colour with a bare class selector and flip
-     `--chev-turn` from whatever element carries THEIR open state. That is the
-     intended relationship, not a specificity accident.
+   This file sits EARLY in the MANIFEST order, so 14-tools, 29-turns,
+   17-settings, 22-git and 61-mcp each override size and colour with a bare
+   class selector by coming later at equal specificity, and flip `--chev-turn`
+   from whatever element carries THEIR open state. That is the intended
+   relationship, not a specificity accident.
 
-     The rotation is on this span rather than on the button some sites wrap it
-     in, so a focus ring stays axis-aligned and a hit target stays square. */
-  .disclosure-chevron {
-    --chev-turn: -90deg;
-    --chev-size: 0.875rem;
+   The rotation is on this span rather than on the button some sites wrap it
+   in, so a focus ring stays axis-aligned and a hit target stays square. */
+.disclosure-chevron {
+  --chev-turn: -90deg;
+  --chev-size: 0.875rem;
 
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    line-height: 1;
-    transform: rotate(var(--chev-turn));
-    transition: transform var(--dur-standard) var(--ease-standard);
-  }
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  line-height: 1;
+  transform: rotate(var(--chev-turn));
+  transition: transform var(--dur-standard) var(--ease-standard);
+}
 
-  .disclosure-chevron > svg {
-    display: block;
-    inline-size: var(--chev-size);
-    block-size: var(--chev-size);
-  }
+.disclosure-chevron > svg {
+  display: block;
+  inline-size: var(--chev-size);
+  block-size: var(--chev-size);
 }

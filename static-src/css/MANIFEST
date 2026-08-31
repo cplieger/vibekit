@@ -1,33 +1,35 @@
 # vibekit/web/static/style.css bundle manifest
 # Files concatenated in declared order at Docker build time.
 #
-# Slicing follows the existing @layer cascade:
-#   00-02  layer declaration + @property defs (00), @layer tokens (01),
-#          @layer reset (02); the ui-primitives base and 04-uip-skin sit
-#          unlayered between 01 and 02
-#   03     base — UNLAYERED, deliberately (see 10-29)
-#   10-29  feature stylesheets, split by feature (chat, tools, input, ...).
-#          Only 10-shell-app.css is @layer components — it opens the block on
-#          line 1 and closes it on its last. The other 21 are UNLAYERED, so they
-#          beat it and every layered rule, and a tie between two of them is
-#          decided by the order below. That is why 15-input.css takes the
-#          `transition` property from 03-base.css's press rule.
+# THE CASCADE MODEL (simplified 2026-08-31): SOURCE ORDER IS THE CASCADE.
+# Exactly two @layers survive, `reset` and `tokens` (declared in 00-header),
+# because those are the two sets that are MEANT to lose to everything. Every
+# other file is unlayered, so a tie between two rules of equal specificity is
+# decided by the order below — later file wins.
 #
-#          THAT ONE-MEMBER LAYER IS LOAD-BEARING, which is not obvious and cost
-#          a packet to establish. `components` ranks BELOW `utilities` and
-#          `mobile` in the declaration above, so 50-mobile.css's overrides beat
-#          10-shell-app.css whatever their specificity. Unlayering it would put
-#          it above every layer and flip three pairs, all mobile regressions:
-#          #sidebar width+z-index (the drawer stops being full-width and drops
-#          behind other chrome), .tab-close width+height (44px touch target
-#          falls back to 24px) and .sidebar-close-only display (the drawer can no
-#          longer be closed). It was FOUR until the dead #user-popup pair went
-#          with the old sidebar popup it styled. Enumerate with
-#          `python3 scripts/css-cascade-audit.py` before touching this.
-#   30     @layer utilities
-#   40     a11y (between utilities-close and mobile-open)
-#   50     @layer mobile
-#   60-61  MCP integrations (live in implicit outer layer, post-mobile)
+# It used to be five layers (reset, tokens, components, utilities, mobile),
+# and the layer maze was a measured hazard: 50-mobile.css sat in @layer
+# mobile where every rule LOST to the 21 unlayered feature slices, so the
+# whole authored phone design (full-width toolbar, hamburger reveal) shipped
+# dead. `scripts/css-cascade-audit.py --unlayer <file>` enumerates the flips
+# for any layering change; unlayering mobile flipped exactly its own 16
+# intended overrides, and unlayering components (10-shell-app) and utilities
+# (30-utilities) afterwards flipped ZERO pairs — the layers were pure risk.
+#
+# Ordering rules that carry weight:
+#   00-02  header (layer decl + @property defs), tokens, ui-primitives base +
+#          skin (unlayered, skin wins by order), reset
+#   03     base — shared element defaults; every feature file may override
+#   10-29  feature stylesheets, split by feature. 10-shell-app is FIRST so
+#          feature files override its shell chrome (chevrons, icon buttons)
+#          by coming later at equal specificity.
+#   30-40  utilities, a11y
+#   50     mobile — the cross-surface shell rules for <=48rem, LATE so they
+#          beat the feature slices. A surface-specific mobile override lives
+#          in its feature file's own @media block instead (the house pattern;
+#          see 15-input.css, 24-find.css, 28-docs.css).
+#   60-61  MCP integrations; 61 also carries the hit-target floor, zero-
+#          specificity on purpose so it only ever sets min-*
 #   70     selection — the one selected-state treatment for every surface that
 #          has one. LAST on purpose: each of its selectors carries real
 #          specificity, so coming after every feature file is the only thing

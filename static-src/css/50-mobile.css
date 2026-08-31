@@ -4,8 +4,9 @@
    position 50 it beats the feature slices by source order and the components
    layer by being unlayered; scripts/css-cascade-audit.py --unlayer 50-mobile.css
    showed exactly 16 flips, all of them this file's own overrides starting to
-   work. The empty @layer mobile declaration stays in 00-header.css so the
-   cascade order string needs no edit. */
+   work. The layer declaration in
+   00-header.css now names only reset and tokens - the two sets that are MEANT
+   to lose to everything. */
 @media (width <= 48rem) {
   :root {
     --btn-h: 2.75rem;

@@ -61,9 +61,8 @@
    (green connected, yellow connecting, red disconnected), and it is the only
    channel an 8px disc has, so the selected fill erased the connection colour
    the moment the popup opened — click the dot, lose the green. Specificity was
-   never going to save it either: the dot's own rules live in the one
-   `@layer components` file and this file is unlayered, so the fill won whatever
-   the selectors scored. A state indicator is not a selected surface — what
+   never going to save it either: the dot's own rules live in 10-shell-app.css,
+   which precedes this file in MANIFEST order, so the fill won the tie. A state indicator is not a selected surface — what
    marks it open is the card, not a repaint of the disc — and it cannot take the
    other two channels at all, because `all: unset` (10-shell-app.css) leaves it
    with no border and no text. */
