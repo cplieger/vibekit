@@ -504,10 +504,9 @@ mark.find-hit-current {
 }
 
 /* Mobile: 44px touch targets and 16px input to defeat iOS focus-zoom.
-   In THIS file rather than 50-mobile.css on purpose — an unlayered feature slice
-   outranks `@layer mobile` whatever the specificity, so a rule for this surface
-   put there would silently lose (css/MANIFEST and 00-header.css record the trap
-   and the audit script that enumerates it). */
+   In THIS file rather than 50-mobile.css: a surface's mobile overrides live
+   beside the surface (the house pattern; 50-mobile.css carries only the
+   cross-surface shell rules). */
 @media (width <= 40rem) {
   .chat-find {
     inset-inline: var(--sp-2);

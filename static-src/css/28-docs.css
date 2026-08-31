@@ -437,12 +437,9 @@
 
 /* Phone: the badge drops under the title.
  *
- * THIS RULE CANNOT LIVE IN 50-mobile.css. That file is inside `@layer mobile`
- * and this one is unlayered, and an unlayered rule beats every layer whatever
- * the media query says — so a copy of this block over there would simply never
- * apply. 50-mobile.css's own `.page-content` padding override is already dead
- * for exactly that reason (18-pages.css declares it unlayered), which is the
- * evidence rather than the theory. See css/MANIFEST and 00-header.css.
+ * In THIS file rather than 50-mobile.css: a surface's mobile overrides live
+ * beside the surface (the house pattern; 50-mobile.css carries only the
+ * cross-surface shell rules).
  *
  * 40rem is the app's phone rung, the same one this page's tab bar uses to swap
  * its pills for a native select. Giving the name the whole first line is what

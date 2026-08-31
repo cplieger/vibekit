@@ -1240,7 +1240,7 @@
 
 .git-ci-pill-pending .git-ci-dot {
   background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard, ease-in-out) infinite;
+  animation: vk-breathe 1.4s var(--ease-standard) infinite;
 }
 
 .git-ci-pill-canceled .git-ci-dot {
@@ -1295,7 +1295,7 @@
 
 .git-ci-panel-row-pending .git-ci-dot {
   background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard, ease-in-out) infinite;
+  animation: vk-breathe 1.4s var(--ease-standard) infinite;
 }
 
 .git-ci-panel-name {
@@ -1468,7 +1468,7 @@
 .identity-email {
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
-  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
 
@@ -1487,7 +1487,7 @@
 .about-grid dd {
   margin: 0;
   color: var(--c-text-primary);
-  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
 
@@ -1770,7 +1770,7 @@ select.native-rule-effect:focus-visible {
  * even when the clipboard API is blocked (non-HTTPS self-host). A version row +
  * explicit Copy button sit alongside it. */
 .diagnostics-version {
-  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-family: var(--font-mono);
   color: var(--c-text-secondary);
 }
 
@@ -1790,7 +1790,7 @@ select.native-rule-effect:focus-visible {
   border-radius: var(--r);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
-  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-family: var(--font-mono);
   font-size: var(--fs-xs);
   line-height: 1.5;
   resize: vertical;

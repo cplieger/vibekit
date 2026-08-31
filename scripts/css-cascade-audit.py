@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Enumerate every rule pair whose winner flips if a stylesheet leaves its @layer.
 
-Removing `@layer components` from 10-shell-app.css changes three classes of
-comparison, not one, so a specificity-only audit under-reports:
+Written for the 2026-08 layer retirement (five layers down to reset+tokens);
+kept because it answers any future layering question the same way. Moving a
+file out of a layer changes three classes of comparison, not one, so a
+specificity-only audit under-reports:
 
   1. vs a LATER unlayered file  - today the layer loses always; after, specificity
      decides, so the pair flips when this file's rule is MORE specific.
-  2. vs `@layer utilities` / `@layer mobile` (30-utilities.css, 50-mobile.css) -
-     today those layers outrank `components` whatever the specificity; after,
-     unlayered outranks them, so EVERY colliding pair flips.
-  3. vs an EARLIER unlayered file (03-base.css, the ui-primitives skin) - today
-     unlayered beats the layer; after, both are unlayered and this file is later
-     in concatenation order, so it wins ties too.
+  2. vs another LAYERED file - today layer rank decides whatever the
+     specificity; after, unlayered outranks the layer, so EVERY colliding
+     pair flips.
+  3. vs an EARLIER unlayered file - today unlayered beats the layer; after,
+     both are unlayered and this file is later in concatenation order, so it
+     wins ties too.
 
 Winner model for two normal declarations: higher layer rank, then specificity,
 then later position in the concatenated bundle. Overlap is decided structurally:
@@ -19,7 +21,7 @@ two subjects can match one element when their positive class/id constraints nest
 they share at least one class or id, neither negates what the other requires,
 and element name + pseudo-element agree.
 
-Usage: python3 scripts/css-cascade-audit.py [--file 10-shell-app.css] [--loose]
+Usage: python3 scripts/css-cascade-audit.py [--unlayer FILE[,FILE]] [--loose] [--losers FILE]
 """
 
 from __future__ import annotations

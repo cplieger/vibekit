@@ -1,4 +1,4 @@
-@layer reset, tokens, components, utilities, mobile;
+@layer reset, tokens;
 
 /* Order is precedence, low to high, and `components` sitting BELOW `utilities`
    and `mobile` is what makes 50-mobile.css's overrides win over
