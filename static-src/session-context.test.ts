@@ -11,7 +11,7 @@ import {
   getLastModel,
   restoreLastModel,
   setLastEffort,
-  getLastEffort,
+  getLastEffortFor,
   restoreLastEffort,
 } from "./session-context.js";
 import { patchSettings } from "./persist.js";
@@ -68,47 +68,68 @@ describe("setLastModel — redundant-write guard", () => {
   });
 });
 
-describe("setLastEffort — the level a new chat opens on", () => {
+describe("setLastEffort — the level a new chat opens on, scoped to its model", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    restoreLastEffort("__reset__");
+    restoreLastEffort("__reset__", "__reset__");
   });
 
-  it("patches once when the value changes from the cache", () => {
-    setLastEffort("max");
+  it("patches once when the pair changes from the cache", () => {
+    setLastEffort("max", "claude-opus-5");
     expect(patchSettings).toHaveBeenCalledTimes(1);
-    expect(patchSettings).toHaveBeenCalledWith({ last_effort: "max" });
-    expect(getLastEffort()).toBe("max");
+    expect(patchSettings).toHaveBeenCalledWith({
+      last_effort: "max",
+      last_effort_model: "claude-opus-5",
+    });
+    expect(getLastEffortFor("claude-opus-5")).toBe("max");
   });
 
-  it("does NOT patch when called again with the cached value", () => {
+  it("the seed answers ONLY for the model it was picked under", () => {
+    // A tier is a judgement about one model; carried onto another it overrode
+    // that model's own default (user report, 2026-08-31).
+    setLastEffort("max", "claude-opus-5");
+    expect(getLastEffortFor("gpt-luna")).toBe("");
+    expect(getLastEffortFor("")).toBe("");
+    expect(getLastEffortFor("claude-opus-5")).toBe("max");
+  });
+
+  it("does NOT patch when called again with the cached pair", () => {
     // Same loop the model guard exists for: the settings_updated handler must not
     // be able to push a server-confirmed value back through the setter. It uses
     // restoreLastEffort for that, and this guard stops any other caller
     // reintroducing it. It also makes a repeat pick of the level already in force
     // free instead of waking the save indicator.
-    setLastEffort("max");
+    setLastEffort("max", "m1");
     vi.clearAllMocks();
 
-    setLastEffort("max");
-    setLastEffort("max");
+    setLastEffort("max", "m1");
+    setLastEffort("max", "m1");
 
     expect(patchSettings).not.toHaveBeenCalled();
   });
 
-  it("restoreLastEffort updates the cache without patching", () => {
-    restoreLastEffort("xhigh");
-    expect(patchSettings).not.toHaveBeenCalled();
-    expect(getLastEffort()).toBe("xhigh");
+  it("the same level under a DIFFERENT model is a real change and patches", () => {
+    setLastEffort("max", "m1");
+    vi.clearAllMocks();
 
-    setLastEffort("xhigh");
+    setLastEffort("max", "m2");
+
+    expect(patchSettings).toHaveBeenCalledWith({ last_effort: "max", last_effort_model: "m2" });
+  });
+
+  it("restoreLastEffort updates the cache without patching", () => {
+    restoreLastEffort("xhigh", "m1");
+    expect(patchSettings).not.toHaveBeenCalled();
+    expect(getLastEffortFor("m1")).toBe("xhigh");
+
+    setLastEffort("xhigh", "m1");
     expect(patchSettings).not.toHaveBeenCalled();
   });
 
   it("starts empty, so a user who never picked gets the model's own default", () => {
     // The seed is absent rather than guessed: marking a tier nobody chose would
     // make the picker claim a level the session is not running at.
-    restoreLastEffort(undefined);
-    expect(getLastEffort()).toBe("__reset__");
+    restoreLastEffort(undefined, undefined);
+    expect(getLastEffortFor("__reset__")).toBe("__reset__");
   });
 });

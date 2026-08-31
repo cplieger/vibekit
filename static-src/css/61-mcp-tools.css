@@ -105,6 +105,23 @@
   flex-shrink: 0;
 }
 
+/* One action set, two layouts. Desktop forces the closed details content inline
+   and hides its summary; phone reverses that in the media rule below. */
+.turn-actions-more {
+  display: contents;
+}
+
+.turn-actions-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.turn-actions-more > .turn-action-more,
+.turn-action-label {
+  display: none;
+}
+
 /* NO resting `opacity`. It was 0.6, and it COMPOUNDED with the row's own 0.7 for
    an effective 0.42: the copy and export glyphs measured 1.967:1 dark / 1.742:1
    light against the card, the lowest ratio anywhere in the app and well under the
@@ -136,6 +153,61 @@
 
 .turn-action-btn.copied {
   color: var(--c-green);
+}
+
+@media (width <= 40rem) {
+  .turn-actions-more {
+    position: relative;
+    display: block;
+  }
+
+  .turn-actions-more > .turn-action-more {
+    display: inline-flex;
+    list-style: none;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+
+  .turn-action-more::-webkit-details-marker {
+    display: none;
+  }
+
+  .turn-actions-more:not([open]) > .turn-actions-secondary {
+    display: none;
+  }
+
+  .turn-actions-more[open] > .turn-actions-secondary {
+    position: absolute;
+    z-index: 20;
+    inset-inline-end: 0;
+    inset-block-end: calc(100% + var(--sp-2));
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-1);
+    min-inline-size: 12rem;
+    padding: var(--sp-2);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r);
+    background: var(--c-bg-elevated);
+    box-shadow:
+      var(--shadow-ambient),
+      0 0.5rem 1.5rem oklch(0% 0 none / 40%);
+    color: var(--c-text-secondary);
+  }
+
+  .turn-actions-secondary > .turn-action-btn {
+    justify-content: flex-start;
+    gap: var(--sp-2);
+    width: 100%;
+    height: auto;
+    padding-inline: var(--sp-2);
+  }
+
+  .turn-actions-secondary .turn-action-label {
+    display: inline;
+    white-space: nowrap;
+  }
 }
 
 /* The latched raw-source toggle takes its fill, edge and ink from

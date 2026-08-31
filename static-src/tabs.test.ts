@@ -85,6 +85,15 @@ vi.mock("./dom.js", () => ({
           }
           return tl;
         }
+        if (prop === "sidebar") {
+          let sidebar = document.getElementById("sidebar");
+          if (sidebar === null) {
+            sidebar = document.createElement("aside");
+            sidebar.id = "sidebar";
+            document.body.appendChild(sidebar);
+          }
+          return sidebar;
+        }
         if (prop === "promptInput") {
           let input = document.getElementById("prompt-input");
           if (input === null) {
@@ -676,7 +685,7 @@ describe("closing the last tab", () => {
 describe("activateTab", () => {
   it.each([
     { desc: "activates existing tab", target: "a", expectActive: "a" },
-    { desc: "activating already-active tab is a no-op", target: "b", expectActive: "b" },
+    { desc: "keeps an already-active tab active", target: "b", expectActive: "b" },
   ])("$desc", async ({ target, expectActive }) => {
     expect.assertions(1);
     await openChats("a", "b");
@@ -689,6 +698,17 @@ describe("activateTab", () => {
     await openChats("a", "b");
     activateTab("tb_missing");
     expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  it("closes the mobile drawer when the active tab is tapped", async () => {
+    await openChats("a", "b");
+    const sidebar = $.sidebar;
+    sidebar.classList.add("open");
+
+    activateTab(chatID("b"));
+
+    expect(getActiveTabId()).toBe(chatID("b"));
+    expect(sidebar.classList.contains("open")).toBe(false);
   });
 });
 

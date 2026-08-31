@@ -34,7 +34,7 @@
   flex-direction: column;
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  background: var(--c-bg-secondary);
+  background: var(--c-turn-body);
   flex-shrink: 0;
 
   /* Deliberately NOT `overflow: clip`. Clipping would keep the tinted bands
@@ -91,13 +91,13 @@
    the target shrinking when a turn was expanded). Copy, the show-more,
    attachment pills and linkified paths keep their own click, and a drag that
    selects the prompt keeps its selection — `disclosure-row.ts` skips controls
-   by kind and clicks that end a selection. A running turn has no fold, so no
-   pointer and no wash. */
-.turn:not([data-running]) > .turn-header {
+   by kind and clicks that end a selection. A no-fold turn (newest, running, or
+   nothing to hide) has no fold, so no pointer and no wash. */
+.turn:not([data-running], [data-no-fold]) > .turn-header {
   cursor: pointer;
 }
 
-.turn:not([data-running]) > .turn-header:hover {
+.turn:not([data-running], [data-no-fold]) > .turn-header:hover {
   /* As a LAYER, per the interaction-ladder contract (01-tokens.css): written
      into `background` the wash would REPLACE this band's tertiary tint with a
      15% film over the card, so the header would lose its tint on hover. */
@@ -327,26 +327,38 @@
    -------------------------------------------------------------------------- */
 
 .turn-body {
+  --fold-slide: 0.3s;
+
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
   padding: var(--sp-3);
   min-width: 0;
 
-  /* The fold ANIMATES: block-size 0↔auto over --dur-standard (interpolate-size
-   * is on :root) instead of a display toggle, so a turn slides shut rather than
-   * snapping. Three parts carried from the subagent body's collapse pattern
-   * (14-tools.css): content-visibility takes the folded subtree out of layout,
-   * flipped discretely at the END of a collapse and the START of an expand
-   * (allow-discrete); no contain-intrinsic-size, because the closed height is
-   * pinned to 0; and the clip sits on THIS base rule, because an expand runs
-   * after [data-folded] is gone and unclipped content would paint over the
-   * footer for the transition's length. */
+  /* The fold is a two-beat choreography (user spec, 2026-08-31), and the beats
+   * exist to keep LAYOUT animation away from a RENDERED subtree — a turn body
+   * can hold hundreds of tool cards, and sliding one shut while its content
+   * still renders re-lays-out and repaints everything below per frame, which
+   * is the reported browser freeze and the mid-animation paint artifacts.
+   *
+   * OPEN (this rule; runs when [data-folded] leaves): the box slides open
+   * FIRST (block-size 0→auto over --fold-slide, interpolate-size is on :root)
+   * with its content already rendering but transparent, then the content
+   * fades in once the slide lands. content-visibility flips at the START
+   * (0s + allow-discrete), because the slide needs the content's intrinsic
+   * height as its target.
+   *
+   * CLOSE is the mirror, declared on the [data-folded] rule below.
+   *
+   * The clip sits on THIS base rule: an expand runs after [data-folded] is
+   * gone, and unclipped content would paint over the footer for the
+   * transition's length. */
   overflow: clip;
   transition:
-    block-size var(--dur-standard) var(--ease-standard),
-    padding-block var(--dur-standard) var(--ease-standard),
-    content-visibility var(--dur-standard) allow-discrete;
+    block-size var(--fold-slide) var(--ease-standard),
+    padding-block var(--fold-slide) var(--ease-standard),
+    opacity var(--dur-standard) var(--ease-enter) var(--fold-slide),
+    content-visibility 0s allow-discrete;
 }
 
 /* An empty body (a prompt whose turn has not started streaming) must not leave
@@ -452,28 +464,14 @@
   }
 }
 
-/* Phone: the one-row footer cannot hold the ledger beside five 44px action
-   targets plus Rewind (the hit-target floor makes that ~280px of controls in
-   a ~358px row, which crushed the ledger to a 44px-wide column of wrapped
-   text). The ledger takes the full first row; the actions and Rewind move to
-   a second row, still right-aligned; the files list keeps spanning below. */
-@media (width <= 40rem) {
-  .turn-footer > .turn-ledger-summary {
-    grid-column: 1 / -1;
-  }
-
-  .turn-footer > .turn-actions-buttons {
-    grid-row: 2;
-  }
-
-  .turn-footer > .turn-rewind {
-    grid-row: 2;
-  }
-}
+/* Phone stays on the same single row. `turn-actions-more` collapses four
+   secondary actions behind one 44px target at this width, so the ledger no
+   longer has to move above a second row of five controls. */
 
 /* The collapsed turn's FACE: input in the header (laid out exactly as when
    open), output here — run-card duplicates above the prose, the final answer
-   (real markdown, default type, clamped below), and a failed turn's error
+   IN FULL (real markdown, default type, no clamp: the fold hides the WORK,
+   never the answer — user ruling, 2026-08-31), and a failed turn's error
    text. A CARD-level child sitting where the body was, so the ledger footer
    below it keeps its open-state layout and credits/model/duration survive the
    fold. Its background is the body's, which is what separates it from the
@@ -483,7 +481,7 @@
   flex-direction: column;
   gap: var(--sp-3);
   padding: var(--sp-3);
-  background: var(--c-bg-secondary);
+  background: var(--c-turn-body);
 
   /* Fades up as the body slides shut, so the fold reads as one motion: work
    * out, answer in. Transition + @starting-style rather than a keyframe so an
@@ -507,31 +505,24 @@
   border-end-end-radius: calc(var(--r) - 1px);
 }
 
-/* THE FACE CLAMP. Three lines, then an ellipsis — the answer-side twin of the
- * request's `.turn-req-text[data-clamped]` above, and what makes the fold a
- * fold. Unclamped, a folded card was routinely TALLER than its open neighbour
- * (measured live: 573px and 634px "collapsed" cards beside a 220px open one),
- * so the chevron flipped and nothing visibly changed — reported as "collapse
- * does not work". Reading the full answer is what expanding is for; the fold
- * shows enough to recognise the turn by. Clamped on the prose root and the
- * error text alike; the run cards between them stay whole (already compact,
- * and a live run's card is the one thing a fold must not hide). */
-.turn-face-prose,
-.turn-face-error {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
+/* No clamp on the face: the fold's compactness comes from hiding the turn's
+   WORK (tool cards, reasoning, delegate output), never from shortening its
+   answer. A 3-line clamp shipped here once and was overruled — the folded turn
+   keeps the whole final reply, ellipsis-free, and a turn whose face would
+   equal its body offers no fold at all (data-no-fold). */
 .turn-face-error {
   color: var(--c-red);
   font-size: var(--fs-sm);
   white-space: pre-wrap;
 }
 
-/* An active turn cannot be collapsed, so it offers no fold affordance. */
-.turn[data-running] .turn-fold-toggle {
+/* A no-fold turn offers no fold affordance: the newest turn (nothing after it
+   to get back to), a running one (it is being watched), and a turn whose fold
+   would hide nothing (the face would equal the body, so the toggle would
+   animate and change nothing). data-running is kept as its own arm so a
+   running card is excluded even before the fold plan stamps it. */
+.turn[data-running] .turn-fold-toggle,
+.turn[data-no-fold] .turn-fold-toggle {
   display: none;
 }
 
@@ -568,6 +559,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  min-width: 0;
   padding: 0;
   background: none;
   border: 0;
@@ -576,6 +568,18 @@
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: color var(--dur-micro) var(--ease-standard);
+}
+
+.turn-ledger-text {
+  min-width: 0;
+}
+
+@media (width <= 40rem) {
+  .turn-ledger-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .turn-ledger-summary:disabled {
@@ -1028,6 +1032,20 @@
   block-size: 0;
   padding-block: 0;
   content-visibility: hidden;
+  opacity: 0;
+
+  /* CLOSE (user spec, 2026-08-31): the content fades out first, the slide
+   * starts right before the fade ends, and the subtree is skipped the moment
+   * the slide lands (content-visibility TO hidden + allow-discrete flips at
+   * the END of its combined duration; earlier would zero the intrinsic size
+   * mid-slide and snap the box shut). The content being invisible for the
+   * whole slide is what removes the mid-animation repaint of a huge body —
+   * the reported freeze and the tool cards painting over the header. */
+  transition:
+    opacity var(--dur-exit) var(--ease-exit),
+    block-size var(--fold-slide) var(--ease-standard) calc(var(--dur-exit) * 0.8),
+    padding-block var(--fold-slide) var(--ease-standard) calc(var(--dur-exit) * 0.8),
+    content-visibility 0s allow-discrete calc(var(--dur-exit) * 0.8 + var(--fold-slide));
 }
 
 /* The hidden body leaves the header's bottom rule directly against the face's

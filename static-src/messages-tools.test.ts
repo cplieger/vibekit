@@ -1,6 +1,7 @@
 // Unit test for applyOutputUpdate: kiro-cli sends CUMULATIVE tool output on
 // every tool_call_update, so the card's <pre> must be REPLACED, not appended.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ToolCall } from "./types.js";
 
 // Mock messages-tools.ts's heavy DOM/store deps so the import resolves without
 // pulling the store, subagent modals, tool-card, etc. output-render + reactive
@@ -54,7 +55,7 @@ vi.mock("./tool-card.js", () => ({
   insertDiffPreview: vi.fn(),
 }));
 
-import { applyOutputUpdate } from "./messages-tools.js";
+import { applyOutputUpdate, updateToolCall } from "./messages-tools.js";
 
 /** A card whose depth 1 is a windowed output (execute / shell / command). */
 function commandCard(): HTMLDivElement {
@@ -119,5 +120,32 @@ describe("applyOutputUpdate (cumulative output → replace, not append)", () => 
     const pre = card.querySelector(".tool-output pre");
     expect(pre?.textContent).toBe("ABC");
     expect(card.querySelectorAll(".tool-output pre").length).toBe(1);
+  });
+});
+
+describe("updateToolCall title", () => {
+  it("keeps a late title frame human-readable", () => {
+    const card = document.createElement("div");
+    card.className = "tool-call";
+    card.dataset["title"] = "Running";
+    const header = document.createElement("div");
+    header.className = "tool-header";
+    const title = document.createElement("span");
+    title.className = "tool-title";
+    header.appendChild(title);
+    card.appendChild(header);
+
+    updateToolCall(
+      card,
+      {
+        id: "late-title",
+        title: "Running: remote_web_search",
+      } as ToolCall,
+      "c1",
+    );
+
+    expect(title.textContent).toBe("remote web search");
+    expect(header.title).toBe("remote web search");
+    expect(card.dataset["title"]).toBe("remote web search");
   });
 });

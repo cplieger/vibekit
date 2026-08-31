@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Settings tab bar: observable store of which tab panel inside Settings
-// is active, plus DOM sync for the horizontal pill bar (all widths; labels
-// swap to centered icons via tab-bar-fit.ts when they would truncate).
+// is active, plus DOM sync for the horizontal pill bar. Every segment shows
+// an icon before its label; tab-bar-fit.ts hides all labels if one truncates.
 //
 // Architecture mirrors tabs.ts: one state primitive, subscribers that
 // reflect state in the DOM and the URL. Any module that wants to jump
@@ -122,7 +122,7 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     });
   }
 
-  // Labels swap to centered icons when the bar cannot fit them (phones).
+  // Drop every label only when one cannot fit.
   fitTabBar(bar);
 
   // Arrow key navigation for the tab bar.

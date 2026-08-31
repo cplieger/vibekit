@@ -24,7 +24,7 @@ import { getActiveId } from "./store.js";
 import { contextFull } from "./prompt-input.js";
 import { nonDefaultEffortLabel } from "./effort.js";
 import { getCachedModels } from "./picker.js";
-import { getLastEffort } from "./session-context.js";
+import { getLastEffortFor } from "./session-context.js";
 
 const CONTEXT_RESERVE_TOKENS = 16_000;
 // Mirrors KAS's own `truncationThreshold`, which `session/load`'s `_meta` now
@@ -87,7 +87,7 @@ export function refreshContextUI(s: Session): void {
     // already runs on every active-session change, so the pill repaints when an
     // optimistic set_effort write lands, when the session reports a new
     // currentValue, and when a model switch changes which default applies.
-    effort: nonDefaultEffortLabel(s, getCachedModels(), getLastEffort()),
+    effort: nonDefaultEffortLabel(s, getCachedModels(), getLastEffortFor(s.model)),
     metering,
     msgCount,
     toolCount,

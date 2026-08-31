@@ -464,6 +464,11 @@ export interface EffectiveSettings {
   last_model: string;
   last_effort: string;
   /**
+ * LastEffortModel is the model LastEffort was picked under; the seed applies
+ * only to a chat running that model (settings.KeyLastEffortModel).
+ */
+  last_effort_model: string;
+  /**
  * AgentIgnoreFiles is the ignore-file basename list the agent read filter
  * applies. Its default is non-empty (settings.DefaultAgentIgnoreFiles), which
  * is why an absent key must not read as the zero value: the client rendered an

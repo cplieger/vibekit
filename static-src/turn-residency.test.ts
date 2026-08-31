@@ -100,6 +100,29 @@ function plainTurns(n: number): Msg[] {
   return out;
 }
 
+/** Like `plainTurns`, but every turn also ran a tool, so its fold HIDES
+ *  something and the turn offers the toggle. Prose-only turns don't: their
+ *  face equals their body, so they carry `data-no-fold` and stay open while
+ *  warm. */
+function toolTurns(n: number): Msg[] {
+  const out: Msg[] = [];
+  for (let i = 1; i <= n; i++) {
+    const tc = `tc${String(i)}`;
+    out.push(user(`u${String(i)}`), {
+      id: `a${String(i)}`,
+      role: "assistant",
+      ts: 2,
+      content: `reply u${String(i)}`,
+      blocks: [
+        { type: "tool_use", tool_call_id: tc },
+        { type: "text", text: `reply u${String(i)}` },
+      ],
+      tool_calls: [{ id: tc, title: "Read file", kind: "read", status: "completed" }],
+    });
+  }
+  return out;
+}
+
 function activate(chatID: string, messages: Msg[], thinking = false): void {
   setSessions([
     {
@@ -179,10 +202,10 @@ describe("the mounted derivation", () => {
 
   it("mounts the open tail and the warm window, and stubs everything older", () => {
     const id = chatID();
-    activate(id, plainTurns(8));
-    // 8 turns: distances 7..0. Warm = distance < 5 (indices 4..8 by 1-based
-    // turn number); the fold's tail keeps only the NEWEST turn open — a turn
-    // auto-collapses when the next one starts.
+    activate(id, toolTurns(8));
+    // 8 tool-bearing turns: distances 7..0. Warm = distance < 5 (indices 4..8
+    // by 1-based turn number); the fold's tail keeps only the NEWEST turn open
+    // — a turn auto-collapses when the next one starts.
     for (const [n, mounted, folded] of [
       [1, false, true],
       [2, false, true],
@@ -196,6 +219,48 @@ describe("the mounted derivation", () => {
       expect(hasBody(`u${String(n)}`), `turn ${String(n)} body`).toBe(mounted);
       expect(isFolded(`u${String(n)}`), `turn ${String(n)} fold`).toBe(folded);
     }
+  });
+
+  it("a prose-only turn stays OPEN while warm — its fold would hide nothing", () => {
+    const id = chatID();
+    activate(id, plainTurns(8));
+    // Same distances, but every turn's face would equal its body (one prose
+    // answer, no tools), so the warm window renders them open with no toggle:
+    // an auto-fold there animates and changes nothing (user report,
+    // 2026-08-31). Beyond the warm window they stub like any other turn — the
+    // stub face IS the body's content for this class, so the swap is
+    // invisible.
+    for (const [n, mounted, folded] of [
+      [1, false, true],
+      [2, false, true],
+      [3, false, true],
+      [4, true, false],
+      [5, true, false],
+      [6, true, false],
+      [7, true, false],
+      [8, true, false],
+    ] as const) {
+      expect(hasBody(`u${String(n)}`), `turn ${String(n)} body`).toBe(mounted);
+      expect(isFolded(`u${String(n)}`), `turn ${String(n)} fold`).toBe(folded);
+    }
+  });
+
+  it("stamps data-no-fold on the newest turn and on hides-nothing turns only", () => {
+    const id = chatID();
+    activate(id, toolTurns(2));
+    // Both turns ran tools. u2 is newest, so it offers no fold; u1 does.
+    expect(card("u1").hasAttribute("data-no-fold")).toBe(false);
+    expect(card("u2").hasAttribute("data-no-fold")).toBe(true);
+    // A third (prose-only) turn arrives: u2 gains its toggle, u3 offers none —
+    // newest AND nothing to hide.
+    activate(id, [...toolTurns(2), ...plainTurns(3).slice(4)]);
+    expect(card("u2").hasAttribute("data-no-fold")).toBe(false);
+    expect(card("u3").hasAttribute("data-no-fold")).toBe(true);
+    // A fourth arrives: u3 is no longer newest but is still no-fold, because
+    // its fold would hide nothing.
+    activate(id, [...toolTurns(2), ...plainTurns(4).slice(4)]);
+    expect(card("u3").hasAttribute("data-no-fold")).toBe(true);
+    expect(card("u4").hasAttribute("data-no-fold")).toBe(true);
   });
 
   it("a stub renders header and footer only, with no message rows and no body element", () => {
@@ -274,21 +339,27 @@ describe("the mounted derivation", () => {
   it("keeps an explicitly collapsed turn inside the warm window mounted", () => {
     const id = chatID();
     setTurnOpen(id, "u7", false);
-    activate(id, plainTurns(8));
+    activate(id, toolTurns(8));
     expect(hasBody("u7")).toBe(true);
     expect(isFolded("u7")).toBe(true);
   });
 });
 
 describe("the fold override outranks the tier", () => {
-  it("an explicit collapse of the NEWEST turn stays collapsed, body kept", () => {
+  it("the NEWEST turn ignores a recorded collapse — it cannot be folded", () => {
+    // Its toggle is hidden (data-no-fold), so a recorded fold can only be a
+    // leftover from an earlier build or from before a rewind made this turn
+    // newest; honouring it would strand the tail closed with no control left
+    // to reopen it (user report, 2026-08-31: the last turn's collapse must
+    // stay disabled).
     const id = chatID();
     setTurnOpen(id, "u8", false);
-    activate(id, plainTurns(8));
-    expect(isFolded("u8")).toBe(true);
+    activate(id, toolTurns(8));
+    expect(isFolded("u8")).toBe(false);
     expect(hasBody("u8")).toBe(true);
-    // ...and a later paint does not argue with the reader.
-    bumpMessages(id);
+    expect(card("u8").hasAttribute("data-no-fold")).toBe(true);
+    // The same override applies once the turn stops being newest.
+    activate(id, [...toolTurns(8), ...plainTurns(9).slice(16)]);
     expect(isFolded("u8")).toBe(true);
     expect(hasBody("u8")).toBe(true);
   });
@@ -396,7 +467,7 @@ describe("the 1→3 flip", () => {
 describe("expanding a stub", () => {
   it("a fold-toggle click mounts the body and opens the turn in the same interaction", async () => {
     const id = chatID();
-    activate(id, plainTurns(8));
+    activate(id, toolTurns(8));
     expect(hasBody("u1")).toBe(false);
 
     (card("u1").querySelector(".turn-fold-toggle") as HTMLButtonElement).click();
@@ -414,7 +485,7 @@ describe("expanding a stub", () => {
 
   it("keyboard activation on the stub header's toggle mounts it too", async () => {
     const id = chatID();
-    activate(id, plainTurns(8));
+    activate(id, toolTurns(8));
     expect(hasBody("u2")).toBe(false);
 
     (card("u2").querySelector(".turn-fold-toggle") as HTMLButtonElement).focus();
@@ -425,11 +496,28 @@ describe("expanding a stub", () => {
     });
   });
 
+  it("a prose-only stub offers no toggle, and a click on it changes nothing", () => {
+    const id = chatID();
+    activate(id, plainTurns(8));
+    expect(hasBody("u1")).toBe(false);
+    expect(card("u1").hasAttribute("data-no-fold")).toBe(true);
+
+    (card("u1").querySelector(".turn-fold-toggle") as HTMLButtonElement).click();
+    // No override recorded, no body build queued: the turn's face already
+    // shows everything the body would.
+    expect(hasBody("u1")).toBe(false);
+    expect(isFolded("u1")).toBe(true);
+  });
+
   it("a stub header keeps the disclosure contract while closed", () => {
     const id = chatID();
     activate(id, plainTurns(8));
-    const header = card("u1").querySelector(":scope > .turn-header");
-    expect(header?.getAttribute("aria-expanded")).toBe("false");
+    const header = card("u1").querySelector<HTMLElement>(":scope > .turn-header");
+    const toggle = header?.querySelector(":scope > .turn-head-row > .turn-fold-toggle");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    // The state lives on the BUTTON. `.turn-header` is a plain div, and
+    // `aria-expanded` on one is an ARIA violation rather than a redundancy.
+    expect(header?.hasAttribute("aria-expanded")).toBe(false);
   });
 
   it("expanding a stub renders exactly what a warm turn renders, one copy of every block type", async () => {

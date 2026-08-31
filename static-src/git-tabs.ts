@@ -17,6 +17,12 @@ export type { GitTab };
 
 const GIT_TABS: readonly GitTab[] = ["changes", "prs", "sources"] as const;
 
+const GIT_TAB_LABELS: Readonly<Record<GitTab, string>> = {
+  changes: "Changes",
+  prs: "Pull requests",
+  sources: "Sources",
+};
+
 type Listener = (tab: GitTab) => void;
 
 // Deduped signal mirroring settings-tabs.ts: a same-value write is a no-op, so
@@ -81,7 +87,7 @@ export function initGitTabs(): void {
     });
   }
 
-  // Labels swap to centered icons when the bar cannot fit them (phones).
+  // Drop every label only when one cannot fit.
   fitTabBar(bar);
 
   rovingFocus(bar, "[data-git-tab]", { orientation: "horizontal" });
@@ -94,6 +100,10 @@ export function initGitTabs(): void {
     }
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-git-panel]")) {
       panel.classList.toggle("hidden", panel.dataset["gitPanel"] !== tab);
+    }
+    const title = document.getElementById("git-page-title");
+    if (title !== null) {
+      title.textContent = GIT_TAB_LABELS[tab];
     }
   });
 }

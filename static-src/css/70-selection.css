@@ -260,56 +260,6 @@
   color: var(--c-selected-yellow-fg);
 }
 
-/* The tab activity dot (12-tabs.css). It is the largest single consumer of this
-   block, because it paints a status hue on the one row in the strip that is
-   always selected, and it declares its own colour — so `--c-selected-fg` never
-   reaches it. Left raw, those hues land between 4.570:1 and 3.068:1 on the dark
-   selected fill and between 3.562:1 and 2.793:1 on the light one, so light is what
-   makes the family necessary rather than merely tidy.
-
-   Each state re-points ONE custom property rather than restating a background,
-   which is why the dot resolves everything through `--dot-color`: the disc, both
-   hollow borders, the hard ring's 30% mix and the reduced-motion donut all follow
-   from one declaration, so a state cannot get its selected ink in one layer and
-   miss it in another. All six clear WCAG 1.4.11's 3:1 on the resting AND
-   hovered selected fill in both themes, worst 4.210:1 (`css-contrast.py dot`).
-
-   The four chat states moved onto the --c-selected-dot-*-fg members in 2026-08,
-   when the dot's inks were re-aligned from @cplieger/web-terminal-ui's library
-   defaults to web-terminal-kiro's own overrides of them. `waiting` and `input`
-   take the SAME member, because they share one hue and separate on fill; the
-   `--c-selected-{blue,green,red,yellow}-fg` members stay for their other
-   consumers above.
-
-   This REPLACED two hand-rolled compensations that predated the ink family:
-   `.tab.active .tab-dot-thinking` and `.tab.active .tab-dot-dirty` both mixed
-   `color-mix(in oklch, var(--c-accent), var(--c-text-primary) 55%)` inline,
-   which is `--c-selected-accent-fg`'s construction at 55% instead of 56% —
-   the token computed by hand before it existed. */
-.tab.active .tab-status-dot[data-status="idle"] {
-  --dot-color: var(--c-selected-muted-fg);
-}
-
-.tab.active .tab-status-dot[data-status="working"] {
-  --dot-color: var(--c-selected-dot-working-fg);
-}
-
-.tab.active .tab-status-dot[data-status="dirty"] {
-  --dot-color: var(--c-selected-accent-fg);
-}
-
-.tab.active .tab-status-dot[data-status="waiting"] {
-  --dot-color: var(--c-selected-dot-input-fg);
-}
-
-.tab.active .tab-status-dot[data-status="input"] {
-  --dot-color: var(--c-selected-dot-input-fg);
-}
-
-.tab.active .tab-status-dot[data-status="failed"] {
-  --dot-color: var(--c-selected-dot-failed-fg);
-}
-
-.tab.active .tab-status-dot[data-status="done"] {
-  --dot-color: var(--c-selected-dot-done-fg);
-}
+/* A tab's selected fill never rewrites its activity dot. Selection belongs to
+   the row; status belongs to the chat, and its hue stays byte-identical whether
+   or not this device is reading that tab (user ruling, 2026-08-31). */

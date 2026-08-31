@@ -88,8 +88,14 @@ export function initFileBrowser(): void {
   });
   $.fbBack.addEventListener("click", goBack);
   $.fbForward.addEventListener("click", goForward);
-  $.fbNewFile.addEventListener("click", newFile);
-  $.fbNewFolder.addEventListener("click", newFolder);
+  $.fbNewFile.addEventListener("click", () => {
+    newFile();
+    $.fbNewFile.closest<HTMLDetailsElement>(".fb-new-menu")?.removeAttribute("open");
+  });
+  $.fbNewFolder.addEventListener("click", () => {
+    newFolder();
+    $.fbNewFolder.closest<HTMLDetailsElement>(".fb-new-menu")?.removeAttribute("open");
+  });
   $.fbRename.addEventListener("click", renameSelected);
   $.fbDelete.addEventListener("click", deleteSelected);
   $.fbDownload.addEventListener("click", downloadSelected);
@@ -370,6 +376,7 @@ function updateNavButtons(): void {
   $.fbForward.disabled = state.historyIdx >= state.history.length - 1;
   $.fbPath.value = displayPath(state.currentPath);
   $.fbPath.readOnly = true;
+  updateToolbarContext();
 }
 
 function updateActionButtons(): void {
@@ -384,10 +391,22 @@ function updateActionButtons(): void {
   updateWriteButtons();
 }
 
+/** State the mobile toolbar's priority: navigation while browsing, selection
+ *  actions while a selection exists. Both sets are still present on desktop. */
+function updateToolbarContext(): void {
+  $.fbBack
+    .closest<HTMLElement>(".view-toolbar-inner")
+    ?.classList.toggle("has-selection", state.selected.size > 0);
+}
+
 function updateWriteButtons(): void {
   $.fbNewFile.disabled = !state.dirWritable;
   $.fbNewFolder.disabled = !state.dirWritable;
   $.fbUpload.disabled = !state.dirWritable;
+  $.fbNewFile
+    .closest<HTMLDetailsElement>(".fb-new-menu")
+    ?.toggleAttribute("data-unavailable", !state.dirWritable);
+  updateToolbarContext();
 }
 
 // --- Render ---

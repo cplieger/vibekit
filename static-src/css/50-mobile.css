@@ -92,15 +92,9 @@
     display: none;
   }
 
-  /* The title ROW hides with its title, not just the title: it is the
-     desktop's clearance for the floating toolbar and the iOS status bar
-     (padding-top 0.3125rem + safe-area-inset-top), and the static
-     .chat-toolbar above already pays the inset here — leaving the empty row
-     in flow double-paid it and charged the header's flex gap on top, which
-     is the "too much padding above the tab dropdown" on git/settings/docs
-     pages. All three rows hold only the (hidden) h2. */
-  .settings-title-row {
-    display: none;
+  /* Icon-only sub-page bars keep the active section name below the bar. */
+  .settings-title-row .page-title {
+    display: block;
   }
 
   .chat-toolbar .mobile-only {

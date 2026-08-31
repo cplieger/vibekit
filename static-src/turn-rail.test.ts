@@ -21,10 +21,30 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 // const would be a ReferenceError inside it. The default is comfortably
 // navigable, because every case outside the visibility block is about the index
 // rather than about whether the rail is worth showing.
-const { scrollable } = vi.hoisted(() => ({ scrollable: { by: 500 } }));
+const { scrollable } = vi.hoisted(() => ({
+  scrollable: {
+    by: 500,
+    viewportBottom: 600,
+    onScroll: undefined as (() => void) | undefined,
+  },
+}));
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
   scrollableBy: () => scrollable.by,
+  getScrollEl: () => ({
+    addEventListener: (type: string, fn: EventListener) => {
+      if (type === "scroll") {
+        scrollable.onScroll = () => {
+          fn(new Event("scroll"));
+        };
+      }
+    },
+    getBoundingClientRect: () => ({
+      top: 0,
+      bottom: scrollable.viewportBottom,
+      height: scrollable.viewportBottom,
+    }),
+  }),
 }));
 // The session-wide index is the rail's own fetch; the lifecycle cases below
 // decide what it does with the answer, not how it asks.
@@ -451,26 +471,41 @@ describe("the rail only appears once the transcript can be scrolled", () => {
 // ---------------------------------------------------------------------------
 // Which turn the rail calls current.
 //
-// The rule: among the cards intersecting the viewport, the LATEST (greatest
-// turn number) is active. A turn half off the top with a whole turn below it is
-// the turn the reader has left, and naming it current marked a turn they had
-// already scrolled past.
+// The rule: the turn occupying the most VERTICAL pixels of the transcript
+// viewport is active. A 20px sliver never beats a 500px turn, whichever one is
+// newer. If two turns occupy the same height, a fully visible footer wins; if
+// that is also equal, the later turn wins so several short turns settle on the
+// last one the reader can see.
 //
 // Two properties are pinned here rather than one, because they fail
-// independently. The max-n pick is the reported defect. The KEPT visible set is
-// the other half: an IntersectionObserver callback carries only the cards whose
-// state CHANGED, so a scroll bringing a turn in above one already on screen
-// delivers the arrival alone — and picking from that callback's entries, by any
-// rule, names the higher card.
+// independently. The geometry pick is the reported defect. The KEPT visible
+// map is the other half: an IntersectionObserver callback carries only the
+// cards whose state CHANGED, so a scroll that changes one card cannot erase the
+// geometry of every incumbent.
 // ---------------------------------------------------------------------------
 
-/** One notification's worth of state for a single card. `top` is carried because
- *  the module used to select on it; the cases keep setting it so a regression to
- *  a position rule is a failure here rather than a silent pass. */
+/** One notification's geometry for a single card. */
 interface FakeEntry {
   target: Element;
   isIntersecting: boolean;
   top?: number;
+  height?: number;
+  footerTop?: number;
+  footerHeight?: number;
+}
+
+function fakeRect(top: number, height: number): DOMRect {
+  return {
+    x: 0,
+    y: top,
+    top,
+    bottom: top + height,
+    left: 0,
+    right: 100,
+    width: 100,
+    height,
+    toJSON: () => ({}),
+  };
 }
 
 /** The layout engine's half of the observer contract: a recorder plus a trigger.
@@ -502,18 +537,39 @@ class FakeIntersectionObserver {
     this.targets.clear();
   }
 
-  /** Deliver one notification. The callback reads `target`, `isIntersecting` and
-   *  `boundingClientRect.top` and nothing else, so the cast is honest. */
+  /** Deliver one notification after applying the card and footer geometry the
+   *  real layout engine would expose at that scroll position. */
   fire(states: FakeEntry[]): void {
+    for (const s of states) {
+      const top = s.top ?? 0;
+      const height = s.height ?? 300;
+      Object.defineProperty(s.target, "getBoundingClientRect", {
+        configurable: true,
+        value: () => fakeRect(top, height),
+      });
+      const footer = s.target.querySelector<HTMLElement>(":scope > .turn-footer");
+      if (footer !== null && s.footerTop !== undefined) {
+        const footerHeight = s.footerHeight ?? 40;
+        Object.defineProperty(footer, "getBoundingClientRect", {
+          configurable: true,
+          value: () => fakeRect(s.footerTop ?? 0, footerHeight),
+        });
+      }
+    }
     this.cb(
-      states.map(
-        (s) =>
-          ({
-            target: s.target,
-            isIntersecting: s.isIntersecting,
-            boundingClientRect: { top: s.top ?? 0 },
-          }) as unknown as IntersectionObserverEntry,
-      ),
+      states.map((s) => {
+        const top = s.top ?? 0;
+        const height = s.height ?? 300;
+        const visibleTop = Math.max(0, top);
+        const visibleBottom = Math.min(scrollable.viewportBottom, top + height);
+        const visibleHeight = s.isIntersecting ? Math.max(0, visibleBottom - visibleTop) : 0;
+        return {
+          target: s.target,
+          isIntersecting: s.isIntersecting,
+          boundingClientRect: fakeRect(top, height),
+          intersectionRect: fakeRect(visibleTop, visibleHeight),
+        } as unknown as IntersectionObserverEntry;
+      }),
     );
   }
 }
@@ -551,6 +607,7 @@ describe("which turn the rail calls current", () => {
     // exists while `navigable()` is true — so restore the comfortable default
     // rather than inheriting whatever the visibility block above left behind.
     scrollable.by = 500;
+    scrollable.viewportBottom = 600;
     resetTurnRail();
     FakeIntersectionObserver.instances.length = 0;
     // Inside the test, never at module scope: `unstubGlobals` restores the
@@ -564,6 +621,9 @@ describe("which turn the rail calls current", () => {
     const e = document.createElement("div");
     e.className = "turn";
     e.setAttribute(KEY_ATTR, `m${String(n)}`);
+    const footer = document.createElement("div");
+    footer.className = "turn-footer";
+    e.appendChild(footer);
     return e;
   }
 
@@ -598,18 +658,96 @@ describe("which turn the rail calls current", () => {
     return c;
   }
 
-  // The reported scenario. Turn 2 is half off the top and turn 3 is whole below
-  // it, which is a reader who has finished with 2.
-  it("names the lower of two visible turns, not the one scrolled past", async () => {
-    const { cards, io } = await seat("c-a", [1, 2, 3]);
+  // The reported scenario: only the bottom edge of turn 1 remains while turn 2
+  // fills the viewport. The older sliver cannot win.
+  it("ignores an older sliver beside a fully visible lower turn", async () => {
+    const { cards, io } = await seat("c-a", [1, 2]);
 
     io.fire([
-      { target: at(cards, 1), isIntersecting: false, top: -900 },
-      { target: at(cards, 2), isIntersecting: true, top: -120 },
-      { target: at(cards, 3), isIntersecting: true, top: 240 },
+      { target: at(cards, 1), isIntersecting: true, top: -280, height: 300 },
+      {
+        target: at(cards, 2),
+        isIntersecting: true,
+        top: 100,
+        height: 400,
+        footerTop: 460,
+      },
     ]);
 
-    expect(current()).toBe("3");
+    expect(current()).toBe("2");
+  });
+
+  it("does not let a newer sliver beat the dominant turn above it", async () => {
+    const { cards, io } = await seat("c-a", [1, 2]);
+
+    io.fire([
+      { target: at(cards, 1), isIntersecting: true, top: 20, height: 500 },
+      { target: at(cards, 2), isIntersecting: true, top: 580, height: 300 },
+    ]);
+
+    expect(current()).toBe("1");
+  });
+
+  it("uses a fully visible footer to break an equal-height tie", async () => {
+    const { cards, io } = await seat("c-a", [1, 2]);
+
+    io.fire([
+      {
+        target: at(cards, 1),
+        isIntersecting: true,
+        top: 0,
+        height: 300,
+        footerTop: 260,
+      },
+      { target: at(cards, 2), isIntersecting: true, top: 300, height: 300, footerTop: 590 },
+    ]);
+
+    expect(current()).toBe("1");
+  });
+
+  it("uses the later turn when equal-height cards have the same footer state", async () => {
+    const { cards, io } = await seat("c-a", [1, 2]);
+
+    io.fire([
+      { target: at(cards, 1), isIntersecting: true, top: 0, height: 300 },
+      { target: at(cards, 2), isIntersecting: true, top: 300, height: 300 },
+    ]);
+
+    expect(current()).toBe("2");
+  });
+
+  it("re-measures the visible cards while the transcript scrolls", async () => {
+    const { cards, io } = await seat("c-a", [1, 2]);
+    const one = at(cards, 1);
+    const two = at(cards, 2);
+
+    io.fire([
+      { target: one, isIntersecting: true, top: 0, height: 400 },
+      { target: two, isIntersecting: true, top: 400, height: 200 },
+    ]);
+    expect(current()).toBe("1");
+
+    // Both cards remain intersecting, so a threshold-0 observer sends no new
+    // membership callback. The scroll listener must still move the current
+    // marker when their visible heights cross.
+    Object.defineProperty(one, "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(-300, 400),
+    });
+    Object.defineProperty(two, "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(100, 500),
+    });
+    scrollable.onScroll?.();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+
+    expect(current()).toBe("2");
   });
 
   // Written as "turn 1 is the only turn in the viewport", NOT "all three are
@@ -690,7 +828,7 @@ describe("which turn the rail calls current", () => {
     expect(FakeIntersectionObserver.instances).toHaveLength(1);
   });
 
-  it("keeps the intersecting set across a paint", async () => {
+  it("keeps the visible-card map across a paint", async () => {
     const { cards, io } = await seat("c-a", [2, 3]);
     io.fire([{ target: at(cards, 3), isIntersecting: true, top: 0 }]);
     expect(current()).toBe("3");
@@ -700,13 +838,12 @@ describe("which turn the rail calls current", () => {
     observeTurns([...cards.values()]);
     expect(current()).toBe("3");
 
-    // The assertion above is NOT what pins the set, and the difference is worth
-    // stating: `pickLatest` deliberately leaves the marker alone on an empty set
-    // (see its doc comment), so an emptied set still reads "3" until something
-    // fires. What it has lost is the incumbent — so the next PARTIAL callback,
-    // which is what a small scroll produces, becomes the whole set and names the
-    // arrival. Turn 2 scrolling in above turn 3 must not become current; with the
-    // set cleared it does.
+    // The assertion above is NOT what pins the map, and the difference matters:
+    // pickDominant deliberately leaves the marker alone on an empty map, so an
+    // accidental clear still reads "3" until something fires. What it loses is
+    // the incumbent geometry; the next PARTIAL callback then becomes the whole
+    // map and can name the arrival incorrectly. Turn 2 entering above turn 3
+    // must not become current.
     io.fire([{ target: at(cards, 2), isIntersecting: true, top: -100 }]);
 
     expect(current()).toBe("3");

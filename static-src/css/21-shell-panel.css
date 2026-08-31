@@ -216,3 +216,22 @@
     opacity: 0;
   }
 }
+
+@media (width <= 40rem) {
+  /* The shared floor already made each button 44px, but the 32px header clipped
+     that target inside the shell panel's overflow boundary. Grow the containing
+     row with the controls, and lift the 12px desktop glyph to 16px. */
+  .shell-header {
+    height: calc(var(--btn-h) + 1px);
+  }
+
+  .shell-header-btn {
+    width: var(--btn-h);
+    height: var(--btn-h);
+  }
+
+  .shell-header-btn svg {
+    width: 1rem;
+    height: 1rem;
+  }
+}

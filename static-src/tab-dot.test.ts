@@ -517,42 +517,23 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. The selected row's ink.
+// 4. Selection does not change status ink.
 // ---------------------------------------------------------------------------
 
-describe("every dot state has an on-selected ink", () => {
-  it("re-points --dot-color for all six states on the active row", () => {
-    // The dot declares its own colour, so `--c-selected-fg` never reaches it and
-    // the raw hues drop to 2.793:1 on the light selected fill. A state added to
-    // 12-tabs.css without a line here would look right on every unselected row and
-    // fail on the one row that is always selected — which is the failure mode this
-    // whole file exists to catch.
+describe("the active row keeps the same dot color", () => {
+  it("never re-points --dot-color from an active-tab selector", () => {
+    // Selection belongs to the row. A status belongs to the chat, so selecting
+    // the row must not turn normal green into a darker green (user ruling,
+    // 2026-08-31). Contrast adjustments belong to the row fill, not the state
+    // indicator's identity.
     const sel = loadCSS("70-selection.css");
-    const inks: [string, string][] = [
-      ["idle", "--c-selected-muted-fg"],
-      ["working", "--c-selected-dot-working-fg"],
-      // The wants-you pair shares one ink here for the same reason it shares one
-      // seed: the states separate on fill, not on hue.
-      ["waiting", "--c-selected-dot-input-fg"],
-      ["input", "--c-selected-dot-input-fg"],
-      ["failed", "--c-selected-dot-failed-fg"],
-      ["done", "--c-selected-dot-done-fg"],
-      ["dirty", "--c-selected-accent-fg"],
-    ];
-    for (const [state, token] of inks) {
-      const rule = ruleContaining(sel, `.tab.active .tab-status-dot[data-status="${state}"]`);
-      expect(
-        rule.body.includes(`--dot-color: var(${token})`),
-        `${state} must take ${token} on a selected row; got: ${rule.body.trim()}`,
-      ).toBe(true);
-    }
+    expect(sel).not.toMatch(/\.tab\.active\s+\.tab-status-dot/u);
   });
 
   it("keeps every state resolving through the one custom property", () => {
     // The disc, both hollow borders, the hard ring's 30% mix and the
-    // reduced-motion donut all read --dot-color, which is what makes one line per
-    // state in 70-selection.css sufficient. A state that hardcoded `background:
-    // var(--c-red)` would take its selected ink in no layer at all.
+    // reduced-motion donut all read --dot-color. The selected row inherits the
+    // exact same value because it has no override.
     const tabs = loadCSS("12-tabs.css");
     for (const state of ["working", "input", "failed", "done", "dirty"]) {
       const rule = ruleContaining(tabs, `.tab-status-dot[data-status="${state}"]`, "top");

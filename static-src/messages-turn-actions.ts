@@ -108,19 +108,31 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
         "data-tooltip": ariaLabel,
       },
       _svgTemplate(svgMarkup)(),
+      el("span", { className: "turn-action-label" }, ariaLabel),
     ) as HTMLButtonElement;
     btn.addEventListener("click", () => {
       onClick(btn);
+      // On phone the secondary buttons sit inside this native disclosure. An
+      // action commits the choice, so close the menu in the same gesture. On
+      // desktop the details content is forced inline and this changes nothing.
+      btn.closest<HTMLDetailsElement>(".turn-actions-more")?.removeAttribute("open");
     });
     return btn;
   };
 
+  // Copy as text stays direct at every width. It is the common action and the
+  // one whose immediate feedback a reader expects beside the turn.
   slot.appendChild(
     makeBtn(ICON_COPY, "Copy as text", (btn) => {
       copyAndAnimate(btn, turnPlainText(card, current()));
     }),
   );
-  slot.appendChild(
+
+  // The other four actions stay inline on desktop and collapse behind one
+  // native <details> summary on phone. One set of real buttons serves both
+  // layouts, so resizing cannot leave a duplicate source toggle out of sync.
+  const secondary = el("span", { className: "turn-actions-secondary" });
+  secondary.appendChild(
     makeBtn(ICON_COPY_MD, "Copy as markdown", (btn) => {
       copyAndAnimate(btn, turnMarkdown(current()));
     }),
@@ -133,8 +145,8 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   });
   srcBtn.classList.add("turn-action-src");
   srcBtn.setAttribute("aria-pressed", "false");
-  slot.appendChild(srcBtn);
-  slot.appendChild(
+  secondary.appendChild(srcBtn);
+  secondary.appendChild(
     makeBtn(ICON_LINK, "Copy chat ID", (btn) => {
       const chatID = getActiveId();
       if (chatID !== "") {
@@ -142,7 +154,7 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
       }
     }),
   );
-  slot.appendChild(
+  secondary.appendChild(
     makeBtn(ICON_EXPORT, "Export chat as JSON", () => {
       const chatID = getActiveId();
       if (chatID !== "") {
@@ -150,6 +162,24 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
       }
     }),
   );
+
+  const more = el("details", {
+    className: "turn-actions-more",
+    name: "turn-actions-overflow",
+  }) as HTMLDetailsElement;
+  more.appendChild(
+    el(
+      "summary",
+      {
+        className: "turn-action-btn turn-action-more",
+        "aria-label": "More turn actions",
+        "data-tooltip": "More turn actions",
+      },
+      "\u2026",
+    ),
+  );
+  more.appendChild(secondary);
+  slot.appendChild(more);
 
   // Before the Rewind button when one exists, so the destructive action keeps
   // the far edge to itself; grid placement pins the columns either way.
@@ -180,7 +210,7 @@ export function resetTurnSourceView(card: HTMLElement): void {
     region.classList.remove("hidden");
   }
   const btn = card.querySelector<HTMLButtonElement>(
-    ":scope > .turn-footer > .turn-actions-buttons > .turn-action-src",
+    ":scope > .turn-footer > .turn-actions-buttons .turn-action-src",
   );
   if (btn !== null) {
     setSrcButtonState(btn, false);

@@ -7,6 +7,8 @@ import {
   turnRunIDs,
   turnFaceProse,
   turnFaceError,
+  turnFoldHides,
+  type Turn,
 } from "./turns.js";
 import type { Message } from "./types.js";
 
@@ -470,6 +472,109 @@ describe("turnFaceProse", () => {
       false,
     )[0];
     expect(t === undefined ? "x" : turnFaceProse(t)).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Whether the fold would hide anything — the gate on the fold affordance.
+// ---------------------------------------------------------------------------
+
+describe("turnFoldHides", () => {
+  function blocks(id: string, bs: Record<string, unknown>[]): Message {
+    return assistant(id, { blocks: bs } as unknown as Partial<Message>);
+  }
+
+  function first(msgs: Message[]): Turn {
+    const t = projectTurns(msgs, false)[0];
+    if (t === undefined) {
+      throw new Error("no turn projected");
+    }
+    return t;
+  }
+
+  it("a prose-only turn hides nothing — its face IS its body", () => {
+    // The user-reported shape (2026-08-31): one answer, no tools. Folding it
+    // animated and changed nothing, so such a turn offers no fold.
+    const t = first([user("u1", "q"), blocks("a1", [{ type: "text", text: "the answer" }])]);
+    expect(turnFoldHides(t)).toBe(false);
+  });
+
+  it("a tool call is hidden by the fold", () => {
+    const t = first([
+      user("u1", "q"),
+      blocks("a1", [
+        { type: "tool_use", tool_call_id: "t1" },
+        { type: "text", text: "done" },
+      ]),
+    ]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("reasoning is hidden by the fold", () => {
+    const t = first([
+      user("u1", "q"),
+      blocks("a1", [
+        { type: "thinking", text: "hmm" },
+        { type: "text", text: "done" },
+      ]),
+    ]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("intermediate prose is hidden — the face shows only the final answer", () => {
+    const t = first([
+      user("u1", "q"),
+      blocks("a1", [
+        { type: "text", text: "working on it" },
+        { type: "text", text: "the final answer" },
+      ]),
+    ]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("a delegate's output is hidden by the fold", () => {
+    const t = first([
+      user("u1", "q"),
+      blocks("a1", [
+        { type: "text", text: "delegate report", agent_subtask_id: "sub-A" },
+        { type: "text", text: "the answer" },
+      ]),
+    ]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("an event row is hidden by the fold", () => {
+    const t = first([
+      user("u1", "q"),
+      blocks("a1", [{ type: "text", text: "partial" }]),
+      event("e1", "cancelled"),
+    ]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("a plan card is hidden by the fold", () => {
+    const withPlan = {
+      ...blocks("a1", [{ type: "text", text: "done" }]),
+      plan: [{ id: "p1", text: "step", status: "done" }],
+    } as unknown as Message;
+    const t = first([user("u1", "q"), withPlan]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("empty text blocks do not count as intermediate prose", () => {
+    const t = first([
+      user("u1", "q"),
+      blocks("a1", [
+        { type: "text", text: "  " },
+        { type: "text", text: "the answer" },
+      ]),
+    ]);
+    expect(turnFoldHides(t)).toBe(false);
+  });
+
+  it("a bodyless turn hides nothing", () => {
+    const t = first([user("u1", "q")]);
+    expect(turnFoldHides(t)).toBe(false);
   });
 });
 

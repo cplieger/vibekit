@@ -11,7 +11,7 @@
 
 import type { ToolStatus, TextSpan } from "./types.js";
 import type { BuildToolCardOpts } from "./tool-card-opts.js";
-import { escText, windowOutput, windowSpans } from "./strings.js";
+import { escText, windowOutput, windowSpans, humanName } from "./strings.js";
 import { renderOutput } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
 import { fileIcon, toolIcon } from "./icons.js";
@@ -45,6 +45,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     denial: opts.denial,
   });
   const depth1 = toolDepth1(info.kind);
+  const withToggle = hasDepth1(info.kind);
   const rawTitle = opts.title.startsWith("Running: ") ? opts.title.slice(9) : opts.title;
   // A disclose_context call names its DOCUMENT, not the tool that fetched it:
   // the activation is the moment a skill's body enters the prompt, and "which
@@ -54,7 +55,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
       ? disclosedClaim(info.disclosed)
       : info.mcp !== null
         ? formatMCPToolName(info.mcp.tool)
-        : rawTitle;
+        : humanName(rawTitle);
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;
@@ -80,26 +81,32 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     trackInProgress(node);
   }
 
-  node.appendChild(buildHeader(opts, displayTitle, info, hasDepth1(info.kind)));
+  const summary = el("div", {
+    className: withToggle ? "tool-summary has-disclosure" : "tool-summary",
+  });
+  summary.appendChild(buildHeader(opts, displayTitle, info, withToggle));
+  node.appendChild(summary);
   applyOutcome(node, opts.status, displayTitle, info);
 
   // A claim-only kind gets no details region and no toggle. A `search` or
-  // `fetch` keeps the subtitle row, which is its claim's second fact.
+  // `fetch` keeps the subtitle row, which is its claim's second fact. It lives
+  // inside the same summary as the title so the whole visible box is one
+  // disclosure target and one hover surface.
   if (depth1 === "search" || depth1 === "fetch" || depth1 === "generic") {
     const subtitle = extractSubtitle(opts.input);
     if (subtitle !== "") {
-      node.appendChild(el("div", { className: "tool-subtitle" }, subtitle));
+      summary.appendChild(el("div", { className: "tool-subtitle" }, subtitle));
     }
   }
 
   if (depth1 === "move") {
     const row = moveRow(opts.input);
     if (row !== null) {
-      node.appendChild(row);
+      summary.appendChild(row);
     }
   }
 
-  if (hasDepth1(info.kind)) {
+  if (withToggle) {
     node.insertAdjacentHTML("beforeend", buildDetails(opts));
     if (opts.output !== undefined && opts.output !== "") {
       appendOutput(node, opts.output, opts.outputSpans ?? [], depth1 === "output");
@@ -164,11 +171,9 @@ function buildHeader(
   info: ToolRenderInfo,
   withToggle: boolean,
 ): HTMLDivElement {
-  // `.has-disclosure` is the CSS hook for the clickable affordance
-  // (14-tools.css); stamped with the toggle so the two cannot drift.
   const header = el("div", {
-    className: withToggle ? "tool-header has-disclosure" : "tool-header",
-    title: opts.title,
+    className: "tool-header",
+    title: displayTitle,
   }) as HTMLDivElement;
 
   const iconSpan = el("span", { className: "tool-icon" }, iconEl(toolIcon(info.kind, opts.title)));
@@ -438,7 +443,7 @@ function wireToggle(el: HTMLElement): void {
   if (toggle === null || details === null) {
     return;
   }
-  const header = el.querySelector<HTMLElement>(".tool-header");
+  const summary = el.querySelector<HTMLElement>(".tool-summary");
   // The disclosure primitive owns aria-expanded/aria-controls, activation,
   // and the animated height 0↔auto with aria-hidden + inert on the collapsed
   // region (which the old class flip never set — collapsed details stayed in
@@ -458,15 +463,13 @@ function wireToggle(el: HTMLElement): void {
       }
     },
   });
-  // The whole row activates that chevron, so the card matches the tool group it
-  // sits inside instead of asking for a 24x24 target at the far end of a 775px
-  // header. Wired HERE rather than in buildHeader, which is what keeps a
-  // claim-only card inert: no toggle means no `.tool-details`, an early return
-  // above, and a header that never becomes clickable. `.tool-file-link` already
-  // stops propagation (wireFileLink), and would be skipped as a `<button>`
-  // anyway.
-  if (header !== null) {
-    wireRowToggle(header, toggle);
+  // The whole visible summary activates that chevron: title row, subtitle or
+  // move row, and the blank padding between them. Wired HERE rather than in
+  // buildHeader, which is what keeps a claim-only card inert: no toggle means
+  // no `.tool-details`, an early return above, and a summary that never becomes
+  // clickable. Nested controls keep their own click through wireRowToggle.
+  if (summary !== null) {
+    wireRowToggle(summary, toggle);
   }
   detailCtls.set(el, ctl);
 }

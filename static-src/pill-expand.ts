@@ -57,6 +57,9 @@ export function makeExpandable(
     onOpen: () => {
       pill.classList.add("pill-expanded");
       opts?.onExpand?.();
+      // Consumers such as the model and mode pickers build their rows on open;
+      // position from that final synchronous width, not the empty card's width.
+      clampToViewport(pill, contentEl);
     },
     onClose: () => {
       pill.classList.remove("pill-expanded");
@@ -103,6 +106,48 @@ export function makeExpandable(
   opts?.signal?.addEventListener("abort", () => {
     popup.dispose();
   });
+}
+
+/** Keep an expanded card inside the visual viewport without changing its width.
+ *  The card remains a sibling positioned by `.pill-slot`; only its inline
+ *  offset moves. The transform origin follows the trigger, so a clamped card
+ *  still grows from the pill that opened it rather than from the screen edge. */
+function clampToViewport(pill: HTMLElement, card: HTMLElement): void {
+  const slot = pill.parentElement;
+  const width = card.offsetWidth;
+  if (slot === null || width <= 0) {
+    return;
+  }
+  const viewport = window.visualViewport;
+  const viewportLeft = viewport?.offsetLeft ?? 0;
+  const viewportRight = viewportLeft + (viewport?.width ?? window.innerWidth);
+  const margin = popupViewportMargin(card);
+  const minLeft = viewportLeft + margin;
+  const maxLeft = Math.max(minLeft, viewportRight - margin - width);
+  const naturalLeft = slot.getBoundingClientRect().left;
+  const cardLeft = Math.min(Math.max(naturalLeft, minLeft), maxLeft);
+  const pillRect = pill.getBoundingClientRect();
+
+  card.style.setProperty("--pill-inline-shift", `${String(cardLeft - naturalLeft)}px`);
+  card.style.setProperty(
+    "--pill-origin-x",
+    `${String(pillRect.left + pillRect.width / 2 - cardLeft)}px`,
+  );
+}
+
+function popupViewportMargin(card: HTMLElement): number {
+  const raw = getComputedStyle(card).getPropertyValue("--pill-viewport-margin").trim();
+  const n = Number.parseFloat(raw);
+  if (Number.isFinite(n)) {
+    if (raw.endsWith("rem")) {
+      const rootSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+      return n * (Number.isFinite(rootSize) ? rootSize : 16);
+    }
+    if (raw.endsWith("px")) {
+      return n;
+    }
+  }
+  return 12;
 }
 
 export function collapseAll(): void {

@@ -131,7 +131,9 @@ function assistant(over: Partial<Message> = {}): Message {
 }
 
 function buttons(footer: HTMLElement): HTMLButtonElement[] {
-  return [...footer.querySelectorAll<HTMLButtonElement>(".turn-actions-buttons .turn-action-btn")];
+  return [
+    ...footer.querySelectorAll<HTMLButtonElement>(".turn-actions-buttons button.turn-action-btn"),
+  ];
 }
 
 function sourceButton(footer: HTMLElement): HTMLButtonElement {
@@ -152,6 +154,34 @@ describe("mountTurnFooterActions", () => {
     mountTurnFooterActions(f.footer, f.card, f.turn);
     expect(f.footer.querySelectorAll(".turn-actions-buttons")).toHaveLength(1);
     expect(buttons(f.footer)).toHaveLength(5);
+  });
+
+  it("keeps copy direct and groups the four secondary actions under More", () => {
+    const f = fixture(assistant());
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+
+    const slot = f.footer.querySelector<HTMLElement>(".turn-actions-buttons")!;
+    const more = slot.querySelector<HTMLDetailsElement>(".turn-actions-more")!;
+    expect(slot.querySelectorAll(":scope > button.turn-action-btn")).toHaveLength(1);
+    expect(more.querySelector(":scope > summary")?.getAttribute("aria-label")).toBe(
+      "More turn actions",
+    );
+    expect(
+      more.querySelectorAll(":scope > .turn-actions-secondary > button.turn-action-btn"),
+    ).toHaveLength(4);
+  });
+
+  it("closes the mobile overflow after an action", () => {
+    const f = fixture(assistant());
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+
+    const more = f.footer.querySelector<HTMLDetailsElement>(".turn-actions-more")!;
+    const summary = more.querySelector<HTMLElement>(":scope > summary")!;
+    summary.click();
+    expect(more.open).toBe(true);
+
+    more.querySelector<HTMLButtonElement>('[aria-label="Copy as markdown"]')?.click();
+    expect(more.open).toBe(false);
   });
 
   it("is idempotent across repeated paint passes", () => {

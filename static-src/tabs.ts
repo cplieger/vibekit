@@ -582,7 +582,15 @@ registerTabsTarget(target);
 /** Activate an existing tab. */
 export function activateTab(id: string): void {
   const row = rowOfID(id);
-  if (row === undefined || state.active === id) {
+  if (row === undefined) {
+    return;
+  }
+  if (state.active === id) {
+    // The row is still an action on phone: its transcript is already active,
+    // but the drawer sits over it. Treat the tap as "show this tab" and reveal
+    // the already-selected view by closing the drawer. On desktop the class is
+    // absent, so this remains a state no-op.
+    $.sidebar.classList.remove("open");
     return;
   }
   state.active = id;

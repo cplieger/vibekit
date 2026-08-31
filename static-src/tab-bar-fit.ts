@@ -1,22 +1,17 @@
 // ---------------------------------------------------------------------------
-// Tab-bar label fitting: the segmented pill bar (settings / git / docs) keeps
-// its labels while they fit and swaps EVERY segment to its centered icon the
-// moment any label would truncate. Replaces the mobile native <select>, which
-// read as foreign chrome (user ruling: keep the pill bar; icons when text
-// does not fit).
+// Tab-bar label fitting: the segmented pill bar (settings / git / docs) shows
+// an icon before every label, then hides EVERY label when one would truncate.
+// This replaces the mobile native <select>, which read as foreign chrome.
 //
 // The decision is MEASURED per bar, never a breakpoint: which labels fit
-// depends on the label set and the container, so a fixed width would be
-// wrong for one bar or another (git's three labels fit a phone, docs' six do
-// not). Truncation is detected per segment (scrollWidth > clientWidth — the
-// segments are flex: 1 + min-width: 0 + overflow: hidden, so overflow shows
-// as ellipsis, never wrapping), and one truncated label flips the whole bar:
-// a row mixing text pills and icon pills reads as broken.
+// depends on the label set and the container. Truncation is detected per
+// segment (scrollWidth > clientWidth); one truncated label flips the whole
+// bar because mixed icon-plus-label and icon-only segments read as broken.
 // ---------------------------------------------------------------------------
 
-/** Bars are re-measured in label mode, so the icons class comes off before
- *  reading. The remove + read + toggle runs synchronously inside one frame —
- *  no paint happens between them, so there is no visible flicker. */
+/** Bars are measured in icon-plus-label mode, so the icon-only class comes
+ *  off before reading. The remove + read + toggle runs synchronously inside
+ *  one frame, so there is no visible flicker. */
 const ICONS_CLASS = "tab-bar-icons";
 
 function measure(bar: HTMLElement): void {

@@ -402,7 +402,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
       };
     case "git":
       return {
-        name: "Source Control",
+        name: "Git",
         icon: TAB_ICONS.git,
         view: TAB_VIEWS.git,
         route: { kind: "git", tab: "changes" },

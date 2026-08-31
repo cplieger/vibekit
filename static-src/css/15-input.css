@@ -245,6 +245,7 @@
 .pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.25rem;
   padding: 0 var(--sp-2);
   /* Matches .send-btn height so the prompt-pills row reads as one
@@ -537,9 +538,11 @@
 }
 
 .pill-expand-content {
+  --pill-viewport-margin: var(--sp-3);
+
   position: absolute;
   bottom: calc(100% + var(--sp-1));
-  left: 0;
+  left: var(--pill-inline-shift, 0);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
@@ -573,7 +576,7 @@
   color: var(--c-text-secondary);
   opacity: 0;
   transform: scale(0.4);
-  transform-origin: bottom left;
+  transform-origin: var(--pill-origin-x, left) bottom;
   transition:
     opacity var(--dur-standard) var(--ease-standard),
     transform var(--dur-standard) var(--ease-standard);
@@ -1218,12 +1221,13 @@
     min-width: var(--btn-h);
   }
 
-  /* The textarea's resting band matches the pill row under it (the pills sit at
-     --btn-h through the hit-target floor), so the composer reads as two equal
-     rows instead of a short line over a tall one. The padding derives from this
-     variable, so one declaration moves the whole band. */
+  /* Match the textarea's WHOLE resting band to the pill row's WHOLE first
+     line. A control alone is --btn-h, but the row is that control plus its two
+     --pill-inset edges and the 1px divider. Setting only --btn-h produced a
+     44px textarea over a 53px button row — exactly the reported mismatch. The
+     padding derives from this variable, so the text stays vertically centred. */
   [id="prompt-input"] {
-    --composer-rest-h: var(--btn-h);
+    --composer-rest-h: calc(var(--btn-h) + 2 * var(--pill-inset) + 1px);
   }
 
   /* A popup card must fit the screen it is on. The width cap keeps an anchored
@@ -1249,11 +1253,20 @@
     font-size: var(--fs-md);
   }
 
-  /* The pill row WRAPS instead of eating its labels: five controls in 356px
-     ellipsized the mode pill to one character. Wrapped, every label renders
-     whole and every target keeps the floor. */
-  .prompt-pills {
-    flex-wrap: wrap;
+  /* Usage figures are body text on a phone, not captions. Both usage surfaces
+     used --fs-xs (11px): the prompt context card and the account credit block
+     in the sidebar status card. Lift every label and value together so the
+     hierarchy stays colour-based rather than size-split. */
+  .pill-context-content,
+  .pill-status-content,
+  .pill-context-content
+    :where(.pill-ctx-label, .pill-detail, .pill-metering-label, .pill-metering-value),
+  .pill-status-content :where(.pill-detail, .pill-account-plan, .pill-account-meter) {
+    font-size: var(--fs-md);
+  }
+
+  .pill-ctx-row {
+    padding-block: var(--sp-1);
   }
 
   .effort-row {

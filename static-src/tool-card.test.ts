@@ -273,7 +273,7 @@ describe("the depth ladder", () => {
     expect(card.querySelector(".tool-details")).toBeNull();
     expect(card.querySelector(".tool-disclosure")).toBeNull();
     // The CSS affordance hook tracks the toggle: no toggle, no class.
-    expect(card.querySelector(".tool-header")?.classList.contains("has-disclosure")).toBe(false);
+    expect(card.querySelector(".tool-summary")?.classList.contains("has-disclosure")).toBe(false);
   });
 
   it("an edit gets a details region — the old tier axis gave it none", async () => {
@@ -289,8 +289,8 @@ describe("the depth ladder", () => {
     expect(card.querySelector(".tool-details")).not.toBeNull();
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
     // ...and a toggle brings the affordance class with it (14-tools.css keys
-    // cursor/hover on it).
-    expect(card.querySelector(".tool-header")?.classList.contains("has-disclosure")).toBe(true);
+    // cursor/hover on the whole summary).
+    expect(card.querySelector(".tool-summary")?.classList.contains("has-disclosure")).toBe(true);
   });
 
   it("has no second View diff button — the subject is the link", async () => {
@@ -507,7 +507,7 @@ describe("tool card: whole-header disclosure", () => {
     card.remove();
   });
 
-  it("a click on the title inside the header toggles it too", () => {
+  it("a click on the title inside the summary toggles it too", () => {
     const card = buildToolCard({
       id: "hdr2",
       title: "executePwsh",
@@ -525,6 +525,44 @@ describe("tool card: whole-header disclosure", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
     card.remove();
+  });
+
+  it("a click on the description below the title toggles the card", () => {
+    // Search/fetch/generic cards put their first input fact under the title.
+    // The whole visible summary is one disclosure target, so that line cannot
+    // be a dead strip inside a box that otherwise reads as a button.
+    const card = buildToolCard({
+      id: "hdr-subtitle",
+      title: "remote_web_search",
+      kind: "fetch",
+      status: "completed",
+      input: { query: "vibekit fold animation" },
+      live: false,
+    });
+    document.body.appendChild(card);
+
+    const subtitle = card.querySelector<HTMLElement>(".tool-subtitle")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+    expect(subtitle.textContent).toBe("vibekit fold animation");
+
+    subtitle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    card.remove();
+  });
+
+  it("shows non-MCP tool names without underscores", () => {
+    const card = buildToolCard({
+      id: "hdr-human-title",
+      title: "remote_web_search",
+      kind: "fetch",
+      status: "completed",
+      input: { query: "vibekit" },
+      live: false,
+    });
+    const title = card.querySelector<HTMLElement>(".tool-title")!;
+    expect(title.textContent).toBe("remote web search");
+    expect(card.dataset["title"]).toBe("remote web search");
   });
 
   it("the chevron still toggles exactly once", () => {

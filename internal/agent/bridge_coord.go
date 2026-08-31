@@ -315,8 +315,18 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 		bc.preBridgeSpawn(ctx)
 	}
 
+	// A spawn carrying a model OVERRIDE that differs from the record is the
+	// switch-by-restart path: the chat's stored tier was chosen under the model
+	// being switched away from, so the session resolves against the TARGET
+	// (seed when picked under it, else its default) exactly as the fast path
+	// does. Every other spawn keeps the chat's own resolution.
+	effort := bc.effortFor(ctx, chat)
+	if model != "" && model != chat.Model {
+		effort = bc.EffortForSwitch(ctx, chat, model)
+	}
+
 	if chat.ACPSessionID != "" {
-		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, bc.effortFor(ctx, chat)) {
+		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, effort) {
 			return sb, nil
 		}
 	}
@@ -345,7 +355,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: bc.effortFor(ctx, chat), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
+	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -957,6 +967,12 @@ func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID vibekit.Ch
 // seeding a chat's choice from a service default (see
 // vibekit.SessionModel.DefaultEffortLevel).
 //
+// The seed is MODEL-SCOPED: it applies only when the chat runs the model it was
+// picked under (settings.KeyLastEffortModel), because an explicit tier is a
+// judgement about one model — carried onto a different model it overrode that
+// model's own default with another model's choice. A pair recorded under no
+// model (a pre-pair install) never applies, which self-heals on the next pick.
+//
 // Validated here rather than trusted: config.json is user-editable and a level
 // this build does not know must not reach the wire. A level the current MODEL
 // does not offer is a different matter and is KAS's to reconcile — it assigns
@@ -966,14 +982,53 @@ func (bc *BridgeCoordinator) effortFor(ctx context.Context, chat *vibekit.Chat) 
 	if chat.Effort != "" {
 		return chat.Effort
 	}
-	var level string
+	return bc.effortSeedFor(ctx, chat.Model)
+}
+
+// effortSeedFor answers the remembered level for exactly one model: the
+// KeyLastEffort/KeyLastEffortModel pair when the recorded model IS `model`,
+// else "". The one seed read, shared by the session-start resolution above and
+// the model-switch target below so the two cannot disagree about scope.
+func (bc *BridgeCoordinator) effortSeedFor(ctx context.Context, model string) string {
+	if model == "" {
+		return ""
+	}
+	var level, seedModel string
 	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyLastEffort, &level) {
+		return ""
+	}
+	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyLastEffortModel, &seedModel) {
+		return ""
+	}
+	if seedModel != model {
 		return ""
 	}
 	if !vibekit.EffortLevel(level).Valid() {
 		return ""
 	}
 	return level
+}
+
+// EffortForSwitch resolves the level a chat runs at AFTER a model switch: the
+// seed when it was picked under the TARGET model, else the target model's own
+// default from the chat's catalog, else "" (KAS reconciles on its own).
+//
+// Deliberately NOT effortFor: the chat's stored choice was made under the model
+// being switched away from, so honouring it here is what carried `max` from one
+// model onto the next (user report, 2026-08-31). The switch clears that choice
+// (PersistModelSwitch) and this names its replacement explicitly — explicit,
+// because KAS KEEPS a fitting level across a swap, so without the assert a
+// cleared choice would silently keep running.
+func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, chat *vibekit.Chat, model string) string {
+	if level := bc.effortSeedFor(ctx, model); level != "" {
+		return level
+	}
+	for _, m := range chat.AvailableModels {
+		if m.ID == model {
+			return m.DefaultEffortLevel
+		}
+	}
+	return ""
 }
 
 // PersistModelSwitch records the switch event and updates the chat's
@@ -994,6 +1049,13 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibe
 			return false
 		}
 		c.Model = model
+		// The chat's chosen tier was a judgement about the model being switched
+		// AWAY from, so it does not survive the switch: resolution falls to the
+		// model-scoped seed, else the new model's own default (EffortForSwitch
+		// asserts that on the session, because KAS keeps a fitting level on its
+		// own). Switching back re-applies the seed when the pick was made under
+		// that model.
+		c.Effort = ""
 		c.Usage = vibekit.Usage{ContextSize: contextSize}
 		return true
 	}); err != nil {

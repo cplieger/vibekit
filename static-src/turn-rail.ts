@@ -29,7 +29,7 @@
 
 import { el } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
-import { jumpTo, scrollableBy } from "./scroll.js";
+import { jumpTo, scrollableBy, getScrollEl } from "./scroll.js";
 import { turnAnchorID, type TurnOutcome } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 import { get, syncEpoch } from "./store.js";
@@ -132,10 +132,20 @@ let observer: IntersectionObserver | undefined;
 let observed = new Set<Element>();
 /** Turn numbers whose jump is waiting on a fetch, so the marker can say so. */
 const pending = new Set<number>();
-/** The turn numbers currently intersecting the viewport. STATE rather than a
- *  per-callback derivation, because an IntersectionObserver callback carries only
- *  the cards whose intersection CHANGED — see `observeTurns`. */
-const visible = new Set<number>();
+/** Mounted cards currently intersecting the transcript viewport, keyed by the
+ *  absolute turn number. The map persists across observer callbacks because an
+ *  IntersectionObserver callback is a DELTA, not a complete visible set. The
+ *  element stays here so every scroll frame can measure exact visible height;
+ *  storing the last observer ratio would go stale while two cards remain
+ *  intersecting. */
+const visible = new Map<number, Element>();
+
+/** Treat subpixel geometry as a tie so fractional layout cannot make the marker
+ *  flicker between two otherwise equal cards. */
+const VISIBILITY_TIE_PX = 1;
+
+/** The scroll-coalesced dominant-turn measurement. */
+let pickFrame = 0;
 
 /** How far the transcript must be able to scroll before the rail appears.
  *
@@ -181,11 +191,17 @@ export function mountTurnRail(host: HTMLElement): void {
     "aria-label": "Turn timeline",
   });
   host.appendChild(root);
+  // IntersectionObserver reports membership changes, not every scroll step.
+  // Re-measure the members once per animation frame while the transcript moves
+  // so two cards that remain intersecting can exchange dominance accurately.
+  getScrollEl().addEventListener("scroll", schedulePick, { passive: true });
   // The rail is responsive and the gap rows are data-dependent, so capacity has
-  // to be measured rather than assumed. Re-measure on resize.
+  // to be measured rather than assumed. A resize also changes visible-height
+  // geometry, so re-pick the current turn in the same callback.
   if (typeof ResizeObserver === "function") {
     new ResizeObserver(() => {
       render();
+      schedulePick();
     }).observe(root);
   }
 }
@@ -285,6 +301,10 @@ export function resetTurnRail(): void {
   renderedNavigable = false;
   pending.clear();
   visible.clear();
+  if (pickFrame !== 0) {
+    cancelAnimationFrame(pickFrame);
+    pickFrame = 0;
+  }
   observer?.disconnect();
   observer = undefined;
   // `disconnect` unobserves every target, so the set has to go with it or the
@@ -310,18 +330,18 @@ export function resetTurnRail(): void {
  *  callback coming to refill it, and the next partial report — which is what a
  *  small scroll produces — would be the whole set and name the arrival.
  *
- *  THE ACTIVE TURN IS THE LATEST ONE ON SCREEN — the greatest turn number among
- *  the cards intersecting the viewport. A turn half off the top with a whole turn
- *  below it is the turn the reader has LEFT, so naming it current marks a turn
- *  they have already scrolled past. Position is not consulted at all:
- *  `boundingClientRect.top` was only ever a proxy for order, and `n` is the
- *  order, resolved through the server's own index.
+ *  THE ACTIVE TURN IS THE DOMINANT ONE ON SCREEN: the card occupying the most
+ *  vertical pixels of the transcript viewport. A sliver never beats a full
+ *  card in either direction. A fully visible footer breaks an equal-height tie,
+ *  then the later turn does. Geometry is measured from the live card and
+ *  scroller on each scroll frame rather than remembered from observer entries,
+ *  because two cards can remain intersecting while their visible heights trade.
  *
- *  The intersecting set is KEPT across callbacks rather than re-derived from one,
+ *  The intersecting map is KEPT across callbacks rather than re-derived from one,
  *  because the entries list is a DELTA: it carries only the cards whose
- *  intersection state changed. A small scroll that brings a turn in above one
- *  already on screen reports the arrival alone, so picking from that callback's
- *  entries — by any rule — would name the higher card. */
+ *  intersection state changed. A small scroll can alter one entry while every
+ *  incumbent remains absent from the callback; dropping them would turn one
+ *  partial notification into the whole visible set. */
 export function observeTurns(cards: Iterable<HTMLElement>): void {
   // Content just changed, so the transcript may have crossed the navigable
   // threshold in either direction. The IntersectionObserver below cannot cover
@@ -343,14 +363,9 @@ export function observeTurns(cards: Iterable<HTMLElement>): void {
     }
     observer.unobserve(c);
     dropped = true;
-    // `unobserve` fires NO callback, so a departed card's number would sit in
-    // `visible` forever and keep `latest` naming a turn that is no longer
-    // mounted. Resolved here rather than remembered per card because the
-    // alternative is a number per observed card recomputed every paint, and
-    // `numberOf` is a linear scan of the index — that trade is what makes this
-    // O(departures) instead of O(turns) per paint. Residual: if the index moved
-    // between the observe and the departure the delete misses, which the two
-    // chat-level `visible.clear()` sites cover for every case that matters.
+    // `unobserve` fires NO callback, so a departed card would stay in the
+    // geometry map forever and could keep winning after its DOM left. Delete it
+    // here; the chat-level `visible.clear()` sites cover every index reset.
     visible.delete(numberOf(c));
   }
   for (const c of next) {
@@ -360,10 +375,13 @@ export function observeTurns(cards: Iterable<HTMLElement>): void {
   }
   observed = next;
   if (dropped) {
-    // A departure changed the set with no callback behind it, so the pick has to
+    // A departure changed the map with no callback behind it, so the pick has to
     // be re-run here or the marker stays on a turn that is no longer mounted.
-    pickLatest();
+    pickDominant();
   }
+  // A paint can change card heights without changing intersection membership
+  // (fold, tool output, streaming text), so remeasure on the next frame too.
+  schedulePick();
 }
 
 /** Fold one DELTA of intersection changes into `visible`, then re-pick.
@@ -376,31 +394,81 @@ function onIntersect(entries: IntersectionObserverEntry[]): void {
       continue;
     }
     if (e.isIntersecting) {
-      visible.add(n);
+      visible.set(n, e.target);
     } else {
       visible.delete(n);
     }
   }
-  pickLatest();
+  pickDominant();
 }
 
-/** Name the latest turn on screen. Shared by the observer callback and the
- *  departure path, because both change `visible` and the rule must not fork.
+/** Coalesce transcript scroll events into one geometry read per frame. */
+function schedulePick(): void {
+  if (pickFrame !== 0) {
+    return;
+  }
+  pickFrame = requestAnimationFrame(() => {
+    pickFrame = 0;
+    pickDominant();
+  });
+}
+
+/** Name the turn occupying the most vertical pixels of the transcript viewport.
  *
- *  An EMPTY set leaves `currentN` alone rather than clearing it: between a
- *  departure and the next callback nothing is known to be on screen, and dropping
- *  the marker there would blink it off on every repaint that removes a turn. */
-function pickLatest(): void {
-  let latest = 0;
-  for (const n of visible) {
-    if (n > latest) {
-      latest = n;
+ *  Absolute visible height is the stable answer for both reported failure
+ *  directions: an older sliver cannot beat a full lower turn, and a newer
+ *  sliver cannot win merely because its number is larger. If heights tie within
+ *  one CSS pixel, a fully visible footer wins; if that ties too, the later turn
+ *  wins so a viewport of several short cards settles on its last one.
+ *
+ *  An EMPTY map leaves `currentN` alone rather than clearing it: between a
+ *  departure and the next observer callback nothing is known to be on screen,
+ *  and clearing the marker there would blink it off during ordinary repaint. */
+function pickDominant(): void {
+  const viewportRect = getScrollEl().getBoundingClientRect();
+  const viewportTop = viewportRect.height > 0 ? viewportRect.top : 0;
+  const viewportBottom = viewportRect.height > 0 ? viewportRect.bottom : window.innerHeight;
+  let bestN = 0;
+  let bestPixels = -1;
+  let bestFooter = false;
+
+  for (const [n, card] of visible) {
+    const rect = card.getBoundingClientRect();
+    const pixels = Math.max(
+      0,
+      Math.min(rect.bottom, viewportBottom) - Math.max(rect.top, viewportTop),
+    );
+    if (pixels <= 0) {
+      continue;
+    }
+    const footer = footerFullyVisible(card, viewportTop, viewportBottom);
+    const clearlyLarger = pixels > bestPixels + VISIBILITY_TIE_PX;
+    const tied = Math.abs(pixels - bestPixels) <= VISIBILITY_TIE_PX;
+    const winsTie = tied && (footer !== bestFooter ? footer : n > bestN);
+    if (clearlyLarger || winsTie) {
+      bestN = n;
+      bestPixels = pixels;
+      bestFooter = footer;
     }
   }
-  if (latest !== 0 && latest !== currentN) {
-    currentN = latest;
+
+  if (bestN !== 0 && bestN !== currentN) {
+    currentN = bestN;
     render();
   }
+}
+
+function footerFullyVisible(card: Element, viewportTop: number, viewportBottom: number): boolean {
+  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
+  if (footer === null) {
+    return false;
+  }
+  const rect = footer.getBoundingClientRect();
+  return (
+    rect.height > 0 &&
+    rect.top >= viewportTop - VISIBILITY_TIE_PX &&
+    rect.bottom <= viewportBottom + VISIBILITY_TIE_PX
+  );
 }
 
 /** A card's absolute turn number, resolved through the server's index so the

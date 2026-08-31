@@ -101,7 +101,10 @@
      centre. Rule and sources: web.md "A nested rounded corner". */
   border-radius: calc(var(--r) - 1px - 0.125rem);
   border: none;
-  background: transparent;
+  /* A standing fill separates the primary creation action from the sidebar
+     plane before hover. It uses the next surface rung rather than an accent
+     wash, so it stays subtle in both themes and still leaves a hover rung. */
+  background: var(--c-bg-tertiary);
   color: var(--c-text-primary);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -113,7 +116,7 @@
   position: relative;
 
   &:hover {
-    background: var(--c-bg-tertiary);
+    background: var(--c-bg-elevated);
     color: var(--c-accent);
   }
 
@@ -541,6 +544,54 @@
   &:focus-visible {
     outline: 2px solid var(--c-accent);
     outline-offset: 3px;
+  }
+}
+
+@media (width <= 48rem) {
+  .sidebar-footer {
+    gap: var(--sp-4);
+  }
+
+  /* Keep the 8px status mark and give its BUTTON the 44px touch target. The
+     pseudo carries the visual state; widening the state-coloured element itself
+     would turn the tiny indicator into a 44px green disc. */
+  .status-dot,
+  .status-dot.connected,
+  .status-dot.error {
+    display: grid;
+    place-items: center;
+    width: var(--btn-h);
+    height: var(--btn-h);
+    background: transparent;
+    animation: none;
+  }
+
+  .status-dot::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--c-yellow);
+    animation: vk-breathe 2s ease-in-out infinite;
+  }
+
+  .status-dot.connected::before {
+    background: var(--c-green);
+    animation: none;
+  }
+
+  .status-dot.error::before {
+    background: var(--c-red);
+    animation: none;
+  }
+
+  .status-dot.connected::after {
+    inset: auto;
+    top: 50%;
+    left: 50%;
+    width: 0.5rem;
+    height: 0.5rem;
+    translate: -50% -50%;
   }
 }
 

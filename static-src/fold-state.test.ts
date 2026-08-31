@@ -86,8 +86,19 @@ describe("the reader's own choice", () => {
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
   });
 
-  it("folds the newest turn by the reader's choice", () => {
+  // The newest turn's toggle is hidden, and the rule outranks a recorded fold:
+  // an override written against it by an earlier build (or against a turn a
+  // rewind made newest) must not strand the tail closed with no control left
+  // to reopen it.
+  it("keeps the newest turn open even with a recorded fold", () => {
     const list = turns(6);
+    setTurnOpen("c1", list[5]!.id, false);
+    expect(isTurnOpen("c1", list[5]!, 5, list.length)).toBe(true);
+  });
+
+  // The same recorded fold applies once the turn is no longer newest.
+  it("applies a recorded fold once the turn is no longer newest", () => {
+    const list = turns(7);
     setTurnOpen("c1", list[5]!.id, false);
     expect(isTurnOpen("c1", list[5]!, 5, list.length)).toBe(false);
   });
