@@ -5,11 +5,13 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "outDir": "../static",
-    "rootDir": ".",
-    "declaration": false,
-    "sourceMap": false,
-    "removeComments": false,
+    // tsc TYPECHECKS and never emits. Without this the compiler writes
+    // unbundled per-module JS over `cmd/bundle`'s output (`outDir` used to say
+    // `../static`) and the app dies in the browser on the first bare specifier
+    // esbuild had resolved — so a green `npm run typecheck` broke the served
+    // app. The Dockerfile's `--noEmit` flags were the workaround for its
+    // absence; every sibling repo declares it here.
+    "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,

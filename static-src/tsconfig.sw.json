@@ -5,11 +5,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ESNext", "WebWorker"],
-    "outDir": "../static",
-    "rootDir": ".",
-    "declaration": false,
-    "sourceMap": false,
-    "removeComments": false,
+    // Typecheck only — see tsconfig.json. This config is standalone rather
+    // than an `extends`, because the service worker's lib is WebWorker instead
+    // of DOM, so the setting is declared here too.
+    "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
