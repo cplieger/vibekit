@@ -30,8 +30,8 @@ func isInternalTool(toolID string) bool {
 // internal tools (one per session creation in practice). An update that never
 // arrives leaks one string per session, which the bridge's lifetime bounds.
 type suppressedTools struct {
-	mu  sync.Mutex
 	ids map[string]struct{}
+	mu  sync.Mutex
 }
 
 func newSuppressedTools() *suppressedTools {
