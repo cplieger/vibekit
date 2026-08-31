@@ -53,28 +53,87 @@ func run() error {
 	return buildCSS()
 }
 
-// cleanOutputs removes previous build artifacts from static/ so stale
-// modules from older builds (or the pre-bundler tsc-emit layout) never
-// linger into the embed. Committed assets (index.html, manifest.json,
-// icons) are untouched: only the patterns the bundle owns are removed.
+// cleanOutputs removes previous build artifacts from static/ so stale modules
+// from older builds (or the pre-bundler tsc-emit layout) never linger into the
+// embed. Committed assets (index.html, manifest.json, icons) are untouched.
+//
+// The bundle's ownership is stated by EXTENSION AT ANY DEPTH, matching
+// .gitignore's `static/**/*.js` — an enumerated directory list is what let
+// `static/exec-view/` survive every rebuild and reach the embedded tree, and
+// each module tree added next was another silent gap. `chunks` and `vendor`
+// keep a whole-directory removal because they may hold entries that are not
+// bundle-owned by extension (a fetched package's metadata).
 func cleanOutputs() error {
-	for _, dir := range []string{"chunks", "vendor", "handlers", "actions", "fundamentals", "lib", "wire", "__test-helpers__"} {
+	for _, dir := range []string{"chunks", "vendor"} {
 		if err := os.RemoveAll(filepath.Join(outDir, dir)); err != nil {
 			return err
 		}
 	}
-	entries, err := os.ReadDir(outDir)
+	if err := removeBundleFiles(outDir); err != nil {
+		return err
+	}
+	// A directory that held only bundle output is now an empty shell: it would
+	// still be embedded, and it is what a reader mistakes for a live module
+	// tree.
+	return pruneEmptyDirs(outDir)
+}
+
+// bundleOwns reports whether the bundler (or a generator writing into the
+// bundle's tree) owns this file name, so removing it can never take a
+// hand-authored asset. Kept in step with .gitignore's static/ block.
+func bundleOwns(name string) bool {
+	switch filepath.Ext(name) {
+	case ".js", ".map", ".gz":
+		return true
+	}
+	return name == "style.css"
+}
+
+// removeBundleFiles deletes every bundle-owned file under dir, at any depth.
+func removeBundleFiles(dir string) error {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		name := e.Name()
+		path := filepath.Join(dir, e.Name())
 		if e.IsDir() {
+			if err := removeBundleFiles(path); err != nil {
+				return err
+			}
 			continue
 		}
-		if strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".js.map") ||
-			strings.HasSuffix(name, ".gz") || name == "style.css" || name == "style.css.map" {
-			if err := os.Remove(filepath.Join(outDir, name)); err != nil {
+		if !bundleOwns(e.Name()) {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pruneEmptyDirs removes every directory under dir left empty, deepest first.
+// dir itself is kept: it is the embed root and holds the committed assets.
+func pruneEmptyDirs(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sub := filepath.Join(dir, e.Name())
+		if err := pruneEmptyDirs(sub); err != nil {
+			return err
+		}
+		rest, err := os.ReadDir(sub)
+		if err != nil {
+			return err
+		}
+		if len(rest) == 0 {
+			if err := os.Remove(sub); err != nil {
 				return err
 			}
 		}
