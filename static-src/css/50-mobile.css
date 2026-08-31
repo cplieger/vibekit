@@ -1,144 +1,150 @@
-@layer mobile {
-  @media (width <= 48rem) {
-    :root {
-      --btn-h: 2.75rem;
-      --ctl-h-dense: 2.75rem;
-    }
-
-    [id="chat-area"] {
-      margin-inline-start: 0;
-    }
-
-    /* The sidebar is an off-canvas drawer here, so the desktop two-tone canvas
-       (02-reset.css body) would paint a secondary column under the chat area.
-       Flat page color; the drawer paints its own background when open. */
-    body {
-      background: var(--c-bg-primary);
-    }
-
-    /* The drawer slides on TRANSFORM, not on `left`. `left` is a layout
-       property, so the old `transition: left` re-laid-out and repainted a
-       full-viewport-width element on every frame of every open and close —
-       on the weakest devices in the fleet, which is exactly where the mobile
-       breakpoint lives. translateX is compositor-only: the drawer rasterizes
-       once and the GPU moves the layer.
-
-       Safe here because nothing inside the sidebar is `position: fixed` or
-       CSS-anchor-positioned — every popover, context menu and expanded pill is
-       hosted into <body> by @cplieger/ui-primitives, and the `anchor-name`
-       declarations have no `anchor()` consumer — so the containing block a
-       transform introduces has no descendant to reposition. Check that again
-       before moving a fixed-position surface INTO the sidebar. */
-    [id="sidebar"] {
-      width: 100vw;
-      z-index: 100;
-      transform: translateX(-100%);
-      transition: transform var(--dur-standard) var(--ease-standard);
-    }
-
-    [id="sidebar"].open {
-      transform: translateX(0);
-    }
-
-    .sidebar-close-only {
-      display: block;
-    }
-
-    .mobile-only {
-      display: flex;
-    }
-
-    .chat-toolbar {
-      position: static;
-      width: 100%;
-      border-radius: 0;
-      padding: env(safe-area-inset-top, 0) var(--sp-3) 0;
-      min-height: calc(3.25rem + env(safe-area-inset-top, 0));
-      border: none;
-      border-block-end: 1px solid var(--c-border);
-      justify-content: flex-end;
-      background: var(--c-bg-primary);
-      flex-shrink: 0;
-      z-index: auto;
-    }
-
-    .toolbar-title {
-      display: block;
-    }
-
-    .page-title {
-      display: none;
-      padding-bottom: var(--sp-3);
-      padding-top: var(--sp-1);
-    }
-
-    .chat-toolbar .mobile-only {
-      display: flex;
-    }
-
-    /* Scroll-to-bottom: right-anchored square icon, text hidden. */
-    [id="scroll-bottom"] {
-      left: auto;
-      right: var(--sp-3);
-      transform: none;
-      width: var(--btn-h);
-      padding: 0;
-    }
-
-    [id="scroll-bottom"] > span {
-      display: none;
-    }
-
-    .fb-row {
-      padding: var(--sp-3);
-    }
-
-    .fb-check {
-      width: 1.25rem;
-      height: 1.25rem;
-    }
-
-    /* Modals: full-width on small screens */
-    .uip-modal-dialog {
-      width: calc(100vw - 2 * var(--sp-4));
-      max-height: 85vh;
-      overflow-y: auto;
-    }
-
-    .subagent-modal-card {
-      width: calc(100vw - 2 * var(--sp-4));
-    }
-
-    /* Toolbars: larger touch targets */
-    .bottom-bar {
-      padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom, 0));
-    }
-
-    /* There is no `.pill` or `#send-btn` sizing here. Both live in the unlayered
-       15-input.css, so a declaration in this layer loses to it whatever its
-       specificity, and the three rules that used to sit here (heights of
-       2.25rem, a 2.5rem send min-width, a 1.1rem glyph, 12px padding and
-       --fs-sm labels) were all measured inert. The touch height comes from the
-       zero-specificity hit-target rule in 61-mcp-tools.css instead, which is
-       unlayered and therefore reaches them. */
-
-    .view-toolbar-inner {
-      gap: var(--sp-1);
-    }
-
-    .fb-actions {
-      gap: 0;
-    }
-
-    /* Settings page: reduce padding */
-    .page-content {
-      padding: var(--sp-3);
-    }
-
-    /* Sidebar tabs: larger touch targets on mobile */
-    .tab-close {
-      width: var(--btn-h);
-      height: var(--btn-h);
-    }
+/* UNLAYERED on purpose (2026-08-31). This file used to sit in @layer mobile,
+   where every rule lost to the 21 unlayered feature slices - measured live: the
+   hamburger reveal and the full-width toolbar below never applied. Unlayered at
+   position 50 it beats the feature slices by source order and the components
+   layer by being unlayered; scripts/css-cascade-audit.py --unlayer 50-mobile.css
+   showed exactly 16 flips, all of them this file's own overrides starting to
+   work. The empty @layer mobile declaration stays in 00-header.css so the
+   cascade order string needs no edit. */
+@media (width <= 48rem) {
+  :root {
+    --btn-h: 2.75rem;
+    --ctl-h-dense: 2.75rem;
   }
-} /* @layer mobile */
+
+  [id="chat-area"] {
+    margin-inline-start: 0;
+  }
+
+  /* The sidebar is an off-canvas drawer here, so the desktop two-tone canvas
+     (02-reset.css body) would paint a secondary column under the chat area.
+     Flat page color; the drawer paints its own background when open. */
+  body {
+    background: var(--c-bg-primary);
+  }
+
+  /* The drawer slides on TRANSFORM, not on `left`. `left` is a layout
+     property, so the old `transition: left` re-laid-out and repainted a
+     full-viewport-width element on every frame of every open and close —
+     on the weakest devices in the fleet, which is exactly where the mobile
+     breakpoint lives. translateX is compositor-only: the drawer rasterizes
+     once and the GPU moves the layer.
+
+     Safe here because nothing inside the sidebar is `position: fixed` or
+     CSS-anchor-positioned — every popover, context menu and expanded pill is
+     hosted into <body> by @cplieger/ui-primitives, and the `anchor-name`
+     declarations have no `anchor()` consumer — so the containing block a
+     transform introduces has no descendant to reposition. Check that again
+     before moving a fixed-position surface INTO the sidebar. */
+  [id="sidebar"] {
+    width: 100vw;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform var(--dur-standard) var(--ease-standard);
+  }
+
+  [id="sidebar"].open {
+    transform: translateX(0);
+  }
+
+  .sidebar-close-only {
+    display: block;
+  }
+
+  .mobile-only {
+    display: flex;
+  }
+
+  .chat-toolbar {
+    position: static;
+    width: 100%;
+    border-radius: 0;
+    padding: env(safe-area-inset-top, 0) var(--sp-3) 0;
+    min-height: calc(3.25rem + env(safe-area-inset-top, 0));
+    border: none;
+    border-block-end: 1px solid var(--c-border);
+    justify-content: flex-end;
+    background: var(--c-bg-primary);
+    flex-shrink: 0;
+    z-index: auto;
+  }
+
+  .toolbar-title {
+    display: block;
+  }
+
+  .page-title {
+    display: none;
+    padding-bottom: var(--sp-3);
+    padding-top: var(--sp-1);
+  }
+
+  .chat-toolbar .mobile-only {
+    display: flex;
+  }
+
+  /* Scroll-to-bottom: right-anchored square icon, text hidden. */
+  [id="scroll-bottom"] {
+    left: auto;
+    right: var(--sp-3);
+    transform: none;
+    width: var(--btn-h);
+    padding: 0;
+  }
+
+  [id="scroll-bottom"] > span {
+    display: none;
+  }
+
+  .fb-row {
+    padding: var(--sp-3);
+  }
+
+  .fb-check {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  /* Modals: full-width on small screens */
+  .uip-modal-dialog {
+    width: calc(100vw - 2 * var(--sp-4));
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+
+  .subagent-modal-card {
+    width: calc(100vw - 2 * var(--sp-4));
+  }
+
+  /* Toolbars: larger touch targets */
+  .bottom-bar {
+    padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom, 0));
+  }
+
+  /* There is no `.pill` or `#send-btn` sizing here. Both live in the unlayered
+     15-input.css, so a declaration in this layer loses to it whatever its
+     specificity, and the three rules that used to sit here (heights of
+     2.25rem, a 2.5rem send min-width, a 1.1rem glyph, 12px padding and
+     --fs-sm labels) were all measured inert. The touch height comes from the
+     zero-specificity hit-target rule in 61-mcp-tools.css instead, which is
+     unlayered and therefore reaches them. */
+
+  .view-toolbar-inner {
+    gap: var(--sp-1);
+  }
+
+  .fb-actions {
+    gap: 0;
+  }
+
+  /* Settings page: reduce padding */
+  .page-content {
+    padding: var(--sp-3);
+  }
+
+  /* Sidebar tabs: larger touch targets on mobile */
+  .tab-close {
+    width: var(--btn-h);
+    height: var(--btn-h);
+  }
+}
