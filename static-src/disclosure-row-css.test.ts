@@ -103,15 +103,15 @@ function css(el: Element, prop: string): string {
   return getComputedStyle(el).getPropertyValue(prop);
 }
 
-/** Every rule that writes `background` for `el`, counting `:hover` rules as if
- *  hovered, in document order — so the LAST entry is what a hovering reader
+/** Every rule that writes one of `props` for `el`, counting `:hover` rules as
+ *  if hovered, in document order — so the LAST entry is what a hovering reader
  *  gets.
  *
  *  Computed style cannot answer this: a synthetic hover does not drive style
  *  recalc, and `CSS.forcePseudoState` is a devtools protocol call rather than
  *  something a test page can make. Walking the CSSOM is the honest oracle, and
  *  it reads the same cascade the browser would. */
-function backgroundWriters(el: Element): { selector: string; value: string }[] {
+function propertyWriters(el: Element, props: string[]): { selector: string; value: string }[] {
   const out: { selector: string; value: string }[] = [];
   for (const sheet of document.styleSheets) {
     let rules: CSSRuleList;
@@ -129,8 +129,13 @@ function backgroundWriters(el: Element): { selector: string; value: string }[] {
           }
           continue;
         }
-        const value =
-          r.style.getPropertyValue("background") || r.style.getPropertyValue("background-color");
+        let value = "";
+        for (const p of props) {
+          value = r.style.getPropertyValue(p);
+          if (value !== "") {
+            break;
+          }
+        }
         if (value === "") {
           continue;
         }
@@ -148,6 +153,10 @@ function backgroundWriters(el: Element): { selector: string; value: string }[] {
     walk(rules);
   }
   return out;
+}
+
+function backgroundWriters(el: Element): { selector: string; value: string }[] {
+  return propertyWriters(el, ["background", "background-color"]);
 }
 
 function winningBackground(el: Element): string | undefined {
@@ -232,12 +241,15 @@ describe("tool card header affordance", () => {
 });
 
 describe("turn card header affordance", () => {
-  async function turn(folded: boolean): Promise<HTMLElement> {
+  async function turn(state: "open" | "folded" | "running"): Promise<HTMLElement> {
     const { buildTurnHeader } = await import("./fundamentals/turn-header.js");
     const card = document.createElement("div");
     card.className = "turn";
-    if (folded) {
+    if (state === "folded") {
       card.setAttribute("data-folded", "");
+    }
+    if (state === "running") {
+      card.setAttribute("data-running", "");
     }
     card.appendChild(
       buildTurnHeader({
@@ -251,37 +263,60 @@ describe("turn card header affordance", () => {
     return mount(card);
   }
 
-  it("open: the meta row is the marked surface, the request is not", async () => {
-    const card = await turn(false);
-    expect(css(card.querySelector(".turn-head-row")!, "cursor")).toBe("pointer");
+  it("the whole band is the marked surface, open and folded alike", async () => {
+    // One gesture wherever the reader clicks it, matching the tool and
+    // delegate cards. It used to admit only the meta row while open, which
+    // read as the target shrinking when a turn was expanded (user report,
+    // 2026-08-31).
+    for (const state of ["open", "folded"] as const) {
+      const card = await turn(state);
+      expect(css(card.querySelector(".turn-header")!, "cursor"), state).toBe("pointer");
+    }
+  });
+
+  it("the prompt stays selectable; the meta row does not", async () => {
+    // The band is a target WITHOUT eating text selection: a drag over the
+    // request keeps its selection (disclosure-row.ts skips a click that ends
+    // one), so `user-select: none` stops at the meta row.
+    const card = await turn("open");
     expect(css(card.querySelector(".turn-head-row")!, "user-select")).toBe("none");
-    // The prompt stays prose: a text cursor, and selectable.
-    expect(css(card.querySelector(".turn-header")!, "cursor")).toBe("auto");
     expect(css(card.querySelector(".turn-req-text")!, "user-select")).not.toBe("none");
   });
 
-  it("folded: the whole band is the marked surface", async () => {
-    const card = await turn(true);
-    expect(css(card.querySelector(".turn-header")!, "cursor")).toBe("pointer");
-    expect(winningBackground(card.querySelector(".turn-header")!)).toBe("var(--c-hover)");
+  it("a running turn's header claims nothing", async () => {
+    // It has no fold (the toggle is display: none), so a pointer cursor there
+    // would advertise a control that opens nothing.
+    const card = await turn("running");
+    expect(css(card.querySelector(".turn-header")!, "cursor")).toBe("auto");
+    expect(propertyWriters(card.querySelector(".turn-header")!, ["background-image"])).toEqual([]);
   });
 
-  it("open: hovering the meta row lands on the shared rung", async () => {
-    const card = await turn(false);
-    expect(winningBackground(card.querySelector(".turn-head-row")!)).toBe("var(--c-hover)");
+  it("hovering the band washes it as a LAYER, keeping the tint", async () => {
+    // `background-image: var(--layer-hover)`, per the interaction-ladder
+    // contract (01-tokens.css): written into `background` the wash would
+    // REPLACE the band's tertiary tint with a 15% film over the card.
+    for (const state of ["open", "folded"] as const) {
+      const header = (await turn(state)).querySelector(".turn-header")!;
+      const writers = propertyWriters(header, ["background-image"]);
+      expect(writers.at(-1)?.value, state).toBe("var(--layer-hover)");
+      expect(winningBackground(header), `${state}: the tint stays`).toBe("var(--c-bg-tertiary)");
+    }
   });
 
-  it("folded: the meta row's own fill is suppressed, so the band paints once", async () => {
-    // Both rules match a hovered folded row, and two translucent overlays would
-    // make that half of the band darker than the rest. The later rule wins.
-    const card = await turn(true);
-    expect(winningBackground(card.querySelector(".turn-head-row")!)).toBe("none");
+  it("the meta row paints no fill of its own — the band paints once", async () => {
+    // Two translucent overlays would make that half of the band darker than
+    // the rest under a hover.
+    for (const state of ["open", "folded"] as const) {
+      const row = (await turn(state)).querySelector(".turn-head-row")!;
+      expect(backgroundWriters(row), state).toEqual([]);
+      expect(propertyWriters(row, ["background-image"]), state).toEqual([]);
+    }
   });
 
   it("the fold toggle clears the 24px hit-target floor", async () => {
     // It was 1rem. vibekit-ui.md: "24px minimum desktop", and this is the
     // measurement the whole change started from.
-    const card = await turn(false);
+    const card = await turn("open");
     const btn = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
     const r = btn.getBoundingClientRect();
     expect(r.width).toBeGreaterThanOrEqual(24);
@@ -291,7 +326,7 @@ describe("turn card header affordance", () => {
   it("the fold toggle matches the copy button at the row's other end", async () => {
     // One row, two buttons, one size — and the copy button already set the
     // row's height, so growing the chevron costs no vertical space.
-    const card = await turn(false);
+    const card = await turn("open");
     const fold = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
     const copy = card.querySelector<HTMLElement>(".turn-copy-req")!;
     copy.hidden = false;
@@ -301,8 +336,56 @@ describe("turn card header affordance", () => {
 
   it("the glyph did not grow with its hit target", async () => {
     // The extra 8px is hit area, not ink: the chevron stays 0.75rem.
-    const card = await turn(false);
+    const card = await turn("open");
     const glyph = card.querySelector<HTMLElement>(".turn-fold-toggle > .disclosure-chevron")!;
     expect(css(glyph, "--chev-size").trim()).toBe("0.75rem");
+  });
+});
+
+describe("folded turn face", () => {
+  function face(kind: "turn-face-prose" | "turn-face-error", lines: number): HTMLElement {
+    const card = document.createElement("div");
+    card.className = "turn";
+    card.setAttribute("data-folded", "");
+    const faceEl = document.createElement("div");
+    faceEl.className = "turn-face";
+    const content = document.createElement("div");
+    if (kind === "turn-face-prose") {
+      // The real shape: buildAssistantBubble's root with the face class added.
+      content.className = "message assistant turn-face-prose";
+      for (let i = 0; i < lines; i++) {
+        const p = document.createElement("p");
+        p.textContent = `line ${String(i)}`;
+        content.appendChild(p);
+      }
+    } else {
+      // The real shape: one text node, newlines rendered by pre-wrap.
+      content.className = kind;
+      content.textContent = Array.from({ length: lines }, (_, i) => `line ${String(i)}`).join("\n");
+    }
+    faceEl.appendChild(content);
+    card.appendChild(faceEl);
+    mount(card);
+    return content;
+  }
+
+  it("the answer clamps to three lines — folding visibly collapses", () => {
+    // The fold's whole point. Unclamped, a folded card was routinely TALLER
+    // than its open neighbour (measured live: 573px and 634px "collapsed"
+    // cards beside a 220px open one), so the chevron flipped and nothing
+    // visibly changed — reported as "collapse does not work" (2026-08-31).
+    for (const kind of ["turn-face-prose", "turn-face-error"] as const) {
+      const content = face(kind, 40);
+      const lineH = parseFloat(css(content, "line-height")) || 25.6;
+      expect(content.scrollHeight, `${kind}: the content overflows`).toBeGreaterThan(
+        content.clientHeight,
+      );
+      expect(content.clientHeight, `${kind}: three lines tall`).toBeLessThan(4 * lineH);
+    }
+  });
+
+  it("a short answer is not clamped into losing anything", () => {
+    const content = face("turn-face-prose", 2);
+    expect(content.scrollHeight).toBeLessThanOrEqual(content.clientHeight + 1);
   });
 });

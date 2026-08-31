@@ -154,30 +154,4 @@ describe("wireRowToggle", () => {
     clickOn(h.plain);
     expect(h.hits()).toBe(1);
   });
-
-  it("skip is consulted with the clicked element and suppresses activation", () => {
-    const h = build();
-    const seen: string[] = [];
-    wireRowToggle(h.row, h.control, {
-      skip: (target) => {
-        seen.push(target.className);
-        return target.closest(".prose") !== null;
-      },
-    });
-
-    clickOn(h.prose);
-    expect(h.hits()).toBe(0);
-
-    clickOn(h.plain);
-    expect(h.hits()).toBe(1);
-    expect(seen).toEqual(["prose", ""]);
-  });
-
-  it("skip returning false leaves the click alone to activate", () => {
-    const h = build();
-    wireRowToggle(h.row, h.control, { skip: () => false });
-
-    clickOn(h.prose);
-    expect(h.hits()).toBe(1);
-  });
 });
