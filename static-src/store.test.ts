@@ -33,7 +33,7 @@ import {
   bumpSyncEpoch,
   transcriptStale,
 } from "./store.js";
-import type { Block, ChatHeader, Session } from "./types.js";
+import type { Block, ChatHeader, Message, Session } from "./types.js";
 import { effect } from "@cplieger/reactive";
 
 // Arbitrary generators for domain types.
@@ -1122,6 +1122,7 @@ import {
   setTurnFailed,
   clearTurnFailed,
   clearTurnDone,
+  relatchTurnVerdict,
   tabStatusFor,
   setAgentStatus,
   setCurrentMode,
@@ -1310,6 +1311,88 @@ describe("Store finished latch", () => {
     const before = get("td-1");
     clearTurnDone("td-1");
     expect(get("td-1")).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// relatchTurnVerdict: the outcome latches, re-derived from the persisted
+// record. The latches are client memory and every reload or transport gap
+// drops them, while the newest message's turn_outcome is durable — so the
+// latch is re-set from it exactly as the live turn_ended handler would have
+// set it. The refusals are half the contract: a live turn invalidates every
+// prior verdict, and a latch already set is newer than anything the page
+// carries.
+// ---------------------------------------------------------------------------
+
+describe("Store relatchTurnVerdict", () => {
+  /** An assistant row as the persisted page carries it; `outcome` absent means
+   *  a message the finalize path never stamped. */
+  function row(id: string, outcome?: Message["turn_outcome"]): Message {
+    return {
+      id,
+      role: "assistant",
+      ts: 1,
+      content: "done.",
+      ...(outcome === undefined ? {} : { turn_outcome: outcome }),
+    };
+  }
+
+  function seed(chatID: string, messages: Message[]): void {
+    setSessions([{ ...makeSession(chatID), messages }]);
+    setActive(chatID);
+  }
+
+  it("re-latches done from the newest persisted outcome, skipping unstamped rows", () => {
+    seed("rl-1", [row("m1", "completed"), { id: "m2", role: "user", ts: 2, content: "thanks" }]);
+    relatchTurnVerdict("rl-1");
+    expect(get("rl-1")?.turn_done).toBe(true);
+    expect(tabStatusFor(get("rl-1"))).toBe("done");
+  });
+
+  it("the newest outcome wins: a failed turn after a completed one relatches failed", () => {
+    seed("rl-2", [row("m1", "completed"), row("m2", "failed")]);
+    relatchTurnVerdict("rl-2");
+    expect(get("rl-2")?.turn_failed).toBe(true);
+    expect(get("rl-2")?.turn_done).toBeUndefined();
+  });
+
+  it("a refusal relatches the failure latch, like the live handler", () => {
+    seed("rl-3", [row("m1", "refused")]);
+    relatchTurnVerdict("rl-3");
+    expect(get("rl-3")?.turn_failed).toBe(true);
+  });
+
+  it("a cancelled newest turn latches nothing, even over an older completed one", () => {
+    // The newest outcome is the chat's verdict: the scan STOPS there rather
+    // than digging for a latchable one below it, matching turn_ended's
+    // treatment of a cancel.
+    seed("rl-4", [row("m1", "completed"), row("m2", "cancelled")]);
+    relatchTurnVerdict("rl-4");
+    expect(get("rl-4")?.turn_done).toBeUndefined();
+    expect(get("rl-4")?.turn_failed).toBeUndefined();
+    expect(tabStatusFor(get("rl-4"))).toBe("idle");
+  });
+
+  it("refuses while a turn is live: thinking invalidates every prior verdict", () => {
+    seed("rl-5", [row("m1", "completed")]);
+    setThinking("rl-5", true);
+    relatchTurnVerdict("rl-5");
+    expect(get("rl-5")?.turn_done).toBeUndefined();
+  });
+
+  it("refuses to overwrite a latch already set", () => {
+    seed("rl-6", [row("m1", "completed")]);
+    setTurnFailed("rl-6");
+    relatchTurnVerdict("rl-6");
+    expect(get("rl-6")?.turn_failed).toBe(true);
+    expect(get("rl-6")?.turn_done).toBeUndefined();
+  });
+
+  it("does not churn the session when no message carries an outcome", () => {
+    seed("rl-7", [row("m1"), row("m2")]);
+    const before = get("rl-7");
+    relatchTurnVerdict("rl-7");
+    expect(get("rl-7")).toBe(before);
   });
 });
 

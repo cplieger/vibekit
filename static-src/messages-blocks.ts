@@ -75,7 +75,12 @@ import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/tod
 import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { mountToolCallCard, disposeToolSlot } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
-import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group.js";
+import {
+  buildToolGroupShell,
+  groupBody,
+  refreshGroupHeader,
+  autoCollapseGroup,
+} from "./tool-group.js";
 
 // Re-exported so messages.ts can inject it into messages-tools' status-flip
 // path (initToolCallbacks) — the same header renderer the block dispatcher uses.
@@ -270,9 +275,11 @@ interface MsgRender {
   /** orchestrate tool-call id → its stage subtask ids, in first-seen order. The
    *  pipeline footer's ledger sums over these. */
   pipelineStages: Map<string, string[]>;
-  /** workflow id → the run card that invocation opened. Keyed by RUN, not by
+  /** workflow id → the run card THIS render hosts. Keyed by RUN, not by
    *  subtask, because one card holds every step of one run — the step rows inside
-   *  it are keyed by node path (see `runContainerFor`). */
+   *  it are keyed by node path (see `runContainerFor`). Only the HOST render of a
+   *  run has an entry (`runCardHosts`); a later message of the same chat routes
+   *  into the host's card and holds nothing here. */
   runs: Map<string, RunCardView>;
   /** workflow id → the ARMED render effect's disposer, absent while the card is
    *  suspended (view parked). Beside `runs` rather than inside `disposers`
@@ -337,6 +344,15 @@ interface MsgRender {
 }
 
 const renders = new Map<string, MsgRender>();
+
+/** chat id → workflow id → the render whose message HOSTS that run's card.
+ *
+ *  The transcript-level half of `MsgRender.runs`: a run's frames span several
+ *  messages, and this is what routes every later message's steps into the card
+ *  the first one built. Claimed at build, released by the host's own disposer.
+ *  Detached renders are never in it — the subagent page is its own surface, and
+ *  adopting the transcript's card would move the DOM node out of it. */
+const runCardHosts = new Map<string, Map<string, MsgRender>>();
 
 // ---------------------------------------------------------------------------
 // Public API (called by messages.ts)
@@ -706,15 +722,43 @@ function renderRange(
     // BEFORE the block, so a note anchored at index i lands above it. This is
     // the whole of "chronologically at the point it was injected".
     flushSteerNotes(st, marks, m.id, i);
-    // Only the trailing block of a live message streams; earlier blocks are
-    // sealed (a new block started because the run kind / subtask changed).
-    placeBlock(st, m, block, i, live && i === lastIdx);
+    placeBlock(st, m, block, i, live && blockIsLive(blocks, i, lastIdx));
   }
   // A note anchored at the CURRENT end has no block to sit above yet, and the
   // loop above can never reach it. Mounting it here is what puts it below
   // everything so far and above everything that arrives next.
   flushSteerNotes(st, marks, m.id, to);
   st.rendered = to;
+}
+
+/** Whether block `i` is the one its stream is still writing.
+ *
+ *  TEXT (and tool_use) blocks stream only at the ARRAY tail: exactly one
+ *  streaming caret is a pinned invariant, so a text block behind the tail is
+ *  sealed even when a delegate interleaved behind it.
+ *
+ *  A THINKING block streams while it is the last block of its OWN lane — the
+ *  server extends the newest block of the delta's own subtask, which can sit
+ *  behind the array tail when a delegate interleaves. For a trace this decides
+ *  the GROWTH WIRING (its signal effect) and the initial open state; DISCLOSURE
+ *  is appendBlock's — anything landing after it in its container seals it, so a
+ *  still-growing trace with a delegate box below it renders sealed while its
+ *  text keeps accumulating. */
+function blockIsLive(blocks: readonly Block[], i: number, lastIdx: number): boolean {
+  const block = blocks[i];
+  if (block === undefined) {
+    return false;
+  }
+  if (block.type !== "thinking") {
+    return i === lastIdx;
+  }
+  const lane = block.agent_subtask_id ?? "";
+  for (let j = i + 1; j <= lastIdx; j++) {
+    if ((blocks[j]?.agent_subtask_id ?? "") === lane) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Mount every not-yet-drawn steer note whose anchor this render has reached.
@@ -741,9 +785,10 @@ function flushSteerNotes(
     ) {
       continue;
     }
-    sealReasoning(st, st.blocksEl);
     closeToolGroup(st, st.blocksEl);
-    st.blocksEl.appendChild(
+    appendBlock(
+      st,
+      st.blocksEl,
       buildSteerNote({
         text: mark.text,
         ...(mark.ack !== undefined ? { ack: mark.ack } : {}),
@@ -808,7 +853,13 @@ function containerFor(st: MsgRender, block: Block, live: boolean): HTMLElement {
     });
     sa.root.dataset["subtask"] = subtask;
     st.subagents.set(subtask, sa);
-    stageHostFor(st, subtask, live).appendChild(sa.root);
+    // The box lands in its HOST (top level or a pipeline body), so the seal and
+    // the group close belong to the host: the delegate's card is the "something
+    // posted after" for whatever trace was open there, and a tool run the box
+    // interrupts must not keep collecting cards above it.
+    const host = stageHostFor(st, subtask, live);
+    closeToolGroup(st, host);
+    appendBlock(st, host, sa.root);
   }
   return sa.body;
 }
@@ -882,7 +933,8 @@ function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): Subag
   box.setIcon(ICON_TAB_RUN);
   box.root.dataset["pipeline"] = pipelineID;
   st.pipelines.set(pipelineID, box);
-  st.blocksEl.appendChild(box.root);
+  closeToolGroup(st, st.blocksEl);
+  appendBlock(st, st.blocksEl, box.root);
   return box;
 }
 
@@ -906,6 +958,24 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
   const existing = st.runs.get(workflowID);
   if (existing !== undefined) {
     return existing;
+  }
+  if (!st.detached) {
+    // ONE box per run per TRANSCRIPT, not per message. The server folds a run's
+    // later frames into a NEW assistant message per turn-segment, so a
+    // per-message key rebuilt the card in every segment — two boxes in the
+    // launching turn, two more each later turn, all reading one store cell.
+    // A later message routes into the first message's card instead; step rows
+    // are keyed by node path, so cross-message routing lands in the right row.
+    const hosted = runCardHosts.get(st.chatID)?.get(workflowID)?.runs.get(workflowID);
+    if (hosted !== undefined) {
+      return hosted;
+    }
+    let hosts = runCardHosts.get(st.chatID);
+    if (hosts === undefined) {
+      hosts = new Map();
+      runCardHosts.set(st.chatID, hosts);
+    }
+    hosts.set(workflowID, st);
   }
   // The footer link re-opens the run's tab. Injected here rather than imported by
   // the card, so `fundamentals/` keeps pointing only downward — and lazily, because
@@ -936,9 +1006,19 @@ function runCardFor(st: MsgRender, workflowID: string, name: string): RunCardVie
     // The card mounts OPEN and the disclosure reports only later flips.
     openContainers.add(`run:${workflowID}`);
   }
-  st.blocksEl.appendChild(card.root);
+  closeToolGroup(st, st.blocksEl);
+  appendBlock(st, st.blocksEl, card.root);
   st.disposers.push(() => {
     disarmRunCard(st, workflowID, card);
+    // Release the host slot only when this render still holds it, so a card
+    // rebuilt under a new host survives its old host's late dispose.
+    const hosts = runCardHosts.get(st.chatID);
+    if (hosts?.get(workflowID) === st) {
+      hosts.delete(workflowID);
+      if (hosts.size === 0) {
+        runCardHosts.delete(st.chatID);
+      }
+    }
     // The store's only bound, and this is the one place that can apply it: three
     // surfaces read a run's cell and none of them is last on its own. A card
     // unmounting (chat switch, or the reconcile dropping its row) with no run tab
@@ -1065,13 +1145,47 @@ function disarmRunCard(st: MsgRender, workflowID: string, card: RunCardView): vo
   releaseRunClock(workflowID, card);
 }
 
+/** A standalone run card for a COLLAPSED turn's face: a DUPLICATE of the
+ *  in-body card, subscribed to the same store cell so the two cannot disagree,
+ *  and visible exactly when the body's copy is not (the fold hides the body;
+ *  unfolding removes the face). Deliberately outside the runCardHosts registry:
+ *  that registry dedupes transcript cards, and this one exists BECAUSE the
+ *  transcript's copy is hidden. */
+export function mountFaceRunCard(workflowID: string): { root: HTMLElement; dispose: () => void } {
+  const card = buildRunCard(
+    workflowID,
+    "Workflow run",
+    (id, label) => {
+      void import("./run-view.js")
+        .then(({ openRunView }) => {
+          openRunView(id, label);
+        })
+        .catch(() => {
+          /* noop: the link degrades to its href on the next click */
+        });
+    },
+    undefined,
+  );
+  const stop = effect(() => {
+    card.render(runState(workflowID), runPendingAsks(workflowID));
+  });
+  holdRunClock(workflowID, card);
+  invalidateRun(workflowID);
+  return {
+    root: card.root,
+    dispose: (): void => {
+      stop();
+      releaseRunClock(workflowID, card);
+    },
+  };
+}
+
 function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: boolean): void {
   const container = containerFor(st, block, live);
   const subtask = block.agent_subtask_id ?? "";
 
   switch (block.type) {
     case "text": {
-      sealReasoning(st, container);
       closeToolGroup(st, container);
       mountText(st, m.id, container, block, i, live);
       return;
@@ -1093,8 +1207,6 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
       // rather than replaced, which is what keeps the two orders equivalent.
       const runID = workflowInvocation(tc);
       if (subtask === "" && runID !== "") {
-        sealReasoning(st, container);
-        closeToolGroup(st, container);
         bindRunCard(st, runID, tc);
         return;
       }
@@ -1104,8 +1216,6 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
       // like it, a box already built by a stage whose frame arrived first is FOUND
       // rather than replaced.
       if (subtask === "" && isPipelineInvocation(tc)) {
-        sealReasoning(st, container);
-        closeToolGroup(st, container);
         bindPipeline(st, m.id, tc, live);
         return;
       }
@@ -1127,12 +1237,10 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
         members.add(tc.id);
       }
       if (isTodoTool(tc)) {
-        sealReasoning(st, container);
         closeToolGroup(st, container);
         mountTodo(st, m.id, container, tc);
         return;
       }
-      sealReasoning(st, container);
       mountToolCard(st, container, tc);
       return;
     }
@@ -1188,9 +1296,9 @@ function mountText(
   });
   if (row !== null) {
     row.appendChild(bubble.root);
-    container.appendChild(row);
+    appendBlock(st, container, row);
   } else {
-    container.appendChild(bubble.root);
+    appendBlock(st, container, bubble.root);
   }
   if (live && !st.detached) {
     const sig = ensureBlockTextSig(msgId, i, initial);
@@ -1225,13 +1333,19 @@ function mountThinking(
   if (initial === "" && !live) {
     return; // an empty settled "Thinking completed" dropdown is worse than none
   }
+  // A trace interrupts a consecutive tool run. Without this, later tool calls
+  // kept joining the group element ABOVE the trace, which both mis-ordered the
+  // transcript and stacked every trace of a think→tool loop into one pile.
+  closeToolGroup(st, container);
   const view = buildReasoning(initial, live);
   st.reasonings.push(view);
   st.blockText.set(i, (full) => {
     view.setText(full);
   });
+  // Append (sealing any open predecessor) BEFORE registering the new view, or
+  // appendBlock would seal the trace being mounted.
+  appendBlock(st, container, view.root);
   st.openReasoning.set(container, view);
-  container.appendChild(view.root);
   if (live && !st.detached) {
     const sig = ensureBlockThinkingSig(msgId, i, initial);
     const cleanup = effect(() => {
@@ -1264,7 +1378,7 @@ function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): voi
 function mountTodo(st: MsgRender, msgId: string, container: HTMLElement, tc: ToolCall): void {
   const list = buildTodoList(parseTodoItems(tc));
   list.dataset["toolId"] = tc.id;
-  container.appendChild(list);
+  appendBlock(st, container, list);
   const sig = ensureToolCallSig(st.chatID, tc.id, tc);
   let last = tc;
   const cleanup = effect(() => {
@@ -1444,18 +1558,35 @@ function sealReasoning(st: MsgRender, container: HTMLElement): void {
   }
 }
 
+/** Append into a block container, closing the thinking block open there first.
+ *
+ *  The ONE door for the rule "anything posted after an open trace supersedes
+ *  it". The wire carries no thinking-ended signal — a delta only extends the
+ *  newest block of its own lane — so the next element's arrival IS the end
+ *  signal (finalizeAssistantBody covers a trace nothing followed). Sealing at
+ *  the append keeps the rule total: a mounter added later cannot forget it,
+ *  because it cannot reach the DOM without it. */
+function appendBlock(st: MsgRender, container: HTMLElement, el: HTMLElement): void {
+  sealReasoning(st, container);
+  container.appendChild(el);
+}
+
 function toolGroupFor(st: MsgRender, container: HTMLElement): HTMLDivElement {
   let group = st.toolGroups.get(container);
   if (group === undefined) {
     group = buildToolGroupShell();
-    container.appendChild(group);
+    appendBlock(st, container, group);
     st.toolGroups.set(container, group);
   }
   return group;
 }
 
 function closeToolGroup(st: MsgRender, container: HTMLElement): void {
+  const group = st.toolGroups.get(container);
   st.toolGroups.delete(container);
+  if (group !== undefined) {
+    autoCollapseGroup(group);
+  }
 }
 
 // ---------------------------------------------------------------------------

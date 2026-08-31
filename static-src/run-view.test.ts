@@ -70,6 +70,7 @@ vi.mock("./tabs.js", () => ({
   // run's tab dot from the fetch. "" keeps the seed inert here: this suite opens
   // no real tabs, so there is no dot to paint.
   tabIdFor: vi.fn(() => ""),
+  tabSetVersion: vi.fn(() => 0),
   setTabStatus: vi.fn(),
   // The completion auto-close's two reads, and the names this graph pulls in.
   // Inert here for the same reason `tabIdFor` is: with no tab id to resolve

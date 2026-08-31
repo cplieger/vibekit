@@ -17,6 +17,7 @@ import {
   bumpMessages,
   normalizeMessage,
   liveTurnMessage,
+  relatchTurnVerdict,
   syncEpoch,
 } from "./store.js";
 
@@ -258,5 +259,12 @@ export async function loadMessages(
     session.loadedEpoch = epochAtStart;
   }
   bumpMessages(chatID);
+  if (beforeID === undefined) {
+    // The page carries the last turn's PERSISTED outcome, so the outcome
+    // latches — client memory the gap door just dropped, or a fresh page
+    // never had — are re-derived from it. After bumpMessages, so the repaint
+    // and the dot read one settled window.
+    relatchTurnVerdict(chatID);
+  }
   return true;
 }

@@ -81,6 +81,29 @@ describe("the delegated-work card's collapse policy", () => {
     sa.setStatus("completed");
     expect(sa.root.classList.contains("running")).toBe(false);
   });
+
+  // FAILURE IS NOT NOISE: the header can only say THAT it failed, and the
+  // reason is the reader's next question — same rule as the tool group.
+  it("pops open when the delegate fails", () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    expect(sa.root.classList.contains("collapsed")).toBe(true);
+    sa.setStatus("failed");
+    expect(sa.root.classList.contains("collapsed")).toBe(false);
+  });
+
+  it("mounts open when built already failed", () => {
+    const sa = buildSubagentBlock("Subagent", "failed");
+    expect(sa.root.classList.contains("collapsed")).toBe(false);
+  });
+
+  it("respects a reader who closed it: a later failure stays closed", () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    const header = sa.root.querySelector<HTMLElement>(".subagent-header");
+    header?.click(); // open
+    header?.click(); // close — the reader has taken control
+    sa.setStatus("failed");
+    expect(sa.root.classList.contains("collapsed")).toBe(true);
+  });
 });
 
 describe("the tail", () => {

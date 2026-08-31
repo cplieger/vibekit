@@ -74,6 +74,7 @@ export const storeMock = {
   clearTurnFailed: vi.fn(),
   setTurnDone: vi.fn(),
   clearTurnDone: vi.fn(),
+  relatchTurnVerdict: vi.fn(),
   setTurnSummary: vi.fn(),
 
   tabStatusFor: vi.fn(() => ""),

@@ -32,6 +32,7 @@ vi.mock("./tabs.js", () => ({
   // Reached through run-view.js → run-dots.js, the parentless-run tab dot.
   hasTab: undefined,
   tabIdFor: undefined,
+  tabSetVersion: undefined,
   // Reached through run-view.js: the completion auto-close's two reads.
   closeTab: undefined,
   getActiveTabId: undefined,

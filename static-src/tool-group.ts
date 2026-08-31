@@ -398,13 +398,30 @@ export function maybeCollapseGroup(node: HTMLElement): void {
     return;
   }
 
-  if (group.classList.contains(CLS_AUTO_COLLAPSED)) {
+  // No count-based collapse here any more: a group stays OPEN while it is the
+  // newest card and collapses when the next element is posted after it —
+  // autoCollapseGroup, called by the dispatcher at the moment the run of
+  // consecutive calls ends.
+}
+
+/** Collapse a group whose run of consecutive calls just ENDED (something else
+ *  was posted after it). The positional rule that replaced "auto-collapse after
+ *  ≥3 completed calls": the newest card is the open one, and being superseded
+ *  is what closes it. A user toggle outranks it, a failure inside blocks it
+ *  (failure is not noise), and a still-running member keeps it open — that
+ *  member's status flip re-runs maybeCollapseGroup, which re-opens on failure. */
+export function autoCollapseGroup(group: HTMLElement): void {
+  if (
+    group.classList.contains(CLS_AUTO_COLLAPSED) ||
+    group.classList.contains(CLS_USER_TOGGLED) ||
+    group.classList.contains(CLS_COLLAPSED)
+  ) {
     return;
   }
-  if (group.classList.contains(CLS_USER_TOGGLED)) {
-    return;
-  }
-  if (calls.length < 3) {
+  const calls = [
+    ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
+  ] as HTMLElement[];
+  if (countFailures(calls) > 0) {
     return;
   }
   for (const c of calls) {
@@ -413,14 +430,12 @@ export function maybeCollapseGroup(node: HTMLElement): void {
     }
   }
   // An AUTO collapse removes height ABOVE the reader, so it is compensated.
-  // (The user-toggle path below enters Reading instead — that is a different
-  // intent: the reader just acted, so nothing should re-pin.) This is the one
-  // ANIMATED height change of the three §3.4 names, via createDisclosure.
+  // This is the one ANIMATED height change of the three §3.4 names, via
+  // createDisclosure.
   preserveReadingPosition(() => {
     group.classList.add(CLS_AUTO_COLLAPSED);
     groupCtls.get(group)?.close();
-    const header = group.querySelector<HTMLElement>(".tool-group-header");
-    header?.setAttribute("aria-expanded", "false");
+    group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
     refreshGroupHeader(group);
   }, "content-growth");
 }

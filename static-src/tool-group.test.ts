@@ -8,6 +8,7 @@ import {
   groupBody,
   refreshGroupHeader,
   maybeCollapseGroup,
+  autoCollapseGroup,
   formatDuration,
   summarizeSameKind,
   summarizeMCP,
@@ -294,18 +295,46 @@ describe("grouping amendments", () => {
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
   });
 
-  it("auto-collapses a clean run of three", () => {
+  it("does not collapse on a count: the group stays open while it is the newest card", () => {
     const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
     maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+
+  it("collapses when the run of consecutive calls ends, however short", () => {
+    // The positional rule: being superseded is what closes a group, so even a
+    // single settled call folds to its one-line summary when the next element
+    // is posted after it.
+    const g = groupWith(card("read", "ok"));
+    autoCollapseGroup(g);
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+  });
+
+  it("does not collapse a superseded group holding a failure", () => {
+    const g = groupWith(card("read", "ok"), card("read", "fail"));
+    autoCollapseGroup(g);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+
+  it("does not collapse a superseded group while a member still runs", () => {
+    const g = groupWith(card("read", "ok"), card("read", "running"));
+    (groupBody(g).lastElementChild as HTMLElement).dataset["startMs"] = "1";
+    autoCollapseGroup(g);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+
+  it("does not re-collapse a group the reader has toggled", () => {
+    const g = groupWith(card("read", "ok"));
+    g.classList.add("tool-group-user-toggled");
+    autoCollapseGroup(g);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
   });
 
   it("re-opens a collapsed group when a member fails afterwards", () => {
     // The half that was missing: a failure inside a run of twelve was invisible
     // because the group closed while everything still looked fine.
     const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
-    const first = groupBody(g).firstElementChild as HTMLElement;
-    maybeCollapseGroup(first);
+    autoCollapseGroup(g);
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
 
     const late = groupBody(g).lastElementChild as HTMLElement;

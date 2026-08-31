@@ -33,22 +33,23 @@
 //
 // It keeps NO state of its own. It used to hold a parallel map of statuses fed by
 // the run events, which is a second copy of something `GET /api/runs/{id}` already
-// answers; the tracked set below is just which runs are parentless, a fact the
+// answers; the tracked set below is just which runs have been SEEN, a fact the
 // status cannot carry.
 // ---------------------------------------------------------------------------
 
 import { effect, signal } from "@cplieger/reactive";
-import { setTabStatus, tabIdFor } from "./tabs.js";
+import { setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
 import { runStatusFor } from "./store.js";
 import { hasPendingDecision } from "./decision-dock.js";
-import { peekRunState } from "./run-store.js";
+import { runState } from "./run-store.js";
 
 /** The runs this client has seen an event for, and the version counter that makes
  *  the effect depend on the set.
  *
  *  A set of ids and nothing else: the STATUS comes from `run-store.ts` on every
- *  repaint, so there is no second copy of it to go stale. Bounded by the sweep in
- *  `repaint`, which drops any id whose tab has closed. */
+ *  repaint, so there is no second copy of it to go stale. Bounded by runs seen
+ *  this session — an id whose tab never opens or has closed paints nothing and
+ *  costs one lookup per repaint. */
 const tracked = new Set<string>();
 const version = signal(0);
 
@@ -88,9 +89,13 @@ function repaint(): void {
     // files a parentless run's asks under; the tab's is opaque and server-minted.
     const id = tabIdFor("run", workflowID);
     if (id === "") {
-      // Bounded by the sweep: a long-lived page must not accumulate one entry per
-      // scheduled run it ever saw. A later frame re-adds it.
-      tracked.delete(workflowID);
+      // No tab YET — the automatic offer's open_tab round trip is still in
+      // flight — or none any more. KEEP the id: the effect depends on the tab
+      // set's version, so the dot paints the moment the row lands. The old
+      // sweep DELETED the id here, which raced that round trip: `trackRun`
+      // bumps only for a first-seen id, so a run that emitted no later frame
+      // (a paused run emits none at all) was swept out before its tab existed
+      // and its dot stayed blank until an unrelated dock churn repainted it.
       continue;
     }
     // Both keys the dock files a run's asks under, the same join
@@ -98,19 +103,28 @@ function repaint(): void {
     // run, the synthetic chat id for a parentless one. Asking both costs one extra
     // map read and means a relocated ask cannot go unnoticed.
     const asking = hasPendingDecision(`run:${workflowID}`) || hasPendingDecision(workflowID);
-    setTabStatus(id, runStatusFor(peekRunState(workflowID)?.status, asking));
+    // TRACKED read, deliberately: the run's cell resolving (the fetch an
+    // invalidation coalesces into) is exactly the moment the dot must repaint,
+    // and `run_progress` for an already-tracked run bumps nothing else here.
+    setTabStatus(id, runStatusFor(runState(workflowID)?.status, asking));
   }
 }
 
 /** Wire the effect. Called from the composition root, not at import: an effect
  *  running at module load would paint against a tab strip that has not been
  *  restored yet, and `setTabStatus` parks its state on a spec that does not exist
- *  then. The sweep is what picks a tab up once it does. */
+ *  then. The tab-set dependency is what picks a tab up once it does. */
 export function installRunDotSubscriber(): void {
   effect(() => {
     void version.value;
-    // Subscribes to the dock queue as well: hasPendingDecision reads queueVersion,
-    // so an ask arriving for a background run repaints its dot with no run event.
+    // Subscribes to the tab SET as well, so a run tab arriving after its run's
+    // frames (the open_tab round trip) or restored on boot paints without a
+    // fresh run event.
+    void tabSetVersion();
+    // Subscribes to the dock queue too: hasPendingDecision reads queueVersion,
+    // so an ask arriving for a background run repaints its dot with no run
+    // event. And to every tracked run's own cell, through repaint's runState
+    // reads.
     repaint();
   });
 }

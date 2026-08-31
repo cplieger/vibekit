@@ -37,6 +37,43 @@ export function loadCSS(name: string): string {
   return hit;
 }
 
+/** Every style rule in the sheet, at-rule bodies included, as
+ *  (selector, body) pairs. For sweeps over a whole vocabulary ("no reasoning
+ *  selector carries an animation") where keying on one exact selector would
+ *  miss the rule that regressed. A rule's body includes its nested blocks. */
+export function allRules(css: string): { selector: string; body: string }[] {
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, " ");
+  const out: { selector: string; body: string }[] = [];
+  const scan = (src: string): void => {
+    let depth = 0;
+    let selStart = 0;
+    let bodyStart = 0;
+    let sel = "";
+    for (let i = 0; i < src.length; i++) {
+      if (src[i] === "{") {
+        if (depth === 0) {
+          sel = src.slice(selStart, i).trim();
+          bodyStart = i + 1;
+        }
+        depth++;
+      } else if (src[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          const body = src.slice(bodyStart, i);
+          if (sel.startsWith("@")) {
+            scan(body);
+          } else {
+            out.push({ selector: sel, body });
+          }
+          selStart = i + 1;
+        }
+      }
+    }
+  };
+  scan(text);
+  return out;
+}
+
 /** The body of a top-level rule, by its exact selector line. Nested `&` blocks
  *  are included, which is what we want: a rule's declarations and its nested
  *  states are one authored unit. */

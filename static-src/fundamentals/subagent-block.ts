@@ -332,7 +332,21 @@ export function buildSubagentBlock(
       opts.onOpenChange?.(open);
     },
   });
-  void ctl;
+  // FAILURE IS NOT NOISE, here like the tool group: a failed delegate pops
+  // open (and mounts open), because the header can only say THAT it failed and
+  // the reason is the reader's next question. A user toggle outranks it.
+  let userToggled = false;
+  const markToggled = (e: Event): void => {
+    if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") {
+      return;
+    }
+    userToggled = true;
+  };
+  header.addEventListener("click", markToggled);
+  header.addEventListener("keydown", markToggled);
+  if (status === "failed") {
+    ctl.open();
+  }
 
   // The tail mirrors the body's trailing text. A MutationObserver rather than
   // a data feed threaded through the dispatcher: the body already receives
@@ -407,6 +421,9 @@ export function buildSubagentBlock(
     setStatus(s: ToolStatus): void {
       lastStatus = s;
       applyIcon(s);
+      if (s === "failed" && !userToggled) {
+        ctl.open();
+      }
       // Settled: the tail's job is done and the footer takes over. Removed
       // rather than hidden — the observer would otherwise keep repainting a
       // region nothing shows.

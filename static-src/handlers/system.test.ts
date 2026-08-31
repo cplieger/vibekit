@@ -47,14 +47,15 @@ vi.mock("../tabs.js", () => ({
   setGitTab: undefined,
   setSettingsTab: undefined,
   setTabDirty: undefined,
-  tabIdFor: undefined,
   toggleGitView: undefined,
   toggleSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
   // Reached through turn-teardown.ts, which the gap handler now shares with the
-  // turn_ended door. A no-op rather than present-but-undefined: the gap handler
-  // CALLS it once per session, so undefined would throw rather than link.
+  // turn_ended door. No-ops rather than present-but-undefined: the gap handler
+  // CALLS both once per session, so undefined would throw rather than link.
+  // tabIdFor answers "" (the no-tab answer), the mock rule's empty value.
+  tabIdFor: vi.fn(() => ""),
   setTabStatus: vi.fn(),
 }));
 

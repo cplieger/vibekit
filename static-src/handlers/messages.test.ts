@@ -105,6 +105,36 @@ describe("message_chunk", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Streaming evidence latches `thinking`. Before these doors existed the flag
+// was only set by this client's OWN sends (sendPromptTo, switchModel) and the
+// connect replay's turn_state — so an agent-initiated turn, a wire turn, or a
+// prompt sent from another device streamed into a chat whose tab dot sat idle
+// the whole time.
+// ---------------------------------------------------------------------------
+
+describe("streaming evidence marks the turn live", () => {
+  it("message_created flips thinking on a chat at rest", () => {
+    fireSSE("message_created", "chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
+    expect(get("chat-1")?.thinking).toBe(true);
+  });
+
+  it("message_chunk flips it too, covering a dropped or reordered created frame", () => {
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hi", block_index: 0 });
+    expect(get("chat-1")?.thinking).toBe(true);
+  });
+
+  it("a chunk on an already-live turn leaves the agent's declared status standing", () => {
+    // setThinking(true) clears the previous turn's verdicts AND the agent's
+    // declared status, so the latch must fire on the TRANSITION only — an
+    // unguarded per-chunk call would erase a mid-turn `waiting_on_user` the
+    // moment the next delta landed.
+    setSessions([makeSession("chat-1", { thinking: true, agent_status: "waiting_on_user" })]);
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hi", block_index: 0 });
+    expect(get("chat-1")?.agent_status).toBe("waiting_on_user");
+  });
+});
+
 describe("code_references", () => {
   it("attaches the reference list to an existing assistant message", () => {
     const msg: Message = { id: "m1", role: "assistant", ts: 0, content: "code" };

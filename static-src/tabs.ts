@@ -245,6 +245,16 @@ function tabsEffect(fn: (s: State) => void): () => void {
   return cleanup;
 }
 
+/** Reactive read of the tab-set version: an effect calling this re-runs on
+ *  every committed tab mutation (open, close, reorder, pin, snapshot reset).
+ *  For a writer that paints onto tab rows from OUTSIDE the strip (run-dots.ts),
+ *  whose target row can arrive a server round trip AFTER the event that made it
+ *  paintworthy — the automatic run-tab offer's open_tab is in flight when the
+ *  run's first frame lands. */
+export function tabSetVersion(): number {
+  return stateVersion.value;
+}
+
 function subjectKey(kind: TabKind, ref: string): string {
   return joinKey(kind, ref);
 }

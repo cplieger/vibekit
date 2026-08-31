@@ -17,6 +17,7 @@ import {
   setAgentStatus,
   setSnapshotSeq,
   noteLiveTurnMessage,
+  get,
 } from "../store.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
@@ -43,10 +44,18 @@ onSSE("message_created", (chatID, m) => {
   // message_created starts a new assistant bubble; upsert so future chunks
   // target the right ID. Content is empty until chunks arrive.
   //
+  // It is also live-turn EVIDENCE: the server emits it only when a turn opens a
+  // buffer, and not every turn is one this client prompted — a KAS auto-woken
+  // turn after a workflow completes, a wire turn opened by a run's step frames,
+  // and any prompt sent from ANOTHER device all stream in with `thinking`
+  // never set, so their tabs showed idle while visibly working. The turn's own
+  // `turn_ended` clears it, whoever opened it.
+  //
   // It is also the point the server starts a buffer nothing has persisted, so
   // the store records which id that is. A refetch replaces the array with the
   // chat file's page, and this marker is the only thing that tells this message
   // from one the page left out on purpose.
+  markTurnLive(chatID);
   noteLiveTurnMessage(chatID, m.id);
   upsertMessage(chatID, m);
 });
@@ -55,6 +64,9 @@ onSSE("message_chunk", (chatID, p) => {
   if (p === undefined) {
     return;
   }
+  // Same live-turn evidence as message_created: a delta only exists for an open
+  // turn, and this is the door that covers a dropped or reordered created frame.
+  markTurnLive(chatID);
   appendChunk(
     chatID,
     p.message_id,
@@ -66,6 +78,15 @@ onSSE("message_chunk", (chatID, p) => {
     p.refusal,
   );
 });
+
+/** Latch `thinking` from streaming evidence, idempotently: `setThinking(true)`
+ *  clears the previous turn's verdicts, so it must only run on the transition
+ *  or every chunk would re-clear latches (and churn the session signal). */
+function markTurnLive(chatID: string): void {
+  if (chatID !== "" && get(chatID)?.thinking === false) {
+    setThinking(chatID, true);
+  }
+}
 
 // turn_state: connect-time synthesis of an in-flight turn (never
 // broadcast live). The server emits one per BUSY chat in the SSE

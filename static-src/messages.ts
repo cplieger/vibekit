@@ -77,10 +77,12 @@ import {
   turnLedger,
   turnAnchorID,
   turnFoldSummary,
+  turnFaceProse,
+  turnFaceError,
   turnRunIDs,
   type Turn,
 } from "./turns.js";
-import { peekRunState, runIsLive } from "./run-store.js";
+import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, setTurnOpen, TURNS_WARM } from "./fold-state.js";
 import { wireRowToggle } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
@@ -106,6 +108,7 @@ import {
   openContainerKeys,
   initBlockRenderer,
   getLiveAnchor,
+  mountFaceRunCard,
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
@@ -715,20 +718,19 @@ const foldPlan = new Map<string, FoldPlan>();
 
 function computeFoldPlan(chatID: string, turns: readonly Turn[]): void {
   foldPlan.clear();
+  turnByID.clear();
   for (const [i, t] of turns.entries()) {
-    // A turn holding a live workflow run stays open however far back it is; see
-    // isTurnOpen. `peekRunState` rather than `runState`, because this runs
-    // inside the paint effect and a tracked read here would subscribe the whole
-    // transcript to every run on screen. The run ids come from the
-    // projection-time cache; the derivation stays turns.ts's.
-    const liveRun = (turnRunIDsCache.get(t.id) ?? turnRunIDs(t)).some((id) =>
-      runIsLive(peekRunState(id)),
-    );
-    const open = isTurnOpen(chatID, t, i, turns.length, liveRun);
+    turnByID.set(t.id, t);
+    const open = isTurnOpen(chatID, t, i, turns.length);
     const distance = turns.length - 1 - i;
     foldPlan.set(t.id, { open, mounted: open || distance < TURNS_WARM });
   }
 }
+
+/** The latest projection per turn id, refreshed each fold-plan pass. The fold
+ *  toggle reads it, because its bound closure holds the BUILD-time turn and a
+ *  face built from that would show a stale body. */
+const turnByID = new Map<string, Turn>();
 
 /** Whether the current full pass mounted at least one new card. The fold pass
  *  reads it: a pass whose cards were born already folded queues no changes, so
@@ -896,8 +898,9 @@ function refreshToolMessage(session: Session, msgID: string | undefined): boolea
     return false;
   }
   // `live` exactly as the full path's keyed update passes it: the mount-time
-  // judgment frozen on the message's state.
-  const live = messageStates.get(msgID)?.streaming ?? false;
+  // judgment, re-promoted upward when the store now says the turn is live
+  // (see liveStateOf).
+  const live = liveStateOf(msg);
   if (!refreshMessageCard(msgID, msg, session.id, live, steerMarks(session.id))) {
     return false;
   }
@@ -1089,6 +1092,9 @@ const turnSpec: ReconcileSpec<Turn> = {
   },
   update: updateTurn,
   onRemove: (card) => {
+    // The face's run-card effects die with the card, or a removed turn keeps
+    // subscribing to its run's cell.
+    disposeTurnFace(card);
     // Dispose the body's messages: the inner reconcile never runs again for a
     // removed card, so its onRemove would not fire on its own.
     const rows = card.querySelectorAll<HTMLElement>(`:scope > .turn-body > [${KEY_ATTR}]`);
@@ -1267,10 +1273,19 @@ function applyFoldPass(turns: readonly Turn[], cards: readonly HTMLElement[]): v
       });
     }
     if (open === !folded) {
+      if (!open && t !== undefined) {
+        // Already folded: keep the face current (a run card or the persisted
+        // outcome can arrive after the fold). Cheap — keyed no-op when nothing
+        // changed.
+        syncTurnFace(card, t);
+      }
       continue;
     }
     changes.push(() => {
       setCardFolded(card, !open);
+      if (t !== undefined) {
+        syncTurnFace(card, t);
+      }
     });
   }
   if (changes.length === 0) {
@@ -1307,11 +1322,18 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
   }
   btn.dataset["bound"] = "";
   btn.addEventListener("click", () => {
+    // An ACTIVE turn cannot be collapsed: it is the one being watched, and
+    // isTurnOpen ignores overrides for it anyway, so recording one here would
+    // only spring a surprise fold at turn end.
+    if (card.hasAttribute("data-running")) {
+      return;
+    }
     const open = card.hasAttribute("data-folded");
     const chatID = getActiveId();
     if (chatID !== "") {
       setTurnOpen(chatID, t.id, open);
     }
+    const fresh = turnByID.get(t.id) ?? t;
     if (open && chatID !== "" && card.querySelector(":scope > .turn-body") === null) {
       // Opening a STUB: its body does not exist yet, so the disclosure creates
       // the region content — build it hidden (the card is still folded), then
@@ -1324,6 +1346,7 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
         .then(() => {
           preserveReadingPosition(() => {
             setCardFolded(card, false);
+            syncTurnFace(card, fresh);
           }, "content-growth");
           bumpMessages(chatID, "shape");
         })
@@ -1336,6 +1359,7 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
     // it is not deferred, but it still must not move what they are looking at.
     preserveReadingPosition(() => {
       setCardFolded(card, !open);
+      syncTurnFace(card, fresh);
     }, "content-growth");
   });
   // The band activates that button, so folding a turn is not a 16x16 target.
@@ -1372,6 +1396,83 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
   header?.setAttribute("aria-expanded", folded ? "false" : "true");
 }
 
+// --- The collapsed turn's FACE ---
+//
+// A collapsed turn is input + output: the header carries the request, and the
+// footer grows a face carrying the turn's result — the run cards it launched
+// (duplicates of the in-body cards, above the prose), the final answer prose in
+// full, and a failed turn's error text. Open, the body shows all of it in
+// place and the face does not exist, so the duplication is never visible twice.
+
+/** Face bookkeeping per CARD element: the key detects a content change (a run
+ *  arriving for a folded turn), the dispose stops the face cards' effects. */
+const turnFaces = new WeakMap<HTMLElement, { key: string; dispose: () => void }>();
+
+function faceKey(t: Turn): string {
+  const runs = turnRunIDsCache.get(t.id) ?? turnRunIDs(t);
+  return `${t.outcome}|${runs.join(",")}|${String(turnFaceProse(t).length)}`;
+}
+
+function disposeTurnFace(card: HTMLElement): void {
+  const face = turnFaces.get(card);
+  if (face === undefined) {
+    return;
+  }
+  turnFaces.delete(card);
+  face.dispose();
+  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
+  footer?.querySelector(":scope > .turn-face")?.remove();
+  footer?.removeAttribute("data-face");
+}
+
+/** Build or refresh the face to match the card's fold state. Idempotent per
+ *  content key, so the fold pass can call it every pass for cheap. */
+function syncTurnFace(card: HTMLElement, t: Turn): void {
+  if (!card.hasAttribute("data-folded")) {
+    disposeTurnFace(card);
+    return;
+  }
+  const key = faceKey(t);
+  if (turnFaces.get(card)?.key === key) {
+    return;
+  }
+  disposeTurnFace(card);
+  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
+  if (footer === null) {
+    return;
+  }
+  const face = el("div", { className: "turn-face" });
+  const disposers: (() => void)[] = [];
+  for (const id of turnRunIDsCache.get(t.id) ?? turnRunIDs(t)) {
+    const mounted = mountFaceRunCard(id);
+    disposers.push(mounted.dispose);
+    face.appendChild(mounted.root);
+  }
+  const prose = turnFaceProse(t);
+  if (prose !== "") {
+    const bubble = buildAssistantBubble(prose, false);
+    bubble.root.classList.add("turn-face-prose");
+    face.appendChild(bubble.root);
+  }
+  const error = turnFaceError(t);
+  if (error !== "") {
+    face.appendChild(el("div", { className: "turn-face-error" }, error));
+  }
+  const dispose = (): void => {
+    for (const d of disposers) {
+      d();
+    }
+  };
+  if (face.childElementCount === 0) {
+    // Nothing to show: the ledger row alone carries the fold, as before.
+    turnFaces.set(card, { key, dispose });
+    return;
+  }
+  footer.prepend(face);
+  footer.setAttribute("data-face", "");
+  turnFaces.set(card, { key, dispose });
+}
+
 // --- The turn card ---
 
 /** Build one turn: tinted header (the trigger), plain body (the work), tinted
@@ -1398,6 +1499,7 @@ function buildTurn(t: Turn): HTMLElement {
   const header = buildTurnHeader(headerData(t));
   mountFoldToggle(header, card, t);
   card.appendChild(header);
+  card.toggleAttribute("data-running", t.outcome === "running");
 
   const plan = foldPlan.get(t.id);
   if (plan === undefined || plan.mounted) {
@@ -1409,8 +1511,10 @@ function buildTurn(t: Turn): HTMLElement {
   }
 
   mountTurnFooter(card, t);
-  // After the footer: Rewind lives inside it, so it must exist first.
+  // After the footer: Rewind lives inside it, so it must exist first — and the
+  // face goes into the footer, so a card born folded builds it here.
   mountRewind(card, t);
+  syncTurnFace(card, t);
   syncTurnBodyless(card);
   paintMountedCards = true;
 
@@ -1429,6 +1533,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   if (header !== null) {
     updateTurnHeader(header, headerData(t));
   }
+  card.toggleAttribute("data-running", t.outcome === "running");
   // A stub has no body element, so the outer reconcile renders whatever
   // mountedness the fold pass last applied; only the fold pass and the
   // on-demand build change it.
@@ -1439,6 +1544,7 @@ function updateTurn(card: HTMLElement, t: Turn): void {
   mountTurnFooter(card, t);
   mountRewind(card, t);
   syncTurnBodyless(card);
+  syncTurnFace(card, t);
 }
 
 /** Build a card's body in place, from the turn's current projection. The
@@ -1730,12 +1836,31 @@ function buildAssistant(m: Message): HTMLElement {
  *  Per-block and per-tool signals feed streaming deltas straight into the
  *  already-mounted primitives, so this only handles structural growth. */
 function updateAssistant(wrap: HTMLElement, m: Message): void {
-  const state = messageStates.get(m.id);
-  if (state === undefined) {
+  if (!messageStates.has(m.id)) {
     return;
   }
   const chatID = getActiveId();
-  updateAssistantBody(wrap, m, chatID, state.streaming, steerMarks(chatID));
+  updateAssistantBody(wrap, m, chatID, liveStateOf(m), steerMarks(chatID));
+}
+
+/** The message's live flag for an update pass, re-promoted when the store now
+ *  says the message is streaming. The mount-time judgment freezes on the
+ *  message's state, and a misjudgement is cheap to cause — any mid-turn event
+ *  that clears the chat's `thinking` flag (a transport gap's eager clear, a
+ *  row mounting before the flag lands) froze it settled for the REST of the
+ *  turn, so every later thinking block mounted collapsed while actively
+ *  streaming. Upward only: the downward transition stays
+ *  finalizeStreamingIfNeeded's, which owns the finalize side effects. */
+function liveStateOf(m: Message): boolean {
+  const state = messageStates.get(m.id);
+  if (state === undefined) {
+    return false;
+  }
+  if (!state.streaming && isLikelyLiveStreaming(m)) {
+    state.streaming = true;
+    streamingIds.add(m.id);
+  }
+  return state.streaming;
 }
 
 /** Finalize a streamed assistant turn: flush every markdown stream + seal

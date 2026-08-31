@@ -68,6 +68,7 @@ export function tabsMock(): Record<string, unknown> {
     // Readers, each answering "nothing".
     hasTab: vi.fn(() => false),
     tabIdFor: vi.fn(() => ""),
+    tabSetVersion: vi.fn(() => 0),
     tabIdForRoute: vi.fn(() => ""),
     getActiveTabId: vi.fn(() => ""),
     getActiveTabRoute: vi.fn(() => null),

@@ -116,6 +116,25 @@ function steeredText(call = 0): string {
   return (mockSteer.mock.calls[call]?.[0] as { text: string } | undefined)?.text ?? "";
 }
 
+/** A DispatchHandle-shaped mock return: dispatch() hands back a promise
+ *  augmented with `outcome`, and submit.ts reads ONLY the outcome — the
+ *  never-rejecting result promise cannot distinguish a void success from a
+ *  failure's null without it. */
+function steerHandle(outcome: unknown): { outcome: Promise<unknown> } {
+  return { outcome: Promise.resolve(outcome) };
+}
+
+function steerOk(): { outcome: Promise<unknown> } {
+  return steerHandle({ status: "success", value: undefined });
+}
+
+function steerRefused(message: string, code?: string): { outcome: Promise<unknown> } {
+  return steerHandle({
+    status: "error",
+    error: { message, ...(code === undefined ? {} : { code }) },
+  });
+}
+
 /** The message id the send primitive was called with on the Nth dispatch. */
 function sentMessageID(call = 0): string {
   return (
@@ -128,7 +147,7 @@ beforeEach(() => {
   mockTakeAttachments.mockReturnValue([]);
   mockAttachmentGeneration.mockReturnValue(0);
   mockTypedCommand.mockReturnValue(false);
-  mockSteer.mockResolvedValue({});
+  mockSteer.mockReturnValue(steerOk());
 });
 
 describe("submitPrompt on an idle chat", () => {
@@ -263,8 +282,10 @@ describe("submitPrompt during a turn", () => {
     expect(steeredText()).toBe("wait, stop");
   });
 
-  // No optimism: the chip is written by the server's own steer_queued frame, so
-  // a refused steer leaves nothing on screen to explain away.
+  // Submit itself writes no store rows: the optimistic chip is the ACTION's
+  // (drawn in its optimistic hook, rolled back on refusal), and this module
+  // only decides prompt-versus-steer. With the action mocked, a steer leaves
+  // the projection untouched.
   it("records nothing locally", async () => {
     resetStore("c1");
     setThinking("c1", true);
@@ -277,11 +298,78 @@ describe("submitPrompt during a turn", () => {
     resetStore("c1");
     setThinking("c1", true);
     mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
-    mockSteer.mockResolvedValue(undefined);
+    mockSteer.mockReturnValue(
+      steerRefused("the session is still loading its history — send this again in a moment"),
+    );
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 0);
+    // The action carries error:false, so the send-error face is the ONE
+    // failure surface, and it speaks the server's own words.
+    expect(mockReportSendRefused).toHaveBeenCalledWith(
+      "the session is still loading its history — send this again in a moment",
+    );
+  });
+});
+
+// The steer refusal class the server stamps reason no_turn on: the chat was
+// idle by the time the steer landed — stale thinking, a shell holder, or the
+// turn ending mid-flight. The message should have been a prompt, so submit
+// converts it into one instead of surfacing a failure the user must redo.
+describe("a steer refused with no_turn", () => {
+  const noTurn = (): { outcome: Promise<unknown> } =>
+    steerRefused("nothing is running to steer — send this as a prompt instead", "no_turn");
+
+  it("is retried as the prompt it should have been", async () => {
+    resetStore("c1");
+    setThinking("c1", true); // stale: the server knows better
+    mockSteer.mockReturnValue(noTurn());
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    expect(await submitPrompt("c1", "hello")).toBe("sent");
+    expect(mockSteer).toHaveBeenCalledTimes(1);
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    // The conversion is silent: nothing failed from the user's seat.
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    expect(mockReportSendRefused).not.toHaveBeenCalled();
+  });
+
+  it("rides the double race: the retry prompt meets a NEW turn and steers into it", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    mockSteer.mockReturnValueOnce(noTurn()).mockReturnValueOnce(steerOk());
+    mockSendPromptTo.mockResolvedValue("queued");
+
+    expect(await submitPrompt("c1", "hello")).toBe("steered");
+    expect(mockSteer).toHaveBeenCalledTimes(2);
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops converting once the budget is spent, at the error face", async () => {
+    // A chat flipping between busy and idle faster than the round trips must
+    // terminate, not loop: steer → no turn → prompt → 409 busy → steer → no
+    // turn again is the budget's worth, and the attempt ends as a failure the
+    // next Send retries.
+    resetStore("c1");
+    setThinking("c1", true);
+    mockSteer.mockReturnValue(noTurn());
+    mockSendPromptTo.mockResolvedValue("queued");
+
+    expect(await submitPrompt("c1", "hello")).toBe("failed");
+    expect(mockSteer).toHaveBeenCalledTimes(2);
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    expect(mockReportSendRefused).toHaveBeenCalled();
+  });
+
+  it("converts on the idle path too: prompt → 409 → steer → no turn → prompt", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValueOnce("queued").mockResolvedValueOnce("sent");
+    mockSteer.mockReturnValue(noTurn());
+
+    expect(await submitPrompt("c1", "hello")).toBe("sent");
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(2);
+    expect(mockSteer).toHaveBeenCalledTimes(1);
   });
 });
 

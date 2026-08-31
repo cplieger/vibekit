@@ -14,12 +14,17 @@ import (
 
 // benchDeps is a minimal host double for benchmarking dispatch overhead.
 type benchDeps struct {
-	// primeOpen is what AdmissionHolderSource reports a prime holder for, so a
-	// test can put the chat in the PRIME window a steer must be refused in.
-	primeOpen bool
+	// holder is what AdmissionHolderSource answers, gated by holderOpen — so a
+	// test picks the admission window a steer meets: a prime for that refusal,
+	// a shell, or nothing for an idle chat. newBenchDeps defaults to a held
+	// PROMPT turn, the situation a steer exists for.
+	holder     vibekit.TurnOpenSource
+	holderOpen bool
 }
 
-func newBenchDeps() *benchDeps { return &benchDeps{} }
+func newBenchDeps() *benchDeps {
+	return &benchDeps{holder: vibekit.TurnSourcePrompt, holderOpen: true}
+}
 
 // The store methods are answered directly now: Roles holds ChatStore, so the
 // ChatStore() getter it used to return is gone.
@@ -90,13 +95,9 @@ func (d *benchDeps) SettleTurnOnResponse(context.Context, vibekit.ChatID, vibeki
 
 func (d *benchDeps) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool { return false }
 
-// AdmissionHolderSource reports a prime holder when primeOpen is set, else no
-// holder at all.
+// AdmissionHolderSource reports the configured admission holder.
 func (d *benchDeps) AdmissionHolderSource(vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
-	if d.primeOpen {
-		return vibekit.TurnSourcePrime, true
-	}
-	return 0, false
+	return d.holder, d.holderOpen
 }
 
 func (d *benchDeps) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
