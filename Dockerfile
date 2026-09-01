@@ -144,7 +144,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
 # keys) so no field's content can forge a different field split. This ARG and
 # static-src/package.json's @cplieger/keyenc pin track the same exact version.
 # renovate: datasource=npm depName=@cplieger/keyenc
-ARG CPLIEGER_KEYENC_VERSION=1.0.5
+ARG CPLIEGER_KEYENC_VERSION=1.0.7
 RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
