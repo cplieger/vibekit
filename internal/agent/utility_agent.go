@@ -1,7 +1,7 @@
-// The utility text-generation agent (the first of the utility runtime's
-// two roles; see utility_session.go for the split). UtilityPrompt serves the
-// ambient AI tasks; one text turn at a time (turnMu), which deliberately does
-// NOT extend to the session's stateless RPC reads.
+// Package agent runs the utility text-generation agent (the first of the
+// utility runtime's two roles; see utility_session.go for the split).
+// UtilityPrompt serves ambient AI tasks, one text turn at a time (turnMu),
+// which does not extend to the session's stateless RPC reads.
 package agent
 
 import (
