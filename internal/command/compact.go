@@ -1,7 +1,6 @@
-// Package command: compaction via KAS's native `_kiro/session/compact` verb.
-// Typed `/compact` performs no compaction — nothing inside KAS parses it, so
-// the text reaches the model as prose and it answers as if compaction had
-// happened. This intercepts before send and calls the real verb instead.
+// Package command intercepts `/compact` before it reaches KAS, since typed
+// slash commands are not parsed there and would otherwise reach the model
+// as prose. It calls the real `_kiro/session/compact` verb instead.
 package command
 
 import (

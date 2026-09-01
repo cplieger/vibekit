@@ -47,7 +47,9 @@ const (
 	methodKiroOpenExternalURL = "_kiro/openExternalUrl"  // A→C request: {url} — open a URL for the user (MCP OAuth); needs the openExternalUrl client capability
 	methodKiroGetUsage        = "_kiro/account/getUsage" // C→A request: account/subscription usage; needs profileArn in the getAccessToken reply
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
-) // KAS's own filesystem verbs, A→C, each gated on
+)
+
+// KAS's own filesystem verbs, A→C, each gated on
 // `clientCapabilities.fs._meta.kiro.<name> === true`. NOT declaring one does
 // not remove the capability: the else-branch is KAS's in-process
 // NodeFileSystem, so an undeclared verb is the same operation with no vibekit
