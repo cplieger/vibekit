@@ -2291,7 +2291,7 @@ export interface UserInputSubOption {
 
 /**
  * WhoamiResponse is the typed response from /api/whoami; see the block
- * comment above for the full field semantics and security rationale.
+ * comment above for field semantics.
  */
 export interface WhoamiResponse {
   email?: string;
