@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cplieger/httpx/v5 v5.0.2 // indirect
-	github.com/cplieger/scheduler/v4 v4.0.1 // indirect
+	github.com/cplieger/scheduler/v4 v4.0.2 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
