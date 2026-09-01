@@ -47,26 +47,18 @@ type agentTerminal struct {
 	done    chan struct{}
 	output  *byteRing
 	// ansi carries SGR state and any incomplete escape across read boundaries,
-	// so a colour opened in one 4 KB chunk still applies in the next and a
-	// sequence split by the boundary never leaks bytes into the text. It also
-	// owns the running UTF-16 offset the wire reports as a chunk's base, which
-	// is why nothing here keeps a second count of the same quantity. Used only
+	// so a colour opened in one chunk still applies in the next. It also owns
+	// the running UTF-16 offset the wire reports as a chunk's base. Used only
 	// for the LIVE stream; the durable copy is re-parsed from the ring.
 	//
-	// Owned by the pump goroutine alone. Read or write it from anywhere else
-	// and two streams' styles bleed together.
+	// Owned by the pump goroutine alone; touching it elsewhere lets two
+	// streams' styles bleed together.
 	ansi   *ansitext.Parser
 	chatID vibekit.ChatID
 	signal string
-	// epoch is the turn that spawned this terminal — the chat's open turn at
-	// create time. What lets an interrupt kill the turn's own processes without
+	// epoch is the turn that spawned this terminal (the chat's open turn at
+	// create time), so an interrupt can kill the turn's own processes without
 	// touching a background command an earlier turn left running.
-	//
-	// The TURN's own identity, not a parallel count. It was `turnSeq`, an ordinal
-	// this type kept for itself and advanced from two Runtime wrappers on the
-	// prompt path, so no turn the wire started ever advanced it: an
-	// agent-initiated turn's terminals shared an ordinal with the NEXT prompted
-	// turn, and cancelling that turn killed the earlier one's processes.
 	epoch    vibekit.TurnEpoch
 	exitCode int
 	mu       sync.Mutex
@@ -196,34 +188,18 @@ type agentTerminals struct {
 	terms    map[string]*agentTerminal
 	byChatID map[vibekit.ChatID][]string // chatID → []terminalID
 	// retired holds the RAW output of terminals no longer in terms, keyed by
-	// the same id, because a terminal's output outlives the terminal.
-	//
-	// KAS releases a terminal as soon as it has read the output, and only THEN
-	// reports the tool call's result: measured on a live run, release landed 3ms
-	// after create (23:42:13.344 → .347) while the `completed` tool_call_update
-	// came after the terminal_output frame. So a design that looks the terminal
-	// up at completion is racing a lifetime it does not control, and loses every
-	// time — the tool call persisted an empty output, which is the defect the
-	// adoption path was added to fix.
-	//
-	// Keyed by terminal id rather than tool-call id on purpose: the tool call
-	// learns its terminal id LATER still, so the id the pump has is the only one
-	// available when the bytes arrive.
-	//
-	// Bounded by the turn: every record is evicted at the turn boundary, and
-	// each holds at most one ring (64 KiB), so the peak is the turn's terminal
-	// count times that.
+	// the same id: a terminal's output outlives the terminal, since KAS
+	// releases it (and reports the tool call's result) within milliseconds,
+	// well before the command finishes. Keyed by terminal id rather than
+	// tool-call id because the tool call learns its terminal id LATER still.
+	// Bounded by the turn: evicted at the turn boundary, each holding at
+	// most one 64 KiB ring.
 	retired map[string]retiredOutput
-	// currentEpoch reads which turn a chat's activity belongs to right now, so a
-	// terminal is stamped with the LIFECYCLE's identity rather than with a count
-	// this type keeps in parallel. A function rather than the registry, because
-	// reading one epoch is the only thing this type wants from the turn
-	// lifecycle — and because the coordinator that owns that lifecycle is built
-	// before this type, so the dependency runs one way.
+	// currentEpoch reads which turn a chat's activity belongs to right now,
+	// so a terminal is stamped with the lifecycle's identity rather than a
+	// count kept in parallel.
 	currentEpoch func(vibekit.ChatID) (vibekit.TurnEpoch, bool)
-	// broadcast publishes a terminal's lifecycle and output frames. A function
-	// rather than the event bus, because emitting is the only thing this type
-	// wants from it and a one-field dependency stated as a func cannot grow.
+	// broadcast publishes a terminal's lifecycle and output frames.
 	broadcast func(context.Context, vibekit.ServerEvent)
 	// bridges is the per-chat bridge registry, for answering the ACP request a
 	// terminal operation arrived on.
@@ -234,27 +210,20 @@ type agentTerminals struct {
 	mu        sync.Mutex
 }
 
-// retiredOutput is what survives a terminal: its raw bytes and enough identity
-// to evict the record at the right moment.
+// retiredOutput is what survives a terminal: its raw bytes and enough
+// identity to evict the record at the right moment.
 //
-// Raw rather than rendered, because the rendered form is DERIVABLE and the ring
-// already bounds it. Keeping a second accumulator would mean a second buffer, a
-// second cap, and span offsets to rebase whenever that cap dropped bytes; the
-// ring already keeps a bounded tail, so adoption parses it on demand instead.
+// Raw rather than rendered: the ring already bounds it, so a second
+// accumulator would mean a second buffer and cap to keep in step.
 //
-// A record is kept even when raw is EMPTY, and that is deliberate: the record's
-// existence is the answer to "did this terminal ever run", which is a different
-// question from "what did it print". Dropping the empty ones makes a silent
-// command (`mkdir -p`, `chmod`, a passing test runner with -q) indistinguishable
-// from a lost record, and the adoption path logs a warning on the latter — so
-// every silent command would file a false alarm and the signal would be worth
-// nothing.
+// Kept even when raw is EMPTY: existence answers "did this terminal ever
+// run", a different question from "what did it print" — dropping empty
+// records would make a silent command indistinguishable from a lost one.
 type retiredOutput struct {
 	raw    string
 	chatID vibekit.ChatID
 	// epoch is the turn that spawned the terminal, or zero when the chat had no
-	// turn open at the time. A zero is evicted by the chat's NEXT turn close
-	// whichever turn that is, so an unowned record is still bounded.
+	// turn open at the time. A zero is evicted by the chat's NEXT turn close.
 	epoch vibekit.TurnEpoch
 }
 
@@ -307,19 +276,16 @@ func (at *agentTerminals) peekRetired(id string) (string, bool) {
 
 // CloseTurn evicts the output records of the turn that just closed.
 //
-// Called by the WINNING closer, from inside finalizeTurn, and that is the whole
-// point of the change: the ordinal this replaced was advanced by two Runtime
-// wrappers on the prompt path, so a turn the wire started — an auto-wake, an
-// agent-initiated turn, a turn closed by bridge death or a model switch — never
-// advanced it at all. Its terminals stayed attributed to a turn that had ended,
-// which is what let a later cancel kill them.
+// Called by the winning closer, so a turn the wire started (an auto-wake, an
+// agent-initiated turn, a bridge death, a model switch) is attributed too —
+// otherwise their terminals would stay attached to a turn that had already
+// ended, letting a later cancel kill them.
 //
-// A turn ends only after every tool call in it has settled, so any record still
-// here has had its chance to be adopted; holding it longer would grow with the
-// session. Epochs are monotonic per chat, so `<=` also collects a record left
-// behind by an earlier turn that never closed, and a ZERO epoch (a terminal
-// created while the chat had no turn open) is collected by whichever turn closes
-// next — an unowned record must still be bounded.
+// A turn ends only after every tool call in it has settled, so any record
+// still here has had its chance to be adopted. Epochs are monotonic per
+// chat, so `<=` also collects a record left behind by an earlier turn that
+// never closed, and a ZERO epoch (created while idle) is collected by
+// whichever turn closes next.
 func (at *agentTerminals) CloseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
 	at.mu.Lock()
 	for id, rec := range at.retired {
@@ -343,15 +309,10 @@ func (at *agentTerminals) turnEpochOf(chatID vibekit.ChatID) vibekit.TurnEpoch {
 }
 
 // KillForTurn kills the terminals the chat's CURRENT turn created and leaves
-// every other chat process alone. The interrupt gate (§5.6 R3): turn cancel used
-// to tear down nothing — `KillForChat`'s only callers are the delete/close paths
-// — so cancelling mid-`npm test` left the command running, owned by nobody,
-// streaming into a turn that no longer existed. Scoped to the turn rather than
-// the chat deliberately: KillForChat here would also kill a background command an
-// EARLIER turn started on purpose.
-//
-// An idle chat kills nothing, and a terminal that was created while the chat was
-// idle (epoch zero) is never this turn's to kill.
+// every other chat process alone. Scoped to the turn rather than the whole
+// chat, so it does not also kill a background command an earlier turn
+// started on purpose. An idle chat kills nothing, and a terminal created
+// while the chat was idle (epoch zero) is never this turn's to kill.
 func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
 	cur := at.turnEpochOf(chatID)
 	if cur == 0 {
@@ -520,32 +481,17 @@ var agentShell = sync.OnceValue(func() string {
 
 // agentCommand builds the process for one terminal/create.
 //
-// ACP's CreateTerminalRequest is `{command, args?}` and KAS leaves `args`
-// UNSET, putting the whole command line in `command` — measured against
-// kiro-cli 2.18.0 (the KAS bundle's request schema marks args optional, and
-// every observed frame carried `"args":null` with the full line in `command`).
-// Handing that straight to exec.Command makes the ENTIRE string the executable
-// path, so every agent command containing a space died with
-// `exec: "echo \"hello\"": executable file not found in $PATH`. Only a bare
-// binary name or a bare path worked, which made the agent's job close to
-// impossible: no flags, no arguments, no pipelines, no redirection.
+// ACP's CreateTerminalRequest is `{command, args?}`, and KAS leaves `args`
+// UNSET, putting the whole command line in `command` (measured against
+// kiro-cli 2.18.0). So an ABSENT `args` means `command` is a command line
+// and runs through a shell; a PRESENT `args` — including an empty one —
+// means the sender already split the argv and is exec'd directly. Presence,
+// not length, decides: a length test would shell a bare program name whose
+// name happens to contain a space.
 //
-// So an ABSENT `args` means `command` is a command line and runs through a
-// shell. A PRESENT `args` — including an empty one — means the sender already
-// split the argv and is exec'd directly: the schema permits it, this client
-// honours it, and neither reading has to guess which one it got.
-//
-// Presence, not length. `{"command":"prog","args":[]}` says "exec prog with no
-// arguments", which is a different statement from omitting the field, and a
-// length test collapses them: a program whose name contains a space or a shell
-// metacharacter would be handed to bash despite the sender having said it was a
-// bare program name. Hence the pointer at the decode site.
-//
-// The shell branch does not widen what the agent may run. Authorization is
-// kiro-cli's Cedar policy, which decides on the command LINE the agent asked
-// for; the environment it runs with is screened separately in create, and
-// that screen is what stops a variable redirecting the approved command into
-// something else.
+// The shell branch does not widen what the agent may run: authorization is
+// kiro-cli's Cedar policy over the command LINE, and the environment is
+// screened separately in create.
 func agentCommand(ctx context.Context, command string, args *[]string) *exec.Cmd {
 	if args != nil {
 		return exec.CommandContext(ctx, command, *args...) // #nosec G204 -- agent-controlled
@@ -665,21 +611,12 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.Chat
 	term := newAgentTerminal(cmd, chatID, limit)
 
 	// One CALLER-OWNED pipe for both streams, not Cmd.StdoutPipe/StderrPipe.
-	//
-	// os/exec closes the pipes it hands out inside Wait, which is the hazard
-	// Cmd.StdoutPipe documents ("it is incorrect to call Wait before all reads
-	// from the pipe have completed"). Owning the read end means Wait cannot
-	// truncate the pump, so the ordering constraint disappears instead of being
-	// managed: Wait observes exit, and the drain is then bounded from THAT
-	// moment. The earlier shape waited for the drain BEFORE Wait, which put the
-	// grace clock on the wrong side of the process — any command running longer
-	// than the grace exhausted it and fell straight back into the race.
-	//
-	// Merging both streams into one pipe also removes the interleaving question:
-	// stdout and stderr arrive in the order the process wrote them, which is
-	// what a terminal shows. io.MultiReader did not preserve write order — it
-	// drained stdout to EOF first, so a command's stderr landed after all of its
-	// stdout however the two were actually produced.
+	// os/exec closes the pipes it hands out inside Wait ("it is incorrect to
+	// call Wait before all reads from the pipe have completed"), so owning the
+	// read end lets Wait observe exit while the drain is bounded from that
+	// moment rather than racing it. Merging both streams into one pipe also
+	// preserves write order between stdout and stderr — io.MultiReader does
+	// not, since it drains stdout to EOF first.
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		stop()
@@ -811,33 +748,22 @@ func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID 
 }
 
 // emitter returns the function that turns one raw chunk into what the
-// TRANSCRIPT renders: hidden Unicode stripped, escape sequences parsed off into
-// style spans, plain text out.
+// TRANSCRIPT renders: hidden Unicode stripped, escape sequences parsed off
+// into style spans, plain text out. Parsing server-side is what lets the
+// client paint spans with textContent instead of building HTML from bytes.
 //
-// Parsing server-side is what lets the client paint spans with textContent
-// instead of building HTML from these bytes.
+// SanitizeUnicode, NOT SanitizeOutput. SanitizeOutput strips ANSI BEFORE the
+// parser can see it, so spans come out empty and output renders unstyled
+// (measured: `ESC[90m1:47AM…` produces spans=0 with SanitizeOutput, spans=2
+// without; TestTerminalEmitter_* pins it). The escape-stripping property is
+// preserved by ORDER instead: hidden Unicode goes first so nothing can hide
+// a sequence behind a zero-width character, the parser consumes SGR, and
+// ansitext guarantees escape-free output text on its own.
 //
-// SanitizeUnicode, NOT SanitizeOutput. SanitizeOutput is
-// SanitizeUnicode(StripANSI(s)) iterated to a fixed point, so calling it here
-// deletes every escape sequence BEFORE the parser can see one: spans come out
-// empty on every chunk and agent output renders entirely unstyled. Measured
-// through this exact path — `ESC[90m1:47AM…` produces spans=0 with
-// SanitizeOutput and spans=2 without. TestTerminalEmitter_* pins it.
-//
-// The security property SanitizeOutput's iteration provided is preserved by the
-// ORDER rather than by stripping. Hidden Unicode goes first, so nothing can hide
-// a sequence behind a zero-width character; the parser then consumes SGR and
-// drops every other escape family StripANSI matched; and ansitext guarantees an
-// escape-free output text (its release paths neutralize a stray ESC, asserted by
-// FuzzParse). So the text reaching the chat file carries no residual escape,
-// which is what the strip was for.
-//
-// There is deliberately no secret-masking step. This app deleted its redaction
-// layer on purpose — chat logs, run history and diagnostics are served as
-// kiro-cli produced them — so adding one here would reintroduce a layer the
-// rest of the app does not have, on one surface, which is worse than not having
-// it: it would make the transcript disagree with the tool card's own content
-// blocks about what the command printed.
+// No secret-masking step here: this app deleted its redaction layer on
+// purpose (logs are served as kiro-cli produced them), and adding one back
+// on this one surface would make the transcript disagree with the tool
+// card's own content about what the command printed.
 func (at *agentTerminals) emitter(
 	ctx context.Context, term *agentTerminal, termID string, chatID vibekit.ChatID,
 ) func(string) {
@@ -920,17 +846,15 @@ func (at *agentTerminals) awaitExit(
 	// inside Wait, so with Cmd.StdoutPipe this order would truncate the pump.
 	err := cmd.Wait()
 
-	// Now bound the drain from the moment the process actually exited. The bound
-	// is needed because EOF is not guaranteed: a command that leaves a
-	// grandchild holding the write end (`some-daemon &`) keeps the pipe open
-	// after the head exits. Closing our read end is what releases the pump in
-	// that case — a plain timeout would leave the goroutine blocked on Read for
-	// as long as the grandchild lived.
+	// Bound the drain from the moment the process actually exited: EOF is not
+	// guaranteed, since a command that leaves a grandchild holding the write
+	// end (`some-daemon &`) keeps the pipe open after the head exits, and
+	// closing our read end is what releases the pump then.
 	//
-	// terminal_exited must not be observable before the output it describes, so
-	// the broadcast happens after this: measured, a `whoami` sent its exit as
-	// event 365 and its own "root\n" as 368, and the client painted the exit
-	// footer above the line that produced it.
+	// terminal_exited must not be observable before the output it describes:
+	// measured, a `whoami` sent its exit as event 365 and its own "root\n" as
+	// 368, and the client painted the exit footer above the line that
+	// produced it.
 	select {
 	case <-drained:
 	case <-time.After(terminalDrainGrace):
@@ -1098,23 +1022,18 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID
 }
 
 // Output returns an agent terminal's output for the translate layer to
-// persist onto the owning tool call. See translate.TerminalReader for why the
-// tool call needs it.
+// persist onto the owning tool call. See translate.TerminalReader.
 //
-// It reads the RAW ring and renders on demand rather than returning a
-// pre-accumulated copy. Three things fall out of that. The rendering is
-// derivable, so there is no second buffer to keep in step and no second cap: the
-// ring already bounds the bytes and keeps the tail. It works for a terminal that
-// has already been released, because `retire` kept those bytes under the same id
-// — which matters because KAS releases before it reports the result, so the
-// live registry is empty by the time this is called. And the sanitize-then-parse
-// order here is the same one the live pump uses, so the persisted text and the
+// It reads the RAW ring and renders on demand: the rendering is derivable so
+// there is no second buffer to keep in step; it works for an already-released
+// terminal because `retire` kept those bytes under the same id (KAS releases
+// before it reports the result, so the live registry is empty by then); and
+// the sanitize-then-parse order matches the live pump, so persisted and
 // streamed text cannot disagree about what an escape meant.
 //
-// ok reports whether the terminal is KNOWN, not whether it printed anything. A
-// registered terminal with no output answers ("", nil, true), because a silent
-// command is a different fact from a lost record and only the second one is
-// worth warning about.
+// ok reports whether the terminal is KNOWN, not whether it printed anything:
+// a silent command answers ("", nil, true), a different fact from a lost
+// record.
 func (at *agentTerminals) Output(terminalID string) (string, []vibekit.TextSpan, bool) {
 	at.mu.Lock()
 	term, live := at.terms[terminalID]

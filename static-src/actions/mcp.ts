@@ -47,13 +47,9 @@ function readValidationFields(body: unknown): ValidationField[] {
   return out;
 }
 
-/** Recover the per-field breakdown a 400 carries, onto the error's `cause`.
- *
- *  The dispatch still FAILS — a rejected record is not a success, so the modal
- *  must stay open with the form as the user left it — and `message` keeps the
- *  server's joined text so a caller that only reads that renders exactly what it
- *  did before. `cause` is the addition, and it is what lets the form mark three
- *  inputs instead of printing three sentences above one box. */
+/** Recovers the per-field breakdown a 400 carries, onto the error's `cause`.
+ *  The dispatch still fails — the modal stays open with the form as left —
+ *  but `cause` lets the form mark specific inputs instead of one sentence. */
 function decodeValidationError<T>(info: ApiErrorInfo): ApiErrorDecision<T> | undefined {
   if (info.status !== 400) {
     return undefined;
@@ -68,9 +64,8 @@ function decodeValidationError<T>(info: ApiErrorInfo): ApiErrorDecision<T> | und
   };
 }
 
-/** Read the field breakdown back off a failed dispatch's error. Returns an empty
- *  array for every other failure, which is what keeps a non-validation 400 (and
- *  a network death) on the single-message path. */
+/** Reads the field breakdown back off a failed dispatch's error. Empty for
+ *  every other failure. */
 export function validationFieldsOf(err: { cause?: unknown } | undefined): ValidationField[] {
   const raw = err?.cause;
   if (!Array.isArray(raw)) {
@@ -158,9 +153,8 @@ interface DeleteArgs {
   id: string;
 }
 
-// No auto-retry and no manual retry: a timed-out DELETE may have
-// succeeded server-side; retrying would hit 404 and trigger a
-// misleading rollback (re-inserting an already-deleted entry).
+// No auto-retry: a timed-out DELETE may have succeeded server-side; a retry
+// would hit 404 and trigger a misleading rollback.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
 export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
   name: "mcp.delete_server",
@@ -221,22 +215,19 @@ export const saveServer = apiAction<SaveArgs, Server>({
 
 // --- mcp.import_servers ---
 //
-// Connect every server of a pasted README block. The server owns the
-// translation from the publisher's shape (see internal/mcp/paste.go), so this
-// posts the parsed JSON unchanged: a second translator here would be a second
-// copy of the same rules, and the one that names an unknown key has to be the
-// one at the decode boundary.
+// Connects every server of a pasted README block. The server owns the
+// translation from the publisher's shape (internal/mcp/paste.go); this
+// posts the parsed JSON unchanged.
 
-/** What one entry of a pasted block did. There is no "updated": an entry naming
- *  a configured server either matches its spec or fails the paste. */
+/** What one entry of a pasted block did. No "updated": an entry naming a
+ *  configured server either matches its spec or fails the paste. */
 interface ImportResult {
   name: string;
   outcome: "created" | "unchanged";
 }
 
-/** Per-entry outcomes plus what the translation had to say about keys vibekit
- *  recognises and cannot store, so an accepted `timeout` does not read as a
- *  silently-dropped field. */
+/** Per-entry outcomes plus notes on keys vibekit recognises but cannot
+ *  store. */
 export interface ImportServersResult {
   results: ImportResult[];
   notes?: string[];
@@ -254,13 +245,11 @@ export const importServers = apiAction<Record<string, unknown>, ImportServersRes
   }),
   decodeError: decodeValidationError,
   success: (_args, res) => summariseImport(res),
-  // The panel renders the failure inline beside the textarea the user is fixing,
-  // which is where they are looking; a toast would put it somewhere else.
+  // Rendered inline beside the textarea being fixed, not as a toast.
   error: false,
 });
 
-/** One sentence naming what landed. Exported for its test: the wording is the
- *  only report a user gets that a re-paste was a no-op rather than a rewrite. */
+/** One sentence naming what landed. Exported for its test. */
 export function summariseImport(res: ImportServersResult | null): string {
   const results = res?.results ?? [];
   const created = results.filter((r) => r.outcome === "created").length;
@@ -291,12 +280,9 @@ interface SearchRegistryArgs {
   q: string;
 }
 
-// No automatic retry, alone among the MCP actions. The registry refuses
-// connections after a burst, so `retryNetwork` + RETRY_STANDARD turned one slow
-// query into three attempts against the endpoint that was already refusing, and
-// made the user wait out every upstream timeout in series before the panel said
-// anything. The panel's own Retry button is the retry, and typing one more
-// character is the other one.
+// No automatic retry, alone among the MCP actions: the registry refuses
+// connections after a burst, so a retry would wait out every upstream
+// timeout in series. The panel's own Retry button covers it.
 export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult>({
   name: "mcp.search_registry",
   dedupe: (args) => args.q,

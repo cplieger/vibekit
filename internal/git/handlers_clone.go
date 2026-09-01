@@ -48,10 +48,6 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out, err := h.clone(cloneCtx, body.URL)
 	if err != nil {
-		// handleReclone logs its clone failure and this handler did not,
-		// so a failed clone left an "it started" line and nothing saying
-		// why it stopped: the reason existed only in the HTTP response
-		// body, which the browser discards.
 		slog.Error("git clone: failed", "url", scrubAuth(body.URL), "error", err, "out", scrubAuth(out))
 	}
 	writeCmdResult(w, out, err)
@@ -183,14 +179,12 @@ func adoptDestination(ctx context.Context, dir, remote string) (string, error) {
 // handleReclone deletes the local copy of `repo` and re-clones it from its
 // previously-configured origin URL. One-click recovery for divergent
 // branches, detached HEAD, merge conflicts, or any other local-only
-// mess the user doesn't want to fix by hand. If `repo` is empty or ".",
-// we reject it: the workspace root isn't necessarily a git repo and
-// accidentally nuking it would be a bad day.
+// mess the user doesn't want to fix by hand. Rejects `repo` empty or ".":
+// the workspace root isn't necessarily a git repo and accidentally
+// nuking it would be a bad day.
 //
 // Caveat: this is a destructive operation with an atomicity gap — if
-// the clone fails after os.RemoveAll, the user's repo is gone. A
-// rename-then-clone-then-delete variant that restores the old tree
-// on clone failure is tracked in .review/TODO.md.
+// the clone fails after os.RemoveAll, the user's repo is gone.
 func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return
@@ -230,10 +224,10 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
-	// Nuke and reclone in place. We delete after resolving the URL so a
-	// partial delete doesn't strand the repo in an unreclonable state. Through the
-	// pinned parent, the same as handleRemove: this is the other destructive site,
-	// and removeRepoDir carries why a name is not safe to unlink.
+	// Delete after resolving the URL so a partial delete doesn't strand
+	// the repo in an unreclonable state. Through the pinned parent, same
+	// as handleRemove — see removeRepoDir for why a name is not safe to
+	// unlink directly.
 	if rmErr := h.removeRepoDir(dir); rmErr != nil {
 		if errors.Is(rmErr, ErrUnsafeRepoPath) {
 			slog.Warn("git reclone: refused", "repo", body.Repo, "error", rmErr)

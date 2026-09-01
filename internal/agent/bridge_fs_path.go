@@ -40,12 +40,11 @@ var errNoWorkRoot = errors.New("workspace is not open for confined access")
 // resolveInsideWorkDir confines p to the workspace. On the type that holds
 // workDir, so a collaborator needing it does not need a *Runtime.
 //
-// It answers a LEXICAL question — "does this name lie inside the workspace" —
-// and answering it is not the same as performing the operation inside the
-// workspace. Every handler that goes on to touch the filesystem uses
-// confineInWorkDir instead, which pairs the answer with the handle that makes it
-// enforceable. This entry point survives for the callers that need only the
-// verdict and the absolute path.
+// Answers a LEXICAL question — "does this name lie inside the workspace" —
+// which is not the same as performing the operation inside the workspace.
+// Every handler that touches the filesystem uses confineInWorkDir instead,
+// which pairs the answer with the handle that makes it enforceable. This entry
+// point survives for callers that need only the verdict and the absolute path.
 func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 	return workspace.ResolveInsideAbs(lt.workDir, p)
 }
@@ -53,34 +52,18 @@ func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 // confineInWorkDir resolves p inside the workspace and returns the workspace
 // root together with the root-relative name that addresses p through it.
 //
-// This is the whole fix for the check-then-act the resolver used to leave open.
-// ResolveInsideAbs is one lexical evaluation: it calls EvalSymlinks, checks
-// containment, and hands back an absolute path. Every operation the handlers
-// then performed was an AMBIENT os call on that path, so the components it had
-// verified were re-resolved by the kernel with no boundary attached — and the
-// requester of these handlers is the agent, which has write access to the
-// workspace and can rename an intermediate directory into a symlink between the
-// two. syscall.O_NOFOLLOW did not close it either: it guards only the FINAL
-// component, so a swapped ANCESTOR redirected the write regardless.
+// This closes the check-then-act window a lexical-only resolve leaves open:
+// the agent has write access to the workspace and can swap an intermediate
+// directory for a symlink between the verdict and the operation, so naming
+// the operation through lt.workRoot is what re-resolves every path component
+// on each op. Residual: a symlink that stays INSIDE the workspace is still
+// followed, so a lost race can land on a different in-workspace file — the
+// delete path descends component by component instead
+// (atomicfile.OpenParentInRoot), because that is the one place the race is
+// unrecoverable.
 //
-// Naming the operation through lt.workRoot closes it, because the kernel
-// re-resolves every component of the name on each operation and refuses any
-// component that leaves the root. The residual, stated because os.Root does not
-// remove it: a symlink that stays INSIDE the workspace is still followed, so a
-// lost race can land the operation on a different in-workspace file. The delete
-// path — the only one where that is unrecoverable — descends component by
-// component instead (atomicfile.OpenParentInRoot), which refuses a symlink
-// component outright. os.Root cannot be asked for that refusal: it ORs
-// O_NOFOLLOW in itself and then re-resolves the link on the resulting ELOOP, so
-// a caller-supplied O_NOFOLLOW is silently ignored (measured on go1.27.0,
-// src/os/root_unix.go:85-101).
-//
-// The returned rel is also what the agent-ignore filter matches on, and that is
-// deliberate: it makes the gate's input the same string the operation is named
-// by. It used to be derived separately, with a fail-OPEN branch if the
-// derivation failed — the read went ahead unfiltered. There is no such branch
-// now, because a name the operation cannot be expressed in is a name the
-// operation does not run on.
+// rel is also what the agent-ignore filter matches on, so the gate's input
+// is the same string the operation is named by.
 func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 	if lt.workRoot == nil {
 		return nil, "", errNoWorkRoot

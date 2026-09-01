@@ -8,10 +8,6 @@
 // container-absolute path ("/workspace/...", "/config/..."), and "/"
 // lists the granted mounts.
 //
-// It was internal/filehandler, which named the KIND of thing it is rather than
-// the job it does — every HTTP package here is a handler, so the only
-// information in that name was already in the import path.
-//
 // Defense layers are documented on paths.go. The handler is the
 // gatekeeper for everything the user can do from the browser; every
 // route that takes a path runs it through resolveOrForbid so that the
@@ -52,19 +48,12 @@ const (
 	// to the client (listing and read responses).
 	respPath = "path"
 
-	// defaultUploadDir is the upload target when the client sends no
-	// "dir". A workspace folder modelled on an OS Downloads folder:
-	// user-managed, with no pruning and no retention policy anywhere in
-	// this app. It does not have to exist — handleUpload's MkdirAll
-	// creates it inside the mount's own os.Root on the first upload, so
-	// nothing else in the app pre-creates it.
-	//
-	// A literal rather than a value derived from KIRO_WORK_DIR, because
-	// the handler holds a longest-first sorted mount list and no notion
-	// of which of those mounts is "the workspace"; an operator who moves
-	// the workspace also has to move this. The client sends the same
-	// string for the composer's drop and paste uploads, and
-	// TestUploadPolicyMatchesClient pins the two spellings together.
+	// defaultUploadDir is the upload target when the client sends no "dir".
+	// A literal rather than a value derived from KIRO_WORK_DIR: the handler
+	// holds a longest-first sorted mount list with no notion of which mount
+	// is "the workspace". The client sends the same string for the
+	// composer's drop and paste uploads; TestUploadPolicyMatchesClient pins
+	// the two spellings together.
 	defaultUploadDir = "/workspace/uploads"
 )
 
@@ -73,12 +62,10 @@ type Handler struct {
 	mounts []mount // sorted longest-dir-first (see openMounts)
 }
 
-// New creates a file handler whose browsable surface is exactly
-// rootDirs. Each granted directory gets its own os.Root, so every file
-// operation is kernel-confined to its mount (TOCTOU-free). A grant
-// that cannot be opened is skipped with a warning — a typo'd
-// VIBEKIT_BROWSE_ROOTS entry must not brick the UI — but zero usable
-// mounts is a hard error.
+// New creates a file handler whose browsable surface is exactly rootDirs.
+// Each granted directory gets its own os.Root (TOCTOU-free). A grant that
+// cannot be opened is skipped with a warning; zero usable mounts is a hard
+// error.
 func New(rootDirs ...string) (*Handler, error) {
 	mounts, errs := openMounts(rootDirs)
 	for _, err := range errs {
@@ -106,11 +93,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // code) and handleFilesAction should not double-write.
 var errHandled = errors.New("handled")
 
-// resolveOrForbid is the common path-resolve prelude: returns the
-// resolved location or writes a 403 and returns (loc{}, false). Logs
-// every rejection at slog.Warn so traversal probes leave a breadcrumb
-// without leaking attacker input beyond the structured JSON-escaped
-// "path" key.
+// resolveOrForbid is the common path-resolve prelude: returns the resolved
+// location or writes a 403 and returns (loc{}, false).
 func (h *Handler) resolveOrForbid(w http.ResponseWriter, reqPath string) (loc, bool) {
 	l, err := h.resolvePath(reqPath)
 	if err != nil {

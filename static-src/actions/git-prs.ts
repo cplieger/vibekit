@@ -18,14 +18,10 @@ interface PRArgs {
 }
 
 /** Args for a PR action pinned to the head commit the row was rendered
- *  from, so the forge refuses to act when the branch moved since. Empty
- *  means the forge reported no head SHA, and the action goes unpinned.
- *
- *  Shared by merge, auto-merge and RE-RUN. The re-run needs it for the same
- *  reason the merge does and not a weaker one: the row's check chip is the
- *  folded state of that one commit, so a re-run resolved from the mutable
- *  branch instead can start CI for a different commit, with whatever
- *  deployment a workflow does behind it. */
+ *  from, so the forge refuses when the branch moved since. Empty means the
+ *  forge reported no head SHA, and the action goes unpinned. Shared by
+ *  merge, auto-merge and re-run — the row's check chip is the folded state
+ *  of that one commit. */
 interface PinnedPRArgs extends PRArgs {
   head_sha: string;
 }

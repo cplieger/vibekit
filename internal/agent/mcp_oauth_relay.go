@@ -2,46 +2,39 @@ package agent
 
 // The MCP OAuth loopback relay.
 //
-// THE DEAD END IT FIXES. KAS owns the whole MCP OAuth flow — discovery, DCR,
-// PKCE, token exchange, refresh — and it binds its OWN redirect listener on
-// `http://localhost:<ephemeral>/oauth/callback` inside the container. vibekit's
-// browser is somewhere else: a phone, a laptop, anything reaching the container
-// over the network. So the provider's 302 sends that browser to ITS OWN
-// localhost, nothing is listening, and the flow dies on a connection-refused
-// page with no recovery path — clicking "Finish sign-in" again just repeats it.
-// For a container reached from another machine that is the NORMAL case, not an
+// KAS owns the whole MCP OAuth flow (discovery, DCR, PKCE, token exchange,
+// refresh) and binds its own redirect listener on
+// `http://localhost:<ephemeral>/oauth/callback` inside the container.
+// vibekit's browser is elsewhere — a phone, a laptop, anything reaching the
+// container over the network — so the provider's 302 sends that browser to
+// its OWN localhost, nothing answers, and the flow dies with no recovery
+// path. For a remotely-reached container that is the normal case, not an
 // edge one.
 //
-// THE SHAPE. The user copies the address bar off the dead page and pastes it
-// here; vibekit validates it and replays the GET to the loopback listener from
-// INSIDE the container, where `127.0.0.1` means what KAS meant by it. KAS's own
-// listener then completes the exchange with the redirect_uri it originally sent
-// (which still matches, because nothing was rewritten), stores the tokens
-// through `_kiro/secret/*`, and connects. One manual step, provider-agnostic,
-// and not one line of KAS's flow is reimplemented.
+// The user copies the address bar off the dead page and pastes it here;
+// vibekit validates it and replays the GET to the loopback listener from
+// INSIDE the container, where `127.0.0.1` means what KAS meant by it. KAS's
+// own listener then completes the exchange with the redirect_uri it
+// originally sent, stores the tokens through `_kiro/secret/*`, and
+// connects. Adopted from KiroCrew's `POST /api/mcp/oauth/relay` (see
+// #kiro-crew-research), including its central rule: request data must
+// never choose a remote host.
 //
-// Adopted from KiroCrew's `POST /api/mcp/oauth/relay` (see #kiro-crew-research),
-// including its central rule: request data must never choose a remote host.
+// Two shapes deliberately not built: rewriting `redirect_uri` to vibekit's
+// own origin (breaks at the token endpoint — RFC 6749 §4.1.3 requires the
+// value used at authorize and at token exchange to match, and KAS still
+// sends its own loopback value there); and terminating the exchange in
+// vibekit (inverts "kiro-cli owns what kiro-cli owns", and secretstore's
+// blobs are opaque by decision).
 //
-// TWO SHAPES DELIBERATELY NOT BUILT.
-//
-//   - Rewriting `redirect_uri` to vibekit's own origin so the callback arrives
-//     with no paste at all. It breaks at the token endpoint: KAS would still
-//     send its own loopback redirect_uri there, and RFC 6749 §4.1.3 requires
-//     that value to match the one used at authorize. Only viable if KAS can be
-//     told a public redirect base, which nothing in this tree shows it can.
-//   - Terminating the exchange in vibekit. That is `kiro-cli owns what kiro-cli
-//     owns` inverted, and internal/secretstore's blobs are opaque by decision.
-//
-// THE TRUST MODEL, stated because this endpoint takes an authorization code on
-// an HTTP surface that carries no auth of its own. The pasted address is
-// UNTRUSTED input; the stored authorization URL is the trust anchor, because
-// KAS wrote it and vibekit only ever kept it verbatim. Everything the relay
-// dials or forwards is checked against that URL rather than taken on the
-// request's word: the dial target comes from the URL's `redirect_uri`, and the
-// `state` must match the URL's `state`. Without that binding this route would be
-// an authorization-code injection lever into KAS's token exchange, which is
-// worse than the dead end it fixes.
+// THE TRUST MODEL. This endpoint takes an authorization code on an HTTP
+// surface with no auth of its own. The pasted address is UNTRUSTED input;
+// the stored authorization URL is the trust anchor, because KAS wrote it
+// and vibekit only ever kept it verbatim. Everything the relay dials or
+// forwards is checked against that URL rather than taken on the request's
+// word: the dial target comes from the URL's `redirect_uri`, and `state`
+// must match the URL's `state`. Without that binding this route would be
+// an authorization-code injection lever into KAS's token exchange.
 
 import (
 	"context"
@@ -63,38 +56,33 @@ import (
 )
 
 const (
-	// relayURLCap bounds the pasted address. An authorization code is a few
-	// hundred bytes at the outside; 4 KiB leaves room for a long code plus
-	// `state`, `scope` and `iss` without accepting a payload.
+	// relayURLCap bounds the pasted address; an authorization code is a
+	// few hundred bytes at the outside.
 	relayURLCap = 4096
 
-	// relayMinPort refuses a privileged port. KAS binds an EPHEMERAL port for
-	// its redirect listener, so nothing legitimate lands below 1024, and the
-	// floor keeps a pasted address from aiming the dial at a low-numbered
-	// service that happens to share the loopback interface.
+	// relayMinPort refuses a privileged port. KAS binds an EPHEMERAL port
+	// for its redirect listener, so nothing legitimate lands below 1024.
 	relayMinPort = 1024
 
-	// relayDialTimeout and relayTotalTimeout bound the replay. The listener is
-	// in this container and either answers immediately or is gone, so both are
-	// short: a hung dial must not hold the request open.
+	// relayDialTimeout and relayTotalTimeout bound the replay: the
+	// listener is in this container and either answers immediately or is
+	// gone.
 	relayDialTimeout  = 3 * time.Second
 	relayTotalTimeout = 8 * time.Second
 
-	// relayBodyCap bounds the response we read and discard. KAS answers with a
-	// small "you can close this window" page; only the status line is used.
+	// relayBodyCap bounds the response we read and discard.
 	relayBodyCap = 64 << 10
 )
 
-// relayQueryKeys is the allowlist of query parameters forwarded to the loopback
-// listener. `code` and `state` are the flow; `scope` is RFC 6749 §4.1.2, `iss`
-// is RFC 9207 issuer identification, `session_state` is OIDC session
-// management. Anything else is refused rather than forwarded, because this
-// request is replayed verbatim into KAS's own handler and an unrecognised
-// parameter is a parameter neither side vouched for.
+// relayQueryKeys is the allowlist of query parameters forwarded to the
+// loopback listener: `code`/`state` are the flow, `scope` is RFC 6749
+// §4.1.2, `iss` is RFC 9207 issuer identification, `session_state` is OIDC
+// session management. Anything else is refused, since this request is
+// replayed verbatim into KAS's own handler and an unrecognised parameter is
+// one neither side vouched for.
 //
-// An error redirect (`error`, `error_description`) is deliberately absent: it
-// carries no code, so there is nothing to relay, and the refusal below names
-// the missing code rather than pretending the relay could help.
+// An error redirect (`error`, `error_description`) is deliberately absent:
+// it carries no code, so there is nothing to relay.
 var relayQueryKeys = map[string]struct{}{
 	"code":          {},
 	"state":         {},
@@ -124,32 +112,18 @@ var (
 	errRelayStateDrift  = errors.New("that address belongs to a different sign-in")
 )
 
-// relayClientFor returns the client for ONE validated callback target, pinned
-// to that target's port. Built per attempt rather than once at init: the
-// destination is not known until a callback is pasted and checked, and an
-// allowlist of exactly the port about to be dialed is a stronger check than any
-// standing policy a package-level client could carry. ssrf offers no way to
-// lift its port restriction, which is the library being right — the earlier
-// shape here switched the port check off entirely and leaned on
-// parseLoopbackCallback as the only guard.
+// relayClientFor returns the client for ONE validated callback target,
+// pinned to that target's port. Built per attempt rather than once at
+// init: the destination is not known until a callback is pasted and
+// checked.
 //
-// The cost this pays is a fresh dialer per paste, which is the right trade: a
-// paste is a rare human action, and keep-alives are disabled because this is
-// one GET to a listener that stops as soon as it answers, so there is no pooled
-// connection worth preserving between attempts.
-//
-// READ THE OPTIONS BEFORE ASSUMING THE DEFAULTS. `ssrf.SafeTransport`'s default
-// posture is the opposite of what this needs — it allows only PUBLIC addresses
-// and only port 443 — and both are replaced here. It is used anyway, rather
-// than hand-rolling a loopback check, for the one guarantee a hand-roll gets
-// wrong: the library re-validates the ACTUALLY-CONNECTED address in a dialer
-// Control hook, which it owns and a caller cannot supply. That closes DNS
-// rebinding, and rebinding is live here because `localhost` is an accepted host
-// and is a DNS name — a resolver answering `localhost` with a routable address
-// would otherwise turn this route into an outbound request generator.
+// ssrf.SafeTransport re-validates the ACTUALLY-CONNECTED address in a
+// dialer Control hook, which a hand-rolled loopback check cannot do —
+// closing DNS rebinding, live here because `localhost` is an accepted host
+// and is a DNS name.
 func relayClientFor(target *url.URL) (*http.Client, error) {
-	// parseLoopbackCallback already accepted this port, so a failure here means
-	// the two disagree; refuse rather than guess.
+	// parseLoopbackCallback already accepted this port; a mismatch here
+	// means the two disagree, so refuse rather than guess.
 	port, err := strconv.ParseUint(target.Port(), 10, 16)
 	if err != nil || port < relayMinPort {
 		return nil, errRelayBadPort
@@ -159,15 +133,12 @@ func relayClientFor(target *url.URL) (*http.Client, error) {
 		ssrf.WithAllowedPorts(uint16(port)),
 		ssrf.WithDialer(&net.Dialer{Timeout: relayDialTimeout}),
 	)
-	// One request, one connection, no pool: the listener is about to exit.
 	tr.DisableKeepAlives = true
 	return &http.Client{
 		Timeout:   relayTotalTimeout,
 		Transport: tr,
-		// Do not follow a redirect: return it as the response instead. Following
-		// would let KAS's handler steer the relay onward, and the status is all
-		// this needs. ErrUseLastResponse rather than an error so a 3xx stays a
-		// delivered callback rather than becoming a transport failure.
+		// Do not follow a redirect: return it as the response instead, so
+		// KAS's handler cannot steer the relay onward.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}, nil
 }
@@ -183,13 +154,12 @@ type mcpOAuthRelayResp struct {
 	Status int `json:"status"`
 }
 
-// handleOAuthRelay: POST /api/mcp/oauth-relay {server, redirect_url} → replay a
-// stranded loopback callback into KAS's waiting listener.
+// handleOAuthRelay: POST /api/mcp/oauth-relay {server, redirect_url} →
+// replay a stranded loopback callback into KAS's waiting listener.
 //
-// Registered by RegisterRoutes. It is NOT wrapped in webhttp.LoopbackOnly and
-// must not be: the whole point is that a REMOTE browser reaches it, and that
-// helper's provenance check rejects a browser outright. The loopback constraint
-// belongs on the outbound half instead, which is relayClientFor's address policy.
+// Registered by RegisterRoutes. NOT wrapped in webhttp.LoopbackOnly: the
+// whole point is that a REMOTE browser reaches it. The loopback constraint
+// belongs on the outbound half instead (relayClientFor's address policy).
 func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -200,16 +170,14 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// RESERVE FIRST, and derive everything downstream from the reservation. The
-	// authorization URL travels on the attempt rather than being re-read later,
-	// because a second read could belong to a different attempt: recordOAuth can
-	// replace the record at any point while this request is out, and a code
-	// validated against attempt A must never be replayed under attempt B's
-	// reservation.
+	// RESERVE FIRST, and derive everything downstream from the reservation:
+	// the authorization URL travels on the attempt rather than being
+	// re-read later, since recordOAuth can replace the record at any point
+	// while this request is out, and a code validated against attempt A
+	// must never be replayed under attempt B's reservation.
 	//
-	// A refusal here is also the answer for an unknown server name: a server with
-	// no authorization in flight has nothing to relay either way, so the two cases
-	// need no separate reply and this one leaks no inventory.
+	// A refusal here also covers an unknown server name, since a server
+	// with no authorization in flight has nothing to relay either way.
 	attempt, err := reg.beginOAuthRelay(body.Server)
 	if err != nil {
 		httpreply.Conflict(w, err.Error())
@@ -218,10 +186,6 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 
 	target, err := validateRelayAddress(body.RedirectURL, attempt.authURL)
 	if err != nil {
-		// The reason is safe to return: every one of them describes the shape of
-		// the pasted address or its disagreement with the stored URL, and none
-		// quotes either. The user is the one who pasted it and cannot fix it
-		// without being told which part was wrong.
 		reg.releaseOAuthRelay(attempt)
 		httpreply.BadRequest(w, err.Error())
 		return
@@ -237,9 +201,8 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	if status >= http.StatusBadRequest {
-		// Delivered, and refused. The reservation goes back, so a corrected paste
-		// can still be tried: KAS runs its own state check and its own single-use
-		// rule, and a 4xx here is most often that check rejecting this code.
+		// Delivered, and refused. The reservation goes back so a
+		// corrected paste can still be tried.
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
 			"server", body.Server, "port", target.Port(), "status", status)
@@ -248,13 +211,10 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// Delivered. The reservation taken at the top IS the single-use latch, so
-	// success needs no second write and cannot land on another attempt's record.
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
 		"server", body.Server, "port", target.Port(), "status", status)
-	// The state transition is NOT invented here — connected is KAS's to report
-	// over `_kiro/mcp/status`, and the token exchange this just unblocked is
-	// still in flight. The client refetches status and waits for that frame.
+	// KAS still owns reporting the connected state over _kiro/mcp/status;
+	// the client refetches status and waits for that frame.
 	webhttp.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 
@@ -280,17 +240,14 @@ func replayCallback(ctx context.Context, target *url.URL) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// dialErrWithoutURL strips the request URL out of an http.Client error before
-// it is logged. REQUIRED, not tidiness: net/http wraps every transport failure
-// in a *url.Error whose Error() begins `Get "<the full URL>"`, and that URL's
-// query is the authorization code. The wrapped cause carries the diagnosis
-// (refused, timeout, policy denial) without the target, which is why unwrapping
-// one layer is enough and the port is logged as its own field.
+// dialErrWithoutURL strips the request URL out of an http.Client error
+// before it is logged. REQUIRED: net/http wraps a transport failure in a
+// *url.Error whose Error() begins `Get "<the full URL>"`, and that URL's
+// query is the authorization code.
 func dialErrWithoutURL(err error) error {
-	// errors.AsType (Go 1.26). `go fix -errorsastype` and golangci-lint's
-	// modernize (the same analyzer) both report 0 hunks here: the fixer only
-	// rewrites a bare positive `if errors.As(...)`, and this one is a clause of
-	// a boolean expression, which is one of its documented blind spots.
+	// errors.AsType (Go 1.26); `go fix -errorsastype` and gocritic's
+	// modernize both skip this site because it is a clause of a boolean
+	// expression, one of their documented blind spots.
 	if ue, ok := errors.AsType[*url.Error](err); ok && ue.Err != nil {
 		return ue.Err
 	}
@@ -300,19 +257,15 @@ func dialErrWithoutURL(err error) error {
 // validateRelayAddress checks a pasted callback address against the
 // authorization URL KAS advertised, and returns the URL to replay.
 //
-// Pure, so it is unit-testable and fuzzable without a listener. Every check is
-// a refusal rather than a repair: this function never rewrites the pasted
-// address, because a "corrected" callback is one neither the provider nor KAS
-// agreed to.
+// Pure, so it is unit-testable and fuzzable without a listener. Every
+// check is a refusal rather than a repair — this function never rewrites
+// the pasted address.
 //
-// WHAT IT RETURNS IS NOT WHAT WAS PASTED. The replay URL is assembled from the
-// ADVERTISED callback (KAS's own scheme, host and path) carrying the PASTED
-// query, so the only thing the request can influence is the parameters that
-// have to be relayed. That is Crew's "request data can never choose a remote
-// host" taken to its conclusion: the host is not merely checked against a set of
-// literals, it is never read off the paste at all. It also fixes a real
-// spelling problem — `localhost` and `127.0.0.1` are both loopback but are
-// different dial targets, and KAS's listener is bound to whichever it named.
+// The replay URL is assembled from the ADVERTISED callback (KAS's own
+// scheme, host, path) carrying the PASTED query, so the host is never read
+// off the paste at all. It also fixes a spelling problem: `localhost` and
+// `127.0.0.1` are both loopback but different dial targets, and KAS's
+// listener is bound to whichever it named.
 func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	u, err := parseLoopbackCallback(strings.TrimSpace(pasted))
 	if err != nil {
@@ -327,25 +280,21 @@ func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The advertised callback, carrying the pasted query. Nothing else of the
-	// paste survives into the request.
 	advertised.RawQuery = u.RawQuery
 	return advertised, nil
 }
 
-// parseLoopbackCallback checks a raw address is a plain-http, credential-free,
-// fragment-free loopback URL on an unprivileged port. Shared by the paste and by
-// the advertised redirect_uri, which is the point: both end up deciding where a
-// request is sent, so both are held to the same shape rather than to two
-// hand-written near-copies that can drift apart.
+// parseLoopbackCallback checks a raw address is a plain-http,
+// credential-free, fragment-free loopback URL on an unprivileged port.
+// Shared by the paste and by the advertised redirect_uri, so both are held
+// to the same shape.
 func parseLoopbackCallback(raw string) (*url.URL, error) {
 	if len(raw) > relayURLCap {
 		return nil, errRelayTooLong
 	}
-	// Before parsing, not after: url.Parse accepts control bytes and percent-
-	// decoding can reintroduce them, and this address is replayed into another
-	// program's HTTP handler. Printable ASCII only, so no CR/LF can split the
-	// request line and no raw space can truncate it.
+	// Checked before parsing, not after: url.Parse accepts control bytes
+	// and percent-decoding can reintroduce them, and this address is
+	// replayed into another program's HTTP handler.
 	if !isPrintableASCII(raw) {
 		return nil, errRelayBadBytes
 	}
@@ -354,15 +303,11 @@ func parseLoopbackCallback(raw string) (*url.URL, error) {
 		return nil, errRelayUnparsable
 	}
 	if !strings.EqualFold(u.Scheme, "http") {
-		// http, not https: KAS's loopback listener is plain. An https paste is a
-		// different address, not this one with a nicer scheme.
 		return nil, errRelayNotHTTP
 	}
 	if u.User != nil {
 		return nil, errRelayHasCreds
 	}
-	// A fragment never reaches a server, so its presence means the address is
-	// not the one the browser was sent to.
 	if u.Fragment != "" || u.RawFragment != "" || strings.Contains(raw, "#") {
 		return nil, errRelayHasFragment
 	}
@@ -376,9 +321,8 @@ func parseLoopbackCallback(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// validateCallbackQuery checks the query is a callback's: every key allowlisted,
-// and a non-empty code present. Returns the parsed values so the caller does not
-// re-parse and risk disagreeing with what was checked.
+// validateCallbackQuery checks the query is a callback's: every key
+// allowlisted, and a non-empty code present.
 func validateCallbackQuery(rawQuery string) (url.Values, error) {
 	q, err := url.ParseQuery(rawQuery)
 	if err != nil {
@@ -395,29 +339,22 @@ func validateCallbackQuery(rawQuery string) (url.Values, error) {
 	return q, nil
 }
 
-// matchAdvertisedCallback binds a pasted callback to the authorization URL KAS
-// advertised and returns the advertised callback to dial. This is the whole
-// security argument for the route, so every half is required rather than
-// best-effort.
+// matchAdvertisedCallback binds a pasted callback to the authorization URL
+// KAS advertised and returns the advertised callback to dial. This is the
+// whole security argument for the route.
 //
-// The advertised `redirect_uri` is itself validated as an unprivileged loopback
-// http address. It is KAS's own value, so it should already be one; checking it
-// means a corrupt or hostile stored URL cannot aim the dial at something else,
-// which matters because this value is what the request is ultimately sent to.
+// The advertised `redirect_uri` is itself validated as an unprivileged
+// loopback http address, so a corrupt or hostile stored URL cannot aim the
+// dial elsewhere.
 //
-// The PORT and PATH must agree with the paste — the port is which listener, the
-// path is which handler on it — so a paste cannot walk the loopback interface
-// looking for something that answers. The HOST is not compared, because it is
-// taken from the advertisement rather than the paste; `localhost` and
-// `127.0.0.1` are both loopback and both legitimate spellings for a user to
-// have in their address bar.
+// PORT and PATH must agree with the paste (which listener, which handler);
+// HOST is not compared, since it is taken from the advertisement rather
+// than the paste — `localhost` and `127.0.0.1` are both legitimate
+// spellings.
 //
 // The `state` match is the CSRF/injection binding. A missing state in the
-// stored URL is a REFUSAL, not a waiver: relaying without it would accept any
-// code anyone posted, and vibekit's HTTP surface carries no auth of its own.
-// Failing closed here means the feature declines rather than becoming a lever,
-// and the message says which value is absent so the condition is diagnosable
-// instead of mysterious.
+// stored URL is a REFUSAL, not a waiver: relaying without it would accept
+// any code anyone posted.
 func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url.URL, error) {
 	auth, err := url.Parse(authURL)
 	if err != nil {
@@ -429,10 +366,9 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 	if redirect == "" {
 		return nil, errRelayNoRedirect
 	}
-	// KAS's own value, held to the SAME shape as the paste, because the dial goes
-	// here. Any refusal collapses to errRelayNoRedirect rather than surfacing the
-	// specific one: the user did not write this value and cannot fix it, so the
-	// actionable statement is that the stored sign-in has no usable callback.
+	// Held to the SAME shape as the paste, because the dial goes here. Any
+	// refusal collapses to errRelayNoRedirect rather than the specific
+	// one: the user did not write this value and cannot fix it.
 	want, err := parseLoopbackCallback(redirect)
 	if err != nil {
 		return nil, errRelayNoRedirect
@@ -445,32 +381,26 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 	if wantState == "" {
 		return nil, errRelayNoState
 	}
-	// Constant-time: the comparison is against a secret-equivalent value, and a
-	// byte-at-a-time early exit would leak it a byte at a time to a caller that
-	// can retry. Length is compared first because ConstantTimeCompare returns 0
-	// on a length mismatch without comparing, which is not a leak (the length is
-	// not the secret) but does mean the guard has to be explicit.
+	// Constant-time: the comparison is against a secret-equivalent value,
+	// and a byte-at-a-time early exit would leak it a byte at a time to a
+	// caller that can retry.
 	if len(wantState) != len(pastedState) ||
 		subtle.ConstantTimeCompare([]byte(wantState), []byte(pastedState)) != 1 {
 		return nil, errRelayStateDrift
 	}
-	// A deep copy: the caller overwrites RawQuery, and the parsed advertisement
-	// must not become a shared mutable value. url.Clone (Go 1.27) rather than
-	// `dial := *want`, which shares the User pointer — the only pointer field
-	// url.URL has. That was safe here only because parseLoopbackCallback refuses
-	// a URL carrying userinfo a hundred lines up, so the invariant lived nowhere
-	// near the copy. Clone makes the claim true by construction instead.
+	// A deep copy: the caller overwrites RawQuery, and the parsed
+	// advertisement must not become a shared mutable value. url.Clone
+	// (Go 1.27) rather than `dial := *want`, which shares the User
+	// pointer — safe here only because parseLoopbackCallback refuses
+	// userinfo, but Clone makes the claim true by construction.
 	return want.Clone(), nil
 }
 
-// isLoopbackHost reports whether host is one of the three spellings a loopback
-// redirect uses. A fixed set rather than a resolve-and-check: the resolved
-// address is re-validated at socket time by relayClientFor's policy, and this gate
-// exists to reject the whole class of remote hosts before any lookup happens.
-//
-// RFC 8252 §7.3 prefers the literals over `localhost` precisely because the name
-// depends on a resolver, but KAS advertises whichever it advertises, so all
-// three are accepted here and the dial-time policy is what makes the name safe.
+// isLoopbackHost reports whether host is one of the three spellings a
+// loopback redirect uses. A fixed set rather than resolve-and-check: the
+// resolved address is re-validated at socket time by relayClientFor's
+// policy, so this gate exists to reject the whole class of remote hosts
+// before any lookup happens.
 func isLoopbackHost(host string) bool {
 	switch strings.ToLower(host) {
 	case "127.0.0.1", "::1", "localhost":

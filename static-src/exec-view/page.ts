@@ -1,30 +1,18 @@
-// ---------------------------------------------------------------------------
-// The exec view PAGE: a full tab for one delegated execution.
+// The exec view page: a full tab for one delegated execution.
 //
-// Assembles the header, the alert, the timeline, the tree and the detail pane, owns
-// the selection between them, and runs one clock for all of them. It names no
-// source: a consumer hands it an `ExecRun` and it draws it, which is what makes a
-// subagent tab a second adapter rather than a second page.
+// Assembles the header, the alert, the timeline, the tree and the detail pane,
+// owns the selection between them, and runs one clock for all of them. Names no
+// source: a consumer hands it an `ExecRun` and it draws it.
 //
-// LAYOUT, and each choice is answering something a transcript column could not:
+// LAYOUT: header (identity/state/progress/elapsed/controls/inputs), alert (only
+// when it wants a person), timeline (where the time went), tree (structure,
+// containers included), detail (the selected node at full width). Tree and
+// detail sit side by side on a wide viewport and stack on a narrow one, via a
+// container query on the tab rather than the viewport (the sidebar decides how
+// much width the tab gets).
 //
-//   header    identity, state, progress, elapsed, controls, and the INPUTS — what
-//             the execution was asked to do, which nothing in the app has shown
-//   alert     only when it wants a person
-//   timeline  where the time went and what overlapped
-//   tree      the structure, containers included
-//   detail    the selected node at full width
-//
-// The tree and the detail sit side by side on a wide viewport and stack on a narrow
-// one, which is a container query rather than a viewport one because the sidebar
-// decides how much width this tab gets — the same reason the timeline rail keys on
-// `chat-area`.
-//
-// ONE CLOCK. A live execution takes minutes and a paused one emits no frames at all,
-// so a duration that only moves when a server frame lands reads as frozen. One
-// interval drives all three panes and stops when nothing is moving, the same shape
-// the transcript uses for its run cards.
-// ---------------------------------------------------------------------------
+// ONE CLOCK: a live execution takes minutes and a paused one emits no frames at
+// all, so one interval drives all three panes and stops when nothing moves.
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
@@ -39,16 +27,14 @@ import { buildExecTimeline, type ExecTimelineView } from "./timeline.js";
 import { buildExecDetail, type ExecDetailView, type EmptyNote } from "./detail.js";
 
 export interface ExecPageOpts {
-  /** What a node with a transcript host but no content yet should say. The reasons
-   *  are the consumer's: a workflow run has three, a subagent tab will have its own. */
+  /** What a node with a transcript host but no content yet should say; the
+   *  consumer's call (a workflow run has three reasons, a subagent tab its own). */
   emptyNote: EmptyNote;
   /** The execution's controls, rebuilt per state. Returns null for a state with no
    *  verbs, so the row disappears rather than rendering empty. */
   controls?: (run: ExecRun) => HTMLElement | null;
-  /** The header's identity glyph. Defaults to the workflow one, because that was the
-   *  only consumer when this page was written; a subagent page passes the agent
-   *  hexagon. Per-page rather than per-render, since a page instance serves one
-   *  source. */
+  /** The header's identity glyph. Defaults to the workflow one; a subagent page
+   *  passes the agent hexagon. */
   icon?: string;
 }
 
@@ -95,18 +81,13 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
 
   let selected = "";
   /** Whether the reader has chosen a node. Until they have, the page follows the
-   *  work: a run being watched should show the step that is running without a click,
-   *  and one that failed should open on the failure. After a click it stops moving,
-   *  because a pane that re-targets itself under a reader is the defect the
-   *  auto-follow exists to avoid at the other extreme. */
+   *  work (a running or failed node opens without a click); after a click it
+   *  stops moving. */
   let userPicked = false;
-  /** The last `ExecRun.focus` this page honoured.
-   *
-   *  Recorded rather than consumed once, because ONE page instance serves every tab
-   *  of its kind: a subagent tab switching to a different delegate arrives as a
-   *  render whose `focus` differs, and that has to re-focus. Comparing against the
-   *  last honoured value is what separates it from the dozens of invalidations
-   *  carrying the same one, which must not fight a click. */
+  /** The last `ExecRun.focus` honoured. Recorded rather than consumed once,
+   *  because one page instance serves every tab of its kind: a subagent tab
+   *  switching delegates arrives as a render with a different `focus`, which
+   *  must re-focus without fighting a later click. */
   let focused = "";
 
   const tree: ExecTreeView = buildExecTree(select);
@@ -121,18 +102,11 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     el("div", { className: "ev-pane ev-pane-detail" }, detail.root),
   );
 
-  // --- results ---------------------------------------------------------------
-  // The execution's PRODUCT, as a roll-up. The detail pane already shows a node's
-  // own output, and this is deliberately a second view of the same text rather than
-  // a replacement: they answer different questions — "what did this step do" against
-  // "what did the run produce" — and a review of a finished execution is exactly the
-  // case where a reader wants the second without clicking through every step to
-  // assemble it. The transcript's run card carries the same pair (`.run-outputs`
-  // beside each step's own capture), so this is the app's existing shape rather than
-  // a new one.
+  // Results: the execution's PRODUCT, as a roll-up, deliberately distinct from
+  // the detail pane's per-node output ("what did this step do" vs "what did the
+  // run produce"). Mirrors the transcript run card's `.run-outputs` pattern.
   //
-  // COLLAPSED by default, and it costs one row shut: a report can be thousands of
-  // characters and the panes above are what a live run is watched through.
+  // Collapsed by default: a report can be thousands of characters.
   const resultsCount = el("span", { className: "ev-r-count" });
   const resultsBody = el("div", { className: "ev-r-body" });
   const resultsHead = el(
@@ -165,9 +139,8 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     repaint();
   }
 
-  /** The node the page opens on: the one that wants attention, else the first leaf.
-   *  Re-derived on every render while the reader has not chosen, which is what makes
-   *  a run followable without clicking. */
+  /** The node the page opens on: the one that wants attention, else the first
+   *  leaf. Re-derived on every render while the reader has not chosen. */
   function autoSelect(run: ExecRun): string {
     const ls = leaves(run.nodes);
     if (ls.length === 0) {
@@ -190,16 +163,10 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     if (run === undefined) {
       return;
     }
-    // IT DEGRADES BY CONTENT, which is what makes one page serve a twenty-node
-    // workflow and a single delegate.
-    //
-    // A tree pane holding one row is not navigation, it is a row you cannot avoid
-    // clicking, and a timeline of one bar says nothing the header's elapsed does not.
-    // So the structural regions appear when there is structure: more than one root,
-    // or any node with children. A single subagent therefore renders as header +
-    // detail + results with the full width on the thing being read, and the same
-    // page renders a pipeline's driver-and-stages as a tree — no consumer has to
-    // choose a layout, and no consumer gets a pane of one.
+    // Degrades by content: a tree of one row is not navigation, and a timeline
+    // of one bar says nothing the header's elapsed does not. Structural regions
+    // appear only when there is structure (more than one root, or any node with
+    // children).
     const structural = run.nodes.length > 1 || run.nodes.some((n) => n.children.length > 0);
     panes.classList.toggle("ev-panes-flat", !structural);
     treePane.hidden = !structural;
@@ -210,11 +177,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     detail.render(nodeAt(run.nodes, selected));
   }
 
-  /** The results roll-up, rebuilt only when the SET changed.
-   *
-   *  Guarded on a signature because `render` runs on every invalidation, dozens of
-   *  times over a live run, and re-parsing a settled report each time would throw
-   *  away the reader's place in it and reset their scroll. */
+  /** The results roll-up, rebuilt only when the SET changed (guarded by
+   *  signature, since `render` runs on every invalidation over a live run and
+   *  re-parsing would reset the reader's scroll). */
   function renderResults(run: ExecRun): void {
     const entries = Object.entries(run.outputs ?? {});
     if (entries.length === 0) {
@@ -233,10 +198,9 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
     resultsBody.replaceChildren(
       ...entries.flatMap(([key, value]) => {
         const rows = [el("div", { className: "ev-r-key" }, key)];
-        // An EMPTY value is a fact rather than an absence: a source writes a key
-        // only for a node that captured, so empty says the node finished without
-        // saying anything — indistinguishable from "never ran" if the row is
-        // dropped.
+        // An empty value is a fact, not an absence: a source writes a key only
+        // for a node that captured, so empty distinguishes "finished silently"
+        // from "never ran".
         rows.push(
           value.trim() === ""
             ? el(
@@ -281,16 +245,13 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
       }
       root.dataset["state"] = run.state;
       name.textContent = run.label;
-      // The ASK outranks the status word, because the execution genuinely still
-      // reads running while a node's ask blocks it and the status would report
-      // nothing wrong.
+      // An unanswered ask outranks the status word: the run genuinely still
+      // reads `running` while it blocks on a node's ask.
       stateEl.textContent = run.alert?.kind === "input" ? "needs input" : STATE_WORD[run.state];
 
       const c = counters(run.nodes);
-      // Withheld for a ONE-NODE execution. "step 1 of 1" is a progress readout that
-      // cannot progress, and the state word beside it already says how the one node
-      // ended — measured on a single delegate, where it was the only noise in the
-      // header. A workflow run of one step gets the same silence for the same reason.
+      // Withheld for a one-node execution: "step 1 of 1" cannot progress, and the
+      // state word beside it already says how the node ended.
       progress.textContent =
         c.total <= 1
           ? ""
@@ -320,12 +281,10 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
 
       renderResults(run);
 
-      // A door that NAMES a node is a choice, so it is honoured like a click and it
-      // also stops the auto-follow. Guarded on the value having CHANGED, because
-      // `render` runs on every invalidation and re-asserting the same focus would
-      // fight a reader who has since clicked elsewhere. A focus naming a node this
-      // execution does not have falls through to the auto-follow rather than
-      // selecting nothing.
+      // A door that NAMES a node is a choice: honoured like a click, and it stops
+      // the auto-follow. Guarded on the value having changed, or re-asserting the
+      // same focus on every invalidation would fight a reader who clicked
+      // elsewhere. A focus naming an absent node falls through to auto-follow.
       if (
         run.focus !== undefined &&
         run.focus !== focused &&

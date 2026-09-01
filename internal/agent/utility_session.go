@@ -1,34 +1,13 @@
 // Utility session: the shared kiro-cli subprocess + ACP session behind
 // vibekit's ambient AI features.
 //
-// The utility runtime is split across three files by role:
-//
-//	utility_session.go  the session-holder: subprocess + ACP session
-//	                    lifecycle, the forward goroutine, host-request
-//	                    answering, and the generation guard. Its mutex
-//	                    protects LIFECYCLE only and is never held across
-//	                    a bridge Call.
-//	utility_rpc.go      stateless KAS RPC wrappers (account usage,
-//	                    knowledge, specs, policy, hooks) over the session.
-//	                    These are instant reads: they acquire the session,
-//	                    Call outside any lock, and never wait behind a
-//	                    text-generation turn.
-//	utility_agent.go    the cheap text-generation agent (UtilityPrompt):
-//	                    per-task effort, recycle policy, and response
-//	                    draining, serialized one turn at a time by its
-//	                    own turn mutex.
-//
-// The split exists because the old single-mutex utilityBridge coupled the
-// two roles: a specs-board or permissions read queued behind an in-flight
-// 60-second generation turn for no reason. Now only text turns serialize
-// with text turns.
-//
-// Concurrency model: callers acquire() a lease {bridge, gen, chunks} and
-// use the bridge OUTSIDE the session mutex (Bridge.Call is safe for
-// concurrent use; readLoop matches responses by id). On error they call
-// resetIf(gen): the generation counter, incremented on every start, makes
-// the reset idempotent — a stale failure can't tear down a session that
-// was already recycled and restarted by someone else.
+// Split across three files by role: this file is the session-holder
+// (lifecycle, forward goroutine, host-request answering); utility_rpc.go is
+// the stateless RPC wrappers, which Call outside any lock; utility_agent.go
+// is the cheap text-generation agent, serialized one turn at a time.
+// Concurrency: acquire() a lease and use its bridge OUTSIDE the session
+// mutex; resetIf(gen) is idempotent, so a stale failure can't tear down an
+// already-recycled session.
 
 package agent
 
@@ -76,17 +55,10 @@ type utilitySessionHooks struct {
 	onGovernanceState func(json.RawMessage)
 	// onPolicyNotification routes _kiro/policy/{changed,error} into the same
 	// translator the chat dispatch uses, so a permissions.yaml change reaches
-	// the client with NO chat open.
-	//
-	// Every ACP session gets its own PolicySession with its own file watcher and
-	// its own notificationSink (read off the KAS 2.19.1 bundle), so this session
-	// is told about a policy reload exactly like a chat bridge is — and because
-	// the utility session's notifications bypass the main dispatcher, dropping it
-	// here meant the ONE reader of that event, Settings -> Permissions, never
-	// heard about a write it had just made itself. Measured on the live instance:
-	// vibekit's write returns when the FILE is written, KAS's watcher rebuilds
-	// ~0.5s later, and with no chat bridge alive no permissions_changed frame
-	// ever followed — so the panel showed the pre-write policy until a reload.
+	// the client with NO chat open — the utility session's own PolicySession
+	// watches the file independently and its notifications bypass the main
+	// dispatcher, so without this Settings -> Permissions never hears about
+	// a write it just made itself.
 	onPolicyNotification func(*vibekit.RPCResponse)
 	// tokenSource answers the _kiro/auth/getAccessToken callback (the runtime's
 	// kiroAccessTokenResult). nil = not wired (older tests) → RPC error.
@@ -207,20 +179,12 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	forwardDone := make(chan struct{})
 	go us.forward(bridge, bridge.NotifCh(), responseCh, forwardDone)
 
-	// Start with the runtime's shutdown context as the subprocess lifecycle
-	// context: the subprocess must outlive individual requests (the
-	// per-request ctx is only used for the model pick above). Runs v3
-	// (KAS) like every chat bridge — without the engine it would default
-	// to v2, which vibekit can no longer talk to.
-	//
-	// Passing a process-lifetime context as the HANDSHAKE ctx is safe because
-	// Start bounds the handshake itself (bridge.handshakeBudget). It was not
-	// always: this call runs under us.mu, so before that budget existed a
-	// session/new KAS never answered held the utility mutex for the life of the
-	// process, and every utility-backed endpoint — the config template,
-	// governance, knowledge, hooks — hung behind it with no error and no log
-	// line. Do not "tidy" this to a per-request ctx: the subprocess would then
-	// die with the request that happened to start it.
+	// The subprocess context is us.shutdownCtx, not a per-request ctx: this
+	// call runs under us.mu, so a session/new that never answers would hold
+	// the mutex for the process lifetime and hang every utility-backed
+	// endpoint, and the subprocess must outlive whichever request started it.
+	// Safe as the HANDSHAKE ctx too, since Start bounds that itself
+	// (bridge.handshakeBudget).
 	if err := bridge.Start(us.shutdownCtx, &vibekit.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx)}); err != nil {
 		return err
 	}
@@ -340,21 +304,11 @@ func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]an
 
 // utilityUpdateBase extracts the sessionUpdate kind discriminator.
 //
-// It is decoded from the notification's `update` OBJECT, never from `params`.
-// A session/update's params are `{sessionId, update:{sessionUpdate, …}}`, so
-// reading the kind off params yields "" for every frame — which looks exactly
-// like a wire that never sends a chunk. That is what it was, and it made
-// UtilityPrompt return empty text for every ambient task (commit messages, PR
-// descriptions, branch names), each of which then reported its own failure:
-// `generation_failed` with "model returned no usable name" for a branch name,
-// an empty box for the other two. The unit tests fed the flat shape, so they
-// agreed with the bug rather than with KAS.
-//
-// translate.ACPSessionUpdateBase carries the same field at the same depth and
-// its doc comment records the same nesting trap one level in (`_meta.kiro.replay`
-// on the update, not on params). Nothing about this discriminator is the utility
-// runtime's own, so the envelope it rides in is translate's type rather than a
-// second copy here.
+// Decoded from the notification's `update` OBJECT, never from `params` — a
+// session/update's params are `{sessionId, update:{sessionUpdate, …}}`, so
+// reading the kind off params yields "" for every frame. Rides
+// translate.ACPSessionUpdateBase's type, which carries the same field at the
+// same depth, rather than a second copy.
 type utilityUpdateBase struct {
 	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 }
@@ -369,26 +323,19 @@ type utilityChunkPayload struct {
 
 // forward is a dedicated goroutine that continuously drains the bridge's
 // NotifCh, forwarding agent_chunk text to responseCh. Peer requests
-// (msg.ID != nil) are answered via answerHostRequest — the utility session
-// runs v3 (KAS) like every chat bridge, so it must vend the host-mediated
-// auth token + shell type or session/new stalls. `executeHook` is NOT among
-// them (see answerHostRequest). A _kiro/hooks/didChange notification
-// fans out an hooks_changed SSE, and _kiro/policy/{changed,error} go to the
-// translator that owns them. All other notifications (usage stats, stale
-// chunks) are discarded. This prevents NotifCh from filling up between calls,
-// which would block readLoop and deadlock all pending Call waiters.
-//
-// bridge is passed explicitly (not read from us.bridge) so a recycle that
-// reassigns us.bridge can't make this goroutine answer on the wrong pipe.
-// forward takes NO locks: the hooks callbacks are immutable and the chunk
-// send is non-blocking, so a held session mutex can never deadlock it.
+// (msg.ID != nil) are answered via answerHostRequest, since the utility
+// session must vend the host-mediated auth token + shell type or session/new
+// stalls. Every other notification except hooks/policy is discarded, which
+// keeps NotifCh from filling and blocking readLoop. bridge is passed
+// explicitly (not read from us.bridge) so a recycle can't make this
+// goroutine answer on the wrong pipe; forward takes NO locks, so a held
+// session mutex can never deadlock it.
 func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan vibekit.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
 	for n := range notifCh {
-		// The read-loop sequence rides every frame and this goroutine ignores it:
-		// the utility session opens no turn, so nothing here has a local decision to
-		// order against the frames still queued.
+		// The read-loop sequence rides every frame; this goroutine ignores it
+		// because the utility session opens no turn to order against.
 		msg := n.Msg
 		switch {
 		case msg.ID != nil:
@@ -458,22 +405,13 @@ func forwardChunk(msg *vibekit.RPCResponse, responseCh chan<- utilityChunkPayloa
 
 // answerHostRequest answers the v3 (KAS) host-mediated requests the utility
 // session receives. getAccessToken + shell_type are on the session-creation
-// critical path (session/new stalls without them).
-//
-// `_kiro/hooks/executeHook` is NOT answered any more and must not be re-added:
-// answering it is what made vibekit run a shell command a hook file specifies,
-// and its only caller (Run-now) is deleted. It now falls to the default branch's
-// -32601, which is the honest reply — vibekit does not offer this capability. KAS
-// runs runCommand hooks internally on autofire, so nothing regresses.
-//
-// Tool-use requests are actively refused: the utility session is
-// text-generation only (the agent's system prompt says so), but the model
-// is not mechanically prevented from trying a tool. The initialize
-// handshake declares fs + terminal capabilities (shared bridge code), so a
-// stray tool call arrives here as an A→C request — and an UNANSWERED
-// request wedges the turn until the agent drain's 60s ceiling fires and
-// resets the whole session. Denying permissions and erroring fs/terminal
-// requests turns that wedge into an immediate, model-visible tool failure.
+// critical path (session/new stalls without them). `_kiro/hooks/executeHook`
+// is deliberately NOT answered — it would run a shell command a hook file
+// specifies — and falls to -32601 instead; KAS runs runCommand hooks
+// internally on autofire, so nothing regresses. Tool-use requests are
+// refused rather than left pending: nothing stops the model trying a tool
+// even though this session is text-only, and an unanswered request would
+// wedge the turn until the 60s drain ceiling resets the session.
 func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RPCResponse) {
 	ctx := context.Background()
 	switch {
@@ -493,12 +431,8 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RP
 		_ = bridge.Respond(ctx, *msg.ID, kiroShellTypeResult(), nil)
 	case msg.Method == methodKiroSecretGet:
 		// The utility session starts with NO mcpServers, so it should never
-		// connect an MCP server and never reach this. It is answered anyway
-		// because the secretStorage capability is declared by the SHARED
-		// bridge initialize: were KAS to ask, the default branch's refusal
-		// would be a store/delete rethrow rather than a clean miss. The
-		// declaration is conditional on us.secrets being non-nil, so a runtime with
-		// no store never offers it here either.
+		// reach this; answered anyway because secretStorage is declared by the
+		// SHARED bridge initialize, conditional on us.secrets being non-nil.
 		_ = bridge.Respond(ctx, *msg.ID, secretGetResult(us.secrets, msg.Params), nil)
 	case msg.Method == methodKiroSecretStore:
 		result, err := secretStoreResult(ctx, us.secrets, msg.Params)

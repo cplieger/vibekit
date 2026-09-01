@@ -3,16 +3,6 @@
 package push
 
 // crypto.go: RFC 8291 content encryption and RFC 8292 VAPID JWT construction.
-//
-// These were an internal/push/crypto SUB-PACKAGE until the go-rulebook pass,
-// reached through three forwarding wrappers in this file. It shadowed stdlib
-// `crypto`, so its one importer had to alias it `pushcrypto` beside
-// `crypto/ecdh` and `crypto/ecdsa`, and a directory named `crypto` sat next to
-// a file named `crypto.go` in the same package. Two of the three wrappers
-// forwarded their arguments unchanged, so the indirection bought nothing that
-// the package boundary did not already give. Rolled up: the shadow is gone, the
-// alias is gone, and the pure helpers are unexported because nothing outside
-// this package ever called them.
 
 import (
 	"crypto/ecdh"
@@ -39,14 +29,9 @@ func (s *Service) vapidHeader(endpoint string) (string, error) {
 // ecdhToECDSA converts an ECDH P-256 private key to an ECDSA private key, so a
 // key generated for RFC 8291 encryption can also sign the RFC 8292 VAPID JWT.
 //
-// ecdh.PrivateKey.Bytes returns the raw big-endian scalar, which is exactly
-// ParseRawPrivateKey's input format; the parser recomputes the public point
-// itself. This used to assemble an ecdsa.PrivateKey by hand out of big.Ints
-// sliced from the uncompressed public point — the ecdsa X/Y/D fields that Go
-// 1.26 deprecated, because assigning them can build an invalid key and
-// big.Int's methods are not constant-time on secret values. The parser also
-// REJECTS a scalar of zero or one not reduced modulo the curve order, which the
-// hand-rolled version accepted silently.
+// ecdh.PrivateKey.Bytes is the raw big-endian scalar ParseRawPrivateKey expects;
+// the parser recomputes the public point and rejects a scalar of zero or one
+// not reduced modulo the curve order.
 func ecdhToECDSA(key *ecdh.PrivateKey) (*ecdsa.PrivateKey, error) {
 	return ecdsa.ParseRawPrivateKey(elliptic.P256(), key.Bytes())
 }
@@ -80,13 +65,7 @@ type keyMaterial struct {
 
 // deriveKeyNonce derives the content-encryption key and nonce per RFC 8291.
 //
-// km is taken by value. The 120 bytes gocritic counts are five slice HEADERS,
-// not the key material they point at, so the copy is a handful of words once per
-// notification and moves no secret. By value is also the safer shape: the callee
-// has no business mutating the caller's key material, and a pointer would add a
-// nil case to a function whose failure mode is a silently undeliverable payload.
-//
-//nolint:gocritic // hugeParam: five slice headers, not the keys; see above.
+//nolint:gocritic // hugeParam: five slice headers, not the key material itself.
 func deriveKeyNonce(km keyMaterial) (cek, nonce []byte, err error) {
 	// Order is the RFC's: the auth info string is the literal, then the CLIENT
 	// key, then the SERVER key. Swapping the two produces a valid-looking key

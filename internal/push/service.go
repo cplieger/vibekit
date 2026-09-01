@@ -99,21 +99,10 @@ type vapidKeys struct {
 // Service manages push subscriptions and sends notifications.
 type Service struct {
 	// lifetime is the service's OWN cancellable child of the context New
-	// requires, and it must stay a field: it is the writeLoop-LIVENESS signal,
-	// which is a second, independent fact from any caller's ctx.
-	//
-	// Converting it into a method parameter would merge the two, and that merge
-	// has already cost a shutdown hang: saveSubs and flushSaves send a snapshot
-	// to writeLoop and then wait for `done` to close, and if Close() raced that
-	// send, writeLoop has already exited and nothing will ever close it. The
-	// caller's ctx says nothing about whether the loop is alive; only this does.
-	// See persist.go's guarded waits and the in-code note there. The same holds
-	// for send.go's mergeCtx, which composes a request ctx WITH this one rather
-	// than picking either.
-	//
-	// Named for what it is, not `ctx`: a field called ctx reads like an ambient
-	// context at the dozen sites that consume it, and that reading is exactly
-	// what invites merging it with a caller's.
+	// requires; it is the writeLoop-liveness signal, distinct from any
+	// caller's ctx. Merging the two would reopen a shutdown hang: saveSubs and
+	// flushSaves wait on `done` closing, which never happens if Close() raced
+	// the send after writeLoop already exited. See persist.go's guarded waits.
 	lifetime      context.Context
 	prefsFlight   singleflight.Group
 	saveCh        chan saveRequest
@@ -162,30 +151,11 @@ func New(ctx context.Context, configDir, subject string) *Service {
 		writeLoopDone: make(chan struct{}),
 		healthy:       true,
 	}
-	// pushClient reuses one connection pool across sends. Small
-	// idle pool — only 3 vendor hosts in practice. CheckRedirect
-	// re-validates every hop against the allowlist so an
-	// allowlisted push service can't redirect us to an
-	// unallowlisted host (defence-in-depth; the vendors don't
-	// redirect externally today). TLS MinVersion pinned to 1.2 so
-	// a future stdlib default change can't silently weaken the
-	// transport that carries VAPID-signed tokens.
-	//
-	// The transport is ssrf.SafeTransport: isAllowedPushEndpoint
-	// remains the PRIMARY gate (name-based FCM/Mozilla/Apple/WNS
-	// allowlist, https-only, no explicit ports), and SafeTransport
-	// sits beneath it as an IP-layer backstop — it resolves DNS once
-	// and validates every resolved IP, plus a net.Dialer Control hook
-	// re-validates the actually-connected IP at socket creation. That
-	// closes the residual DNS-rebinding / suffix-subdomain-to-internal
-	// vectors a purely name-based check leaves open. Ports are pinned to
-	// 443 — the dialer enforces this, and the allowlist already rejects
-	// explicit ports so every legitimate vendor endpoint is default-443.
-	// https is enforced by the allowlist and the redirect check, NOT the
-	// transport (SafeTransport's dialer never sees the URL scheme), so no
-	// scheme option is passed. SafeTransport carries
-	// no TLSClientConfig or idle-pool size via options, so those two
-	// original settings are applied to the returned *http.Transport.
+	// isAllowedPushEndpoint is the primary gate (name-based vendor allowlist,
+	// https-only, no explicit ports); ssrf.SafeTransport is the IP-layer
+	// backstop, re-validating the resolved/connected IP to close DNS-rebinding
+	// vectors a name-based check alone leaves open. CheckRedirect re-checks
+	// the allowlist on every hop.
 	pushTransport := ssrf.SafeTransport(
 		ssrf.WithAllowedPorts(443),
 	)
@@ -269,44 +239,30 @@ func (s *Service) HasSubscribers() bool {
 }
 
 // kindRegistry is the single source of truth for push notification kinds.
-// Adding a new kind requires only a new entry here — the default, settings
-// key, and kind constant are co-located. The init() below validates that
-// every registered kind passes vibekit.PushKind.Valid(), ensuring the registry
-// and the vibekit-level Valid() switch cannot drift.
+// init() below validates every entry against vibekit.PushKind.Valid() so the
+// two cannot drift.
 //
 // An EMPTY SettingsKey means the kind has no writable preference: it is a
-// floor, always DefaultOn, and loadPreferences never looks for a value it
-// could be overridden by. PushKindPermission is the one such kind — see the
-// "no notify_permission key" note in internal/settings/defaults.go for why
-// silencing a turn-blocking ask is a defect rather than a preference.
+// floor, always DefaultOn. PushKindPermission is the one such kind — see the
+// "no notify_permission key" note in internal/settings/defaults.go.
 var kindRegistry = []KindPref{
 	{vibekit.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
 	{vibekit.PushKindPRStatus, settings.KeyNotifyPRStatus, true},
 	{vibekit.PushKindPermission, "", true},
 }
 
-// KindPref is one registered kind. Named rather than anonymous so
-// validateKindRegistry can take a table — including a deliberately wrong one in
-// a test, which is the only way to exercise a rule whose production form is a
-// panic at init.
-//
-// Exported so the settings write path can DERIVE its preference map from the
-// registry instead of keeping a third hand-maintained copy of the kind set beside
-// this one and vibekit.pushKinds. That third copy was the reason a new kind's toggle
-// could persist to config.json and never reach the running service until the next
-// SSE reconnect.
+// KindPref is one registered kind. Exported so the settings write path can
+// derive its preference map from this registry instead of keeping a third
+// hand-maintained copy beside vibekit.pushKinds.
 type KindPref struct {
 	Kind        vibekit.PushKind
 	SettingsKey string
 	DefaultOn   bool
 }
 
-// Kinds returns the registered kinds and their settings keys.
-//
-// The caller that wants only the CONFIGURABLE ones filters on a non-empty
-// SettingsKey; the permission floor is the one member without one, and it is
-// deliberately still in this list so a caller building a preference map seeds it
-// too. Returns a copy so no consumer can reorder or extend the registry.
+// Kinds returns the registered kinds and their settings keys. A caller
+// wanting only the configurable ones filters on a non-empty SettingsKey.
+// Returns a copy so no consumer can reorder or extend the registry.
 func Kinds() []KindPref { return slices.Clone(kindRegistry) }
 
 func init() {
@@ -315,14 +271,11 @@ func init() {
 	}
 }
 
-// validateKindRegistry enforces the two rules the registry's types cannot.
-//
-// The first keeps the registry and vibekit.PushKind.Valid() from drifting. The
-// second is why the keyless convention is safe to have at all: an empty
-// SettingsKey MEANS "unconfigurable floor", and nothing distinguishes that from
-// an entry whose author simply forgot the key — so a future kind added with a
-// missing key would become permanently on and unwritable, silently. Only the
-// permission ask earns the exemption, and only as an always-on floor.
+// validateKindRegistry enforces the two rules the registry's types cannot: the
+// registry must agree with vibekit.PushKind.Valid(), and an empty SettingsKey
+// (an unconfigurable floor) is legal only for the permission kind, and only
+// when DefaultOn — otherwise a forgotten key would silently ship a
+// permanently-on, unwritable toggle.
 func validateKindRegistry(entries []KindPref) error {
 	for _, kr := range entries {
 		if !kr.Kind.Valid() {
@@ -390,16 +343,12 @@ func (s *Service) writeLoop() {
 // loadPreferences reads per-kind notification toggles from
 // <configDir>/config.json and applies them. Missing file, missing
 // keys, or parse failures fall through to the default state set
-// in New via kindRegistry. Parse failures are logged at Warn level so
-// a corrupted config.json silently reverting user toggles leaves a
-// diagnostic trail.
+// in New via kindRegistry.
 func (s *Service) loadPreferences(ctx context.Context) {
 	// Build local prefs map without holding mu — settings.Field does disk I/O.
 	local := make(map[vibekit.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
-		// A keyless kind is a floor: no disk read, so no config.json value —
-		// current, hand-edited or left over from an older release — can turn
-		// it off.
+		// A keyless kind is a floor: no disk read can turn it off.
 		if kr.SettingsKey == "" {
 			local[kr.Kind] = kr.DefaultOn
 			continue

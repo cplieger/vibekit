@@ -10,80 +10,50 @@ import (
 )
 
 // This file is the package's dependency contracts: the role interfaces the
-// Translator reads its host through. Each is shaped by what THIS package
-// invokes, which keeps a test stub small enough to be obviously correct and
-// documents each handler file's actual dependency footprint.
+// Translator reads its host through. Each is shaped by what this package
+// invokes, which keeps a test stub small enough to be obviously correct.
 //
-// Each role names ONE collaborator, and Roles is flat. It used to bundle them
-// into StreamingAccess (8 members) and PermissionAccess (5), and that shape is
-// what built the host's god object: a composite spanning the chat store, the
-// event bus, the buffer store, the line tracker, the terminal registry and the
-// bridge lookup can only be satisfied by something holding all six, so the host
-// grew ten forwarding methods and became the one type that qualified. A role per
-// collaborator is satisfied by the collaborator itself.
-//
-// Two consequences. There is no ChatRecords()/BufferStore()/LineTracker()
-// GETTER any more — a method returning an interface was a second indirection
-// for nothing, and Roles carries the interface directly. And WorkDir is a
-// string, not a method: it is a process constant, so nothing is substituted and
-// no host should be in the middle of reading it.
-//
-// The chat-store width arithmetic still holds: this package reads and writes
-// chats through 4 of the 11 methods *chat.Store offers. It never lists chats,
-// never builds a history transcript, never deletes one, never touches a draft
-// and never registers a route. The old note about needing a differently-NAMED
-// accessor than internal/command's is obsolete with the getters gone: both
-// packages now name *chat.Store directly through their own narrow interface,
-// and an interface is satisfied without either side knowing the other exists.
+// Each role names one collaborator, and Roles is flat. A composite
+// spanning several stores can only be satisfied by something holding all
+// of them, which is how a host grows into a god object.
 
-// BufferAccess is where a frame's content folds: the OPEN TURN's buffer.
-//
-// It used to be a per-chat store with a lazy create, and the replacement is the
-// point rather than a rename. A buffer keyed by chat outlives the turn that
-// filled it, so a turn nothing closed left its content behind for the next turn's
-// frames to extend; and a fold arriving with no turn open is a turn vibekit did
-// not prompt, which needs a record for the same reasons every other turn does.
+// BufferAccess is where a frame's content folds: the open turn's buffer.
+// Keyed by the open turn rather than by chat, since a buffer keyed by chat
+// would outlive the turn that filled it.
 type BufferAccess interface {
 	// TurnFoldTarget returns the chat's open turn's buffer, opening a
 	// wireTurnStart turn when none is open. Never nil.
 	TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID) *buffer.Buffer
 }
 
-// TurnBoundary is the wire's own turn bracket, which KAS emits for EVERY turn —
-// agent-initiated included — and which reached nothing on the live path before.
-//
-// Three operations rather than two, because acknowledgement is PROVISIONAL: the
-// bracket carries no correlation key and no agentInitiated flag, so a binding to
-// a pre-opened prompt turn has to be revisable by the first frame that can
-// discriminate.
+// TurnBoundary is the wire's own turn bracket, which KAS emits for every
+// turn, agent-initiated included.
 type TurnBoundary interface {
-	// WireTurnStart binds the bracket to the pending pre-open, or closes a turn
-	// whose own end never arrived and opens one the engine started.
+	// WireTurnStart binds the bracket to the pending pre-open, or closes a
+	// turn whose own end never arrived and opens one the engine started.
 	WireTurnStart(ctx context.Context, chatID vibekit.ChatID)
-	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op
-	// when no turn is open.
+	// WireTurnEnd closes the chat's open turn with the wire's own
+	// outcome. A no-op when no turn is open.
 	WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason)
 	// ReviseTurnBinding undoes a provisional binding on a frame carrying
-	// agentInitiated: the started turn was the agent's, and the pre-open is still
-	// owed its own bracket.
+	// agentInitiated: the started turn was the agent's, and the pre-open
+	// is still owed its own bracket.
 	ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID)
 }
 
-// LineRecorder is the consumer-side interface for line tracking.
-// Narrows the coupling: translate only needs RecordFromDiffs.
+// LineRecorder is the consumer-side interface for line tracking, narrowed
+// to the one method translate needs.
 type LineRecorder interface {
 	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
 }
 
-// ChatRecords is the chat store as this package uses it: read a chat, mutate it,
-// append a message, upsert the turn's plan row. 4 of the 11 methods *chat.Store
-// offers.
+// ChatRecords is the chat store as this package uses it: read a chat,
+// mutate it, append a message, upsert the turn's plan row.
 //
-// Every write through it is a LATE write: it lands after the frame that caused
-// it, on a chat the user may already have deleted. So chat.ErrTombstoned is the
-// designed outcome here rather than a fault — the tombstone exists to make such
-// a write a no-op — and each site matches it and returns instead of logging an
-// error. Every other error keeps its handling.
+// Every write through it is a LATE write: it lands after the frame that
+// caused it, on a chat the user may already have deleted. So
+// chat.ErrTombstoned is the designed outcome here rather than a fault, and
+// each site matches it and returns instead of logging an error.
 type ChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
@@ -96,18 +66,15 @@ type ChatRecords interface {
 	UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 }
 
-// Roles is the wiring-time role set: the host names which of its interfaces
-// answers each role once, at construction, and the Translator keeps them as
-// separate fields so every method names the one role it uses.
+// Roles is the wiring-time role set: the host names which of its
+// interfaces answers each role once, at construction, and the Translator
+// keeps them as separate fields so every method names the one role it
+// uses.
 //
-// A plain struct rather than an interface, deliberately. Nothing in the package
-// takes this type, so no method can reach the host through it, and it never
-// widens as the host grows. Taken by pointer: six interface fields is 96 bytes,
-// and New copies them into its own fields anyway.
+// A plain struct rather than an interface: nothing in the package takes
+// this type, so it never widens as the host grows. Taken by pointer.
 type Roles struct {
-	// Bus is the event fan-out, and the busiest role by far (35 call sites).
-	// It was a Broadcast member on BOTH composites, which is what made every
-	// split of the host drag the event bus along with it.
+	// Bus is the event fan-out, the busiest role by far (35 call sites).
 	Bus Broadcaster
 	// Chats is the chat store at 4 methods.
 	Chats ChatRecords
@@ -123,8 +90,8 @@ type Roles struct {
 	Respond Responder
 	// Push sends a web-push notification.
 	Push Pusher
-	// Sessions resolves a chat's parent ACP session, to tell a subagent's frame
-	// from its parent's.
+	// Sessions resolves a chat's parent ACP session, to tell a subagent's
+	// frame from its parent's.
 	Sessions SessionResolver
 	// Terminals reads an agent terminal's rendered output.
 	Terminals TerminalReader
@@ -138,9 +105,8 @@ type Roles struct {
 	TurnInterrupt TurnInterruptAccess
 	// Metering is the per-turn accounting a turn_completion frame writes.
 	Metering TurnMetering
-	// WorkDir is the workspace root. A VALUE: it is a process constant, so there
-	// is nothing to substitute and no reason for a method. Last because a
-	// trailing string ends fieldalignment's leading-pointer count early.
+	// WorkDir is the workspace root. A value: it is a process constant,
+	// so there is nothing to substitute. Last for fieldalignment.
 	WorkDir string
 }
 
@@ -157,14 +123,13 @@ type PendingPermAdder interface {
 
 // Responder answers a server-to-client ACP request on the chat's bridge.
 //
-// The one role here that writes to the WIRE rather than to the event bus, and it
-// exists because a request vibekit declines to process still has to be answered:
-// KAS's sendRequest carries no timeout, so an unanswered ask strands the tool
-// batch until process teardown. The ordinary answer to an ask travels the other
-// way, from the client through internal/command, and never through here.
+// The one role here that writes to the wire rather than the event bus: a
+// request vibekit declines to process still has to be answered, since
+// KAS's sendRequest carries no timeout and an unanswered ask strands the
+// tool batch until process teardown.
 //
-// A chat with no bridge is not an error — a response has nowhere to go — so an
-// implementation reports nil for that case rather than a failure.
+// A chat with no bridge is not an error — a response has nowhere to go —
+// so an implementation reports nil for that case rather than a failure.
 type Responder interface {
 	BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error
 }
@@ -174,67 +139,61 @@ type Pusher interface {
 	NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID)
 }
 
-// SessionResolver answers a chat's parent ACP session id, or "" when no bridge
-// is running. Used to short-circuit notifications whose top-level sessionId
-// belongs to a subagent rather than the parent chat.
+// SessionResolver answers a chat's parent ACP session id, or "" when no
+// bridge is running. Used to short-circuit notifications whose top-level
+// sessionId belongs to a subagent rather than the parent chat.
 type SessionResolver interface {
 	ParentACPSession(chatID vibekit.ChatID) string
 }
 
-// HookStatusReader reports whether hook status display is enabled; when it is
+// HookStatusReader reports whether hook status display is enabled; when
 // off, tool calls of kind "hook" are suppressed from the transcript.
 type HookStatusReader interface {
 	IsHookStatusEnabled() bool
 }
 
-// TerminalReader returns an agent terminal's rendered output: plain text with
-// escapes parsed off, plus the spans styling it.
+// TerminalReader returns an agent terminal's rendered output: plain text
+// with escapes parsed off, plus the spans styling it.
 //
-// ok reports whether the terminal is KNOWN, not whether it printed anything: a
-// registered terminal that produced no output answers ("", nil, true). The
-// distinction is the whole value of the boolean — adoption logs a miss on false,
-// and a silent command reporting as missing would file that warning every turn.
+// ok reports whether the terminal is known, not whether it printed
+// anything: a registered terminal that produced no output answers
+// ("", nil, true).
 //
-// This is what makes the tool CARD the durable home of a command's output. KAS
-// puts none of it on the tool call — a successful terminal-backed command's
-// tool_call_update carries no output field at all, so before this every finished
-// command persisted an empty output and the bytes lived only in an ephemeral SSE
-// stream that a page reload discarded.
+// This is what makes the tool card the durable home of a command's
+// output: KAS puts none of it on the tool call, so before this every
+// finished command persisted an empty output and the bytes lived only in
+// an ephemeral SSE stream a page reload discarded.
 type TerminalReader interface {
 	Output(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
 }
 
-// GovernanceAccess caches the latest account/workspace governance state so GET
-// /api/governance can serve it with no chat open (see agent/governance.go).
-//
-// One method, and its own name rather than a loose method on a composite,
-// because it is the only thing this package asks of that cache.
+// GovernanceAccess caches the latest account/workspace governance state so
+// GET /api/governance can serve it with no chat open.
 type GovernanceAccess interface {
 	// SetGovernance replaces the cached governance state.
 	SetGovernance(state vibekit.GovernanceStatePayload)
 }
 
-// MCPRecorder groups MCP server state tracking methods, so the MCP frames can
-// be stubbed independently of the rest of the host.
+// MCPRecorder groups MCP server state tracking methods.
 type MCPRecorder interface {
-	// RecordConnected marks a server connected and records what it advertises
-	// (from _kiro/mcp/status): its tool names, prompts and resources. All three
-	// may be nil, and all three arrive together — there is no separate
-	// SetKnownTools, because a second call would be a second write of the same
-	// notification and the record it lands in is replaced wholesale here.
+	// RecordConnected marks a server connected and records what it
+	// advertises (from _kiro/mcp/status): its tool names, prompts and
+	// resources. All three may be nil and all three arrive together —
+	// the record they land in is replaced wholesale here.
 	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo)
 	RecordOAuth(ctx context.Context, serverName, oauthURL string)
 	RecordInitFailure(ctx context.Context, serverName, errMsg string)
-	// RecordDisabled reports a server KAS says is off. The recorder keeps it
-	// only when vibekit never configured it — a configured server's off state is
-	// already on its config row, and this call must not resurrect one the user
-	// switched off. See runtime's recordDisabled for the rule.
+	// RecordDisabled reports a server KAS says is off. Kept only when
+	// vibekit never configured it — a configured server's off state is
+	// already on its config row, and this call must not resurrect one
+	// the user switched off.
 	RecordDisabled(ctx context.Context, serverName string)
 	SignalReady()
 }
 
-// Translator holds stateful translate logic extracted from Runtime. Each role is
-// its own field, so a handler method's reach is the field it names.
+// Translator holds stateful translate logic extracted from Runtime. Each
+// role is its own field, so a handler method's reach is the field it
+// names.
 type Translator struct {
 	bus           Broadcaster
 	chats         ChatRecords
@@ -254,12 +213,12 @@ type Translator struct {
 	turnInterrupt TurnInterruptAccess
 	metering      TurnMetering
 	newMsgID      func() string
-	// steps maps a workflow step's ACP session id to its run and node. Fed from
-	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
+	// steps maps a workflow step's ACP session id to its run and node.
+	// Fed from the wire (node_start) and from an inspect read.
 	steps *stepRegistry
-	// suppressed holds the tool-call ids of dropped internal-tool frames, so
-	// the follow-up tool_call_update is dropped BEFORE TurnFoldTarget can open
-	// a wire turn for it. See HandleToolCall and internal_tools.go.
+	// suppressed holds the tool-call ids of dropped internal-tool
+	// frames, so the follow-up tool_call_update is dropped before
+	// TurnFoldTarget can open a wire turn for it.
 	suppressed *suppressedTools
 	workDir    string // last for fieldalignment, as in Roles
 }
@@ -301,8 +260,8 @@ func New(r *Roles, opts ...Option) *Translator {
 type Option func(*Translator)
 
 // withIDGenerator overrides the default message ID generator. Unexported:
-// the only caller is this package's own tests, which need deterministic
-// message IDs; production always takes the ids.NewMessageID default.
+// only this package's own tests need deterministic message IDs;
+// production always takes the ids.NewMessageID default.
 func withIDGenerator(fn func() string) Option {
 	return func(t *Translator) { t.newMsgID = fn }
 }
@@ -319,15 +278,13 @@ func (t *Translator) newEventMessage(kind vibekit.EventKind, content string) vib
 	}
 }
 
-// deriveSubSession returns the sessionID when it belongs to a SUBAGENT, and ""
-// for the launching chat itself OR for a workflow step.
+// deriveSubSession returns the sessionID when it belongs to a subagent,
+// and "" for the launching chat itself or for a workflow step.
 //
-// A step returning "" is the point, not a loss: a step's frames arrive on the
-// chat's connection with their own session id, and every caller of this function
-// treats a non-empty result as "a subagent did this" — three by dropping the
-// frame and three by stamping SubSessionID. Neither is true of a step, so the
-// step case is answered where it is known (ClassifyFrame) and this function
-// keeps its one narrow meaning. See workflow_steps.go for the whole problem.
+// A step returning "" is the point: a step's frames arrive on the chat's
+// connection with their own session id, and every caller of this function
+// treats a non-empty result as "a subagent did this". The step case is
+// answered where it is known (ClassifyFrame).
 func (t *Translator) deriveSubSession(chatID vibekit.ChatID, sessionID string) string {
 	if t.ClassifyFrame(chatID, sessionID, false) == OwnerSubagent {
 		return sessionID
@@ -335,73 +292,54 @@ func (t *Translator) deriveSubSession(chatID vibekit.ChatID, sessionID string) s
 	return ""
 }
 
-// RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.
+// RunOriginAccess answers whether a workflow run was launched by a
+// schedule. Keyed by workflow id rather than chat id, since a parentless
+// run's frames carry no topic.
 //
-// One method, because that is the whole question workflow.go asks. The fact lives
-// on the host: the scheduler's launch path carries a schedule id and marks the run
-// with it, and nothing on the ACP wire distinguishes a scheduled run from a manual
-// one (both are parentless, both arrive with an empty chat id). Keyed by workflow
-// id rather than chat id for the same reason — a parentless run's frames carry no
-// topic.
-//
-// In-memory on the host, so a run that OUTLIVES a restart reports false
-// afterwards: the mark is gone, and vibekit genuinely no longer knows the run was
-// scheduled. That is a missing start signal on a resume, not a wrong one.
+// In-memory on the host, so a run that outlives a restart reports false
+// afterwards — a missing start signal on a resume, not a wrong one.
 type RunOriginAccess interface {
 	IsScheduled(workflowID string) bool
 }
 
-// RunBoundsAccess reports a workflow STEP that blew its turn cap.
+// RunBoundsAccess reports a workflow step that blew its turn cap.
 //
-// One method, and it takes the breach rather than asking permission for it,
-// because the two halves of the cap live in different places on purpose:
-// COUNTING belongs here (the step's tool frames pass through this package, and
-// `_meta.kiro.workflow` is what identifies them), while ENFORCEMENT belongs on
-// the host (it owns the bridges and the only stop verb, which is run-scoped).
-//
-// The host is expected to cancel the whole RUN, since no per-step stop verb
-// exists on the wire; that is the host's decision to state, not this package's to
-// assume, which is why the name says what happened rather than what to do.
+// Takes the breach rather than asking permission for it: counting
+// belongs here (the step's tool frames pass through this package), while
+// enforcement belongs on the host (it owns the bridges and the only stop
+// verb, which is run-scoped). The host is expected to cancel the whole
+// run, since no per-step stop verb exists on the wire.
 type RunBoundsAccess interface {
 	StepTurnCapExceeded(workflowID, nodeID string, turns int)
 }
 
-// TurnInterruptAccess ends a turn kiro-cli has abandoned without answering.
+// TurnInterruptAccess ends a turn kiro-cli has abandoned without
+// answering.
 //
-// Same split as RunBoundsAccess, for the same reason: DETECTION belongs here
-// (the sentinel arrives as an assistant text chunk, which passes through this
-// package) and TERMINATION belongs on the host, which owns the bridges and the
-// in-flight prompt's cancel func. This package holds neither, and a turn ends
-// here only by the host acting on what it was told.
+// Same split as RunBoundsAccess: detection belongs here (the sentinel
+// arrives as an assistant text chunk) and termination belongs on the
+// host, which owns the bridges and the in-flight prompt's cancel func.
 //
-// reason travels because the host cannot derive it. The transcript already shows
-// the sentinel as ordinary assistant text; what the divider needs is the
-// attribution, and only the detector knows which sentinel matched.
+// reason travels because the host cannot derive it — the divider needs
+// the attribution, and only the detector knows which sentinel matched.
 //
-// Advisory in one direction only: the host may decline (no turn in flight, or a
-// user cancel already claimed this one), which is why nothing here reads a
-// result.
+// Advisory in one direction only: the host may decline (no turn in
+// flight, or a user cancel already claimed this one).
 type TurnInterruptAccess interface {
 	InterruptTurn(chatID vibekit.ChatID, reason string)
 }
 
-// TurnMetering is the per-turn accounting a turn_completion frame writes, and it
-// is TWO operations because the frame carries two facts with different owners.
-//
-// The split is what lets a workflow STEP's frame through: its credits are spent
-// by the chat that launched it, so they accumulate there, while the conversation
-// turn count and duration are the conversation's and a step must not move them.
-// Before the split one blanket gate dropped a step's frame whole, so a
-// twenty-step run reported no cost at all on the chat that paid for it.
-//
-// Staging belongs on the host because it belongs on the open TURN: several frames
-// can describe one turn, and only the host holds the record they sum onto.
+// TurnMetering is the per-turn accounting a turn_completion frame writes,
+// split into two operations because the frame carries two facts with
+// different owners: a workflow step's credits are spent by the chat that
+// launched it and accumulate there, while the conversation turn count and
+// duration are the conversation's and a step must not move them.
 type TurnMetering interface {
-	// AccumulateSpend adds a turn_completion's credit spend, cumulatively, for
-	// every frame — step or not.
+	// AccumulateSpend adds a turn_completion's credit spend, cumulatively,
+	// for every frame — step or not.
 	AccumulateSpend(ctx context.Context, chatID vibekit.ChatID, credits float64)
 	// StageConversationTurnSummary records a conversation turn's reported
-	// duration, accumulating rather than overwriting so several frames for one
-	// turn sum.
+	// duration, accumulating rather than overwriting so several frames
+	// for one turn sum.
 	StageConversationTurnSummary(ctx context.Context, chatID vibekit.ChatID, elapsedMs float64)
 }

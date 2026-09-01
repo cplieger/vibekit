@@ -1,21 +1,19 @@
 // ---------------------------------------------------------------------------
 // Fundamental: TodoList — a live checklist for kiro-cli's `todo_list` tool.
 //
-// kiro-cli's enableTodoList surfaces multi-step task tracking as a `todo_list`
-// tool call whose input carries the items. Rather than show a raw generic tool
-// card, we render a first-class checklist (like the IDE's todo panel and the
-// TUI's checklist): a progress header + one row per item with a status glyph,
-// reconciled by content so ticking an item off animates in place.
+// Renders a first-class checklist rather than a generic tool card: a
+// progress header + one row per item with a status glyph, reconciled by
+// content so ticking an item off animates in place.
 //
 // Pure view over a NORMALIZED TodoItem[]; the tolerant parse from tool input
-// lives in the composition (todo item shapes vary).
+// lives in composition (todo item shapes vary).
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
 import { reconcile, type ReconcileSpec } from "../reconcile.js";
 import type { PlanStatus } from "../types.js";
 
-/** A normalized todo item. Status reuses PlanStatus (pending/in_progress/completed). */
+/** A normalized todo item; status reuses PlanStatus. */
 export interface TodoItem {
   content: string;
   status: PlanStatus;

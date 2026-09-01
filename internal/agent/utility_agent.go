@@ -1,12 +1,7 @@
 // The utility text-generation agent (the first of the utility runtime's
-// two roles; see utility_session.go for the split).
-//
-// UtilityPrompt serves the ambient AI tasks: chat titles, archive
-// summaries, commit messages, PR descriptions, branch names, error
-// explanations, merge resolutions. One text turn at a time (turnMu);
-// callers queue. That serialization deliberately does NOT extend to the
-// session's stateless RPC reads, which bypass this file entirely.
-
+// two roles; see utility_session.go for the split). UtilityPrompt serves the
+// ambient AI tasks; one text turn at a time (turnMu), which deliberately does
+// NOT extend to the session's stateless RPC reads.
 package agent
 
 import (
@@ -36,11 +31,8 @@ const maxUtilityPromptBytes = 64 * 1024
 type utilityAgent struct {
 	session *utilitySession
 	// currentEffort is the reasoning-effort level last applied to the live
-	// session via session/set_config_option (empty = model default,
-	// nothing applied yet). Per-task levels: cheap tasks (titles,
-	// summaries) run low; diff-reading tasks (commit messages, PR
-	// descriptions, merge resolution) run medium. Only re-applied when the
-	// requested level differs.
+	// session (empty = model default). Per-task levels: cheap tasks run
+	// low, diff-reading tasks run medium. Only re-applied when it differs.
 	currentEffort vibekit.EffortLevel
 
 	// turnMu serializes text-generation turns. Ambient tasks are not
@@ -52,10 +44,8 @@ type utilityAgent struct {
 	counterGen  uint64
 	promptCount int
 	// promptBytes accumulates the byte size of every prompt sent on the
-	// current session. Each turn re-sends the whole prior conversation as
-	// model input, so a session that carried a few 8-12 KB commit/PR diffs
-	// re-bills that dead context on every subsequent task. Recycling on a
-	// byte budget (not just prompt count) bounds that waste.
+	// current session. Each turn re-sends the whole prior conversation, so
+	// recycling on a byte budget bounds the re-billed dead context.
 	promptBytes int
 	// effortUnsupported latches after a failed effortLevel
 	// set_config_option (the cheapest model may expose no reasoning-effort
@@ -87,10 +77,6 @@ func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort
 	}
 	ua.syncCounters(lease.gen)
 
-	// Recycle the session when it has served too many prompts or carried
-	// too many prompt bytes. The count bound limits context bleeding
-	// between unrelated tasks; the byte bound limits paying for a big
-	// diff's tokens on every later turn of the session.
 	if ua.promptCount >= maxUtilityPrompts || ua.promptBytes >= maxUtilityPromptBytes {
 		slog.Info("utility bridge recycled", "prompts", ua.promptCount, "prompt_bytes", ua.promptBytes)
 		ua.session.resetIf(lease.gen)
@@ -104,22 +90,16 @@ func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort
 
 	ua.applyEffort(ctx, lease, effort)
 
-	// Clear any residual chunks a prior turn left in the channel so they
-	// can't prepend to this task's output (drainResponse below would
-	// otherwise read the leftover first).
 	drainLeftoverChunks(lease.chunks)
 
 	resp, err := lease.bridge.Call(ctx, vibekit.MethodPrompt, utilitySessionParams(lease.bridge, map[string]any{
 		"prompt": []map[string]any{vibekit.TextBlock(utilitySystemPrompt + prompt)},
 	}))
 	if err != nil {
-		// Session may be dead; reset (if still this generation) so the
-		// next call restarts it.
 		ua.session.resetIf(lease.gen)
 		return "", fmt.Errorf("utility prompt: %w", err)
 	}
 
-	// Drain the forwarded response channel to consume the response chunks.
 	return ua.drainResponse(ctx, lease, resp)
 }
 
@@ -178,21 +158,14 @@ func drainLeftoverChunks(chunks <-chan utilityChunkPayload) {
 	}
 }
 
-// drainResponse reads the prompt response and collects assistant
-// text from the forwarded response channel. Returns the concatenated text.
+// drainResponse reads the prompt response and collects assistant text from
+// the forwarded response channel.
 //
 // kiro-cli does NOT emit a `session/update` sessionUpdate=="end_turn"
-// notification: per ACP, the turn-end signal is the JSON-RPC RESPONSE
-// to session/prompt (which the bridge Call already awaited before this
-// function runs). By the time we get here, the turn is already over;
-// all we need to do is drain whatever chunks are still buffered in
-// the channel from before the response landed.
-//
-// Strategy: keep reading chunks until a short idle period elapses or
-// ctx / the 60 s hard ceiling fire. The idle debounce handles the race
-// between Call returning and the last chunks landing in the channel
-// buffer. Caller-supplied ctx lets HTTP handlers cancel the operation
-// without waiting for the ceiling.
+// notification: per ACP, the turn-end signal is the JSON-RPC RESPONSE to
+// session/prompt, already awaited by Call before this runs. So this only
+// drains chunks that arrived before the response landed, until a short idle
+// debounce elapses or ctx / the 60s hard ceiling fire.
 func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, resp *vibekit.RPCResponse) (string, error) {
 	if resp == nil {
 		return "", errors.New("nil response")
@@ -212,11 +185,9 @@ func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, r
 	for {
 		select {
 		case <-ctx.Done():
-			// Caller cancelled. Only reset the session if the
-			// cancellation came from the request context (user
-			// navigated away), not from shutdownCtx (graceful
-			// shutdown). During shutdown, stopUtilityBridge handles
-			// cleanup; an extra reset here would race with Stop().
+			// Only reset if cancellation came from the request context, not
+			// shutdownCtx — during shutdown, stopUtilityBridge handles
+			// cleanup and an extra reset here would race Stop().
 			if !ua.session.shuttingDown() {
 				ua.session.resetIf(lease.gen)
 			}
@@ -226,19 +197,14 @@ func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, r
 				return text.String(), nil
 			}
 			text.WriteString(chunk.Content.Text)
-			// Rearm the idle window on every chunk we accepted. No Stop and no
-			// drain: a chan-based timer's channel is unbuffered as of Go 1.23, so
-			// Reset alone guarantees no receive corresponding to the previous
-			// setting (time.Timer.Reset's own doc says so), and Go 1.27 removed
-			// the asynctimerchan GODEBUG that could have reverted it.
+			// Reset alone is safe: a chan-based timer's channel is
+			// unbuffered since Go 1.23, so no stale receive can land.
 			idle.Reset(idleDebounce)
 		case <-idle.C:
-			// No chunks for idleDebounce → all chunks drained.
 			return text.String(), nil
 		case <-timeout.C:
-			// Hard ceiling hit. Reset the session so a wedged turn
-			// doesn't pollute the next caller with leftover chunks
-			// interleaving with their own stream.
+			// Reset so a wedged turn doesn't interleave leftover chunks
+			// into the next caller's stream.
 			ua.session.resetIf(lease.gen)
 			return text.String(), errors.New("utility prompt timeout")
 		}

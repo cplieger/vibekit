@@ -4,25 +4,20 @@ package agent
 // nobody to answer it, so it is refused on a short budget instead of parking the
 // run forever.
 //
-// Why this exists at all: the one-live-run-per-recipe rule means a parked run
-// blocks every later run of the same recipe. So a single unanswered prompt at
-// 03:00 does not fail one night, it silently stops the schedule until someone
-// notices — which is the failure this floor removes.
+// Why this exists: the one-live-run-per-recipe rule means a parked run blocks
+// every later run of the same recipe, so an unanswered prompt at 03:00 silently
+// stops the schedule until someone notices.
 //
 // Scope is deliberately narrow (user decision): SCHEDULED runs only. A manually
-// launched run is attended by definition — the user clicked Run and can answer —
-// and an agent-launched run is the agent's own, on its chat's bridge. Neither is
-// marked, so neither is ever auto-refused.
+// launched run is attended by definition, and an agent-launched run is the
+// agent's own on its chat's bridge. Neither is marked, so neither is ever
+// auto-refused.
 //
-// DENY by default, with an explicit opt-out. "I approve this while watching" and
-// "approve this unattended at 03:00" are different consents, and INHERITING the
+// DENY by default, with an explicit opt-out (`scheduled_auto_approve`,
+// Settings → Permissions, off by default): "I approve this while watching" and
+// "approve this unattended at 03:00" are different consents, and inheriting the
 // first as the second is how a scheduler quietly acquires privileges nobody
-// granted. A `scheduled_auto_approve` setting (Settings → Permissions, off by
-// default) is not that inheritance: it is a decision made on purpose about
-// unattended work, so it is offered rather than refused. With it off, a workflow
-// needing a permission Cedar does not already allow will not complete unattended
-// and the row says why; with it on, the budget still applies and the answer at
-// the deadline is approve instead of refuse.
+// granted.
 
 import (
 	"context"
@@ -38,21 +33,16 @@ import (
 // unattendedApprovalBudget is how long a scheduled run's permission request
 // waits before it is refused.
 //
-// 180 seconds, copied from KiroCrew's `_BACKGROUND_APPROVAL_TIMEOUT_SECS`
-// (src/kiro_crew/dashboard/state.py), whose own comment records the reasoning:
+// 180 seconds, copied from KiroCrew's `_BACKGROUND_APPROVAL_TIMEOUT_SECS`:
 // background sources have no human responder, so waiting the full interactive
-// window burns hours on every unattended approval. It is not zero because the
-// user may have the run's page open and can still answer.
+// window burns hours on every unattended approval. Not zero because the user
+// may have the run's page open and can still answer.
 const unattendedApprovalBudget = 180 * time.Second
 
 // maxToolNameBytes bounds the tool name on its two human surfaces, the log
 // attribute and the schedule row's sentence. Deliberately not the permission
 // card's 512: this value is CONCATENATED into a one-line sentence an operator
-// reads in the Workflows tab rather than given a surface of its own, and it is
-// persisted into schedules.json on every fire. 128 leaves every legitimate name
-// intact — a KAS tool id is a short snake_case token, and the longest real
-// tool-call title in this repo's fixtures is under 60 bytes. Bytes of CONTENT:
-// the preset's truncation marker rides outside the cap.
+// reads and is persisted into schedules.json on every fire.
 const maxToolNameBytes = 128
 
 // approvalTypeTurn is the `_meta.kiro.type` marking a TURN APPROVAL.
@@ -99,22 +89,15 @@ const outcomeOverran = "failed: still running when its next slot came due, so it
 
 // permissionWithUnattendedFloor wraps the ordinary permission handler.
 //
-// The request still reaches the client exactly as it would otherwise: the run's
-// page shows the card, and a user with it open can answer inside the budget.
-// What the wrapper adds is a deadline after which vibekit answers for them.
+// The request still reaches the client exactly as it would otherwise; what the
+// wrapper adds is a deadline after which vibekit answers for them.
 func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 		inner(ctx, chatID, msg)
 
-		// The lease's own mark, which is why the floor now survives a restart:
-		// before, the mark was in memory, so a container that restarted while a
-		// scheduled run was parked left that run's next permission ask waiting for
-		// a human who was never going to arrive.
-		//
-		// The lookup key strips the `run:` prefix and yields "" for any other chat
-		// id, so the floor reaches only a parentless run on its own bridge. An
-		// agent-launched run's asks arrive on its chat's real id and are attended
-		// by the person who asked for them.
+		// The lease's own mark, which is why the floor now survives a restart.
+		// The lookup key strips the `run:` prefix and yields "" for any other
+		// chat id, so the floor reaches only a parentless run on its own bridge.
 		l, held := rs.lease(workflowIDOf(chatID))
 		if !held || !l.Unattended || msg.ID == nil {
 			return
@@ -122,10 +105,9 @@ func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		scheduleID := l.ScheduleID
 		requestID := *msg.ID
 		tool := permissionToolName(msg.Params)
-		// AfterFunc parks no goroutine while waiting, and the timer is a no-op
-		// once the request has been answered: answerUnattended claims
-		// the request from the tracker, and the ordinary response path has
-		// already claimed it.
+		// AfterFunc parks no goroutine while waiting, and it is a no-op once the
+		// request has been answered: answerUnattended claims the request from
+		// the tracker, and the ordinary response path has already claimed it.
 		params := msg.Params
 		time.AfterFunc(unattendedApprovalBudget, func() {
 			rs.answerUnattended(chatID, requestID, scheduleID, tool, params)
@@ -144,11 +126,9 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 		return
 	}
 	approve := scheduledAutoApprove(ctx, rs.lifecycle.configDir)
-	// Refuse with the reject option the request ADVERTISED, the same rule the
-	// approve side below follows: answer with a choice the request offered.
-	// Cancelled stays the FALL-BACK for a request advertising none, so behaviour
-	// there is unchanged. It also stops an unattended refusal reading as a turn
-	// cancel in the backend's own session record.
+	// Refuse with the reject option the request ADVERTISED — answer with a
+	// choice the request offered, same rule the approve side below follows.
+	// Cancelled is the FALL-BACK for a request advertising none.
 	outcome := vibekit.PermissionOutcomeCancelled()
 	if opt := optionIDByKind(msgParams, optionKindRejectOnce); opt != "" {
 		outcome = vibekit.PermissionOutcomeSelected(opt)
@@ -157,8 +137,7 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 	if approve {
 		opt := optionIDByKind(msgParams, optionKindAllowOnce)
 		if opt == "" {
-			// Nothing to select: an allow option is what makes approval
-			// expressible, and inventing an id would answer with a choice the
+			// Nothing to select: inventing an id would answer with a choice the
 			// request never offered. Fall back to the refusal.
 			slog.Warn("unattended auto-approve: request offered no allow option, refusing instead",
 				"chat_id", chatID, "tool", tool)
@@ -167,22 +146,21 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 			verb = outcomeApproved
 		}
 	}
-	// Claim the request, and give up when the claim fails. This is the load-
-	// bearing one: the floor races a human who has the run's page open, and the
-	// budget expires at a moment nobody chose. Before the claim was atomic, both
-	// answers went out — a Reject the user pressed at 179s and this Allow — and
-	// kiro-cli kept whichever arrived first, so the user's decision could be
-	// overruled by a timer with no trace of it anywhere.
+	// Claim the request, and give up when the claim fails. This is
+	// load-bearing: the floor races a human who has the run's page open, and
+	// the budget expires at a moment nobody chose. Before the claim was atomic,
+	// both answers went out and kiro-cli kept whichever arrived first, so the
+	// user's decision could be overruled by a timer with no trace of it.
 	//
-	// Taking it also retires the entry, so nothing below has to, and announces
-	// the answer as the MACHINE's: a card collapsing under a reader who was
-	// deciding must say that a deadline answered it, and which way.
+	// Taking it also retires the entry, and announces the answer as the
+	// MACHINE's: a card collapsing under a reader who was deciding must say
+	// that a deadline answered it, and which way.
 	if !rs.perms.TakePendingPerm(chatID, requestID, vibekit.SettledByUnattended) {
 		return
 	}
 	// A FIXED message with the outcome as a field, not a message built from the
-	// verb: a Loki rule matches on the message, and a concatenated one cannot be
-	// matched reliably (see homelab apps/loki/rules/alerts.yaml vibekit_logs).
+	// verb: a Loki rule matches on the message, and a concatenated one cannot
+	// be matched reliably.
 	slog.Warn(logMsgUnattendedPermission,
 		"outcome", verb, "chat_id", chatID, "tool", tool,
 		"budget", unattendedApprovalBudget, "schedule_id", scheduleID)
@@ -214,11 +192,10 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 // permissionToolName names what a request is asking about, for the log line and
 // the schedule row. Best-effort: an unnamed request still gets denied.
 //
-// Machine-authored names first, the model's prose last. A PRECEDENCE rather than
-// a gate on toolId: only the ordinary tool approval carries one, three of the
-// backend's six ask kinds carry no `_meta` at all, and a hook approval carries a
-// different shape — so failing closed on toolId would blank the operator's only
-// description of five of the six.
+// Machine-authored names first, the model's prose last. A PRECEDENCE rather
+// than a gate on toolId: only the ordinary tool approval carries one, three of
+// the backend's six ask kinds carry no `_meta` at all, and a hook approval
+// carries a different shape.
 func permissionToolName(params json.RawMessage) string {
 	var p struct {
 		ToolCall struct {
@@ -261,11 +238,9 @@ func permissionToolName(params json.RawMessage) string {
 // safeToolName defuses one wire-supplied name for a single-line human surface.
 //
 // The title is composed upstream by the MODEL, so an agent that read a poisoned
-// file can reach both the log line and the schedule row through it — and that row
-// is a decision surface by the same argument the permission card is one: it is
-// what an operator reads the next morning to decide which permission rule to
-// write. The sanitizer replaces rather than deletes, so a legitimate name is
-// byte-identical and a bidi reversal becomes visible whitespace.
+// file can reach both the log line and the schedule row through it. The
+// sanitizer replaces rather than deletes, so a legitimate name is byte-identical
+// and a bidi reversal becomes visible whitespace.
 func safeToolName(s string) string {
 	return runesafe.SanitizeSingleLineBounded(s, maxToolNameBytes)
 }
@@ -282,11 +257,10 @@ func scheduledAutoApprove(ctx context.Context, configDir string) bool {
 
 // optionIDByKind picks the request's advertised option of one EXACT kind.
 //
-// Exact, never a prefix, and that is the whole safety property: `allow_always`
-// and `reject_always` are advertised whenever consent is persistable, and
-// selecting either makes the backend PERSIST a rule — turning one automated
-// answer into a standing grant, or a standing deny, that nobody wrote. A one-shot
-// answer expires with the turn.
+// Exact, never a prefix: `allow_always`/`reject_always` are advertised whenever
+// consent is persistable, and selecting either makes the backend PERSIST a
+// rule — turning one automated answer into a standing grant nobody wrote. A
+// one-shot answer expires with the turn.
 func optionIDByKind(params json.RawMessage, kind string) string {
 	var p struct {
 		Options []struct {

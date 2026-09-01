@@ -50,29 +50,20 @@ function liftOutput(parsed: unknown): GitCmdResult {
   return {};
 }
 
-/** Compose the message a failed /api/git envelope should carry: the kind, plus
- *  the `detail` field when the server supplied one.
- *
- *  Without the detail the toast reads `Couldn't suggest a branch name:
- *  generation_failed` — a machine discriminator and nothing a reader can act
- *  on, while the server had already put the cause in the same body. The two
- *  callers that pass an EMPTY detail do so deliberately (`no_staged_changes`,
- *  `not_in_repo` say everything in their kind), so those keep rendering bare. */
+/** Composes the message a failed /api/git envelope should carry: the kind,
+ *  plus `detail` when the server supplied one. The two callers passing an
+ *  empty detail do so deliberately (their kind says everything). */
 function errorMessage(data: { error: string }): string {
   const detail = (data as { detail?: unknown }).detail;
   return typeof detail === "string" && detail !== "" ? `${data.error}: ${detail}` : data.error;
 }
 
-/** Decode the /api/git 200-with-error envelope (apiAction's decode seam).
- *
+/** Decodes the /api/git 200-with-error envelope (apiAction's decode seam).
  *  HTTP 200 + {"error": …} means the git subprocess failed; code "git"
- *  (never retried: the command may have had side effects). Transport
- *  failures and genuine non-2xx responses keep apiAction's default
- *  mapping (codes "network"/"timeout"/"cancelled", retryNetwork-eligible;
- *  status + lifted body error for non-2xx). Shared with git-branch.ts. */
+ *  (never retried — the command may have had side effects). Shared with
+ *  git-branch.ts. */
 export function decodeGitResult(data: unknown): GitCmdResult {
   if (hasErrorString(data) && data.error !== "") {
-    // HTTP 200 + {"error": …}: the git subprocess failed (18-F1).
     throw new ActionError(errorMessage(data), { code: "git" });
   }
   return liftOutput(data);
@@ -168,19 +159,11 @@ function decodePullAll(data: unknown): GitPullResult[] {
   return out;
 }
 
-/** Fast-forward every repo where that is safe, and report the rest.
- *
- *  ONE request rather than a fan-out over `pull` above, because the judgement
- *  "is a fast-forward safe in this tree" has to be atomic with the pull it
- *  guards — a client asking a second endpoint and then pulling leaves a window
- *  where the tree changes between the answer and the action. It is also the only
- *  side that can fetch first, so `behind` is measured rather than remembered.
- *
- *  `dedupe` collapses a second press onto the pass already running; the server
- *  singleflights the same key, so the two agree. No retry: a pass that timed out
- *  may have pulled some of the repos, and re-running it would re-fetch every
- *  remote for no new information — Refresh is the recovery. The summary toast is
- *  computed from the result because the counts exist nowhere else. */
+/** Fast-forwards every repo where that is safe, and reports the rest. One
+ *  request rather than a fan-out over `pull`: the fast-forward-safety
+ *  judgement has to be atomic with the pull it guards. `dedupe` collapses a
+ *  second press onto the pass already running; no retry — a timed-out pass
+ *  may have pulled some repos, and Refresh is the recovery. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no args
 export const pullAll = apiAction<void, GitPullResult[]>({
   name: "git.pull_all",

@@ -25,44 +25,27 @@ import (
 )
 
 // pushPayload is the typed wire shape for Web Push notification payloads.
-// Using a struct instead of map[string]string gives compile-time key safety
-// and enables json's cached struct encoder.
 //
-// vibekit.PushSubject is EMBEDDED, so its fields land flat on the wire and there is
-// one definition of the subject rather than a copy here. It is also what makes
-// fitToCap correct by construction: every subject field is charged against the
-// cap because the whole struct is what gets marshaled, so adding a subject field
-// cannot under-count the payload by exactly the amount that makes the vendor
-// reject it.
+// vibekit.PushSubject is EMBEDDED so fitToCap's size check (which marshals this
+// struct) automatically charges every subject field against the cap; a
+// separate subject copy could under-count the payload by exactly the amount
+// that makes the vendor reject it.
 type pushPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	vibekit.PushSubject
 }
 
-// Send delivers a push notification to all subscribers.
-// The service checks per-kind preferences and debounces rapid
-// notifications per KIND AND SUBJECT, so a permission push does not
-// suppress the agent-finished push that follows within 5s and one pull
-// request settling does not swallow another's verdict. Oversize payloads
-// are truncated with a Warn breadcrumb so an accidentally-chatty caller
-// doesn't get silently rejected by the push vendor.
+// Send delivers a push notification to all subscribers, debounced per KIND AND
+// SUBJECT (so one pull request settling does not suppress another's verdict).
 //
-// subject names what the notification is about; see vibekit.PushSubject. Pass a zero
-// value for a workspace-global notification with nothing single behind it.
+// subject names what the notification is about; see vibekit.PushSubject. Pass a
+// zero value for a workspace-global notification with nothing single behind it.
 //
-// The nil check below reads a two-valued answer from one slice: nil means DO NOT
-// SEND — a gate refused (unhealthy, kind disabled, unknown kind, still inside the
-// debounce window) — while a non-nil EMPTY slice means send to nobody, i.e. every
-// gate passed and there are no subscribers. Only the first is a return. The
-// second falls through and fans out to zero endpoints, which matters because
-// preflightSend stamps the debounce timestamp before it snapshots the
-// subscribers: an app nobody has subscribed to still burns the window, so a
-// subscription registered within pushDebounce of a notification is debounced out
-// of the next one. Nothing is lost that was deliverable at the time, and closing
-// it would mean either stamping after the snapshot (reopening the TOCTOU that
-// hold is there to close) or treating an empty subscriber set as a refusal, which
-// is a different claim than the gates make.
+// preflightSend returns nil to mean DO NOT SEND (a gate refused), vs a non-nil
+// EMPTY slice meaning every gate passed but nobody is subscribed — only the
+// former is a return here; the latter still fans out to zero endpoints because
+// preflightSend stamps the debounce timestamp before snapshotting subscribers.
 func (s *Service) Send(ctx context.Context, title, body string, notifyType vibekit.PushKind, subject vibekit.PushSubject) {
 	slog.Debug("push: send", "kind", string(notifyType))
 	// Trim against the *marshaled* size, not the raw title+body length. The
@@ -156,20 +139,12 @@ func classify(code int) disposition {
 // deliver sends one payload to one subscriber, retrying the retryable, and
 // reports whether the subscription should be pruned.
 //
-// The retry is deliberately small: a bounded in-goroutine loop, no queue and no
-// dead-letter store. A production web-push architecture puts a job queue and a
-// DLQ behind this, and the reason vibekit does not is that a DLQ exists to make
-// undelivered WORK recoverable, while nothing here is work: an unanswered
-// permission is replayed to every client on reconnect by the runtime's pending-
-// permission tracker, and a finished turn is in the transcript. An undelivered
-// notification costs a nudge, not state.
-//
-// The budget is wall-time rather than an attempt count for the same reason. A
-// permission ask is worthless once it has been answered or its turn has died,
-// and "agent finished" is worthless an hour later, whatever the request's
-// 24-hour TTL header permits the SERVICE to do. So the loop stops when the
-// notification would arrive too late to mean anything, which is a smaller and
-// more honest bound than "five attempts with exponential backoff".
+// No queue and no dead-letter store, deliberately: nothing here is durable
+// work — an unanswered permission is replayed on reconnect by the runtime's
+// pending-permission tracker, and a finished turn is already in the transcript.
+// An undelivered notification costs a nudge, not state, so the retry budget is
+// wall-time (how long the notification stays meaningful) rather than an
+// attempt count.
 func (s *Service) deliver(ctx context.Context, sub vibekit.PushSubscription, payload []byte) (prune bool) {
 	ep := runesafe.SanitizeSingleLineBounded(sub.Endpoint, 60)
 	deadline := time.Now().Add(pushRetryBudget)
@@ -214,17 +189,11 @@ func (s *Service) deliver(ctx context.Context, sub vibekit.PushSubscription, pay
 }
 
 // waitRetry sleeps before the next attempt and reports whether to make one.
+// Refuses when the attempt cap is reached, the budget is spent, or a
+// Retry-After would land past the notification's usefulness window.
 //
-// It refuses when the attempt cap is reached, when the budget is spent, or when
-// the service asked for a delay longer than the budget has left — the last case
-// is the one worth naming, because honouring a 300-second Retry-After for a
-// notification with 60 seconds of usefulness left would hold a goroutine to
-// deliver something stale.
-//
-// Backoff is exponential with FULL jitter (a uniform pick over [0, backoff)),
-// which matters even at this scale: every device subscribes through the same
-// vendor, so a vendor outage recovering would otherwise have every subscriber's
-// retry land in the same instant.
+// Backoff is exponential with FULL jitter (uniform over [0, backoff)) so a
+// vendor outage recovering does not land every subscriber's retry at once.
 func (s *Service) waitRetry(
 	ctx context.Context,
 	attempt int,
@@ -301,17 +270,7 @@ func parseRetryAfter(h string) time.Duration {
 // the new debounce timestamp, and returns the subscriber snapshot to
 // POST to — or nil if the send should be dropped. Holding mu across
 // the decision + stamp closes the TOCTOU between "should send" and
-// "record last-push".
-//
-// nil and an empty non-nil slice are DIFFERENT answers: nil is "a gate refused",
-// empty is "nothing refused and there is nobody subscribed". See Send for what
-// the caller does with each, and for the consequence of stamping before the
-// snapshot.
-//
-// The window is per kind AND subject. A kind-only window meant the second of two
-// pull requests settling in one poll was dropped inside five seconds while the
-// poller had already advanced its state for it, so that notification was never
-// sent at all — see pushDebounceKey.
+// "record last-push". See Send's doc comment for the nil-vs-empty contract.
 func (s *Service) preflightSend(notifyType vibekit.PushKind, subject vibekit.PushSubject) []vibekit.PushSubscription {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -344,10 +303,7 @@ func (s *Service) preflightSend(notifyType vibekit.PushKind, subject vibekit.Pus
 }
 
 // pruneDebounceLocked drops entries whose window has expired. Caller holds mu.
-//
-// An expired entry cannot suppress anything, so this changes no decision — it only
-// keeps the map from growing with every distinct chat and pull request a long-lived
-// process notifies about.
+// An expired entry cannot suppress anything, so this only bounds map growth.
 func (s *Service) pruneDebounceLocked() {
 	if len(s.lastPush) < debounceHighWater {
 		return
@@ -516,23 +472,14 @@ const pushTruncMarker = "..."
 // fitToCap trims the body — then, only if an empty body still overflows, the
 // title — until the marshaled pushPayload is at most pushBodyCap bytes, and
 // reports whether anything was trimmed. Sizing against the marshaled form
-// (JSON envelope + escaping included) is what keeps the encoded payload under
-// the vendor's record limit; push() rejects anything larger, so without this
-// an oversize notification is dropped rather than delivered truncated.
+// (JSON envelope + escaping included) is required because push() rejects
+// anything over the cap outright.
 //
 // Trimming goes through runesafe's Capped pair so the byte cap never splits a
-// multi-byte rune and the marker is charged inside that cap: the title under
-// the single-line policy, the body under the CR/LF-keeping one (notification
-// bodies are legitimately multi-line, which is why the body cannot take the
-// single-line preset). A marker inside the cap is what makes the arithmetic
-// here the overflow and nothing else — len(field)-over is a true total, with no
-// marker width to subtract at the call site to compensate for a marker landing
-// outside the cap, and no byte of the vendor's budget left unused per trim.
-//
-// The loop terminates: whenever it runs, over >= 1 and the field being trimmed
-// is asked for a cap strictly below its current length, and the Capped pair
-// never returns more than the cap it was given — so that field strictly
-// shrinks, and an empty title+body marshals well under the cap.
+// multi-byte rune and the truncation marker is charged inside that cap (body
+// uses the CR/LF-keeping variant since notification bodies are legitimately
+// multi-line). The loop terminates because each pass strictly shrinks the
+// field being trimmed to a cap below its current length.
 func fitToCap(title, body string, subject vibekit.PushSubject) (fitTitle, fitBody string, truncated bool) {
 	if marshaledLen(title, body, subject) <= pushBodyCap {
 		return title, body, false
@@ -555,12 +502,6 @@ func fitToCap(title, body string, subject vibekit.PushSubject) (fitTitle, fitBod
 
 // marshaledLen is the byte length of the JSON-encoded notification payload.
 // Marshaling three strings cannot fail, so the error is intentionally dropped.
-//
-// The subject is charged against the cap like any other field: its fields are
-// short, but leaving them out would under-count the payload by exactly the amount
-// that makes the vendor reject it, which is the failure fitToCap exists to
-// prevent. Embedding vibekit.PushSubject in pushPayload is what makes that automatic
-// rather than a thing each new subject field has to remember.
 func marshaledLen(title, body string, subject vibekit.PushSubject) int {
 	p, _ := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject})
 	return len(p)

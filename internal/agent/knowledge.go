@@ -1,31 +1,23 @@
 package agent
 
-// Knowledge-base management: list / add / remove workspace knowledge contexts
-// over the v3 (KAS) _kiro/knowledge C→A request. Mirrors the REST-backed-by-
-// bridge.Call shape of mcp_control.go.
+// Knowledge-base management: list / add / remove workspace knowledge
+// contexts over the v3 (KAS) _kiro/knowledge C→A request.
 //
-// Bridge-targeting model (knowledge is workspace-GLOBAL, unlike MCP whose pool
-// is per-bridge): the store is disk-backed at $KIRO_HOME/.kiro/knowledge_bases/
-// default and shared by every kiro-cli process on the same KIRO_HOME. So these
-// ops route through the long-lived UTILITY bridge (same as account/getUsage) —
-// it's always available even with no chat open, and _kiro/knowledge is issued
-// WITHOUT a sessionId so it deterministically targets that global default
-// store. (A builtin-agent chat session resolves to the same store, but a
-// custom "wire" agent session would get its own in-memory store; omitting
-// sessionId sidesteps that entirely.)
+// The store is disk-backed at $KIRO_HOME/.kiro/knowledge_bases/default and
+// shared by every kiro-cli process on the same KIRO_HOME, so these ops
+// route through the long-lived UTILITY bridge — always available with no
+// chat open — and _kiro/knowledge is issued WITHOUT a sessionId so it
+// deterministically targets that global default store (a custom "wire"
+// agent session would otherwise get its own in-memory store).
 //
 // Verified live against kiro-cli acp v3 2.12.0:
-//   - subcommands: show / add / remove / update / clear / cancel; an unknown
-//     subcommand returns {success:false, message:"Unknown subcommand: …"}.
-//   - `add` is ASYNC: it returns {success:true, message:"Indexing … in
-//     background"} immediately and indexes in a background operation. Progress
-//     shows up in `show` as an entry with indexing:true + items_display ("0%",
-//     "42% · ETA 3s"); the finished context replaces it with a real item_count.
-//   - a user-initiated `add` does NOT emit _kiro/knowledge/indexing* — those
-//     fire only for agent-declared knowledge_bases sync at session start — so
-//     the client polls `show` for user-add progress (see translate/knowledge.go
-//     the ONLY progress channel — there is no notification path any more, see
-//     below).
+//   - subcommands: show / add / remove / update / clear / cancel; an
+//     unknown subcommand returns {success:false, message:"Unknown
+//     subcommand: …"}.
+//   - `add` is ASYNC: returns {success:true, message:"Indexing … in
+//     background"} immediately. Progress shows up in `show` as an entry
+//     with indexing:true + items_display; the client polls `show` for
+//     user-add progress since no notification path exists for it.
 
 import (
 	"context"
@@ -44,24 +36,22 @@ import (
 // keySubcommand is the _kiro/knowledge dispatch field naming the operation.
 const keySubcommand = "subcommand"
 
-// knowledgeCallTimeout bounds one _kiro/knowledge round-trip. show/add/remove
-// are fast (add returns immediately, indexing is backgrounded); the only slow
-// path is the first call, which lazily spins up the utility bridge
-// (session/new + auth handshake). bridge.Call has no timeout of its own.
+// knowledgeCallTimeout bounds one _kiro/knowledge round-trip. The only slow
+// path is the first call, which lazily spins up the utility bridge.
 const knowledgeCallTimeout = 45 * time.Second
 
 // kasKnowledgeResult is the _kiro/knowledge reply. `show` fills Entries;
-// add/remove/update/clear/cancel fill Message. Success is false for a usage
-// error (missing args), a not-found remove target, or an unknown subcommand.
+// add/remove/update/clear/cancel fill Message. Success is false for a
+// usage error, a not-found remove target, or an unknown subcommand.
 type kasKnowledgeResult struct {
 	Message string              `json:"message"`
 	Entries []kasKnowledgeEntry `json:"entries"`
 	Success bool                `json:"success"`
 }
 
-// kasKnowledgeEntry is one entry in a `show` reply: either an indexed context
-// (item_count + path, no indexing flag) or an in-flight operation (indexing
-// true + items_display progress). Shapes verified on the live wire.
+// kasKnowledgeEntry is one entry in a `show` reply: either an indexed
+// context (item_count + path, no indexing flag) or an in-flight operation
+// (indexing true + items_display progress).
 type kasKnowledgeEntry struct {
 	Name         string `json:"name"`
 	ID           string `json:"id"`
@@ -72,9 +62,9 @@ type kasKnowledgeEntry struct {
 	Indexing     bool   `json:"indexing"`
 }
 
-// knowledgeContext is one entry in the GET /api/knowledge response. Field set
-// mirrors kasKnowledgeEntry; the client keys rows by ID and drives the live
-// progress ring from Indexing + ItemsDisplay.
+// knowledgeContext is one entry in the GET /api/knowledge response. Field
+// set mirrors kasKnowledgeEntry; the client keys rows by ID and drives the
+// live progress ring from Indexing + ItemsDisplay.
 type knowledgeContext struct {
 	Name         string `json:"name"`
 	ID           string `json:"id"`
@@ -90,15 +80,14 @@ type knowledgeListResponse struct {
 	Contexts []knowledgeContext `json:"contexts"`
 }
 
-// knowledgeMessageResponse is the POST /api/knowledge (add) success body: the
-// KAS background-indexing confirmation message, surfaced to the user verbatim.
+// knowledgeMessageResponse is the POST /api/knowledge (add) success body:
+// the KAS background-indexing confirmation, surfaced verbatim.
 type knowledgeMessageResponse struct {
 	Message string `json:"message"`
 }
 
-// knowledgeCall lazily constructs the utility bridge (same pattern as
-// AccountUsage/UtilityPrompt) and issues one _kiro/knowledge request with a
-// bounded timeout. params carry the subcommand and its arguments; sessionId is
+// knowledgeCall lazily constructs the utility bridge and issues one
+// _kiro/knowledge request with a bounded timeout. sessionId is
 // intentionally never set (global default store).
 func (st *Settings) knowledgeCall(ctx context.Context, params map[string]any) (json.RawMessage, error) {
 	u := st.utility()
@@ -144,8 +133,7 @@ func (st *Settings) knowledgeShow(ctx context.Context) ([]knowledgeContext, erro
 
 // resolveKnowledgePath makes a user-supplied knowledge path absolute: a
 // relative path resolves against the workspace dir; an absolute path is
-// cleaned and used as-is. Sending an absolute path to KAS removes any
-// ambiguity about which cwd its file enumerator resolves against.
+// cleaned and used as-is.
 func (st *Settings) resolveKnowledgePath(p string) string {
 	if filepath.IsAbs(p) {
 		return filepath.Clean(p)
@@ -251,9 +239,8 @@ func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) 
 }
 
 // writeKnowledgeErr maps a bridge / kiro-cli failure to 502 with a generic
-// message (details logged, not leaked). There is no errNoLiveBridge case: the
-// utility bridge is auto-started, so a failure here is a backend fault, not a
-// "open a chat first" condition.
+// message (details logged, not leaked). No errNoLiveBridge case here: the
+// utility bridge is auto-started, so a failure is a backend fault.
 func writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))

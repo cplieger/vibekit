@@ -1,19 +1,16 @@
 // ---------------------------------------------------------------------------
 // Fundamental: the assistant markdown bubble (streaming or replay).
 //
-// A pure view. The bubble owns its incremental markdown stream; the
-// composition layer forwards deltas and calls end() at turn finalize.
+// A pure view owning its incremental markdown stream; composition forwards
+// deltas and calls end() at turn finalize.
 //
-// A LIVE bubble also owns a reveal cursor (`reveal.ts`), which decides WHEN
-// text reaches the parser: the network's lumps are spread across frames at a
-// rate that trails the live edge by a fixed lag, so the transcript grows
-// continuously instead of five times a second. Text already present when the
-// bubble mounts is history rather than a token arriving now, so it paints in one
-// pass; only growth is revealed. A replay bubble has no cursor at all.
+// A LIVE bubble also owns a reveal cursor (`reveal.ts`), which spreads the
+// network's lumpy deltas across frames at a rate trailing the live edge by a
+// fixed lag, so the transcript grows continuously instead of in bursts.
+// Mounted history paints in one pass; only growth is revealed.
 //
-// `.message.assistant` is no longer a bubble in the chat-bubble sense — it is
-// the turn body's PROSE container, and its ~40rem cap is the reading measure
-// (evidence — diffs, tool cards, output — sits beside it uncapped).
+// `.message.assistant` is the turn body's prose container (~40rem measure);
+// evidence beside it (diffs, tool cards, output) is uncapped.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -26,20 +23,16 @@ export interface AssistantBubble {
   readonly root: HTMLDivElement;
   /** Feed a streamed markdown delta through the incremental parser. */
   append(delta: string): void;
-  /** Replace-to-full: render only the tail beyond what's rendered. The twin of
-   *  ReasoningView.setText, and the same reason — it lets a caller holding the
-   *  block's whole text bring a bubble up to date without knowing how much of it
-   *  already landed. A no-op when nothing grew, so a settled block costs one
-   *  integer comparison. */
+  /** Replace-to-full: render only the tail beyond what's rendered — the
+   *  twin of ReasoningView.setText, no-op when nothing grew. */
   setText(full: string): void;
-  /** Stop the text: no more growth is coming. On a live bubble the reveal keeps
-   *  running until it catches up, so the caret and the streaming wash outlive
-   *  `turn_ended` by the reveal's lag — which is correct, because text is still
-   *  appearing. Finalizing the markdown stream waits for that. */
+  /** Stop the text: no more growth is coming. On a live bubble the reveal
+   *  keeps running until it catches up, so the caret and streaming wash
+   *  outlive `turn_ended` by the reveal's lag. */
   end(): void;
-  /** end(), minus the wait: reveal the remainder in one write and finalize now.
-   *  For a bubble being discarded (chat switch, message removed) and for any
-   *  caller that needs the settled DOM synchronously. */
+  /** end(), minus the wait: reveal the remainder in one write and finalize
+   *  now — for a bubble being discarded, or any caller needing settled DOM
+   *  synchronously. */
   finishNow(): void;
 }
 
@@ -50,17 +43,15 @@ export interface AssistantBubble {
  * the full markdown one-shot.
  */
 export interface AssistantBubbleOpts {
-  /** Fired exactly once, when the bubble seals — the moment `.streaming` (the
-   *  wash and the caret) drops. The live-anchor registry hangs off this: the
-   *  composition layer registers a top-level live bubble at mount and must
-   *  clear it at the same moment the class goes, whichever path sealed it
-   *  (tail moved, turn finalized, unmount). */
+  /** Fires once when the bubble seals — the moment `.streaming` drops. The
+   *  live-anchor registry hangs off this, cleared at whichever path sealed
+   *  it (tail moved, turn finalized, unmount). */
   onSeal?: (root: HTMLElement) => void;
-  /** Reports whether the bubble is BLANK — nothing to show and not streaming —
-   *  once with the initial state during build, then on every transition. The
-   *  row wrapper hides on it (`.msg-row.is-empty`, css/13-messages.css): a
-   *  reserved block slot must keep its DOM position but cost no row until its
-   *  text arrives, while a live bubble stays visible to carry its caret. */
+  /** Reports whether the bubble is BLANK (nothing to show, not streaming),
+   *  once initially then on every transition. The row wrapper hides on it
+   *  (`.msg-row.is-empty`): a reserved slot must keep its DOM position but
+   *  cost no row until text arrives, while a live bubble stays visible for
+   *  its caret. */
   onBlankChange?: (blank: boolean) => void;
 }
 
@@ -85,27 +76,16 @@ export function buildAssistantBubble(
     }
   };
 
-  /** Append `delta`, opening the incremental renderer when there is not one yet.
-   *
-   *  Two callers reach the no-stream branch and they want the same thing. A live
-   *  bubble's first delta arrives with nothing rendered. A REPLAY bubble that
-   *  grows arrives with its text already rendered one-shot, which leaves no
-   *  parser state to append to — so it re-renders the accumulated text through a
-   *  fresh stream once, then appends normally from there. `flush` is what keeps
-   *  that swap invisible: `wasRendered` says the text was on screen a moment ago,
-   *  and without the flush the bubble sits blank for the stream's buffer having
-   *  just thrown away what the reader was looking at.
-   *
-   *  The replay branch runs when the caller's live/replay judgement was wrong
-   *  about this block, and a bubble frozen at its first chunk is what it
-   *  replaces. */
+  /** Append `delta`, opening the incremental renderer when there is not one
+   *  yet. Two callers reach the no-stream branch: a live bubble's first
+   *  delta, or a REPLAY bubble whose caller judged it live/replay wrong and
+   *  is re-rendering the already-shown text through a fresh stream —
+   *  `wasRendered` triggers a flush so that swap stays invisible. */
   const write = (delta: string): void => {
     if (delta === "") {
       return;
     }
     text += delta;
-    // Accepted text is committed to appear (the stream flushes it), so the row
-    // un-hides now rather than at the stream's own flush.
     setBlank(false);
     if (stream !== null) {
       stream.writeDelta(delta);
@@ -113,8 +93,8 @@ export function buildAssistantBubble(
     }
     const wasRendered = root.firstChild !== null;
     root.replaceChildren();
-    // A live bubble regulates its own cadence through the reveal, so the
-    // stream's own buffering would only re-lump what the reveal spread out.
+    // Flush interval 0 on the live path: the reveal already regulates
+    // cadence, so the stream's own buffering would re-lump what it spread.
     stream = createMarkdownStream(root, live ? { flushIntervalMs: 0 } : {});
     stream.writeDelta(text);
     if (wasRendered) {
@@ -122,15 +102,13 @@ export function buildAssistantBubble(
     }
   };
 
-  /** Finalize the markdown stream and drop `.streaming` — the wash and the
-   *  caret go with it. Idempotent; `onSeal` fires on the first call only. */
+  /** Finalize the markdown stream and drop `.streaming`. Idempotent; `onSeal`
+   *  fires on the first call only. */
   let sealed = false;
   const seal = (): void => {
     stream?.end();
     stream = null;
     root.classList.remove("streaming");
-    // The wash is gone, so an empty bubble is a blank one from here on (a
-    // reserved slot whose text never arrived).
     setBlank(root.firstChild === null);
     if (!sealed) {
       sealed = true;
@@ -161,8 +139,8 @@ export function buildAssistantBubble(
     }
   }
 
-  // The initial report. DOM truth rather than `initial === ""`: whitespace-only
-  // markdown renders no node, and the row keys on what is visible.
+  // Initial report: DOM truth, since whitespace-only markdown renders no
+  // node and the row keys on what is visible.
   blank = !live && root.firstChild === null;
   opts?.onBlankChange?.(blank);
 
@@ -181,9 +159,6 @@ export function buildAssistantBubble(
     if (full.length <= targetLen) {
       return;
     }
-    // The caller's stream is append-only, so the tail past `targetLen` is the
-    // whole growth — which is what makes a resync from full text and a
-    // streamed delta one path.
     feed(full.slice(targetLen));
   };
 
@@ -201,7 +176,6 @@ export function buildAssistantBubble(
         return;
       }
       ending = true;
-      // Nothing left to reveal means no frame is coming to run onIdle.
       if (reveal === null || reveal.idle) {
         seal();
       }
@@ -212,12 +186,10 @@ export function buildAssistantBubble(
         seal();
         return;
       }
-      reveal.finishNow(); // → the last write, then onIdle → seal()
+      reveal.finishNow();
     },
   };
 }
 
-// buildUserBubble is GONE with the bubbles. The user's request is the turn
-// card's tinted header band now (fundamentals/turn-header.ts), which owns the
-// same plain-text + path-linkification rendering plus the three-line clamp a
-// free-standing bubble had no reason to want.
+// buildUserBubble is gone with the bubbles: the user's request is the turn
+// card's header band (turn-header.ts) now.

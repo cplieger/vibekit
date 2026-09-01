@@ -2,27 +2,22 @@ package translate
 
 // Stripping the steering acknowledgement marker out of assistant text.
 //
-// When a steer is injected, KAS instructs the agent to close its response with
-// `[STEERING steer-<id>: what I did about it]`. That marker is MACHINERY: KAS
-// reads it back with `recordSteeringAcks` to mark the steer handled. It is not
-// prose, and no client should render it.
+// When a steer is injected, KAS instructs the agent to close its response
+// with `[STEERING steer-<id>: what I did about it]`. That marker is
+// machinery: KAS reads it back with `recordSteeringAcks` to mark the
+// steer handled, and does not remove it itself, so it arrives here
+// verbatim inside ordinary text deltas.
 //
-// KAS does not remove it. `recordSteeringAcks` only READS it — there is no
-// scrubbing step anywhere in the bundle — so the marker arrives here verbatim,
-// inside ordinary text deltas. Which means the stripping has to happen mid-
-// STREAM, and a marker can be split across any number of chunk boundaries.
+// The stripping happens mid-stream, and a marker can be split across any
+// number of chunk boundaries. Hence a carry: the trailing bytes of a
+// chunk that could still grow into a marker are withheld rather than
+// emitted, and released once the next chunk proves they were not one.
+// The carry lives on the per-chat buffer.Buffer and is flushed if a turn
+// ends while something is still held.
 //
-// Hence a carry: the trailing bytes of a chunk that could still grow into a
-// marker are withheld rather than emitted, and released once the next chunk
-// proves they were not one. The carry lives on the per-chat buffer.Buffer (it is
-// per-turn state, and Buffer is already the single-writer home for exactly that),
-// and it is flushed if a turn ends while something is still held.
-//
-// TEXT ONLY, and that is KAS's own scoping rather than a shortcut:
-// `getLastAssistantText` collects `entry.type === "text"` and nothing else, so
-// KAS itself never looks for the marker in reasoning. Filtering one stream also
-// means one carry — sharing a carry between interleaved text and thinking deltas
-// would splice one stream's held bytes onto the other's.
+// Text only, matching KAS's own scoping: `getLastAssistantText` collects
+// only text entries, so KAS itself never looks for the marker in
+// reasoning.
 
 import (
 	"regexp"
@@ -65,23 +60,16 @@ type steerAck struct {
 	Text    string
 }
 
-// stripSteerAcks removes complete acknowledgement markers from carry+incoming
-// and returns the text safe to emit, the bytes still withheld, and the
-// acknowledgements it lifted out, in the order they appeared.
+// stripSteerAcks removes complete acknowledgement markers from
+// carry+incoming and returns the text safe to emit, the bytes still
+// withheld, and the acknowledgements it lifted out, in order.
 //
-// The returned carry is always a suffix of the input, so nothing is invented and
-// nothing is lost: every byte is either emitted, withheld for the next call, or
-// part of a marker that was matched in full — and a matched marker's content now
-// leaves through acks rather than being dropped.
-//
-// That suffix property is what the settled boundary below buys, and it is a
-// correctness rule rather than bookkeeping. A `[` sitting BEFORE a complete
-// marker has a complete marker between it and every byte that arrives later, so
-// it can never grow into one: withholding it would splice it onto the next chunk
-// across text that is already gone, and `[STEERING stee` + a removed marker +
-// `r-9: x]` would then be stripped as an acknowledgement of steer-9 that the
-// agent never wrote. KAS's own recordSteeringAcks reads the RAW text and would
-// see no such marker, so neither may this.
+// The returned carry is always a suffix of the input: every byte is either
+// emitted, withheld for the next call, or part of a marker matched in
+// full. A `[` sitting before a complete marker can never grow into one
+// itself, since a complete marker sits between it and every later byte —
+// withholding it would splice unrelated text across a marker that is
+// already gone.
 func stripSteerAcks(carry, incoming string) (emit, newCarry string, acks []steerAck) {
 	joined := carry + incoming
 	buf := joined

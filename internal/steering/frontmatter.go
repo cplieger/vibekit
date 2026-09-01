@@ -1,34 +1,18 @@
 // The ONE YAML front-matter parser for `.kiro/**/*.md`.
 //
-// # Why this replaced a line-oriented reader
+// Replaced a line-oriented `strings.Cut(line, ":")` reader that mishandled
+// YAML block scalars (`description: >`), returning the bare indicator as the
+// value and dropping continuation lines — measured on this repo: 61 of 216
+// `.kiro` documents used a block scalar, so the agent-facing environment.md
+// rendered "— >" as a skill's description.
 //
-// The previous parser did `strings.Cut(line, ":")` per line, which is correct
-// only for a single-line scalar. YAML block scalars (`description: >` or `|`,
-// with the value on following indented lines) yielded the INDICATOR as the value
-// and dropped every continuation line for lacking a colon. Measured on this
-// repo's own corpus: **all 47 agents and 14 of 28 skill docs** use `description:
-// >`, so the old parser returned the literal `">"` for 61 of 216 documents — and
-// for skills that value was rendered into the AGENT-FACING `environment.md` as
-// `— >`, i.e. the agent was told each skill's description was a greater-than
-// sign. There was zero folded-scalar coverage in the package's tests.
+// internal/server's REST scanners and this package's environment.md generator
+// both read the same fields off the same files through this one parser.
 //
-// # One parser, two consumers
-//
-// `internal/server`'s REST scanners and this package's `environment.md`
-// generator both read the same files for the same fields. A second parser with
-// different semantics for `description` is the shape the steering docs reject
-// elsewhere, so the fix is a consolidation: `Parse` is exported and the REST
-// side calls it rather than re-deriving.
-//
-// # Deliberately not a YAML library
-//
-// This handles the subset `.kiro` front-matter actually uses — flat scalars,
-// block scalars, quoted strings, and flow/block sequences for `tools` — and
-// nothing else (no nesting, no anchors, no multi-document). Front-matter that
-// falls outside it degrades to empty fields, never to an error: a malformed
-// header is the author's own file, and the row renders with its filename.
-// Pulling in a full YAML parser to read six keys off a file head would be a
-// dependency for no gain.
+// Deliberately not a YAML library: handles only the subset `.kiro`
+// front-matter uses (flat/block/quoted scalars, flow/block sequences), and a
+// malformed header degrades to empty fields rather than an error — a bad
+// front-matter block is the author's own file, not vibekit's to reject.
 
 package steering
 

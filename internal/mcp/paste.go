@@ -2,35 +2,23 @@ package mcp
 
 // Pasting a publisher's block.
 //
-// Every MCP server's README hands out a JSON block in the Claude-Desktop / KAS
-// family shape — a MAP of servers under one wrapper key — and the only way in
-// used to be retyping it field by field, once per server. This file translates
-// that block into vibekit's own records.
+// Every MCP server's README hands out a JSON block in the Claude-Desktop /
+// KAS family shape — a MAP of servers under one wrapper key. This file
+// translates that block into vibekit's own records.
 //
-// The translation is the INVERSE of kasfile.go's renderKASServers, deliberately:
-// reading the renderer backwards is the cheapest correctness check available,
-// and it is where the transport-inference rule is already written down (KAS
-// infers the transport from which fields are present, accepts a `type` hint and
-// ignores it).
+// The translation is the INVERSE of kasfile.go's renderKASServers,
+// deliberately: reading the renderer backwards is the cheapest
+// correctness check available.
 //
 // # Unknown keys are NAMED, not dropped
 //
-// encoding/json ignores a key with no matching field, so a typo like "comand"
-// produced a server that did nothing, and the only error the user saw named
-// `command` as missing — which is not the thing that was wrong. Blanket
-// DisallowUnknownFields is the wrong tool: a real publisher block legitimately
-// carries keys vibekit has no field for (`cwd`, `timeout`, `waitForReady`), so
-// strictness would refuse the paste rather than name the typo, which is the
-// opposite of the point. It also cannot tell a typo from an unsupported field,
-// and that distinction is the whole value. So keys are classified in three:
-// consumed, known-but-unmodelled (accepted, reported as a note so `timeout`
-// does not read as a typo), and unknown (400 naming the key with a nearest
+// encoding/json ignores a key with no matching field, so a typo like
+// "comand" produced a server that did nothing. Blanket
+// DisallowUnknownFields is the wrong tool: a real publisher block
+// legitimately carries keys vibekit has no field for. So keys are
+// classified in three: consumed, known-but-unmodelled (accepted,
+// reported as a note), and unknown (400 naming the key with a nearest
 // match).
-//
-// Not to be confused with kasfile.go's policy for the file vibekit WRITES,
-// where unknown top-level keys are preserved in silence because KAS reads
-// `powers.mcpServers` out of the same file. Different file, different
-// direction.
 
 import (
 	"bytes"
@@ -89,25 +77,16 @@ var pasteServerIgnored = map[string]string{
 // boundary where the input is copied out of somebody else's README.
 var pasteOAuthKeys = []string{"clientId", "clientSecret"}
 
-// pasteOAuthIgnored is the nested oauth object's ignored set: a key KAS's schema
-// carries that vibekit recognises and cannot honour. Accepted with a note, like
-// pasteServerIgnored, rather than refused.
+// pasteOAuthIgnored is the nested oauth object's ignored set: a key KAS's
+// schema carries that vibekit recognises and cannot honour. Accepted
+// with a note, like pasteServerIgnored, rather than refused.
 //
-// clientMetadataUrl is kiro-cli 2.19.2's addition, and refusing it was the worse
-// half of not supporting it. The field points at a hosted client-metadata
-// document the authorization server reads, and one of the things that document
-// declares is the redirect URI — which vibekit cannot pin, because KAS owns the
-// loopback listener and binds it on the CONTAINER's localhost with no way to tell
-// the client which port it took. That is the same gap the OAuth paste-back relay
-// exists for. So the authorization server would reject the request whatever
-// document was published, and vibekit has no field to store the URL in.
-//
-// Being unsupported is not what made it worth fixing. Being REFUSED was: the
-// key reaches the raw-paste box straight out of a publisher's README, and
-// classifyKeys answered a hard 400 with a Levenshtein suggestion that could
-// never find a match, so a block a user copied correctly failed to install and
-// the message blamed a typo. Now it installs and the note says why the field is
-// dropped.
+// clientMetadataUrl is kiro-cli 2.19.2's addition. vibekit cannot pin the
+// loopback redirect port KAS binds, so the authorization server would
+// reject the request whatever document was published, and vibekit has
+// no field to store the URL in — so it installs and the note says why
+// the field is dropped, rather than the paste failing on an
+// unrecognized key.
 var pasteOAuthIgnored = map[string]string{
 	"clientMetadataUrl": "vibekit cannot pin the loopback redirect port KAS binds, so the authorization server would reject the request",
 }
@@ -321,10 +300,11 @@ func prewarmFor(spec *pasteServer, command string) bool {
 	return command == "npx"
 }
 
-// importName maps a block key (or a single object's "name") onto a name the
-// store will accept. An adjustment is REPORTED rather than made silently: the
-// name becomes the agent's tool prefix (mcp_<name>_<tool>), so a user whose
-// README said one thing and whose tool list says another needs to be told.
+// importName maps a block key (or a single object's "name") onto a name
+// the store will accept. An adjustment is REPORTED rather than made
+// silently: the name becomes the agent's tool prefix, so a user whose
+// README said one thing and whose tool list says another needs to be
+// told.
 func importName(raw string, req *importRequest) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	clean := sanitizeName(trimmed)
@@ -340,15 +320,14 @@ func importName(raw string, req *importRequest) (string, error) {
 }
 
 // sanitizeName folds a raw name into the shared grammar: anything outside
-// NameAllowedRune becomes "-", the result is trimmed to open on a lead rune, and
-// it is capped at NameMaxLen.
+// NameAllowedRune becomes "-", the result is trimmed to open on a lead
+// rune, and it is capped at NameMaxLen.
 //
-// This is a REPAIRER, not a rejector — it is what lets a README's `@scope/pkg`
-// install instead of erroring — but its charset and its bound are validate.go's,
-// not its own. It used to restate both as a switch and a literal 64, with three
-// comments claiming they matched a regexp that no longer exists; that regexp was
-// the third copy D81 exists to end. TestSanitizeNameAlwaysValid asserts the postcondition mechanically: every
-// output ValidateName accepts.
+// This is a REPAIRER, not a rejector — it is what lets a README's
+// `@scope/pkg` install instead of erroring — but its charset and its
+// bound are validate.go's, not its own.
+// TestSanitizeNameAlwaysValid asserts the postcondition mechanically:
+// every output ValidateName accepts.
 func sanitizeName(raw string) string {
 	var b strings.Builder
 	b.Grow(len(raw))
@@ -464,20 +443,16 @@ func editDistance(a, b string) int {
 	return prev[len(b)]
 }
 
-// decodeOrderedPairs reads a JSON record into ordered KeyPairs, preserving the
-// document's order. Absent yields nil. A scalar value is stringified — a real
-// block writes `"PORT": 3000` — while an object, array or null is a mistake
-// worth naming rather than flattening.
+// decodeOrderedPairs reads a JSON record into ordered KeyPairs, preserving
+// the document's order. Absent yields nil. A scalar value is stringified,
+// while an object, array or null is a mistake worth naming rather than
+// flattening.
 //
-// The pair count is bounded HERE rather than only at the store's validator,
-// because the slice is what a hostile body amplifies. Measured on go1.27.0: an
-// env object at webhttp's 1 MiB body cap, filled with the cheapest pair JSON
-// can express, decoded to 174,762 KeyPairs and 39.4 MB of allocation — 37.6x
-// the wire bytes — and only then met `maxEnvEntries = 64`. The bound is
-// maxImportBlockKeys, the same one classifyKeys applies to the sibling walk
-// over the enclosing object, so the paste layer refuses an oversized record
-// before allocation scales with it and the store's per-field limits stay the
-// authoritative ones.
+// The pair count is bounded HERE rather than only at the store's
+// validator, because the slice is what a hostile body amplifies:
+// measured on go1.27.0, an env object at webhttp's 1 MiB body cap
+// decoded to 174,762 KeyPairs and 39.4 MB of allocation before meeting
+// the store's own limit.
 func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 	if len(raw) == 0 {
 		return nil, nil

@@ -58,13 +58,11 @@ type BridgeCoordinator struct {
 	// still nil at this literal cannot be captured. Nil in tests, which is why
 	// finalizeTurn guards it.
 	onTurnClosed func(vibekit.ChatID, vibekit.TurnEpoch)
-	// secretStorage reports whether the runtime holds a credential store, read at
-	// SPAWN time rather than captured as a bool, because newBridgeCoordinator
-	// runs before NewHub opens the store — a snapshot here would be false for
-	// every bridge this process ever starts. It gates the
-	// `_meta.kiro.secretStorage` declaration: see vibekit.StartOpts.SecretStorage
-	// for why declaring it without a store breaks an MCP connect.
-	// reports whether a credential store opened; nil means declare it off.
+	// secretStorage reports whether the runtime holds a credential store, read
+	// at SPAWN time rather than captured as a bool (newBridgeCoordinator runs
+	// before NewHub opens the store, so a snapshot here would be false for
+	// every bridge this process ever starts). Gates the `_meta.kiro.secretStorage`
+	// declaration; nil means declare it off.
 	secretStorage func() bool `wiring:"optional"`
 	// chatStatus reads a chat's last self-declared status, which is what the
 	// agent-finished push body says instead of a fixed literal. A FUNCTION rather
@@ -79,13 +77,10 @@ type BridgeCoordinator struct {
 	unknownStops sync.Map
 	// primeFrom notes which chat's transcript should prime a chat's FIRST
 	// session, for the tangent whose session/fork was refused (command/fork.go).
-	// Consumed by the next spawn and deleted there, so it is a handoff between
-	// the fork command and one launch rather than state anything can read twice.
-	//
-	// Not persisted, deliberately. It describes the launch of one session; after
-	// a restart the tangent has its own conversation and the parent's history is
-	// no longer owed to it. Bounded by the same fact: a note only exists between
-	// a fork refusal and that chat's first prompt.
+	// Consumed and deleted by the next spawn, so it is a handoff between the
+	// fork command and one launch, not state anything can read twice. Not
+	// persisted: after a restart the tangent has its own conversation and the
+	// parent's history is no longer owed to it.
 	//
 	// Sits among the pointer fields for govet fieldalignment; its mutex is a
 	// non-pointer and stays at the end of the struct.
@@ -173,31 +168,18 @@ func (bc *BridgeCoordinator) hasSecretStorage() bool {
 }
 
 // processLifetimeCtx returns the context that bounds a spawned kiro-cli
-// subprocess: the runtime's shutdown context, so a bridge outlives the turn that
-// happened to create it and still dies with the runtime.
-//
-// It must never be the caller's ctx. Every spawn here is reached from a command
-// handler, and CmdPrompt's is a per-turn context it cancels on return — see
-// vibekit.StartOpts.Lifetime for what that measured like.
-//
-// It is a plain field read: agent.New requires the runtime's lifetime context, so
-// there is nothing to be nil-safe against. The context.Background() fallback
-// that used to sit here existed for tests building a coordinator without a
-// lifetime, and it was the third uncancellable substitution on this one
-// path — a test that wants a Stop-owned subprocess says so in its own
-// StartOpts now.
+// subprocess: the runtime's shutdown context, so a bridge outlives the turn
+// that happened to create it and still dies with the runtime. Must never be
+// the caller's ctx — CmdPrompt's is per-turn and cancels on return.
 func (bc *BridgeCoordinator) processLifetimeCtx() context.Context {
 	return bc.lifecycle.shutdownCtx
 }
 
 // resolveAgentEngine returns the kiro-cli agent engine, hard-pinned to v3
-// (KAS). vibekit is v3-only: the v2 (_kiro.dev/*) wire and its handlers
-// were removed, so a stray KIRO_AGENT_ENGINE=v1/v2 is deliberately
-// ignored — honoring it would launch a legacy engine vibekit can no
-// longer talk to (session/new stalls, every turn fails). v3 requires the
-// host to answer _kiro/auth/getAccessToken + _kiro/terminal/shell_type
-// (internal/agent/bridge_v3_auth.go). The v2→v3 wire comparison is in
-// kiro-cli-research.md.
+// (KAS). vibekit is v3-only: the v2 wire and its handlers were removed, so a
+// stray KIRO_AGENT_ENGINE=v1/v2 is deliberately ignored — honoring it would
+// launch a legacy engine vibekit can no longer talk to (session/new stalls,
+// every turn fails).
 func resolveAgentEngine() string {
 	return vibekit.AgentEngineV3
 }
@@ -233,28 +215,11 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.Chat
 }
 
 // bridgeSpawnKey composes the bridge-spawn singleflight key over
-// (chatID, modelOverride).
-//
-// NEITHER field can carry keyenc's ':' separator today — ids.ValidChatID
-// restricts a chat id to [a-zA-Z0-9_-] and ids.ValidIdent restricts a model
-// id to [A-Za-z0-9_.-] — so this key is unambiguous either way, and because
-// both alphabets are separator-free the encoded key is BYTE-IDENTICAL to a
-// plain "chatID:modelOverride" concatenation. keyenc is here for uniformity
-// with the repo's other composite keys and so the key stays injective if
-// either field's alphabet is ever widened: a model id taken verbatim from an
-// upstream catalog, say, which is an edit to a validator in another package
-// that would not look like it touched key encoding.
-//
-// Consequence of a collision, concretely: singleflight hands every coalesced
-// caller the leader's result, so two distinct (chat, model) pairs sharing a
-// key mean the second caller receives the FIRST caller's bridge — a chat
-// talking to another chat's kiro-cli session, or a model-override request
-// silently served by a bridge running a different model. The pre-keyenc form
-// used a 0x00 separator, which is unreachable through both validators rather
-// than merely absent from them; the ':' form trades that for an encoding that
-// stays injective whatever the fields contain. The key's bytes changed (0x00
-// became ':'); nothing persists it, the singleflight group lives on the
-// in-memory bridge manager for the life of one spawn.
+// (chatID, modelOverride). Both fields are separator-free (ids.ValidChatID
+// and ids.ValidIdent), so the keyenc-joined key is unambiguous; a collision
+// would hand a coalesced caller another chat's bridge, which is why the
+// encoding stays injective even if either alphabet widens later. Not
+// persisted — the singleflight group lives in memory for one spawn.
 func bridgeSpawnKey(chatID vibekit.ChatID, modelOverride string) string {
 	return keyenc.Join(string(chatID), modelOverride)
 }
@@ -290,17 +255,12 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// Withhold a model the account cannot run, SILENTLY, and let the session take
 	// the backend's own default.
 	//
-	// This is the inherited-value case: `model` here comes from the persisted
-	// chat field (written from the client's cross-device `last_model`) or from a
-	// caller's override, not from a pick the user just made. kiro-cli accepts the
-	// `--model` flag either way and only the service rejects it, mid-prompt, on
-	// every later turn -- so a stale entitlement makes every turn of every new
-	// chat fail while the picker still shows the model as selected. Silence is
-	// right for a value nobody chose in this moment; an explicit pick is refused
-	// loudly instead, in cmdSwitchModel.
-	//
-	// The evidence is the LAST session's advertised set, because the launch flag
-	// is built before this session has one. Empty means unknowable and allows.
+	// This is the inherited-value case: `model` comes from the persisted chat
+	// field or a caller's override, not from a pick the user just made, and
+	// kiro-cli only rejects a bad model mid-prompt on every later turn. So an
+	// inherited value that isn't served is silently withheld here; an explicit
+	// pick is refused loudly instead, in cmdSwitchModel. The evidence is the
+	// LAST session's advertised set (empty means unknowable and allows).
 	if !vibekit.ModelServed(model, chat.ServedModelIDs) {
 		slog.Warn("withholding a model this account does not serve; using the backend default",
 			"chat_id", chatID, "model", model)
@@ -331,30 +291,22 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 		}
 	}
 
-	// EnableHooks:true opts chat bridges into KAS's v2 hook engine
-	// (_meta.kiro.hooks={enabled,v2} in the initialize handshake) so the
+	// EnableHooks:true opts chat bridges into KAS's v2 hook engine so the
 	// workspace's user-authored .kiro/hooks/*.json hooks AUTOFIRE on their
-	// triggers (SessionStart / UserPromptSubmit / PreToolUse / PostToolUse)
-	// during a turn. In v2 mode KAS loads the hook files itself and RUNS
-	// runCommand hooks internally (its own process runner, in the workspace),
-	// exactly as the Kiro IDE and kiro-cli TUI do — it does NOT call back the
-	// client's _kiro/hooks/executeHook for autofire (verified on the live v3
-	// wire: chat autofire produced zero executeHook callbacks; the hook
-	// commands ran internally). So no chat-bridge executeHook handler is
-	// needed. Same trust model as vibekit's `!cmd` interception: the hooks are
-	// the user's own automation. The utility bridge keeps its own EnableHooks
-	// for the hooks dashboard (list/setEnabled/Run-now); see agent/hooks.go.
+	// triggers during a turn. KAS loads and runs them internally in v2 mode
+	// (verified: zero executeHook callbacks on autofire), so no chat-bridge
+	// executeHook handler is needed. Same trust model as vibekit's `!cmd`
+	// interception. The utility bridge keeps its own EnableHooks for the
+	// hooks dashboard; see agent/hooks.go.
 	//
-	// Forward MUST be draining NotifCh before Start: on v3 (KAS) the agent
-	// sends _kiro/auth/getAccessToken and _kiro/terminal/shell_type as
-	// server->client REQUESTS on the session-creation critical path, and
-	// session/new does not return until they are answered. Attaching the
-	// forward goroutine after Start deadlocks every fresh session. If Start
-	// fails it stops the bridge (NotifCh closes), so this goroutine exits.
+	// Forward MUST drain NotifCh before Start: on v3 the agent sends
+	// _kiro/auth/getAccessToken and _kiro/terminal/shell_type as server->client
+	// REQUESTS on the session-creation critical path, and session/new does not
+	// return until they are answered. Attaching Forward after Start deadlocks
+	// every fresh session.
 	go bc.Forward(chatID, sb.bridge)
-	// Supervised is passed at creation and only here: the session/load path below
-	// does not repeat it, because KAS persists `autopilot` in its own session
-	// metadata and a loaded session already carries the value.
+	// Supervised is passed at creation only: session/load below does not
+	// repeat it, because KAS persists `autopilot` in its own session metadata.
 	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		return nil, setupErr(err)
 	}
@@ -485,36 +437,17 @@ func adoptKASTitle(c *vibekit.Chat, title string) {
 // applyLoadedSessionFacts copies what a RESUMED session reported onto the chat
 // record, writing each field only when the load result actually carried it.
 //
-// The guard belongs here rather than one layer down. applySessionResultLocked
-// already implements keep-on-absent — an absent modes block or an absent `model`
-// config option leaves the previous list standing — but that keep is worth
-// nothing on a resume, because the bridge is FRESHLY constructed on this path
-// (spawnBridge returns early for a bridge that already existed), so every
-// accessor answers the zero value for whatever the result omitted. Writing those
-// zeros destroyed the catalog the chat file had carried since its previous
-// session: the guard existed and this layer overwrote its result.
+// The guard belongs here rather than one layer down: applySessionResultLocked
+// already keeps-on-absent, but that keep is worthless on a resume because the
+// bridge is FRESHLY constructed, so every accessor answers the zero value for
+// whatever the result omitted. `session/load` omits the model catalog
+// routinely (KAS resolves ListAvailableModels asynchronously) — models
+// self-heal from a later config_option_update, but modes have no repair
+// channel, so an emptied mode list stays empty for the rest of the session.
 //
-// The result omits them routinely rather than exceptionally. Measured on
-// kiro-cli 2.20.0: `session/load` resolves ListAvailableModels asynchronously,
-// so reading the result as it arrives yields `mode`, `autopilot` and
-// `contentCollection` with `model` ABSENT, and the real catalog follows on the
-// config_option_update notification. An expired auth token produces the same
-// shape from a different cause.
-//
-// The two halves cost differently and the mode half is the worse one. Models
-// self-heal when a later config_option_update carries the full list, so there
-// the damage was a wiped record plus a race against the repair. Modes have NO
-// repair channel — HandleConfigOptionUpdate deliberately does not refresh them,
-// because the config catalog omits the bundled/workspace source tag the picker
-// groups by — so an emptied mode list stayed empty for the rest of the session,
-// and a CurrentModeID reaching "" also drops the mode the next session/new
-// would have asked for.
-//
-// session/new keeps its unconditional writes on purpose (persistNewSessionMetadata
-// below): there the overwrite IS the check, because reportModeNotApplied compares
-// the mode asked for against the mode that landed, and a fresh session that
-// advertised no catalog is the documented "entitlement unknowable" state rather
-// than a loss.
+// session/new's own persistNewSessionMetadata keeps unconditional writes on
+// purpose: there the overwrite IS the check (reportModeNotApplied compares
+// the mode asked for against the mode that landed).
 func applyLoadedSessionFacts(c *vibekit.Chat, facts acpSessionFacts, title string) {
 	if mode := facts.CurrentMode(); mode != "" {
 		c.CurrentModeID = mode
@@ -564,22 +497,21 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	bc.reportModeNotApplied(ctx, chatID, requestedMode, currentMode)
 }
 
-// reportModeNotApplied tells the user when the session did not get the mode the
-// chat asked for.
+// reportModeNotApplied tells the user when the session did not get the mode
+// the chat asked for.
 //
-// Storing the ACTUAL mode above is right: the mode pill must not claim a role the
-// agent is not running under. What was wrong is that it was the ONLY record of the
-// request, so a single transient `session/set_mode` failure (applyInitialMode
-// warns and continues, deliberately, so a mode problem never costs the user their
-// session) silently and permanently converted a chat pinned to `spec` into a
-// default-mode chat: at the next spawn the requested id now EQUALS the current
-// one, so applyInitialMode's own guard means no retry is ever attempted.
+// Storing the ACTUAL mode elsewhere is right (the mode pill must not claim a
+// role the agent is not running under), but that was also the ONLY record of
+// the request: a single transient `session/set_mode` failure silently and
+// permanently converted a chat pinned to `spec` into a default-mode chat,
+// because the next spawn's requested id then EQUALS the current one and
+// applyInitialMode's own guard means no retry is ever attempted.
 //
-// A visible banner rather than an automatic retry, because the truthful pill plus
-// a named mismatch puts the choice back in front of a user who is present, and a
-// retry would need a second persisted mode field to remember an intent the record
-// no longer holds. This is not a privilege gate: tool authorization is Cedar's,
-// and the engine default is not the least constrained bundled mode.
+// A visible banner rather than an automatic retry: the truthful pill plus a
+// named mismatch puts the choice back in front of a present user, and a
+// retry would need a second persisted field to remember an intent the
+// record no longer holds. Not a privilege gate — tool authorization is
+// Cedar's.
 func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID vibekit.ChatID, requested, actual string) {
 	if requested == "" || requested == actual {
 		return
@@ -801,29 +733,18 @@ func (bc *BridgeCoordinator) TurnOpenedAfter(chatID vibekit.ChatID, epoch vibeki
 	return bc.turns.openedAfter(chatID, epoch)
 }
 
-// agentFinishedBody is what the agent-finished notification SAYS.
+// statusDescription reads the chat's self-declared status description (KAS's
+// focus_update channel), for the push notification's body.
 //
-// It was the fixed literal "Agent finished", which tells a reader nothing about
-// which of three background chats just came back. The agent's own one-line
-// self-description is already server-side, in memory, on the Runtime, keyed by the
-// chat id this method is handed: `chat_status` arrives on KAS's focus_update
-// channel (the model's update_session_information tool). So no new wire field, no
-// new call site — a read at the push site.
+// Must be read BEFORE the turn_ended broadcast, not at the push site: the
+// status cache is deliberately cleared at turn end (so a bare replay cannot
+// resurrect a stale "in_progress"), inside the same emit() that fires
+// turn_ended — which sits between the top of EmitTurnEndedWithStats and this
+// push. Reading the cache after that broadcast would always find it gone.
 //
-// ORDERING IS THE TRAP, and it is why the caller reads the description early
-// rather than here. The status cache is cleared at turn end by design (so a bare
-// replay cannot resurrect a stale "in_progress"), and the clear runs inside emit()
-// as the turn_ended event goes out — the broadcast that sits between the top of
-// EmitTurnEndedWithStats and this push. Reading the cache at the push site would
-// therefore always find the entry already gone and always fall back to the
-// literal, silently. So the read happens before the broadcast and travels here as
-// a string.
-//
-// EMPTY IS LEGITIMATE. An agent need never call update_session_information, so the
-// description is often "" and the literal is the honest fallback rather than a
-// defensive branch. Length needs no cap: fitToCap trims the body against the
-// marshaled payload cap and logs a Warn, so an oversize description is delivered
-// truncated rather than dropped.
+// Empty is legitimate (an agent need never call update_session_information),
+// so the caller's fallback literal is the honest default, not a defensive
+// branch.
 func (bc *BridgeCoordinator) statusDescription(chatID vibekit.ChatID) string {
 	if bc.chatStatus == nil {
 		return ""
@@ -911,32 +832,19 @@ func (bc *BridgeCoordinator) applyModelSwitch(
 	return true
 }
 
-// repairEffort re-asserts the chat's reasoning-effort level on a bridge that is
-// ALREADY OPEN, which is the one checkpoint that catches a level KAS changed on
-// its own.
+// repairEffort re-asserts the chat's reasoning-effort level on a bridge that
+// is ALREADY OPEN — the one checkpoint that catches a level KAS changed on
+// its own (its own pinSessionModelId settling an unset model on first
+// prompt, or a model switch made from the Kiro IDE/TUI on a shared session).
 //
-// Two ways that happens, neither of them a vibekit action, so neither is covered
-// by the session doors or by the model-switch re-assert. KAS's own
-// pinSessionModelId settles an unset model on the first prompt and runs the same
-// effort reconciliation, so a chat left on `auto` — no model picked, or one the
-// entitlement gate withheld — has its level replaced by the pinned model's
-// default. And a model switch made from the Kiro IDE or the TUI on a shared
-// session does the same thing, with vibekit's record still holding the level the
-// user chose.
+// At the prompt rather than reactively on the notification: a reactive Call
+// from the Forward goroutine would block the drain it is waiting on, needs
+// its own loop guard, and covers only enumerated triggers. OpenBridge is on
+// every prompt's path, and Bridge.EnsureEffort compares before it calls, so
+// the normal case is one comparison and no round trip.
 //
-// At the prompt rather than on the notification, deliberately. The reactive shape
-// looks more direct and is worse in three ways: a bridge Call issued from the
-// Forward goroutine blocks the very drain that Call is waiting on, so it needs a
-// goroutine and its own loop guard; it reacts to one enumerated trigger where this
-// reads the actual state and so covers triggers nobody listed; and it would add
-// work to the process on every catalog frame. OpenBridge is on the path of every
-// prompt, and Bridge.EnsureEffort compares before it calls, so the normal case is
-// one comparison and no round trip.
-//
-// Best-effort and log-only: a chat must not fail to answer because a preference
-// could not be re-applied. The level being unavailable on the current model is not
-// a failure at all — KAS answers success and keeps its own, and the client marks
-// what the session reports rather than what the record wants.
+// Best-effort and log-only: a chat must not fail to answer because a
+// preference could not be re-applied.
 func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge) {
 	chat, ok := bc.chatStore.Get(ctx, chatID)
 	if !ok {
@@ -952,32 +860,21 @@ func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID vibekit.Ch
 	}
 }
 
-// effortFor resolves the reasoning-effort level a chat's next session starts at: the chat's own choice, else the last level the user picked anywhere
-// (settings.KeyLastEffort). Empty means send nothing and let the service apply
-// the model's own default.
+// effortFor resolves the reasoning-effort level a chat's next session starts
+// at: the chat's own choice, else the last level the user picked anywhere
+// (settings.KeyLastEffort). Empty means send nothing and let the service
+// apply the model's own default.
 //
-// The seed exists because per-chat storage left new chats with no memory at all.
-// Model has one (the client's last_model rides into every new chat), effort had
-// none, so every new chat silently reopened at the current model's default tier
-// however many times the user had chosen otherwise.
+// It is a FALLBACK never written onto the chat record — stamping it would
+// pin an unchosen chat to today's value for every later session, the same
+// mistake as seeding from a service default. It is also MODEL-SCOPED
+// (settings.KeyLastEffortModel): an explicit tier is a judgement about one
+// model, and applying it under a different model would override that
+// model's own default with another model's choice.
 //
-// It is a FALLBACK and is never written onto the chat record. A chat that has
-// chosen nothing has to keep following the setting; stamping today's value on
-// would pin that chat there for every later session, which is the same mistake as
-// seeding a chat's choice from a service default (see
-// vibekit.SessionModel.DefaultEffortLevel).
-//
-// The seed is MODEL-SCOPED: it applies only when the chat runs the model it was
-// picked under (settings.KeyLastEffortModel), because an explicit tier is a
-// judgement about one model — carried onto a different model it overrode that
-// model's own default with another model's choice. A pair recorded under no
-// model (a pre-pair install) never applies, which self-heals on the next pick.
-//
-// Validated here rather than trusted: config.json is user-editable and a level
-// this build does not know must not reach the wire. A level the current MODEL
-// does not offer is a different matter and is KAS's to reconcile — it assigns
-// only from its own tier list and then broadcasts the real currentValue, which
-// corrects the client through config_option_update.
+// Validated here because config.json is user-editable and an unknown level
+// must not reach the wire; a level the current MODEL does not offer is
+// KAS's to reconcile via config_option_update.
 func (bc *BridgeCoordinator) effortFor(ctx context.Context, chat *vibekit.Chat) string {
 	if chat.Effort != "" {
 		return chat.Effort
@@ -1233,21 +1130,16 @@ const stopReasonCancelled = vibekit.StopReasonCancelled
 // trips that turn's prompt call so the ordinary failure path finalizes it.
 // Satisfies translate.TurnInterruptAccess.
 //
-// The cause lands on the TURN, epoch-scoped and first-wins, so it describes the
-// turn it was raised for and nothing else. It used to be stashed on the bridge,
-// where turn A's cause could survive into turn B once the prompt failure that
-// consumed it was deferred.
+// The cause lands on the TURN, epoch-scoped and first-wins, so it describes
+// only the turn it was raised for.
 //
-// The bridge is left ALIVE and the ACP session untouched: only the tool call was
-// cancelled, so tripping the prompt context releases the slot and the chat is
-// immediately promptable again. That is what makes this preferable to a bridge
-// restart, and it is why the recovery costs the user one Send rather than a
-// session.
+// The bridge is left ALIVE and the ACP session untouched: only the tool call
+// was cancelled, so tripping the prompt context frees the slot and the chat
+// is immediately promptable again — one Send rather than a bridge restart.
 //
 // A chat with no open turn, no bridge, or a cause already claimed is not a
-// failure: the frame can arrive after a user cancel already ended the same turn.
-// Logged at Debug so the no-op is observable without making a benign race look
-// like one.
+// failure: the frame can arrive after a user cancel already ended the same
+// turn. Logged at Debug so the no-op stays observable without reading like one.
 func (bc *BridgeCoordinator) InterruptTurn(chatID vibekit.ChatID, reason string) {
 	epoch, open := bc.turns.openEpoch(chatID)
 	if !open {

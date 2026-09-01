@@ -93,13 +93,10 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	}
 
 	s.mu.Lock()
-	// A reinstall of an identical spec is a no-op, not a conflict. The 409 it
-	// replaces had exactly one workaround — delete, then re-add — which threw
-	// away every API key the user had typed in, because DELETE removes the record
-	// and its stored secrets outright. Returning the existing record instead
-	// preserves them, and skipping the persist matters beyond tidiness: a write
-	// re-renders KAS's config file, whose watcher emits a status notification
-	// back into the agent.
+	// A reinstall of an identical spec is a no-op, not a conflict. The 409
+	// it replaces had exactly one workaround — delete, then re-add —
+	// which threw away every API key the user had typed in. Returning
+	// the existing record instead preserves them.
 	if existing := s.findByNameLocked(rec.Name); existing != nil {
 		if !sameSpec(existing, rec) {
 			s.mu.Unlock()
@@ -146,18 +143,13 @@ type ImportResult struct {
 
 // ImportServers creates every server of one pasted block, or none of them.
 //
-// ALL-OR-NOTHING is the decision, and it is about the artifact rather than the
-// store: the block is one thing the user copied out of one README, so installing
-// three of five and reporting the other two leaves them diffing the UI against
-// the document to work out what landed. The store gives no reason to prefer
-// partial success either — one atomicfile write covers N servers — and because
-// an identical re-paste is a no-op (see Create), correcting the block and
-// pasting it again costs nothing and re-lands the entries that were fine.
+// ALL-OR-NOTHING: the block is one thing the user copied out of one
+// README, so installing three of five and reporting the other two
+// leaves them diffing the UI against the document.
 //
-// A name already configured with the SAME spec is `unchanged`, which is what
-// makes the common case work: a block naming three servers where one is already
-// installed. A name configured with a DIFFERENT spec fails the paste, because
-// the alternative is a POST that silently overwrites.
+// A name already configured with the SAME spec is `unchanged`. A name
+// configured with a DIFFERENT spec fails the paste, because the
+// alternative is a POST that silently overwrites.
 func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult, error) {
 	if len(in) == 0 {
 		return nil, errors.New("no servers to connect")
@@ -267,10 +259,9 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 		URL:       in.URL,
 		Headers:   mergeSecrets(in.Headers, existing.Headers),
 		// Both list fields go through preserveNilSlice: an omitted list means
-		// "unchanged", not "empty". DisabledTools used to take a raw copy while
-		// AutoApprove on the very next line preserved, so any PUT that left
-		// disabled_tools out silently re-enabled every tool the user had turned
-		// off — the more dangerous direction of the two.
+		// "unchanged", not "empty". DisabledTools used to take a raw copy
+		// while AutoApprove preserved, so any PUT that left disabled_tools
+		// out silently re-enabled every tool the user had turned off.
 		DisabledTools:     preserveNilSlice(in.DisabledTools, existing.DisabledTools),
 		AutoApprove:       preserveNilSlice(in.AutoApprove, existing.AutoApprove),
 		OAuthClientID:     strings.TrimSpace(in.OAuthClientID),
@@ -319,10 +310,9 @@ func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Ser
 		return out, nil
 	}
 	// Snapshot the struct by value so rollback restores the pre-mutation
-	// scalar fields (Enabled, UpdatedAt). The Args/Env/Headers slices
-	// aren't mutated here, so sharing the backing arrays with the live
-	// record is safe; any future mutation that rewrites those slices
-	// must deep-copy first, matching Update's mergeSecrets pattern.
+	// scalar fields. The Args/Env/Headers slices aren't mutated here, so
+	// sharing the backing arrays is safe; a future mutation rewriting
+	// those slices must deep-copy first.
 	before := *s.servers[idx]
 	s.servers[idx].Enabled = enabled
 	s.servers[idx].UpdatedAt = time.Now().UnixMilli()
@@ -356,27 +346,17 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 	}
 	s.mu.Unlock()
 	// Log the STORED record's id, not the request parameter: identical
-	// bytes (the index lookup matched them), but the stored value is
-	// vibekit-generated at Create (newID base32), which breaks the
+	// bytes, but the stored value is vibekit-generated, which breaks the
 	// user-input taint chain a raw path segment would carry into the log.
 	slog.Info("mcp: server deleted", "id", removed.ID)
 	s.notifyChange()
 	return nil
 }
 
-// There is no SetKnownTools. A connected server's tool names arrive on the same
-// _kiro/mcp/status notification as its prompts and resources, and they are
-// RUNTIME state — they describe what is connected right now, not what the user
-// configured. They used to be written into this config file on every status
-// notification, which made a notification path do disk I/O and put agent-derived
-// data in a user-intent file. They live in the runtime's runtime registry now and
-// reach the UI through /api/mcp/status, beside the prompts and resources that
-// were already there.
-//
-// Deleting the write also closed a loop the KAS-file adoption would have opened:
-// persisting here re-rendered KAS's config, whose watcher re-emitted status,
-// which called back in. The identical-set guard stopped it after one extra
-// cycle, but the cycle had no reason to exist.
+// There is no SetKnownTools. A connected server's tool names arrive on the
+// same _kiro/mcp/status notification as its prompts and resources, and
+// they are RUNTIME state, not what the user configured. They live in
+// the runtime's registry now and reach the UI through /api/mcp/status.
 
 // EnabledServers returns the prewarm-relevant view of enabled servers.
 // Satisfies prewarm.ServerLister so the Store can be passed directly

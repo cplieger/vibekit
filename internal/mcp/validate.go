@@ -55,25 +55,20 @@ func NameAllowedRune(r rune) bool {
 
 // nameGrammar describes the rule for the person reading the rejection.
 //
-// PROSE, deliberately, and built from NameMaxLen. It replaced a regex literal
-// (`[A-Za-z][A-Za-z0-9_-]{0,63}`) that was a second executable grammar in all but
-// enforcement: it restated the charset and hard-coded the bound, so extending the
-// predicates left the user being told an old rule. Prose cannot drift into being
-// authoritative, and a reader who is not writing regexes is better served by it.
+// PROSE, deliberately, built from NameMaxLen. It replaced a regex literal
+// that was a second executable grammar in all but enforcement, restating
+// the charset and hard-coding the bound.
 func nameGrammar() string {
 	return "a letter, then letters, digits, underscores or hyphens, up to " +
 		strconv.Itoa(NameMaxLen) + " characters"
 }
 
-// ValidateName is the ONE admission rule for a server name, and it is implemented
+// ValidateName is the ONE admission rule for a server name, implemented
 // directly from the rune predicates and the length constant.
 //
-// Three doors reach a name and they must agree: Validate (every create and
-// update), ParseServerID (the URL path segment, which is a different value with
-// its own bound but the same charset question), and paste.go's sanitizeName
-// (which REPAIRS rather than rejects). All three now read the same two predicates,
-// so agreement is structural rather than asserted by comment; TestNameDoorsAgree
-// and FuzzValidateNameMatchesPredicates pin it either way.
+// Three doors reach a name and they must agree: Validate, ParseServerID,
+// and paste.go's sanitizeName (which REPAIRS rather than rejects). All
+// three read the same two predicates, so agreement is structural.
 func ValidateName(name string) error {
 	if err := checkName(name); err != nil {
 		return &FieldError{Field: fieldName, Msg: err.Error()}
@@ -175,15 +170,10 @@ const (
 	fieldOAuthClientSecret = "oauth_client_secret"
 )
 
-// FieldError is one validation failure, attributed to the wire field it came
-// from.
-//
-// The attribution is what lets a form mark three inputs instead of printing
-// three sentences above one box, and the field name is the WIRE name
-// (`oauth_client_secret`, `headers`, `args`) because that is what the form binds
-// to. Msg is unchanged from what the check always said — an indexed message like
-// `headers[1]: duplicate name "X"` keeps its index, because the field says which
-// input and the message says which entry of it.
+// FieldError is one validation failure, attributed to the wire field it
+// came from. Msg is unchanged from what the check always said — an
+// indexed message like `headers[1]: duplicate name "X"` keeps its
+// index.
 type FieldError struct {
 	Field string `json:"field"`
 	Msg   string `json:"message"`
@@ -191,12 +181,10 @@ type FieldError struct {
 
 func (e *FieldError) Error() string { return e.Msg }
 
-// maxFieldErrors bounds one response's error list.
-//
-// Accumulation turns a per-entry check into a per-entry ALLOCATION, so a paste
-// naming 4096 bad tool names would otherwise build 4096 messages to describe one
-// mistake. A reader fixes a form a few fields at a time; past this the list has
-// stopped being actionable and is only a cost.
+// maxFieldErrors bounds one response's error list: accumulation turns a
+// per-entry check into a per-entry ALLOCATION, so a paste naming
+// thousands of bad tool names would otherwise build thousands of
+// messages.
 const maxFieldErrors = 32
 
 // fieldErrs accumulates independent validation failures.
@@ -239,14 +227,11 @@ func (c *fieldErrs) any() bool { return len(c.errs) > 0 }
 // working through a wrap).
 func (c *fieldErrs) join() error { return errors.Join(c.errs...) }
 
-// FieldErrors flattens an error tree into the field failures it carries, for a
-// caller that wants to mark inputs rather than print a paragraph. Returns nil for
-// an error carrying none, which is how the HTTP layer decides between the
-// field-bearing 400 and the plain one.
+// FieldErrors flattens an error tree into the field failures it carries,
+// for a caller that wants to mark inputs rather than print a paragraph.
 //
-// It walks BOTH wrap shapes, because both occur on the way out: errors.Join's
-// Unwrap() []error, and fmt.Errorf("%w")'s Unwrap() error — ImportServers wraps a
-// whole joined validation with the server's name.
+// It walks BOTH wrap shapes: errors.Join's Unwrap() []error, and
+// fmt.Errorf("%w")'s Unwrap() error.
 func FieldErrors(err error) []FieldError {
 	var out []FieldError
 	var walk func(error)
@@ -279,17 +264,12 @@ func FieldErrors(err error) []FieldError {
 // create/update before persist. Callers do not run their own checks;
 // this is the single source of truth.
 //
-// It ACCUMULATES rather than short-circuits, so a record with three problems is
-// answered once instead of over three submit-fix-submit round trips. That became
-// load-bearing when the paste path landed: a block copied out of a README is
-// exactly the case where several fields are wrong at once and the user typed none
-// of them.
+// It ACCUMULATES rather than short-circuits, so a record with three
+// problems is answered once instead of over three round trips.
 //
-// One short-circuit stays, and it is a genuine sequential necessity rather than a
-// leftover: the transport chain. An unknown transport means transportValidators
-// has no entry, so the per-transport check CANNOT run — there is nothing to
-// accumulate, not merely something inconvenient to reach. Accumulate across
-// independent checks; stop within a dependent chain.
+// One short-circuit stays: the transport chain. An unknown transport
+// means transportValidators has no entry, so the per-transport check
+// CANNOT run.
 func Validate(s *Server) error {
 	var errs fieldErrs
 	errs.merge(ValidateName(s.Name))
@@ -323,13 +303,10 @@ func validateTransportChain(s *Server) error {
 }
 
 // hasCtl reports whether s contains any C0 control character
-// (U+0000..U+001F) or DEL (U+007F). Intentionally rejects \t — none of
-// the fields validated here (command, url, args, env value, header
-// value, disabled-tool name) has a legitimate need for tabs, and RFC
-// 7230 forbids non-VCHAR/SP/HTAB in header values specifically, so we
-// err on the strict side. The byte-wise scan is correct: every byte of
-// a UTF-8 continuation (0x80..0xBF) is > 0x7F, so multi-byte runes
-// can never trigger a false positive.
+// (U+0000..U+001F) or DEL (U+007F). Intentionally rejects \t — RFC 7230
+// forbids non-VCHAR/SP/HTAB in header values, so this errs strict. The
+// byte-wise scan is correct: every byte of a UTF-8 continuation is >
+// 0x7F, so multi-byte runes can never trigger a false positive.
 func hasCtl(s string) bool {
 	for i := range len(s) {
 		c := s[i]

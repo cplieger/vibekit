@@ -54,7 +54,6 @@ const parseErrDecay = 5 * time.Minute
 // Record notes a parse error and returns the action readLoop should take.
 func (t *parseErrTracker) Record() parseErrAction {
 	now := time.Now()
-	// Decay: if the last error was long ago, reset the storm window.
 	if !t.lastErrorAt.IsZero() && now.Sub(t.lastErrorAt) > parseErrDecay {
 		t.total = 0
 		t.windowStart = time.Time{}

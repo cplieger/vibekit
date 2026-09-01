@@ -1,7 +1,6 @@
-// GitLab ForgeOps implementation backed by the glab CLI.
-//
-// glab supports per-host config; we pass --hostname for cloud GitLab
-// and self-hosted instances. Most subcommands accept --output json.
+// GitLab ForgeOps implementation backed by the glab CLI. glab
+// supports per-host config; we pass --hostname for cloud and
+// self-hosted instances.
 
 package forges
 
@@ -20,14 +19,12 @@ type gitlabProvider struct {
 	host string
 }
 
-// gitlabMR is the wire struct for GitLab merge request JSON responses.
-// Shared between ListPRs (array) and viewPR (single object).
-//
-// DetailedMergeStatus is the field that carries both the CI verdict and
-// the merge-block cause. head_pipeline is deliberately NOT read: GitLab
-// documents it on the single-MR response only, so a list-shaped decode
-// of it is empty on every row, and fetching it per PR is the N-call
-// fan-out this work exists to avoid.
+// gitlabMR is the wire struct for GitLab merge request JSON
+// responses, shared between ListPRs (array) and viewPR (single
+// object). DetailedMergeStatus carries both the CI verdict and the
+// merge-block cause. head_pipeline is deliberately not read: GitLab
+// documents it on the single-MR response only, so fetching it per PR
+// would be an N-call fan-out.
 type gitlabMR struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -70,13 +67,11 @@ func (r *gitlabMR) toPR() PR {
 	}
 }
 
-// mapGLabCheckStatus derives the check chip from detailed_merge_status.
-//
-// Only two of its values are genuine CI statements. `mergeable` is NOT
-// one of them: a project that does not require pipelines to pass is
-// mergeable with a red pipeline, so treating it as passing would paint a
-// green chip over a failure. GitLab therefore reports pending and
-// failing, and stays silent otherwise.
+// mapGLabCheckStatus derives the check chip from
+// detailed_merge_status. Only two values are genuine CI statements;
+// `mergeable` is not one of them, because a project that does not
+// require pipelines to pass is mergeable with a red pipeline, so
+// treating it as passing would paint a green chip over a failure.
 func mapGLabCheckStatus(detailed string) string {
 	switch detailed {
 	case "ci_still_running":
@@ -88,11 +83,9 @@ func mapGLabCheckStatus(detailed string) string {
 }
 
 // mapGLabMergeBlock names the merge-block cause for a GitLab MR.
-//
-// detailed_merge_status is preferred; merge_status is the fallback for an
-// instance old enough not to send it (deprecated in 15.6 but still
-// present), and has_conflicts is what separates a conflict from every
-// other cannot_be_merged reason on that path.
+// detailed_merge_status is preferred; merge_status is the fallback
+// for an instance too old to send it, and has_conflicts separates a
+// conflict from every other cannot_be_merged reason on that path.
 func mapGLabMergeBlock(detailed, mergeStatus string, draft, hasConflicts bool) string {
 	switch detailed {
 	case "mergeable":
@@ -112,10 +105,9 @@ func mapGLabMergeBlock(detailed, mergeStatus string, draft, hasConflicts bool) s
 	case "":
 		// Fall through to the deprecated field below.
 	default:
-		// not_approved, blocked_status, discussions_not_resolved,
-		// requested_changes, policies_denied, status_checks_must_pass,
-		// jira_association_missing, not_open, … — every one of these is
-		// a project policy refusing the merge.
+		// Every other value (not_approved, blocked_status,
+		// discussions_not_resolved, requested_changes, ...) is a
+		// project policy refusing the merge.
 		return blockProtected
 	}
 	if draft {
@@ -140,9 +132,8 @@ func newGitLab(host string) *gitlabProvider {
 	return &gitlabProvider{host: host}
 }
 
-// withHost prepends host-targeting flags. glab uses GITLAB_HOST env
-// var or per-config-section host; --hostname is supported on most
-// commands.
+// withHost prepends host-targeting flags; --hostname is supported
+// on most glab commands.
 func (p *gitlabProvider) withHost(args ...string) []string {
 	return append([]string{flagHostname, p.host}, args...)
 }
@@ -167,10 +158,10 @@ func (p *gitlabProvider) Whoami(ctx context.Context) (*User, error) {
 	}, nil
 }
 
-// ListRepos lists projects accessible to the user.
+// ListRepos lists projects accessible to the user. `glab repo list`
+// is not reliable for "all accessible" projects, so this uses the API
+// directly.
 func (p *gitlabProvider) ListRepos(ctx context.Context) ([]Repo, error) {
-	// glab repo list isn't reliable for "all accessible" projects;
-	// glab api projects?membership=true&per_page=100 is the canonical way.
 	args := p.withHost("api", "projects", "-F", "membership=true", "-F", "per_page=100", "--paginate")
 	out, err := runCmd(ctx, ListTimeout, nil, "glab", args...)
 	if err != nil {
@@ -241,7 +232,7 @@ func (p *gitlabProvider) CreatePR(ctx context.Context, repo string, params *Crea
 		"--description", params.Body,
 		"--source-branch", params.SourceBranch,
 		"--target-branch", params.TargetBranch,
-		"--yes", // skip confirmation prompts
+		"--yes",
 	)
 	if params.Draft {
 		args = append(args, "--draft")
@@ -272,18 +263,10 @@ func (p *gitlabProvider) viewPR(ctx context.Context, repo string, number int) (*
 	return &pr, nil
 }
 
-// MergePR merges an MR.
-//
-// Two flags carry the new preconditions, both from glab's documented
-// `mr merge` surface: `--sha` ("Merge only if the HEAD of the source
-// branch matches this SHA") and `--auto-merge`.
-//
-// `--auto-merge` is passed ONLY when arming. glab documents its default
-// as true, so a plain merge on a repository with a running pipeline is
-// already handed to GitLab to finish — that is glab's behaviour today and
-// this change does not alter it. Passing `--auto-merge=false` to force an
-// immediate merge would be a behaviour change on a flag no binary here
-// can confirm, so it is left alone.
+// MergePR merges an MR. `--sha` pins the head commit; `--auto-merge`
+// is passed only when arming, since glab documents its own default as
+// true and forcing `--auto-merge=false` would be an unconfirmed
+// behaviour change.
 func (p *gitlabProvider) MergePR(ctx context.Context, repo string, number int, opts MergeOptions) error {
 	args := p.withHost("mr", "merge", strconv.Itoa(number), "--repo", repo, "--yes")
 	switch opts.Method {
@@ -315,24 +298,15 @@ func (p *gitlabProvider) ReopenPR(ctx context.Context, repo string, number int) 
 	return err
 }
 
-// RerunFailedChecks retries the failed jobs of the MR's head pipeline.
-//
-// GitLab has no per-job "rerun failed" verb to reach: retrying failed
-// jobs IS a pipeline endpoint, so this goes through `glab api` exactly as
-// CommitStatus already does, rather than through `glab ci retry`, which
-// is job-keyed and wants a local checkout. The pipeline id comes from the
-// single-MR read, the one response GitLab documents head_pipeline on.
-//
-// `head_pipeline` is already a commit linkage — it is the pipeline GitLab
-// reports FOR the MR's head — so unlike GitHub's branch-keyed run list this
-// path never had the wrong-commit defect. headSHA is still checked, against
-// the MR's own `sha`, because a row read before a force-push describes a
-// commit that no longer exists and re-running is an action, not a read.
-//
-// The head pipeline's OWN sha is deliberately not compared to the MR's: with
-// merged-results pipelines or a merge train the pipeline runs against a
-// synthesized merge commit, so requiring equality would refuse every re-run on
-// a project using either feature.
+// RerunFailedChecks retries the failed jobs of the MR's head
+// pipeline via `glab api`, rather than `glab ci retry`, which is
+// job-keyed and wants a local checkout. head_pipeline is already a
+// commit linkage — GitLab reports it FOR the MR's head — so this path
+// never had GitHub's branch-keyed wrong-commit defect. headSHA is
+// still checked against the MR's own `sha`, since re-running is an
+// action rather than a read. The head pipeline's own sha is
+// deliberately not compared: with merged-results pipelines or a merge
+// train it runs against a synthesized commit.
 func (p *gitlabProvider) RerunFailedChecks(ctx context.Context, repo string, number int, headSHA string) error {
 	project, err := gLabProjectPath(repo)
 	if err != nil {
@@ -351,8 +325,8 @@ func (p *gitlabProvider) RerunFailedChecks(ctx context.Context, repo string, num
 	return err
 }
 
-// headPipelineID reads an MR's head commit and the id of the pipeline GitLab
-// reports for it.
+// headPipelineID reads an MR's head commit and the id of the
+// pipeline GitLab reports for it.
 func (p *gitlabProvider) headPipelineID(ctx context.Context, project string, number int) (head string, pipelineID int64, err error) {
 	endpoint := fmt.Sprintf("projects/%s/merge_requests/%d", project, number)
 	args := p.withHost("api", endpoint)

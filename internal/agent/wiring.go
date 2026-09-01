@@ -2,41 +2,16 @@ package agent
 
 import "reflect"
 
-// requireCollaborators panics unless every collaborator field of every collaborator the
-// Runtime built is populated.
-//
-// This guards a bug this constructor has now shipped THREE times, in three
-// different types, and the third time is what made it worth a structural answer
-// rather than a third fix. The pattern: a collaborator binds its collaborators BY VALUE
-// at construction, so a field still nil at that moment stays nil forever — where
-// the forwarding methods these collaborators replaced read h per call and so tolerated
-// any assignment order. Splitting the god object is exactly what made order
-// load-bearing, and nothing in the language notices.
-//
-// The failure mode is what makes it worth catching here: a nil collaborator is
-// not a compile error and not a startup error, it is a nil-receiver panic on the
-// first request that reaches that path. The run surface's utility thunk, three
-// translate roles and the inbound ladder's coordinator each shipped that way.
-//
-// A panic rather than an error, on the same terms as the nil lifetime context New
-// already refuses: this is a mistake in this package's own wiring, fixable only by
-// editing this package, and it fires in every test at process start. See
-// requireWired for the translate-role half of the same idea.
-//
-// Reflection over the struct rather than a hand-written checklist, because a
-// checklist must be edited exactly when a collaborator is added — the moment the
-// mistake is available to make. Only pointer, interface and func fields are
-// checked; a value field has no nil to be.
-//
-// A genuinely optional collaborator carries `wiring:"optional"` on the FIELD, so
-// the exemption sits where a reader of that field will see it and a newly added
-// field cannot inherit one by accident. There are real ones: scheduling is off
-// rather than half-present when no store is wired, and the secret store and the
-// ignore matcher are both absent when no config dir is set.
+// requireCollaborators panics unless every collaborator field of every collaborator
+// the Runtime built is populated. A collaborator binds its own collaborators BY
+// VALUE at construction, so a field still nil at that literal stays nil forever;
+// this has shipped as a nil-receiver panic three times, which is why it gets a
+// structural check via reflection rather than a hand-edited checklist. Only
+// pointer, interface and func fields are checked. A genuinely optional
+// collaborator carries `wiring:"optional"` on the FIELD.
 func requireCollaborators(h *Runtime) {
-	// Keyed literals, not positional: govet's fieldalignment wants `v` first and
-	// the name second, and a positional list silently swaps meaning the moment
-	// that order changes. Keys make the order the linter's business alone.
+	// Keyed literals: a positional list silently swaps meaning if fieldalignment
+	// ever reorders these.
 	for _, c := range []struct {
 		v    any
 		name string
@@ -49,10 +24,7 @@ func requireCollaborators(h *Runtime) {
 		{name: "runRoutes", v: h.runRoutes},
 		{name: "utility", v: h.utility},
 		{name: "replay", v: h.replay},
-		// The coordinator is here because it was the FOURTH site to capture a nil
-		// this way, and the guard missed it: the list held the collaborators I thought of
-		// rather than everything that binds a collaborator at construction. Any
-		// type built inside New with fields taken from h belongs in it.
+		// Every collaborator constructed inside New with fields taken from h.
 		{name: "coord", v: h.coord},
 	} {
 		requirePopulated(c.name, c.v)
@@ -80,7 +52,7 @@ func requirePopulated(owner string, v any) {
 			}
 		default:
 			// A value field (a mutex, a map, a string, an embedded struct) has no
-			// nil state to check. Maps are deliberately excluded: several collaborators
+			// nil state to check. Maps are excluded: several collaborators
 			// initialise theirs lazily on first write.
 		}
 	}

@@ -5,13 +5,6 @@
 // seven flags `kiro-cli acp` accepts, one is already emitted (`--agent-engine`)
 // and five must be refused, which leaves `--agent` and `-v`.
 //
-// An earlier revision of this comment claimed `buildACPArgs` emits `--model` and
-// `--effort`. It does not, and cannot: kiro-cli REFUSES both alongside
-// `--agent-engine=v3` and exits before answering initialize (see
-// bridge_process.go). That mistake is why they were missing from the refusal list
-// below, which made this hatch a way to kill every chat bridge from a compose
-// value. Model and effort travel as session config options instead.
-//
 // So the justification is reach, not power: a flag upstream adds tomorrow becomes
 // a compose-value edit instead of a code change and an image rebuild. Worth ~40
 // lines on those terms and no more; do not sell it as a v3 switch or a

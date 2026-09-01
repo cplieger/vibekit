@@ -22,9 +22,7 @@ import (
 )
 
 // allRepoStatus mirrors gitStatusResp but adds the repo name so the
-// front-end multi-repo dashboard can group by source. Defined here
-// (next to the handler that produces a slice of these) rather than
-// in handlers.go so the data shape lives next to its first consumer.
+// front-end multi-repo dashboard can group by source.
 type allRepoStatus struct {
 	Repo string `json:"repo"`
 	gitStatusResp
@@ -40,26 +38,22 @@ const (
 
 // handleStatusAll fans out collectStatus across every cloned repo
 // under workDir (plus workDir itself if it's a repo) and returns a
-// merged array. This is what the Changes tab on the new git page
-// fetches once per refresh, instead of N round-trips for N repos.
+// merged array. This is what the Changes tab on the git page fetches
+// once per refresh, instead of N round-trips for N repos.
 //
 // The scan is singleflighted and DETACHED from the request context:
-// boot fires several concurrent callers (changes tab + badge poll),
-// and a client-side abort used to cancel the shared context mid-scan,
-// SIGKILLing every in-flight `git status` and logging a WARN burst per
-// repo. Now concurrent callers join one scan, an abandoned scan runs
-// to completion (bounded by statusAllBudget), and the next poll gets a
+// boot fires several concurrent callers (changes tab + badge poll), so
+// concurrent callers join one scan, an abandoned scan runs to
+// completion (bounded by statusAllBudget), and the next poll gets a
 // fast answer.
 //
 // By default the network fetch (`fetch --quiet`) is skipped inside each
 // per-repo collectStatus call: doing N fetches in parallel on every
 // 15s badge poll is too aggressive for slow forges. ?fetch=1 (the
 // user-initiated "Refresh all" / git-tab activation) opts in so
-// ahead/behind counts are actually refreshed against the remotes —
-// without it `behind` went permanently stale because no UI path ever
-// fetched. Fetching callers get their own singleflight key so a
-// cheap poll never piggybacks a fetch-less result onto them (and vice
-// versa).
+// ahead/behind counts are refreshed against the remotes. Fetching
+// callers get their own singleflight key so a cheap poll never
+// piggybacks a fetch-less result onto them (and vice versa).
 func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	doFetch := r.URL.Query().Get("fetch") == "1"
 	key := "status-all"
@@ -101,11 +95,6 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 
 // handleShow serves a file's CONTENT at a git ref — the base side of the
 // editor's diff-vs-HEAD pane, whose working-tree side comes from /api/file.
-//
-// There is no sibling handler serving a unified-diff TEXT for one file.
-// /api/git/file-diff was the git panel's inline drawer, and that drawer is gone:
-// a changed file opens in the editor's diff tab now, which reads both sides as
-// content (git-changes-tab.ts openFileDiff). Nothing else ever called it.
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	requested := r.URL.Query().Get("path")
 	if requested == "" {
@@ -129,16 +118,11 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid ref")
 		return
 	}
-	// An absent `repo` means "resolve it": the path is workspace-relative and
-	// the caller does not know which repository owns it. That is the shape
-	// every caller coming from a turn's changed-file ledger or a tool card
-	// has — those paths are produced by translate.relPath, which strips the
-	// workspace prefix and knows nothing about repos. Defaulting to the
-	// workspace root instead (the old behaviour) ran `git show` in a
-	// directory that is usually not a repository at all, so the base side of
-	// every such diff failed; and when the root WAS a repo but the file lived
-	// in a subdirectory repo, the base read as empty and the diff claimed
-	// every line had just been added.
+	// An absent `repo` means "resolve it": the path is workspace-relative
+	// and the caller does not know which repository owns it — the shape
+	// produced by translate.relPath for a turn's changed-file ledger or a
+	// tool card, which strips the workspace prefix and knows nothing
+	// about repos.
 	repo := repoFromQuery(r)
 	file := requested
 	if repo == "" {
@@ -152,8 +136,8 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		repo, file = owner, inRepo
 	}
 	dir := h.repoDir(repo)
-	// gitShowCmd carries --no-textconv, so this new resolution path inherits the
-	// raw-blob pin rather than needing its own.
+	// gitShowCmd carries --no-textconv, so this resolution path inherits
+	// the raw-blob pin rather than needing its own.
 	out, err := gitShowCmd(r.Context(), dir, ref, file)
 	if err != nil {
 		if errors.Is(err, ErrPathNotInRef) {
@@ -185,11 +169,10 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0, "commit_url_prefix": ""})
 		return
 	}
-	// Not pinned to []string{} the way `branches` below is: git log answering
-	// successfully means at least one commit line, and the no-commits repo takes
-	// the error path above, which writes the empty array explicitly. The client
-	// reads `entries ?? []`, so the unreachable null would degrade to the same
-	// empty state anyway.
+	// Not pinned to []string{} the way `branches` below is: git log
+	// answering successfully means at least one commit line, and the
+	// no-commits repo takes the error path above, which writes the empty
+	// array explicitly.
 	var lines []string
 	for line := range strings.SplitSeq(out, "\n") {
 		if line != "" {
@@ -324,8 +307,8 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 // workspace, never by name. A lexical containment check cannot carry its answer
 // forward: between the check and the remove the kernel re-resolves every
 // component from the root, so an ordinary directory that passed, replaced by a
-// symlink before the unlink, sends the delete wherever the link points — and with
-// no root on the path the target is not even bounded to the workspace, while this
+// symlink before the unlink, sends the delete wherever the link points — with no
+// root on the path the target is not even bounded to the workspace, and this
 // container's /config holds the chat store, the secret store, the tool tree and
 // the installed agent runtime.
 //
@@ -334,16 +317,12 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 // the directory it opened is the one it inspected. Naming only the final element
 // through that handle removes every ancestor from the unlink's path.
 //
-// A repo the user symlinked into the workspace stays removable, which is the
-// feature the lexical resolver exists for: the descent refuses a symlink only at
-// an INTERMEDIATE component and hands back the parent for the final one, and the
-// parent's own RemoveAll unlinks a symlink rather than following it.
-// atomicfile.RemoveFileInRoot would refuse it with ErrNotRegular — the right rule
-// for a writer sweeping names it created, the wrong one here.
+// A repo the user symlinked into the workspace stays removable: the descent
+// refuses a symlink only at an INTERMEDIATE component and hands back the parent
+// for the final one, whose own RemoveAll unlinks a symlink rather than following
+// it — atomicfile.RemoveFileInRoot would refuse it with ErrNotRegular instead,
+// the right rule for a writer sweeping names it created, the wrong one here.
 // internal/agent's _kiro/fs/delete records the same choice.
-//
-// Holding the root on the Handler is the better shape, but it changes
-// construction; one per request is the smaller step.
 func (h *Handler) removeRepoDir(dir string) error {
 	root, err := os.OpenRoot(h.workDir)
 	if err != nil {

@@ -1,20 +1,11 @@
-// list_cache.go — a read-through cache over the two forge LISTING calls.
-//
-// Why only these two: the PRs tab aggregates client-side, so one visit is
-// `GET /api/forges`, then one `/repos` per connected forge, then one
-// `/prs` per repository — and each of those last two is a `gh`/`glab`/`tea`
-// subprocess plus an upstream API call. Nothing was cached, so the cost was
-// paid again on every visit, and the repo listing is worse than its share
-// suggests: no PR request can start until `gh repo list --limit 300` returns.
-//
-// What this deliberately does NOT do is run anything in the background. There
-// is no ticker and no goroutine at rest; a fill happens only because a request
-// asked for the data. The one goroutine that exists is the revalidation of an
-// already-served stale value, which lives for one fill and is bounded by
-// ListTimeout.
-//
-// Mutations are never cached. The decorator promotes them from the embedded
-// ForgeOps untouched, so a merge, a close or a create always reaches the forge.
+// A read-through cache over the two forge LISTING calls (repos, PRs):
+// the PRs tab aggregates client-side, so one visit forks a `gh`/`glab`/
+// `tea` subprocess per repository with no caching at all. There is no
+// background ticker; a fill happens only because a request asked for
+// the data, and the one goroutine that exists is the revalidation of an
+// already-served stale value, bounded by ListTimeout. Mutations are
+// never cached — the decorator promotes them from the embedded
+// ForgeOps untouched.
 
 package forges
 

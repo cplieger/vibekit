@@ -38,26 +38,14 @@ const LastDay = -1
 // The bounds on FreqMinutely's Interval. Sub-hour steps only: an hour or more is
 // FreqHourly's job, and 60 here would be a second spelling of "hourly, every 1".
 //
-// The FLOOR is the load-bearing half, and it is derived rather than chosen. Four
-// mechanisms misbehave below it, and 5 is the smallest step none of them
-// misbehaves at:
+// The FLOOR (5) is derived, not chosen: below it, the runner's 1-minute ticker
+// makes every sweep due, one live-run-per-recipe overlap refusal writes
+// "failed" into the row forever for a run that outlives its interval, MissGrace
+// (3 min) cannot distinguish a still-fireable slot from the next one, and the
+// host's run-deadline floor (minRunBudget) pages the operator for any run over
+// 61 seconds. minRunBudget moves with this constant.
 //
-//   - the runner ticks once a minute (TickInterval), so an interval of 1 leaves
-//     every sweep due and the schedule is really "as often as possible"
-//   - one live run per recipe is refused as an overlap, so a run that outlives
-//     its own interval writes "failed" into the row on every later slot, and the
-//     row then reads failed forever while nothing is actually wrong
-//   - MissGrace is 3 minutes, and a slot that may still fire is only
-//     distinguishable from the NEXT slot while the interval exceeds the grace
-//   - a scheduled run's own interval is one input to the run's single deadline
-//     (the host's runCeiling / minRunBudget pair in internal/agent/run_bounds.go),
-//     and blowing that deadline logs at ERROR for an alert rule, so a 1-minute
-//     interval pages the operator for any run that takes 61 seconds. The host
-//     FLOORS the derived budget at this same 5 minutes, so the two numbers move
-//     together — change minRunBudget with this constant
-//
-// Mirrored in static-src/schedule-types.ts (INTERVAL_BOUNDS), which is where the
-// user meets the rule; change both together.
+// Mirrored in static-src/schedule-types.ts (INTERVAL_BOUNDS); change both together.
 const (
 	minMinuteInterval = 5
 	maxMinuteInterval = 59
@@ -232,27 +220,17 @@ func daysInMonth(t time.Time) int {
 
 // timesOn returns the fire times on a day the spec matches, in order.
 //
-// The switch is EXHAUSTIVE rather than the negative test it replaced
-// (`if s.Freq != FreqHourly`). That form routed any newly added frequency into
-// the one-slot-per-day branch, which is not an error, not a log line and not a
-// test failure: the new frequency would degrade to daily and look like it works.
+// The switch is EXHAUSTIVE rather than a negative test on FreqHourly: routing
+// an unhandled frequency into a one-slot-per-day fallback would silently
+// degrade it to daily instead of failing loudly.
 //
-// Every fire time is built with time.Date, so month lengths, leap years and DST
-// stay delegated rather than reimplemented. Two DST consequences the minute walk
-// inherits from the hourly one, both correct and neither needing code here:
-//
-//   - a spring-forward day's missing local hour normalizes BACKWARD, measured:
-//     time.Date(2026, 3, 8, 2, 0, ...) in America/New_York is 01:00 EST. So those
-//     slots land on instants the earlier slots already produced, the
-//     strictly-after scan in NextRun skips them as past, and the 23-hour day
-//     simply holds fewer slots. Nothing repeats and no day is skipped.
-//   - a fall-back day's repeated local hour resolves to ONE instant per slot, so
-//     those slots fire once rather than twice, at the price of one longer real
-//     gap across the repeat.
-//
+// Every fire time is built with time.Date, delegating DST to the stdlib. On a
+// spring-forward day the missing local hour normalizes backward, so those
+// slots collapse onto earlier ones and NextRun's strictly-after scan skips
+// them; on a fall-back day the repeated hour resolves to one instant per slot.
 // The list is therefore not monotonic on a spring-forward day, which is safe
-// because NextRun returns the first element strictly after its argument and the
-// out-of-order block is entirely in the past by the time it is reached.
+// because the out-of-order block is entirely in the past by the time NextRun
+// reaches it.
 func (s Spec) timesOn(day time.Time) []time.Time {
 	at := func(h, m int) time.Time {
 		return time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, day.Location())

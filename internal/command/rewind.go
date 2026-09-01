@@ -1,15 +1,14 @@
 package command
 
-// Rewind: revert THIS chat to a past turn. There is no branch, no promote and
-// no discard — the whole family apparatus is gone, because a fork made a SECOND
-// chat and rewinding was always meant to edit the one you are in.
+// Rewind: revert this chat to a past turn. There is no branch, no promote
+// and no discard — a fork makes a second chat, and rewind edits the one
+// you are in.
 //
-// The operation is one KAS call. `_kiro/checkpoint/revertMultiple` drops the
-// addressed user message and everything after it, rolls the files back from
-// KAS's own snapshots, and appends a `checkpoint_revert` tombstone to its
-// session log so the truncation is durable. Vibekit's Rewind and its former
-// turn-level Restore are therefore the same operation: the transcript and the
-// files move together, because KAS moves them together.
+// The operation is one KAS call. `_kiro/checkpoint/revertMultiple` drops
+// the addressed user message and everything after it, rolls the files
+// back from KAS's own snapshots, and appends a tombstone so the truncation
+// is durable. Vibekit's Rewind and its former turn-level Restore are the
+// same operation.
 
 import (
 	"cmp"
@@ -25,25 +24,19 @@ import (
 // CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint
 // machinery, then truncates vibekit's record to match.
 //
-// The truncation is NOT redundant with the revert, and it is not a
-// re-derivation of KAS's answer either. KAS's tombstone makes ITS log correct;
-// vibekit's chat file still holds the dropped turns, and `mergeProjection`
-// deliberately preserves anything newer than a replay's last message (KAS's log
-// is not fsynced, so an absent tail is normally a durability gap rather than an
-// intended deletion). Left alone, the next resume would therefore hand the
-// reverted turns straight back. A revert is the one case where the tail is gone
-// ON PURPOSE, and only vibekit knows that at this moment, so it cuts its own
-// record here.
+// The truncation is not redundant with the revert: vibekit's chat file
+// still holds the dropped turns, and mergeProjection deliberately
+// preserves anything newer than a replay's last message (KAS's log is not
+// fsynced, so an absent tail is normally a durability gap rather than an
+// intended deletion). A revert is the one case where the tail is gone on
+// purpose, and only vibekit knows that at this moment.
 //
-// That is also why there is no session/load: the live session's context is
-// already reverted in place by the handler, the tombstone covers every future
-// load, and a reload would only re-derive an answer both sides already agree on
-// at the price of tearing down the bridge.
+// No session/load follows: the live session's context is already reverted
+// in place, and the tombstone covers every future load.
 //
-// Mid-turn is refused, not queued. KAS throws on `session.abortController`
-// ("Cannot revert while the agent is still running"), and refuses a concurrent
-// revert per session — so both races are settled upstream and vibekit forwards
-// the reason instead of reimplementing the guard.
+// Mid-turn is refused, not queued — KAS throws on a live turn and refuses
+// a concurrent revert per session, so vibekit forwards the reason instead
+// of reimplementing the guard.
 func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -75,9 +68,9 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 		return nil, StatusError(status, err)
 	}
 
-	// Cut at idx, not idx+1: the addressed message is discarded WITH its
-	// successors (KAS slices from the target inclusive), so the prompt at that
-	// turn is gone and has to be retyped. That is the operation, not a bug.
+	// Cut at idx, not idx+1: the addressed message is discarded with its
+	// successors (KAS slices from the target inclusive), so the prompt at
+	// that turn is gone and has to be retyped.
 	if mErr := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
@@ -111,15 +104,11 @@ type revertResult struct {
 	Success       bool     `json:"success"`
 }
 
-// revertToMessage performs the KAS round trip and normalises its TWO failure
-// channels into one error plus the HTTP status to report.
-//
-// Two channels because KAS uses both: a transport/JSON-RPC failure comes back as
-// an error, while a refusal it can explain — an unknown id, a non-user target, a
-// live turn, a concurrent revert, an unreadable snapshot — comes back
-// `success:false` with a reason. The reason is forwarded verbatim: it is more
-// specific than anything vibekit could infer, and a revert that did not happen
-// must never read like one that did.
+// revertToMessage performs the KAS round trip and normalises its two
+// failure channels into one error plus the HTTP status to report: a
+// transport/JSON-RPC failure comes back as an error, while a refusal KAS
+// can explain comes back `success:false` with a reason, forwarded verbatim
+// since it is more specific than anything vibekit could infer.
 func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string) (revertResult, int, error) {
 	var result revertResult
 	resp, err := bridge.Call(ctx, vibekit.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
@@ -137,13 +126,10 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 	return result, http.StatusOK, nil
 }
 
-// userMessageIndex locates the revert target: the USER message with this id.
-//
-// User-only because KAS requires it — a non-user target is refused in-band with
-// the type it found — and because only user messages share an id space with KAS
-// at all. It echoes back the messageId vibekit sends on session/prompt, while an
-// assistant turn carries KAS's own `<uuid>-say`, so an assistant id would be
-// unknown to the revert regardless of role checking. Returns -1 when absent.
+// userMessageIndex locates the revert target: the user message with this
+// id. User-only because KAS requires it, and only user messages share an
+// id space with KAS — an assistant turn carries KAS's own id. Returns -1
+// when absent.
 func userMessageIndex(messages []vibekit.Message, id string) int {
 	for i := range messages {
 		if messages[i].ID == id && messages[i].Role == vibekit.RoleUser {
@@ -153,23 +139,17 @@ func userMessageIndex(messages []vibekit.Message, id string) int {
 	return -1
 }
 
-// CmdSetEffort sets the chat's reasoning-effort level. On v3 (KAS) effort is a
-// session config option, so a running session is switched in place via
-// session/set_config_option (configId "effortLevel"); the level is then
-// persisted ON THE CHAT and applied to any later session at launch through
-// StartOpts.Effort.
+// CmdSetEffort sets the chat's reasoning-effort level. On v3 (KAS) effort is
+// a session config option, so a running session is switched in place via
+// session/set_config_option; the level is then persisted on the chat and
+// applied to any later session through StartOpts.Effort.
 //
-// Effort is PER-CHAT (the fourth composer setting to be, beside model, mode and
-// supervised). It used to be one global `model_effort` setting keyed by the LAST
-// model, which meant two chats could not disagree and switching models silently
-// discarded the previous model's choice.
+// Effort is per-chat: two chats can disagree, and switching models no
+// longer discards the previous model's choice.
 //
-// A chat with no bridge is NOT a 409 any more, which is the other half of the
-// same move: the persisted level is enough, exactly as CmdSetMode's is, and the
-// client no longer needs an empty-chat branch that writes a global setting
-// instead. Auto-create mirrors CmdSetMode for the same reason — a fresh chat is
-// client-side only until its first prompt, so without it every pick before the
-// first message 404'd and the control rolled back.
+// A chat with no bridge is not a 409: the persisted level is enough, and
+// auto-create mirrors CmdSetMode — a fresh chat is client-side only until
+// its first prompt.
 func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err

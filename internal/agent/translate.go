@@ -1,23 +1,11 @@
 // ACP → domain event translation (dispatcher + session-update sub-dispatcher).
 //
-// KIRO-CLI 2.0.1 tui.js:886710603bed3fb6 — payload shapes pinned.
-//
-// kiro-cli sends a mix of JSON-RPC notifications, requests (that need
-// a response), and method-qualified envelopes. `translateACPEvent` is
-// the single dispatch point — every per-method handler lives in a
-// sibling `translate_*.go` file so this one stays short and readable.
-//
-// Design rules:
-//   - Unhandled `_kiro/*` extensions fall through to a debug log,
-//     not a panic or a silent drop. KAS's extension namespace is
-//     explicitly unstable; we discover new surfaces without committing
-//     to decode them.
-//   - ACP-spec methods (no `_kiro/` prefix) are expected to be
-//     stable; unknown ones log at the same debug level but that's a
-//     stronger signal something needs wiring.
-//   - Requests (msg.ID != nil && msg.Method != "") route through the
-//     fs handlers first; the rest of the dispatcher only cares about
-//     notifications.
+// kiro-cli sends notifications, requests needing a response, and
+// method-qualified envelopes. `translateACPEvent` is the single dispatch
+// point; per-method handlers live in sibling `translate_*.go` files.
+// Unhandled `_kiro/*` extensions log at Debug (that namespace is explicitly
+// unstable); an unknown stable ACP-spec method logs the same but is a
+// stronger signal something needs wiring.
 
 package agent
 
@@ -52,15 +40,10 @@ func ignoreAttribution(fn func(context.Context, vibekit.ChatID, json.RawMessage)
 func (rt *Runtime) initDispatch() {
 	rt.chatHandlers = map[string]chatHandler{
 		vibekit.MethodSessionUpdate: rt.handleSessionUpdate,
-		// Wrapped so a SCHEDULED run's request is refused on a short budget
-		// rather than parking the run forever (run_unattended.go). The wrapper
-		// is a no-op for every attended chat.
+		// Refused on a short budget for a SCHEDULED run rather than parking it forever.
 		vibekit.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.translator.HandlePermissionRequest),
-		// _kiro/mcp/elicitation (a request with an id). Routed here by method.
 		vibekit.MethodElicitationCreate: rt.translator.HandleElicitationCreate,
-		// _kiro/userInput (a request with an id, 2.14+): the agent's
-		// structured question — gated on the _meta.kiro.userInput
-		// initialize capability declared in bridge.go.
+		// Gated on the _meta.kiro.userInput initialize capability (bridge.go).
 		vibekit.MethodKiroUserInput: rt.translator.HandleUserInput,
 		// v3 (KAS) _kiro/* notifications.
 		methodV3RateLimit:            rt.translator.HandleRateLimit,
@@ -68,30 +51,17 @@ func (rt *Runtime) initDispatch() {
 		methodV3CustomAgentConfigErr: rt.translator.HandleAgentConfigError,
 		methodV3MCPStatus:            rt.translator.HandleMCPStatus,
 		methodV3SystemNotify:         rt.translator.HandleSystemNotify,
-		// Native Cedar policy: hot-reload + parse-error notifications KAS
-		// emits when a permissions.{yaml,json} file changes. Translated to
-		// SSE so the client refetches GET /api/permissions.
-		methodV3PolicyChanged: rt.translator.HandlePolicyChanged,
-		methodV3PolicyError:   rt.translator.HandlePolicyError,
-		// Licensed-code attribution: surfaced as a per-turn attribution chip.
+		// Cedar policy hot-reload / parse-error → SSE refetch of GET /api/permissions.
+		methodV3PolicyChanged:  rt.translator.HandlePolicyChanged,
+		methodV3PolicyError:    rt.translator.HandlePolicyError,
 		methodV3CodeReferences: rt.translator.HandleCodeReferences,
-		// Infrastructure-Safety gate state → safety_status / safety_properties
-		// SSE. Defensive: KAS only emits these when the gate is installed (client
-		// capability + an AWS governance flag that is off by default), so on a
-		// normal account they never fire. See translate/safety.go.
+		// Dormant unless the enterprise safety gate is installed. See translate/safety.go.
 		methodV3SafetyStatusChanged: rt.translator.HandleSafetyStatusChanged,
 		methodV3SafetyPropertiesChg: rt.translator.HandleSafetyPropertiesChanged,
-		// Org/account feature-flag policy → governance_state SSE (broadcast
-		// global) + runtime-side cache served at GET /api/governance. Gates
-		// affordances the flags control (MCP availability, the org-policy
-		// disclosure, the code-reference chip). See translate/governance.go.
-		methodV3Governance: rt.translator.HandleGovernanceState,
-		// Workflow-run lifecycle. Nine KAS notifications → three SSE events; the
-		// seven middle kinds share one handler because they mean one thing to a
-		// client ("refetch"). See translate/workflow.go.
-		// Wrapped rather than registered bare: the run clock (run_bounds.go) has
-		// to see a run start, pause and finish, and `run_start` is the only frame
-		// vibekit gets for an AGENT-launched run, whose launch path is KAS's.
+		methodV3Governance:          rt.translator.HandleGovernanceState,
+		// Nine KAS notifications collapse to three SSE events; see translate/workflow.go.
+		// Wrapped (not registered bare) so the run clock (run_bounds.go) can see
+		// start/pause/finish — run_start is the only frame for an AGENT-launched run.
 		methodWFRunStart:    rt.runs.observeStart,
 		methodWFRunComplete: rt.runs.observeComplete,
 	}
@@ -106,28 +76,21 @@ func (rt *Runtime) initDispatch() {
 	} {
 		rt.chatHandlers[method] = rt.translator.RunProgressHandler(kind)
 	}
-	// A run-level pause stops the clock, because each arm is a ceiling of
-	// EXECUTING time: a run parked on purpose must not be cancelled for having
-	// been parked. Node-level pauses keep it — a step waiting inside a run that is
-	// still going is exactly what the ceiling is for.
-	//
-	// TWO wrappers, composed rather than merged, because they read different
-	// collaborators off one frame: observePaused reaches the bounds, healPaused
-	// reaches the bridges and the chat store. Order is load-bearing in one
-	// direction only — the clock must be parked before anything can decide to
-	// resume, and healPaused runs its own work after `next`, so the client renders
-	// the pause before the heal undoes it.
+	// A run-level pause stops the clock (each arm is a ceiling of EXECUTING
+	// time; a run parked on purpose must not be cancelled for it). Node-level
+	// pauses keep the clock running. TWO wrappers composed rather than
+	// merged, since they read different collaborators: observePaused reaches
+	// the bounds, healPaused reaches the bridges and chat store. Order is
+	// load-bearing — the clock must be parked before anything can decide to
+	// resume.
 	rt.chatHandlers[methodWFPaused] = rt.runs.observePaused(
 		rt.runs.healPaused(rt.chatHandlers[methodWFPaused]),
 	)
-	// A completed node is the only honest evidence that whatever paused a run has
-	// cleared, so it is what returns the run's heal budget.
+	// A completed node is the only honest evidence a pause has cleared, so
+	// it returns the run's heal budget.
 	rt.chatHandlers[methodWFNodeComplete] = rt.runs.healProgress(rt.chatHandlers[methodWFNodeComplete])
-	// Explicit noops: v3 methods we recognise but intentionally ignore
-	// (feature flags, tool/steering/skills catalogs vibekit sources via
-	// REST, and the session inventory diff which has no client consumer now
-	// that subagents are tool calls). Listing them keeps them out of the
-	// "unhandled" debug log.
+	// v3 methods recognised but intentionally ignored (feature flags, catalogs
+	// vibekit sources via REST). Listed to keep them out of the unhandled-debug log.
 	rt.noopMethods = map[string]struct{}{
 		methodV3SessionsChanged:    {},
 		methodV3ToolsDidChange:     {},
@@ -135,8 +98,8 @@ func (rt *Runtime) initDispatch() {
 		methodV3ProgressiveContext: {},
 		methodV3Powers:             {},
 	}
-	// Session-update sub-dispatcher: built eagerly to avoid a data race
-	// when multiple bridge goroutines call sessionUpdateHandlers() concurrently.
+	// Built eagerly to avoid a data race when multiple bridge goroutines call
+	// sessionUpdateHandlers() concurrently.
 	rt.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
 		vibekit.ACPUpdateAgentChunk: ignoreAttribution(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 			rt.translator.HandleAssistantChunk(ctx, chatID, raw, false)
@@ -148,11 +111,7 @@ func (rt *Runtime) initDispatch() {
 		vibekit.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
 		vibekit.ACPUpdatePlan:       ignoreAttribution(rt.translator.HandlePlan),
 		vibekit.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
-		// v3 (KAS) sub-kinds: context-usage + slash-command catalog moved
-		// here from the v2 _kiro.dev/metadata + commands/available notifs.
-		// session_info_update also carries compaction (summarization) state;
-		// usage_update is the primary v3 context-usage channel; and
-		// config_option_update delivers the live model/mode/effort catalog.
+		// v3 sub-kinds moved here from v2's _kiro.dev/metadata + commands/available.
 		vibekit.ACPUpdateSessionInfo:  rt.translator.HandleSessionInfoUpdate,
 		vibekit.ACPUpdateUsage:        ignoreAttribution(rt.translator.HandleUsageUpdate),
 		vibekit.ACPUpdateConfigOption: ignoreAttribution(rt.translator.HandleConfigOptionUpdate),
@@ -163,14 +122,11 @@ func (rt *Runtime) initDispatch() {
 // forward goroutine. Every branch must return promptly; long-running
 // work belongs in goroutines inside the handler (see bridge_fs.go).
 func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-	// Derive a context from the runtime's shutdownCtx so handlers can
-	// propagate shutdown cancellation to I/O calls.
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
 
-	// A RUN bridge's frames take their own door: step content must not flow
-	// into any transcript, and this connection's workflow lifecycle frames are
-	// workspace-global rather than a chat's. See run_host.go.
+	// A RUN bridge's frames take their own door: step content must not
+	// flow into any transcript. See run_host.go.
 	if isRunChat(chatID) {
 		rt.dispatch(ctx, chatID, msg)
 		return
@@ -180,48 +136,23 @@ func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResp
 		return
 	}
 
-	// Gated on the id for the same reason the noop table below is: ungated, a
-	// method the backend later promotes from a notification to a request reaches a
-	// notification handler that reads Params and returns, and the fence below is
-	// never reached. The three request-shaped members are dispatched from
-	// routeInboundRequest instead, so the halves are disjoint. The guard belongs on
-	// the LOOKUP — moved below the fence it would stop notifications entirely.
+	// The id test keeps a future request-shaped method promoted into this
+	// map from being swallowed silently by a notification handler.
 	if fn, ok := rt.chatHandlers[msg.Method]; ok && msg.ID == nil {
 		fn(ctx, chatID, msg)
 		return
 	}
-	// The noop table is keyed by METHOD only, so the id test is what keeps it
-	// from swallowing a REQUEST. Every member is a notification today, but a
-	// future request-shaped method added to that map would otherwise return here
-	// and never be answered, which is the exact wedge the refusal below exists to
-	// prevent — and it would be invisible, because a noop logs nothing.
+	// Same reason: a request-shaped method landing in the noop table would
+	// otherwise return here unanswered, and a noop logs nothing.
 	if _, ok := rt.noopMethods[msg.Method]; ok && msg.ID == nil {
 		return
 	}
-	// An unrecognised REQUEST must be answered. KAS calls its ext-methods with
-	// `await connection.extMethod(...)` and no timeout — the only rejection is
-	// the connection closing — so an unanswered request does not degrade a
-	// feature, it wedges the whole turn: the session/prompt Call never returns
-	// (Bridge.Call has no client-side deadline by design), bridgePrompting is
-	// never released, and every later prompt on that chat 409s into a client
-	// queue whose only drain is a turn_ended that will never fire.
-	//
-	// This mirrors the fallback the utility bridge (utility_session.go) and the
-	// run bridge (run_host.go) already have, with the same rationale written in
-	// their comments. The chat dispatcher was the one of the three without it.
-	//
-	// The reachable case today is _kiro/workspace/{active_file,
-	// currently_open_files}: KAS registers those resolvers with NO capability
-	// gate, and reaches them from processPromptWithContext on any `#[[...]]`
-	// reference in a workspace-authored agent prompt. vibekit deliberately does
-	// not implement the pull direction (see vibekit-acp.md), so a prompt in this
-	// very repo can raise a request nothing answers.
-	//
-	// The code is -32601, "Method not found", which is what JSON-RPC 2.0 assigns
-	// to exactly this case. KAS answers its own unknown ext-methods with -32603
-	// and switches on nothing, so either settles its promise — but -32603 means
-	// "I broke", and labelling a deliberate refusal an internal fault would make
-	// these logs lie about which side has the problem.
+	// An unrecognised REQUEST must be answered. KAS's ext-method calls have no
+	// timeout, so an unanswered request wedges the whole turn: session/prompt's
+	// Call never returns, the prompt slot is never released, and every later
+	// prompt on that chat 409s forever. -32601 rather than -32603: -32601 is
+	// "method not found", -32603 means "I broke" — a deliberate refusal
+	// labelled internal fault would blame the wrong side in these logs.
 	if msg.ID != nil {
 		slog.Warn("chat bridge: refusing an unexpected peer request",
 			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
@@ -235,10 +166,8 @@ func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResp
 		}
 		return
 	}
-	// v3 (KAS) emits the _kiro/* extension namespace. Unhandled NOTIFICATIONS
-	// (Cedar policy, spec/hooks/knowledge/safety/sandbox families, etc.) fall
-	// through to a debug log rather than a silent drop. Nothing is owed on the
-	// wire for these, unlike the request branch above.
+	// v3 (KAS) _kiro/* namespace: unhandled NOTIFICATIONS log at Debug rather
+	// than dropping silently — nothing is owed on the wire for these.
 	if strings.HasPrefix(msg.Method, "_kiro/") {
 		slog.Debug("unhandled kiro extension",
 			"method", msg.Method, "chat_id", chatID)
@@ -246,45 +175,32 @@ func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResp
 }
 
 // routeInboundRequest dispatches an A→C REQUEST (a frame carrying an id) to the
-// handler family that owns it, returning whether one claimed it.
-//
-// Split out of translateACPEvent so the request chain and the notification chain
-// are separately readable: every arm here owes a response on the wire, and
-// nothing below in the caller does. That is also why the caller's fallthrough is
-// a refusal rather than a log — see its comment.
+// handler family that owns it, returning whether one claimed it. Split out of
+// translateACPEvent because every arm here owes a response on the wire.
 func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	if rt.inbound.handleFSRequest(ctx, chatID, msg) {
 		return true
 	}
-	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}). Separate from
-	// handleFSRequest because they are a different rung of KAS's adapter ladder
-	// with different shapes — and because these execute rather than stage.
+	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}): a different
+	// rung of the adapter ladder, and these execute rather than stage.
 	if rt.inbound.handleKiroFSRequest(ctx, chatID, msg) {
 		return true
 	}
-	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
-	// _kiro/terminal/shell_type).
 	if rt.inbound.handleKiroClientRequest(ctx, chatID, msg) {
 		return true
 	}
-	// v3 (KAS) credential storage (_kiro/secret/*). Must be answered: KAS
-	// rethrows a store/delete failure into the MCP connect path, and an
-	// UNANSWERED request wedges the turn.
+	// Must be answered: KAS rethrows a store/delete failure into the MCP
+	// connect path, and an UNANSWERED request wedges the turn.
 	if rt.inbound.handleKiroSecretRequest(ctx, chatID, msg) {
 		return true
 	}
-	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.).
 	if strings.HasPrefix(msg.Method, methodTermPrefix) {
 		rt.handleTerminalRequest(ctx, chatID, msg.Method, msg)
 		return true
 	}
-	// The three request-shaped members of the chat handler table, whitelisted
-	// EXPLICITLY the way run_host.go's dispatchRequest does it: they live in that
-	// table because the surface they drive is the chat's, but a request belongs on
-	// this half of the dispatch, where every arm owes an answer. Claiming the frame
-	// here is also what makes double dispatch unreachable rather than merely
-	// avoided — the caller returns the moment this returns true, so the table is
-	// never consulted for these three.
+	// Explicit whitelist for the three request-shaped chat-handler members:
+	// claiming the frame here makes double dispatch unreachable, since the
+	// caller returns the moment this returns true.
 	switch msg.Method {
 	case vibekit.MethodRequestPermission,
 		vibekit.MethodElicitationCreate,
@@ -316,63 +232,25 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatI
 		return
 	}
 
-	// Determine attribution through the ONE shared classifier. This site and
-	// translate/deps.go's deriveSubSession are the protocol's two derivation
-	// points and they shared no code, so a step frame classified differently
-	// depending on which door it came through. ACP cannot supply the answer —
-	// its session model is flat, one sessionId per method with no parent/child
-	// concept — so it comes from KAS's own `_meta.kiro.workflow`, which the
-	// frame carries, plus the step-session registry for frames that do not.
-	//
-	// A STEP carries an empty SubSessionID and Step true: the per-kind handlers
-	// all read a non-empty id as "a subagent did this", which is not true of a
-	// step, and a step's own display attribution rides its blocks instead
-	// (ACPWorkflowMeta.SubtaskID). Step is separate rather than folded into the
-	// id because a handler that touches the CHAT's accounting has to tell a step
-	// from the chat, and one string cannot say three things — see
-	// translate.FrameAttribution for the defect that proved it.
+	// Determine attribution through the ONE shared classifier (also used by
+	// translate/deps.go's deriveSubSession, so a step frame classifies the
+	// same regardless of which door it came through). ACP's session model
+	// is flat, so this comes from KAS's own `_meta.kiro.workflow` plus the
+	// step-session registry for frames lacking it. A STEP carries an empty
+	// SubSessionID and Step true: per-kind handlers read a non-empty id as
+	// "a subagent did this", false for a step, whose own display
+	// attribution rides ACPWorkflowMeta.SubtaskID on the blocks instead.
 	attr := rt.translator.Attribute(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil)
 
-	// A REPLAYED frame is stored history, not something happening now, and
-	// must not reach the live handlers. KAS replays a session's whole
-	// transcript on `session/load` — which vibekit calls on every
-	// container-restart resume and every model-switch fallback — as ordinary
-	// session/update notifications tagged `_meta.kiro.replay`.
-	//
-	// Measured against kiro-cli 2.16.0: a load of a one-turn session returns
-	// 9 frames, 6 of them replay-tagged. Ungated, the replayed
-	// agent_message_chunk runs ensureTurnStarted and opens a PHANTOM turn —
-	// a fresh message id whose `message_created` + `message_chunk` events go
-	// out to every connected client, re-streaming history as though the agent
-	// were typing it. There is no `session/prompt` response to end that turn,
-	// so it never flushes to the chat file — but every connected client has
-	// already rendered the duplicate, and before the .partial sidecar was
-	// deleted, boot recovery could promote it to a real message.
-	//
-	// The frames are no longer dropped: they BUILD the transcript, via a
-	// per-chat translate.Projection opened for the load (load_projection.go).
-	//
-	// Three facts about that path are worth keeping here, at the seam:
-	//
-	//  1. Completion cannot be decided by the goroutine that issued the load.
-	//     session/load runs inside bridge.Start, which blocks on the result,
-	//     while these frames arrive on Forward. They precede the result on the
-	//     wire, so when Start returns they are all PUSHED — but notifCh is
-	//     buffered, so not necessarily DRAINED. Forward settles instead, on
-	//     loadDone && len(NotifCh()) == 0.
-	//  2. The projected transcript MERGES rather than replaces. Assistant ids
-	//     differ between vibekit's record and the wire, event messages exist
-	//     only in vibekit's, and a turn newer than the replay's window may be
-	//     one KAS never flushed. See mergeProjection.
-	//  3. The gate is PER-FRAME, not per-load. KAS leaves a frame untagged when
-	//     it carries current state rather than history, so it must keep reaching
-	//     the live handlers during a load — available_commands_update and
-	//     config_option_update are the two that arrive as session/update
-	//     sub-kinds, and the set grows (see translate.ACPSessionUpdateBase).
+	// A REPLAYED frame is stored history and must not reach the live
+	// handlers. KAS replays a session's transcript on `session/load` as
+	// ordinary session/update notifications tagged `_meta.kiro.replay`;
+	// ungated, a replay opens a PHANTOM turn with no session/prompt response
+	// to end it. The frames BUILD the transcript instead via a per-chat
+	// translate.Projection (see load_projection.go): the gate is PER-FRAME
+	// since KAS leaves current-state frames untagged.
 	if base.Meta.Kiro.Replay {
-		// A load in flight consumes the frame into its projection; anything
-		// else is dropped, because a replay frame with no load to belong to has
-		// no transcript to build.
+		// A load in flight consumes the frame; otherwise it is dropped.
 		if !rt.replay.ingestReplayFrame(chatID, base.Kind, env.Params.Update) {
 			slog.Debug("session/update: dropping replayed frame, no load in flight",
 				"chat_id", chatID, "kind", base.Kind)

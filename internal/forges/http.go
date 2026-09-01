@@ -102,8 +102,6 @@ func (h *HTTPHandler) notifyChanged(ctx context.Context) {
 	}
 }
 
-// Compile-time interface assertion.
-
 // RegisterRoutes installs the /api/forges/* mux entries.
 func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/forges", h.handleForgesList)
@@ -146,9 +144,8 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, "missing forge id")
 		return
 	}
-	// First path segment is either "refresh" / "oauth" (handled
-	// above by direct registration) or a forge ID. ID is "kind:host"
-	// — the colon could be percent-encoded but we keep it literal.
+	// ID is "kind:host" — the colon could be percent-encoded but we
+	// keep it literal.
 	id, sub, _ := splitFirst(tail)
 	if h.manager.Get(id) == nil {
 		httpreply.NotFound(w, "unknown forge id")

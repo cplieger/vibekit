@@ -14,10 +14,9 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// handleCompactionCompleted persists the compacted-summary event and records
-// the compaction watermark. KAS self-reorients after summarization, so no
-// context-recovery prompt is injected: the old injectContextRecovery was dead
-// on v3 (it sent session/prompt as a JSON-RPC notification, which KAS drops).
+// handleCompactionCompleted persists the compacted-summary event and
+// records the compaction watermark. KAS self-reorients after
+// summarization, so no context-recovery prompt is injected.
 func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibekit.ChatID, summaryPtr *string) {
 	summary := ""
 	if summaryPtr != nil {

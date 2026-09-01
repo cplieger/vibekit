@@ -2,47 +2,36 @@ package translate
 
 // Wire projection: rebuilding a chat transcript from a `session/load` replay.
 //
-// KAS answers `session/load` by replaying the session's stored transcript as
-// ordinary `session/update` notifications, each tagged
+// KAS answers `session/load` by replaying the session's stored transcript
+// as ordinary `session/update` notifications, each tagged
 // `update._meta.kiro.replay: true`. This file turns that stream back into
 // []vibekit.Message.
 //
-// It is a PURE ACCUMULATOR: no chat store, no broadcaster, no clock beyond an
-// injected id generator. That is deliberate — the replay must be staged and
-// swapped into the chat record atomically, never merged into it frame by
-// frame, because a compaction marker arrives only AFTER the turns it applies
-// to and a half-ingested replay is a transcript with history that should have
-// been summarised.
+// It is a pure accumulator: no chat store, no broadcaster, no clock beyond
+// an injected id generator. The replay must be staged and swapped into the
+// chat record atomically, never merged frame by frame, because a
+// compaction marker arrives only after the turns it applies to and a
+// half-ingested replay is a transcript with history that should have been
+// summarised.
 //
-// The frame sequence is measured, not inferred (kiro-cli 2.16.0, 2026-08-02).
-// A two-turn session that was then compacted replays as:
-//
-//	user_message_chunk                      "Reply with exactly: ONE"
-//	session_info_update turn_start
-//	agent_message_chunk                     "ONE"
-//	session_info_update context_usage
-//	session_info_update turn_completion
-//	session_info_update turn_end
-//	  … the same six for turn two …
-//	session_info_update summarization_separator
-//	session_info_update summary_message      {content: "## Goal…"}
-//	available_commands_update      ← NOT replay-tagged
-//	session_info_update context_usage   ← NOT replay-tagged
-//	config_option_update           ← NOT replay-tagged
+// The frame sequence (kiro-cli 2.16.0): a two-turn session that was then
+// compacted replays as user_message_chunk, then per turn
+// (turn_start / content / context_usage / turn_completion / turn_end),
+// then summarization_separator, summary_message, and finally three
+// untagged frames (available_commands_update, context_usage,
+// config_option_update).
 //
 // Three properties of that shape drive the design:
 //
-//  1. **The user message precedes `turn_start`**, so it is not inside the
-//     assistant turn's bracket. It is flushed when the bracket opens.
-//  2. **Turns are fully bracketed** by `turn_start` / `turn_end`. Live code
-//     opens a turn on the first chunk and ends it from the `session/prompt`
-//     response; a replay has no such response, so without these brackets
-//     every replayed turn merges into one message.
-//  3. **Both compaction markers arrive at the TAIL**, after every original
-//     turn, and the separator carries a bare `summarizationSeparator: true`
-//     with no message id. So "the segment before the separator" is the only
-//     thing the wire can mean, and appending the compaction event at that
-//     point is equivalent to honouring an id.
+//  1. The user message precedes turn_start, so it is not inside the
+//     assistant turn's bracket — it is flushed when the bracket opens.
+//  2. Turns are fully bracketed by turn_start / turn_end. Live code opens
+//     a turn on the first chunk and ends it from the session/prompt
+//     response; a replay has no such response, so without these
+//     brackets every replayed turn merges into one message.
+//  3. Both compaction markers arrive at the tail, after every original
+//     turn, and the separator carries no message id. So "the segment
+//     before the separator" is the only thing the wire can mean.
 
 import (
 	"encoding/json"
@@ -349,33 +338,20 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 	}
 }
 
-// applySummary appends the compaction event for a replayed summary. It folds
-// onto the SAME domain shape the live path produces (an vibekit.RoleEvent message
-// with EventKind compacted, plus a watermark) rather than introducing a second
-// representation of a compacted transcript.
+// applySummary appends the compaction event for a replayed summary. It
+// folds onto the same domain shape the live path produces (a RoleEvent
+// message with EventKind compacted, plus a watermark).
 //
-// The originals are KEPT, matching live behaviour: vibekit's model is a
-// watermark, not a deletion. The separator's position is what the watermark
-// means, which is why compactAt is recorded rather than the messages dropped.
-//
-// KNOWN DISAGREEMENT with the design doc (§16.3), recorded rather than
-// silently resolved. §16.3 says to "collapse that segment to the summary" and
-// its risk table wants a fixture asserting pre-summary turns are ABSENT. This
-// keeps them, for three reasons measured in this codebase:
-//
-//  1. The LIVE path keeps them. translate/compact.go's
-//     handleCompactionCompleted appends the summary as an EventCompacted
-//     message and sets CompactionWatermark; it deletes nothing. Collapsing on
-//     replay would make a chat's transcript change shape across a container
-//     restart — and §16.3 itself asks for all three compaction shapes to
-//     "fold onto one domain event", which collapse-on-replay-only is not.
-//  2. It would break the context bar. static-src/context-ui.ts derives
-//     summarizedCount by counting messages up to the watermark; with the
-//     pre-summary messages gone that count is the constant 1.
-//  3. Collapse remains available downstream at zero cost. The watermark marks
-//     the boundary, so hiding the segment is a render decision the client can
-//     take later — whereas dropping it here throws away data no consumer can
-//     recover.
+// The originals are kept, matching live behaviour: vibekit's model is a
+// watermark, not a deletion. The separator's position is what the
+// watermark means, which is why compactAt is recorded rather than the
+// messages dropped. Three reasons the originals stay rather than being
+// collapsed: the live path keeps them too, so a chat's transcript must
+// not change shape across a container restart; the context bar derives
+// summarizedCount by counting up to the watermark, which collapses to a
+// constant if the segment is gone; and collapse is a render decision
+// available downstream at zero cost, while dropping it here throws away
+// data no consumer can recover.
 func (p *Projection) applySummary(sum *struct {
 	Content string `json:"content"`
 },

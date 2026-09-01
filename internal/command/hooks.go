@@ -77,16 +77,14 @@ func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeN
 			fmt.Errorf("event_type %q is not a trigger kiro-cli loads; expected one of: %s",
 				p.EventType, vibekit.KnownHookTriggers())
 	}
-	// A matcher on a trigger that has nothing to match on is always a typo, and
-	// upstream will not say so: KAS logs its own warning and counts
-	// hooks.ineffectiveMatcher into its telemetry, with nothing on the wire, so a
-	// hook created this way looks fine and its matcher silently governs nothing.
-	// Cheap to fix at the form, so it is refused here.
+	// A matcher on a trigger that has nothing to match on is always a typo,
+	// and upstream will not say so — KAS logs its own warning with nothing
+	// on the wire, so the hook silently governs nothing. Cheap to catch
+	// here.
 	//
-	// The SIBLING condition — a PreToolUse or PostToolUse hook with no matcher —
-	// is deliberately NOT refused. "Run on every tool call" is a legitimate
-	// choice, so it earns a badge on the read surface instead
-	// (vibekit.HookMatcherMissingToolName, rendered by the Hooks tab).
+	// The sibling condition — a PreToolUse/PostToolUse hook with no matcher
+	// — is deliberately not refused: "run on every tool call" is legitimate
+	// and gets a badge on the read surface instead.
 	if vibekit.ClassifyHookMatcher(trigger.Name, p.Patterns) == vibekit.HookMatcherIneffective {
 		return p, "", http.StatusBadRequest,
 			fmt.Errorf("trigger %s has nothing to match against, so its matcher %q would be ignored; leave patterns empty for this trigger",
@@ -100,28 +98,18 @@ func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeN
 	return p, safeName, 0, nil
 }
 
-// The standalone .kiro/hooks/<name>.json shape. The document wraps a single
-// hook in a versioned envelope:
+// The standalone .kiro/hooks/<name>.json shape:
 //
 //	{ "version": "v1", "hooks": [ { name, trigger, matcher?, action, timeout? } ] }
 //
-// trigger is PascalCase (see vibekit.NormalizeHookTrigger); action.type is "command"
-// (carries command) or "agent" (carries prompt). This replaces the old
-// embedded 2.x shape (a top-level hook object with when/then blocks).
+// trigger is PascalCase (see vibekit.NormalizeHookTrigger); action.type is
+// "command" (carries command) or "agent" (carries prompt).
 //
-// THREE INDEPENDENT v-NUMBERS COLLIDE HERE, so do not reconcile them:
-//
-//   - The AGENT ENGINE is v1/v2/v3, and vibekit is pinned to v3.
-//   - The HOOK ENGINE is v1/v2 and has NO v3. vibekit opts into v2 by
-//     declaring _meta.kiro.hooks={enabled:true,v2:true} (internal/kascap).
-//   - This DOCUMENT's "version" is "v1", and it is the current spelling.
-//
-// So `version: "v1"` beside a declared hook engine v2 is correct, not stale.
-// Bumping it to "v2" to match the engine makes every hook vibekit writes
-// unloadable: KAS's kasHookFileSchema declares this field as a LITERAL type
-// (`version: literalType("v1")`, read off 2.18.0), so any other value fails
-// validation outright rather than degrading. The engine version is negotiated
-// on the wire, not in the file. It is not the agent engine's v3 either.
+// Three independent v-numbers collide here, so do not reconcile them: the
+// agent engine is v1/v2/v3 (vibekit pins v3), the hook engine is v1/v2 with
+// no v3 (vibekit declares v2 via _meta.kiro.hooks), and this document's
+// "version" field is a literal "v1" KAS's schema requires — bumping it to
+// "v2" to match the hook engine makes every hook unloadable.
 type hookAction struct {
 	Type    string `json:"type"`
 	Command string `json:"command,omitempty"`
@@ -142,9 +130,8 @@ type hookDoc struct {
 	Hooks   []hookEntry `json:"hooks"`
 }
 
-// mustTrigger resolves an event type validateHookPayload has already accepted.
-// Separate from vibekit.NormalizeHookTrigger so the validated path reads as one
-// expression while the boundary check keeps its two-value form.
+// mustTrigger resolves an event type validateHookPayload has already
+// accepted.
 func mustTrigger(eventType string) string {
 	t, _ := vibekit.NormalizeHookTrigger(eventType)
 	return t.Name
@@ -165,10 +152,7 @@ func buildHookAction(p *hookCreatePayload) hookAction {
 }
 
 // buildHookDoc renders the v1 hook document written to
-// .kiro/hooks/<name>.json. vibekit's event-type/action-type payload is
-// mapped to the KAS v1 schema: a PascalCase trigger, an
-// action.{type, command|prompt}, and optional matcher/timeout. Patterns
-// become the single-regex matcher; an unset/zero timeout is omitted.
+// .kiro/hooks/<name>.json.
 func buildHookDoc(p *hookCreatePayload) hookDoc {
 	entry := hookEntry{
 		Name:        p.Name,

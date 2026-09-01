@@ -1,15 +1,9 @@
 // ---------------------------------------------------------------------------
 // Workflow-run actions: the recipe list, launch, and the four run controls.
 //
-// Cancel, pause and resume are all KAS's own verbs; vibekit adds no
-// control of its own and no policy. Cancel doubles as the tab-close gesture,
-// which is what dispatches it for a launcher-owned run tab.
-//
-// This replaces an earlier note that said launch and cancel were the app's only
-// run verbs by user decision. That decision assumed offering a control meant
-// building one; the 2.16.1 sweep found every verb already live in the pinned
-// binary, so the real choice was whether to route to them — and not routing left
-// a paused run with no way forward except deleting the chat.
+// Cancel, pause and resume are all KAS's own verbs; vibekit adds no policy
+// of its own. Cancel doubles as the tab-close gesture for a launcher-owned
+// run tab.
 // ---------------------------------------------------------------------------
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";

@@ -1,25 +1,18 @@
-// ---------------------------------------------------------------------------
-// The exec view's DETAIL pane: one node, at full width.
+// The exec view's detail pane: one node, at full width.
 //
-// This is what the page buys that a transcript block cannot. In a conversation a
-// delegated node gets a collapsed row, because N of them stream into one column and
-// ten walls of text is not a transcript. Here there is one node on screen at a time,
-// chosen by the reader, so everything the source knows about it can be stated
-// outright: who ran it, on what, how it ended, what it produced, and what it did.
+// In a conversation a delegated node gets a collapsed row, because N stream into
+// one column. Here there is one node on screen at a time, chosen by the reader,
+// so everything the source knows about it can be stated outright.
 //
-// Four regions, in the order a reader asks for them:
+// Four regions, in reading order: IDENTITY (facts as a definition list — agent,
+// model, effort, signal, retries, a loop's bound, a session id), FAILURE
+// (verbatim, above the output since it explains it), OUTPUT (what the node
+// produced, as markdown), TRANSCRIPT (the live host, filled by the consumer's
+// frames).
 //
-//   IDENTITY   the facts, as a definition list — agent, model, effort, signal,
-//              retries, a loop's bound, a session id
-//   FAILURE    verbatim, when there is one, and above the output because it is why
-//              the output looks the way it does
-//   OUTPUT     what the node produced, as the MARKDOWN it is
-//   TRANSCRIPT the live host, filled by whatever streams the consumer's frames
-//
-// The transcript host is handed OUT rather than filled here (`bodyFor`), the same
-// contract the run card's `stepBody` uses, so this pane knows nothing about where
-// content comes from and a subagent tab reuses it unchanged.
-// ---------------------------------------------------------------------------
+// The transcript host is handed OUT (`bodyFor`), the same contract the run
+// card's `stepBody` uses, so this pane knows nothing about where content comes
+// from.
 
 import { el } from "@cplieger/reactive";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
@@ -34,18 +27,16 @@ export interface ExecDetailView {
   /** The element this node's live transcript renders into, created on demand.
    *
    *  Per PATH and kept for the pane's life, so a reader who selects another node
-   *  and comes back finds the content still there rather than a host that was
-   *  discarded with the render. That retention is the whole reason it is a map: the
-   *  frames are live-only and cannot be replayed. */
+   *  and comes back finds the content still there — frames are live-only and
+   *  cannot be replayed. */
   bodyFor(path: string): HTMLElement;
   /** Advance the duration of a node still running. */
   tick(): void;
 }
 
-/** What a node with no transcript host says, and it has to distinguish three cases
- *  a blank region cannot. Injected as a function so the CONSUMER owns the wording:
- *  a workflow run's reasons (the content went to a chat, or it was never stored)
- *  are not a subagent tab's. */
+/** What a node with no transcript host says; distinguishes three cases a blank
+ *  region cannot. Injected so the CONSUMER owns the wording: a workflow run's
+ *  reasons are not a subagent tab's. */
 export type EmptyNote = (node: ExecNode) => string;
 
 export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
@@ -91,9 +82,9 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
       output.replaceChildren();
       return;
     }
-    // A signature over the whole set, because `render` runs on every refetch —
-    // dozens over a live run — and re-parsing a settled report each time would throw
-    // away the reader's place in it.
+    // A signature over the whole set: `render` runs on every refetch, dozens
+    // over a live run, and re-parsing a settled report each time would reset
+    // the reader's scroll.
     const sig = `${node.path}\u0000${[...merged].map(([k, v]) => `${k}\u0001${v}`).join("\u0002")}`;
     if (output.dataset["sig"] === sig) {
       return;
@@ -105,9 +96,8 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
         const rows: HTMLElement[] = [];
         rows.push(el("div", { className: "ev-d-out-key" }, key === "" ? "Output" : key));
         if (value.trim() === "") {
-          // An EMPTY value is a fact, not an absence: a source writes a key only for
-          // a node that captured, so empty says the node finished without saying
-          // anything — indistinguishable from "never ran" if the row is dropped.
+          // An empty value is a fact, not an absence: distinguishes "finished
+          // silently" from "never ran".
           rows.push(
             el(
               "div",
@@ -116,9 +106,8 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
             ),
           );
         } else {
-          // Through the transcript's own markdown bubble: a captured output IS an
-          // assistant message, so a report written in markdown should read as one
-          // rather than showing its own asterisks in a `<pre>`.
+          // Through the transcript's own markdown bubble: a captured output IS
+          // an assistant message and should read as one.
           rows.push(
             el("div", { className: "ev-d-out-body" }, buildAssistantBubble(value, false).root),
           );
@@ -164,8 +153,8 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
 
     renderOutput(node);
 
-    // Only ONE node's transcript is on screen; the rest stay in the DOM so their
-    // live content survives a selection change, since the frames cannot be replayed.
+    // Only ONE node's transcript is on screen; the rest stay in the DOM since
+    // their live content cannot be replayed.
     let anyShown = false;
     for (const [path, host] of hosts) {
       const isShown = path === node.path;
@@ -173,8 +162,7 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
       anyShown = anyShown || (isShown && host.childElementCount > 0);
     }
     bodies.hidden = false;
-    // A container hosts nothing, and saying so beats an empty region: the reader is
-    // looking at a loop or a branch, not at a step that went quiet.
+    // A container hosts nothing; saying so beats an empty region.
     const hostable = node.transcript === true;
     empty.hidden = anyShown;
     empty.textContent = hostable ? emptyNote(node) : "";
@@ -194,9 +182,8 @@ export function buildExecDetail(emptyNote: EmptyNote): ExecDetailView {
         hosts.set(path, host);
         bodies.appendChild(host);
       }
-      // A first frame arriving for the node on screen retires the empty note in the
-      // same pass, so a reader watching a step that has just started sees the note
-      // replaced rather than sitting under real content.
+      // A first frame arriving for the node on screen retires the empty note in
+      // the same pass.
       if (shown?.path === path) {
         empty.hidden = true;
       }

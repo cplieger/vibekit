@@ -1,50 +1,24 @@
 // ---------------------------------------------------------------------------
 // Fundamental: the WORKFLOW RUN card — a run's home in the transcript.
 //
-// A run used to have four disjoint surfaces in a chat and no relation between
-// them: a generic `run_workflow` tool row, one anonymous box per step scattered as
-// its siblings, an ephemeral toast, and a separate `/run/{id}` tab. Nothing said
-// the boxes belonged to the row, nothing said the run was still going, and none of
-// the twenty-odd facts KAS reports per step reached the transcript at all. This
-// card is the one object: the invocation becomes its header, every step renders
-// inside it, and the run TAB is a different surface entirely — `exec-view/`, which
-// renders the execution as a tree over time with a detail pane. This card and that
-// page share a status vocabulary and nothing else, because a card among a
-// conversation's turns and a page of its own want opposite things: this one is a
-// glance, that one is the review.
+// The invocation becomes its header, and every step renders inside it. The
+// run TAB is a different surface (`exec-view/`, a tree over time with a
+// detail pane): this card and that page share only a status vocabulary — a
+// card among a conversation's turns is a glance, the page is the review.
 //
-// Four regions, and each answers a different question:
+// Four regions: HEAD (what/how/how-long, always) / ALERT (an ask, pause,
+// stop or failure) / BODY (per-step rows hosting each step's live blocks) /
+// FOOT (outcome + link to the full tree).
 //
-//   HEAD    what is this, how is it going, how long  (always)
-//   ALERT   what it needs from a person              (an ask, a pause, a stop, a failure)
-//   BODY    per-step rows, each hosting the step's own live blocks
-//   FOOT    the outcome, and the way to the full tree
+// OPEN BY DEFAULT — the inverse of the delegated-work card, deliberately:
+// there is exactly one run card per launch and it runs for minutes, where
+// the delegate card's N-at-once reasoning does not apply. Step rows ARE
+// collapsed, which is where that reasoning belongs.
 //
-// THERE IS NO SPINE, and it was DELETED rather than repadded (2026-08). A row of
-// one pip per leaf used to sit between the head and the alert, restating the body
-// at lower fidelity: every step it described already has a row with a live glyph of
-// its own, and the head's "step N of M" answers the progress question for a
-// collapsed card. Its one unique contribution was showing the steps a run has not
-// reached yet while the card is closed, which does not pay for a second status
-// vocabulary a reader has to learn. What is left of it is the head's own
-// `margin-block-end`: the pips sat flush against the head's hover tint, and putting
-// the gap on the HEAD rather than on each follower is what stops that recurring for
-// whatever region comes next.
-//
-// OPEN BY DEFAULT, which is the exact inverse of the delegated-work card beside
-// it, and deliberately. That card collapses because N delegates stream at once and
-// ten walls of text is not a transcript; there is exactly ONE run card per launch,
-// it is the thing the user just asked for, and it runs for minutes. The STEP rows
-// inside it are collapsed, which is where the delegate card's reasoning actually
-// applies.
-//
-// IT RENDERS FROM `inspect`, NEVER FROM ACCUMULATED EVENTS. `run-store.ts` owns
-// the fetch; this file is a pure view over the value it returns. That is what
-// makes the card correct after a refresh with no server change: the invocation
-// tool call is persisted in its launching turn, so the card comes back and refills
-// itself from the endpoint. The nested live blocks are the one thing a refresh
-// loses (they belong to a turn vibekit never finalized), and the row, status,
-// agent, model, duration and captured output all survive without them.
+// Renders from `inspect`, never from accumulated events: `run-store.ts` owns
+// the fetch, this file is a pure view. The invocation tool call is persisted
+// in its launching turn, so the card refills itself on refresh; only the
+// nested live blocks (belonging to a turn vibekit never finalizes) are lost.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -66,28 +40,18 @@ import {
   type RunState,
 } from "../run-store.js";
 
-/** The state vocabulary is `exec-view/status.ts`, shared with the `/run/{id}` page's
- *  tree, timeline and detail pane.
- *
- *  It used to be a private copy right here — `StepState`, `STEP_BADGE`, `STEP_WORD`
- *  and `stepStateOf`, sixty lines of it — while the page carried a third set of dot
- *  colours of its own. `vibekit-ui.md` names that exact shape as a defect (the todo
- *  block's `☐ ◐ ☑` against the task pill's `○ ⏳ ✅`: two icon sets a reader learns
- *  separately, two feeds that can disagree with nothing detecting it), and with a
- *  subagent tab coming a fourth copy was the default outcome. So the two run
- *  surfaces read one module and a third surface inherits it for free. */
+/** The state vocabulary is `exec-view/status.ts`, shared with the `/run/{id}`
+ *  page's tree, timeline and detail pane — one module rather than a private
+ *  copy per surface. */
 
-/** What a run is waiting on a PERSON for, passed in because the card cannot see it.
+/** What a run is waiting on a PERSON for, passed in because the card cannot
+ *  see it: KAS blocks the asking step's own turn and leaves the run
+ *  `running`, so `inspect` alone cannot show it. The unanswered-asks queue
+ *  lives in `decision-dock.ts`, a feature module, so this is injected rather
+ *  than imported.
  *
- *  An ask is not a node status. KAS blocks the asking step's own turn and leaves the
- *  run `running`, so `inspect` describes a step that looks like it is working while
- *  nothing moves until somebody clicks — which is the same masking the tab dot fixed
- *  for a background chat, one level down. The queue of unanswered asks lives in
- *  `decision-dock.ts`, a feature module, so the fact travels in the same direction
- *  `onOpen` does rather than being imported by this `fundamentals/` view.
- *
- *  Declared here rather than there because this is the CONSUMER's contract: the card
- *  states what it needs, and the dock answers in those terms. */
+ *  Declared here (the consumer) rather than there: the card states what it
+ *  needs, and the dock answers in those terms. */
 export interface RunAsks {
   /** How many of this run's asks are unanswered. */
   count: number;
@@ -101,10 +65,10 @@ export interface RunAsks {
 
 const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
 
-/** A run's status as one scannable word. `paused` is deliberately "waiting"
- *  rather than "paused": what a reader needs to know is that nothing will move
- *  until something happens, and KAS pauses a run for a watch, a retry budget and a
- *  loop policy alike. */
+/** A run's status as one scannable word. `paused` reads "waiting", not
+ *  "paused": KAS pauses for a watch, a retry budget, and a loop policy alike,
+ *  and what matters to the reader is that nothing moves until something
+ *  happens. */
 function runWord(status: RunState["status"]): string {
   switch (status) {
     case "running":
@@ -125,30 +89,26 @@ function runWord(status: RunState["status"]): string {
 /** A mounted run card plus its imperative handle. */
 export interface RunCardView {
   readonly root: HTMLDivElement;
-  /** Re-render every region from a fresh state. Idempotent, and safe to call on
+  /** Re-render every region from a fresh state. Idempotent, and safe on
    *  every invalidation: rows are reconciled in place, so a step's open
-   *  disclosure and the blocks inside it survive.
+   *  disclosure and its blocks survive.
    *
-   *  `asks` is the second half of the truth and defaults to the last one given, so
-   *  an internal re-render (`setLaunch`) does not have to restate it. The caller
-   *  that owns the render effect passes both on every pass. */
+   *  `asks` defaults to the last one given, so an internal re-render
+   *  (`setLaunch`) does not have to restate it. */
   render(state: RunState | undefined, asks?: RunAsks): void;
-  /** Advance the clocks only. Called on a 1s tick while the run is live, so a
-   *  five-minute run does not read as frozen between server frames. */
+  /** Advance the clocks only, on a 1s tick while the run is live. */
   tick(): void;
   /** The container a step's own blocks render into, creating the row when the
    *  state has not arrived yet.
    *
-   *  Out-of-order is the normal case, not an edge: a step's first frame can beat
-   *  the `inspect` fetch that describes it, so a row must be creatable from a
+   *  Out-of-order is the normal case: a step's first frame can beat the
+   *  `inspect` fetch that describes it, so a row must be creatable from a
    *  node path alone and filled in later. */
   stepBody(nodePath: string): HTMLElement;
-  /** Fold in the LAUNCH tool call's own status and output.
-   *
-   *  A launch that failed created no run, so the endpoint has nothing to report
-   *  and the card would read "starting" forever. The tool call is the only witness
-   *  in that case. On a successful launch this contributes nothing the run's own
-   *  state does not already say, so it is deliberately silent. */
+  /** Fold in the LAUNCH tool call's own status and output — a launch that
+   *  failed created no run, so `inspect` has nothing to report and the tool
+   *  call is the only witness. Silent on a successful launch, since the
+   *  run's own state already covers it. */
   setLaunch(status: ToolStatus, output: string | undefined): void;
 }
 
@@ -165,16 +125,12 @@ interface StepRow {
   endedAt?: string;
 }
 
-/** Build a run card.
- *
- *  `name` is the best label available at creation — the recipe name from the
- *  invocation's input, or a generic one — and every later render prefers the run's
- *  own `runLabel`. `onOpen` is what the footer's link calls; injected so this
- *  `fundamentals/` view does not import the feature module that owns run tabs.
- *  `onOpenChange` reports disclosure flips — `null` for the card itself, the node
- *  path for a step row — because the composition layer keys its open-container
- *  bookkeeping on ids this view never learns. The card mounts OPEN and rows
- *  mount closed; only later flips are reported. */
+/** Build a run card. `name` is the best label at creation (recipe name from
+ *  the invocation, or generic); later renders prefer the run's own
+ *  `runLabel`. `onOpen` (the footer link) and `onOpenChange` (disclosure
+ *  flips, keyed by node path / null for the card) are injected so this
+ *  `fundamentals/` view avoids importing the feature module that owns run
+ *  tabs and its open-container bookkeeping. Card mounts open; rows closed. */
 export function buildRunCard(
   workflowID: string,
   name: string,
@@ -190,20 +146,14 @@ export function buildRunCard(
   // --- head -----------------------------------------------------------------
   const icon = el("span", { className: "run-icon", "aria-hidden": "true" }, iconEl(ICON_TAB_RUN));
   const nameEl = el("span", { className: "run-name" }, name);
-  // `run-state`, not `run-status`: the /run/{id} page owned a `.run-status` in
-  // `18-pages.css` first, and two different components sharing a class name is
-  // how one page's tweak silently restyles another. That page renders THIS card
-  // now and its own vocabulary is deleted, so the collision is historical — the
-  // name stays because renaming it back would buy nothing and cost a CSS sweep.
+  // `run-state`, not `run-status`: `.run-status` in 18-pages.css was the
+  // `/run/{id}` page's before this card started rendering that page's own
+  // content — the collision is historical and renaming would buy nothing.
   const statusEl = el("span", { className: "run-state" }, runWord(undefined));
   const countEl = el("span", { className: "run-count" });
   const clockEl = el("span", { className: "run-clock" });
-  // A SPAN, and that is forced by the head being `role="button"`. A `<button>`
-  // inside it is `nested-interactive` (axe, serious) whatever the ARIA says:
-  // measured 18 nodes on a four-card page, and `aria-hidden` plus
-  // `tabindex="-1"` does NOT clear it, because a `tabindex="-1"` element is
-  // still focusable by click and by script. The head carries the activation and
-  // `aria-expanded`, so nothing is lost — this glyph never had a handler.
+  // A span, not a button: the head is `role="button"`, so a nested `<button>`
+  // is axe's `nested-interactive` regardless of aria-hidden/tabindex="-1".
   const chevron = el("span", { className: "run-toggle", "aria-hidden": "true" }, chevronEl());
   const head = el(
     "div",
@@ -214,10 +164,9 @@ export function buildRunCard(
     chevron,
   );
 
-  // --- alert ----------------------------------------------------------------
-  // The only region that speaks about a person's involvement, so it is a `status`
-  // live region: a run that parks waiting for a PR review is exactly the state a
-  // reader must not have to poll for.
+  // --- alert ------------------------------------------------------------
+  // A `status` live region: a run parked waiting for a PR review must not
+  // require polling to notice.
   const alert = el("div", {
     className: "run-alert hidden",
     role: "status",
@@ -229,16 +178,11 @@ export function buildRunCard(
   const outputs = el("dl", { className: "run-outputs hidden" });
   const body = el("div", { className: "run-body" }, steps, outputs);
 
-  // --- foot -----------------------------------------------------------------
+  // --- foot ---------------------------------------------------------------
   const ledger = el("span", { className: "run-ledger" });
-  // A real anchor, so middle-click and copy-link work, with a click handler over
-  // it so an ordinary click OPENS THE TAB rather than navigating.
-  //
-  // The distinction matters because of the offer guard: the automatic sub-tab is
-  // offered once per run per client, so a reader who closed it gets it back only by
-  // asking, and this link is the asking. `onOpen` is injected rather than imported
-  // because this file is a `fundamentals/` view: `run-view.ts` owns the opener and
-  // importing it here would point a primitive at a feature module.
+  // A real anchor (middle-click, copy-link work) with a click handler that
+  // opens the tab instead of navigating. `onOpen` is injected since this
+  // `fundamentals/` view must not import `run-view.ts`'s feature module.
   const open = el(
     "a",
     { className: "run-open", href: `/run/${encodeURIComponent(workflowID)}` },
@@ -246,8 +190,7 @@ export function buildRunCard(
     el("span", { className: "run-open-icon", "aria-hidden": "true" }, iconEl(ICON_EXTERNAL)),
   );
   open.addEventListener("click", (e) => {
-    // Let a modified click do what the browser would: a new tab or window is a
-    // deliberate escape from the app's own routing.
+    // A modified click is a deliberate escape from the app's own routing.
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (e as MouseEvent).button !== 0) {
       return;
     }
@@ -289,7 +232,6 @@ export function buildRunCard(
     const nameEl2 = el("span", { className: "run-step-name" }, label);
     const meta = el("span", { className: "run-step-meta" });
     const dur = el("span", { className: "run-step-dur" });
-    // A span for the same reason as the card's own chevron above.
     const chev = el("span", { className: "run-step-toggle", "aria-hidden": "true" }, chevronEl());
     const rowHead = el(
       "div",
@@ -324,17 +266,14 @@ export function buildRunCard(
    *  ordering pass rather than an ordering pass with a renderer inside it. */
   function paintRow(row: StepRow, node: RunNode, asks: RunAsks): void {
     const state = stateOf(node.status);
-    // An ask reclassifies a step only while that step is otherwise IN FLIGHT, and
-    // that guard is what resolves the one ambiguity in the join: `node_id` on the
-    // wire is a node ID, not a node PATH, so a repeat's iterations share it and a
-    // finished pass would light up beside the live one.
+    // An ask reclassifies a step only while it is IN FLIGHT: `node_id` is a
+    // node ID not a path, so a repeat's iterations share it.
     const shown = withAsk(state, asks.nodes.has(node.nodeId));
     row.root.dataset["status"] = shown;
     row.root.dataset["nodeType"] = node.type;
     row.glyph.textContent = STATE_BADGE[shown];
-    // Assigned through a local rather than directly, because the fields are
-    // optional under exactOptionalPropertyTypes: `undefined` is not a value an
-    // optional property accepts, and a pending step legitimately has neither.
+    // Via a local, not directly: `undefined` is not a valid value for an
+    // optional property under exactOptionalPropertyTypes.
     if (node.startedAt === undefined) {
       delete row.startedAt;
     } else {
@@ -346,9 +285,8 @@ export function buildRunCard(
       row.endedAt = node.endedAt;
     }
 
-    // The facts a reader can act on, in the order they answer questions: who ran
-    // it, on what, and what went wrong. A watch node names its own kind instead
-    // of an agent, because nothing runs a watch — it polls.
+    // Who ran it, on what, what went wrong, in that order. A watch names its
+    // own kind since nothing runs a watch — it polls.
     const bits: string[] = [];
     if (node.type === "watch") {
       bits.push("watch");
@@ -377,15 +315,10 @@ export function buildRunCard(
     row.dur.textContent = ms > 0 ? formatElapsed(ms) : "";
     row.head.setAttribute("aria-label", `${row.name.textContent}, ${STATE_WORD[shown]}`);
 
-    // A captured output is a RESULT, so it is visible on the collapsed row rather
-    // than hidden behind the disclosure with the step's working transcript. This
-    // is the same rule the delegate card's footer follows.
-    //
-    // TWO LINES, then it clamps (27-run-card.css): this is a trace of what the step
-    // produced, and the place to read one in full is the run's own tab, where the
-    // exec view's detail pane renders it as the markdown it is. Guarded on the text
-    // having CHANGED because `render` runs on every invalidation, dozens of times
-    // over a live run.
+    // Visible on the collapsed row, like the delegate card's footer, since a
+    // captured output is a RESULT rather than the working transcript. Clamps
+    // to two lines in CSS; guarded on the text changing since render() runs
+    // on every invalidation.
     const cap = row.root.querySelector<HTMLElement>(":scope > .run-step-capture");
     const text = node.capturedOutput ?? "";
     if (text === "") {
@@ -406,9 +339,9 @@ export function buildRunCard(
       const path = nodePathOf(state?.root, node).join("/");
       paintRow(stepRow(path), node, asks);
     }
-    // Order the rows to match the plan. A row created by a live frame the state
-    // does not describe yet keeps its arrival position at the end rather than
-    // being dropped: dropping it would delete the blocks rendered inside it.
+    // Order to match the plan; a row created by a live frame the state
+    // doesn't describe yet keeps its arrival position (dropping it would
+    // delete the blocks rendered inside it).
     let anchor: Element | null = null;
     for (const node of leaves) {
       const path = nodePathOf(state?.root, node).join("/");
@@ -429,23 +362,19 @@ export function buildRunCard(
     }
   }
 
-  /** The alert, and the five things that can put a run in front of a person.
-   *
-   *  Order is by what the reader can do about it: an unanswered ask is the one
-   *  state a click resolves right now, a deliberate stop needs nothing, a pause may
-   *  need an action, a transient-error park is informational, and a failure needs
-   *  reading. Only one shows — a run has one reason it is not moving. */
+  /** The alert: five things that can put a run in front of a person, ordered
+   *  by what the reader can do about it. Only one shows. */
   function renderAlert(state: RunState | undefined, asks: RunAsks): void {
     const parts: string[] = [];
     let kind = "";
     if (launchError !== "") {
-      // Outranks every state, because there is no state: the launch never created
-      // a run, so `inspect` has nothing and only this reason exists.
+      // Outranks every state: the launch never created a run, so `inspect`
+      // has nothing and only this reason exists.
       kind = "failed";
       parts.push(launchError);
     } else if (asks.count > 0) {
-      // Ahead of the run's own status deliberately: the run still reads `running`
-      // while a step's ask blocks it, so the status would say nothing is wrong.
+      // Ahead of the run's own status: it still reads `running` while a
+      // step's ask blocks it.
       kind = "input";
       parts.push(
         asks.label === ""
@@ -493,12 +422,10 @@ export function buildRunCard(
     alert.textContent = parts.join(" \u00b7 ");
   }
 
-  /** Artifacts and captured outputs, merged into one list of named results.
-   *
-   *  KAS keeps them apart because they are produced differently (a step declares
-   *  an artifact, `captureOutput` records a transcript), but to a reader they are
-   *  the same thing: what the run produced. Artifacts win a key collision, being
-   *  the value a step chose to publish. */
+  /** Artifacts and captured outputs merged into one result list — KAS keeps
+   *  them apart (a step declares an artifact vs `captureOutput` records a
+   *  transcript) but to a reader they're the same thing. Artifacts win a
+   *  key collision. */
   function renderOutputs(state: RunState | undefined): void {
     const merged = new Map<string, string>();
     for (const [k, v] of Object.entries(state?.capturedOutputs ?? {})) {
@@ -510,8 +437,6 @@ export function buildRunCard(
     if (merged.size === 0) {
       outputs.classList.add("hidden");
       outputs.replaceChildren();
-      // Cleared with the children, or a later render whose content matches this
-      // signature would take the early return below and leave the list hidden.
       delete outputs.dataset["sig"];
       return;
     }
@@ -528,10 +453,9 @@ export function buildRunCard(
       ...[...merged.entries()].flatMap(([k, v]) => [
         el("dt", { className: "run-output-key" }, k),
         // An EMPTY value is rendered rather than skipped, and the sentence says
-        // what it means. KAS writes a key only for a step that captured, so an
-        // empty value is the step reporting that it finished without saying
-        // anything — the most diagnostic fact a finished run holds, and
-        // indistinguishable from "never ran" if the row is dropped.
+        // KAS writes a key only for a step that captured, so an empty value
+        // means the step finished without saying anything — worth stating,
+        // or it's indistinguishable from "never ran".
         el(
           "dd",
           { className: v.trim() === "" ? "run-output-val run-output-val-empty" : "run-output-val" },
@@ -566,9 +490,8 @@ export function buildRunCard(
       nameEl.textContent = label;
     }
     root.dataset["status"] = state?.status ?? "starting";
-    // A second axis rather than a sixth `data-status` value: the run genuinely IS
-    // running while a step's ask blocks it, and overwriting the status would lose
-    // that. The rail and the status word read this instead.
+    // Second axis rather than a sixth `data-status` value: the run genuinely
+    // IS running while a step's ask blocks it.
     if (asks.count > 0) {
       root.dataset["asking"] = "true";
     } else {
@@ -592,8 +515,6 @@ export function buildRunCard(
     renderSteps(state, asks);
     renderOutputs(state);
     renderFoot(state);
-    // Reads the rendered word rather than re-deriving it, so the accessible name
-    // cannot disagree with the one on screen.
     head.setAttribute("aria-label", `Workflow run ${nameEl.textContent}, ${statusEl.textContent}`);
   }
 
@@ -601,9 +522,8 @@ export function buildRunCard(
     if (!liveClock) {
       return;
     }
-    // Re-derive from the rows' own timestamps rather than re-fetching: a clock is
-    // the one thing the client can advance honestly on its own, and a tick that
-    // hit the network once a second per card would be a poll nobody asked for.
+    // Re-derive from the rows' own timestamps rather than re-fetch — the one
+    // thing the client can advance honestly on its own.
     let first = Number.POSITIVE_INFINITY;
     for (const row of rows.values()) {
       const rowMs = elapsedMs(row.startedAt, row.endedAt);
@@ -638,8 +558,6 @@ export function buildRunCard(
       const text = (output ?? "").trim();
       launchError = text === "" ? "The workflow could not be started" : truncate(text, 200);
       liveClock = false;
-      // Re-render from the store's current value rather than from nothing, so a
-      // late failure on a run that DID produce state keeps the steps it produced.
       render(lastState);
     },
   };

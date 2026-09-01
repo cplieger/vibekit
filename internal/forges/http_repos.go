@@ -38,7 +38,6 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 		httpreply.NotFound(w, err.Error())
 		return
 	}
-	// rest is "" → list repos. Otherwise it's "owner/name[/sub...]".
 	if rest == "" {
 		if r.Method != http.MethodGet {
 			httpreply.MethodNotAllowed(w, http.MethodGet)

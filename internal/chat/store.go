@@ -43,10 +43,8 @@ var (
 // broadcaster is the SSE fan-out this store emits chat lifecycle and message
 // events through. *agent.Runtime satisfies it.
 //
-// Declared HERE, at the consumer, rather than in a shared contract package.
-// 1 method — the whole of what a store needs to say "this happened" — against a
-// *agent.Runtime that exports well over a hundred. Nothing about a bridge, a session
-// or a turn is any business of a file writer.
+// Declared HERE, at the consumer, rather than in a shared contract package:
+// 1 method against a *agent.Runtime that exports well over a hundred.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 }
@@ -71,12 +69,11 @@ const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
 // Store owns the chat directory. Each chat has its own mutex so different
 // chats never block each other; same-chat mutations serialize.
 //
-// A short-TTL tombstone set guards against the delete-during-turn race:
-// if cmdPrompt auto-creates a chat via Mutate at the same moment the
-// user deletes it from another tab, the delayed AppendMessage calls
-// would otherwise re-create the chat file as a ghost. Tombstones make
-// Mutate refuse to create for a recently-deleted id — late writes
-// become no-ops instead of undead resurrections.
+// A short-TTL tombstone set guards against the delete-during-turn race: if
+// cmdPrompt auto-creates a chat via Mutate at the same moment the user
+// deletes it from another tab, the delayed AppendMessage calls would
+// otherwise re-create the chat file as a ghost. Tombstones make Mutate
+// refuse to create for a recently-deleted id.
 type Store struct {
 	broadcast   broadcaster
 	listSF      singleflight.Group
@@ -91,12 +88,9 @@ type Store struct {
 	tombMu      sync.Mutex
 }
 
-// tombstoneTTL is how long a deleted chat id blocks re-creation via
-// Mutate. Comfortably longer than any real prompt roundtrip (kiro-cli
-// turns can run minutes) but short enough that new chats with ids
-// recycled by the client (e.g. same timestamp after a clock jump)
-// aren't permanently blacklisted. 10 minutes matches our idempotency
-// cache TTL (2x safety margin).
+// tombstoneTTL is how long a deleted chat id blocks re-creation via Mutate.
+// Comfortably longer than any real prompt roundtrip but short enough that
+// recycled client ids aren't permanently blacklisted.
 const tombstoneTTL = 10 * time.Minute
 
 // NewStore opens (or creates) the chat directory at dir. Returns an error
@@ -110,38 +104,29 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 		return nil, fmt.Errorf("chat store: mkdir %s: %w", dir, err)
 	}
 	// MkdirAll only applies its mode on CREATION, and even then the mode is a
-	// request: a directory created under a setgid parent carries the bit whether
-	// or not it was asked for, and an inheritable group-write ACL stores 0770 for
-	// a 0o700 mkdir. So the enforcement covers both a pre-existing directory a
-	// user-mounted config volume left wide and a fresh one the kernel widened —
-	// and EnforceDir re-stats the descriptor it chmod'ed, which is the only
-	// thing that makes the mode below a fact rather than a request. It refuses a
-	// symlink or a non-directory at the name instead of chmod'ing through it.
+	// request: a directory created under a setgid parent carries the bit
+	// whether or not asked for, and an inheritable group-write ACL stores
+	// 0770 for a 0o700 mkdir. EnforceDir re-stats the descriptor it chmod'ed,
+	// which is what makes the mode below a fact rather than a request. It
+	// refuses a symlink or non-directory at the name instead of chmod'ing
+	// through it.
 	//
-	// Warn-and-continue is KEPT, against this function's own doc claim that it
-	// fails when perms cannot be enforced: a chmod refused on a mounted volume
-	// (read-only, or owned by another uid while still writable by us) must not
-	// abort boot, because the operator's way IN to repair /config is the container
-	// coming up (vibekit invariant 6). The doc comment above is corrected to say
-	// what the code does.
+	// Warn-and-continue is KEPT: a chmod refused on a mounted volume must
+	// not abort boot, because the operator's way IN to repair /config is
+	// the container coming up (invariant 6).
 	stored, err := filemode.EnforceDir(dir, dirMode)
 	mode := stored.String()
 	if err != nil {
 		slog.Warn("chat store: chat dir is not 0700 and could not be made 0700; chat content may be readable by other users on this host",
 			"dir", dir, "error", err)
-		// The mode is genuinely UNKNOWN on this branch — the open or the stat is
-		// what failed — so the breadcrumb must not print a zero FileMode as if it
-		// were an observation.
+		// The mode is genuinely UNKNOWN on this branch — the open or the stat
+		// failed — so the breadcrumb must not print a zero FileMode as an
+		// observation.
 		mode = "unverified"
 	}
 	// Startup breadcrumb so Loki can answer "did the store come up cleanly
-	// after restart?" without having to read the runtime's wiring log. Matches the
-	// single-Info-line-on-init pattern used by other vibekit package
-	// constructors. The mode logged is the one the FILESYSTEM stored, read back
-	// from the handle — not the constant we asked for. The old line reported
-	// dirMode unconditionally, so it claimed 0700 on exactly the filesystems
-	// where that was false, which is the one case an operator needs this
-	// breadcrumb for.
+	// after restart?" The mode logged is the one the FILESYSTEM stored, read
+	// back from the handle — not the constant asked for.
 	slog.Info("chat store: opened", "dir", dir, "mode", mode)
 	s := &Store{
 		dir:       dir,
@@ -211,23 +196,21 @@ func (s *Store) Get(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, 
 	return c, true
 }
 
-// Mutate is the single mutation primitive: load → apply → save → broadcast.
-// The mutator runs under the per-chat mutex and receives the current chat
-// (or a fresh zero-value chat if it does not exist). If mutator returns
-// false, the mutation is aborted without side effects. If it returns true,
-// the chat is persisted and a chat_updated event is broadcast. Both of those
-// report nil; a write to a recently deleted id is refused with ErrTombstoned.
+// Mutate is the single mutation primitive: load → apply → save →
+// broadcast. The mutator runs under the per-chat mutex and receives the
+// current chat (or a fresh zero-value chat if it does not exist). If
+// mutator returns false, the mutation is aborted without side effects. If
+// it returns true, the chat is persisted and a chat_updated event is
+// broadcast. A write to a recently deleted id is refused with
+// ErrTombstoned.
 //
 // To create a new chat, call Mutate with an ID that does not exist. The
 // store pre-fills c.ID and c.CreatedAt before invoking the mutator;
-// mutators must not overwrite these — reassigning c.ID would retarget
-// the save to a different file under the wrong per-chat mutex, which
-// Mutate refuses with an error so the broken caller surfaces loudly.
-// c.CreatedAt is authoritative (derived from the original create or
-// loaded from disk); Mutate snapshots it before the mutator runs and
-// restores it after so a caller that accidentally overwrites it
-// (e.g. by assigning a fresh zero value on the auto-create path) can
-// not corrupt the sidebar sort order or the broadcast payload.
+// mutators must not overwrite these — reassigning c.ID would retarget the
+// save to a different file under the wrong per-chat mutex, which Mutate
+// refuses with an error. c.CreatedAt is snapshotted before the mutator
+// runs and restored after so an accidental zero-value overwrite cannot
+// corrupt the sidebar sort order.
 func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -241,15 +224,11 @@ func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c
 		return err
 	}
 	if !exists {
-		// Delete-during-turn race: a concurrent cmdDeleteChat may have
-		// just removed the file while a cmdPrompt or translate_* handler
-		// is about to call AppendMessage (or similar) on the stale id.
-		// Tombstone check blocks re-creation for a short window so the
-		// late write is refused instead of resurrecting the chat as a
-		// ghost row the user has to delete again. Callers that already
-		// gate with `if !exists { return false }` are unaffected; the
-		// guard kicks in for the narrow "mutate auto-creates" paths
-		// (cmdCreateChat, cmdPrompt's user-message append).
+		// Delete-during-turn race: a concurrent cmdDeleteChat may have just
+		// removed the file while a cmdPrompt or translate_* handler is
+		// about to call AppendMessage on the stale id. Tombstone check
+		// blocks re-creation for a short window so the late write is
+		// refused instead of resurrecting the chat as a ghost row.
 		//
 		// The refusal is NAMED rather than reported as success: a caller
 		// that cannot tell it apart from a persisted write proceeds — a
@@ -262,13 +241,10 @@ func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c
 		}
 		c = &vibekit.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
-	// Snapshot the authoritative CreatedAt before the mutator runs.
-	// Mutators have no legitimate reason to reassign it — the value
-	// is either the original create timestamp (new chat) or the
-	// on-disk persisted value (existing chat). Restoring it after
-	// the mutator runs prevents a caller that blanket-assigns fields
-	// from a zero-value struct from silently corrupting the header
-	// sort order and every subsequent header broadcast.
+	// Snapshot the authoritative CreatedAt before the mutator runs. Mutators
+	// have no legitimate reason to reassign it; restoring it after prevents
+	// a caller that blanket-assigns fields from a zero-value struct from
+	// silently corrupting the header sort order.
 	originalCreatedAt := c.CreatedAt
 	if !mutate(c, exists) {
 		return nil
@@ -276,8 +252,7 @@ func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c
 	// Defensive invariant: the mutator must not reassign c.ID. Doing so
 	// would retarget s.save to a different file path serialised by a
 	// different per-chat mutex, allowing concurrent writes under
-	// mismatched locks. Fail loudly so the broken caller is visible
-	// rather than silently corrupting another chat's file.
+	// mismatched locks.
 	if c.ID != string(chatID) {
 		slog.Error("chat mutate: mutator reassigned chat id",
 			"expected", chatID, "got", c.ID)
@@ -330,20 +305,17 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID vibekit.ChatID, c 
 	s.broadcast.Broadcast(ctx, vibekit.NewEvent(evt, chatID, c.Header()))
 }
 
-// SetDraft persists the chat's unsent composer text. Deliberately not a Mutate
-// call: it must leave UpdatedAt alone (the retention purge ages a chat from it)
-// and it broadcasts nothing.
+// SetDraft persists the chat's unsent composer text. Deliberately not a
+// Mutate call: it must leave UpdatedAt alone (the retention purge ages a
+// chat from it) and it broadcasts nothing.
 //
-// Deliberately silent on a missing chat. A chat only becomes a server record on
-// its first prompt, so a draft typed into a brand-new chat has nowhere to land
-// yet, and creating the file here would put a row in every client's sidebar for
-// a conversation nobody has started. The client keeps that draft locally until
-// the first prompt creates the record.
+// Deliberately silent on a missing chat: a chat only becomes a server
+// record on its first prompt, so a draft typed into a brand-new chat has
+// nowhere to land yet.
 //
-// The returned state is nil when nothing was written — no such chat, or the
-// stored draft already equalled text — and is the chat's WHOLE composer state
-// otherwise, so the caller can broadcast draft_changed without reading the file
-// a second time. Unspecified when err is non-nil.
+// The returned state is nil when nothing was written and is the chat's
+// WHOLE composer state otherwise, so the caller can broadcast
+// draft_changed without reading the file a second time.
 func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -366,13 +338,12 @@ func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string
 	})
 }
 
-// SetAttachments persists the paths staged beside the chat's draft, replacing
-// whatever was there. The draft's twin in every respect that matters here: no
-// Mutate, so UpdatedAt is untouched, and no record means no-op rather than a
-// created chat. See SetDraft for both reasons.
+// SetAttachments persists the paths staged beside the chat's draft,
+// replacing whatever was there. The draft's twin: no Mutate, so UpdatedAt
+// is untouched, and no record means no-op rather than a created chat.
 //
-// An empty or nil slice clears the row, which is what a send and an emptied pill
-// row both mean, so it is stored as nil rather than refused.
+// An empty or nil slice clears the row, stored as nil rather than
+// refused.
 func (s *Store) SetAttachments(ctx context.Context, chatID vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -392,9 +363,8 @@ func (s *Store) SetAttachments(ctx context.Context, chatID vibekit.ChatID, paths
 	}
 	next := slices.Clone(paths)
 	if len(next) == 0 {
-		// nil rather than an empty slice: `omitempty` then keeps the field out of
-		// the chat file entirely, so a chat with nothing staged reads the way it
-		// did before this field existed.
+		// nil rather than an empty slice: `omitempty` keeps the field out
+		// of the chat file entirely.
 		next = nil
 	}
 	return s.setComposer(chatID, "chat attachments", func(c *vibekit.Chat) bool {
@@ -406,14 +376,13 @@ func (s *Store) SetAttachments(ctx context.Context, chatID vibekit.ChatID, paths
 	})
 }
 
-// setComposer is the shared body of the two composer writers: load under the
-// chat's own lock, apply, write only when something moved, and report the state
-// that landed.
+// setComposer is the shared body of the two composer writers: load under
+// the chat's own lock, apply, write only when something moved, and report
+// the state that landed.
 //
-// One body rather than two because the part that is easy to get wrong is
-// identical and is not the assignment — it is the id check, the no-change
-// shortcut and the deliberate absence of a Mutate. `what` names the caller in the
-// mismatch log, which is the one line where the two differ.
+// One body rather than two because the id check, the no-change shortcut
+// and the deliberate absence of a Mutate are identical across both.
+// `what` names the caller in the mismatch log.
 func (s *Store) setComposer(chatID vibekit.ChatID, what string, apply func(*vibekit.Chat) bool) (*vibekit.ComposerState, error) {
 	m := s.lock(chatID)
 	m.Lock()
@@ -425,14 +394,9 @@ func (s *Store) setComposer(chatID vibekit.ChatID, what string, apply func(*vibe
 		}
 		return nil, err
 	}
-	// Before the field is touched, and before the no-change shortcut below: this
-	// chat file claims to be a different chat, so nothing about it can be
-	// persisted under this id's lock. Mutate refuses the same disagreement when a
-	// mutator causes it; the file is the other way to reach it, and the loud
-	// refusal is what stops an autosave for c1 from writing the whole object over
-	// c2. Checking here rather than only in writeChat also means a draft that
-	// happens to equal what is already stored is reported instead of returning
-	// nil through the shortcut, so the corruption surfaces on the first keystroke.
+	// Before the field is touched: this chat file claims to be a different
+	// chat, so nothing about it can be persisted under this id's lock.
+	// Mutate refuses the same disagreement when a mutator causes it.
 	if c.ID != string(chatID) {
 		slog.Error(what+": chat file holds another chat's id",
 			"chat_id", chatID, "stored_id", c.ID)
@@ -448,16 +412,12 @@ func (s *Store) setComposer(chatID vibekit.ChatID, what string, apply func(*vibe
 	return &state, nil
 }
 
-// DeleteFamily and PromoteRewind are GONE with the rewind-branch family. Both
-// existed only because a chat could own other chats: DeleteFamily supplied the
-// ordering contract that kept a crash from leaving a child pointing at a deleted
-// parent, and PromoteRewind cleared a child's parent linkage under one lock so a
-// promote could never report success while the relationship was intact. A rewind
-// reverts the chat it is in, so no chat has a parent or children and neither
-// transition has a subject. Delete is the whole delete path again.
+// DeleteFamily and PromoteRewind are GONE with the rewind-branch family: a
+// rewind now reverts the chat it is in, so no chat has a parent or
+// children.
 
-// Delete removes the chat file and broadcasts chat_deleted. Records a tombstone
-// first so a concurrent Mutate cannot resurrect the id as a ghost row.
+// Delete removes the chat file and broadcasts chat_deleted. Records a
+// tombstone first so a concurrent Mutate cannot resurrect the id.
 func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -473,9 +433,8 @@ func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
 	missing := errors.Is(rmErr, os.ErrNotExist)
 	if !missing {
 		// Mark tombstone while we still hold the per-chat lock so any
-		// racing Mutate attempt has to queue behind us and will then
-		// see the tombstone. Only tombstone chats that actually
-		// existed — phantom deletes shouldn't block future creates.
+		// racing Mutate attempt has to queue behind us. Only tombstone
+		// chats that actually existed.
 		s.markDeleted(chatID)
 	}
 	m.Unlock()
@@ -489,9 +448,7 @@ func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
 		slog.Info("chat delete: no-op on missing chat", "chat_id", chatID)
 	} else {
 		// Snapshot tombstone map size outside markDeleted's lock so
-		// operators can spot a tombstone-map creep pattern without a
-		// dedicated gauge. At steady state this stays at or near zero
-		// because opportunistic pruning runs inside markDeleted.
+		// operators can spot a creep pattern without a dedicated gauge.
 		s.tombMu.Lock()
 		tombCount := len(s.tombstone)
 		s.tombMu.Unlock()
@@ -528,31 +485,19 @@ func (s *Store) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *v
 	return nil
 }
 
-// UpsertTurnPlan records the agent's plan for the turn in flight: it overwrites
-// this turn's existing plan row when there is one and appends msg otherwise,
-// broadcasting message_updated or message_appended to match.
+// UpsertTurnPlan records the agent's plan for the turn in flight: it
+// overwrites this turn's existing plan row when there is one and appends
+// msg otherwise, broadcasting message_updated or message_appended to
+// match.
 //
-// ONE row per turn, because ACP resends the WHOLE entries array on every plan
-// update. An append per frame persisted N snapshots of one plan, and the client
-// rendered N cards — mountPlan dedupes within a message's own wrap, not across
-// messages — each frozen at a different stage. They also inflated message_count
-// and consumed slots in the paginated newest page, pushing real content off it.
-// The plan a reader watches while work happens is the prompt-bar task pill, which
-// already reads only the newest plan and ignores every earlier one.
+// ONE row per turn, because ACP resends the WHOLE entries array on every
+// plan update; an append per frame would persist N snapshots of one plan.
 //
-// "This turn" is the tail up to the first user message, matching projectTurns'
-// own rule that a user message opens a turn. Deriving the row rather than
-// remembering it is what keeps this out of the chat record: nothing has to hold a
-// plan message id across frames, so there is no state to leave stale when a turn
-// ends. A plan arriving with no turn open (an agent-initiated turn has no user
-// row) correctly finds the previous plan only if no user message separates them,
-// which is the same window projectTurns would draw.
+// "This turn" is the tail up to the first user message, matching
+// projectTurns' own rule that a user message opens a turn.
 //
-// Ts is deliberately NOT restamped on the update path: the row's timestamp marks
-// where the plan entered the conversation, and moving it would claim the plan was
-// made later than it was.
-//
-// The broadcast fires only after the save succeeds, like its two siblings.
+// Ts is deliberately NOT restamped on the update path: the row's
+// timestamp marks where the plan entered the conversation.
 func (s *Store) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
 	var updated *vibekit.Message
 	var appended bool

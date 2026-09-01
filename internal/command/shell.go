@@ -2,17 +2,11 @@ package command
 
 // The `!cmd` shell interception.
 //
-// Output capture is procout's, not this package's. `ShellCappedBuffer` used to
-// live here and was the THIRD bounded-capture writer in the tree — internal/auth
-// and internal/server already share procout.Buffer, whose whole reason for
-// existing is that the choice should not be a per-site coin flip. Its Write is
-// also the one that is provably right about os/exec: a capping writer reporting
-// the bytes it KEPT makes io.Copy return io.ErrShortWrite, which Cmd.Wait then
-// hands back as the command's error on a child that exited 0. The version here
-// happened to get that right and had no test for it; procout's suite does,
-// alongside an os/exec merged-stream test and a fuzz target parameterised over
-// the cap that the two hand-rolled ones (this package's and the duplicate in
-// internal/agent) each seeded with a 1 MiB literal.
+// Output capture is procout's, not this package's: internal/auth and
+// internal/server already share procout.Buffer, whose Write also reports
+// the bytes it kept, which makes io.Copy return io.ErrShortWrite on a
+// truncated capture — Cmd.Wait then hands that back as the command's error
+// on a child that exited 0.
 
 import (
 	"context"
@@ -70,12 +64,9 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		return nil, StatusError(http.StatusBadRequest, errEmptyPrompt)
 	}
 
-	// Admission: the same per-chat reservation a prompt takes, as a TRY — never
-	// a wait. ONE mechanism serializes prompts and shells, whatever state the
-	// bridge is in: a `!cmd` during a prompt's spawn, prime, MCP wait or
-	// streaming turn refuses immediately with 409, and the client surfaces the
-	// busy answer. The turn-source rule below still refuses a shell while an
-	// AGENT-initiated turn is open, which holds no reservation.
+	// Admission: the same per-chat reservation a prompt takes, as a try —
+	// never a wait. One mechanism serializes prompts and shells, whatever
+	// state the bridge is in.
 	if !roles.turnOutcome.TryReserveTurn(cmd.ChatID, vibekit.TurnSourceLocalShell) {
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}
@@ -97,14 +88,9 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		return nil, StatusError(http.StatusConflict, ErrChatNotFound)
 	}
 
-	// The shell turn is a turn like any other, so it opens one: without a record
-	// its end was a broadcast nothing owned, and a second closer could produce
-	// another. Opened after the user message lands, so a refused record leaves no
-	// turn open behind it.
-	//
-	// A zero epoch is the source rule REFUSING while an agent turn is open. The
-	// reservation above excludes the turns vibekit admitted; this catches the
-	// ones it did not, which hold no reservation.
+	// The shell turn opens a turn like any other: without a record its end
+	// would be a broadcast nothing owned. A zero epoch is the source rule
+	// refusing while an agent turn is open.
 	epoch := roles.turnOutcome.StartTurn(ctx, cmd.ChatID, vibekit.TurnSourceLocalShell)
 	if epoch == 0 {
 		return nil, StatusError(http.StatusConflict, errBusy)

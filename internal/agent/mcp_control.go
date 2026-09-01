@@ -1,31 +1,17 @@
 package agent
 
 // Live MCP control: reconnect a wedged server, and resolve MCP
-// prompts/resources on demand. These act on the RUNNING chat bridges via
-// the v3 (KAS) _kiro/mcp/* C→A requests (resetServer / getPrompt /
-// getResource), verified functional over the acp wire.
+// prompts/resources on demand, via the v3 (KAS) _kiro/mcp/* C→A requests.
 //
-// Bridge-targeting model (vibekit's MCP config is global; each chat bridge
-// is a separate kiro-cli acp process with its OWN MCP pool):
+// vibekit's MCP config is global, but each chat bridge is a separate
+// kiro-cli acp process with its own MCP pool. reconnect fans out to ALL
+// live bridges, since a wedged/expired-OAuth server is wedged per-pool.
+// getPrompt/getResource are equivalent reads against any connected pool, so
+// they target one live bridge and return errNoLiveBridge otherwise.
 //
-//   - reconnect fans out to ALL live bridges. A wedged / expired-OAuth
-//     server is wedged per-pool, so reconnecting everywhere is the only way
-//     to fully un-wedge it across active chats. Each bridge re-emits
-//     _kiro/mcp/status on reconnect, which flows through HandleMCPStatus →
-//     the registry → SSE, so every device reflects the refreshed state with
-//     no optimistic client rendering. No-op when no bridge is live (nothing
-//     is connected then — the registry is already cleared on last-bridge
-//     exit).
-//   - getPrompt / getResource are equivalent reads against any connected
-//     pool, so they target one live bridge. They require a live bridge and
-//     return errNoLiveBridge otherwise.
-//
-// _kiro/mcp/toggle is deliberately NOT wired: the live probe showed it is a
-// GLOBAL notification (whole-subsystem enable/disable, no serverName) that
-// re-initialises from kiro-cli's own config sources — it cannot enable or
-// disable a specific inline-forwarded server, so it doesn't map onto
-// vibekit's per-server enabled flag. Per-server enable/disable still takes
-// effect on the next new chat; the persisted flag stays the source of truth.
+// _kiro/mcp/toggle is deliberately NOT wired: it is a GLOBAL notification
+// with no serverName, so it cannot enable/disable a specific server and
+// doesn't map onto vibekit's per-server enabled flag.
 
 import (
 	"context"
@@ -41,10 +27,8 @@ import (
 )
 
 const (
-	// mcpReconnectTimeout bounds a single bridge's resetServer round-trip.
-	// resetServer awaits the full reconnect (MCP handshake, possibly an
-	// OAuth redirect), and bridge.Call has no timeout of its own, so this
-	// keeps the HTTP request from hanging forever on a dead server.
+	// mcpReconnectTimeout bounds a single bridge's resetServer round-trip
+	// (may include an OAuth redirect). bridge.Call has no timeout of its own.
 	mcpReconnectTimeout = 90 * time.Second
 	// mcpFetchTimeout bounds a getPrompt / getResource round-trip.
 	mcpFetchTimeout = 30 * time.Second
@@ -55,7 +39,7 @@ const (
 var errNoLiveBridge = errors.New("no active chat session")
 
 // keyServerName is the wire key naming the target MCP server in the
-// _kiro/mcp/* request params (verified against the KAS 2.12 bundle).
+// _kiro/mcp/* request params.
 const keyServerName = "serverName"
 
 // keyExitCode is the shared wire key for a process exit code (agent
@@ -63,8 +47,8 @@ const keyServerName = "serverName"
 const keyExitCode = "exitCode"
 
 // firstLiveBridge returns any live bridge, or nil when none are running.
-// All live bridges load the same global MCP config, so for reads (prompt /
-// resource) any one is equivalent.
+// All live bridges load the same global MCP config, so for reads any one
+// is equivalent.
 func (reg *mcpRegistry) firstLiveBridge() *sharedBridge {
 	for _, sb := range reg.bridges.all() {
 		return sb
@@ -88,8 +72,6 @@ func (reg *mcpRegistry) serverEnabled(ctx context.Context, name string) bool {
 // reconnectServer sends _kiro/mcp/resetServer{serverName} to every live
 // bridge concurrently and returns the number of bridges targeted. Per-bridge
 // errors are logged, not fatal — a wedged bridge must not block the others.
-// The refreshed _kiro/mcp/status each bridge emits on reconnect updates the
-// registry + SSE independently.
 func (reg *mcpRegistry) reconnectServer(ctx context.Context, name string) int {
 	bridges := reg.bridges.all()
 	if len(bridges) == 0 {
@@ -111,8 +93,7 @@ func (reg *mcpRegistry) reconnectServer(ctx context.Context, name string) int {
 	return len(bridges)
 }
 
-// promptFor resolves an MCP prompt via a live bridge's pool. Returns the
-// raw MCP GetPromptResult ({messages:[...]}) or an error. args is always
+// promptFor resolves an MCP prompt via a live bridge's pool. args is always
 // sent as an object (never null) so servers with no arguments still parse.
 func (reg *mcpRegistry) promptFor(ctx context.Context, server, promptName string, args map[string]any) (json.RawMessage, error) {
 	if args == nil {
@@ -125,8 +106,7 @@ func (reg *mcpRegistry) promptFor(ctx context.Context, server, promptName string
 	})
 }
 
-// resourceFor reads an MCP resource via a live bridge's pool. Returns the
-// raw MCP ReadResourceResult ({contents:[...]}) or an error.
+// resourceFor reads an MCP resource via a live bridge's pool.
 func (reg *mcpRegistry) resourceFor(ctx context.Context, server, uri string) (json.RawMessage, error) {
 	return reg.fetch(ctx, methodV3MCPGetResource, map[string]any{
 		keyServerName: server,
@@ -255,9 +235,8 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 }
 
 // writeFetchErr maps a getPrompt/getResource failure to an HTTP status.
-// errNoLiveBridge → 409 (open a chat first); any other error is a bridge /
-// MCP-server failure → 502 with a generic message (the raw RPC message is
-// often just "Internal error" and the useful detail is logged, not leaked).
+// errNoLiveBridge → 409 (open a chat first); any other error → 502 with a
+// generic message (details logged, not leaked).
 func writeFetchErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errNoLiveBridge) {
 		httpreply.Conflict(w, "no active chat session — open a chat to use MCP prompts and resources")

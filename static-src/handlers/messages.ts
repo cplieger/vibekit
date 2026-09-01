@@ -42,19 +42,11 @@ onSSE("message_created", (chatID, m) => {
     return;
   }
   // message_created starts a new assistant bubble; upsert so future chunks
-  // target the right ID. Content is empty until chunks arrive.
-  //
-  // It is also live-turn EVIDENCE: the server emits it only when a turn opens a
-  // buffer, and not every turn is one this client prompted — a KAS auto-woken
-  // turn after a workflow completes, a wire turn opened by a run's step frames,
-  // and any prompt sent from ANOTHER device all stream in with `thinking`
-  // never set, so their tabs showed idle while visibly working. The turn's own
-  // `turn_ended` clears it, whoever opened it.
-  //
-  // It is also the point the server starts a buffer nothing has persisted, so
-  // the store records which id that is. A refetch replaces the array with the
-  // chat file's page, and this marker is the only thing that tells this message
-  // from one the page left out on purpose.
+  // target the right ID. Also live-turn evidence: the server emits it only
+  // when a turn opens a buffer, and some turns this client did not prompt
+  // (a KAS auto-wake, a run step, another device's send) never set
+  // `thinking` any other way. Also marks which message is unpersisted, so
+  // a refetch's array replacement doesn't drop it.
   markTurnLive(chatID);
   noteLiveTurnMessage(chatID, m.id);
   upsertMessage(chatID, m);
@@ -64,8 +56,8 @@ onSSE("message_chunk", (chatID, p) => {
   if (p === undefined) {
     return;
   }
-  // Same live-turn evidence as message_created: a delta only exists for an open
-  // turn, and this is the door that covers a dropped or reordered created frame.
+  // Same live-turn evidence as message_created, covering a dropped or
+  // reordered created frame.
   markTurnLive(chatID);
   appendChunk(
     chatID,
@@ -88,14 +80,11 @@ function markTurnLive(chatID: string): void {
   }
 }
 
-// turn_state: connect-time synthesis of an in-flight turn (never
-// broadcast live). The server emits one per BUSY chat in the SSE
-// connect replay: an authoritative busy signal (replacing the gap
-// handler's eager thinking-clear guess for chats that are genuinely
-// mid-turn), the accumulated assistant message so the streaming
+// turn_state: connect-time synthesis of an in-flight turn (never broadcast
+// live). Emitted once per busy chat in the SSE connect replay: an
+// authoritative busy signal, the accumulated assistant message so the
 // transcript isn't blank until the next chunk, and the agent's last
-// self-declared status for the turn. The chunk_seq watermark makes
-// chunks that raced the snapshot idempotent (see appendChunk).
+// self-declared status.
 onSSE("turn_state", (chatID, p) => {
   if (p === undefined || chatID === "") {
     return;
@@ -104,8 +93,8 @@ onSSE("turn_state", (chatID, p) => {
   const msg = p.message;
   if (msg !== undefined && msg.id !== "") {
     setSnapshotSeq(chatID, msg.id, p.chunk_seq ?? 0);
-    // The snapshot IS the server's unflushed buffer, so this id is unpersisted
-    // by construction — the third door, and the one a reload comes through.
+    // The snapshot is the server's unflushed buffer, so this id is
+    // unpersisted by construction.
     noteLiveTurnMessage(chatID, msg.id);
     upsertMessage(chatID, msg);
   }

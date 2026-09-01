@@ -112,46 +112,34 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 }
 
 // handleLogin spawns `kiro-cli login --use-device-flow` and streams its
-// stdout looking for the first "Open this URL:" (or bare https://) token
-// to return to the browser. The subprocess intentionally outlives the
-// HTTP request (device-flow login takes minutes while the user completes
-// the browser flow; r.Context() would cancel it as soon as the response
-// is written) — see the context.WithTimeout below which caps the
-// subprocess at the LoginTimeout wall-clock budget.
+// stdout looking for the first "Open this URL:" (or bare https://) token to
+// return to the browser. The subprocess intentionally outlives the HTTP
+// request — see the context.WithTimeout below, which caps the subprocess at
+// the LoginTimeout wall-clock budget.
 //
-// Only one login may be in flight at a time: a concurrent POST gets
-// HTTP 409. vibekit is single-user, and a double-click/LAN-probe
-// would otherwise pin two AWS device codes for 16 minutes each.
+// Only one login may be in flight at a time: a concurrent POST gets HTTP
+// 409.
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	// Audit trail: record every /api/login POST so operators can
-	// distinguish browser-initiated login from unexpected activity in
-	// Loki. client_ip is the spoof-safe resolved client host from
-	// webhttp.ClientIP: the unspoofable socket peer when directly
-	// exposed, or the real client from a trusted X-Forwarded-For when
-	// TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
-	// client_ip + user_agent is bounded.
+	// Audit trail: record every /api/login POST. client_ip is the
+	// spoof-safe resolved client host from webhttp.ClientIP.
 	slog.Info("login: request received",
 		"client_ip", webhttp.ClientIP(r, h.trusted...),
 		"user_agent", r.Header.Get("User-Agent"))
 	select {
 	case h.loginSem <- struct{}{}:
-		// Do NOT release here. Ownership transfers to the reap
-		// goroutine below once cmd.Start succeeds; any pre-reap
-		// error return (body decode, validation, StdoutPipe,
-		// cmd.Start) releases via the semReleased guard before
-		// returning. See Handler doc comment.
+		// Ownership transfers to the reap goroutine below once cmd.Start
+		// succeeds; any pre-reap error return releases via the
+		// semReleased guard.
 	default:
 		httpreply.Conflict(w, "login in progress")
 		return
 	}
-	// Guarded release: only fires if we return before the reap
-	// goroutine takes ownership. After cmd.Start succeeds and the
-	// reap goroutine is launched, we set semReleased=true so the
-	// defer is a no-op and the goroutine owns the release.
+	// Guarded release: only fires if we return before the reap goroutine
+	// takes ownership.
 	semReleased := false
 	defer func() {
 		if !semReleased {
@@ -162,15 +150,12 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Wall-clock cap on the subprocess — NOT r.Context(). The
-	// device-flow login intentionally outlives the HTTP request:
-	// the client disconnects immediately after we write the auth
-	// URL and comes back minutes later (Builder ID flow). Request
-	// cancellation here would SIGKILL the login before the user
-	// completes the browser step. The outer hard cap bounds
-	// abandoned flows (tab closed, network lost) at AWS's
-	// device-code TTL + 1m grace. The select below separately
-	// bounds the URL-discovery phase at LoginURLTimeout.
+	// Wall-clock cap on the subprocess — NOT r.Context(). The device-flow
+	// login intentionally outlives the HTTP request: the client
+	// disconnects immediately after we write the auth URL and comes back
+	// minutes later. The outer hard cap bounds abandoned flows at AWS's
+	// device-code TTL + 1m grace; the select below separately bounds the
+	// URL-discovery phase at LoginURLTimeout.
 	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginTimeout)
 	cmd := exec.CommandContext(ctx, h.cliPath(), buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
 	setProcGroup(cmd)
@@ -184,9 +169,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Capture stderr into a bounded buffer separate from stdout so
-	// stderr chatter (deprecation warnings, debug envs) doesn't
-	// count against the 200-line maxLoginLines cap on the URL
-	// scanner. Logged on timeout / error paths for diagnostics.
+	// stderr chatter doesn't count against the maxLoginLines cap on the
+	// URL scanner.
 	stderrBuf := procout.NewBuffer(stderrCap)
 	cmd.Stderr = stderrBuf
 	if err := cmd.Start(); err != nil {
@@ -196,41 +180,31 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	urlCh := make(chan map[string]string, 1)
-	// scanLoginOutput returns the moment it finds a URL (or hits an
-	// error). The subprocess keeps writing progress/banner lines to
-	// stdout while the user completes the browser flow — if nothing
-	// drains the pipe, kiro-cli blocks on a full 64 KiB buffer and
-	// wedges until the 16-minute hard cap fires. Keep draining in
-	// the background so the child can make forward progress.
+	// scanLoginOutput returns the moment it finds a URL (or hits an error).
+	// The subprocess keeps writing progress/banner lines to stdout while
+	// the user completes the browser flow — keep draining in the
+	// background so the child doesn't wedge on a full pipe buffer.
 	//
-	// stdoutDone is closed when the scanner+drain goroutine has
-	// returned (URL found + drain to EOF, or scanner error). The
-	// reap goroutine waits on this before calling cmd.Wait so the
-	// pipe isn't closed mid-read. See loginReap doc for the
-	// underlying Go runtime requirement.
+	// stdoutDone is closed when the scanner+drain goroutine has returned.
+	// The reap goroutine waits on this before calling cmd.Wait so the
+	// pipe isn't closed mid-read. See loginReap doc.
 	stdoutDone := make(chan struct{})
 	go func() {
 		defer close(stdoutDone)
 		scanLoginOutputWithDrain(stdout, urlCh)
 	}()
 
-	// Transfer loginSem ownership to the reap goroutine: any
-	// pre-reap return path above this point releases via the
-	// semReleased guard, but from here on the sem is held until
-	// cmd.Wait returns so a second login attempt during the 16m
-	// device-code window still gets 409.
+	// Transfer loginSem ownership to the reap goroutine: from here on the
+	// sem is held until cmd.Wait returns so a second login attempt during
+	// the device-code window still gets 409.
 	semReleased = true
 
-	// Reap the child no matter which branch wins the select below
-	// so both the success path and the timeout path collect the
-	// exit status and release the subprocess resources. On success
-	// this goroutine outlives the HTTP handler (the login runs
-	// until the user finishes the browser flow or the outer
-	// LoginTimeout fires). On timeout we kill the process
-	// group (CommandContext's default cancel only kills the PID,
-	// which orphans bun/Node helper children that keep the stdout
-	// pipe open and wedge cmd.Wait for the full sleep), and wait
-	// here so FDs are reclaimed before the handler returns.
+	// Reap the child no matter which branch wins the select below so both
+	// the success path and the timeout path collect the exit status and
+	// release resources. On timeout we kill the process group
+	// (CommandContext's default cancel only kills the PID, which orphans
+	// helper children holding the stdout pipe open) and wait here so FDs
+	// are reclaimed before the handler returns.
 	waitDone := make(chan struct{})
 	go h.reapLoginProcess(loginReap{
 		ctx:        ctx,
@@ -244,17 +218,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	select {
 	case result := <-urlCh:
 		if result["url"] == "" {
-			// Scanner hit an error (line cap, buffer overflow,
-			// reader error, already_logged_in) without a URL.
-			// Log a handler-layer breadcrumb so operators can
-			// correlate the scanLoginOutput Warn with this
-			// specific HTTP request. result["error"] is one of
-			// a fixed sentinel set so cardinality is bounded.
-			slog.Warn("login: scanner reported error without URL",
-				"error", result["error"])
-			// Reap the child eagerly rather than waiting for
-			// the 16-minute hard cap — no user completion is
-			// coming and the device code is wasted either way.
+			// Scanner hit an error without a URL. Reap the child eagerly
+			// rather than waiting for the hard cap — no user completion
+			// is coming and the device code is wasted either way.
 			killProcessGroup(cmd)
 			<-waitDone
 		}

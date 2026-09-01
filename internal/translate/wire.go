@@ -158,18 +158,17 @@ type ACPKiroBlock struct {
 // the same layout, which a defined type over the same struct does.
 type acpKiroBlockShadow ACPKiroBlock
 
-// UnmarshalJSON decodes the block and, on the way past, reports any member KAS
-// sent that this type does not read.
+// UnmarshalJSON decodes the block and, on the way past, reports any
+// member KAS sent that this type does not read.
 //
-// The census runs HERE rather than at the handlers because encoding/json hands
-// this method exactly the `_meta.kiro` object's bytes: probing a few hundred bytes
-// per frame instead of rescanning a whole tool_call_update, which can carry a
-// multi-megabyte diff. That difference is the reason this is a method at all.
+// The census runs here rather than at the handlers because
+// encoding/json hands this method exactly the `_meta.kiro` object's
+// bytes, so probing a few hundred bytes per frame is cheap even when the
+// surrounding tool_call_update carries a multi-megabyte diff.
 //
-// The decode's own error is returned verbatim and the census cannot contribute
-// one. Every call site drops the frame on a decode error, so a probe that could
-// fail would stop tool cards from rendering — a diagnostic must never be able to
-// cost a turn.
+// The decode's own error is returned verbatim and the census cannot
+// contribute one: every call site drops the frame on a decode error, so
+// a probe that could fail would stop tool cards from rendering.
 func (b *ACPKiroBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*acpKiroBlockShadow)(b)); err != nil {
 		return err
@@ -234,28 +233,22 @@ type ACPWorkflowMeta struct {
 
 // SubtaskID is the per-block attribution key for a step's content.
 //
-// A step's prose otherwise MERGES into the launching chat's own paragraph, and
-// that reproduces exactly the context confusion workflows exist to avoid. The
-// mechanism: the chunk handlers append through `Buffer.AppendTextDelta(text,
-// subtask)`, which extends a block only when kind AND subtask match — and a
-// step's text frame carries an EMPTY `agentSubtaskId` (KAS sets that only on tool
-// frames), so empty matched empty and the step's words landed inside the parent
-// agent's block.
+// A step's prose otherwise merges into the launching chat's own
+// paragraph: the chunk handlers append through
+// Buffer.AppendTextDelta(text, subtask), which extends a block only when
+// kind and subtask match, and a step's text frame carries an empty
+// agentSubtaskId (KAS sets that only on tool frames) — so empty matched
+// empty and the step's words landed inside the parent agent's block.
 //
-// Reusing `agent_subtask_id` rather than adding a parallel channel is deliberate:
+// Reusing agent_subtask_id rather than adding a parallel channel means
 // the client already groups same-subtask blocks into a collapsible
-// delegated-work block, so a step renders as delegated work with no client
-// change at all. The `wf:` prefix keeps the two id spaces from ever colliding —
-// KAS's subtask ids are uuids.
+// delegated-work block, so a step renders as delegated work with no
+// client change at all. The `wf:` prefix keeps the two id spaces from
+// colliding.
 //
-// TWO SEGMENTS, and the run id is the first. `wf:<workflowId>:<nodePath>` is what
-// lets the client render a step INSIDE the run that started it rather than as a
-// sibling of it: the run id is the key of the run card, the node path is the key
-// of the step row within it. It used to be `wf:<nodePath>` alone, which threw away
-// the one fact KAS puts on every single step frame, so the client had no way to
-// tell which run a step belonged to and every step became a top-level anonymous
-// box. A node path cannot contain a colon (KAS node ids are identifiers), so one
-// SplitN is an unambiguous parse.
+// Two segments, and the run id is the first: `wf:<workflowId>:<nodePath>`
+// lets the client render a step inside the run that started it. A node
+// path cannot contain a colon, so one SplitN is an unambiguous parse.
 func (w *ACPWorkflowMeta) SubtaskID() string {
 	if w == nil || w.WorkflowID == "" {
 		return ""
@@ -382,26 +375,20 @@ type ACPToolCallUpdateWire struct {
 	Meta ACPKiroMeta `json:"_meta"`
 }
 
-// ACPRawOutput is the whole of what this client reads out of a tool call's
-// `rawOutput`, which KAS types as `unknown` and fills with whatever the tool
-// returned: an object here, a bare string or a number elsewhere.
+// ACPRawOutput is the whole of what this client reads out of a tool
+// call's `rawOutput`, which KAS types as `unknown` and fills with
+// whatever the tool returned.
 //
-// `run_workflow` is the reason. Its terminal update carries
-// `{message, workflowId, status}` (KAS's `handleToolAction` terminal arm sends
-// `rawOutput: event.output`, and the tool's `emitAction` output is that object),
-// and the workflow id is the ONLY structural link from the invocation to the run
-// it started. Without it the transcript cannot render a run's steps inside the
-// tool call that launched them, because a step frame names its run and the
-// invocation named nothing — the client would be left parsing the id out of the
-// English summary sentence.
+// `run_workflow` is the reason: its terminal update carries
+// `{message, workflowId, status}`, and the workflow id is the only
+// structural link from the invocation to the run it started. Without it
+// the transcript cannot render a run's steps inside the tool call that
+// launched them.
 //
-// Decoding is deliberately narrow and tolerant: rawOutputWorkflowID returns ""
-// for a non-object, a missing field or malformed JSON, so a tool whose output is
-// a string costs one failed unmarshal and nothing else. Do NOT widen this into a
-// general structured-output channel; the content blocks are that channel.
-//
-// `error`/`message` are the second read, and rawOutputFailureText below states
-// the gate that keeps it from being that widening.
+// Decoding is deliberately narrow and tolerant: rawOutputWorkflowID
+// returns "" for a non-object, a missing field or malformed JSON. Do not
+// widen this into a general structured-output channel — the content
+// blocks are that channel.
 type ACPRawOutput struct {
 	WorkflowID string `json:"workflowId"`
 	Error      string `json:"error"`
@@ -422,19 +409,14 @@ func rawOutputWorkflowID(raw json.RawMessage) string {
 	return out.WorkflowID
 }
 
-// rawOutputFailureText extracts the reason a FAILED tool call reports, or "" when
-// rawOutput is absent, malformed, neither a string nor an object, or carries no
-// text.
+// rawOutputFailureText extracts the reason a failed tool call reports, or
+// "" when rawOutput is absent, malformed, neither a string nor an
+// object, or carries no text.
 //
-// Callers must gate on the terminal status being `failed` and on nothing else
-// having produced output. That gate is what keeps this from widening rawOutput
-// into the general structured-output channel the content blocks own: for a failed
-// edit KAS puts a DIFF in the content blocks and the reason nowhere else, so on
-// that path there is no content channel to prefer.
-//
-// A bare string first, then an object's `error` or `message`, because KAS sends
-// `event.output ?? event.errorMessage` and a tool's output is an object on some
-// tools and a plain string on most.
+// Callers must gate on the terminal status being `failed` and on nothing
+// else having produced output: for a failed edit KAS puts a diff in the
+// content blocks and the reason nowhere else, so there is no content
+// channel to prefer on that path.
 func rawOutputFailureText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -475,38 +457,28 @@ type ACPSessionUpdateEnvelope struct {
 	Update    json.RawMessage `json:"update"`
 }
 
-// ACPSessionUpdateBase extracts the two discriminators every session/update
-// dispatch needs: the sessionUpdate kind, and whether the frame is a REPLAY
-// of stored history rather than something happening now.
+// ACPSessionUpdateBase extracts the two discriminators every
+// session/update dispatch needs: the sessionUpdate kind, and whether the
+// frame is a replay of stored history rather than something happening
+// now.
 //
 // KAS replays a session's whole transcript as ordinary session/update
-// notifications in response to `session/load` (bounded only when the caller
-// asks, via `_meta.kiro.replayLimit`), tagging each replayed frame
-// `_meta.kiro.replay: true`. Note the nesting: the flag is on the **update**
-// object, not on `params` — reading it off params yields false for every
-// frame, which looks exactly like a wire that never sets it.
+// notifications in response to session/load, tagging each replayed frame
+// `_meta.kiro.replay: true`. Note the nesting: the flag is on the update
+// object, not on params — reading it off params yields false for every
+// frame.
 //
-// Live frames leave it absent, and so does anything describing the session's
-// CURRENT state rather than its history — those must keep reaching the live
-// handlers during a load. That is the rule, stated as a rule rather than as the
-// list of members it had when the gate was written, because the list GROWS: it
-// was `available_commands_update` and `config_option_update`, and a 2.20.0
-// capture (13 of 23 frames tagged) added `_kiro/mcp/status`,
-// `_kiro/tools/didChange`, `_kiro/governance/state`, `_kiro/powers/items_changed`
-// and `_kiro/progressive_context/items_changed`. Those five are separate
-// JSON-RPC methods and never reach this struct, so the enumeration was not
-// wrong, only narrower than the property — and reading it as the property is
-// what invites the inverse gate. Do NOT replace this with "drop everything
-// during a load": that suppresses a notification family nobody listed, which is
-// exactly what a per-frame tag exists to avoid.
+// Live frames leave it absent, and so does anything describing the
+// session's current state rather than its history. That is a rule
+// rather than an enumerable list, since the untagged set grows over
+// releases; do not replace this with "drop everything during a load",
+// which would suppress a notification family nobody listed.
 type ACPSessionUpdateBase struct {
 	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 	Meta struct {
 		Kiro struct {
-			// Workflow is present on a workflow STEP's frames and is the
-			// discriminator the dispatcher classifies on. Decoded here, at the
-			// same shallow depth as Replay, because both answer "which door does
-			// this frame go through" before any per-kind decode happens.
+			// Workflow is present on a workflow step's frames and is
+			// the discriminator the dispatcher classifies on.
 			Workflow *ACPWorkflowMeta `json:"workflow"`
 			Replay   bool             `json:"replay"`
 		} `json:"kiro"`

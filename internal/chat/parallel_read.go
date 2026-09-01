@@ -21,11 +21,7 @@ type chatEntry struct {
 // (bounded at 8 workers) and returns the successfully-read headers.
 //
 // Workers read from a shared index channel; no per-chat lock is needed
-// because readChatHeader is read-only and writes use atomic temp+rename
-// (readers always see a complete file). It used to take a `label` for the
-// diagnostic prefix, when the archive list was a second caller passing
-// "archived chat"; with one caller the parameter only produced the
-// doubled "chat chat:" warning.
+// because readChatHeader is read-only and writes use atomic temp+rename.
 func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
@@ -46,10 +42,10 @@ func readHeadersParallel(
 	parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
 		h, err := readChatHeader(ce.path, "chat "+ce.id)
 		if err != nil {
-			// ENOENT is a concurrent delete: the chat is genuinely gone, so
-			// dropping it is correct and the scan is still complete. Anything
-			// else means a chat that exists is missing from the result, which
-			// callers deriving a keep-list from it must not treat as authority.
+			// ENOENT is a concurrent delete: the chat is genuinely gone.
+			// Anything else means a chat that exists is missing from the
+			// result, which callers deriving a keep-list from it must not
+			// treat as authority.
 			if !errors.Is(err, os.ErrNotExist) {
 				slog.Warn("chat: skipping unreadable file",
 					"chat_id", ce.id, "error", err)

@@ -13,57 +13,31 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// readCappedFile reads a file at path, enforcing the maxChatFileBytes
-// size cap and the TOCTOU grow-during-read guard. Returns the raw bytes.
+// readCappedFile reads a file at path, enforcing the maxChatFileBytes size
+// cap and the TOCTOU grow-during-read guard. Returns the raw bytes.
 //
-// THE NAME IS OPENED THROUGH atomicfile.OpenRegular, NOT os.Open, and that is
-// an availability fix rather than tidiness. os.Open on a FIFO blocks in open(2)
-// until a writer appears and no context deadline can rescue it (measured on
-// go1.27.0: os.Open, os.ReadFile and io.ReadAll over one all hang past 2s,
-// while the same open with O_NONBLOCK returns immediately). This directory is
-// on the /config volume, which invariant 6 invites the operator to reshape and
-// which the agent's own shell can reach, so `mkfifo <chats>/<valid-chat-id>.json`
-// was a one-command permanent wedge: Store.load blocks, every reader that
-// serialises behind it blocks, and List's whole 8-worker fan-out blocks inside
-// one singleflight slot, so every later GET /api/chats joins the same queue.
-// It survives a restart, because the FIFO is on the volume. OpenRegular refuses
-// a directory, FIFO, device node or socket with ErrNotRegular and refuses a
-// symlink at the final component with ErrSymlinkTarget, both on the open
-// itself, and hands back the descriptor the bytes are then read from — so the
-// object judged and the object read are the same one.
-//
-// The symlink refusal is a second, smaller close: a link planted at
-// <chats>/<id>.json pointing anywhere else made that file's bytes searchable
-// through Search/SearchAll under a chat id. A refused chat degrades one row
-// (List logs it and reports the scan incomplete, which fails the session sweep
-// closed) rather than aborting boot, so this stays inside invariant 6.
+// THE NAME IS OPENED THROUGH atomicfile.OpenRegular, NOT os.Open: os.Open on
+// a FIFO blocks in open(2) until a writer appears with no context deadline
+// able to rescue it (measured on go1.27.0: os.Open, os.ReadFile and
+// io.ReadAll all hang past 2s, while the same open with O_NONBLOCK returns
+// immediately). This directory is on the /config volume, reachable by the
+// agent's own shell, so `mkfifo <chats>/<valid-chat-id>.json` was a
+// one-command permanent wedge across every reader that serialises behind
+// it. OpenRegular refuses a directory, FIFO, device node or socket with
+// ErrNotRegular and a symlink at the final component with
+// ErrSymlinkTarget, both on the open itself, so the object judged and the
+// object read are the same one.
 //
 // Path is filepath.Clean'd up-front and rejected if it holds a ".."
-// component or is non-absolute. Callers already pass paths derived from
-// store.Dir() + a ValidChatID-checked chatID, but the local guard makes
-// the safety property visible to CodeQL's go/path-injection analyzer
-// (which doesn't follow ValidChatID across package boundaries).
-//
-// The traversal half is pathinside.HasDotDot, which matches a ".."
-// COMPONENT rather than the two-character substring the test it replaced
-// searched for. That is the whole behavioural delta: an ordinary chat
-// file whose name happens to hold two adjacent dots ("a..b.json",
-// "..extras.json") is now read instead of rejected as unsafe. Nothing
-// that was refused for traversal is accepted — see below.
+// component or is non-absolute — a guard that makes the safety property
+// visible to CodeQL's go/path-injection analyzer, which doesn't follow
+// ValidChatID across package boundaries.
 //
 // KNOWN VACUITY, deliberately preserved: this predicate runs on the
-// CLEANED value, and filepath.Clean has already collapsed every ".."
-// and clamped at the filesystem root, so no ".." component can survive
-// in an absolute cleaned path and the traversal test cannot fire. It is
-// kept because it is what CodeQL reads as the sanitizer, and it is kept
-// on `clean` rather than moved to the raw `path` on purpose: judging the
-// raw value WOULD be a real gate, but it would also refuse every read
-// under a KIRO_CONFIG_DIR an operator wrote with a ".." segment
-// ("/config/../data"), which ConfigFromEnv accepts verbatim today.
-// Turning this into a live gate is a config-normalisation change
-// (canonicalise ConfigDir at load, then judge the raw path here), not a
-// one-line swap — and failing every chat read on a legal operator
-// config is the failure shape invariant 6 exists to prevent.
+// CLEANED value, so no ".." component can survive and the traversal test
+// cannot fire. It is kept because CodeQL reads it as the sanitizer, and
+// judging the raw value instead would also refuse a legal
+// KIRO_CONFIG_DIR containing a ".." segment.
 func readCappedFile(path, label string) ([]byte, error) {
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) || pathinside.HasDotDot(clean) {
@@ -74,14 +48,12 @@ func readCappedFile(path, label string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	// ReadBoundedFile is the size cap AND the grow-during-read guard the two
-	// hand-rolled stat/ReadAll/re-check steps here used to be: it stats the
-	// descriptor, refuses over maxChatFileBytes with ErrFileTooLarge, and
-	// refuses again if the file grew past the limit while being read.
-	// context.Background() because no read path here carries one — Store.load,
-	// Store.Load (archive.StoreAccess) and searchOneChat are all context-free,
-	// and threading one through would change the archive interface for a bound
-	// that is already enforced.
+	// ReadBoundedFile is the size cap AND the grow-during-read guard: it
+	// stats the descriptor, refuses over maxChatFileBytes, and refuses
+	// again if the file grew past the limit while being read.
+	// context.Background() because no read path here carries one — threading
+	// one through would change the archive interface for a bound that is
+	// already enforced.
 	data, err := atomicfile.ReadBoundedFile(context.Background(), f, maxChatFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
@@ -132,12 +104,10 @@ func readChatHeader(path, label string) (*vibekit.ChatHeader, error) {
 // countJSONArrayElements counts top-level elements in a JSON array without
 // materializing them: each element is token-skipped via jsoncap, so
 // counting never allocates per-element buffers. Returns 0 for
-// nil/empty/invalid input (count-so-far when an element mid-array is
-// malformed).
+// nil/empty/invalid input.
 //
 // NOTE: internal/chat/archive/helpers.go carries an aligned copy (archive
-// cannot import chat, and exporting a generic JSON utility from archive
-// just for this would warp its surface); keep the two in sync.
+// cannot import chat); keep the two in sync.
 func countJSONArrayElements(raw json.RawMessage) int {
 	if len(raw) == 0 {
 		return 0

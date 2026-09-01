@@ -39,16 +39,14 @@ type file struct {
 
 const fileVersion = 1
 
-// persist writes vibekit's own record and then RENDERS KAS's config file from
-// it. Both or neither: a successful vibekit write followed by a failed KAS write
-// would leave the UI showing a server the agent cannot see, which is the exact
-// confusion the file adoption removes. The caller rolls its in-memory mutation
-// back on error.
+// persist writes vibekit's own record and then RENDERS KAS's config file
+// from it. Both or neither: a successful vibekit write followed by a
+// failed KAS write would leave the UI showing a server the agent cannot
+// see. The caller rolls its in-memory mutation back on error.
 //
-// MUST be called with s.mu held for writing. It reads s.servers directly and
-// takes no lock of its own — sync.RWMutex is not reentrant, and every call site
-// already holds the write lock across its mutation and this write so that memory
-// and disk cannot disagree.
+// MUST be called with s.mu held for writing: sync.RWMutex is not
+// reentrant, and every call site already holds the write lock across its
+// mutation and this write.
 func (s *Store) persist(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()

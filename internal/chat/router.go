@@ -7,14 +7,11 @@ import (
 	"github.com/cplieger/webhttp/v2"
 )
 
-// Router owns the HTTP handler surface for the chat package. It holds
-// a *Store reference and delegates all persistence to it, separating
-// the HTTP routing/serialisation concern from the data layer.
+// Router owns the HTTP handler surface for the chat package. It holds a
+// *Store reference and delegates all persistence to it.
 //
-// The Store's RegisterRoutes method delegates to Router.Register, which
-// separates the HTTP concern without changing the Store's method set — so the
-// chat-store contracts its consumers declare (agent/deps.go, command/deps.go) see
-// the same store either way.
+// The Store's RegisterRoutes method delegates to Router.Register so the
+// chat-store contracts its consumers declare see the same store either way.
 type Router struct {
 	store *Store
 }
@@ -37,9 +34,9 @@ func (rt *Router) Register(mux *http.ServeMux) {
 
 // handleSearchAll serves GET /api/chats/search?q=: which CHATS match, ranked.
 //
-// A different question from the per-chat handleSearch, which stays scoped to the
-// chat being read (user decision): this answers "which conversation was that
-// in", so it returns chats with their best line rather than every hit.
+// A different question from the per-chat handleSearch, which stays scoped
+// to the chat being read: this answers "which conversation was that in", so
+// it returns chats with their best line rather than every hit.
 func (rt *Router) handleSearchAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)

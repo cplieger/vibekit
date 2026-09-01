@@ -72,10 +72,9 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listMounts writes the synthetic root listing: one directory entry
-// per granted mount (a nested grant like /data/media renders as the
-// slash-joined name "data/media"). The root itself is never writable —
-// mounts are boot-time configuration, not filesystem entries.
+// listMounts writes the synthetic root listing: one directory entry per
+// granted mount. The root itself is never writable — mounts are boot-time
+// configuration, not filesystem entries.
 func (h *Handler) listMounts(w http.ResponseWriter) {
 	files := make([]fileEntry, 0, len(h.mounts))
 	for i := range h.mounts {
@@ -110,11 +109,9 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 		}
 		info, err := e.Info()
 		if err != nil {
-			// Races (file deleted between ReadDir and Info), EACCES
-			// on restrictive modes, and transient NFS errors all land
-			// here. Debug level so agent-driven directory churn doesn't
-			// create noise; operators can flip the level when the
-			// "some files missing from UI" report comes in.
+			// Races (file deleted between ReadDir and Info), EACCES on
+			// restrictive modes, and transient NFS errors land here. Debug
+			// so agent-driven directory churn doesn't create noise.
 			slog.Debug("filebrowse: listEntries entry stat failed",
 				"dir", logsafe.Field(resolved), "name", logsafe.Field(name), "error", logsafe.Field(err.Error()))
 			continue
@@ -130,15 +127,10 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 	return files
 }
 
-// isWritable probes write access by creating and removing a
-// zero-byte probe file THROUGH the mount's kernel-confined root
-// handle, so the same os.Root confinement that gates every other file
-// operation also applies to the probe. O_EXCL plus a random suffix
-// keeps concurrent probes collision-free. Failures are logged at
-// Debug (probe couldn't even create a file — not actionable) or Warn
-// (probe file leaked — operator may want to sweep). The probe prefix
-// is named so a future startup sweeper can scan for ".vibekit-probe-*"
-// leftovers.
+// isWritable probes write access by creating and removing a zero-byte probe
+// file through the mount's kernel-confined root handle. O_EXCL plus a random
+// suffix keeps concurrent probes collision-free. The probe prefix is named
+// so a future startup sweeper can scan for ".vibekit-probe-*" leftovers.
 func isWritable(l loc) bool {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {

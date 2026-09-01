@@ -1,36 +1,21 @@
 package agent
 
-// Internal runtime methods for chat state cleanup. These are called by
-// command_deps.go to satisfy the command package's role interfaces.
-
 import (
 	"context"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// cleanupChatState tears down every in-memory bookkeeping entry for a
-// chat. reapDurable controls whether the chat's durable per-chat state —
-// its checkpoint (file-restore/undo) history AND its kiro-cli/KAS session
-// state — is destroyed: true for a permanent delete (hard delete / promote
-// / discard), false for the ARCHIVE path. Archive is reversible: a restored
-// chat must keep its checkpoints and be able to session/load its KAS
-// session, so both are reaped only at delete/purge, never on archive.
-// Everything else (flush the in-flight turn via CloseBridge, kill agent
-// terminals, clear pending perms, close+remove the assistant buffer) runs on both
-// paths. There is no staging queue to flush and no per-turn trust to clear —
-// both went with internal/pending.
+// cleanupChatState tears down every in-memory bookkeeping entry for a chat.
+// reapDurable is true for a permanent delete (destroys checkpoint history and
+// KAS session state); false for the archive path, which must stay reversible.
 func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
 	rt.bus.ClearPendingPermsForChat(chatID)
-	// The chat is going away, so no declared status can still be true of it —
-	// including the waiting_on_user that ClearAtTurnEnd deliberately retains past
-	// a turn's end. Without this, closing a chat that was waiting on an answer
-	// left its amber status in the cache for the next connect to replay.
+	// waiting_on_user survives ClearAtTurnEnd past turn end; the chat going away
+	// must clear it too, or a reconnect replays a status for a chat that's gone.
 	rt.bus.chatStatus.Clear(chatID)
 	rt.coord.CloseBridge(chatID)
 	rt.agentTerms.KillForChat(chatID)
-	// The turn records hold the buffers, so forgetting the chat's lifecycle drops
-	// its in-flight content with it. There is no second store to clear.
 	rt.coord.turns.forget(chatID)
 	if reapDurable {
 		rt.reapChatSession(ctx, chatID)
@@ -38,17 +23,10 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, 
 	rt.lines.Clear(chatID)
 }
 
-// reapChatSession removes the chat's on-disk kiro-cli/KAS session state on
-// permanent delete. cleanupChatState runs before the chat file is removed, so
-// the session chain is still readable. No-op when the chat is already gone or
-// it never started a session; the close escalation, whose record IS gone by
-// teardown time, resolves the chain before its commit and reaps through
-// reapSessions directly.
-//
-// Reaps the whole CHAIN, not just the current session: a chat that changed
-// session (failed session/load, model-switch fallback) has state under every
-// id it ever held, and leaving the retired ones behind makes them orphans the
-// hourly sweep has to find later.
+// reapChatSession removes the chat's on-disk KAS session state on permanent
+// delete, reaping the whole session CHAIN rather than just the current id —
+// a chat that changed session (failed load, model-switch fallback) leaves
+// state under every id it held.
 func (rt *Runtime) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
 	c, ok := rt.chatStore.Get(ctx, chatID)
 	if !ok {
@@ -57,10 +35,8 @@ func (rt *Runtime) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
 	rt.reapSessions(c.SessionChain())
 }
 
-// reapSessions removes each session's on-disk kiro-cli/KAS state. The
-// chain-shaped half of reapChatSession: it reads no chat record, so it works
-// from a CAPTURED chain after the record is deleted. No-op when the reaper is
-// unwired (tests).
+// reapSessions removes each session's on-disk KAS state from a captured
+// chain, for callers whose chat record is already gone.
 func (rt *Runtime) reapSessions(chain []string) {
 	if rt.sessionReaper == nil {
 		return

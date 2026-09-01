@@ -1,44 +1,30 @@
 package translate
 
-// A PARENTLESS run's step content: the half of the workflow contract that used to
-// be thrown away.
+// A parentless run's step content.
 //
-// Two ways a run starts and they reach opposite ends of this file. An AGENT
-// calling `run_workflow` gets its run parented on the calling chat's session, so
-// every step frame arrives on that chat's bridge, goes through the ordinary
-// content handlers, and lands in the transcript's run card keyed by
-// `ACPWorkflowMeta.SubtaskID` — nothing here is involved. A USER clicking Run, or
-// the scheduler, gets a run on its own bridge under the synthetic chat id
-// `run:<workflowId>`, and that bridge's dispatcher DROPPED every `session/update`
-// (run_host.go). So exactly the runs whose only surface is the run tab were the
-// ones whose steps could not be watched: the tab had `capturedOutput` after a step
-// finished and nothing at all while it worked.
+// A run parented on a calling chat's session (an agent's `run_workflow`) has its
+// step frames arrive on that chat's bridge, go through the ordinary content
+// handlers, and land in the transcript's run card keyed by
+// `ACPWorkflowMeta.SubtaskID` — nothing here is involved. A parentless run (a
+// user Run click, or the scheduler) runs on its own bridge under the synthetic
+// chat id `run:<workflowId>`, whose dispatcher drops every `session/update`
+// (run_host.go), because a run has no chat, no message and no buffer, and
+// opening one under the synthetic id would create the phantom chat invariant 3
+// exists to prevent. This file is a second, buffer-free projection of the same
+// frames straight to the clients watching that run, rendered into the run
+// card's own step rows:
 //
-// The reason recorded for the drop was that there is no transcript to put the
-// content in, and that part is still true — a run has no chat, no message and no
-// buffer, and opening one under the synthetic id would create the phantom chat
-// invariant 3 exists to prevent. What was wrong was the conclusion. A transcript
-// is not the only destination: the content can go straight to the clients watching
-// that run, as a run-scoped event, rendered into the run card's own step rows.
+//   - text and reasoning deltas forward as they arrive, unaccumulated, because
+//     the client appends them into a live bubble exactly as it does for a chat.
+//   - a tool call IS accumulated (an update must fold into its create), in the
+//     step registry, bounded by the same `run_complete` that bounds the
+//     session map beside it.
 //
-// So this file is a SECOND, buffer-free projection of the same frames:
-//
-//   - text and reasoning deltas are forwarded as they arrive, with no
-//     accumulation, because the client appends them into a live bubble exactly as
-//     it does for a chat.
-//   - a tool call IS accumulated, because an update has to fold into its create
-//     and a delta-only stream cannot be rendered from the last frame received.
-//     The fold lives in the step registry, bounded by the same `run_complete`
-//     that bounds the session map beside it, so a finished run's calls are not
-//     held for the life of the process.
-//
-// What is deliberately NOT here, and each for a stated reason. `plan` frames: a
-// step's plan is a plan for the step, and the run card has no plan region to put
-// one in — the steps ARE the plan. `session_info_update` and `usage_update`: a
-// step's metering belongs to whoever pays for it, which for a parentless run is
-// nobody, and the chat-side gate exists precisely to keep a step's numbers out of
-// a conversation's accounting. Terminal-output adoption: the bytes reach the
-// client on the terminal surface already, keyed by the same synthetic chat id.
+// Deliberately not projected here: `plan` frames (a step's plan is for the
+// step; the run card has no plan region — the steps ARE the plan) and
+// `session_info_update`/`usage_update` (a step's metering belongs to whoever
+// pays for it, which for a parentless run is nobody; terminal output already
+// reaches the client on the terminal surface, keyed by the same synthetic id).
 
 import (
 	"context"
@@ -52,19 +38,19 @@ import (
 // HandleRunStepFrame projects one `session/update` from a run bridge to the
 // clients watching that run.
 //
-// `workflowID` comes from the synthetic chat id rather than from the frame, and
-// that is the one fact this path can rely on: the run bridge hosts exactly one
-// run, so its identity is known before anything is decoded. The frame's own
-// `_meta.kiro.workflow` supplies the NODE, and a frame carrying no workflow block
-// is dropped — it is either the run session's own bookkeeping or something this
-// projection has no row to put content in.
+// `workflowID` comes from the synthetic chat id rather than from the frame,
+// because the run bridge hosts exactly one run, so its identity is known
+// before anything is decoded. The frame's own `_meta.kiro.workflow` supplies
+// the node, and a frame carrying no workflow block is dropped — it is either
+// the run session's own bookkeeping or something this projection has no row to
+// put content in.
 func (t *Translator) HandleRunStepFrame(ctx context.Context, workflowID string, params json.RawMessage) {
 	if workflowID == "" {
 		return
 	}
-	// `params` is the notification's own params object — `{sessionId, update}` —
-	// not a frame wrapping one. The chat dispatcher decodes through a wrapper
-	// because it holds the whole RPCResponse; this is handed the params directly.
+	// `params` is the notification's own `{sessionId, update}` object, not a
+	// frame wrapping one — the chat dispatcher decodes through a wrapper because
+	// it holds the whole RPCResponse, this is handed the params directly.
 	var env ACPSessionUpdateEnvelope
 	if json.Unmarshal(params, &env) != nil || env.Update == nil {
 		return
@@ -73,9 +59,8 @@ func (t *Translator) HandleRunStepFrame(ctx context.Context, workflowID string, 
 	if json.Unmarshal(env.Update, &base) != nil {
 		return
 	}
-	// A replayed frame is stored history. The chat path builds a transcript out of
-	// those through a load projection; there is no transcript here and no load
-	// either, so replaying one would re-stream a finished step as though it were
+	// A replayed frame is stored history. There is no transcript or load here,
+	// so replaying one would re-stream a finished step as though it were
 	// working now.
 	if base.Meta.Kiro.Replay {
 		return
@@ -99,8 +84,8 @@ func (t *Translator) HandleRunStepFrame(ctx context.Context, workflowID string, 
 // forwardRunChunk sends one text or reasoning delta.
 //
 // No truncation ceiling, unlike the chat path's 32 MiB buffer cap: nothing
-// accumulates here, so a pathological step costs one event per delta rather than
-// unbounded server memory. The client's own bubble is what holds the text, and it
+// accumulates here, so a pathological step costs one event per delta rather
+// than unbounded server memory. The client's own bubble holds the text, and it
 // is discarded with the tab.
 func (t *Translator) forwardRunChunk(
 	ctx context.Context, workflowID string, raw json.RawMessage, kind vibekit.RunStepKind,
@@ -128,9 +113,9 @@ func (t *Translator) forwardRunToolCall(ctx context.Context, workflowID string, 
 	if json.Unmarshal(raw, &tc) != nil || tc.ToolCallID == "" {
 		return
 	}
-	// The same hook-status suppression the chat path applies. A hook ask is a
-	// kind:"other" call tagged `_meta.kiro.hookAsk`, and a reader who turned hook
-	// status off did not mean "except inside a run".
+	// The same hook-status suppression the chat path applies: a hook ask is a
+	// kind:"other" call tagged `_meta.kiro.hookAsk`, and turning hook status off
+	// is not meant to exempt runs.
 	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
@@ -139,10 +124,10 @@ func (t *Translator) forwardRunToolCall(ctx context.Context, workflowID string, 
 		return
 	}
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
-	// Subtask and sub-session are both empty on purpose. They are the CHAT's
-	// grouping keys — which box inside a transcript a block belongs to — and this
-	// payload carries its own address in NodePath, so filling them in would hand
-	// the client a second, redundant answer that could disagree with the first.
+	// Subtask and sub-session are empty on purpose: those are the chat's
+	// grouping keys, and this payload carries its own address in NodePath, so
+	// filling them in would give the client a second answer that could
+	// disagree with the first.
 	call := toolCallFromWire(&tc, "", "", content)
 	t.steps.recordRunTool(workflowID, path, &call)
 	t.broadcastRunTool(ctx, workflowID, path, &call)
@@ -151,10 +136,9 @@ func (t *Translator) forwardRunToolCall(ctx context.Context, workflowID string, 
 // forwardRunToolUpdate folds an update into the call it names and sends the
 // folded value.
 //
-// An update for a call this projection never saw is DROPPED rather than sent as a
-// partial, mirroring the chat path's `buf.ToolCall` miss: without the create
-// there is no title, no kind and no input, so a client would render a card that
-// says nothing about what ran.
+// An update for a call this projection never saw is dropped rather than sent
+// as a partial, mirroring the chat path's `buf.ToolCall` miss: without the
+// create there is no title, no kind and no input.
 func (t *Translator) forwardRunToolUpdate(ctx context.Context, workflowID string, raw json.RawMessage) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil || tu.ToolCallID == "" {
@@ -173,8 +157,8 @@ func (t *Translator) forwardRunToolUpdate(ctx context.Context, workflowID string
 func (t *Translator) broadcastRunTool(
 	ctx context.Context, workflowID, path string, call *vibekit.ToolCall,
 ) {
-	// A COPY into the payload, because the registry holds the value this pointer
-	// addresses and an event travels to a fan-out goroutine.
+	// A copy into the payload: the registry holds the value this pointer
+	// addresses, and an event travels to a fan-out goroutine.
 	sent := *call
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStep, "", vibekit.RunStepPayload{
 		ToolCall:   &sent,
@@ -186,19 +170,16 @@ func (t *Translator) broadcastRunTool(
 
 // applyRunToolUpdate is the run path's field fold.
 //
-// Deliberately NOT `applyToolCallUpdate`. That function needs a `*buffer.Buffer`
-// for the tool's duration and a chat id for the working-label broadcast and the
-// line tracker, and all three of those are a CHAT's concerns: a run has no turn
-// footer to summarise, no composer label to drive and no per-turn file ledger.
-// Passing a fake buffer to reach the shared code would be the wrong trade — it
-// would tie a run's correctness to a chat abstraction it does not have.
-//
-// The folds that DO carry over are the ones describing the tool itself, and they
-// follow the chat path's order and its rules: a nullish title or kind must not
-// wipe the create's value, the terminal link is adopted before the status so a
-// frame carrying both does not look up an id the call does not have yet, and a
-// failed tool's reason is taken off rawOutput because run-step-blocks.ts opens a
-// failed step's card onto the same region a chat's failed card opens onto.
+// Deliberately NOT `applyToolCallUpdate`: that function needs a `*buffer.Buffer`
+// for the tool's duration and a chat id for the working-label broadcast and
+// line tracker, all of which are a chat's concerns — a run has no turn footer,
+// no composer label and no per-turn file ledger. The folds that DO carry over
+// describe the tool itself and follow the chat path's order: a nullish title
+// or kind must not wipe the create's value, the terminal link is adopted
+// before the status so a frame carrying both does not look up an id the call
+// does not have yet, and a failed tool's reason is taken off rawOutput because
+// run-step-blocks.ts opens a failed step's card onto the same region a chat's
+// failed card opens onto.
 func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	if tu.Title != "" {
 		tc.Title = tu.Title
@@ -230,21 +211,15 @@ func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content
 	mergeToolMeta(tc, tu)
 }
 
-// runNodePath is the step's address within its run, and the ONE join for it.
+// runNodePath is the step's address within its run, and the one join for it.
 //
-// The NODE PATH rather than the node id, for the reason ACPWorkflowMeta.SubtaskID
-// records: a repeat's iterations share a node id, so an id addresses a node in the
-// plan and not one execution of it, and two passes of a loop body would stream
-// into each other's rows. Falls back to the id when KAS sends no path, because a
-// row in the wrong place still beats content that vanishes.
-//
-// `SubtaskID` calls this rather than joining the array itself, and that is what
-// keeps the two channels a step's content travels on addressing the same row. A
-// CHAT-parented run's steps are keyed by `wf:<id>:<path>` in the transcript; a
-// PARENTLESS run's are keyed by `<path>` in a `run_step` payload. Both resolve
-// through the client's `nodePathOf`, so two joins here would be two chances for
-// one of the two surfaces to grow phantom rows while the other stayed correct —
-// and the failure would be invisible on whichever surface was not being tested.
+// The node PATH rather than the node id: a repeat's iterations share a node id
+// (see ACPWorkflowMeta.SubtaskID), so two passes of a loop body would stream
+// into each other's rows without it. Falls back to the id when KAS sends no
+// path, because a row in the wrong place still beats content that vanishes.
+// `SubtaskID` calls this rather than joining the array itself, which is what
+// keeps a chat-parented run's transcript keying (`wf:<id>:<path>`) and a
+// parentless run's `run_step` keying resolving through one join.
 func runNodePath(w *ACPWorkflowMeta) string {
 	if w == nil {
 		return ""

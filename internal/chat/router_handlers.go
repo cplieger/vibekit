@@ -90,19 +90,15 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		end = indexOfMessage(msgs, beforeID)
 	}
 	start := max(end-limit, 0)
-	// NOT slices.Clone: measured on go1.27.0, cloning a sub-slice of a NIL
-	// messages array yields nil and marshals as `null`, where make+copy yields a
-	// non-nil empty slice and marshals as `[]`. A chat with no messages is
-	// ordinary, and the wire decoder rejects `null` for an array (see List's doc
-	// for the same rule). The idiom is right in general and wrong wherever the
-	// empty result has to keep its shape on the wire.
+	// NOT slices.Clone: cloning a sub-slice of a NIL messages array yields
+	// nil and marshals as `null`, where make+copy yields a non-nil empty
+	// slice and marshals as `[]`. The wire decoder rejects `null` for an
+	// array.
 	window := make([]vibekit.Message, end-start)
 	copy(window, msgs[start:end])
 
-	// `draft` rides here as its own field rather than on the header, which is
-	// what keeps the composer autosave off the SSE fan-out and off the list
-	// response: this is the one request a client makes when it opens a chat it
-	// has no local draft for, which is exactly when it needs the server's copy.
+	// `draft` rides here as its own field, keeping the composer autosave
+	// off the SSE fan-out and off the list response.
 	webhttp.WriteJSON(w, map[string]any{
 		"chat":     c.Header(),
 		"messages": window,
@@ -114,16 +110,9 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // handleTurns serves GET /api/chats/{id}/turns: the chat's session-wide turn
 // index (number, outcome, start time, first line) with no message bodies.
 //
-// The timeline rail spans the whole session while the client's transcript store
-// holds a paginated window, so a rail assembled from resident turns would grow
-// markers as the reader scrolled up — exactly the progress read-out it claims
-// not to be. Without this route the client's only option is walking `?before_id=`
-// to the beginning of history and pulling every message body over the wire to
-// count turns.
-//
-// It is cheap on purpose: `Get` already materialises the whole chat (the
-// paginated read does too, then discards all but a window), so the added cost
-// here is serialising a few fields per turn rather than any extra IO.
+// The timeline rail spans the whole session while the client's transcript
+// store holds a paginated window, so a rail assembled from resident turns
+// would grow markers as the reader scrolled up.
 func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -138,20 +127,14 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vib
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	// thinking=false: the store is the persisted record and knows nothing about
-	// a bridge being mid-turn. The client owns the live turn's outcome, which is
-	// the one turn it always has resident anyway.
+	// thinking=false: the store is the persisted record and knows nothing
+	// about a bridge being mid-turn.
 	webhttp.WriteJSON(w, map[string]any{"turns": projectTurnSummaries(c.Messages, false)})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
-// chat's messages, session-wide.
-//
-// Server-side because the CLIENT CANNOT DO IT HONESTLY. Its store is a paginated
-// window, so a store-only search would present itself as searching the
-// conversation while covering only the resident tail. It is also what makes
-// progressive collapse acceptable: a collapse that hides content from search is
-// a data-loss bug. See search.go's header for why there is no index.
+// chat's messages, session-wide. Server-side because the client's store is a
+// paginated window; see search.go's header for why there is no index.
 func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -166,11 +149,8 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vi
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	// `case=1` is the client's match-case toggle. Both halves of the in-chat
-	// search have to agree on it (the client highlights in the DOM, this
-	// enumerates session-wide), so it rides the request rather than being a
-	// default either side could get wrong. Absent or anything else = insensitive,
-	// which is the behaviour every existing client gets.
+	// `case=1` is the client's match-case toggle; both halves of the
+	// in-chat search must agree on it, so it rides the request.
 	caseSensitive := r.URL.Query().Get("case") == "1"
 	webhttp.WriteJSON(w, map[string]any{
 		"hits": Search(c.Messages, r.URL.Query().Get("q"), caseSensitive),
@@ -190,31 +170,17 @@ func parseLimitParam(r *http.Request) int {
 	return limit
 }
 
-// indexOfMessage returns the position of the message with the given id, which is
-// the exclusive upper bound of the page before it. It returns len(msgs) for an id
-// the chat does not hold, so an unknown cursor pages the newest window rather
-// than an empty one.
+// indexOfMessage returns the position of the message with the given id, the
+// exclusive upper bound of the page before it. Returns len(msgs) for an
+// unknown id, so an unknown cursor pages the newest window rather than an
+// empty one.
 //
 // This replaced a `?before=<ts>` cursor resolved with sort.Search over
-// Message.Ts, and the replacement is a correctness fix rather than a style
-// preference. Two things were wrong with the timestamp:
-//
-//   - Binary search needs the field to be non-decreasing across the slice, and
-//     nothing makes that true. Message order is ARRAY POSITION (nothing sorts a
-//     transcript for rendering), and translate.newEventMessage stamps Ts when it
-//     CONSTRUCTS a message, outside the per-chat lock AppendMessage takes — so two
-//     writers can stamp 101 and 102 and then append 102 first. On a slice that is
-//     not ordered, sort.Search returns an arbitrary index and the page is silently
-//     dropped or repeated. The client catches a repeat by id; nothing catches a drop.
-//   - Even on an ordered slice, Search returns the FIRST index at the boundary
-//     value, so a group of messages sharing a millisecond was excluded wholesale.
-//     Ties are reachable from the two writers above and one is created on purpose:
-//     projection.applySummary gives a compaction event its predecessor's Ts so the
-//     event sorts where it belongs.
-//
-// An id is exact, so neither failure exists, and it needs no ordering invariant at
-// all. Cost is a backwards scan of an already-materialised slice; the store loads
-// the whole chat for this request either way.
+// Message.Ts. Message order is ARRAY POSITION, not sorted, and
+// translate.newEventMessage stamps Ts outside the per-chat lock
+// AppendMessage takes — so two writers can stamp 101 and 102 and append 102
+// first, making sort.Search return an arbitrary index. An id is exact and
+// needs no ordering invariant.
 func indexOfMessage(msgs []vibekit.Message, id string) int {
 	for i := range slices.Backward(msgs) {
 		if msgs[i].ID == id {

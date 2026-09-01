@@ -2,34 +2,10 @@ package agent
 
 // Previous-session picker: GET /api/sessions serves the workspace's stored
 // KAS sessions so the UI can offer "load a previous session" the way
-// kiro-cli's own picker does.
+// kiro-cli's own picker does — the ACP `session/list` verb, not the
+// `--resume-picker` shell-out, since vibekit already has the utility bridge.
 //
-// This is the ADOPTION of kiro-cli's `/chat` capability, with a UI instead of
-// an ANSI list. Read out of the v3 TUI source (tui.js, 2.16.0) rather than
-// guessed:
-//
-//	{name:"/chat", description:"Load a previous session, save, or start a new
-//	 one", meta:{inputType:"selection", local:true,
-//	 subcommands:["new","save","load"]}}
-//
-// `local:true` marks it TUI-side, and its `save`/`load` subcommands take a
-// FILE PATH — they are not the session picker. The picker is
-// `--resume-picker`, whose list comes from `Vd()`:
-//
-//	let a = ["chat","--list-sessions","--format","json"];   // spawns kiro-cli
-//
-// and whose selection resolves to a sessionId that is then resumed. So the
-// native shape is: list the sessions for THIS DIRECTORY, pick one, resume it.
-//
-// vibekit uses the ACP verb rather than that shell-out, deliberately. The TUI
-// spawns a subprocess because at --resume-picker time it has no ACP session
-// yet; vibekit has the utility bridge. Measured 2026-08-02, both views agree
-// on the same 2 rows for one workspace, and the ACP row is strictly richer:
-// the shell-out carries {sessionId, source, title, updatedAt} while
-// session/list adds status, createdAt, agentMode, description — and the
-// `workflow` marker this file filters on.
-//
-// One vocabulary trap: `source` means different things in the two views. The
+// Vocabulary trap: `source` means different things in the two views. The
 // shell-out's is a FORMAT tag ("v3"); ACP's `_meta.kiro.source` is a LOCALITY
 // tag ("local"). Do not treat them as the same field.
 
@@ -57,9 +33,7 @@ type kasSessionList struct {
 	Sessions []kasSessionRow `json:"sessions"`
 }
 
-// kasSessionRow is one stored session as session/list reports it. Every field
-// here was present on all 399 rows of the measurement except the _meta
-// entries noted at their declarations.
+// kasSessionRow is one stored session as session/list reports it.
 type kasSessionRow struct {
 	SessionID string `json:"sessionId"`
 	CWD       string `json:"cwd"`
@@ -70,17 +44,10 @@ type kasSessionRow struct {
 			CreatedAt string `json:"createdAt"`
 			AgentMode string `json:"agentMode"`
 			Status    string `json:"status"`
-			// Description was present on 88 of 399 rows: the agent's
-			// self-declared "what I'm working on" for that session.
+			// Description is the agent's self-declared "what I'm working on".
 			Description string `json:"description"`
-			// Workflow is present ONLY on a workflow-step session (93 of 399,
-			// co-occurring exactly with modelId and shellType). It is the
+			// Workflow is present ONLY on a workflow-step session — the
 			// discriminator that keeps run machinery out of a chat picker.
-			//
-			// This corrects the design doc, which declined session/list partly
-			// because `createdReason` is null on every row and concluded no
-			// discriminator existed. createdReason IS still null on all 399 —
-			// but this field does the job.
 			Workflow json.RawMessage `json:"workflow"`
 		} `json:"kiro"`
 	} `json:"_meta"`
@@ -157,36 +124,13 @@ func (rt *Runtime) claimedSessions(ctx context.Context) map[string]vibekit.ChatI
 	return claimed
 }
 
-// toResumable filters the raw rows down to what belongs in a chat picker and
-// marks the ones a vibekit chat already owns.
-//
-// The population is TAB CONVERSATIONS: a row survives only when a vibekit chat
-// claims its session. That is the rule, and every other filter here is a
-// consequence of it rather than a separate policy:
-//
-//   - A workflow STEP session is not a chat, and the explicit check stays because
-//     it is the cheaper test and it documents the majority case (93 of 399 rows in
-//     the measurement).
-//   - vibekit's OWN utility session is not a chat either. It reached users as the
-//     bug this rule exists to end: the utility bridge's `session/new` is an
-//     ordinary session in the workspace cwd, so it sat at the TOP of the History
-//     page (newest updatedAt) reading "New Session", permanently, because a live
-//     bridge's session is exempt from the orphan sweep too. Clicking it adopted
-//     vibekit's own machinery as a chat, whose replay has no user turn, so the
-//     page rendered blank and an empty chat was left behind.
-//   - A SUBAGENT cannot reach this list at all: KAS models one as a sub-EXECUTION
-//     inside its parent session and folds its messages into the parent's stream,
-//     so it has no session directory and no index entry.
-//
-// The chat store is therefore the authority on WHAT is offered, and `session/list`
-// on whether KAS can still resume it — a chat whose session KAS no longer holds is
-// not restorable, and offering it would be a row that fails on click.
-//
-// The cost, stated: a session vibekit does not own is no longer adoptable. That
-// covers a session started by `kiro-cli` inside the container, and a session whose
-// chat was deleted while KAS still held it. Neither is reachable from this UI now,
-// and the trade is deliberate — an unclaimed row was indistinguishable from
-// vibekit's own machinery, and every instance a user actually met was machinery.
+// toResumable filters the raw rows down to what belongs in a chat picker: a
+// row survives only when a vibekit chat claims its session. This drops
+// workflow-step sessions, vibekit's own utility session (which otherwise sits
+// at the top of History as "New Session" forever), and subagent sessions
+// (KAS folds those into their parent's stream, so they have no row at all).
+// The chat store decides WHAT is offered; session/list decides whether KAS
+// can still resume it, so an unresumable chat is never offered.
 func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibekit.ResumableSession {
 	out := make([]vibekit.ResumableSession, 0, len(rows))
 	for i := range rows {
@@ -222,24 +166,10 @@ func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibe
 }
 
 // collapseClaimedByChat keeps ONE row per owning chat, the most recently
-// updated.
-//
-// A row is a door to a chat, and a chat has one identity, so two rows opening the
-// same chat is a duplicate by construction — which is exactly what the History
-// page showed: the same conversation twice, at two different times. The cause is
-// that `claimed` is keyed on the whole session CHAIN (it has to be, or a chat's
-// retired sessions read as unowned strangers), and every chat that ever changed
-// session has more than one member: a failed session/load, a model-switch
-// fallback, or empty-turn recovery. A `/goal` launch used to hit the last of those
-// on every send, which is how a one-message-old chat managed to appear twice.
-//
-// Every row reaching here is claimed (toResumable drops the rest), so there is no
-// unclaimed case to exempt: folding on the empty chat id can no longer happen.
-//
-// Newest wins because UpdatedAt is what the row displays and what the sort
-// orders on; it is also the chat's live session in every case that produces a
-// chain. The full rule is the largest (UpdatedAt, CreatedAt, SessionID) — see
-// livelierThan for why the two tie-breaks are there.
+// updated. A chat with more than one chain member (a failed session/load, a
+// model-switch fallback, empty-turn recovery) otherwise produces one row per
+// member. Newest wins because UpdatedAt is what the row displays and sorts
+// on; tie-break rule: livelierThan.
 func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableSession {
 	newestFor := map[string]int{}
 	drop := map[int]bool{}
@@ -272,29 +202,12 @@ func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableS
 	return kept
 }
 
-// livelierThan reports whether a should keep its chat's single row and b should
-// be dropped, for two rows that open the SAME chat. The key is (UpdatedAt,
-// CreatedAt, SessionID), all descending, so equal rows keep the one seen first.
-//
-// The tie-breaks exist because an UpdatedAt tie is reachable and its outcome was
-// otherwise arrival order. parseKASTime sinks an absent or unparseable timestamp
-// to 0, so two members of one chain tie whenever KAS omits or reshapes the field
-// on both, and two sessions touched inside the same millisecond tie outright.
-//
-// CreatedAt decides that tie towards the later-created session, on the same
-// reasoning the newest-wins rule rests on: of two sessions last touched at the
-// same instant, the one created later is the chat's live member — a chain is
-// produced by RETIRING a session for a fresh one. It is present on every
-// measured row (all 399), and 0 on both rows only when KAS withheld it, which is
-// what SessionID covers.
-//
-// SessionID carries no ordering meaning; it is there to make the order TOTAL, so
-// the surviving row is a function of the row SET and never of the sequence KAS
-// listed it in. That is the point of the whole rule rather than a formality:
-// while the outcome depended on arrival order, a picker row's title, status and
-// timestamp could change between two polls that returned the same two tied
-// sessions in a different order — the reshuffle toResumable's stable sort
-// defends against, one layer down.
+// livelierThan reports whether a should keep its chat's single row over b,
+// for two rows opening the SAME chat. Key: (UpdatedAt, CreatedAt, SessionID),
+// all descending. An UpdatedAt tie is reachable (parseKASTime sinks a bad
+// timestamp to 0), so CreatedAt breaks it toward the later-created session —
+// a chain is produced by retiring a session for a fresh one. SessionID makes
+// the order total so ties do not reshuffle between polls.
 func livelierThan(a, b *vibekit.ResumableSession) bool {
 	return cmp.Or(
 		cmp.Compare(a.UpdatedAt, b.UpdatedAt),
@@ -319,18 +232,10 @@ func parseKASTime(s string) int64 {
 
 // --- Workflow runs -------------------------------------------------------
 //
-// Previous workflow RUNS belong in the same history surface as previous chats,
-// but they do NOT come from session/list. That was the trap: session/list's
-// workflow-tagged rows are STEP sessions, all 93 of them `type:"step"` across
-// only 6 distinct workflowIds — one run's loop alone produced 76 rows
-// (`p24-step-parked · tick #17`, `#16`, …). Listing those would put 76 entries
-// in the history for a single run, and their `status` is `idle` on every one,
-// so a run's real outcome is not even in that data.
-//
-// _kiro/workflow/list is the run-level inventory: the same workspace that
-// yields 93 step rows yields 4 RUNS, each with a run-level status and the
-// session that launched it. Both it and _kiro/workflow/inspect work without
-// the workflows capability (probed 2026-08-02).
+// Runs do NOT come from session/list: its workflow-tagged rows are STEP
+// sessions (many per run, one per iteration), and their status is always
+// idle regardless of the run's real outcome. _kiro/workflow/list is the
+// run-level inventory instead, and works without the workflows capability.
 
 // kasWorkflowRuns is the _kiro/workflow/list result.
 type kasWorkflowRuns struct {
@@ -385,17 +290,8 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 		// Attributed through the launching session's chain, so a run launched by
 		// a chat that has since changed session still resolves.
 		parentChatID := string(claimed[r.ParentSessionID])
-		// PARENTLESS runs only. A run a chat launched is that conversation's
-		// work: it already renders in the chat's transcript, its outcome is the
-		// agent's to handle, and recovering it is the agent's job — so a second
-		// row here duplicates a thing the user reaches by opening the chat, and
-		// the run rows a user can actually act on get buried under it. Six of
-		// the six runs in the live workspace were agent-launched `/goal` runs
-		// off three chats.
-		//
-		// A manual or scheduled run has no other home: nothing pushes on a
-		// finished run (vibekit.PushKind has no member for it), so this page is the
-		// only place its outcome is ever read.
+		// PARENTLESS runs only: a chat-launched run already renders in that
+		// chat's transcript, and a manual/scheduled run has no other home.
 		if parentChatID != "" {
 			continue
 		}
@@ -406,16 +302,13 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 			CreatedAt:  parseKASTime(r.CreatedAt),
 			UpdatedAt:  parseKASTime(r.UpdatedAt),
 			StartedAt:  parseKASTime(r.StartedAt),
-			// Always empty now, and kept on the wire rather than removed: the
-			// client reads it to decide the outcome glyph and the Retry
-			// affordance, both of which are "parentless" questions, and a field
-			// that says so explicitly beats a client that infers it from the
-			// row's presence.
+			// Always empty here (parentless-only), kept explicit on the wire
+			// rather than inferred from row presence: the client reads it for
+			// the outcome glyph and the Retry affordance.
 			ParentChatID: parentChatID,
-			// Joined from the host, because KAS has no field for it: both run
-			// bounds stop a run through the same cancel a person does, so the
-			// reason has to come from the side that decided. "" for everything
-			// else, including a user cancel. See run_bounds.go.
+			// KAS has no end-reason field; both run bounds stop a run via the
+			// same cancel a person does, so the reason must come from the
+			// host that decided. See run_bounds.go.
 			EndReason: rs.endReason(r.WorkflowID),
 		})
 	}

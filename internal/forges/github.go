@@ -1,8 +1,5 @@
-// GitHub ForgeOps implementation backed by the gh CLI.
-//
-// All operations shell out to gh with --json or --output json
-// flags where available. JSON schemas are gh-specific; we map them
-// into the unified types from provider.go.
+// GitHub ForgeOps implementation backed by the gh CLI. JSON schemas
+// are gh-specific; we map them into the unified types from provider.go.
 
 package forges
 
@@ -30,27 +27,20 @@ func newGitHub(host string) *githubProvider {
 	return &githubProvider{host: host}
 }
 
-// withHost is a pass-through that's kept as a single seam for any
-// future per-host flag plumbing. The actual host targeting happens
-// via envHost (GH_HOST environment variable) — gh's --hostname flag
-// is per-subcommand and not supported by `gh repo list`,
-// `gh issue list`, and others, so we drove the consistency at the
-// env-var layer instead.
+// withHost is a pass-through seam; host targeting happens via envHost
+// (GH_HOST) because gh's --hostname flag is not supported by every
+// subcommand (`gh repo list`, `gh issue list`, and others).
 func (p *githubProvider) withHost(args ...string) []string {
 	return args
 }
 
-// envHost returns the env-var pair that targets gh at p.host. Apply
-// to every gh subprocess via runJSONEnv / runCmdEnv.
+// envHost returns the env-var pair that targets gh at p.host.
 func (p *githubProvider) envHost() []string {
 	return []string{"GH_HOST=" + p.host}
 }
 
-// Whoami queries gh's auth status to confirm login + return the user.
-//
-// gh's `auth status --hostname X` output isn't great for parsing, but
-// `gh api user --hostname X` returns the same /user endpoint as the
-// API would. We use the latter.
+// Whoami uses `gh api user` rather than `auth status`, whose output
+// is not built for parsing.
 func (p *githubProvider) Whoami(ctx context.Context) (*User, error) {
 	var raw struct {
 		Login   string `json:"login"`
@@ -72,7 +62,6 @@ func (p *githubProvider) Whoami(ctx context.Context) (*User, error) {
 
 // ListRepos lists user-owned and collaborated-on repos.
 func (p *githubProvider) ListRepos(ctx context.Context) ([]Repo, error) {
-	// gh repo list uses repository "graph" output with structured fields.
 	fields := "name,owner,nameWithOwner,defaultBranchRef,description,isPrivate,isArchived,isFork,sshUrl,url,updatedAt"
 	args := p.withHost(fieldRepo, "list", "--json", fields, "--limit", "300")
 	var raw []struct {
@@ -114,25 +103,20 @@ func (p *githubProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 	return repos, nil
 }
 
-// ghPRFields is the --json field set for a PR read. Shared by ListPRs
-// and viewPR so the two cannot drift; viewPR's result is what CreatePR
-// hands back, and a field missing there is a field the caller loses.
-//
-// statusCheckRollup, mergeStateStatus, headRefOid and autoMergeRequest
-// all ride this ONE call: gh resolves them in a single GraphQL query,
-// so the row's check chip, its merge-block cause and its merge pin cost
-// no extra round trip. mergeStateStatus is a slow field on large
-// repositories — if list latency ever regresses, it is the one to drop
-// (mergeable plus the rollup still carry a coarser cause).
+// ghPRFields is the --json field set for a PR read, shared by ListPRs
+// and viewPR (viewPR's result is what CreatePR hands back, so a field
+// missing there is a field the caller loses). statusCheckRollup,
+// mergeStateStatus, headRefOid and autoMergeRequest ride this one call
+// because gh resolves them in a single GraphQL query; mergeStateStatus
+// is the slow field on large repositories if list latency regresses.
 const ghPRFields = "number,title,body,state,author,headRefName,baseRefName,url," +
 	"createdAt,updatedAt,mergeable,isDraft,headRefOid,mergeStateStatus," +
 	"statusCheckRollup,autoMergeRequest"
 
 // ghRollupEntry is one element of gh's statusCheckRollup array. GitHub
-// returns TWO shapes in that one array and __typename is the
-// discriminator: a CheckRun carries status + conclusion, a
-// StatusContext carries state. Both key sets are decoded because both
-// arrive (verified against gh 2.94.0 on a live repository).
+// returns two shapes in that one array (a CheckRun carries
+// status+conclusion, a StatusContext carries state); both key sets are
+// decoded because both arrive (verified against gh 2.94.0 live).
 type ghRollupEntry struct {
 	TypeName   string `json:"__typename"`
 	Name       string `json:"name"`
@@ -140,19 +124,17 @@ type ghRollupEntry struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	State      string `json:"state"`
-	// DetailsURL is the CheckRun's link to the thing that produced it. For a
-	// GitHub Actions check that is the workflow RUN, which makes this the
-	// commit-scoped run linkage RerunFailedChecks resolves against — see
-	// ghActionsRunID. A StatusContext carries targetUrl instead and is
-	// deliberately not decoded: gh run cannot re-run a third-party status.
+	// DetailsURL is a CheckRun's link to its producing workflow run, the
+	// commit-scoped linkage RerunFailedChecks resolves against (see
+	// ghActionsRunID). A StatusContext's targetUrl is not decoded: gh
+	// run cannot re-run a third-party status.
 	DetailsURL string `json:"detailsUrl"`
 }
 
 // ghPRRaw is the decode target for a gh PR read.
 type ghPRRaw struct {
 	// AutoMergeRequest is null unless auto-merge is already armed; only
-	// its presence is read, so the shape stays empty. Pointer first for
-	// govet fieldalignment.
+	// its presence is read.
 	AutoMergeRequest *struct{} `json:"autoMergeRequest"`
 	Title            string    `json:"title"`
 	Body             string    `json:"body"`
@@ -198,10 +180,9 @@ func (r *ghPRRaw) toPR() PR {
 }
 
 // summarizeGHRollup folds a rollup array into the canonical check
-// verdict plus its counts. A failure outranks a pending check, which
-// outranks a pass; an empty rollup is no verdict at all rather than a
-// passing one, because "nothing ran" and "everything passed" are
-// different facts and only one of them justifies a green chip.
+// verdict plus its counts. Failure outranks pending, which outranks
+// pass; an empty rollup is no verdict rather than a passing one,
+// because "nothing ran" and "everything passed" are different facts.
 func summarizeGHRollup(entries []ghRollupEntry) (status string, total, failing int) {
 	pending := 0
 	for i := range entries {
@@ -245,11 +226,11 @@ func (p *githubProvider) ListPRs(ctx context.Context, repo string, state ListSta
 	return prs, nil
 }
 
-// CreatePR opens a new pull request via gh pr create.
+// CreatePR opens a new pull request via gh pr create. The body goes
+// via stdin (--body-file -) rather than --body, since an AI-generated
+// description can exceed ARG_MAX (~128 KB on Linux); stdin has no
+// such limit.
 func (p *githubProvider) CreatePR(ctx context.Context, repo string, params *CreatePRParams) (*PR, error) {
-	// Pass the body via stdin (--body-file -) rather than --body STRING.
-	// AI-generated PR descriptions can exceed ARG_MAX (~128 KB on Linux);
-	// stdin has no such limit. Title is short enough to stay as a flag arg.
 	args := p.withHost("pr", "create",
 		"--repo", repo,
 		"--title", params.Title,
@@ -267,7 +248,6 @@ func (p *githubProvider) CreatePR(ctx context.Context, repo string, params *Crea
 	if err != nil {
 		return nil, err
 	}
-	// gh prints the PR URL on success — fetch the full PR to return.
 	createdURL := string(out)
 	prNumber := extractPRNumberFromURL(createdURL)
 	if prNumber == 0 {
@@ -323,31 +303,16 @@ func (p *githubProvider) ReopenPR(ctx context.Context, repo string, number int) 
 	return err
 }
 
-// RerunFailedChecks re-runs the failed jobs of a workflow run belonging to
-// the PR's CURRENT head commit.
-//
-// `gh run rerun` is keyed on a RUN id, not a PR number, so a run has to be
-// resolved first — and WHICH run is the whole correctness question. Resolving
-// PR → head BRANCH → newest failed run on that branch was wrong twice over: a
-// branch is mutable, and "newest failed anywhere in the last 20 runs" ignores
-// which commit failed. The concrete case is a PR whose current red status comes
-// from a third-party provider while the same branch carries an older failed
-// Actions run: the row offers Re-run, the branch search finds the historical
-// failure, and CI re-runs an older commit. A re-run can trigger a deployment,
-// so that is an observable wrong action rather than a wasted minute.
-//
-// The fix is to take the run id from the PR's own statusCheckRollup, which is
-// BY DEFINITION the check set of the head commit. That is a commit linkage
-// rather than a branch one, so it needs no `run list` (one fewer subprocess)
-// and no comparison against a run's self-reported headSha — the comparison the
-// merge-result and merge-queue workflow triggers would break, since those run
-// against a synthesized commit rather than the PR head.
-//
-// headSHA is the caller's row identity and is checked against the PR's live
-// head: a row read before a force-push must not act on what replaced it.
-//
-// gh run covers GitHub Actions only. A PR failing a third-party status
-// provider has no run to rerun, and saying so beats a silent no-op.
+// RerunFailedChecks re-runs the failed jobs of the workflow run
+// belonging to the PR's CURRENT head commit. `gh run rerun` is keyed
+// on a run id, not a PR number, so the run must be resolved from the
+// PR's own statusCheckRollup (by definition the check set of the head
+// commit) rather than from a branch search, which can re-run a stale
+// commit's run when the branch also carries an older failure — an
+// observable wrong action since a re-run can trigger a deployment.
+// headSHA is checked against the PR's live head so a row read before
+// a force-push cannot act on what replaced it. gh run covers GitHub
+// Actions only; a PR failing a third-party status has no run to rerun.
 func (p *githubProvider) RerunFailedChecks(ctx context.Context, repo string, number int, headSHA string) error {
 	head, rollup, err := p.prHeadChecks(ctx, repo, number)
 	if err != nil {
@@ -365,10 +330,10 @@ func (p *githubProvider) RerunFailedChecks(ctx context.Context, repo string, num
 	return err
 }
 
-// prHeadChecks reads a PR's head commit and the rollup of that commit's
-// checks. Two fields off the shared read rather than the whole ghPRFields set:
-// this path needs no body, no author and no mergeStateStatus, which is the slow
-// field on a large repository.
+// prHeadChecks reads a PR's head commit and the rollup of that
+// commit's checks, using two fields rather than the whole ghPRFields
+// set (no body, no author, no mergeStateStatus — the slow field on a
+// large repository).
 func (p *githubProvider) prHeadChecks(ctx context.Context, repo string, number int) (head string, rollup []ghRollupEntry, err error) {
 	args := p.withHost("pr", "view", strconv.Itoa(number), "--repo", repo,
 		"--json", "headRefOid,statusCheckRollup")
@@ -385,19 +350,11 @@ func (p *githubProvider) prHeadChecks(ctx context.Context, repo string, number i
 	return r.HeadRefOid, r.StatusCheckRollup, nil
 }
 
-// failedActionsRun picks the Actions run to re-run out of a head commit's
-// rollup: the highest run id among the FAILING check runs whose details URL
-// names a run in this same repository.
-//
-// Highest id rather than first-listed because run ids are assigned in creation
-// order, so the maximum is the newest attempt — the rollup's own order is not
-// documented, and a re-run needs to be deterministic rather than merely
-// plausible. Requiring the URL's repository to match is what keeps a check
-// reported by another repository's workflow from being re-run here.
-//
-// A non-Actions failure (a third-party status, or a check run whose details
-// point somewhere else) contributes nothing, which is what makes the caller's
-// "no failed workflow run" answer honest rather than a fallback.
+// failedActionsRun picks the Actions run to re-run out of a head
+// commit's rollup: the highest run id (creation order, so the newest
+// attempt) among the failing check runs whose details URL names a run
+// in this same repository — which excludes a check reported by
+// another repository's workflow.
 func failedActionsRun(rollup []ghRollupEntry, repo string) (runID int64, found bool) {
 	for i := range rollup {
 		e := &rollup[i]
@@ -412,13 +369,10 @@ func failedActionsRun(rollup []ghRollupEntry, repo string) (runID int64, found b
 	return runID, found
 }
 
-// ghActionsRunID extracts the workflow-run id from a check run's details URL,
-// requiring the URL to name an Actions run in repo.
-//
-// The shape is https://<host>/<owner>/<name>/actions/runs/<id>[/job/<id>]
-// (verified against gh 2.94.0 on a live repository). Anything else — a
-// third-party provider's dashboard, an Actions URL for a different repository,
-// a non-numeric id — is not a run this call may re-run.
+// ghActionsRunID extracts the workflow-run id from a check run's
+// details URL, requiring the shape
+// https://<host>/<owner>/<name>/actions/runs/<id>[/job/<id>] naming an
+// Actions run in repo (verified against gh 2.94.0 live).
 func ghActionsRunID(detailsURL, repo string) (runID int64, ok bool) {
 	u, err := url.Parse(detailsURL)
 	if err != nil {
@@ -441,12 +395,10 @@ func ghActionsRunID(detailsURL, repo string) (runID int64, ok bool) {
 }
 
 // classifyGHCheck folds one rollup entry into the canonical check
-// vocabulary, or "" for an entry that carries no verdict (a skipped or
-// neutral check, or a shape with no recognised state word).
-//
-// A CheckRun reports status + conclusion; a StatusContext reports state.
-// Both are read without branching on __typename, because the two field
-// sets are disjoint in practice and an unset field classifies as "".
+// vocabulary, or "" for an entry with no verdict. A CheckRun reports
+// status+conclusion, a StatusContext reports state; both are read
+// without branching on __typename since the two field sets are
+// disjoint in practice.
 func classifyGHCheck(status, conclusion, state string) string {
 	switch strings.ToUpper(status) {
 	case "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING":
@@ -454,7 +406,6 @@ func classifyGHCheck(status, conclusion, state string) string {
 	case "COMPLETED":
 		return ghConclusionVerdict(conclusion)
 	}
-	// StatusContext: a commit status has one state word and no status.
 	switch strings.ToUpper(state) {
 	case "SUCCESS":
 		return checkPassing
@@ -490,12 +441,9 @@ func isGHFailedConclusion(conclusion string) bool {
 }
 
 // mapGHMergeState names the merge-block cause from GitHub's
-// mergeStateStatus, falling back to the check verdict when the state
-// says a check is at fault without saying which way.
-//
-// UNSTABLE and HAS_HOOKS are NOT blocks: GitHub permits those merges, so
-// reporting them as blocked would disable a button the forge would have
-// honoured. CLEAN is the mergeable case.
+// mergeStateStatus. UNSTABLE and HAS_HOOKS are not blocks — GitHub
+// permits those merges, so reporting them blocked would disable a
+// button the forge would have honoured.
 func mapGHMergeState(mergeState, checkStatus string) string {
 	switch strings.ToUpper(mergeState) {
 	case "CLEAN", "UNSTABLE", "HAS_HOOKS":
@@ -507,9 +455,6 @@ func mapGHMergeState(mergeState, checkStatus string) string {
 	case "BEHIND":
 		return blockBehind
 	case "BLOCKED":
-		// A required check that is failing or still running is a more
-		// specific answer than "branch protection", and the rollup we
-		// already fetched knows which it is.
 		switch checkStatus {
 		case checkFailing:
 			return blockChecksFailing
@@ -570,10 +515,9 @@ func (p *githubProvider) ListIssues(ctx context.Context, repo string, state List
 	return issues, nil
 }
 
-// CreateIssue files a new issue.
+// CreateIssue files a new issue. The body goes via stdin for the
+// same ARG_MAX reason as CreatePR.
 func (p *githubProvider) CreateIssue(ctx context.Context, repo string, params CreateIssueParams) (*Issue, error) {
-	// Body via stdin (--body-file -) for the same reason as CreatePR:
-	// avoids ARG_MAX on long bodies.
 	args := p.withHost("issue", "create",
 		"--repo", repo,
 		"--title", params.Title,
@@ -639,8 +583,8 @@ func (p *githubProvider) CloseIssue(ctx context.Context, repo string, number int
 	return err
 }
 
-// CommitStatus returns CI checks for a ref. Uses gh api directly
-// since `gh run list` only covers Actions, not other status providers.
+// CommitStatus returns CI checks for a ref via gh api, since
+// `gh run list` only covers Actions, not other status providers.
 func (p *githubProvider) CommitStatus(ctx context.Context, repo, ref string) ([]Check, error) {
 	owner, name, err := ParseRepo(repo)
 	if err != nil {
@@ -709,9 +653,6 @@ func (p *githubProvider) CreateRelease(ctx context.Context, repo string, params 
 	if params.Name != "" {
 		args = append(args, "--title", params.Name)
 	}
-	// Notes via stdin (--notes-file -) for the same ARG_MAX reasoning
-	// as CreatePR. Empty body still goes through stdin (gh treats it
-	// as no notes); harmless and keeps the call site simple.
 	if params.Body != "" {
 		args = append(args, "--notes-file", "-")
 	}

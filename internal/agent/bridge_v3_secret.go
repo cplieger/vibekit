@@ -1,22 +1,16 @@
 // v3 (KAS) credential storage: the `_kiro/secret/{get,store,delete}` A→C
 // requests, answered from the process-global internal/secretstore.
 //
-// KAS owns the entire MCP OAuth flow (discovery, DCR, PKCE, token exchange and
-// refresh) but keeps only an in-process memory copy of the results — there is
-// no KAS-side file. It asks the client to hold them, gated on the client
-// declaring `_meta.kiro.secretStorage` in initialize. Declining the capability
-// is what made every bridge spawn re-run `POST /register`.
+// KAS owns the entire MCP OAuth flow but keeps only an in-process memory
+// copy of the results — no KAS-side file — and asks the client to hold
+// them, gated on `_meta.kiro.secretStorage` in initialize. That declaration
+// is CONDITIONAL on a store existing (vibekit.StartOpts.SecretStorage):
+// declaring it without one is worse than declining, because KAS rethrows a
+// store failure into the MCP connect path.
 //
-// The declaration is CONDITIONAL on a store existing (vibekit.StartOpts.SecretStorage).
-// Declaring it without one is worse than declining: KAS rethrows a store failure
-// into the MCP connect path, so every OAuth connect fails instead of merely
-// paying one DCR per spawn.
-//
-// Keys and values are opaque here; see internal/secretstore for the shape KAS
-// derives and why vibekit does not parse it. Values are never logged.
-//
-// One store serves every bridge because KAS's key namespace is global, so a
-// registration a chat bridge obtained is reused by the next one.
+// Keys and values are opaque here and never logged; see internal/secretstore
+// for the shape KAS derives. One store serves every bridge, because KAS's
+// key namespace is global.
 
 package agent
 

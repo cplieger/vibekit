@@ -19,21 +19,14 @@ const IDMaxLen = 32
 
 // ParseServerID validates a raw string as a server ID.
 //
-// The CHARSET is the shared one (mcp.NameAllowedRune), which is the half that
-// has to agree with every other admission door: it is what refuses a
-// traversal-shaped or space-bearing path segment, and this door had NO charset
-// check at all before — `../../etc/passwd` and `my server` were both accepted as
-// ids. Two rules deliberately do NOT come from ValidateName, and each is a real
-// difference rather than drift:
+// The CHARSET is the shared one (mcp.NameAllowedRune), which is the half
+// that has to agree with every other admission door. Two rules
+// deliberately do NOT come from ValidateName: the BOUND is IDMaxLen
+// (32), not mcp.NameMaxLen (64), and the LEADING-letter rule does not
+// apply, since newID() is base32 lowercase and can open with a digit.
 //
-//   - the BOUND is IDMaxLen (32), not mcp.NameMaxLen (64). A name becomes the
-//     agent's tool prefix and earns that length; an id is a generated handle.
-//   - the LEADING-letter rule does not apply. newID() below is base32 lowercase
-//     (a-z 2-7), so a perfectly good generated id can open with a digit, and
-//     borrowing the name's lead rule would reject roughly a fifth of them.
-//
-// TestNameDoorsAgree pins the shared half and the two stated differences
-// together, so a change to either one fails a test rather than diverging quietly.
+// TestNameDoorsAgree pins the shared half and the two stated
+// differences together.
 func ParseServerID(raw string) (ServerID, error) {
 	if raw == "" {
 		return "", errors.New("empty server id")

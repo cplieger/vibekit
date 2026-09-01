@@ -1,41 +1,30 @@
 // Recursive file-CONTENT search: GET /api/files/search.
 //
-// LEXICAL AND INDEX-FREE, the decision internal/chat's two searches already
-// record for the transcript. A persistent inverted index would be exactly the
-// second store this architecture exists to avoid, and a WORKSPACE index is the
-// worse case of the two: the agent writes into these trees constantly, so every
-// write would have to invalidate it, and there is no watcher anywhere in this
-// codebase to hang that invalidation on. So the scan runs inside the request,
-// bounded by the caps below and by the request context, and keeps nothing.
+// LEXICAL AND INDEX-FREE, matching internal/chat's two searches: a persistent
+// inverted index would be a second store to keep consistent, and a WORKSPACE
+// index is worse — the agent writes into these trees constantly and nothing
+// here watches for invalidation. So the scan runs inside the request, bounded
+// by the caps below and by the request context.
 //
-// IT SAYS WHAT IT DID NOT READ, in the vocabulary the cross-chat search already
-// uses (`scanned` / `truncated`). A repo holds far more files than a chat store,
-// so the cap is reached routinely rather than exotically, and a bare "no
-// matches" over a capped scan tells the reader the text is nowhere when most of
-// the tree was simply never opened.
+// IT SAYS WHAT IT DID NOT READ (`scanned` / `truncated`, matching the
+// cross-chat search's vocabulary), since the cap is reached routinely on a
+// repo-sized tree.
 //
 // CONFINEMENT IS INHERITED, never re-derived. The search ROOT goes through
-// resolveOrForbid, so all four defense layers on paths.go apply to it; the walk
-// then stays inside that mount BY CONSTRUCTION. Three rules follow and all
-// three are load-bearing:
+// resolveOrForbid, so all four defense layers on paths.go apply to it; the
+// walk then stays inside that mount BY CONSTRUCTION:
 //
-//   - EVERY open is one NAME against the open DESCRIPTOR of the directory that
+//   - Every open is one NAME against the open DESCRIPTOR of the directory that
 //     name was read from, O_NOFOLLOW (openChild). No path is ever resolved a
-//     second time, so a symlink swapped in for an accepted file — or for one of
-//     its ANCESTORS — after the walk classified it is refused by the kernel
-//     rather than followed. That is what makes the absolute path on a result the
-//     path of the object actually read, which is the premise the denylist below
-//     stands on: a check-then-reopen sequence cannot have that property at any
-//     price, because an os.Root deliberately follows a symlink whose target
-//     stays inside its mount. It is also why a directory handle stays open for
-//     as long as the walk is visiting it, and therefore why depth is capped.
-//   - IsSensitive runs on EVERY entry. An os.Root cannot deny a sub-path, and a
-//     recursive walk reaches /config/mcp-secrets.json from ABOVE rather than by
-//     being asked for it, so the root check alone would hand its OAuth refresh
-//     tokens back as search hits.
-//   - resolvePath is NOT re-run per entry. It calls EvalSymlinks on every call
-//     (a stat storm on a walk) and can return a DIFFERENT mount when an in-tree
-//     symlink crosses grants, which would silently re-root the walk mid-flight.
+//     second time, so a symlink swapped in for an accepted file — or one of
+//     its ancestors — after the walk classified it is refused by the kernel
+//     rather than followed.
+//   - IsSensitive runs on EVERY entry, since an os.Root cannot deny a
+//     sub-path and a recursive walk reaches a sensitive file from ABOVE
+//     rather than by being asked for it.
+//   - resolvePath is NOT re-run per entry: it calls EvalSymlinks on every
+//     call and can return a DIFFERENT mount when an in-tree symlink crosses
+//     grants, which would silently re-root the walk mid-flight.
 
 package filebrowse
 
@@ -65,50 +54,37 @@ import (
 )
 
 const (
-	// maxSearchFiles bounds how many files one search opens. The cross-chat
-	// search reads at most 500 chat files, each potentially megabytes; a source
-	// tree is the opposite shape, many small files, so the file budget is larger
-	// and the per-file budget smaller. 5000 covers this repo's own 1167 tracked
-	// files several times over, which is the scale the box is for.
+	// maxSearchFiles bounds how many files one search opens. A source tree is
+	// many small files, so the file budget is larger and the per-file budget
+	// smaller than the cross-chat search's.
 	maxSearchFiles = 5000
-	// maxSearchDirs bounds directories VISITED, which maxSearchFiles does not: a
-	// tree of empty directories costs one ReadDir each and would otherwise walk
-	// forever without ever filling the file budget.
+	// maxSearchDirs bounds directories VISITED, which maxSearchFiles does not:
+	// a tree of empty directories costs one ReadDir each and would otherwise
+	// walk forever without ever filling the file budget.
 	maxSearchDirs = 20_000
-	// maxSearchDepth bounds how deep the walk descends. It is a DESCRIPTOR
-	// budget rather than a taste judgement: a directory handle is what pins its
-	// children's opens (see openChild), so it stays open for as long as the walk
-	// is inside it, and the depth of the descent IS the number of directory
-	// handles one search holds at once. 128 is past any real source tree and far
-	// short of any process descriptor limit, and a tree deeper than it reports
-	// `truncated` instead of failing opens across the whole server.
+	// maxSearchDepth bounds how deep the walk descends: a directory handle
+	// stays open for as long as the walk is inside it, so depth IS the number
+	// of directory handles one search holds at once.
 	maxSearchDepth = 128
-	// maxSearchMatches caps the response. Past this a search is not a search,
-	// it is a listing the reader will refine instead of paging through — the
-	// same reasoning and the same number as chat.maxSearchHits.
+	// maxSearchMatches caps the response: past this a search is a listing the
+	// reader will refine rather than page through.
 	maxSearchMatches = 200
 	// maxFileMatches caps ONE file's contribution, so a generated or minified
 	// file cannot spend the whole match budget before the reader's own code is
 	// reached.
 	maxFileMatches = 20
-	// maxSearchFileSize is the per-file read ceiling. Deliberately smaller than
-	// maxFileSize (the editor's 2 MB): a text file larger than this is generated
-	// or vendored, a match inside one is not actionable, and the editor's
-	// ceiling times the file budget would be a gigabyte of transient reads.
+	// maxSearchFileSize is the per-file read ceiling, deliberately smaller
+	// than maxFileSize (the editor's 2 MB): a text file larger than this is
+	// generated or vendored.
 	maxSearchFileSize = 512 * 1024
 	// searchExcerptRadius is how much of a long line surrounds the match. A
-	// minified bundle is one line, so the excerpt has to be windowed even though
-	// the unit is a line.
+	// minified bundle is one line, so the excerpt has to be windowed even
+	// though the unit is a line.
 	searchExcerptRadius = 80
-	// searchReadDirChunk is how many directory entries one ReadDir call takes.
-	//
-	// A whole-directory ReadDir(-1) allocates and reads every entry before the
-	// first cancellation or budget check, and a directory can hold arbitrarily
-	// many entries that never consume the FILE budget (excluded names, symlinks,
-	// special files, oversized files), so that budget does not bound the work
-	// either. A fixed chunk bounds the per-directory allocation whatever the
-	// directory holds and gives cancellation somewhere to land. Same number as
-	// atomicfile.WalkDirInRoot's batch, for the same reason.
+	// searchReadDirChunk bounds one ReadDir call's allocation whatever the
+	// directory holds, and gives cancellation somewhere to land — a
+	// whole-directory ReadDir(-1) reads every entry before the first check.
+	// Same number as atomicfile.WalkDirInRoot's batch.
 	searchReadDirChunk = 256
 )
 
@@ -117,13 +93,13 @@ const searchWorkers = 8
 
 const (
 	// searchDirFlags opens a directory for the walk. O_DIRECTORY makes a
-	// non-directory swapped in under a directory's name a refusal rather than a
-	// read, O_NOFOLLOW refuses a symlink AT that name, and O_NONBLOCK is what
-	// keeps a FIFO planted there from parking the walk in open(2) forever.
-	// O_CLOEXEC so a walk in flight cannot leak a descriptor into a bridge spawn.
+	// non-directory swapped in under a directory's name a refusal, O_NOFOLLOW
+	// refuses a symlink AT that name, and O_NONBLOCK keeps a FIFO planted
+	// there from parking the walk in open(2) forever. O_CLOEXEC so a walk in
+	// flight cannot leak a descriptor into a bridge spawn.
 	searchDirFlags = os.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_CLOEXEC
-	// searchFileFlags is the same open for a leaf, which may legitimately be any
-	// file type; the type is then refused off the DESCRIPTOR, never the name.
+	// searchFileFlags is the same open for a leaf, which may legitimately be
+	// any file type; the type is refused off the DESCRIPTOR, never the name.
 	searchFileFlags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_CLOEXEC
 )
 
@@ -143,35 +119,23 @@ type FileMatch struct {
 	Line    int    `json:"line"`
 }
 
-// FileSearchResult is GET /api/files/search's reply.
-//
-// Scanned and Truncated are chat.SearchAllResult's two words, deliberately
-// spelled the same: three surfaces reporting one fact under three names is the
-// drift those two avoided on purpose.
+// FileSearchResult is GET /api/files/search's reply. Scanned and Truncated
+// share chat.SearchAllResult's field names deliberately, so three surfaces
+// don't report one fact under three names.
 type FileSearchResult struct {
 	Matches []FileMatch `json:"matches"`
-	// Scanned is how many files the scan OPENED. A file that vanished mid-scan
-	// counts, and so does one the descriptor turned out to say was oversized: a
-	// concurrent agent write is normal here, and flapping this number on one
-	// would be noise rather than information. Opened rather than read, because
-	// the shape and size of a candidate are only knowable once it is open — see
-	// classify.
+	// Scanned is how many files the scan OPENED. A file that vanished
+	// mid-scan counts, and so does one the descriptor turned out to say was
+	// oversized — the shape and size of a candidate are only knowable once
+	// it is open (see classify).
 	Scanned int `json:"scanned"`
-	// Truncated says the answer is INCOMPLETE: the walk hit its file, directory
-	// or depth cap, the match cap stopped it opening the rest, or something it
-	// meant to read could not be read — a search root, directory or file the
-	// kernel refused for a reason the walk did not choose. Either way files were
-	// left unread, so the UI must say so rather than let a short result imply the
-	// text is nowhere else.
-	//
-	// One field rather than two, because a caller can do exactly one thing with
-	// either answer: say the result is partial. A second word for "and some of it
-	// was unreadable" would split one fact across two names for a distinction no
-	// reader of this endpoint acts on, and the reason WHY belongs in the log line
-	// that already names the path. A DELIBERATE skip — an excluded glob, a
-	// symlink, a sensitive path, a binary, a file that vanished under the walk —
-	// is not a loss and never sets this: the answer covers everything the search
-	// was asked to cover.
+	// Truncated says the answer is INCOMPLETE: the walk hit its file,
+	// directory or depth cap, the match cap stopped it opening the rest, or
+	// something it meant to read could not be read. One field rather than
+	// two, because a caller can do exactly one thing with either answer: say
+	// the result is partial. A DELIBERATE skip (an excluded glob, a
+	// symlink, a sensitive path, a binary, a file that vanished under the
+	// walk) is not a loss and never sets this.
 	Truncated bool `json:"truncated"`
 }
 
@@ -301,10 +265,10 @@ func matchAnyGlob(patterns []string, rel string) bool {
 // searchDir is one directory the walk is inside: the open handle that PINS it
 // plus the two coordinate spaces its children are named in.
 //
-// The handle is the security-relevant field. Every child is opened as a single
-// name against it, so nothing below this point re-resolves a path and no
-// ancestor swap can redirect a read. Its cost is one descriptor per level of
-// descent, which is what maxSearchDepth bounds.
+// The handle is the security-relevant field: every child is opened as a
+// single name against it, so nothing below this point re-resolves a path
+// and no ancestor swap can redirect a read. Its cost is one descriptor per
+// level of descent, bounded by maxSearchDepth.
 type searchDir struct {
 	f *os.File
 	// abs is the container-absolute path, for the response and the denylist.
@@ -330,13 +294,12 @@ type searchCandidate struct {
 }
 
 // fileScan carries one search's accounting. Hoisting the walk onto named
-// methods (rather than a deeply-nested recursive closure) is the shape
-// zipStream uses for the same reason: it keeps the handler's control flow flat
-// and each method inside gocognit's ceiling.
+// methods (rather than a deeply-nested recursive closure) keeps the
+// handler's control flow flat and each method inside gocognit's ceiling.
 //
-// Every field is owned by the WALK goroutine. The read fan-out is per chunk and
-// collects into a pre-sized local slice by index, so a worker touches no shared
-// state and the scan needs neither mutex nor atomic.
+// Every field is owned by the WALK goroutine; the read fan-out collects into
+// a pre-sized local slice by index, so a worker touches no shared state and
+// the scan needs neither mutex nor atomic.
 type fileScan struct {
 	ctx context.Context
 	// needle is folded when the search is case-insensitive, so the haystack is
@@ -383,17 +346,14 @@ func (s *fileScan) capped() bool {
 // openChild opens one child of an already-open directory BY NAME, refusing a
 // symlink at that name.
 //
-// This is the whole of the search's confinement, and the reason the walk holds
-// its directory open. openat(2) against a directory descriptor resolves exactly
-// one component, so no ancestor is named and none can be substituted; the kernel
-// refuses a symlink at the final component under O_NOFOLLOW, which no
-// check-then-open sequence can do without a race. dirfd comes through
-// SyscallConn so it stays valid for the duration of the call even though the
-// read fan-out uses it from another goroutine.
+// openat(2) against a directory descriptor resolves exactly one component,
+// so no ancestor is named and none can be substituted; the kernel refuses a
+// symlink at the final component under O_NOFOLLOW, which no check-then-open
+// sequence can do without a race. dirfd comes through SyscallConn so it
+// stays valid for the duration of the call even though the read fan-out uses
+// it from another goroutine.
 //
-// name must be a single component. Every caller passes a DirEntry name or a
-// component of an already-cleaned path, and openSearchRoot rejects the three
-// spellings that would not be one.
+// name must be a single component.
 func openChild(dir *os.File, name, displayPath string, flags int) (*os.File, error) {
 	conn, err := dir.SyscallConn()
 	if err != nil {
@@ -417,19 +377,16 @@ func openChild(dir *os.File, name, displayPath string, flags int) (*os.File, err
 	return os.NewFile(uintptr(fd), displayPath), nil
 }
 
-// openSearchRoot walks from the mount's own root handle down to the search root,
-// one component at a time, refusing a symlink at every step.
+// openSearchRoot walks from the mount's own root handle down to the search
+// root, one component at a time, refusing a symlink at every step.
 //
-// The descent exists because the walk's guarantee has to start somewhere. loc
-// carries an already symlink-RESOLVED path (resolvePath), so a component of it
-// that is a symlink now was substituted after that resolution — exactly the
-// swap the walk refuses further down, and it reaches the same denied files
-// through the root instead of through a leaf. Opening the root by path would
-// hand that swap back, because an os.Root follows a link whose target stays in
-// its mount.
+// loc carries an already symlink-RESOLVED path (resolvePath), so a
+// component of it that is a symlink now was substituted after that
+// resolution. Opening the root by path would hand that swap back, because
+// an os.Root follows a link whose target stays in its mount.
 //
-// The final component is opened without O_DIRECTORY: a root that is a FILE is a
-// single-file search, and the same endpoint serves it.
+// The final component is opened without O_DIRECTORY: a root that is a FILE
+// is a single-file search, served by the same endpoint.
 func openSearchRoot(l loc) (*os.File, error) {
 	dir, err := l.m.root.OpenFile(".", searchDirFlags, 0)
 	if err != nil {

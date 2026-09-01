@@ -1,12 +1,8 @@
 // Gitea/Codeberg ForgeOps implementation backed by the tea CLI.
-//
-// Codeberg is a Gitea instance — same CLI, different host. The kind
-// is preserved so the UI can render the right branding, but the
-// provider behavior is identical.
-//
-// tea is less feature-rich than gh/glab; some operations (commit
-// status, releases) don't have direct CLI commands and we fall back
-// to the Gitea HTTP API via tea's API integration.
+// Codeberg is a Gitea instance — same CLI, different host; the kind
+// is preserved only so the UI can render the right branding. tea is
+// less feature-rich than gh/glab, so some operations fall back to the
+// Gitea HTTP API directly.
 
 package forges
 
@@ -39,9 +35,8 @@ func newGitea(kind Kind, host string) *giteaProvider {
 	return &giteaProvider{host: host}
 }
 
-// loginName returns the tea login alias that maps to this host.
-// We use the host itself as the login name when injecting tokens,
-// so this is just a stable accessor.
+// loginName returns the tea login alias that maps to this host —
+// vibekit uses the host itself as the login name.
 func (p *giteaProvider) loginName() string { return p.host }
 
 // withLogin prepends the --login flag for the host's tea config.
@@ -49,9 +44,9 @@ func (p *giteaProvider) withLogin(args ...string) []string {
 	return append([]string{"--login", p.loginName()}, args...)
 }
 
-// Whoami queries tea for the authenticated user.
+// Whoami queries tea for the authenticated user (`tea whoami` prints
+// just the username on stdout).
 func (p *giteaProvider) Whoami(ctx context.Context) (*User, error) {
-	// `tea whoami` prints just the username on stdout.
 	args := p.withLogin("whoami")
 	out, err := runCmd(ctx, CmdTimeout, nil, "tea", args...)
 	if err != nil {
@@ -61,12 +56,10 @@ func (p *giteaProvider) Whoami(ctx context.Context) (*User, error) {
 	if login == "" {
 		return nil, ErrNotLoggedIn
 	}
-	// Get full user info via API for email/name.
 	full, apiErr := p.userViaAPI(ctx, login)
 	if apiErr == nil {
 		return full, nil
 	}
-	// Fall back to bare login if the API call fails (older tea).
 	return &User{
 		Login: login,
 		URL:   fmt.Sprintf("https://%s/%s", p.host, login),
@@ -126,9 +119,7 @@ func (p *giteaProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 		r := &raw[i]
 		owner := r.Owner.Login
 		if owner == "" {
-			// tea omits the owner object on some responses; the full name
-			// carries it. Cut rather than Contains-then-split: one pass, and
-			// the found bit IS the guard.
+			// tea omits the owner object on some responses; the full name carries it.
 			if head, _, found := strings.Cut(r.FullName, "/"); found {
 				owner = head
 			}
@@ -163,15 +154,11 @@ func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListStat
 	return parsePRs(out)
 }
 
-// parsePRs decodes Gitea's own PR objects. `tea pulls list -o json`
-// passes the API shape through rather than the --fields vocabulary, so
-// this one decoder serves both the list and the single-PR view.
-//
-// CheckStatus is deliberately left empty for every Gitea row: the PR
-// object carries no CI state, and the alternatives were both worse than
-// an absent chip — one extra statuses request per PR (the N-call fan-out
-// this work rejects) or a chip inferred from `mergeable`, which would be
-// a guess presented as a fact.
+// parsePRs decodes Gitea's own PR objects (`tea pulls list -o json`
+// passes the API shape through, so this one decoder serves both the
+// list and the single-PR view). CheckStatus is left empty for every
+// row: the PR object carries no CI state, and an N-call fan-out or a
+// guess inferred from `mergeable` are both worse than an absent chip.
 func parsePRs(data []byte) ([]PR, error) {
 	var raw []struct {
 		Base struct {
@@ -225,10 +212,9 @@ func parsePRs(data []byte) ([]PR, error) {
 	return prs, nil
 }
 
-// giteaMergeBlock names what a Gitea PR object can actually support.
+// giteaMergeBlock names what a Gitea PR object can actually support:
 // `mergeable` is one bit with no cause behind it, so an unmergeable PR
-// reports blockUnknown: the row then says the forge refuses the merge
-// without inventing conflicts, checks or protection as the reason.
+// reports blockUnknown rather than inventing a specific cause.
 func giteaMergeBlock(mergeable, draft bool) string {
 	if draft {
 		return blockDraft
@@ -255,10 +241,8 @@ func (p *giteaProvider) CreatePR(ctx context.Context, repo string, params *Creat
 	if err != nil {
 		return nil, err
 	}
-	// tea prints the PR URL on success; parse the number from it.
 	number := extractPRNumberFromURL(string(out))
 	if number == 0 {
-		// Fallback: list and find newest by source branch.
 		prs, listErr := p.ListPRs(ctx, repo, StateOpen)
 		if listErr == nil {
 			for i := range prs {
@@ -290,8 +274,8 @@ func (p *giteaProvider) viewPR(ctx context.Context, repo string, number int) (*P
 }
 
 // giteaMergeBody is the Gitea merge-API request. Both new fields are
-// omitted unless asked for, so an instance that predates
-// merge_when_checks_succeed still sees the body it has always seen.
+// omitted unless asked for, so an instance predating
+// merge_when_checks_succeed still sees the body it always has.
 type giteaMergeBody struct {
 	Do                     string `json:"Do"`
 	HeadCommitID           string `json:"head_commit_id,omitempty"`
@@ -318,13 +302,9 @@ func giteaMergeRequestBody(opts MergeOptions) ([]byte, error) {
 	return body, nil
 }
 
-// MergePR merges a PR through the Gitea API.
-//
-// tea gained a `pulls merge` verb, but it exposes only --style/--title/
-// --message: no head-commit flag and no auto-merge flag. The API carries
-// both (head_commit_id, merge_when_checks_succeed), and this call was
-// already on the API path, so the pin and the arming are body fields
-// rather than a new dependency on the CLI's feature set.
+// MergePR merges a PR through the Gitea API rather than tea's own
+// `pulls merge` verb, because that verb exposes no head-commit or
+// auto-merge flag while the API carries both as body fields.
 func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, opts MergeOptions) error {
 	owner, name, err := ParseRepo(repo)
 	if err != nil {
@@ -342,9 +322,8 @@ func (p *giteaProvider) ClosePR(ctx context.Context, repo string, number int) er
 	return p.setPRState(ctx, repo, number, stateClosed)
 }
 
-// ReopenPR reopens a closed PR. It goes through the same PATCH ClosePR
-// uses rather than `tea pulls reopen`, so the pair shares one token path
-// and one failure shape.
+// ReopenPR reopens a closed PR through the same PATCH ClosePR uses,
+// so the pair shares one token path and one failure shape.
 func (p *giteaProvider) ReopenPR(ctx context.Context, repo string, number int) error {
 	return p.setPRState(ctx, repo, number, stateOpen)
 }
@@ -363,11 +342,8 @@ func (p *giteaProvider) setPRState(ctx context.Context, repo string, number int,
 	return p.apiPatchJSON(ctx, endpoint, body)
 }
 
-// RerunFailedChecks is not available on Gitea or Forgejo: tea has no CI
-// verb at all, and the Actions re-run endpoints are not part of the
-// stable public API the rest of this file talks to. Returning the
-// sentinel lets the client hide the control instead of offering one that
-// always fails.
+// RerunFailedChecks is not available: tea has no CI verb, and the
+// Actions re-run endpoints are not part of the stable public API.
 func (p *giteaProvider) RerunFailedChecks(_ context.Context, _ string, _ int, _ string) error {
 	return fmt.Errorf("%w: re-running CI is not available on gitea/forgejo", ErrNotSupported)
 }
@@ -442,7 +418,6 @@ func (p *giteaProvider) CreateIssue(ctx context.Context, repo string, params Cre
 	if number == 0 {
 		issues, listErr := p.ListIssues(ctx, repo, StateOpen)
 		if listErr == nil && len(issues) > 0 {
-			// Return the newest issue by creation time.
 			newest := issues[0]
 			for idx := range issues {
 				i := &issues[idx]
@@ -609,36 +584,28 @@ func (p *giteaProvider) ListLabels(ctx context.Context, repo string) ([]Label, e
 	return labels, nil
 }
 
-// Gitea/Forgejo REST API access.
-//
-// These calls go through Go's net/http rather than shelling out to
-// curl. That is a deliberate security choice: the auth token is set as
-// an Authorization *header*, so it is never part of a process-argument
-// list. It therefore cannot leak into a cliexec CmdError string (which
-// joins argv), an slog line, or the HTTP error body writeOpsError
-// returns to the browser — the PAT-in-error-response leak the curl-arg
-// approach caused.
+// Gitea/Forgejo REST API access. These calls go through Go's
+// net/http rather than shelling out to curl: the auth token is set as
+// an Authorization header, never a process argument, so it cannot
+// leak into a cmdError string, a log line, or an HTTP error body —
+// the PAT-in-error-response leak the curl-arg approach caused.
 
 // giteaAPIClient is the shared HTTP client for direct Gitea/Forgejo API
-// calls. The timeout mirrors the CLI command timeout so a wedged forge
+// calls; the timeout mirrors the CLI command timeout so a wedged forge
 // can't pin a request.
 var giteaAPIClient = &http.Client{Timeout: CmdTimeout}
 
-// apiMaxResponseBytes caps how much of an API response body we buffer,
-// mirroring cliexec's output cap.
+// apiMaxResponseBytes caps how much of an API response body we buffer.
 const apiMaxResponseBytes = 32 << 20 // 32 MiB
 
-// teaTokenCache holds helper-minted tokens per host, so the gap-fill
-// API paths don't spawn a `tea login helper get` subprocess per call.
-// Invalidated on a 401/403 response (doAPI re-mints once and retries)
-// — the moment a token is rotated via a fresh login, the next API call
-// self-heals.
+// teaTokenCache holds helper-minted tokens per host, so API calls
+// don't spawn a `tea login helper get` subprocess each time.
+// Invalidated on a 401/403 response, so a rotated token self-heals.
 var teaTokenCache sync.Map // host → token string
 
 // teaHelperToken mints the API token for host through tea's own
-// git-credential-protocol interface (`tea login helper get`), the same
-// documented surface git itself authenticates through. vibekit holds
-// the token in memory only — it never persists a second copy.
+// git-credential-protocol interface. vibekit holds the token in
+// memory only — it never persists a second copy.
 func teaHelperToken(ctx context.Context, host string) (string, error) {
 	if v, ok := teaTokenCache.Load(host); ok {
 		if tok, tokOK := v.(string); tokOK && tok != "" {
@@ -659,12 +626,10 @@ func teaHelperToken(ctx context.Context, host string) (string, error) {
 	return "", fmt.Errorf("forges: no tea token for host %q", host)
 }
 
-// doAPI performs an authenticated Gitea API request. The token is sent
-// only as an Authorization header, so it is structurally absent from
-// every error this function can return. On a non-2xx status it returns
-// the (token-free) response body plus a status-coded error. A 401/403
-// invalidates the cached token and retries once with a fresh mint, so
-// a token rotated through a re-login heals without a restart.
+// doAPI performs an authenticated Gitea API request. The token is
+// sent only as an Authorization header, so it is structurally absent
+// from every error this function can return. A 401/403 invalidates
+// the cached token and retries once with a fresh mint.
 func (p *giteaProvider) doAPI(ctx context.Context, method, endpoint string, body []byte) ([]byte, error) {
 	token, err := teaHelperToken(ctx, p.host)
 	if err != nil {
@@ -701,8 +666,6 @@ func doAPIWith(ctx context.Context, token, method, endpoint string, body []byte)
 	//nolint:gosec // G704: the URL authority is the user's own configured forge host (constrained to logged-in forges by manager.Get); only the path varies, so this is not attacker-controlled SSRF
 	resp, err := giteaAPIClient.Do(req)
 	if err != nil {
-		// The url.Error here carries the method, URL, and cause — none of
-		// which contain the token (it lived only in a request header).
 		return nil, 0, fmt.Errorf("gitea api: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -718,11 +681,9 @@ func doAPIWith(ctx context.Context, token, method, endpoint string, body []byte)
 }
 
 // apiErrorSnippet returns a short, single-line summary of a Gitea API
-// error body for an error message. It is derived purely from the
-// server's response, so it never contains the request's auth token.
-// Both paths are sanitized and byte-capped (rune-boundary safe) via
-// runesafe, so an upstream-controlled body cannot forge log records,
-// carry terminal escapes, or balloon the error string.
+// error body, sanitized and byte-capped via runesafe so an
+// upstream-controlled body cannot forge log records, carry terminal
+// escapes, or balloon the error string.
 func apiErrorSnippet(body []byte) string {
 	const maxLen = 256
 	var e struct {

@@ -7,21 +7,15 @@
 //	_kiro/terminal/shell_type -> {shellType}
 //
 // Without an answer to getAccessToken KAS runs unauthenticated: sessions
-// still open, but every service-backed surface (the model registry, turns)
-// fails. It also sends _kiro/openExternalUrl (only because we declare that
-// client capability; see internal/bridge/bridge.go initialize) when an MCP
-// server needs a browser OAuth page opened — answered here too. v1/v2
-// never send any of these, so handleKiroClientRequest is a safe no-op
-// there.
+// still open, but every service-backed surface fails. It also sends
+// _kiro/openExternalUrl (declared as a client capability) when an MCP
+// server needs a browser OAuth page opened. v1/v2 never send any of these.
 //
 // Tokens come from kiro-cli itself: internal/kiroauth shells the CLI's
-// internal `chat _ get-kas-token` subcommand — the same interface the
-// CLI's own TUI host uses for this exact callback. The CLI owns the login
-// store and the refresh chain; the reply carries accessToken, expiresAt
-// and profileArn (plus authMethod/provider when present), so KAS routes to
-// the profile's region and _kiro/account/getUsage can identify the
-// account. vibekit performs no token refresh of its own — a second
-// refresher would fork the rotating refresh-token chain.
+// `chat _ get-kas-token` subcommand, the same interface the CLI's own TUI
+// host uses. The CLI owns the login store and the refresh chain; vibekit
+// performs no token refresh of its own — a second refresher would fork the
+// rotating refresh-token chain.
 
 package agent
 
@@ -49,16 +43,12 @@ const (
 func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroGetAccessToken:
-		// kiroauth.Token can block under a mutex for as long as
-		// kiroauth.cliTimeout while the CLI refreshes SSO-OIDC, so answering
-		// synchronously here stalls the forward goroutine (translateACPEvent)
-		// and backs up this chat's ACP event processing. Dispatch async under
-		// inflight (so Shutdown drains it) with a FRESH runtime-scoped context
-		// — the per-event ctx is cancelled by translateACPEvent's defer the
-		// moment it returns, which would make Bridge.Respond drop the token
-		// write. getAccessToken is answered on the forward goroutine, after
-		// Start() returns, so the bridge is already registered in the manager;
-		// respondBridge resolves it the same as the sync path.
+		// kiroauth.Token can block under a mutex while the CLI refreshes
+		// SSO-OIDC, so answering synchronously would stall the forward
+		// goroutine. Dispatch async under inflight with a FRESH runtime-scoped
+		// context — the per-event ctx is cancelled the moment
+		// translateACPEvent returns, which would make Bridge.Respond drop the
+		// token write.
 		in.lifetime.inflight.Go(func() {
 			actx, cancel := in.lifetime.derivedContext()
 			defer cancel()
@@ -77,17 +67,14 @@ func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID vibekit.C
 }
 
 // respondKiroOpenExternalURL answers the v3 _kiro/openExternalUrl request
-// (A→C, {url}). KAS sends it — most often for an MCP server's OAuth
-// authorization page — only because vibekit declares the openExternalUrl
-// client capability in the initialize handshake; the same URL is also
-// surfaced via _kiro/mcp/status, so this is an additive proactive channel.
+// (A→C, {url}) — KAS sends it, most often for an MCP server's OAuth
+// authorization page, only because vibekit declares the capability.
 //
-// We do NOT auto-open: a browser popup-blocks window.open() that isn't
-// driven by a user gesture, and this fires from an SSE event. Instead we
-// ack the request (so the agent's OAuth redirect completes) and broadcast
-// an open_external_url event; the client renders a clickable affordance
-// the user activates. Only http/https URLs are accepted — any other
-// scheme is rejected with an RPC error and not broadcast.
+// Does NOT auto-open: a browser popup-blocks window.open() not driven by a
+// user gesture, and this fires from an SSE event. Instead it acks the
+// request (so the agent's OAuth redirect completes) and broadcasts an
+// open_external_url event for a clickable affordance. Only http/https URLs
+// are accepted; any other scheme is rejected with an RPC error.
 func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		URL string `json:"url"`
@@ -123,26 +110,18 @@ func isSafeExternalURL(u string) bool {
 	return parsed.Scheme == "http" || parsed.Scheme == "https"
 }
 
-// authTokenLatch remembers the last outcome of vending a KAS access token.
+// authTokenLatch remembers the last outcome of vending a KAS access token,
+// so readiness can report a dead sign-in without probing identity — a probe
+// would spawn a subprocess and could block under a mutex for as long as
+// kiroauth.cliTimeout, which /api/health must not do.
 //
-// It exists so readiness can report a dead sign-in without probing identity.
-// /api/health is a lock and two field reads per request and must stay that way —
-// asking kiro-cli whether it still holds a token is a subprocess spawn, and
-// kiroauth.Token can block under a mutex for as long as kiroauth.cliTimeout, so
-// a probe on the health path would turn a monitor's poll into a process launch.
-// The vend already happens on the session-creation critical path, so the fact is
-// free to observe there; nothing else has to go looking for it.
+// NOT sticky: it clears on the next success, because the failure it serves
+// is an expired SSO refresh chain, and the sign-in that fixes it is exactly
+// what makes the latch stale.
 //
-// NOT sticky. It clears on the next success, because the failure this serves is
-// an expired SSO refresh chain and the sign-in that fixes it is exactly what
-// makes the latch stale. A latch that only ever set would keep reporting a
-// signed-out runtime after the user signed back in.
-//
-// It holds the outcome and not the reason: kiro-cli's own error text goes to the
-// log line and to the SSE error frame at the vend site, both of which already
-// have it, and the readiness envelope must not carry it — /api/health is
-// unauthenticated and that text can name a path on the volume, which is the same
-// reason kiroReasonText serves fixed literals.
+// Holds the outcome, not the reason: kiro-cli's error text already reaches
+// the log line and the SSE error frame, and /api/health is unauthenticated,
+// so it must not carry text that can name a path on the volume.
 type authTokenLatch struct {
 	failed atomic.Bool
 }

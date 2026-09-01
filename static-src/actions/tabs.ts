@@ -1,50 +1,29 @@
 // ---------------------------------------------------------------------------
-// The four tab mutations. Every change to the open-tab set goes through one of
-// these; nothing else may send a tab command.
+// The four tab mutations. Every change to the open-tab set goes through one
+// of these; nothing else may send a tab command.
 //
-// A RESPONSE IS WHAT THE SERVER COMMITTED — a subject, a `closed` list, the
-// version the mutation produced — and it is what the pending-op machine
-// (tabs-sync.ts, mechanism 4) reconciles against the `tabs_changed` frame that
-// follows. The frame stays idempotent by id, so the device that asked and the
-// device that did not converge on the same rows whichever answer lands first.
+// A response is what the server committed (a subject, a `closed` list, a
+// version), reconciled by the pending-op machine against the `tabs_changed`
+// frame that follows, idempotent by id.
 //
-// THE VERSION IN EVERY REPLY IS FOR THE MACHINE, NEVER FOR THE WATERMARK.
-// Carrying a version to the pending machine is not advancing the event
-// watermark: only an EVENT advances it (tabs-sync.ts, mechanism 1), and the
-// machine compares a reply's `committedVersion` against the watermark without
-// ever writing it there. A response-adopted v+2 makes another device's
-// in-flight v+1 read as stale, which destroys the gap check permanently — the
-// machine must never write the watermark from a response.
+// The version in every reply is for the machine, never the watermark: only
+// an EVENT advances the watermark (tabs-sync.ts). A response-adopted v+2
+// would make another device's in-flight v+1 read as stale, destroying the
+// gap check.
 //
-// WHERE `dedupe` IS AND IS NOT USED, which is a per-command decision rather than
-// a house style:
+// `dedupe` is a per-command decision. `open_tab` dedupes on (kind, ref) via
+// a key function — the default key would include the unique `op_id` and
+// collapse nothing. `close_tab` dedupes on the id, same reasoning. `pin_tab`
+// and `reorder_tabs` dedupe on nothing: pin -> unpin -> pin must end pinned,
+// and A -> B -> A must end at A, so collapsing the repeat would silently
+// leave the collection one step behind. None of these four carries an
+// argument-composite idempotency key for the same reason — inside the TTL a
+// repeated mutation would replay a cached success and never run
+// (`files.rename` shipped this once).
 //
-//   - `open_tab` DEDUPES on (kind, ref), with a key FUNCTION. Two taps on one
-//     door are one open. The default key is `safeStringify(args)`, which would
-//     include the unique `op_id` and therefore collapse nothing at all, so the
-//     function is not a refinement — it is the difference between the option
-//     working and being decorative. `dedupe` collapses only IN-FLIGHT dispatches
-//     (the framework evicts the slot in `result.finally`); outside that window the
-//     server's own (kind, ref) uniqueness answers a late second tap by returning
-//     the tab already open, which is why nothing further is needed.
-//   - `close_tab` DEDUPES on the id, for the same reason and with the same
-//     safety: closing an id that is not open is not an error, so a collapse and a
-//     second round trip have the same outcome.
-//   - `pin_tab` and `reorder_tabs` DEDUPE ON NOTHING, deliberately. A repeat pin
-//     and a drag back to where it started are real gestures that must reach the
-//     server: pin → unpin → pin has to end pinned, and A → B → A has to end at A.
-//     Any key that collapsed the third gesture onto the first would leave the
-//     collection at the second, silently. This is also why none of these four
-//     carries an argument-composite idempotency key — inside the 5-minute cache a
-//     repeated mutation would replay a cached success and never run, which is the
-//     same defect from the other side and one this fleet has already shipped once
-//     (`files.rename`).
-//
-// `op_id` IS A DISPATCH ARGUMENT, never minted inside `run()`. The framework
-// re-invokes `run()` per retry attempt and hoists only the idempotency key, so an
-// op minted there would be fresh on every attempt and correlate nothing — and
-// correlation is what tells this device's own echo from another device's, which is
-// what stops a teardown running twice.
+// `op_id` is a dispatch ARGUMENT, never minted inside `run()`: the framework
+// re-invokes `run()` per retry and hoists only the idempotency key, so an
+// op minted there would be fresh on every attempt and correlate nothing.
 // ---------------------------------------------------------------------------
 
 import { join as joinKey } from "@cplieger/keyenc";
@@ -55,28 +34,21 @@ import type { TabKind, TabSubject } from "../types.js";
 import { decodeTabSubject } from "../wire/decoders.gen.js";
 
 /** What `open_tab` needs about the thing being opened. `ref` is empty for a
- *  singleton, which is the one kind whose identity is its kind. */
+ *  singleton, whose identity is its kind. */
 export interface OpenTabArgs {
   kind: TabKind;
   ref: string;
-  /** An already-open tab to nest under. Empty for top level. A parent that is not
-   *  open promotes the new tab to top level rather than refusing it — the server's
-   *  rule, matching what the strip does with an orphan. */
+  /** An already-open tab to nest under. Empty for top level. A parent that
+   *  is not open promotes the new tab to top level rather than refusing it. */
   parent: string;
   /** Whether closing this tab tears down what it shows. */
   owns: boolean;
   opID: string;
 }
 
-/** What the server committed for an open.
- *
- *  `created: false` is load-bearing, not informational: an already-open
- *  (kind, ref) commits nothing, so it bumps no version and emits NO event. The
- *  pending-op machine retires such an op on the spot, because no frame will ever
- *  correlate it.
- *
- *  `version` is the collection version the mutation committed, consumed by the
- *  machine and never by the watermark (see the module header). */
+/** What the server committed for an open. `created: false` is load-bearing:
+ *  an already-open (kind, ref) commits nothing, bumps no version, and emits
+ *  no event, so the pending-op machine retires such an op on the spot. */
 export interface OpenTabReply {
   subject: TabSubject;
   created: boolean;
@@ -116,15 +88,12 @@ export const openTabCommand = defineAction<OpenTabArgs, OpenTabReply | null>({
     }
     return {
       subject: decodeTabSubject(body["subject"]),
-      // Absent is treated as NOT created, which is the conservative reading: it
-      // makes the machine hold the op for a frame rather than assume one is
-      // coming, and version absorption bounds the hold.
+      // Absent treated as not created — the conservative reading.
       created: body["created"] === true,
       version: numberField(body, "version"),
     };
   },
-  // At the product limit the refusal has a remedy, and saying so is the whole
-  // difference between a control that looks broken and one that is bounded.
+  // At the product limit the refusal has a remedy.
   error: (_args, err) =>
     err.status === 409
       ? "Close a tab first — this workspace has too many open."
@@ -136,19 +105,14 @@ export interface CloseTabArgs {
   opID: string;
 }
 
-/** How long a close dispatch may stay unanswered before the gesture stops
- *  waiting and the pending-op machine VERIFIES instead (opTimedOut): the
- *  removal stays applied, nothing restores, and one re-list per backoff tick
- *  settles it on authoritative evidence. Definition-level so the deadline
- *  bounds the whole retry sequence, not one attempt. */
+/** How long a close dispatch may stay unanswered before the pending-op
+ *  machine VERIFIES instead: the removal stays applied, nothing restores,
+ *  and a re-list settles it on authoritative evidence. */
 export const CLOSE_CONFIRM_MS = 5000;
 
-/** What the server committed for a close.
- *
- *  `closed` is a LIST because a parent and its children go as one mutation, and
- *  EMPTY is a normal answer rather than a failure: two devices can close one
- *  tab, and an empty list is the machine's SEMANTIC confirmation of absence.
- *  `version` is for the machine, never the watermark (module header). */
+/** What the server committed for a close. `closed` is a list (a parent and
+ *  its children close as one mutation), and empty is a normal answer —
+ *  two devices can close one tab. */
 export interface CloseTabReply {
   closed: string[];
   version: number;
@@ -183,11 +147,9 @@ export const closeTabCommand = defineAction<CloseTabArgs, CloseTabReply | null>(
       version: body === null ? 0 : numberField(body, "version"),
     };
   },
-  // NO framework toast: the two failure shapes want opposite surfaces and the
-  // notifier cannot split them. A TIMEOUT is inconclusive — the close may have
-  // committed, so the machine VERIFIES and saying "couldn't close" would claim
-  // an outcome nobody knows — while a DEFINITIVE refusal is the close gesture's
-  // to report beside its rollback (tabs.ts), where the outcome is known.
+  // No framework toast: a TIMEOUT is inconclusive (the close may have
+  // committed, so the machine verifies), while a DEFINITIVE refusal is the
+  // close gesture's own to report alongside its rollback.
   error: false,
 });
 
@@ -196,10 +158,9 @@ export interface ReorderTabsArgs {
   opID: string;
 }
 
-/** The exact-set refusal. A 409 means the set moved under the drag, so the
- *  arrangement the gesture committed describes a collection that no longer exists
- *  — re-list, never re-send. Distinguished here rather than at the call site so
- *  there is one reading of the status. */
+/** The exact-set refusal: a 409 means the set moved under the drag, so the
+ *  gesture's arrangement describes a collection that no longer exists —
+ *  re-list, never re-send. */
 export const REORDER_STALE = "stale" as const;
 
 export const reorderTabsCommand = defineAction<ReorderTabsArgs, "ok" | typeof REORDER_STALE | null>(
@@ -221,9 +182,8 @@ export const reorderTabsCommand = defineAction<ReorderTabsArgs, "ok" | typeof RE
         { signal, reportSendState: false },
       );
       if (r.status === 409) {
-        // NOT an error to the reader: nothing is broken and nothing is lost, the
-        // strip simply reflects a set this device had not caught up with. The
-        // caller re-lists and the drag snaps back, which is the honest surface.
+        // Not an error to the reader: the strip reflects a set this device
+        // had not caught up with. Caller re-lists and the drag snaps back.
         return REORDER_STALE;
       }
       if (!r.ok) {
@@ -259,9 +219,8 @@ export const pinTabCommand = defineAction<PinTabArgs, boolean>({
       { signal, reportSendState: false },
     );
     if (!r.ok) {
-      // A 404 here rather than the empty answer a close gets, and the asymmetry is
-      // the server's: a pin is a statement ABOUT a tab, so naming one that is not
-      // open is a mistake rather than a race.
+      // 404 rather than the empty answer a close gets: a pin is a statement
+      // ABOUT a tab, so naming one that is not open is a mistake, not a race.
       throw sendFailure(r, "pin that tab");
     }
     return true;
@@ -275,19 +234,16 @@ function asObject(body: unknown): Record<string, unknown> | null {
   return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
 }
 
-/** The committed version out of a reply body, 0 when absent or malformed. 0 is
- *  below every real version, so the machine reads it as "already covered" and
- *  never holds an op hostage to a field a fake omitted. */
+/** The committed version out of a reply body, 0 when absent or malformed —
+ *  below every real version, so the machine treats it as already covered. */
 function numberField(body: Record<string, unknown>, key: string): number {
   const v = body[key];
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** Turn a transport failure into the shape the framework's error surface reads.
- *
- *  `ActionError` is not imported: the framework normalizes a thrown Error and
- *  reads `status` off it when present, and hand-building one here would put a
- *  second error vocabulary beside the one every other action uses. */
+/** Turns a transport failure into the shape the framework's error surface
+ *  reads. `ActionError` is not imported: the framework normalizes a thrown
+ *  Error and reads `status` off it when present. */
 function sendFailure(r: SendResult, what: string): Error & { status?: number } {
   const err: Error & { status?: number } = new Error(r.error ?? `Couldn't ${what}`);
   err.status = r.status;

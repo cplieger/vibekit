@@ -143,47 +143,39 @@ type promptTurnSummary struct {
 // counting and report nothing.
 const meteringUnitCredit = "credit"
 
-// HandleSessionInfoUpdate folds v3 context-usage into the chat's usage so
-// the context ring works on the KAS engine (v2 sourced this from
-// _kiro.dev/metadata), and routes v3 compaction status (v2 sourced this
-// from _kiro.dev/compaction/status). Parent-only: subagent updates are
-// dropped so they don't overwrite the parent chat.
+// HandleSessionInfoUpdate folds v3 context-usage into the chat's usage
+// so the context ring works on the KAS engine, and routes v3 compaction
+// status. Parent-only: subagent updates are dropped so they don't
+// overwrite the parent chat.
 //
-// ONE exception, and it is why the gate moved below the unmarshal: a workflow
-// STEP's turn_completion is the only record of what that step SPENT, and the
-// blanket gate discarded it — so a run of twenty steps reported no cost at all
-// on the chat that launched and paid for it. A step frame is now allowed
-// through for its metering only; see persistTurnSummary's owner argument for
-// why the turn counters are not the step's to move.
+// One exception: a workflow step's turn_completion is the only record
+// of what that step spent, so it is let through for its metering only —
+// see persistTurnSummary's owner argument for why the turn counters are
+// not the step's to move.
 func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
 		return
 	}
-	// Steering is dispatched BEFORE the parent-only gate, and deliberately.
-	// A steer belongs to the CHAT — the user typed it into this conversation —
-	// but it is consumed by whichever execution happens to be running, which may
-	// be a subagent's. Gating on attribution would drop the injected signal for
-	// exactly the case where the agent delegated, leaving a chip that says
-	// "waiting" forever over a message the model already read.
+	// Steering is dispatched before the parent-only gate, deliberately:
+	// a steer belongs to the chat, but it is consumed by whichever
+	// execution happens to be running, which may be a subagent's. Gating
+	// on attribution would drop the injected signal for exactly the case
+	// where the agent delegated.
 	if t.handleSteeringUpdate(ctx, chatID, &u) {
 		return
 	}
-	// A STEP's frame is identified by its SESSION, never by this payload.
-	// `_meta.kiro.workflow` marks a step's CONTENT frames and never reaches a
-	// session_info_update: KAS's buildSessionInfoUpdate composes `_meta.kiro`
-	// from `legacyFields(update)` plus the update object and merges no
-	// `promptMeta`. Reading the block here was therefore always nil, so every
-	// step's metering was counted as one of this chat's own turns — see
-	// FrameAttribution for the measurement.
+	// A step's frame is identified by its session, never by this
+	// payload: `_meta.kiro.workflow` never reaches a session_info_update,
+	// so every step's metering used to be counted as one of this chat's
+	// own turns.
 	step := attr.Step
 	if attr.SubSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
 		return
 	}
-	// The wire's own turn bracket, and it is dispatched HERE — after the
-	// attribution gate — deliberately. Pre-gate, every workflow step's turn_start
-	// would close the launching chat's live turn: a run of twenty steps would end
-	// the conversation's turn twenty times.
+	// The wire's own turn bracket, dispatched after the attribution
+	// gate deliberately: pre-gate, every workflow step's turn_start
+	// would close the launching chat's live turn.
 	if u.Meta.Kiro.TurnStart != nil {
 		t.turns.WireTurnStart(ctx, chatID)
 		return
@@ -251,30 +243,24 @@ var knownSessionInfoKinds = map[string]struct{}{
 	"steering_inclusion": {}, "queued": {}, "hook_update": {}, "repositories_update": {},
 }
 
-// logUnconsumedInfoKind reports a session_info_update that reached the end of
-// the dispatch cascade without being consumed.
+// logUnconsumedInfoKind reports a session_info_update that reached the
+// end of the dispatch cascade without being consumed.
 //
-// session_info_update is a CARRIER, not a message type: it multiplexes 22+
-// sub-kinds under `_meta.kiro.kind`, and the cascade above dispatches on
-// which sub-BLOCK is present (focus / summarization / promptTurnSummaries /
-// contextUsage) rather than on the kind string. That is deliberate — those
-// four are proven against the live wire, and keying them off kind values
-// instead would be a guess — but it means everything else falls through
-// here silently.
+// session_info_update is a carrier, not a message type: it multiplexes
+// 22+ sub-kinds under `_meta.kiro.kind`, and the cascade above dispatches
+// on which sub-block is present rather than on the kind string, so
+// everything else falls through here silently.
 //
-// A kind absent from knownSessionInfoKinds is logged at Warn because it is
-// most likely a KAS addition vibekit has not looked at yet, and the whole
-// failure mode of a multiplexed carrier is that new payloads vanish without
-// a trace. A known-but-ignored kind logs at Debug: expected, not news.
+// A kind absent from knownSessionInfoKinds is logged at Warn, since it
+// is most likely a KAS addition vibekit has not looked at yet. A
+// known-but-ignored kind logs at Debug.
 func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 	if kind == "" {
 		return
 	}
-	// Sanitized and bounded like every other upstream string this package logs.
-	// The kind is backend-controlled and vibekit logs logfmt, so a raw newline in
-	// it forges a log line and an ANSI sequence repaints the terminal of whoever
-	// tails it. Applied to the KNOWN branch too: membership is decided before the
-	// value is trusted, not by it.
+	// Sanitized and bounded like every other upstream string this
+	// package logs: the kind is backend-controlled, and a raw newline
+	// forges a log line.
 	safe := runesafe.SanitizeSingleLineBounded(kind, maxCensusNameBytes)
 	if _, known := knownSessionInfoKinds[kind]; known {
 		slog.Debug("session_info_update: known kind carries nothing vibekit consumes",
@@ -310,20 +296,17 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.C
 	}
 }
 
-// persistTurnSummary routes one turn-end metering frame to the two operations it
-// carries.
+// persistTurnSummary routes one turn-end metering frame to the two
+// operations it carries.
 //
-// `step` says the metering came from a workflow STEP rather than from a turn of
-// the conversation, and it splits the frame by what each fact means: CREDITS are
-// real account spend the chat that launched the step is owed a readout of, so
-// they accumulate either way; the turn count and duration describe the
-// CONVERSATION, so a step must not touch them — twenty steps would otherwise
-// report a four-message chat as twenty-four turns and overwrite "last turn" with
-// an unrelated duration.
+// `step` says the metering came from a workflow step rather than from a
+// turn of the conversation: credits are real account spend the
+// launching chat is owed a readout of, so they accumulate either way,
+// while the turn count and duration describe the conversation and a
+// step must not touch them.
 //
-// Credits ACCUMULATE; the absolute usage_update.cost channel (persistUsage) keeps
-// overwrite precedence if KAS ever ships both — an absolute value arriving after
-// an increment simply corrects it.
+// Credits accumulate; the absolute usage_update.cost channel
+// (persistUsage) keeps overwrite precedence if KAS ever ships both.
 func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
@@ -331,10 +314,10 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 			credits += summaries[i].Usage
 			continue
 		}
-		// A unit this does not sum is either a dimension KAS added or a rename of
-		// the one above, and no field-name probe can see it: `unit` is a field
-		// vibekit reads, so only the LABEL is novel. Reported once per process
-		// because the alternative is a spend line that silently stops counting.
+		// A unit this does not sum is either a dimension KAS added or a
+		// rename of the one above, invisible to a field-name probe.
+		// Reported once per process, since the alternative is a spend
+		// line that silently stops counting.
 		censusMeteringUnit(summaries[i].Unit)
 	}
 	t.metering.AccumulateSpend(ctx, chatID, credits)
@@ -381,24 +364,17 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatI
 // persistUsage writes the context percentage, and optionally the
 // context-window size and credits, into the chat's usage, skipping a
 // no-op write. size <= 0 leaves the stored context size unchanged;
-// credits < 0 leaves credits unchanged (the session_info_update
-// context-usage path carries no cost).
+// credits < 0 leaves credits unchanged.
 //
-// The context-percentage gate is a MATERIAL delta, not any delta, and that
-// distinction is the whole cost of this function. A chat file is rewritten
-// wholesale on every Mutate (load, Unmarshal, Marshal, atomic save with an
-// fsync), and KAS emits contextUsagePercentAtModelResponse once per model
-// response plus a second breakdown-bearing frame, so an exact-inequality gate
-// turned a 20-tool-call turn into roughly 40 full-transcript rewrites,
-// serialized on the per-chat mutex, to move a float by fractions of a point.
-// Measured on this fleet's real KAS transcripts: p50 737 KB, p90 5.6 MB, max
-// 21.1 MB across 12,473 records. The fsync is cheap (~9 ms for 20 MB on ZFS);
-// the JSON round trip is not.
+// The context-percentage gate is a material delta, not any delta: a chat
+// file is rewritten wholesale on every Mutate, and KAS emits its
+// percentage more than once per model response, so an exact-inequality
+// gate turned a 20-tool-call turn into dozens of full-transcript
+// rewrites to move a float by fractions of a point.
 //
-// The threshold is 1.0 percentage point because that is the resolution the
-// context ring actually renders, plus the two tier boundaries KAS itself keys
-// on (80 = warning, 95 = critical) so a crossing is never rounded away. A
-// change the UI cannot show is not worth a transcript rewrite.
+// The threshold is 1.0 percentage point, the resolution the context ring
+// actually renders, plus the tier boundaries the ring itself colours on
+// so a crossing is never rounded away.
 func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pct float64, size int, credits float64) {
 	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
@@ -418,14 +394,11 @@ func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pc
 			c.Usage.Credits = credits
 			changed = true
 		}
-		// Credits keep an exact-inequality gate deliberately, and it costs
-		// nothing: the only caller that passes a non-negative credits value is
-		// HandleUsageUpdate, and `usage_update` has no emit site in KAS 2.16.0 or
-		// 2.16.1 (one occurrence, in a Zod schema). The live channel is
-		// session_info_update's context-usage sub-kind, which passes -1 here. So
-		// this arm is unreachable today; when KAS revives the notification, a
-		// money value is also the one field where rounding a change away would be
-		// wrong.
+		// Credits keep an exact-inequality gate deliberately: the only
+		// caller passing a non-negative credits value is
+		// HandleUsageUpdate, whose frame has no emit site in any KAS
+		// build measured so far, so this arm is unreachable today and a
+		// money value is where rounding away a change would be wrong.
 		return changed
 	})
 	if errors.Is(err, chat.ErrTombstoned) {
@@ -440,15 +413,13 @@ func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pc
 // transcript rewrite: one point, the resolution the context ring renders.
 const contextPctEpsilon = 1.0
 
-// contextPctTiers are the thresholds a percentage crossing must always persist
-// through, because each one changes what the CLIENT does rather than merely how
-// it rounds: 70 and 90 are where the context ring changes colour, and 95 is
-// DEFAULT_CUTOFF_PCT, where the client stops accepting input entirely.
-//
-// vibekit's own thresholds, not KAS's. An earlier revision used KAS's 80/95 tier
-// boundaries, which are the ones its TUI colours on and which this client never
-// renders — so the epsilon could round away a crossing of the one threshold that
-// disables the composer.
+// contextPctTiers are the thresholds a percentage crossing must always
+// persist through, since each changes what the client does rather than
+// merely how it rounds: 70 and 90 are where the context ring changes
+// colour, and 95 is where the client stops accepting input entirely.
+// vibekit's own thresholds, not KAS's — using KAS's 80/95 tier
+// boundaries let the epsilon round away the crossing that disables the
+// composer.
 var contextPctTiers = [...]float64{70, 90, 95}
 
 // materialPctDelta reports whether moving the stored context percentage from

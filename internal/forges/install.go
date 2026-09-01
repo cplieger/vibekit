@@ -28,7 +28,7 @@ func EnsureCLI(ctx context.Context, kind Kind) error {
 		return fmt.Errorf("forges: no CLI for kind %q", kind)
 	}
 	if _, err := exec.LookPath(cli); err == nil {
-		return nil // already on PATH
+		return nil
 	}
 	if EnsureTool == nil {
 		return fmt.Errorf("forges: %s is not installed (tools engine unavailable)", cli)

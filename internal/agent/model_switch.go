@@ -4,10 +4,8 @@ package agent
 //
 // cmdSwitchModel: switch the model for an active chat. Two strategies:
 //
-//  1. Fast path (session/set_config_option, configId "model"): call the
-//     v3 (KAS) config-option method on the running bridge. KAS swaps the
-//     model in-session without tearing down the subprocess. No priming,
-//     no token cost, instant.
+//  1. Fast path (session/set_config_option, configId "model"): swap the model
+//     in-session on the running bridge. No priming, no token cost, instant.
 //
 //  2. Fallback (bridge restart): if the in-session switch fails, close the
 //     bridge, start a new one, and let getOrCreateBridge try session/load
@@ -67,19 +65,13 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientComman
 
 	model, isSwitch := resolveSwitchModel(chat, p)
 
-	// Refuse an unserved pick before anything else, then try the fast path: an
-	// in-session model swap on the running bridge. Both live under one isSwitch
-	// because both are only meaningful for a real change of model.
 	if isSwitch {
 		if err := rt.refuseUnservedModel(ctx, cmd.ChatID, chat, model); err != nil {
 			return nil, err
 		}
 		// A pick on a chat that has never run is a PREFERENCE, not a switch:
-		// persist it and let the first prompt's session/new carry it through the
-		// _meta.kiro door. Falling through would spawn a ~300MB bridge tree for a
-		// pill click — which is why the client used to keep this pick local-only,
-		// and the record then clobbered it back on the next header echo
-		// (set_effort's auto-persist broadcast; user report, 2026-08-31).
+		// persist it and let the first prompt's session/new carry it through.
+		// Falling through would spawn a ~300MB bridge tree for a pill click.
 		if chat.ACPSessionID == "" && len(chat.Messages) == 0 && !rt.HasLiveBridge(cmd.ChatID) {
 			rt.persistModelPick(ctx, cmd.ChatID, model)
 			return responseOK2, nil
@@ -95,9 +87,8 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientComman
 
 // persistModelPick records a pre-session model choice on the chat record: no
 // event row (nothing was switched — the chat never ran), no usage reset, no
-// bridge. The Mutate's own broadcast carries the header every device converges
-// on. The chosen-effort clear matches PersistModelSwitch: a tier picked under
-// the previous model does not survive onto this one.
+// bridge. The chosen-effort clear matches PersistModelSwitch: a tier picked
+// under the previous model does not survive onto this one.
 func (rt *Runtime) persistModelPick(ctx context.Context, chatID vibekit.ChatID, model string) {
 	if err := rt.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
@@ -111,13 +102,8 @@ func (rt *Runtime) persistModelPick(ctx context.Context, chatID vibekit.ChatID, 
 	}
 }
 
-// switchByRestart is the fallback when the in-session swap did not take: tear the
-// bridge down and let OpenBridge try session/load, then session/new.
-//
-// Extracted from cmdSwitchModel because it is the one coherent unit in it — the
-// dispatcher now reads validate, try fast, else restart — and because leaving it
-// inline put that function over the complexity ceiling once the entitlement gate
-// landed. No behaviour moved with it.
+// switchByRestart is the fallback when the in-session swap did not take: tear
+// the bridge down and let OpenBridge try session/load, then session/new.
 func (rt *Runtime) switchByRestart(
 	ctx context.Context, cmd *vibekit.ClientCommand,
 	chat *vibekit.Chat, model string, isSwitch bool,
@@ -147,27 +133,19 @@ func (rt *Runtime) switchByRestart(
 	} else {
 		slog.Info("model switch: fallback, session/load succeeded",
 			"chat_id", cmd.ChatID, "model", model)
-		// A RESUMED session has never seen this pick. session/load restores KAS's
-		// own persisted model and vibekit's session/new door does not run, so
-		// without this the switch silently did not happen: PersistModelSwitch wrote
-		// the new id onto the chat while the old model kept answering, and the
-		// load's config_option_update then raced that write back to the old id, so
-		// the pill snapped back and the pick was lost.
+		// A RESUMED session has never seen this pick: session/load restores KAS's
+		// own persisted model and session/new's priming door does not run, so
+		// without this the switch would silently not happen — the load's
+		// config_option_update would race PersistModelSwitch's write back to the
+		// old id.
 		//
-		// Only on this branch. `needsPrime` means a FRESH session, where the model
-		// and the level already rode _meta.kiro on session/new, so re-sending them
-		// would be two round trips that change nothing.
+		// Only on this branch: a fresh session already carried the model and
+		// level on session/new, so re-sending would be two round trips that
+		// change nothing.
 		//
-		// Reusing the swap path is deliberate even though it is what just failed:
-		// it failed against the OLD subprocess and session (a context too large for
-		// the target, a stale entitlement), and this is a new one. A second failure
-		// leaves the session on its restored model, which is the same place the
-		// caller was already in, so there is nothing further to fall back to.
-		//
-		// Through the bridge this function HOLDS, never a fresh lookup by chat id:
-		// the old bridge's exit cleanup can evict the manager entry after the new
-		// one registered, so a lookup here can answer nil or answer with a bridge
-		// that is not the session just loaded.
+		// Through the bridge this function HOLDS, never a fresh lookup by chat
+		// id: the old bridge's exit cleanup can evict the manager entry after the
+		// new one registered.
 		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.EffortForSwitch(ctx, chat, model)) {
 			slog.Warn("model switch: the resumed session kept its own model",
 				"chat_id", cmd.ChatID, "model", model)
@@ -178,21 +156,17 @@ func (rt *Runtime) switchByRestart(
 }
 
 // refuseUnservedModel is the LOUD half of the entitlement check: spawnBridge
-// withholds an inherited value silently, because nobody chose it in that moment,
-// while a pick the user just made must be refused rather than downgraded behind
-// their back.
+// withholds an inherited value silently, because nobody chose it in that
+// moment, while a pick the user just made must be refused rather than
+// downgraded behind their back.
 //
-// Without it the id reaches the wire, KAS accepts it, and the rejection arrives
-// mid-prompt on this and every later turn — after the fast path has already failed
-// and the fallback has torn down a working bridge to respawn on the same rejected
-// id.
+// Without it the id reaches the wire, KAS accepts it, and the rejection
+// arrives mid-prompt on this and every later turn.
 //
-// The live session's own advertised set is the evidence when a bridge exists, and
-// it is the UNFILTERED one: validating against the picker's list would refuse a
-// deprecated model the account can still use. An empty set means entitlement is
-// unknowable and vibekit.ModelServed allows it.
-// It answers whether the request was REFUSED, having already written the response
-// and broadcast the banner, so the caller is one guard clause.
+// The live session's own advertised set is the evidence when a bridge exists,
+// and it is the UNFILTERED one: validating against the picker's list would
+// refuse a deprecated model the account can still use. An empty set means
+// entitlement is unknowable and vibekit.ModelServed allows it.
 func (rt *Runtime) refuseUnservedModel(
 	ctx context.Context, chatID vibekit.ChatID, chat *vibekit.Chat, model string,
 ) error {

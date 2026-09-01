@@ -83,43 +83,34 @@ type wireUserInputOption struct {
 	Recommended     bool                     `json:"recommended"`
 }
 
-// Bounds on what a userInput question may put on screen. The agent composes these
-// options, so they are model output arriving over a trusted channel — exactly the
-// shape that gets forwarded unchecked. Three things go wrong without bounds and
-// none of them fails loudly:
-//
-//   - a long list pushes the composer off screen, and the dock has no scroll of
-//     its own
-//   - an empty title renders a card the user cannot read, and the ANSWER is the
-//     title text, so choosing it sends "" back to the agent
-//   - two identical titles make the answer ambiguous by construction, because the
-//     reply carries the title rather than an index
+// Bounds on what a userInput question may put on screen. The agent
+// composes these options, so they are model output over a trusted
+// channel. Three failure modes without bounds: a long list pushes the
+// composer off screen; an empty title renders an unreadable card whose
+// answer is also empty text; two identical titles make the answer
+// ambiguous, since the reply carries the title rather than an index.
 const (
 	maxUserInputOptions    = 24
 	maxUserInputSubOptions = 24
 )
 
-// sanitizeUserInputOptions drops what cannot be answered, defuses what is shown,
-// and bounds what is left.
+// sanitizeUserInputOptions drops what cannot be answered, defuses what is
+// shown, and bounds what is left.
 //
-// Dropping rather than refusing the whole question: one unusable option among
-// five still leaves a question worth asking, and refusing outright would leave
-// the agent waiting on a request vibekit had already decided not to show.
+// Dropping rather than refusing the whole question: one unusable option
+// among five still leaves a question worth asking.
 //
-// DISPLAYTEXT RUNS BEFORE TRIMSPACE AND BEFORE THE DEDUP, and that order is
-// load-bearing in both directions. The preset turns each unsafe rune into a
-// SPACE, so a title of nothing but a Bidi override sanitizes to " " — trimming
-// afterwards empties it and the empty-title rule drops it, where trimming first
-// would leave a card rendering as blank space that answers "\u202e" when chosen
-// (measured on runesafe v1.4.2: sanitize-then-trim gives "", trim-then-sanitize
-// gives " "). And two titles differing only in invisible controls dedup to one
-// only if the dedup sees the sanitized form; keyed on the raw text they would
-// both survive as visually identical cards, which is exactly the ambiguity the
-// dedup exists to prevent — the reply carries the title, not an index.
+// displayText runs before TrimSpace and before the dedup, and that order
+// is load-bearing: the preset turns each unsafe rune into a space, so
+// sanitizing first and trimming after correctly empties a title of
+// nothing but a Bidi override, where trimming first would leave a blank
+// card that answers with an invisible control character when chosen. The
+// dedup must also see the sanitized form, or two titles differing only in
+// invisible controls would survive as visually identical cards — exactly
+// the ambiguity it exists to prevent.
 //
-// That last point is also why sanitizing the title is not merely cosmetic here:
-// the title IS the answer sent back to the agent, so the text the human read and
-// the text the agent receives have to be the same string.
+// The title IS the answer sent back to the agent, so the text the human
+// read and the text the agent receives have to be the same string.
 func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOption {
 	options := make([]vibekit.UserInputOption, 0, min(len(in), maxUserInputOptions))
 	seen := make(map[string]struct{}, len(in))

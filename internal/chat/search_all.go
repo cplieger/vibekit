@@ -1,16 +1,14 @@
 package chat
 
-// Cross-chat search: the History page's box, answering "which conversation was
-// that in".
+// Cross-chat search: the History page's box, answering "which conversation
+// was that in".
 //
-// Deliberately a DIFFERENT question from the in-chat Ctrl-F, which stays scoped
-// to the chat you are reading (user decision). So this returns CHATS ranked by
-// how well they match, each with its single best line, rather than a flat list
-// of every hit — the answer is a conversation to open, not a position to jump
-// to. Once the chat is open, its own search takes over.
+// A DIFFERENT question from the in-chat Ctrl-F, which stays scoped to the
+// chat you are reading. So this returns CHATS ranked by match quality, each
+// with its single best line, rather than a flat list of every hit.
 //
-// Lexical and index-free, consistent with Search: the substrate is the same
-// per-chat scan fanned out over the existing bounded-parallel reader.
+// Lexical and index-free, consistent with Search: fans out the per-chat scan
+// over the existing bounded-parallel reader.
 
 import (
 	"cmp"
@@ -28,10 +26,8 @@ import (
 )
 
 // The scan window, result cap and title boost are KiroCrew's
-// `_SEARCH_SCAN_WINDOW`, `search_sessions(limit=50)` and `_TITLE_BOOST`
-// (src/kiro_crew/history.py), adopted with their values rather than guessed --
-// it ships against the same kiro-cli and its ranking is documented reasoning
-// rather than a hunch.
+// `_SEARCH_SCAN_WINDOW`, `search_sessions(limit=50)` and `_TITLE_BOOST`,
+// adopted with their values rather than guessed.
 const (
 	// maxChatsScanned bounds one search: a no-index fan-out reads every chat
 	// file, so the newest N are scanned and older ones reported as unscanned.
@@ -110,22 +106,18 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 func searchOneChat(ce chatEntry, query string) Match {
 	c, err := readChatFile(ce.path, "chat "+ce.id)
 	if err != nil {
-		// A concurrent delete is normal and not worth a line; anything else
-		// means a chat that exists was not searched, which the user should not
-		// have to guess at.
+		// A concurrent delete is normal; anything else means a chat that
+		// exists was not searched.
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("chat search: skipping unreadable file", "chat_id", ce.id, "error", err)
 		}
 		return Match{}
 	}
-	// Case-INSENSITIVE, always. The match-case toggle belongs to the in-chat
-	// search, which is a different question on a different endpoint; a
-	// cross-chat "which conversation was that in" is asked from memory, and
-	// memory does not remember capitalisation.
+	// Case-INSENSITIVE, always: a cross-chat "which conversation was that
+	// in" is asked from memory, and memory does not remember capitalisation.
 	hits := Search(c.Messages, query, false)
-	// A chat whose TITLE names the subject is a result even when its body never
-	// repeats the word — dropping it on content hits alone would make the title
-	// boost unreachable in exactly the case it exists for.
+	// A chat whose TITLE names the subject is a result even when its body
+	// never repeats the word.
 	titles := titleHits(c.Name, query)
 	if len(hits) == 0 && titles == 0 {
 		return Match{}
@@ -146,9 +138,8 @@ func searchOneChat(ce chatEntry, query string) Match {
 
 // newestEntries lists chat files newest-first, capped at maxChatsScanned.
 //
-// Ordering by the file's own mtime rather than by reading each header: the point
-// of the cap is to avoid reading every file, so the ordering cannot depend on
-// having read them.
+// Ordering by the file's own mtime rather than by reading each header: the
+// point of the cap is to avoid reading every file.
 func (s *Store) newestEntries(ctx context.Context) (entries []chatEntry, truncated bool) {
 	des, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -209,16 +200,9 @@ func bestHit(hits []SearchHit) SearchHit {
 //
 //	score = title_hits*titleBoost + content_hits/sqrt(1 + docChars/1024)
 //
-// Two details are load-bearing and both differ from a naive count. The title
-// term is a MULTIPLIER on the number of title hits, not a flag, so naming the
-// subject twice counts twice. And the length normaliser divides by CHARACTER
-// volume in KiB, not by message count -- one enormous message and fifty short
-// ones are not the same amount of text to get a casual mention into, which is
-// exactly the case the normaliser exists to discount. The `1 +` keeps a tiny
-// chat from being divided by nearly zero.
-//
-// KiroCrew's own note records why this is not BM25: the `(1-b) + b*(dl/avgdl)`
-// term needs corpus-wide stats, which would mean a second pass over every chat.
+// The title term MULTIPLIES by the number of title hits, not a flag. The
+// length normaliser divides by CHARACTER volume in KiB, not message count.
+// The `1 +` keeps a tiny chat from being divided by nearly zero.
 func scoreChat(contentHits, titleHitCount, docChars int, _ string) float64 {
 	lengthNorm := math.Sqrt(1 + float64(docChars)/1024)
 	return float64(titleHitCount)*titleBoost + float64(contentHits)/lengthNorm

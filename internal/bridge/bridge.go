@@ -428,8 +428,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 				// preservation, temp-then-rename atomicity, FIFO and
 				// device-node refusal, and internal/ignore on the read side.
 				//
-				// It is NOT the supervised staging path, which is what this
-				// comment used to say. Staging is gone: KAS gates a whole turn
+				// It is NOT the supervised staging path: KAS gates a whole turn
 				// (autopilot: false) and restores a rejected action through an
 				// ordinary fs/write_text_file, which is exactly why
 				// respondFSWrite applies unconditionally.

@@ -41,29 +41,21 @@ type listResult struct {
 	complete bool
 }
 
-// ReferencedSessionIDs returns every ACP session id still referenced by a chat
-// vibekit keeps, and reports whether that set is COMPLETE.
+// ReferencedSessionIDs returns every ACP session id still referenced by a
+// chat vibekit keeps, and reports whether that set is COMPLETE.
 //
 // One list, because chats no longer move: there is no archive directory to
-// union in. That collapse is the point — the old two-list form ANDed two
-// completeness flags, so an unreadable file in either location suppressed the
-// whole sweep.
+// union in.
 //
-// It backs the orphan session sweep (internal/kirosession): any on-disk KAS
-// session not in this set is treated as reapable, which makes an incomplete
-// answer here a data-loss bug rather than a stale read. Two properties are
-// therefore load-bearing:
+// It backs the orphan session sweep: any on-disk KAS session not in this
+// set is treated as reapable, which makes an incomplete answer here a
+// data-loss bug. Every id in a chat's CHAIN counts, not just its current
+// one — a chat routinely changes session and each abandoned directory
+// still holds that period's transcript.
 //
-// Every id in a chat's CHAIN counts, not just its current one. A chat
-// routinely changes session (a failed session/load, a model-switch fallback)
-// and each abandoned session directory still holds that period's transcript
-// and pre-images.
-//
-// It FAILS CLOSED. `complete` is false when any chat file that exists could
-// not be read, because a chat dropped from the list takes its sessions'
-// keep-entries with it and the next sweep deletes them. A chat that vanished
-// mid-scan (ENOENT — a concurrent delete) is not a failure: it genuinely has
-// no sessions to keep, and treating it as one would wedge the sweep forever.
+// It FAILS CLOSED: `complete` is false when any chat file that exists
+// could not be read. A chat that vanished mid-scan (ENOENT) is not a
+// failure — it genuinely has no sessions to keep.
 func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struct{}, complete bool) {
 	refs = make(map[string]struct{})
 	headers, complete := s.listWithCompleteness(ctx)
@@ -76,10 +68,9 @@ func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struc
 }
 
 // listWithCompleteness is List plus the read-completeness flag the sweep
-// needs. List itself stays best-effort for the UI, where showing most of the
-// sidebar beats showing none of it.
-//
-// Coalesces concurrent sidebar refreshes into a single directory scan.
+// needs. List itself stays best-effort for the UI, where showing most of
+// the sidebar beats showing none of it. Coalesces concurrent sidebar
+// refreshes into a single directory scan.
 func (s *Store) listWithCompleteness(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	r := sfDo(&s.listSF, "list", func() listResult {
 		headers, complete := s.listOnce(ctx)
@@ -135,19 +126,12 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 
 // primeHistoryCap bounds the transcript BuildHistory returns.
 //
-// The prime is the DEGRADED path: it runs only when a model switch fell back to
-// a new session or a reload could not `session/load`, so the alternative to a
-// good prime is a model that has forgotten the conversation entirely. That
-// argues for generosity. Against it: the prime is itself a prompt, so every byte
-// spent re-narrating history is a byte the resumed conversation cannot use, and
-// an unbounded transcript can exceed the window outright, which fails upstream
-// with an opaque error instead of a shortened memory.
-//
-// 64 KiB is roughly 16k tokens: enough to carry a long working session's recent
-// arc, and a small fraction of any window vibekit's models offer. Bytes rather
-// than tokens because vibekit cannot count tokens (the context ring reads usage
-// from KAS's `usage_update`, which does not exist yet at prime time), and a byte
-// budget is the same proxy `MaxInlineTurnBytes` and `pushBodyCap` already use.
+// The prime is the DEGRADED path: it runs only when a model switch fell
+// back to a new session or a reload could not `session/load`. Bytes rather
+// than tokens because vibekit cannot count tokens at prime time (the
+// context ring reads usage from KAS's `usage_update`, which does not
+// exist yet), and a byte budget is the same proxy `MaxInlineTurnBytes` and
+// `pushBodyCap` already use.
 const primeHistoryCap = 64 << 10
 
 // primeOmissionNotice tells the model its own input was clipped. Without it a
@@ -155,36 +139,31 @@ const primeHistoryCap = 64 << 10
 // answers confidently about a history it was never given.
 const primeOmissionNotice = "[%d earlier message(s) omitted to fit the priming budget]\n"
 
-// BuildHistory returns a plain-text transcript used for prime priming, bounded
-// to primeHistoryCap. Returns "" if the chat is missing or empty.
+// BuildHistory returns a plain-text transcript used for prime priming,
+// bounded to primeHistoryCap. Returns "" if the chat is missing or empty.
 //
-// Trimming drops WHOLE MESSAGES, oldest first, which is the only honest unit
-// here: cutting mid-message would hand the model half a sentence and no way to
-// know it. The newest messages are the ones kept, because a resumed
-// conversation continues from its end and anything from the start that still
-// matters has usually been restated since.
+// Trimming drops WHOLE MESSAGES, oldest first: cutting mid-message would
+// hand the model half a sentence with no way to know it. The newest
+// messages are kept, since a resumed conversation continues from its end.
 //
-// The last message always survives. If it alone exceeds the budget its content
-// is truncated with a marker charged INSIDE the cap (the same rule
-// push.fitToCap follows), because a prime with no final turn cannot resume
-// anything.
+// The last message always survives. If it alone exceeds the budget its
+// content is truncated with a marker charged INSIDE the cap.
 func (s *Store) BuildHistory(ctx context.Context, chatID vibekit.ChatID) string {
 	c, ok := s.Get(ctx, chatID)
 	if !ok || len(c.Messages) == 0 {
 		return ""
 	}
 
-	// Render first, measure second. Each message's rendered form is what costs
-	// budget, so selecting on the raw fields would mis-count the role prefixes
-	// and the tool-call lines.
+	// Render first, measure second: each message's rendered form is what
+	// costs budget, so selecting on raw fields would mis-count role
+	// prefixes and tool-call lines.
 	rendered := make([]string, len(c.Messages))
 	for i := range c.Messages {
 		rendered[i] = renderPrimeMessage(&c.Messages[i], chatID)
 	}
 
-	// Reserve the omission notice's bytes BEFORE selecting, so the notice can
-	// never push an already-admitted message over the cap. Computed exactly
-	// (the count is bounded by the message total) rather than guessed.
+	// Reserve the omission notice's bytes BEFORE selecting, so it can never
+	// push an already-admitted message over the cap.
 	budget := primeHistoryCap - len(fmt.Sprintf(primeOmissionNotice, len(rendered)))
 	first, total := selectPrimeWindow(rendered, budget)
 	if first == len(rendered) {
@@ -215,13 +194,13 @@ func (s *Store) BuildHistory(ctx context.Context, chatID vibekit.ChatID) string 
 	return b.String()
 }
 
-// selectPrimeWindow picks the newest run of rendered messages that fits budget,
-// returning the index of the oldest one kept and their total size. `first ==
-// len(rendered)` means nothing was renderable.
+// selectPrimeWindow picks the newest run of rendered messages that fits
+// budget, returning the index of the oldest one kept and their total size.
+// `first == len(rendered)` means nothing was renderable.
 //
-// The last message is admitted unconditionally, which is what guarantees a prime
-// always carries the turn the conversation resumes from; the caller truncates it
-// if it alone busts the cap.
+// The last message is admitted unconditionally, guaranteeing a prime
+// always carries the turn the conversation resumes from; the caller
+// truncates it if it alone busts the cap.
 func selectPrimeWindow(rendered []string, budget int) (first, total int) {
 	first = len(rendered)
 	last := len(rendered) - 1

@@ -15,8 +15,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// Compile-time interface assertion.
-
 // Option configures a Handler at construction time.
 type Option func(*Handler)
 
@@ -63,19 +61,16 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/pr-fetch", h.handlePRFetch)
 }
 
-// --- helpers ---
-
 // resolveRepoDir resolves a client-supplied repo name against a workDir,
 // rejecting attempts to escape the workspace root via a `..` component or
 // an absolute path. Falls back to workDir for empty / "." / invalid
 // inputs so the workspace root is the default "repo".
 //
 // The traversal test is pathinside.HasDotDot: the name is judged AS
-// WRITTEN, before it is joined onto anything, which is the syntactic-
-// hygiene axis rather than the containment one (there is no root to
-// compare against yet). It is component-precise, so a directory whose
-// NAME merely contains two adjacent dots ("foo..bar") now resolves as
-// the repo it is instead of silently falling back to workDir.
+// WRITTEN, before it is joined onto anything, since there is no root to
+// compare against yet. It is component-precise, so a directory whose
+// NAME merely contains two adjacent dots ("foo..bar") resolves as the
+// repo it is instead of falling back to workDir.
 func resolveRepoDir(workDir, repo string) string {
 	if repo == "" || repo == "." || pathinside.HasDotDot(repo) || filepath.IsAbs(repo) {
 		return workDir
@@ -83,23 +78,16 @@ func resolveRepoDir(workDir, repo string) string {
 	return filepath.Join(workDir, filepath.Clean(repo))
 }
 
-// repoDir resolves a client-supplied repo name against h.workDir,
-// rejecting attempts to escape the workspace root via a `..` component
-// or an absolute path. Falls back to workDir for empty / "." / invalid
-// inputs so the workspace root is the default "repo".
+// repoDir resolves repo against h.workDir; see resolveRepoDir.
 //
 // Symlinks inside workDir are NOT resolved: users may symlink a real
 // git repo into the workspace and expect the UI to address it by its
 // symlink name. Git itself doesn't follow symlinks into .git/, so
-// this is safe for the read operations this package performs. Write
-// operations in the runtime's fs bridge resolve symlinks via EvalSymlinks
-// — that path has stricter requirements. The check is therefore
-// deliberately LEXICAL-ONLY: an os.Root here would refuse the
-// symlinked repos that are a feature of this surface.
-//
-// The `..` check is component-precise (pathinside.HasDotDot), so the
-// old over-refusal of legitimate directory names containing ".."
-// (e.g. "foo..bar") is gone; a real `..` segment is still rejected.
+// this is safe for the read operations this package performs; the
+// runtime's fs bridge resolves symlinks via EvalSymlinks for writes,
+// which has stricter requirements. The check here is deliberately
+// LEXICAL-ONLY: an os.Root would refuse the symlinked repos that are
+// a feature of this surface.
 func (h *Handler) repoDir(repo string) string {
 	return resolveRepoDir(h.workDir, repo)
 }
@@ -139,14 +127,10 @@ func parseGitStatus(ctx context.Context, dir string) []gitFile {
 }
 
 // handlePRFetch fetches a pull request's head ref into a local branch
-// named "pr-<number>". Works for GitHub + Gitea family (both expose
-// pull/{n}/head refs); GitLab's equivalent is merge-requests/{n}/head.
-// We derive the ref shape from the remote URL.
-//
-// Payload: {"repo": "name", "number": 42, "head": "feature-branch"}.
-// "head" is a best-effort label for the local branch — when set, we
-// use it as the local branch name; otherwise we fall back to
-// pr-<number>.
+// named "pr-<number>" (or body.Head, if set). Works for GitHub + Gitea
+// family (both expose pull/{n}/head refs); GitLab's equivalent is
+// merge-requests/{n}/head — prRefShape derives the ref shape from the
+// remote URL.
 func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	if !requirePOST(w, r) {
 		return

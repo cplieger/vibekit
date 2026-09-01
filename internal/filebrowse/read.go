@@ -30,12 +30,10 @@ const (
 // --- /api/file (GET read) + /api/file/download ---
 
 func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string) {
-	// atomicfile.ReadBoundedInRoot owns the confined bounded read: it opens through the
-	// root, stats the OPEN HANDLE (so the size guard and the read cannot refer to
-	// different files), requires a regular file, and opens non-blocking so a FIFO under a
-	// granted root cannot wedge the handler. Hand-rolling that sequence here duplicated
-	// three non-obvious details the library already guarantees on the write side, and one
-	// of them getting it wrong is a confinement bypass.
+	// atomicfile.ReadBoundedInRoot owns the confined bounded read: it opens
+	// through the root, stats the OPEN HANDLE, requires a regular file, and
+	// opens non-blocking so a FIFO under a granted root cannot wedge the
+	// handler.
 	data, err := atomicfile.ReadBoundedInRoot(ctx, l.m.root, l.rel(), maxFileSize)
 	if err != nil {
 		readFileError(w, l, err)
@@ -46,17 +44,14 @@ func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string)
 			httpreply.ErrorJSON("binary file"))
 		return
 	}
-	// content_hash is the client's handle on "the bytes I loaded". It comes back
-	// on save as expected_hash, which is what turns a blind overwrite into a
-	// detected conflict — the file the user is editing is the same tree the agent
-	// writes to, so an external change between load and save is routine here
-	// rather than exotic.
+	// content_hash is the client's handle on "the bytes I loaded"; it comes
+	// back on save as expected_hash, turning a blind overwrite into a
+	// detected conflict.
 	//
-	// A DIGEST rather than the mtime, deliberately: this repo already measured
-	// that Linux stamps inode timestamps from a coarse clock (jiffy granularity),
-	// so two writes inside one tick are byte-identical in mtime and an
-	// mtime-based guard would miss exactly the rapid agent write it exists to
-	// catch. See kiro_docs.go's dirSignature for the same finding.
+	// A DIGEST rather than the mtime, deliberately: Linux stamps inode
+	// timestamps from a coarse clock, so two writes inside one tick are
+	// byte-identical in mtime and an mtime-based guard would miss exactly
+	// the rapid agent write it exists to catch.
 	webhttp.WriteJSON(w, map[string]string{
 		"content":      string(data),
 		"content_hash": contentHash(data),
@@ -64,20 +59,16 @@ func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string)
 	})
 }
 
-// contentHash is the stale-write guard's comparison key: a hex SHA-256 of the
-// bytes served. Full hex rather than a truncation because the cost is one field
-// on a response that already carries the whole file.
+// contentHash is the stale-write guard's comparison key: a hex SHA-256 of
+// the served bytes.
 func contentHash(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
-// looksBinary reports whether the file's first binarySniffN bytes contain
-// a NUL. Not perfect but matches the pre-rewrite behaviour and is good
-// enough to keep the editor from blindly loading images / executables.
-// bytes.IndexByte is used directly because it hits the runtime's SIMD
-// implementation on amd64/arm64 — binary sniffing is a bytes-package
-// operation, not a generic slice one.
+// looksBinary reports whether the file's first binarySniffN bytes contain a
+// NUL. bytes.IndexByte is used directly to hit the runtime's SIMD
+// implementation on amd64/arm64.
 func looksBinary(data []byte) bool {
 	if len(data) > binarySniffN {
 		data = data[:binarySniffN]
@@ -101,13 +92,9 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Open through the mount's os.Root (kernel-confined) rather than
-	// serving the absolute path with http.ServeFile. ServeFile re-opens by
-	// path and follows symlinks at serve time, which reintroduces the
-	// check-to-serve TOCTOU that resolvePath's EvalSymlinks otherwise
-	// closes: a symlink swapped in after resolution could point outside
-	// the mount. Every other read/write goes through the root; download
-	// does too.
+	// Open through the mount's os.Root rather than http.ServeFile, which
+	// re-opens by path and follows symlinks at serve time — reintroducing
+	// the check-to-serve TOCTOU resolvePath's EvalSymlinks otherwise closes.
 	f, err := l.m.root.Open(l.rel())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -139,46 +126,28 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	name := filepath.Base(l.abs)
 	ct := cmp.Or(mime.TypeByExtension(filepath.Ext(name)), "application/octet-stream")
 	w.Header().Set("Content-Type", ct)
-	// `attachment` is a SECURITY CONTROL on this route, not a UX preference, and
-	// the case that makes it one is SVG: mime.TypeByExtension(".svg") is
-	// "image/svg+xml", which a browser will execute script from if the response is
-	// NAVIGATED to as a document. Every `<img src=…>` pointed here is safe on its
-	// own (an SVG referenced as an image may not fetch or script), but the file
-	// browser also offers a real same-origin anchor to this URL, and CSP does not
-	// close the hole — `frame-src` falls back to `default-src 'self'`, which
-	// PERMITS a same-origin frame. `attachment` is what makes the browser save the
-	// bytes instead of rendering them as a document with this origin's privileges.
-	// Do not relax it to `inline` for images: that turns the existing download
-	// anchor into stored XSS. TestHandleDownload_SVGIsAttachment pins it.
+	// `attachment` is a SECURITY CONTROL here, not a UX preference: an SVG
+	// served inline (mime.TypeByExtension(".svg") is "image/svg+xml") would
+	// execute script if navigated to as a document, and CSP does not close
+	// this — `frame-src` falls back to `default-src 'self'`, which permits
+	// a same-origin frame. Do not relax to `inline` for images: that turns
+	// the existing download anchor into stored XSS.
+	// TestHandleDownload_SVGIsAttachment pins it.
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
-	// Revalidate on every impression. ServeContent supplies Last-Modified but
-	// no freshness directive, and a validator with no explicit lifetime gets
-	// HEURISTIC caching whose window scales with the document's age — so an
-	// hour-old file is served stale for minutes, and the browser's in-page
-	// image cache hands an already-decoded image to a new <img> with the same
-	// src without a network round trip at all. Both bite the agent's
-	// screenshot loop, where a re-shot frame keeps its filename and therefore
-	// its URL (see utils-url.ts rewriteWorkspaceImageSrc). `no-cache` does not
-	// forbid caching, it requires revalidation, so ServeContent's own
-	// If-Modified-Since comparison answers 304 for an unchanged file and 200
-	// with the new bytes for a rewritten one. Same policy the static asset
-	// handler already uses.
+	// Revalidate on every impression: a validator with no explicit lifetime
+	// gets heuristic caching whose window scales with the document's age,
+	// which bites the agent's screenshot loop where a re-shot frame keeps
+	// its filename (see utils-url.ts rewriteWorkspaceImageSrc). `no-cache`
+	// requires revalidation rather than forbidding caching.
 	w.Header().Set("Cache-Control", "no-cache")
-	// A strong validator, because the mtime alone is not one for this consumer.
-	// ServeContent's only validator would otherwise be Last-Modified, whose
-	// HTTP-date is truncated to ONE SECOND — so two writes inside one second of
-	// the client's last Last-Modified answer 304 and the browser serves the
-	// previous bytes. readFile above refuses the mtime for exactly this reason
-	// (see its content_hash comment), and the screenshot loop this handler's
-	// Cache-Control comment describes is the rapid-write consumer that makes the
-	// second-resolution window reachable. ServeContent evaluates If-None-Match
-	// first and skips If-Modified-Since entirely when it is present, so size plus
-	// mtime-in-nanoseconds shrinks the stale window to one clock tick at zero I/O
-	// cost. The QUOTING is load-bearing: an unquoted value is not a valid strong
-	// validator, ServeContent will not match it, and the route silently falls back
-	// to the mtime. Deliberately not a content hash: this handler streams from an
-	// open fd and supports Range, so hashing means a second full read per
-	// impression.
+	// A strong validator: Last-Modified's HTTP-date truncates to ONE SECOND,
+	// so two writes within a second answer 304 with stale bytes (see
+	// content_hash above for the same mtime-resolution problem). Size plus
+	// mtime-in-nanoseconds shrinks that window to one clock tick at zero I/O
+	// cost. The QUOTING is load-bearing — an unquoted value is not a valid
+	// strong validator and ServeContent falls back to the mtime. Not a
+	// content hash: this handler streams from an open fd and supports
+	// Range, so hashing means a second full read per impression.
 	w.Header().Set("ETag", strconv.Quote(fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())))
 	// Debug (not Info): the resolved path can name a workspace file and
 	// this line ships to Loki. http.ServeContent serves from the already-
@@ -187,18 +156,10 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 
-// readFileError maps a confined-read failure onto the HTTP status the client needs.
-//
-// The mapping is why this is a switch rather than one 500: a missing file and an
-// unreadable one are different answers to the caller, and a client cannot retry
-// intelligently if both arrive as "internal error". atomicfile's sentinels make each case
-// distinguishable without inspecting error text.
-//
-// ErrNotRegular covers a directory, FIFO, device node or socket. The previous code
-// answered "path is a directory" for the directory case specifically; the message is now
-// mode-agnostic because the library does not report WHICH non-regular type it refused,
-// and inventing a guess would be worse than a truthful general answer. A cancelled
-// request is silent — the client is gone.
+// readFileError maps a confined-read failure onto the HTTP status the
+// client needs. atomicfile's sentinels distinguish the cases without
+// inspecting error text; a cancelled request is silent since the client
+// is gone.
 func readFileError(w http.ResponseWriter, l loc, err error) {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):

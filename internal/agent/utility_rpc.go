@@ -121,8 +121,5 @@ func (us *utilitySession) configTemplateRaw(ctx context.Context) (json.RawMessag
 	return us.rawCall(ctx, "config template call", methodKiroConfigTemplate, callerParams(nil))
 }
 
-// There is no hook TRIGGER wrapper here. `_kiro/hooks/triggerHook` and the
-// `_kiro/hooks/executeHook` callback it provoked are deleted with Run-now: the
-// callback made vibekit run `sh -c` on a command a hook file specifies, and this
-// was its only caller. Do not re-add one without re-reading why the surface went
-// (hooks.go's header).
+// No hook TRIGGER wrapper exists here: `_kiro/hooks/triggerHook` made vibekit
+// run `sh -c` on a command a hook file specifies. Do not re-add it.

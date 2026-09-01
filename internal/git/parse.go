@@ -10,8 +10,6 @@ import (
 	"strings"
 )
 
-// --- git status parsing ---
-
 // gitFile represents a single entry from `git status --porcelain=v1 -z`.
 //
 // OrigPath is set only on a rename or copy entry, carrying the path the
@@ -157,8 +155,6 @@ func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFil
 	}
 	return files
 }
-
-// --- git status helpers ---
 
 // splitTrackedUntracked partitions the given file list into tracked
 // (checkout --) and untracked (clean -fd) buckets based on the current

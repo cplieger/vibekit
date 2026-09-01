@@ -1,13 +1,5 @@
 // Forge-CLI subprocess execution: structured output capture, size-capped
 // buffers, and typed errors.
-//
-// This was internal/forges/cliexec, reachable only from here, and the wrapper
-// file that stood in this place existed for no reason other than to re-export
-// it at package scope ("so existing callers within the forges package continue
-// to compile unchanged"). Rolling it up deleted that layer and unexported
-// everything the forge providers do not name across a package boundary; only
-// the two sentinel errors stay exported, because they are the error vocabulary
-// a caller matches on.
 
 package forges
 
@@ -27,11 +19,7 @@ import (
 // maxCmdOutputBytes caps stdout/stderr capture per CLI call. 32 MiB.
 const maxCmdOutputBytes = 32 << 20
 
-// ErrNotInstalled signals the backing CLI is not on PATH. It is the sentinel
-// runCmd actually returns, and it is the one every errors.Is in this package
-// matches against — the package used to declare a SEPARATE errors.New with the
-// same message beside the providers, so every one of those checks silently
-// never matched.
+// ErrNotInstalled signals the backing CLI is not on PATH.
 var ErrNotInstalled = errors.New("forges: CLI not installed")
 
 // ErrNotLoggedIn signals the CLI is installed but no auth is configured.
@@ -73,10 +61,6 @@ func runCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEn
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	// The directive below also suppresses the unused-directive check, for the
-	// reason internal/git/exec.go records in full: golangci-lint's gosec
-	// integration reports this line on some runs and not others, and a silent
-	// run fails the build for an unused directive.
 	//nolint:gosec,nolintlint // G702: cli is one of the three literal CLI names Kind.CLI() returns, resolved through LookPath above; args are built by this package's providers and reach execve as separate tokens with no shell, so a request-supplied repo or branch cannot become a command
 	cmd := exec.CommandContext(ctx, cli, args...)
 	cmd.Env = sanitizeEnv(os.Environ())

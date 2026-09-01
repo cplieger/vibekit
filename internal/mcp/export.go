@@ -104,22 +104,16 @@ func mergeSecrets(patch, existing []KeyPair) []KeyPair {
 	return out
 }
 
-// sameSpec reports whether two records describe the same CONNECTION, which is
-// what makes a re-paste of an already-configured server a no-op instead of a
-// conflict. The line is drawn at what identifies the connection, so three
-// groups of fields are deliberately excluded:
+// sameSpec reports whether two records describe the same CONNECTION, which
+// is what makes a re-paste of an already-configured server a no-op
+// instead of a conflict. Deliberately excluded: ID/CreatedAt/UpdatedAt
+// (store-owned), secret VALUES (a pasted README carries a placeholder),
+// and Enabled/Prewarm/DisabledTools/AutoApprove (the user's own policy).
 //
-//   - ID, CreatedAt, UpdatedAt: the store owns them.
-//   - Secret VALUES (env/header values, OAuthClientSecret): a pasted README
-//     carries <YOUR_TOKEN> or nothing at all, and preserving what the user
-//     already typed is the entire point of the item.
-//   - Enabled, Prewarm, DisabledTools, AutoApprove: the user's own policy. A
-//     re-paste says nothing about a toggle they set afterwards.
-//
-// Env and header NAMES are compared as sets, not sequences: they are records on
-// KAS's wire (pairsRecord flattens them) and the ordered form exists only so the
-// editor can hold duplicates, so a user who dragged two env rows around has not
-// changed the connection. Args stay order-sensitive, because argv order is.
+// Env and header NAMES are compared as sets, not sequences: they are
+// records on KAS's wire, so a user who dragged two env rows around has
+// not changed the connection. Args stay order-sensitive, since argv order
+// is.
 func sameSpec(a, b *Server) bool {
 	if a.Transport != b.Transport ||
 		strings.TrimSpace(a.Command) != strings.TrimSpace(b.Command) ||
@@ -155,22 +149,15 @@ func sortedPairNames(pairs []KeyPair, fold bool) []string {
 // guardOriginChange refuses to re-attach a preserved secret to a new origin.
 //
 // A PUT may change `url` while masked header rows survive, and mergeSecrets
-// keys its index on the header NAME alone — nothing consults the URL. So a
-// bearer issued for the old origin was silently re-attached, persisted, and
-// rendered into KAS's config file, whose watcher hands it to the new origin.
+// keys its index on the header NAME alone. So a bearer issued for the old
+// origin was silently re-attached, persisted, and rendered into KAS's
+// config file, whose watcher hands it to the new origin.
 //
-// This is NOT in tension with the deleted redaction layer, and the difference
-// decides the shape: that was about displaying a user their own secret, which is
-// theirs to see. This is about TRANSMITTING their secret to a third party it was
-// not issued for. Different direction, so refusing is right where redacting was
-// not — and it refuses rather than silently dropping the value to "", because a
-// silent drop is indistinguishable from a successful save and the user would
-// learn about it from a 401 inside the agent.
+// It refuses rather than silently dropping the value to "": a silent drop
+// is indistinguishable from a successful save.
 //
-// The comparison is scheme+host, not the whole string: a path edit on the same
-// origin (/mcp to /mcp/v2) is not a new party, and refusing it would make a
-// routine edit demand every token be retyped. Origin is the unit the credential
-// was issued for.
+// The comparison is scheme+host, not the whole string: a path edit on the
+// same origin is not a new party.
 func guardOriginChange(in, existing *Server) error {
 	if !changesOrigin(existing.URL, in.URL) {
 		return nil
@@ -225,20 +212,13 @@ var errImportDuplicate = errors.New("names the same server twice")
 
 // There is no ACP wire builder here any more, and no ACPServers.
 //
-// vibekit sent its server set INLINE on session/new and session/load, as the
-// `mcpServers` parameter. It now renders KAS's own config file instead
-// (kasfile.go), and sends nothing — KAS merges `client > file-based`, so an
-// inline entry would win over the file and make every file edit look like a
-// no-op. The two had to swap in one change.
+// vibekit sent its server set INLINE on session/new and session/load. It
+// now renders KAS's own config file instead (kasfile.go) and sends
+// nothing — KAS merges `client > file-based`, so an inline entry would
+// win over the file and make every file edit look like a no-op.
 //
-// What went with it: toACP, the per-transport stdio/remote builders,
-// Transport.buildACP, argsArray and pairsArray. The ACP McpServerStdio /
-// McpServerHttp / McpServerSse shapes they encoded are no longer vibekit's
-// concern — KAS infers the transport from the fields present and negotiates
-// HTTP vs SSE itself.
-//
-// EnabledNames stays: the runtime still filters status notifications against the
-// set of servers the user has enabled.
+// EnabledNames stays: the runtime still filters status notifications
+// against the set of servers the user has enabled.
 
 // EnabledNames returns the set of enabled server names, for the runtime's
 // defensive filtering of init notifications.

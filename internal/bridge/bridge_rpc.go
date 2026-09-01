@@ -192,7 +192,6 @@ func (b *Bridge) recordParseError(tracker *parseErrTracker, lineLen int, err err
 func (b *Bridge) dispatch(msg *vibekit.RPCResponse) {
 	switch {
 	case msg.ID != nil && msg.Method == "":
-		// Response to one of our requests.
 		b.pendingMu.Lock()
 		ch, ok := b.pending[*msg.ID]
 		if ok {
@@ -206,11 +205,8 @@ func (b *Bridge) dispatch(msg *vibekit.RPCResponse) {
 			ch <- pendingReply{resp: msg, seq: b.deliveredSeq}
 		}
 	case msg.ID != nil:
-		// Request FROM kiro-cli (fs/read_text_file, terminal/*);
-		// the runtime will eventually call Respond(*msg.ID, ...).
 		b.sendNotif(msg)
 	case msg.Method != "":
-		// Server-sent notification (session/update, etc.).
 		slog.Debug("ACP notification", "method", msg.Method)
 		b.sendNotif(msg)
 	}
