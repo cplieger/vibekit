@@ -3,16 +3,14 @@ package agent
 // Last-declared chat status per chat.
 //
 // This is the one thing the connect-time turn_state synthesis needs that the
-// assistant buffer does NOT hold. `chat_status` comes from KAS's focus_update
-// channel (the model's update_session_information tool), which is a session
-// event rather than turn content, so it appears in no message and in no
-// replay — the deleted turn_mirror.go was its only holder.
+// assistant buffer does NOT hold: `chat_status` comes from KAS's focus_update
+// channel (update_session_information), a session event rather than turn
+// content, so it appears in no message and in no replay.
 //
-// Deliberately ephemeral and deliberately tiny: one entry per chat, replaced
-// on each event, dropped when the turn ends. It is NEVER persisted, matching
-// the live event's contract (see vibekit.md's chat_status row: cleared
-// client-side on the next prompt and on transport:gap, precisely so a bare
-// replay cannot resurrect a stale "in_progress").
+// Deliberately ephemeral and tiny: one entry per chat, replaced on each
+// event, dropped when the turn ends. Never persisted, matching the live
+// event's contract — cleared client-side on the next prompt and on
+// transport:gap, so a bare replay cannot resurrect a stale "in_progress".
 
 import (
 	"maps"
@@ -57,18 +55,15 @@ func (c *chatStatusCache) Snapshot() map[vibekit.ChatID]vibekit.ChatStatusPayloa
 }
 
 // ClearAtTurnEnd drops a chat's status at turn end, so a later connect cannot
-// report a finished turn's label as current — EXCEPT waiting_on_user, which is
-// the one status whose whole meaning is that the turn ended and a person still
-// owes an answer.
+// report a finished turn's label as current — EXCEPT waiting_on_user, the one
+// status whose whole meaning is that the turn ended and a person still owes
+// an answer.
 //
-// Clearing that one unconditionally is what made the amber dot unrecoverable.
-// The client renders `waiting_on_user` as a dot that survives turn end (it is
-// the only status that does), but the cache dropped it in the same breath as the
-// turn — so the dot existed only for a client that happened to be connected when
-// the event fired. A refresh lost it, and so did a second device joining later,
-// which is exactly the state a person picking the work up on another screen
-// needs to see. Keeping it costs one map entry per waiting chat, cleared by the
-// next status the agent declares or by the chat going away.
+// The client renders `waiting_on_user` as a dot that survives turn end, so
+// clearing it unconditionally made the dot exist only for a client connected
+// when the event fired: a refresh, or a second device joining later, lost it
+// — exactly the state someone picking the work up on another screen needs.
+// Kept until the next status the agent declares or the chat going away.
 func (c *chatStatusCache) ClearAtTurnEnd(chatID vibekit.ChatID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

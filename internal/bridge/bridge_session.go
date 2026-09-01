@@ -1,8 +1,5 @@
 package bridge
 
-// Session management: types, creation, loading, and result application.
-// Extracted from bridge.go for single-responsibility clarity.
-
 import (
 	"context"
 	"encoding/json"

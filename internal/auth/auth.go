@@ -22,8 +22,6 @@ import (
 	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
-// Compile-time interface assertion.
-
 // Config holds per-instance timeout configuration. Tests construct
 // a Handler with short timeouts directly via WithConfig; production
 // passes a config built by the composition layer's ConfigFromEnv.
@@ -43,29 +41,24 @@ var DefaultConfig = Config{
 }
 
 // Scanner caps for scanLoginOutput: a generous per-line limit guards
-// against accidental 64 KiB overflows from debug dumps embedded in the
-// login banner, and maxLoginLines bounds total memory at roughly
-// maxScanLineBytes * maxLoginLines worst case.
+// against accidental overflows from debug dumps embedded in the login
+// banner, and maxLoginLines bounds total memory.
 const (
 	maxScanLineBytes = 256 * 1024
 	maxLoginLines    = 200
 )
 
-// Subprocess output caps. Legitimate whoami output is ~150 bytes of
-// JSON; the 64 KiB cap is three orders of magnitude of headroom and
-// catches a pathological/malicious kiro-cli replacement that tries to
-// OOM the container via unbounded stdout. The logout cap matches in
-// spirit: a confirmation banner fits easily in 1 MiB.
+// Subprocess output caps. Legitimate whoami output is ~150 bytes of JSON;
+// the 64 KiB cap catches a pathological/malicious kiro-cli replacement
+// trying to OOM the container via unbounded stdout. The logout cap
+// matches in spirit.
 const (
 	whoamiMaxOutput = buffer.DefaultOutputCap
 	logoutMaxOutput = 1 << 20 // 1 MiB
 
-	// stderrCap bounds subprocess stderr capture across every
-	// handler (whoami, login, logout uses a combined stdout+stderr
-	// cap via logoutMaxOutput). A hostile or runaway kiro-cli can
-	// otherwise OOM the container via unbounded stderr on any
-	// endpoint. 32 KiB fits every legitimate kiro-cli diagnostic
-	// with several orders of magnitude of headroom.
+	// stderrCap bounds subprocess stderr capture across every handler.
+	// A hostile or runaway kiro-cli can otherwise OOM the container via
+	// unbounded stderr on any endpoint.
 	stderrCap = 32 * 1024
 )
 
@@ -76,16 +69,12 @@ const (
 	maxRegionLen   = 32
 )
 
-// childWaitDelay bounds how long Wait may spend past the context's deadline on
-// two things it cannot otherwise interrupt: a child that has not exited, and a
-// child that has exited but left its I/O pipes held open by someone else.
-//
-// It is a BACKSTOP, not the mechanism. boundChild's Cancel kills the whole
-// process group, which closes the pipes at once (measured: Run returned 50ms
-// after a 50ms deadline, with none of this delay spent), so the delay is only
-// reached by a descendant that escaped the group or a process in an
-// uninterruptible sleep. One second bounds the handler's overshoot while leaving
-// far more time than any legitimate kiro-cli flush needs.
+// childWaitDelay bounds how long Wait may spend past the context's deadline
+// on a child that has not exited or has left its I/O pipes held open. It is
+// a BACKSTOP, not the mechanism — boundChild's Cancel kills the whole
+// process group, which closes the pipes at once — so this is only reached
+// by a descendant that escaped the group or a process in an uninterruptible
+// sleep.
 const childWaitDelay = time.Second
 
 // awsRegionRe matches AWS region ids across all partitions: commercial
@@ -167,10 +156,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // stderrAttr returns slog key/value attributes for a captured stderr
-// buffer, omitting the "stderr" key entirely when the buffer is empty.
-// The common timeout case is "subprocess stuck on read/sleep wrote
-// nothing"; emitting `stderr=""` pads every such log line with a
-// useless key-value pair and gives the false impression that stderr
+// buffer, omitting the "stderr" key entirely when the buffer is empty —
+// emitting `stderr=""` for a timeout would give the false impression stderr
 // was empty-but-captured rather than empty-and-unavailable.
 func stderrAttr(stderr *procout.Buffer) []any {
 	s := sanitize.Output(strings.TrimSpace(stderr.String()))
@@ -181,25 +168,22 @@ func stderrAttr(stderr *procout.Buffer) []any {
 }
 
 // boundChild makes a subprocess honour ITS CONTEXT'S deadline rather than the
-// child's own lifetime, and it is a correctness fix rather than a tuning knob.
+// child's own lifetime.
 //
-// exec.CommandContext's default cancellation SIGKILLs the parent PID only. Every
-// kiro-cli invocation here is a bun/Node wrapper that forks helpers, and a fork
-// inherits the stdout and stderr pipe write ends — so cmd.Run, which waits for
-// its output goroutines to see EOF, does not return until the LAST descendant
-// exits. Both /api/whoami and /api/logout document a wall-clock cap that "can't
-// pin the HTTP handler indefinitely", and neither delivered one.
+// exec.CommandContext's default cancellation SIGKILLs the parent PID only.
+// Every kiro-cli invocation here is a bun/Node wrapper that forks helpers
+// inheriting the stdout/stderr pipe write ends, so cmd.Run does not return
+// until the LAST descendant exits.
 //
-// Measured on go1.27.0 against a /bin/sh fake CLI running `sleep 10` under a 50ms
+// Measured on go1.27.0 against a fake CLI running `sleep 10` under a 50ms
 // context: Run returned after 10.001s with the default cancellation AND with
-// Setpgid alone, because the group kill both handlers already had only ran after
-// Run returned. With a group-killing Cancel plus WaitDelay it returned after
-// 50ms. WaitDelay alone came back at 1.051s — bounded, but the orphan lives out
-// its own lifetime — so both halves are load-bearing and neither is redundant.
+// Setpgid alone (the group kill in both handlers ran only after Run
+// returned). With a group-killing Cancel plus WaitDelay it returned after
+// 50ms; WaitDelay alone came back at 1.051s. Both halves are load-bearing.
 //
-// /api/whoami fires on every page load and every SSE reconnect, which is what
-// makes this an exhaustion path rather than a latency wart: one pinned handler
-// goroutine per page load, for as long as some grandchild happens to live.
+// /api/whoami fires on every page load and every SSE reconnect, which is
+// what makes this an exhaustion path: one pinned handler goroutine per page
+// load for as long as some grandchild happens to live.
 func boundChild(cmd *exec.Cmd) {
 	setProcGroup(cmd)
 	cmd.Cancel = func() error {
@@ -216,19 +200,15 @@ func boundChild(cmd *exec.Cmd) {
 }
 
 // loginReap bundles the state handed off from handleLogin to the reap
-// goroutine. Ownership transfers atomically: after the go statement,
-// the reap goroutine is the sole owner of ctx cancellation, cmd.Wait,
-// stderrBuf reads, and the waitDone close.
+// goroutine. Ownership transfers atomically: after the go statement, the
+// reap goroutine is the sole owner of ctx cancellation, cmd.Wait, stderrBuf
+// reads, and the waitDone close.
 //
-// stdoutDone is closed by the scanner goroutine after it finishes
-// reading the stdout pipe (URL found, scanner error, or EOF). The reap
-// goroutine waits on this channel before calling cmd.Wait — per Go's
-// exec.Cmd docs, "it is incorrect to call Wait before all reads from
-// the pipe have completed" because Wait closes the pipe and races a
-// concurrent reader. Without this gate, fast-exiting subprocesses
-// (e.g. tests using a `cat + exit` fake CLI on a slow CI runner)
-// could see Wait close the pipe before the scanner reads anything,
-// surfacing as `read |0: file already closed` errors.
+// stdoutDone is closed by the scanner goroutine after it finishes reading
+// the stdout pipe. The reap goroutine waits on this channel before calling
+// cmd.Wait — per Go's exec.Cmd docs, "it is incorrect to call Wait before
+// all reads from the pipe have completed" because Wait closes the pipe and
+// races a concurrent reader.
 type loginReap struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -238,11 +218,9 @@ type loginReap struct {
 	waitDone   chan struct{}
 }
 
-// lineRing holds the first N and last N lines pushed into it, capping
-// each line at perLineCap bytes. Used for the line-cap diagnostic log
-// in scanLoginOutput. Zero-alloc for the first 2*halfCap lines; after
-// that, each Push allocates a new backing array of halfCap strings
-// (bounded, not growing).
+// lineRing holds the first N and last N lines pushed into it, capping each
+// line at perLineCap bytes. Used for the line-cap diagnostic log in
+// scanLoginOutput.
 type lineRing struct {
 	first      []string
 	last       []string

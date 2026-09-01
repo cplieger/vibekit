@@ -1,12 +1,6 @@
-// The GitHub OAuth device flow: vibekit runs the whole protocol, then hands
-// the resulting token to `gh auth login --with-token` (see login.go).
-//
-// This was internal/forges/oauth, reachable only from here through three
-// forwarding declarations in login.go. Rolling it up deleted them; what stays
-// exported is the pair the HTTP surface serves (DeviceFlowResponse and
-// StartGitHubDeviceFlow), while the raw token poll became pollDeviceToken —
-// unexported, because the exported PollGitHubDeviceFlow is the one that also
-// logs gh in, and a caller must not be able to reach the token-bearing half.
+// The GitHub OAuth device flow: vibekit runs the whole protocol, then
+// hands the resulting token to `gh auth login --with-token` (see
+// login.go).
 
 package forges
 
@@ -34,25 +28,22 @@ type DeviceFlowResponse struct {
 	ExpiresIn       int    `json:"expires_in"`
 }
 
-// deviceTokenResult is one raw token-poll outcome. Distinct from PollResult,
-// which is what the HTTP surface returns: this one carries the access token, so
-// it never leaves the package.
+// deviceTokenResult is one raw token-poll outcome; it carries the
+// access token and never leaves the package.
 type deviceTokenResult struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
-	Token  string `json:"-"` // populated on success
+	Token  string `json:"-"`
 }
 
 // githubOAuthClientID is the OAuth app ID for GitHub device flow.
 const githubOAuthClientID = "178c6fc778ccc68e1d6a"
 
-// scopes requested for GitHub OAuth: repo ops + org listing (gh's own
-// login minimum) plus workflow so pushes touching .github/workflows
-// aren't rejected. No gist — vibekit has no gist feature (the old list
-// was inherited from gh's own client, which has `gh gist`).
+// githubOAuthScopes: repo ops + org listing (gh's own login minimum)
+// plus workflow so pushes touching .github/workflows aren't rejected.
+// No gist — vibekit has no gist feature.
 const githubOAuthScopes = "repo,read:org,workflow"
 
-// oauthHTTPClient is the shared HTTP client for OAuth requests.
 var oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // StartGitHubDeviceFlow initiates the OAuth device flow with GitHub.
@@ -82,9 +73,8 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 	return parseDeviceFlowResponse(body)
 }
 
-// parseDeviceFlowResponse decodes a GitHub device-flow start response body
-// into a DeviceFlowResponse, surfacing an embedded OAuth error as a Go
-// error. This is the pure, testable core of StartGitHubDeviceFlow.
+// parseDeviceFlowResponse is the pure, testable core of
+// StartGitHubDeviceFlow.
 func parseDeviceFlowResponse(body []byte) (*DeviceFlowResponse, error) {
 	var raw struct {
 		UserCode        string `json:"user_code"`
@@ -110,7 +100,6 @@ func parseDeviceFlowResponse(body []byte) (*DeviceFlowResponse, error) {
 }
 
 // pollDeviceToken checks whether the user has approved the device.
-// On success, deviceTokenResult.Token contains the access token.
 func pollDeviceToken(ctx context.Context, deviceCode string) (deviceTokenResult, error) {
 	if deviceCode == "" {
 		return deviceTokenResult{}, errors.New("oauth: missing device_code")
@@ -138,10 +127,9 @@ func pollDeviceToken(ctx context.Context, deviceCode string) (deviceTokenResult,
 	return interpretPollResponse(body)
 }
 
-// interpretPollResponse maps a GitHub device-flow token-poll response body
-// to a deviceTokenResult. This is the pure, testable core of pollDeviceToken:
-// the OAuth error code drives the status, and an empty access_token on an
-// otherwise-successful response is treated as an error, never "complete".
+// interpretPollResponse is the pure, testable core of pollDeviceToken:
+// an empty access_token on an otherwise-successful response is
+// treated as an error, never "complete".
 func interpretPollResponse(body []byte) (deviceTokenResult, error) {
 	var raw struct {
 		AccessToken      string `json:"access_token"`

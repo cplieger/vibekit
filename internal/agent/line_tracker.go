@@ -1,7 +1,5 @@
-// File line tracker HTTP handler.
-//
-// The LineTracker implementation lives in internal/buffer. This file
-// provides the HTTP handler that exposes it via
+// File line tracker HTTP handler. The LineTracker implementation lives in
+// internal/buffer; this file exposes it via
 // GET /api/file-changes?chat_id=<id>&path=<path>.
 
 package agent

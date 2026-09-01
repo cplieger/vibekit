@@ -107,16 +107,10 @@ func (sb *sharedBridge) stopCancelTimerLocked() {
 // --- command.Bridge implementation on sharedBridge ---
 //
 // Four explicit forwards, and NOT `ACPBridge` embedded, which would supply all
-// four for free. The narrowing is the point: ACPBridge also carries Start, Stop,
-// NotifCh and SetModel, and sharedBridge is the state machine that owns when
-// those may run — the cancel-grace timer and the idle/prompting transitions above
-// exist because nothing else may drive the subprocess's lifetime. Embedding would
-// hand every holder of a command.Bridge the ability to Stop the bridge behind the
-// state machine's back, and would silently widen this surface again each time
-// ACPBridge gains a method.
-//
-// So a forward-hunting sweep will flag these four. They are the answer, not the
-// finding.
+// four for free. The narrowing is the point: ACPBridge also carries Start,
+// Stop, NotifCh and SetModel, which only sharedBridge's state machine may
+// drive. Embedding would hand every holder of a command.Bridge the ability to
+// Stop the bridge behind that state machine's back.
 
 func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
 	return sb.bridge.Call(ctx, method, params)

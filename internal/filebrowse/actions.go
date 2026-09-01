@@ -24,10 +24,9 @@ import (
 type fileAction struct {
 	Action string `json:"action"`
 	Path   string `json:"path"`
-	// `dest` and `name` are optional at the wire level; optionality is
-	// enforced per-action in the handlers (resolveCopyMoveDest rejects
-	// empty Dest for copy/move, actionRename rejects empty Name). Tags
-	// stay uniform because `omitempty` has zero effect on decode.
+	// `dest` and `name` are optional at the wire level; enforced per-action
+	// in the handlers (resolveCopyMoveDest rejects empty Dest for copy/move,
+	// actionRename rejects empty Name).
 	Dest string `json:"dest"`
 	Name string `json:"name"`
 }
@@ -102,17 +101,14 @@ func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
 
 func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
 	// Symmetric with actionDelete/actionRename/actionMove destination
-	// guards: creation paths also need the protected-dir gate so a
-	// cold-boot request with `mkdir /config/chats` can't pre-empt the
-	// chat store's own directory before it's materialised.
+	// guards: a cold-boot mkdir on a sensitive dir must not pre-empt it.
 	if isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to mkdir protected directory")
 		return errHandled
 	}
-	// A granted root always exists; "creating" it is either a no-op or
-	// (via a nested grant) an attempt to shadow a mount. Refuse, matching
-	// actionDelete: don't allow what we can't undo.
+	// A granted root always exists; "creating" it is a no-op or an attempt
+	// to shadow a mount. Refuse, matching actionDelete.
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "mkdir", l)
 	}
@@ -124,9 +120,8 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 }
 
 func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
-	// Mirror of actionMkdir; also checks IsSensitive so a creation of
-	// an exact-match sensitive file (e.g. /config/push-subs.json)
-	// is refused before it ever hits the filesystem.
+	// Mirror of actionMkdir; also checks IsSensitive so creating an
+	// exact-match sensitive file is refused before it hits the filesystem.
 	if IsSensitive(l.abs) || isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: touch blocked on protected path", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to touch protected path")
@@ -135,16 +130,14 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "touch", l)
 	}
-	// O_EXCL rather than the syscall.O_NOFOLLOW this used to carry. The flag was
-	// INERT: os.Root.OpenFile ORs O_NOFOLLOW in itself and re-resolves the link
-	// on the resulting ELOOP, so a caller-supplied one is silently ignored
-	// (go1.27.0, src/os/root_unix.go:85-101, and pinned by this package's own
-	// search_test.go). O_EXCL is a refusal the kernel does honour: anything
-	// already at the name — including a symlink planted after resolvePath
-	// accepted it — makes the create fail instead of opening whatever it points
-	// at. An existing entry is touch's no-op case, so EEXIST is success, which
-	// keeps the observable behaviour identical (O_CREATE|O_WRONLY without
-	// truncation never modified an existing file or its mtime either).
+	// O_EXCL rather than syscall.O_NOFOLLOW, which is INERT here:
+	// os.Root.OpenFile ORs O_NOFOLLOW in itself and re-resolves the link on
+	// the resulting ELOOP (go1.27.0, src/os/root_unix.go:85-101), so a
+	// caller-supplied one is silently ignored. O_EXCL is a refusal the
+	// kernel does honour: anything already at the name — including a
+	// symlink planted after resolvePath accepted it — makes the create
+	// fail instead of opening whatever it points at. An existing entry is
+	// touch's no-op case, so EEXIST is success.
 	f, err := l.m.root.OpenFile(l.rel(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
@@ -161,43 +154,37 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 }
 
 func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
-	// Refuse to delete a granted root itself. Everything INSIDE a
-	// mount is deletable (the mount boundary replaces the old
-	// segment-depth heuristic); users who genuinely want to nuke a
-	// whole mount's contents can select-all or use the shell.
+	// Refuse to delete a granted root itself; everything INSIDE a mount is
+	// deletable.
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "delete", l)
 	}
-	// Layered guard: the mount-point check stops `/config` but would
-	// let `/config/chats` through because IsSensitive only matches the
-	// files inside. The isProtectedDir helper closes that gap by
-	// blocking the container directories of every sensitive path too.
+	// Layered guard: the mount-point check stops `/config` but would let
+	// `/config/chats` through, since IsSensitive only matches the files
+	// inside. isProtectedDir closes that gap.
 	if isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: delete blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to delete protected directory")
 		return errHandled
 	}
-	// The mount's os.Root confines this unlink but does not PIN it: a root
+	// The mount's os.Root confines this unlink but does not PIN it: it
 	// deliberately follows an in-root symlink, so a multi-component rel can
-	// resolve to a different file than the one isProtectedDir judged. That is
-	// reachable THROUGH the sensitive-path check, because the check is exact-prefix
-	// over the resolved path — /config/x/chats matches no sensitive prefix and
-	// passes, and if x is an in-mount symlink to "." at the moment of the unlink
-	// the delete lands on /config/chats, the whole chat store, through a check
-	// that said the path was not protected. OpenParentInRoot descends component by
-	// component, Lstat-ing each one and refusing a symlink rather than following
-	// it, so naming only the final element through the pinned parent removes every
-	// ancestor from the unlink's path.
+	// resolve to a different file than the one isProtectedDir judged —
+	// reachable through the sensitive-path check because that check is
+	// exact-prefix over the resolved path. OpenParentInRoot descends
+	// component by component, Lstat-ing each one and refusing a symlink
+	// rather than following it, so naming only the final element through
+	// the pinned parent removes every ancestor from the unlink's path.
 	//
-	// The parent's own RemoveAll, never atomicfile.RemoveFileInRoot: that refuses
-	// anything non-regular with ErrNotRegular, which would make a symlinked entry
-	// undeletable from the browser.
+	// The parent's own RemoveAll, never atomicfile.RemoveFileInRoot: that
+	// refuses anything non-regular with ErrNotRegular, which would make a
+	// symlinked entry undeletable from the browser.
 	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
-		// os.Root.RemoveAll reported an already-absent path as success, and a
-		// parent directory that is gone is the same answer to the caller. Only
-		// ErrNotExist: a component refused for being a symlink or a non-directory
-		// is a real failure and must surface.
+		// os.Root.RemoveAll reports an already-absent path as success; a
+		// parent directory that is gone is the same answer to the caller.
+		// Only ErrNotExist: a component refused for being a symlink or a
+		// non-directory is a real failure and must surface.
 		if errors.Is(err, fs.ErrNotExist) {
 			slog.Info("filebrowse: delete (already absent)", "path", l.abs)
 			return nil
@@ -212,12 +199,10 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 	return nil
 }
 
-// isSingleSegmentName reports whether name is one non-traversal path component,
-// safe to Join onto a parent directory.
-//
-// filepath.Base alone isn't enough: a bare ".." passes Base untouched, and Join
-// then silently escapes to the parent directory. A path separator or a NUL is
-// rejected before anything touches the filesystem.
+// isSingleSegmentName reports whether name is one non-traversal path
+// component, safe to Join onto a parent directory. filepath.Base alone
+// isn't enough: a bare ".." passes Base untouched and Join then silently
+// escapes to the parent directory.
 func isSingleSegmentName(name string) bool {
 	return name != "" && name != "." && name != ".." &&
 		!strings.ContainsRune(name, '/') && !strings.ContainsRune(name, '\\') &&
@@ -225,13 +210,9 @@ func isSingleSegmentName(name string) bool {
 }
 
 func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
-	// Source-side guards. Renaming a granted root would shadow the
-	// mount; renaming a protected container (IsSensitive on the source
-	// leaves /config/chats — no trailing slash — through because the
-	// sensitive prefix is /config/chats/) could move the entire chat
-	// store onto a fresh name and orphan the server's view of its
-	// state. rename/move share the same destructive semantics and need
-	// the same guards.
+	// Source-side guards. Renaming a granted root would shadow the mount;
+	// renaming a protected container could orphan the server's view of
+	// its state.
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "rename", l)
 	}
@@ -246,8 +227,8 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	}
 	dest := filepath.Join(filepath.Dir(l.abs), body.Name)
 	// Route the destination through resolvePath so the allow-list +
-	// real-path (EvalSymlinks) checks fire against the rename target
-	// the same way copy/move enforce them via resolveCopyMoveDest.
+	// real-path checks fire against the rename target the same way
+	// copy/move enforce them via resolveCopyMoveDest.
 	destLoc, err := h.resolvePath(dest)
 	if err != nil {
 		slog.Warn("filebrowse: rename dest rejected",
@@ -255,33 +236,26 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 		httpreply.Forbidden(w, err.Error())
 		return errHandled
 	}
-	// Paranoia: confirm the resolved destination is still a direct
-	// child of the original parent (defense in depth against
-	// separator surprises on non-Linux filesystems). Same parent
-	// implies same mount, so the source root handle covers both ends.
+	// Confirm the resolved destination is still a direct child of the
+	// original parent (defense in depth against separator surprises on
+	// non-Linux filesystems). Same parent implies same mount.
 	if filepath.Dir(destLoc.abs) != filepath.Dir(l.abs) {
 		httpreply.Forbidden(w, "rename escapes parent directory")
 		return errHandled
 	}
-	// Sensitive-path check on the DESTINATION. Without this the
-	// touch→write→rename sequence trivially overwrites sensitive
-	// files because rename targets a directory that's already passed
-	// the lexical guard. isProtectedDir layers on top so a rename
-	// that would land a decoy directory at exactly /config/chats (or
-	// any other bare-directory sensitive prefix name) on cold boot
-	// is also refused; a destination naming a granted root is the
-	// mount-shadowing variant of the same attack.
+	// Sensitive-path check on the DESTINATION: without this a
+	// touch→write→rename sequence could overwrite sensitive files.
+	// isProtectedDir layers on top for a decoy directory landing at a
+	// bare-directory sensitive prefix name.
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: rename blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		httpreply.Forbidden(w, "rename target is protected")
 		return errHandled
 	}
-	// One pinned parent addresses both ends here, because the same-parent
-	// assertion above has already established that they share one directory — so
-	// every ancestor leaves the rename's path without needing a second descent.
-	// See actionDelete for why the mount's os.Root is not enough on its own, and
-	// renameAcrossPinnedParents for the move case, where the ends can differ.
+	// One pinned parent addresses both ends here, since the same-parent
+	// assertion above already established they share one directory. See
+	// actionDelete for why the mount's os.Root is not enough on its own.
 	parent, base, err := atomicfile.OpenParentInRoot(l.m.root, l.rel())
 	if err != nil {
 		return err
@@ -299,11 +273,8 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 	if err != nil {
 		return err
 	}
-	// Copy is non-destructive on the source (unlike rename/move),
-	// so only the destination needs the protected-dir / sensitive-
-	// path gate. Keeps the per-action pattern uniform with rename
-	// and move. Cross-mount copies are fine: the stream reads from
-	// the source mount's root and writes through the destination's.
+	// Copy is non-destructive on the source, so only the destination needs
+	// the protected-dir / sensitive-path gate. Cross-mount copies are fine.
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: copy blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
@@ -328,18 +299,15 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 var errOversize = errors.New("source file too large")
 
 // streamCopy streams the file at src into dest atomically via
-// write-to-temp-then-rename, kernel-confined to the destination mount. The copy
-// is capped at sizeCap bytes; exceeding it returns errOversize. The context
-// allows callers to cancel mid-stream (e.g. on client disconnect).
+// write-to-temp-then-rename, kernel-confined to the destination mount. The
+// copy is capped at sizeCap bytes; exceeding it returns errOversize. The
+// context allows callers to cancel mid-stream.
 //
-// The temp used to be created with os.CreateTemp on the destination's ABSOLUTE
-// parent, which is an ambient path — the one write in this handler that did not
-// go through a root. That was an escape, not an inconsistency: a destination
-// parent replaced by a symlink pointing out of every granted mount after
-// resolvePath accepted it received the source file's bytes, which turns the copy
-// action into an exfiltration primitive. atomicfile.WriteReaderInRoot stages the
-// temp INSIDE the root, so the whole sequence is confined; it is the same call
-// writeOneUpload already makes for the identical job.
+// The temp used to be created with os.CreateTemp on the destination's
+// ABSOLUTE parent — an ambient path that could receive the source file's
+// bytes if the parent was replaced by a symlink pointing outside every
+// granted mount after resolvePath accepted it. atomicfile.WriteReaderInRoot
+// stages the temp INSIDE the root, closing that.
 func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error) {
 	in, err := src.m.root.Open(src.rel())
 	if err != nil {
@@ -357,10 +325,9 @@ func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error
 		return 0, errOversize
 	}
 
-	// 0o600 preserves the mode the deleted os.CreateTemp produced, so a copied
-	// file lands with exactly the bits it did before. WithMaxBytes REJECTS an
-	// over-cap source (a sparse file, or one growing under the copy) where the
-	// old io.LimitReader tail guard had to detect it after the fact.
+	// 0o600 preserves the mode the deleted os.CreateTemp produced. WithMaxBytes
+	// REJECTS an over-cap source rather than the old io.LimitReader tail
+	// guard detecting it after the fact.
 	cr := &countingReader{r: &ctxReader{ctx: ctx, r: in}}
 	if _, wErr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
 		atomicfile.WithMode(0o600), atomicfile.WithMaxBytes(sizeCap)); wErr != nil {
@@ -375,10 +342,8 @@ func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error
 }
 
 func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
-	// Source-side guards mirror actionRename: moving a granted root
-	// (or /config/chats to /workspace/stolen-chats) detaches state
-	// from its expected location. Copy is non-destructive so it skips
-	// the source check.
+	// Source-side guards mirror actionRename. Copy is non-destructive so it
+	// skips the source check.
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "move", l)
 	}
@@ -391,18 +356,14 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 	if err != nil {
 		return err
 	}
-	// Destination guard mirrors actionRename: sensitive files,
-	// protected directories, and granted roots are off-limits.
+	// Destination guard mirrors actionRename.
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: move blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		httpreply.Forbidden(w, "move target is protected")
 		return errHandled
 	}
-	// A rename cannot cross os.Root handles. Moves across granted
-	// roots were already broken in practice (the mounts are separate
-	// volumes in the shipped container, so rename returned EXDEV);
-	// surface the honest, actionable error instead.
+	// A rename cannot cross os.Root handles; surface the actionable error.
 	if destLoc.m != l.m {
 		httpreply.BadRequest(w, "cannot move across granted roots; use copy")
 		return errHandled
@@ -438,9 +399,9 @@ func renameAcrossPinnedParents(src, dest loc) error {
 		return err
 	}
 	defer func() { _ = destParent.Close() }()
-	// The descriptors are what renameat addresses; the pinned roots exist to hold
-	// them open, so neither directory can be swapped between the descent that
-	// confirmed its identity and the rename that names an entry inside it.
+	// The descriptors are what renameat addresses; the pinned roots hold
+	// them open so neither directory can be swapped between the descent
+	// that confirmed its identity and the rename itself.
 	srcDir, err := srcParent.Open(".")
 	if err != nil {
 		return err
@@ -472,9 +433,8 @@ func resolveCopyMoveDest(w http.ResponseWriter, body fileAction, h *Handler) (lo
 }
 
 // ctxReader wraps an io.Reader with a context. Every Read first checks
-// ctx.Err() so a cancelled/disconnected request aborts the copy on
-// the next chunk boundary instead of running to completion after the
-// client is long gone.
+// ctx.Err() so a cancelled/disconnected request aborts on the next chunk
+// boundary.
 type ctxReader struct {
 	ctx context.Context
 	r   io.Reader

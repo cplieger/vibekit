@@ -2,24 +2,18 @@
 // kiro-cli's (KAS's) native code intelligence for THE workspace.
 //
 // Every bridge already opts its sessions into the code tool via the
-// initialize handshake (_meta.kiro.settings.codeIntelligence — see
-// bridge.go), which gives the agent the tree-sitter operations
+// initialize handshake, which gives the agent tree-sitter operations
 // unconditionally. The LSP half needs a one-time per-workspace
-// activation: .kiro/settings/lsp.json under the work dir, written by
-// KAS's `init` subcommand. This file is what chat sessions read to
-// spawn language servers on demand — vibekit never manages server
-// processes itself.
+// activation: .kiro/settings/lsp.json under the work dir, written by KAS's
+// `init` subcommand; this is what chat sessions read to spawn language
+// servers on demand — vibekit never manages server processes itself.
 //
-// EnsureCodeIntelligence runs that init exactly when it is useful:
-// the config file does not exist yet AND at least one lsp-marked tool
-// is enabled and installed (the gate closure, composition-injected
-// over the tools engine — no toolbelt import here). Callers fire it
-// at boot and on lsp-tool install success, so enabling a language
-// server in Settings -> Tools lights up code intelligence with no
-// restart and no manual step. KAS's init never rewrites an existing
-// config, so a stale language set (a language added AFTER the first
-// init) is refreshed by deleting the file — the next trigger
-// re-initializes.
+// EnsureCodeIntelligence runs init exactly when useful: the config file
+// does not exist yet AND at least one lsp-marked tool is enabled and
+// installed. Callers fire it at boot and on lsp-tool install success, so
+// enabling a language server lights up code intelligence with no restart.
+// KAS's init never rewrites an existing config, so a stale language set is
+// refreshed by deleting the file — the next trigger re-initializes.
 
 package agent
 

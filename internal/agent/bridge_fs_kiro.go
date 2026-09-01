@@ -1,43 +1,19 @@
 // KAS's own filesystem verbs: `_kiro/fs/{stat,read_directory,delete}`.
 //
-// # Why these are implemented at all
+// Gated on `clientCapabilities.fs._meta.kiro.<name> === true`; undeclared,
+// KAS serves the verb itself via a bare `NodeFileSystem`. So declaring one
+// does not GRANT a capability the agent lacked — it puts a capability it
+// already had behind `resolveInsideWorkDir`. Declaring `read_directory` is
+// what lets the agent-ignore list reach a LISTING, closing the discovery
+// vector an unfiltered listing would otherwise open.
 //
-// Each of the three is gated on `clientCapabilities.fs._meta.kiro.<name> === true`
-// (strict, `resolveCapabilities` in KAS's resolved-capabilities.ts). The
-// else-branch is NOT `execute_bash` and it is NOT a failure: it is a bare
-// `NodeFileSystem`, which does the `fs.stat` / `fs.readdir` / `fs.rm` **inside the
-// KAS process**. So an undeclared verb is not an absent capability, it is the same
-// capability with no vibekit path check on it at all.
+// vibekit is the confined EXECUTOR; KAS is the REVIEWER: resolve, filter,
+// execute, no staging or attribution. KAS checkpoints before it unlinks and
+// restores a rejected delete via an ordinary `fs/write_text_file`; a second
+// gate here would intercept that restore.
 //
-// That inverts the usual reasoning. Declaring `delete` does not GRANT the agent a
-// delete it lacked — it already had one — it puts the delete it already had behind
-// `resolveInsideWorkDir` for the first time. And declaring `read_directory` is
-// what lets the agent-ignore list reach a LISTING, which is the vector the list
-// exists to close: an unfiltered listing is how an agent discovers the
-// `.env.dec` that the read filter would then refuse to open.
-//
-// # The division of labour
-//
-// vibekit is the confined EXECUTOR; KAS is the REVIEWER. These handlers resolve,
-// filter, and execute. They do NOT block, stage, snapshot, or attribute — and
-// that is a decision, not an omission. KAS's `DeleteFile` tool already
-// checkpoints before it unlinks and already routes through `acpToolApproval`, and
-// its per-turn review restores a rejected delete by writing the snapshot back
-// through an ordinary `fs/write_text_file` A→C request. A second vibekit-side
-// gate would intercept that restore and re-stage it, asking the user to approve
-// the undoing of their own rejection and stalling KAS mid-`restorePendingChanges`
-// with the remaining actions unreverted. Two gates must not both be on. A restore
-// write is a user-instructed write (invariant 4's spirit): let it through.
-//
-// Read and write are deliberately NOT declared here. `fs._meta.kiro.readFile` /
-// `writeFile` would move them off the `fs/read_text_file` / `fs/write_text_file`
-// rung vibekit implements onto this one, and that rung's handlers are where every
-// guardrail on a KAS-side write lives: path confinement, the size ceiling,
-// permission-bit preservation, atomic replace, and the agent-ignore read filter.
-//
-// It is NOT about supervised staging, which is what this comment used to say.
-// Staging is gone — KAS gates the whole turn and restores a rejected action
-// through an ordinary fs/write_text_file. See `vibekit-acp.md`.
+// Read and write stay undeclared: the `fs/{read,write}_text_file` rung is
+// where every write guardrail lives, and this rung would bypass it.
 
 package agent
 
@@ -213,16 +189,12 @@ func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID vibeki
 
 // readDirInRoot lists the directory at rel inside root.
 //
-// os.Root has no ReadDir, so the listing is an open plus File.ReadDir — and the
-// two flags on that open are what make it a safe replacement for os.ReadDir
-// rather than a mechanical one. O_DIRECTORY makes the KERNEL refuse anything at
-// the name that is not a directory, so the "is it a directory" question is
-// answered by the same syscall that opens it instead of by a separate stat.
-// O_NONBLOCK is the one that matters operationally: root.Open is a plain
-// O_RDONLY openat, and a reader-less FIFO left at the name blocks that open(2)
-// indefinitely — which here would wedge the handler under lifetime.inflight
-// against a KAS Call that carries no timeout. The flag has no effect on a
-// directory, which is the only thing this can open, so it costs nothing.
+// os.Root has no ReadDir, so the listing is an open plus File.ReadDir.
+// O_DIRECTORY makes the kernel refuse anything at the name that is not a
+// directory; O_NONBLOCK matters because root.Open is a plain O_RDONLY
+// openat, and a reader-less FIFO left at the name would otherwise block
+// open(2) indefinitely, wedging this handler against a KAS Call with no
+// timeout.
 func readDirInRoot(root *os.Root, rel string) ([]os.DirEntry, error) {
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -265,16 +237,13 @@ func (in *inbound) filterDirEntries(ctx context.Context, _ vibekit.ChatID, dirRe
 
 // respondKiroFSDelete answers `_kiro/fs/delete` with `{}`.
 //
-// Recursive for a directory, matching KAS's NodeFileSystem (`fs.rm` with
-// recursive, versus `unlink` for a file) — the fallback this replaces, so
-// mirroring it is what keeps the change a confinement rather than a behaviour
-// change. The one refusal is the workspace root itself: no tool means it (the
-// `delete_file` schema's arg is `targetFile`), and it is unrecoverable.
+// Recursive for a directory, matching KAS's NodeFileSystem fallback this
+// replaces (so the change stays a confinement rather than a behaviour
+// change). The one refusal is the workspace root itself, unrecoverable.
 //
-// NOT ignore-filtered, and NOT gated. Not filtered because a delete is
-// write-class and writes follow git semantics (an ignored file stays writable);
-// not gated because KAS checkpoints before the unlink and reviews after it, and a
-// second gate here would intercept its restore write. See the file header.
+// NOT ignore-filtered (a delete is write-class, and writes follow git
+// semantics), and NOT gated (KAS checkpoints before the unlink and reviews
+// after it — see the file header).
 func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {

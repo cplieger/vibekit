@@ -81,17 +81,14 @@ func isHexSHA(s string) bool {
 }
 
 // parseRFC3339Millis parses an RFC 3339 timestamp string into Unix
-// milliseconds. Returns 0 on parse failure (caller decides whether
-// the missing field is fatal).
+// milliseconds. Returns 0 on parse failure.
 func parseRFC3339Millis(s string) int64 {
 	if s == "" {
 		return 0
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		// Some providers emit RFC 3339 without nanoseconds and a
-		// trailing 'Z'; the standard parser accepts both. Try
-		// without timezone for the rare case of a naive string.
+		// Fall back for the rare naive-timestamp provider response.
 		t, err = time.Parse("2006-01-02T15:04:05", s)
 		if err != nil {
 			return 0
@@ -100,8 +97,6 @@ func parseRFC3339Millis(s string) int64 {
 	return t.UnixMilli()
 }
 
-// trimSpace is a thin alias for strings.TrimSpace, used widely enough
-// in this package to warrant a one-letter shorthand.
 func trimSpace(s string) string {
 	return strings.TrimSpace(s)
 }

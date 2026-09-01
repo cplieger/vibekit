@@ -2,22 +2,17 @@ package agent
 
 // Pre-session catalog: GET /api/config-template serves the mode + model
 // catalog from kiro-cli 2.14's _kiro/config/template — the session-less
-// config-options template (what a fresh session/new WOULD return), built
-// from KAS's bundled modes + bundled agents + the user's ~/.kiro/agents
-// and the service-refreshed model registry. Replaces the former
-// `kiro-cli chat --list-models` shell-out behind /api/models: one call
-// now seeds BOTH the pre-session model picker and the role picker's mode
-// list (which the client still merges with workspace agents from
-// /api/workspace/kiro-config — the template deliberately carries no
-// workspace agents, it is built with empty workspacePaths upstream).
+// config-options template. Replaces the former `kiro-cli chat --list-models`
+// shell-out behind /api/models: one call seeds both the pre-session model
+// picker and the role picker's mode list (the client still merges workspace
+// agents from /api/workspace/kiro-config, since the template carries none).
 //
-// Routed through the long-lived UTILITY bridge like hooks/knowledge: the
-// method is advertised unconditionally and needs no session context, but
-// the model registry it reads is populated by the governance refresh that
-// runs on session creation — the utility bridge's own session/new covers
-// that, so the catalog is the same service-derived list a live session
-// sees. Once a chat session exists its config_option_update stays the
-// authoritative per-chat catalog; this endpoint only feeds pre-session UI.
+// Routed through the long-lived UTILITY bridge: the method is advertised
+// unconditionally and needs no session context, but the model registry it
+// reads is populated by the governance refresh that runs on session
+// creation, which the utility bridge's own session/new covers. Once a chat
+// session exists its config_option_update stays the authoritative catalog;
+// this endpoint only feeds pre-session UI.
 
 import (
 	"context"
@@ -31,9 +26,9 @@ import (
 	"github.com/cplieger/webhttp/v2"
 )
 
-// configTemplateTimeout bounds the template round-trip. First call may
-// lazily spin up the utility bridge (session/new + auth handshake), so
-// this matches hookCallTimeout rather than a bare read timeout.
+// configTemplateTimeout bounds the template round-trip: first call may
+// lazily spin up the utility bridge, so this matches hookCallTimeout
+// rather than a bare read timeout.
 const configTemplateTimeout = 45 * time.Second
 
 // kasConfigTemplate is the _kiro/config/template result shape. Modes
@@ -71,8 +66,9 @@ type kasConfigChoice struct {
 	Options     []kasConfigChoice `json:"options"` // grouped selects nest
 	Meta        struct {
 		Kiro struct {
-			// The model's own default tier. The TIER LIST is not here — it is the
-			// `effortLevel` option's own options[]. See vibekit.SessionModel.
+			// DefaultEffortLevel is the model's own default tier; the tier
+			// list itself is the `effortLevel` option's own options[] — see
+			// vibekit.SessionModel.
 			DefaultEffortLevel string  `json:"defaultEffortLevel"`
 			RateMultiplier     float64 `json:"rateMultiplier"`
 			HasEffort          bool    `json:"hasEffort"`
@@ -83,10 +79,9 @@ type kasConfigChoice struct {
 // configTemplateResponse is the GET /api/config-template reply.
 type configTemplateResponse struct {
 	DefaultModel string `json:"default_model,omitempty"`
-	// EffortActive is the `effortLevel` option's currentValue in the template:
-	// the tier a fresh session would run at. Pre-session, this is the only
-	// evidence of a live level, and without it the effort control rendered with
-	// nothing selected on every chat before its first pick.
+	// EffortActive is the `effortLevel` option's currentValue: the tier a
+	// fresh session would run at. Pre-session, this is the only evidence of
+	// a live level.
 	EffortActive string                       `json:"effort_active,omitempty"`
 	Modes        []vibekit.SessionMode        `json:"modes"`
 	Models       []vibekit.SessionModel       `json:"models"`
@@ -94,8 +89,8 @@ type configTemplateResponse struct {
 }
 
 // handleConfigTemplate: GET /api/config-template → the pre-session mode +
-// model catalog. Degrades to empty lists on any failure (same contract the
-// old /api/models had): the client keeps its static fallbacks and the
+// model catalog. Degrades to empty lists on any failure, matching the old
+// /api/models contract: the client keeps its static fallbacks and the
 // authoritative per-session catalog arrives with the first bridge.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	u := rt.utility.get()

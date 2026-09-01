@@ -117,18 +117,14 @@ func (bc *BridgeCoordinator) AdmissionHolderSource(chatID vibekit.ChatID) (vibek
 	return bc.turns.admissionHolder(chatID)
 }
 
-// ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting
-// up to wait while it is held. All waiters wake per state change and loop; at
-// most one acquires; an explicit wake fires at bridge-ready (OpenBridge), so
-// the answer matches the refusal rule's timing.
+// ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up
+// to wait while it is held; at most one waiter acquires per wake.
 //
-// The refusal arm keys on the HOLDER'S SOURCE, not on bridge liveness alone: a
-// prompt-class holder (prompt, empty-retry) whose bridge is live answers Busy
-// IMMEDIATELY — the client's 409→steer conversion works, so waiting longer
-// buys nothing — while every other holder (a cold spawn, a shell on a bridged
-// or bridgeless chat, a prime) parks the waiter and answers Starting at the
-// budget. A dead ctx answers Starting too: the client is gone or the process
-// is shutting down, and nothing reads the answer.
+// The refusal arm keys on the HOLDER'S SOURCE, not bridge liveness alone: a
+// prompt-class holder with a live bridge answers Busy immediately (the client's
+// 409→steer conversion works, so waiting buys nothing); every other holder parks
+// the waiter and answers Starting at the budget. A dead ctx also answers
+// Starting: nothing reads the answer.
 func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID vibekit.ChatID, wait time.Duration) command.AdmissionOutcome {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()

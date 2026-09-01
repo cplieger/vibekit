@@ -15,12 +15,9 @@ import (
 // --- Unexported Store methods ---
 
 // lock returns the per-chat mutex for chatID, creating it lazily. Entries
-// are never removed from the map: removing an entry races with any caller
-// that already fetched the *sync.Mutex pointer, which would let two
-// goroutines hold distinct mutexes for the same id and skip serialization.
-// The map is bounded by the number of distinct chat ids ever accessed in
-// the process lifetime (negligible memory). Uses sync.Map for lock-free
-// reads on the hot path (existing chats).
+// are never removed from the map: removing an entry races with any
+// caller that already fetched the *sync.Mutex pointer, letting two
+// goroutines hold distinct mutexes for the same id.
 func (s *Store) lock(chatID vibekit.ChatID) *sync.Mutex {
 	v, _ := s.locks.LoadOrStore(chatID, &sync.Mutex{})
 	//nolint:errcheck // LoadOrStore guarantees v is the stored *sync.Mutex.
@@ -85,36 +82,26 @@ func (s *Store) load(chatID vibekit.ChatID) (*vibekit.Chat, error) {
 	return readChatFile(path, "chat "+string(chatID))
 }
 
-// save stamps the chat's last-activity time and writes it to chatID's file.
-// Every mutation except a draft autosave goes through here, because every other
-// mutation IS activity.
+// save stamps the chat's last-activity time and writes it to chatID's
+// file. Every mutation except a draft autosave goes through here, since
+// every other mutation IS activity.
 func (s *Store) save(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	chat.UpdatedAt = time.Now().UnixMilli()
 	return s.writeChat(chatID, chat)
 }
 
-// writeChat atomically writes chat to chatID's file, leaving UpdatedAt exactly
-// as the caller left it. The caller holds the per-chat mutex, so atomicfile's own
-// locking is unnecessary — WriteFile is the bare atomic temp+fsync+rename
-// primitive. WithMkdirMode mirrors the old SaveBytes behavior of auto-creating
-// the parent dir (0o700: chat files may carry secrets).
+// writeChat atomically writes chat to chatID's file, leaving UpdatedAt
+// exactly as the caller left it. The caller holds the per-chat mutex, so
+// atomicfile's own locking is unnecessary. WithMkdirMode auto-creates the
+// parent dir (0o700: chat files may carry secrets).
 //
-// Split out of save for SetDraft, whose whole point is a write that does not
-// move the retention clock (archive/purge.go ages a chat from UpdatedAt, and
-// purgeReferenceTime's own comment names "a settings-driven field change" as
-// the class of write that must not reset its own cutoff). A draft save is
-// exactly that class.
+// Split out of save for SetDraft, whose whole point is a write that does
+// not move the retention clock.
 //
-// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified against
-// it. This primitive used to derive the path from chat.ID, which made every
-// caller responsible for an invariant only Mutate actually checked: a chat file
-// whose stored id is not its filename (corrupt, or hand-edited by the operator
-// this container invites to reshape /config) would be written over the file that
-// id names, while the lock held was the requested id's. That is one chat
-// silently overwriting another, racing any legitimate write to it. Taking the id
-// as a parameter means a future no-stamp writer cannot reintroduce the bypass by
-// skipping a check, because there is no path left that reads the destination off
-// the payload.
+// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified
+// against it: a chat file whose stored id is not its filename would
+// otherwise be written over the file that id names, under the requested
+// id's lock — one chat silently overwriting another.
 func (s *Store) writeChat(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	path, err := s.pathFor(chatID)
 	if err != nil {

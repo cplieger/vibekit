@@ -2,17 +2,15 @@ package command
 
 // Resuming a KAS session vibekit has no chat record for.
 //
-// The previous-session picker (GET /api/sessions) lists what KAS stored,
-// including sessions vibekit never had a chat for — a session started from the
-// TUI, or one whose chat the user deleted while retention kept the session. To
-// open one, vibekit needs a chat record to hang it on, because a chat is what
-// its UI, retention and per-chat bridge are keyed by.
+// The previous-session picker lists what KAS stored, including sessions
+// vibekit never had a chat for — a session started from the TUI, or one
+// whose chat the user deleted while retention kept the session. To open
+// one, vibekit needs a chat record to hang it on, since a chat is what its
+// UI, retention and per-chat bridge are keyed by.
 //
-// So resume is: create a chat already BOUND to that session id. Nothing else is
-// needed. The next OpenBridge sees a stored ACPSessionID and takes the
-// session/load path, whose replay the projection turns into the transcript
-// (agent/load_projection.go). That is the whole import — vibekit copies no
-// messages, because it no longer owns them.
+// Resume creates a chat already bound to that session id; the next
+// OpenBridge sees a stored ACPSessionID and takes the session/load path,
+// whose replay turns into the transcript. vibekit copies no messages.
 
 import (
 	"cmp"
@@ -27,10 +25,7 @@ import (
 
 // CmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened, and returns the chat plus its tab.
-//
-// The id is MINTED here when the envelope carries none, and the response is what
-// makes that usable: the caller has to be able to open the chat it just asked
-// for. Returning `{ok:true}` was enough only while the client chose the id.
+// The id is minted here when the envelope carries none.
 func CmdResumeSession(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
 	var p vibekit.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
@@ -47,26 +42,18 @@ func CmdResumeSession(ctx context.Context, mem *Membership, cmd *vibekit.ClientC
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	// The op ledger matters MORE here than for a bare create: minting per attempt
-	// would leave two chats bound to one KAS session, which is two chats claiming
-	// one transcript and two entries in the reaper's keep-list for the same chain.
-	// The coordinator owns it, so the reservation, the mint and both writes are one
-	// critical section.
+	// The op ledger matters more here than for a bare create: minting per
+	// attempt would leave two chats bound to one KAS session.
 	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
 		OpID:   p.OpID,
 		ChatID: cmd.ChatID,
 		Init: func(c *vibekit.Chat) {
-			// Init runs only when the record does NOT exist, which is what refuses to
-			// rebind an existing chat: pointing a live chat at another session would
-			// strand its own session (its transcript still on disk, no longer
-			// referenced, so the reaper sweeps it) and hand the user a chat whose
-			// history silently changed. A replayed op lands on the same branch, and
-			// the no-op is right for it too — the chat is already bound to this
-			// session.
+			// Init runs only when the record does not exist, which is
+			// what refuses to rebind an existing chat: pointing a live
+			// chat at another session would strand its own session.
 			c.Name = name
-			// RecordSession rather than assignment: it is the only sanctioned way
-			// to set this field, and it keeps the chain invariant the reaper's
-			// keep-list depends on (see Chat.RecordSession).
+			// RecordSession, not assignment: the sanctioned writer of
+			// this field, keeping the reaper's keep-list chain invariant.
 			c.RecordSession(p.SessionID)
 		},
 	})

@@ -5,41 +5,43 @@ package agent
 //
 // KAS answers session/load by replaying the stored transcript as ordinary
 // session/update notifications tagged `_meta.kiro.replay`. translate.Projection
-// accumulates those into []vibekit.Message; this file owns WHEN one is open, which
-// frames reach it, and when it is complete.
+// accumulates those into []vibekit.Message; this file owns WHEN one is open,
+// which frames reach it, and when it is complete.
 //
 // # Why completion needs care
 //
-// session/load is issued inside bridge.Start, which BLOCKS on the result, while
-// the replay frames arrive on the bc.Forward goroutine attached just before it.
-// The frames precede the result on the wire, so by the time Start returns they
-// have all been PUSHED to the bridge's notifCh — but that channel is buffered
-// (256), so Forward has not necessarily DRAINED them. Settling the projection
-// at Start's return would therefore be a race against a partial transcript.
+// session/load is issued inside bridge.Start, which BLOCKS on the result,
+// while the replay frames arrive on the bc.Forward goroutine attached just
+// before it. The frames precede the result on the wire, so by the time
+// Start returns they have all been PUSHED to the bridge's notifCh — but
+// that channel is buffered (256), so Forward has not necessarily DRAINED
+// them. Settling the projection at Start's return would be a race against
+// a partial transcript.
 //
-// The barrier this file uses instead needs no timeout and no new bridge API:
+// The barrier this file uses instead needs no timeout and no new bridge
+// API:
 //
 //	Forward, after processing each frame, settles when
 //	  loadDone == true  AND  len(bridge.NotifCh()) == 0
 //
-// That is sound. Every pre-result frame was pushed before the result, and
-// loadDone is set only after the result, so once loadDone is true no pre-result
-// push is still outstanding. The channel is FIFO, so an empty channel observed
-// from the CONSUMER — after it finished processing a frame — means every one of
-// those frames has been consumed. Post-result catalog frames may keep the
-// channel non-empty and delay the settle by an iteration, which is harmless.
+// Every pre-result frame was pushed before the result, and loadDone is set
+// only after the result, so once loadDone is true no pre-result push is
+// still outstanding. The channel is FIFO, so an empty channel observed
+// from the CONSUMER means every one of those frames has been consumed.
+// Post-result catalog frames may keep the channel non-empty and delay the
+// settle by an iteration, which is harmless.
 //
-// Forward also settles once more after its range loop ends (the bridge closed
-// notifCh), so a load whose trailing frames never arrive still completes rather
-// than leaking a projection. A load that never returned leaves loadDone false
-// and the projection is discarded, which is right: a failed session/load has no
-// transcript to adopt.
+// Forward also settles once more after its range loop ends (the bridge
+// closed notifCh), so a load whose trailing frames never arrive still
+// completes rather than leaking a projection. A load that never returned
+// leaves loadDone false and the projection is discarded — a failed
+// session/load has no transcript to adopt.
 //
-// The barrier still needs no timeout. What DID need one is the session/load RPC
-// above it: bridge.replayBudget bounds that call, which is what makes "a load
-// that never returned" a state this code reaches at all rather than a wait with
-// no end. Do not move that budget down here — the settle is a correctness
-// argument and a timer on it would only turn a sound barrier into a guess.
+// The barrier still needs no timeout: bridge.replayBudget bounds the
+// session/load RPC above it, which is what makes "a load that never
+// returned" a state this code reaches at all. Do not move that budget down
+// here — the settle is a correctness argument and a timer on it would only
+// turn a sound barrier into a guess.
 
 import (
 	"cmp"
@@ -52,31 +54,22 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// replay owns the session/load transcript projection: the in-flight rebuild of a
-// chat's history from KAS's own replay, and the swap that makes it the record.
-//
-// The cleanest extraction left on the Runtime, and the reason is the direction.
-// Three of its four fields are exclusively its own (projMu, projections,
-// onProjection), its only outward reach is the chat store and the process
-// lifetime, and just two callers reach in — the translator with a frame, and the
-// constructor installing the settle hook. Nothing here calls back.
-//
-// The coordinator consumes it through the in-package replayProjector interface,
-// which has no external consumer, so the seam moved with no signature change
-// anywhere.
+// replay owns the session/load transcript projection: the in-flight rebuild
+// of a chat's history from KAS's own replay, and the swap that makes it the
+// record.
 type replay struct {
-	// chats is where a settled projection lands. It needs Mutate, not just Get,
-	// so it takes the translator's 3-method contract rather than the run
-	// surface's read-only one.
+	// chats is where a settled projection lands. Needs Mutate, not just
+	// Get, so it takes the translator's 3-method contract.
 	chats translate.ChatRecords
-	// lifetime supplies the context the swap runs under, since a settle outlives
-	// the frame that triggered it.
+	// lifetime supplies the context the swap runs under, since a settle
+	// outlives the frame that triggered it.
 	lifetime *lifetime
 	// projections are the rebuilds in flight, keyed by chat.
 	projections map[vibekit.ChatID]*loadProjection
-	// onProjection receives a settled transcript. Called WITHOUT projMu held: the
-	// swap writes the chat store, and holding the projection lock across that
-	// would let a store mutation and a replay frame deadlock against each other.
+	// onProjection receives a settled transcript. Called WITHOUT projMu
+	// held: the swap writes the chat store, and holding the projection
+	// lock across that would let a store mutation and a replay frame
+	// deadlock against each other.
 	onProjection func(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string)
 	projMu       sync.Mutex
 }
@@ -85,9 +78,8 @@ type replay struct {
 // Guarded by Runtime.projMu; the fields are not independently safe.
 type loadProjection struct {
 	proj *translate.Projection
-	// frames counts replay frames ingested, for the settle log — a load that
-	// projects zero messages from many frames is a decoding bug, and the two
-	// numbers together say so.
+	// frames counts replay frames ingested, for the settle log — a load
+	// that projects zero messages from many frames is a decoding bug.
 	frames   int
 	loadDone bool
 }
@@ -107,8 +99,8 @@ func (rp *replay) OpenReplayProjection(chatID vibekit.ChatID) {
 	rp.projections[chatID] = &loadProjection{proj: translate.NewProjection(newMessageID)}
 }
 
-// MarkReplayLoadDone records that the session/load RPC has returned, which is
-// half of the settle condition. Called from the spawn goroutine.
+// MarkReplayLoadDone records that the session/load RPC has returned, which
+// is half of the settle condition. Called from the spawn goroutine.
 func (rp *replay) MarkReplayLoadDone(chatID vibekit.ChatID) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -117,7 +109,7 @@ func (rp *replay) MarkReplayLoadDone(chatID vibekit.ChatID) {
 	}
 }
 
-// DiscardReplayProjection drops a chat's projection unsettled. Used when the
+// DiscardReplayProjection drops a chat's projection unsettled, when the
 // load failed, so a half-built transcript cannot be adopted later.
 func (rp *replay) DiscardReplayProjection(chatID vibekit.ChatID) {
 	rp.projMu.Lock()
@@ -129,8 +121,8 @@ func (rp *replay) DiscardReplayProjection(chatID vibekit.ChatID) {
 }
 
 // ingestReplayFrame folds one replay-tagged frame into the chat's open
-// projection. Reports whether a projection consumed it, so the caller can fall
-// back to dropping when a replay arrives with no load in flight.
+// projection. Reports whether a projection consumed it, so the caller can
+// fall back to dropping when a replay arrives with no load in flight.
 func (rp *replay) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdateKind, raw json.RawMessage) bool {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
@@ -145,11 +137,11 @@ func (rp *replay) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdat
 
 // SettleReplayProjection completes a chat's projection when the load has
 // returned and every replayed frame has been drained. `buffered` is the
-// consumer's own view of the notification channel's remaining depth; see this
-// file's header for why that is the sound barrier. `force` settles regardless
-// of the channel depth, for the bridge-exit call.
+// consumer's own view of the notification channel's remaining depth (see
+// this file's header for why that is the sound barrier). `force` settles
+// regardless of channel depth, for the bridge-exit call.
 //
-// It is a no-op when no projection is open, so callers may call it per frame.
+// No-op when no projection is open, so callers may call it per frame.
 func (rp *replay) SettleReplayProjection(chatID vibekit.ChatID, buffered int, force bool) {
 	rp.projMu.Lock()
 	lp := rp.projections[chatID]
@@ -173,19 +165,17 @@ func (rp *replay) SettleReplayProjection(chatID vibekit.ChatID, buffered int, fo
 	}
 }
 
-// swapProjectedTranscript makes a settled replay the chat's transcript, merged
-// with what a replay cannot speak for (see mergeProjection).
+// swapProjectedTranscript makes a settled replay the chat's transcript,
+// merged with what a replay cannot speak for (see mergeProjection).
 //
-// It runs on the Forward goroutine, so it must not hold projMu — the store
-// mutation below can block, and a replay frame arriving meanwhile needs that
-// lock. SettleReplayProjection releases it before calling this.
+// Runs on the Forward goroutine, so it must not hold projMu — the store
+// mutation below can block, and a replay frame arriving meanwhile needs
+// that lock.
 //
-// No broadcast. A load happens on bridge spawn, which a client triggers by
-// prompting or opening the chat, and the client fetches messages on
-// activation — so the swapped transcript is what the next fetch returns.
-// Connected clients that are looking at a stale copy of a chat they did not
-// touch will not see the correction until they refetch, which is the same
-// window the gap/refetch path already covers.
+// No broadcast: the swapped transcript is what the next fetch returns, and
+// a connected client on a stale copy of an untouched chat sees the
+// correction on its next refetch, the same window the gap/refetch path
+// already covers.
 func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string) {
 	var before, after int
 	err := rp.chats.Mutate(rp.lifetime.shutdownCtx, chatID, func(c *vibekit.Chat, exists bool) bool {
@@ -209,8 +199,8 @@ func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.
 		slog.Error("replay projection: swap failed", "chat_id", chatID, "error", err)
 		return
 	}
-	// Logged at info with both counts because a SHRINK is the signal worth
-	// seeing: it means the replay covered turns the record no longer holds.
+	// Logged with both counts because a SHRINK is the signal worth seeing:
+	// it means the replay covered turns the record no longer holds.
 	slog.Info("replay projection: transcript swapped",
 		"chat_id", chatID, "was", before, "now", after, "projected", len(msgs))
 }
@@ -219,33 +209,27 @@ func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.
 // projection's messages, plus the ones vibekit holds that a replay cannot
 // speak for.
 //
-// A blind replace is wrong in two directions, and each needs a different rule
-// because message identity differs by role:
+// A blind replace is wrong in two directions, each needing a different
+// rule since message identity differs by role:
 //
 //   - USER and ASSISTANT messages inside the projection's window are the
-//     wire's. Note that only the user half has matching ids — KAS echoes back
-//     the messageId vibekit sent on session/prompt, while an assistant turn
-//     carries KAS's own `<uuid>-say`. So a merge keyed on assistant ids would
-//     keep every existing turn AND add the projected one, duplicating the whole
+//     wire's. Only the user half has matching ids — KAS echoes back the
+//     messageId vibekit sent, while an assistant turn carries KAS's own
+//     `<uuid>-say`. A merge keyed on assistant ids would keep every
+//     existing turn AND add the projected one, duplicating the whole
 //     transcript. The projection supersedes them wholesale instead.
 //   - EVENT messages are not on the replay wire at all. cancelled,
 //     model_switched, interrupted and compaction_failed are vibekit's own
-//     record of what happened to a turn, so a replace would silently drop every
-//     badge on every resume. They are preserved wherever they sit.
+//     record of what happened to a turn, so a replace would silently drop
+//     every badge on every resume. They are preserved wherever they sit.
 //
-// Anything newer than the projection's last message is preserved regardless of
-// role. That is the un-replayed tail: KAS's log is NOT fsynced (no fsync calls
-// in the 2.16.0 bundle, and appendMessagesQuietly swallows a failed persist), so
-// a turn vibekit durably holds can legitimately be absent from a replay. Losing
-// it to a resume would make the projection strictly worse than the stack it
+// Anything newer than the projection's last message is preserved
+// regardless of role: KAS's log is NOT fsynced, so a turn vibekit durably
+// holds can legitimately be absent from a replay, and losing it to a
+// resume would make the projection strictly worse than the stack it
 // replaces.
-//
-// Ordering is by timestamp, which the projection can only be trusted to produce
-// because it takes `_meta.kiro.timestamp` from the wire.
 func mergeProjection(existing, projected []vibekit.Message) []vibekit.Message {
 	if len(projected) == 0 {
-		// Nothing was projected — an empty session, or a decode that produced
-		// nothing. Either way the existing record is the better answer.
 		return existing
 	}
 
@@ -260,8 +244,8 @@ func mergeProjection(existing, projected []vibekit.Message) []vibekit.Message {
 
 	out := make([]vibekit.Message, 0, len(projected)+len(existing))
 	out = append(out, projected...)
-	// Indexed rather than ranged by value: vibekit.Message is 216 bytes, which
-	// gocritic's rangeValCopy flags.
+	// Indexed rather than ranged by value: vibekit.Message is 216 bytes,
+	// which gocritic's rangeValCopy flags.
 	for i := range existing {
 		if _, dup := projectedIDs[existing[i].ID]; dup {
 			continue
@@ -271,9 +255,9 @@ func mergeProjection(existing, projected []vibekit.Message) []vibekit.Message {
 		}
 	}
 
-	// Stable sort so same-timestamp messages keep the order they were added,
-	// which puts a projected message ahead of a preserved one at the same
-	// instant — the projected copy is the more complete of the two.
+	// Stable sort so same-timestamp messages keep the order they were
+	// added, which puts a projected message ahead of a preserved one at
+	// the same instant — the projected copy is the more complete of the two.
 	slices.SortStableFunc(out, func(a, b vibekit.Message) int {
 		return cmp.Compare(a.Ts, b.Ts)
 	})

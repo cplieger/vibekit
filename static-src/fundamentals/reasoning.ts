@@ -2,51 +2,30 @@
 // Fundamental: ReasoningBlock — the collapsible "Thinking…" / "Thinking
 // completed" trace for a `thinking` block.
 //
-// Pure view: no store, no signals. The composition layer feeds it deltas
-// (streaming) or a full string (replay) and seals it when the trace ends or
-// the first sibling text arrives (the IDE auto-collapses reasoning the moment
-// regular output starts). Reuses the existing `.reasoning-block` CSS vocab.
-//
-// The summary row also carries the trace's word count, right-aligned: collapsed,
-// "Thinking completed" alone says nothing about how much is folded behind it.
-// A number only — no preview text, so nothing of the reasoning CONTENT leaks
-// into the summary of a collapsed block.
+// Pure view: composition feeds deltas (streaming) or a full string (replay)
+// and seals it when the trace ends or the first sibling text arrives. The
+// summary row carries a right-aligned word count (number only, no preview —
+// nothing of the reasoning content should leak into a collapsed summary).
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { preserveReadingPosition } from "../scroll.js";
 
-/** One whitespace character. Module scope and no `g` flag, so `test` is
- *  stateless and the object is allocated once rather than per delta. */
+/** One whitespace character. No `g` flag, so `test` stays stateless. */
 const SPACE = /\s/u;
 
 /**
- * Words `chunk` adds to a trace that currently ends `openWord`, plus whether it
- * ends mid-word after it. Whitespace-separated tokens, nothing cleverer.
+ * Words `chunk` adds to a trace ending `openWord`, plus whether it ends
+ * mid-word after it. Whitespace-separated tokens only — a CJK trace with no
+ * inter-word spaces reads as "1 word"; a character-count fallback was tried
+ * and removed because it misjudged a URL/hash/stack-frame token as its
+ * character count. `Intl.Segmenter` would fix both; separate work.
  *
- * ADDED UP PER DELTA rather than recounted from the whole string, which reverses
- * an earlier decision here, so it owes that decision an answer. The objection was
- * that a chunk boundary can fall inside a word ("reas" + "oning" is one word, not
- * two) — and that is exactly what `openWord` carries: a chunk that starts on a
- * non-space while the trace already ends on one is continuing a word this counter
- * has counted, so its first run is not a new word. The premise that went with the
- * objection is what did not hold. "A trace is a few thousand characters, so the
- * recount is cheaper than being wrong" was measured false: across the real chat
- * files, thinking is 1.2 MB over 3133 blocks and a single trace reaches tens of
- * kilobytes. Recounting per delta made this O(length squared) per block over the
- * largest content bucket in the app, and `syncMountedText` re-drove it on every
- * repaint — for COLLAPSED delegate traces nobody is looking at, too.
- *
- * Whitespace tokens are the whole rule, and a character fallback for scripts
- * that write without inter-word spaces was tried and removed rather than left
- * unwritten. Switching units past a characters-per-token threshold cannot tell a
- * CJK trace from an English one holding a single long token, so a trace that was
- * one URL, one hash or one stack frame reported its character count as though it
- * were a different language. A Chinese trace reading "1 word" is a known and
- * accepted limitation of a whitespace measure; a URL reading "44 characters" was
- * a wrong answer in the common case, which is worse. A real fix is
- * `Intl.Segmenter`, and it is a separate piece of work.
+ * Added up PER DELTA rather than recounted from the whole string: a real
+ * trace reaches tens of KB (measured: 1.2 MB thinking over 3133 blocks), so
+ * recounting per delta is O(length²) per block, re-driven on every repaint
+ * even for a collapsed trace nobody is looking at.
  */
 function foldWords(chunk: string, openWord: boolean): { added: number; openWord: boolean } {
   if (chunk === "") {
@@ -79,26 +58,14 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
   const root = el("details", {
     className: "reasoning-block msg-reasoning",
   }) as HTMLDetailsElement;
-  // The label is its own element so `seal()` can rewrite it without touching the
-  // chevron beside it. A bare `summary.textContent = …` would delete the glyph,
-  // which is why the chevron replaced a `::before` rather than becoming a plain
-  // child of the summary.
+  // Own element so seal() can rewrite it without touching the chevron beside it.
   const label = el("span", { className: "reasoning-label" }, live ? "Thinking…" : "Reasoning");
-  // Its own element beside the label for the same reason the label is its own
-  // element: `seal()` rewrites the label and nothing else in the row. It also
-  // keeps the label's text exactly "Thinking…" / "Thinking completed" — the
-  // state, not the state plus a measurement.
   const count = el("span", { className: "reasoning-count" });
-  // `<summary>` is focusable and its accessible name is computed from its
-  // DESCENDANTS, so a number living in the row is part of that name: repainting
-  // it on every streamed chunk renames a focusable control dozens of times per
-  // trace, and a screen reader re-announces the control on each rename. Hidden
-  // from the name PERMANENTLY, live and sealed alike — an `aria-hidden` that
-  // came off at `seal()` would still rename the row one final time, under a
-  // reader whose focus may be sitting on it, and it is the renaming rather than
-  // the number that is the defect. The trade is deliberate: the label carries
-  // the STATE, which is the part that has to be announced, and the count is a
-  // footnote on it that costs a screen-reader user nothing to miss.
+  // `<summary>`'s accessible name is computed from its descendants, and it is
+  // focusable — repainting a number in it on every chunk would rename a
+  // focusable control dozens of times per trace and re-announce on each
+  // rename. Hidden permanently (not just while live), since a screen reader
+  // needs the label's STATE, not a footnote it costs nothing to miss.
   count.setAttribute("aria-hidden", "true");
   const summary = el("summary", { className: "reasoning-summary" }, chevronEl(), label, count);
   const body = el("blockquote", { className: "reasoning-body" }, initial);
@@ -108,13 +75,9 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
     root.classList.add("streaming");
   }
 
-  // The accumulated trace. Its length is also the watermark `setText` slices
-  // against, so this replaced a separate `rendered` counter rather than joining
-  // it — two names for one number is how they drift apart.
+  // Also the watermark setText() slices against.
   let text = initial;
   let sealed = false;
-  // The running count and the one bit of state that makes it exact across a
-  // chunk boundary: whether the trace so far ends inside a word.
   let words = 0;
   let openWord = false;
 
@@ -127,12 +90,9 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
 
   /** Repaint the count. A count of zero renders NOTHING, not "0 words". */
   function showCount(): void {
-    // toLocaleString so a long trace reads "1,204 words" rather than "1204".
     count.textContent =
       words === 0 ? "" : `${words.toLocaleString()} ${words === 1 ? "word" : "words"}`;
   }
-  // The mount's own text goes through the same fold, so there is one counting
-  // path rather than a seed that could disagree with the increments after it.
   countIn(initial);
   showCount();
 
@@ -154,8 +114,6 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
       const tail = full.slice(text.length);
       body.appendChild(document.createTextNode(tail));
       text = full;
-      // The TAIL, not `full`: this path is replace-to-full on the wire but
-      // append-only in effect, and counting `full` would double every word.
       countIn(tail);
       showCount();
     },
@@ -166,15 +124,8 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
       sealed = true;
       label.textContent = "Thinking completed";
       root.classList.remove("streaming");
-      // Every path that can change the trace ends in a repaint, this one
-      // included: the collapsed summary is what the reader is left with, so the
-      // number on it is asserted rather than assumed.
       showCount();
-      // An IMMEDIATE geometry change — a bare `open = false` on a native
-      // <details>, no animation — which still removes height above the reader.
-      // Compensated for the same reason as tool-group's animated collapse, by
-      // the same helper; the two behave differently enough to be worth testing
-      // separately, which is why §3.4 names them apart.
+      // No animation on a bare `open = false`, so compensate scroll position.
       preserveReadingPosition(() => {
         root.open = false;
       }, "content-growth");

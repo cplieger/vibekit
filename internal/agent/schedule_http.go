@@ -3,9 +3,8 @@ package agent
 // Schedule REST: the workflow rows on /docs/workflows carry a Schedule button
 // beside Run, and this is what it talks to.
 //
-// Three verbs and no more. A schedule is a small record the client rewrites
-// wholesale, so an upsert plus a delete covers editing without a PATCH shape,
-// and the list is small enough to send in full.
+// Three verbs and no more: a schedule is a small record the client rewrites
+// wholesale, so an upsert plus a delete covers editing without a PATCH shape.
 
 import (
 	"encoding/json"
@@ -67,9 +66,9 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 		v.LastRunAt = &t
 	}
 	if e.Enabled {
-		// Same derivation the runner uses (schedule.NextRunFrom), measured from
-		// the entry's anchor and floored at now so a stale anchor cannot render a
-		// next run that has already passed.
+		// Same derivation the runner uses (schedule.NextRunFrom), floored at
+		// now so a stale anchor cannot render a next run that has already
+		// passed.
 		if next, err := schedule.NextRunFrom(e.Spec, e.Anchor, time.Now()); err == nil {
 			v.NextRunAt = &next
 		}

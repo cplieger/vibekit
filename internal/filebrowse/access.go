@@ -3,29 +3,17 @@ package filebrowse
 import "strings"
 
 // Access model: an ALLOW-LIST of granted roots (mounts) plus the
-// sensitive-path deny-list below.
+// sensitive-path deny-list below. Mount matching lives in paths.go
+// (resolvePath); this file keeps the second layer, a deny-list by
+// necessity: the sensitive entries live INSIDE the granted /config
+// mount, and an os.Root cannot enforce sub-path denial.
 //
-// The old model was the inverse — the handler was rooted at the
-// container root with a blacklist of system directories, which was
-// fail-open: every new path outside the enumerated list was browsable
-// by default. Mount matching lives in paths.go (resolvePath); this
-// file keeps the second layer, the sensitive-path list, which is still
-// a deny-list by necessity: the sensitive entries live INSIDE the
-// granted /config mount, and an os.Root cannot enforce sub-path denial.
-//
-// The prefix tests below are deliberately NOT pathinside calls, and the
-// reason is the deny-list inversion. pathinside's containment predicates
-// count the root as inside, while IsSensitive must EXCLUDE the listed
-// directory itself so isProtectedDir can answer for it separately under a
-// different rule (see its doc). isProtectedDir is not a containment test
-// at all: it asks in BOTH directions — does the candidate enclose a
-// sensitive path, or does a sensitive path enclose it — which no single
-// pathinside function expresses. The entries also carry their own
-// trailing separator, so the sibling-lookalike failure that motivates the
-// library ("/config/homework" against "/config/home/") does not arise
-// here. Containment in this package IS pathinside: the mount lookup uses
-// Inside (paths.go mountFor), backed by one os.Root per mount for the
-// kernel-enforced half.
+// The prefix tests below are deliberately NOT pathinside calls: IsSensitive
+// must EXCLUDE the listed directory itself so isProtectedDir can answer for
+// it separately under a different rule (see its doc), and isProtectedDir
+// asks in BOTH directions — does the candidate enclose a sensitive path, or
+// does a sensitive path enclose it — which no single pathinside function
+// expresses.
 
 // sensitivePath describes a single blocked path entry with explicit
 // match semantics: IsDir=true means "directory prefix" (blocks all
@@ -35,30 +23,21 @@ type sensitivePath struct {
 	IsDir bool
 }
 
-// Specific paths or path prefixes blocked from the file-editor surface.
-// Protects system-level agent config, auto-generated docs, internal
-// state files, and — most importantly — the credential stores that back
-// vibekit's own auth, git, and MCP integrations.
-//
-// kiro-cli's per-user state (KIRO_HOME = $HOME/.kiro: steering,
-// sessions, settings, agents, logs) lives inside the container HOME,
-// so the /config/home/ tree block below covers all of it — including
-// the auto-generated steering/environment.md and steering/custom.md
-// (edited only through /api/steering, never the file editor).
+// Specific paths or path prefixes blocked from the file-editor surface:
+// system-level agent config, auto-generated docs, internal state files,
+// and the credential stores backing vibekit's own auth, git, and MCP
+// integrations.
 //
 // /config/kiro/ is the LEGACY KIRO_HOME (pre-relocation; the v3 engine
-// ignores KIRO_HOME and reads $HOME/.kiro, so KIRO_HOME moved inside
-// HOME). The entrypoint migrates and deletes it on first boot, but the
-// prefix stays blocked so the editor can't touch stragglers on a
-// volume that predates the migration.
+// ignores KIRO_HOME and reads $HOME/.kiro). The entrypoint migrates and
+// deletes it on first boot, but the prefix stays blocked so the editor
+// can't touch stragglers on a volume that predates the migration.
 var sensitivePrefixes = []sensitivePath{
 	// Legacy kiro-cli state tree (migrated + removed by entrypoint).
 	{Path: "/config/kiro/", IsDir: true},
-	// Container HOME ($HOME=/config/home): AWS SSO token + OAuth secret
-	// (~/.aws/sso/cache), git SSH keys (~/.ssh), forge PAT
-	// (~/.config/gh/hosts.yml), ~/.gitconfig, kiro-cli's ~/.kiro state
-	// (steering, sessions, settings, agents), and its ~/.local install
-	// tree. The whole tree is blocked.
+	// Container HOME ($HOME=/config/home): AWS SSO token + OAuth secret,
+	// git SSH keys, forge PAT, ~/.gitconfig, kiro-cli's ~/.kiro state, and
+	// its ~/.local install tree. The whole tree is blocked.
 	{Path: "/config/home/", IsDir: true},
 	// Internal vibekit runtime state.
 	{Path: "/config/chats/", IsDir: true},
@@ -66,10 +45,8 @@ var sensitivePrefixes = []sensitivePath{
 	{Path: "/config/vapid-keys.json", IsDir: false},
 	// MCP server config — env / header / OAuth secrets stored cleartext.
 	{Path: "/config/mcp.json", IsDir: false},
-	// The OAuth credentials KAS asks vibekit to hold for it: opaque
-	// blobs, refresh tokens and PKCE verifiers whose 0600 is the whole
-	// protection. Its sibling above was blocked from the start and this
-	// one was not, which left the more sensitive of the pair readable.
+	// The OAuth credentials KAS asks vibekit to hold for it (opaque blobs,
+	// refresh tokens, PKCE verifiers whose 0600 is the whole protection).
 	{Path: "/config/mcp-secrets.json", IsDir: false},
 }
 
@@ -77,14 +54,12 @@ var sensitivePrefixes = []sensitivePath{
 // Directory prefixes match their contents but not the directory itself;
 // use isProtectedDir when the operation would affect the container.
 //
-// EXPORTED for one reason: internal/server's `.kiro` docs scanner reads files
-// too, and it must agree with this handler about what is off limits. It calls
-// THIS function rather than keeping a list of its own — two scanners disagreeing
-// about the denylist is the inconsistency that becomes a real leak the next time
-// a root is widened, and only one of them would be updated. The caller passes an
-// already-resolved absolute container path, symlinks followed, which is the only
-// form this predicate is meaningful on: the entries below are absolute
-// `/config/...` paths, so a path that has not been resolved cannot match one.
+// EXPORTED because internal/server's `.kiro` docs scanner calls this same
+// function rather than keeping its own denylist — two scanners disagreeing
+// about it is the inconsistency that becomes a real leak the next time a
+// root is widened. The caller must pass an already-resolved absolute
+// container path (symlinks followed): the entries below are absolute
+// `/config/...` paths, so an unresolved path cannot match one.
 func IsSensitive(resolved string) bool {
 	for _, sp := range sensitivePrefixes {
 		if sp.IsDir {
@@ -102,12 +77,8 @@ func IsSensitive(resolved string) bool {
 // directory listed (or enclosing a path listed) in sensitivePrefixes.
 // This is the "directory container" check that IsSensitive deliberately
 // omits — IsSensitive alone lets `/config/chats` (no trailing slash)
-// through while `/config/chats/foo.json` is blocked.
-//
-// Callers pass an already-canonicalised path (filepath.Clean has run
-// either via resolvePath or explicitly). The suffix-"/" form is used
-// so the trailing-slash comparison works for both trailing-slash-free
-// resolved values and trailing-slash-terminated sensitive prefixes.
+// through while `/config/chats/foo.json` is blocked. Callers pass an
+// already-canonicalised path.
 func isProtectedDir(resolved string) bool {
 	res := strings.TrimRight(resolved, "/") + "/"
 	for _, sp := range sensitivePrefixes {

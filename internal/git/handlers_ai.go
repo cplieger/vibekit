@@ -89,23 +89,22 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	}
 	dir := a.repoDir(body.Repo)
 
-	// Check for staged changes. --no-textconv here too, even though --stat
-	// prints no content: the flag is what stops the textconv PROGRAM being
-	// run, not merely its output being shown.
+	// --no-textconv here too, even though --stat prints no content: the
+	// flag stops the textconv PROGRAM from running, not merely its output
+	// from showing.
 	diff, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--cached", "--stat")
 	if err != nil || strings.TrimSpace(diff) == "" {
 		writeGitError(w, KindNoStaged, "")
 		return
 	}
 
-	// Get the full diff, capped at 8KB.
+	// Full diff, capped at 8KB.
 	fullDiff, dErr := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--cached")
 	if dErr != nil {
 		fullDiff = diff
 	}
 	fullDiff = truncateDiff(fullDiff, 8*1024)
 
-	// Get recent commit history for pattern matching.
 	commitHistory := getRecentCommits(r.Context(), dir, 10)
 
 	prompt := buildCommitPrompt(commitHistory, fullDiff)
@@ -140,7 +139,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	}
 	dir := a.repoDir(body.Repo)
 
-	// Get the base branch (default: main).
+	// Base branch, default main.
 	base := defaultPRBase
 	if body.Branch != "" {
 		if !isValidGitRef(body.Branch) {
@@ -152,10 +151,10 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 		base = body.Branch
 	}
 
-	// Get the diff between current branch and base.
+	// Diff between current branch and base.
 	diff, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", base+"...HEAD")
 	if err != nil || strings.TrimSpace(diff) == "" {
-		// Try origin/main if local main doesn't exist.
+		// Fall back to origin/main if local main doesn't exist.
 		diff, err = gitCmd(r.Context(), dir, "diff", "--no-textconv", "origin/"+base+"...HEAD")
 		if err != nil || strings.TrimSpace(diff) == "" {
 			writeGitError(w, KindNoChanges, "against "+base)
@@ -163,10 +162,9 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Cap diff at 12KB for PR descriptions (larger than commit messages).
+	// Cap at 12KB for PR descriptions (larger than commit messages).
 	diff = truncateDiff(diff, 12*1024)
 
-	// Get commit log for the branch.
 	log, err := gitCmd(r.Context(), dir, "log", "--oneline", base+"..HEAD")
 	if err != nil || strings.TrimSpace(log) == "" {
 		if fallbackLog, fallbackErr := gitCmd(r.Context(), dir, "log", "--oneline", "origin/"+base+"..HEAD"); fallbackErr == nil {
@@ -185,9 +183,9 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Clean up: strip markdown fences (including language-tagged
-	// variants like ```markdown / ```diff) via the shared helper so
-	// this flow stays in sync with extractCommitMessage.
+	// Clean up: strip markdown fences (including language-tagged variants
+	// like ```markdown / ```diff) via the shared helper so this stays in
+	// sync with extractCommitMessage.
 	result = strings.TrimSpace(result)
 	result = modeltext.StripCodeFence(result)
 	result = strings.TrimSpace(result)

@@ -2,24 +2,16 @@ package command
 
 // The op ledger: what a repeated create resolves to.
 //
-// Server-minting a chat id removes an idempotency the client-minted id gave for
-// free. When the client chose the id, a retry carried the SAME id, and every
-// creating handler's `if exists { return false }` made the second attempt a
-// no-op. Minting server-side, a retry mints again — two chats for one gesture.
+// Server-minting a chat id removes the idempotency a client-minted id gave
+// for free: a retry now mints a second chat unless something remembers the
+// first.
 //
-// The Idempotency-Key header covers most of that already (one middleware over
-// every mutating route, and @cplieger/actions threads one key through every retry
-// attempt of a dispatch). It does not cover all of it: the cache's TTL is 5
-// minutes and eviction is LAZY, so a lookup past the TTL falls through and the
-// handler runs for real (internal/server/idempotency.go). A user-driven retry —
-// the error toast's Retry button re-dispatches with the same args, minutes later
-// — lands in exactly that window.
-//
-// So the ledger covers the fall-through and nothing else: op_id -> chat id,
-// bounded, TTL'd, in memory. Deliberately NOT a field on the chat record, which
-// the design considered and rejected: chat.Store has no by-field index and the
-// directory listing IS the index, so a lookup could only scan every chat file.
-// The window that needs covering is a retry window, not a chat lifetime.
+// The Idempotency-Key header covers most of this already, but its cache TTL
+// is 5 minutes with lazy eviction, so a lookup past the TTL falls through
+// and the handler runs for real. This ledger covers that fall-through:
+// op_id -> chat id, bounded, TTL'd, in memory. Deliberately not a field on
+// the chat record — chat.Store has no by-field index, so a lookup would
+// scan every chat file for a retry window rather than a chat lifetime.
 
 import (
 	"sync"
@@ -28,23 +20,18 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// createOpTTL is how long an op_id resolves to the chat it created.
-//
-// Longer than the Idempotency-Key cache's 5 minutes on purpose: covering that
-// cache's fall-through is this ledger's entire job, so a shorter TTL would leave
-// the gap it exists to close, and matching it exactly would leave the boundary
-// racing. Short enough that the map is a retry window rather than history.
+// createOpTTL is how long an op_id resolves to the chat it created. Longer
+// than the Idempotency-Key cache's 5 minutes on purpose, since covering that
+// cache's fall-through is this ledger's whole job.
 const createOpTTL = 10 * time.Minute
 
-// maxCreateOps bounds the map. A create is a deliberate human gesture, so the
-// live population inside one TTL is single digits; the cap is what stops a
-// client looping op ids from growing it without limit.
+// maxCreateOps bounds the map: a create is a deliberate human gesture, so
+// the live population inside one TTL is single digits.
 const maxCreateOps = 512
 
-// createLedger records which chat each create op_id produced.
-//
-// Safe for concurrent use. The zero value IS usable — a nil map is only read
-// until the first record — but construct with newCreateLedger, which says so.
+// createLedger records which chat each create op_id produced. Safe for
+// concurrent use. The zero value is usable, but construct with
+// newCreateLedger, which says so.
 type createLedger struct {
 	ops  map[string]createOp
 	now  func() time.Time
@@ -67,15 +54,12 @@ func newCreateLedger() *createLedger {
 	}
 }
 
-// resolve returns the chat id op names, minting one with mint when this is the
-// first time op has been seen. replay reports which happened, so a caller can
-// tell a fresh create from a retry answering with the chat it already made.
+// resolve returns the chat id op names, minting one with mint when this is
+// the first time op has been seen. replay reports which happened.
 //
-// An empty op is a caller that sent no correlation id: it always mints and
-// records nothing, because there is no key to record it under. Reserve and mint
-// happen under ONE lock, so two attempts of one op cannot mint two chats even if
-// they overlap — which is the whole property, and a check-then-mint pair spelled
-// at the call site would not have it.
+// An empty op always mints and records nothing (no key to record it under).
+// Reserve and mint happen under one lock, so two attempts of one op cannot
+// mint two chats even if they overlap.
 func (l *createLedger) resolve(op string, mint func() vibekit.ChatID) (id vibekit.ChatID, replay bool) {
 	if op == "" {
 		return mint(), false
@@ -95,15 +79,13 @@ func (l *createLedger) resolve(op string, mint func() vibekit.ChatID) (id vibeki
 	return id, false
 }
 
-// peek reports the chat op already resolved to, WITHOUT minting one and without
-// extending its TTL. An op that has never been seen, has expired, or is empty
-// reports false.
+// peek reports the chat op already resolved to, without minting one and
+// without extending its TTL. An op that has never been seen, has expired, or
+// is empty reports false.
 //
-// It exists for the one caller that has to decide something before it is allowed
-// to mint: a create whose capacity reservation must run before the mint needs to
-// know whether this op already owns a tab, and fork_chat needs to know whether it
-// may skip its session/fork round trip. Both are decisions ABOUT a possible
-// mint, so neither can be spelled as a resolve.
+// Exists for a caller that must decide something before it is allowed to
+// mint: a create whose capacity reservation must run before the mint needs
+// to know whether this op already owns a tab.
 func (l *createLedger) peek(op string) (vibekit.ChatID, bool) {
 	if op == "" {
 		return "", false
@@ -117,13 +99,8 @@ func (l *createLedger) peek(op string) (vibekit.ChatID, bool) {
 	return e.chatID, true
 }
 
-// sweep drops expired entries and, if the map is still full, the entry closest
-// to expiry. Caller holds l.mu.
-//
-// Eviction on write rather than on a timer: the map is only read by a create, so
-// a goroutine sweeping it between creates would be a lifetime to own for no
-// observable difference. The oldest-first fallback is what makes the bound hard
-// — a TTL alone bounds nothing inside one window.
+// sweep drops expired entries and, if the map is still full, the entry
+// closest to expiry. Caller holds l.mu.
 func (l *createLedger) sweep(now time.Time) {
 	for k, e := range l.ops {
 		if !now.Before(e.expires) {

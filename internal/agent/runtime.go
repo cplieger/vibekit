@@ -59,63 +59,40 @@ const (
 // lifetime groups Runtime fields related to process lifecycle,
 // shutdown coordination, and workspace paths.
 type lifetime struct {
-	// shutdownCtx is the runtime's own cancellable child of the lifetime context
-	// New requires, and it is a lifetime HANDLE rather than a stashed caller
-	// context: it is read by the shell manager, the agent terminals, the
-	// projection writer and every Broadcast, none of which a run-method
-	// parameter could reach. Shutdown() cancels it, so the runtime can be torn
-	// down on its own without the app's lifetime ending — which is what
-	// App.Shutdown relies on.
-	//
-	// It used to be rooted at context.Background() inside New, which is why
-	// callers had to fetch it back out through an exported ShutdownCtx()
-	// accessor. That accessor is gone: the composition root owns the app's
-	// lifetime and hands the same one to every component, and the one consumer
-	// that needed a context DERIVED from this asks for that instead (see
-	// TurnContext).
+	// shutdownCtx is the runtime's own cancellable child of the lifetime
+	// context New requires. Shutdown() cancels it, so the runtime can be torn
+	// down on its own without the app's lifetime ending.
 	shutdownCtx    context.Context
 	done           chan struct{}
 	shutdownCancel context.CancelFunc
-	// workRoot is the kernel-confined handle on workDir, and it is what makes
-	// the fs handlers' containment an enforced property rather than a lexical
-	// claim. resolveInsideWorkDir answers "does this name lie inside the
-	// workspace" ONCE; every operation named through this root has each of its
-	// components re-resolved by the kernel at the moment it runs, so an
-	// ancestor directory swapped for a symlink after the check redirects
-	// nothing outside the tree. See confineInWorkDir.
+	// workRoot is the kernel-confined handle on workDir: every operation
+	// named through this root has each of its components re-resolved by the
+	// kernel at the moment it runs, so an ancestor directory swapped for a
+	// symlink after the check redirects nothing outside the tree. See
+	// confineInWorkDir.
 	//
-	// Opened once, in New. An os.Root holds a descriptor on the directory it
-	// was opened on, so it keeps referring to that directory even if the name
-	// is later renamed or shadowed — which is the property a boundary wants.
-	// It is deliberately NOT closed: a Close after an ABANDONED inflight wait
-	// (Shutdown's budget can expire) would turn a wedged handler's filesystem
-	// error into ErrClosed for no gain, and the one path that ends the lifetime
-	// this handle is scoped to is process exit, which reclaims the descriptor.
+	// Deliberately NOT closed: the one path that ends the lifetime this
+	// handle is scoped to is process exit, which reclaims the descriptor.
 	//
-	// nil when workDir could not be opened. The fs handlers then REFUSE rather
-	// than falling back to ambient os calls: a boundary with nothing behind it
-	// is worse than a withheld capability (vibekit.md invariant 6's shape — the
-	// server still runs, this one capability reports why it cannot).
+	// nil when workDir could not be opened. The fs handlers then REFUSE
+	// rather than falling back to ambient os calls.
 	workRoot  *os.Root
 	workDir   string
 	configDir string
 	inflight  sync.WaitGroup
 	// loops covers the background goroutines that exit on done: the two New
-	// starts, plus the MCP registry's debounced notifier, which SetOnChange
-	// starts once from the composition root.
-	// It is a SEPARATE group from inflight and must stay one: Shutdown waits on
-	// inflight only after every bridge has been stopped, and the two groups are
-	// reported apart so a shutdown that times out names a wedged handler or a
-	// wedged loop rather than "something".
+	// starts, plus the MCP registry's debounced notifier.
+	//
+	// A SEPARATE group from inflight: Shutdown waits on inflight only after
+	// every bridge has been stopped, and the two groups are reported apart so
+	// a shutdown that times out names a wedged handler or a wedged loop.
 	loops    sync.WaitGroup
 	mu       sync.Mutex
 	draining atomic.Bool
 }
 
-// derivedContext returns a cancellable child of the process lifetime, for work
-// that must outlive the request that started it. Runtime's hubContext() is the same
-// two lines; this is the copy the collaborators use, so a collaborator does not need a *Runtime to
-// ask a question about the lifetime this struct owns.
+// derivedContext returns a cancellable child of the process lifetime, for
+// work that must outlive the request that started it.
 func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(lt.shutdownCtx)
 }
@@ -123,22 +100,13 @@ func (lt *lifetime) derivedContext() (context.Context, context.CancelFunc) {
 // TurnContext returns the context a turn runs under, plus the teardown its
 // handler must defer.
 //
-// It replaced an exported ShutdownCtx() accessor, and the replacement is the
-// point: a command handler never wanted the raw lifetime context, it wanted a
-// turn context derived from it, and handing out the lifetime made every consumer
-// responsible for deriving one correctly. This type is what holds the lifetime,
-// so the derivation lives on it. It was a Runtime method forwarding to
-// h.lifecycle.shutdownCtx, which put the runtime in the path of a question only this
-// struct's own fields can answer.
-//
-// The turn is DETACHED from reqCtx's cancellation while keeping its values: the
-// prompt POST's context dies when the handler returns, and a turn that died with
-// it failed before it could finalize and persist the assistant buffer, even
-// though kiro-cli kept running the turn to completion. Cancellation is
-// re-attached to the shutdown context via AfterFunc so the turn still dies on
-// shutdown; the returned cancel tears it down on handler return and unregisters
-// that AfterFunc so it cannot leak. Explicit user cancellation is unaffected —
-// it goes through session/cancel (Notify), not this context.
+// The turn is DETACHED from reqCtx's cancellation while keeping its values:
+// the prompt POST's context dies when the handler returns, and a turn that
+// died with it failed before it could finalize and persist the assistant
+// buffer, even though kiro-cli kept running the turn to completion.
+// Cancellation is re-attached to the shutdown context via AfterFunc so the
+// turn still dies on shutdown; the returned cancel tears it down on handler
+// return and unregisters that AfterFunc so it cannot leak.
 //
 // This mirrors the pattern in agent_terminal.go, which runs agent-spawned
 // subprocesses under context.WithCancel(context.WithoutCancel(ctx)) +
@@ -164,10 +132,6 @@ func (lt *lifetime) InflightDone() {
 }
 
 // bridges groups Runtime fields related to ACP bridge management.
-//
-// The utility runtime left: it was a field plus a sync.Once here, guarded by the
-// process-lifetime mutex at its three readers and by nothing at its writer. It is
-// utilityLease now, which owns its own lock — see utility_lease.go.
 type bridges struct {
 	factory ACPBridgeFactory
 	mgr     *bridgeManager
@@ -283,10 +247,10 @@ func WithSchedules(st *schedule.Store) Option {
 
 // WithRunLeases wires the DURABLE run-lease store.
 //
-// Unlike WithSchedules, absent does not mean off: the runtime falls back to an
-// in-memory registry (leaseStore), because a lease carries the run's wall clock
-// and its unattended mark. What this option adds is survival across a restart —
-// which is the whole point of the record, so production always wires it.
+// Unlike WithSchedules, absent does not mean off: the runtime falls back to
+// an in-memory registry (leaseStore), because a lease carries the run's wall
+// clock and its unattended mark. What this option adds is survival across a
+// restart.
 func WithRunLeases(st *runlease.Store) Option {
 	return func(h *Runtime) { h.runs.leases = st }
 }
@@ -294,12 +258,10 @@ func WithRunLeases(st *runlease.Store) Option {
 // WithTabs wires the open-tab set, which is what makes the tab commands, the
 // tabs_changed event and retention's open-tab predicate live.
 //
-// Absent means no tab store: every tab command answers unavailable and a create
-// writes its chat record with no tab. That is the shape a build with no config
-// dir has, and it is deliberately not a construction failure — the store's own
-// constructor already warns and returns a usable empty store for a file it cannot
-// read, because an arrangement is re-derivable by opening the tabs again
-// (invariant 6).
+// Absent means no tab store: every tab command answers unavailable and a
+// create writes its chat record with no tab. Deliberately not a
+// construction failure — the store's own constructor already warns and
+// returns a usable empty store for a file it cannot read.
 func WithTabs(st *tabs.Store) Option {
 	return func(h *Runtime) { h.tabs = st }
 }
@@ -309,14 +271,9 @@ func WithPush(p pushService) Option {
 	return func(h *Runtime) { h.push = p }
 }
 
-// WithMCPConfig wires the MCP configuration store. The registry reads the three
-// name sets to classify a status notification's origin and to drop the frames
-// of a server the user switched off.
-//
-// It used to read an ACPServers() that no longer exists: vibekit stopped sending
-// servers inline and adopted KAS's own mcp.json, leaving `mcpServers` on the
-// session methods as a required-but-empty array (bridge_session.go). The comment
-// outlived the method.
+// WithMCPConfig wires the MCP configuration store. The registry reads the
+// three name sets to classify a status notification's origin and to drop
+// the frames of a server the user switched off.
 func WithMCPConfig(c mcpNameSets) Option {
 	return func(h *Runtime) { h.mcpConfig = c }
 }
@@ -352,23 +309,18 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 // (agent engine + model + effort); tool-call authorization is owned by
 // kiro-cli's native Cedar policy on v3, not by CLI trust flags.
 //
-// ctx is the runtime's LIFETIME and is required. The runtime has no run method to take
-// it — it is handed to server.New as a route provider and the process then
-// blocks in ListenAndServe — so the fleet's rule for that case applies: require
-// the lifetime at construction rather than default it. There is deliberately no
-// nil check and no WithLifetime option: a nil ctx panics in context.WithCancel
-// below, at the one construction site, which is the refusal; an option would be
-// a default wearing a nicer name, and every default for a lifetime is a
-// lifetime nothing can cancel.
+// ctx is the runtime's LIFETIME and is required: the runtime has no run
+// method to take it, so there is deliberately no nil check and no
+// WithLifetime option — a nil ctx panics in context.WithCancel below, which
+// is the refusal, and an option would be a default wearing a nicer name.
 //
-// New does NOT take ownership of ctx's cancellation. Shutdown cancels the runtime's
-// own child of it, so the caller may tear the runtime down first and end the app's
-// lifetime afterwards.
+// New does NOT take ownership of ctx's cancellation. Shutdown cancels the
+// runtime's own child of it, so the caller may tear the runtime down first
+// and end the app's lifetime afterwards.
 //
-// chatStore is REQUIRED, on the same terms as ctx: it is read here to wire the
-// translator, so a nil one builds a runtime that cannot serve a single chat and
-// defers the crash to the first ACP frame. requireWired refuses it at
-// construction, which is where a caller can still fix it.
+// chatStore is REQUIRED, on the same terms as ctx: requireWired refuses it
+// at construction, before a nil one could build a runtime that cannot serve
+// a single chat and defer the crash to the first ACP frame.
 func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore chatRecords, opts ...Option) *Runtime {
 	sseHub := sse.NewHub(sse.WithReplay(replayBufSize), sse.WithKeepalive(keepaliveInterval))
 	lc := &lifetime{
@@ -377,9 +329,8 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort, and fail-CLOSED at the handlers rather than at construction:
-	// a missing or unopenable workDir is a deployment fault the operator repairs
-	// from inside the container, and refusing to build the runtime would take the
-	// server that lets them do it (vibekit.md invariant 6).
+	// a missing or unopenable workDir is a deployment fault the operator
+	// repairs from inside the container.
 	if root, err := os.OpenRoot(workDir); err != nil {
 		slog.Error("workspace root: open failed; agent filesystem requests will be refused",
 			"work_dir", workDir, "error", err)
@@ -387,11 +338,10 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		lc.workRoot = root
 	}
 
-	// The collaborators are locals first so the run surface can name the two it depends on
-	// (the bridge registry and the pending-decision tracker) rather than reaching
-	// them through a *Runtime. Its remaining three collaborators do not exist yet and
-	// are assigned below; those assignments are the honest back-edges, in one
-	// place, instead of a back-pointer that hides them.
+	// The collaborators are locals first so the run surface can name the two
+	// it depends on (the bridge registry and the pending-decision tracker)
+	// rather than reaching them through a *Runtime. Its remaining three
+	// collaborators do not exist yet and are assigned below.
 	bridgeP := &bridges{
 		factory: factory,
 		mgr:     newBridgeManager(factory),
@@ -428,19 +378,18 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	// CONSTRUCTION, then WIRING, in that order and not interleaved.
 	//
-	// Every role below is bound to its owner BY VALUE, so a field still nil at the
-	// literal stays nil forever — the reads no longer happen per call the way they
-	// did when every role named h. Three roles (coord, lines, agentTerms) were
-	// assigned after the translator and captured nil until this was reordered.
-	// TestNew_EveryTranslateRoleIsWired pins it.
+	// Every role below is bound to its owner BY VALUE, so a field still nil at
+	// the literal stays nil forever. Three roles (coord, lines, agentTerms)
+	// were assigned after the translator and captured nil until this was
+	// reordered. TestNew_EveryTranslateRoleIsWired pins it.
 	h.utility = &utilityLease{build: h.buildUtility}
 	h.runRoutes = &runRoutes{runs: runs}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.replay = &replay{chats: chatStore, lifetime: lc, projections: map[vibekit.ChatID]*loadProjection{}}
 	h.coord = newBridgeCoordinator(h)
-	// The inbound ladder is built here rather than in the struct literal because
-	// two of its collaborators (coord, and the ignore matcher the configDir block
-	// below installs) do not exist yet at that point.
+	// The inbound ladder is built here rather than in the struct literal
+	// because two of its collaborators (coord, and the ignore matcher the
+	// configDir block below installs) do not exist yet at that point.
 	h.inbound = &inbound{
 		lifetime: lc, coord: h.coord, chats: chatStore,
 		bus: sseP, kiroToken: h.kiroToken, authLatch: h.authLatch,
@@ -448,14 +397,12 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast, h.coord.turns.currentEpoch)
-	// A settled session/load replay becomes the chat's transcript. Assigned here
-	// (not in the struct literal) because it is a method value on the fully-built
-	// Runtime; see load_projection.go.
+	// A settled session/load replay becomes the chat's transcript. Assigned
+	// here rather than in the struct literal because it is a method value on
+	// the fully-built Runtime; see load_projection.go.
 	h.replay.onProjection = h.replay.swapProjectedTranscript
-	// Both collaborators take the LEASE's own accessor, not a Runtime method value. A
-	// thunk is still needed — the runtime is built lazily, and its build closes
-	// over two Settings hooks — but pointing it at the lease is what leaves
-	// neither collaborator holding a reference to the Runtime at all.
+	// Both collaborators take the LEASE's own accessor, not a Runtime method
+	// value, so neither collaborator holds a reference to the Runtime.
 	runs.utility = h.utility.get
 	runs.coord = h.coord
 	configP.utility = h.utility.get
@@ -468,11 +415,9 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.initDispatch()
 	if lc.configDir != "" {
 		h.inbound.ignore = ignore.NewMatcher(lc.configDir, workDir)
-		// Best-effort: a store that cannot be opened leaves h.secrets nil, and
-		// bridges then do NOT declare `_meta.kiro.secretStorage` (see
-		// vibekit.StartOpts.SecretStorage), so KAS never asks and MCP OAuth
-		// re-registers per spawn as it did before the capability, rather than
-		// the runtime refusing to construct over a credential cache.
+		// Best-effort: a store that cannot be opened leaves h.secrets nil,
+		// and bridges then do NOT declare `_meta.kiro.secretStorage`, so
+		// KAS never asks and MCP OAuth re-registers per spawn.
 		secrets, err := secretstore.New(lc.configDir)
 		if err != nil {
 			slog.Error("secretstore: open failed; MCP credentials will not persist", "error", err)
@@ -486,32 +431,25 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	return h
 }
 
-// UtilityPrompt delegates to the utility text-gen agent. The runtime is lazily
-// constructed on first call. effort is the per-task reasoning-effort level:
-// cheap tasks (summaries, error explanations) pass vibekit.EffortLow, tasks that
-// read a diff or merge code (commit messages, PR descriptions, conflict
-// resolution) pass vibekit.EffortMedium; "" keeps the session's current level.
+// UtilityPrompt delegates to the utility text-gen agent. The runtime is
+// lazily constructed on first call. effort is the per-task reasoning-effort
+// level: cheap tasks pass vibekit.EffortLow, tasks that read a diff or merge
+// code pass vibekit.EffortMedium; "" keeps the session's current level.
 // Best-effort — a model with no effort config ignores it.
-//
-// Its consumers declare the one-method contract themselves (internal/server and
-// internal/git); this is not used for chat titles, which come from KAS (see
-// translate/focus.go).
 func (rt *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
 	return rt.utility.get().textgen.UtilityPrompt(ctx, prompt, effort)
 }
 
-// MCPRegistry returns the in-memory registry of currently-connected MCP servers
-// as a RouteRegistrar — route mounting is the only surface the composition root
-// needs from it, and returning the concrete type would leak an unexported name
-// from an exported method.
+// MCPRegistry returns the in-memory registry of currently-connected MCP
+// servers as a RouteRegistrar, since route mounting is the only surface the
+// composition root needs.
 func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 
-// MCPSnapshot returns a stable-ordered snapshot of the runtime registry
-// so callers outside agent (e.g. the steering generator) can read it
-// without taking agent internals as a dependency. Only servers in the
-// connected state are included: the steering file presents the list as
-// "Connected integrations", and a failed or OAuth-pending server has no
-// live tools for the agent to call.
+// MCPSnapshot returns a stable-ordered snapshot of the runtime registry so
+// callers outside agent (e.g. the steering generator) can read it without
+// taking agent internals as a dependency. Only CONNECTED servers are
+// included: a failed or OAuth-pending server has no live tools for the
+// agent to call.
 func (rt *Runtime) MCPSnapshot() []vibekit.MCPSnapshotServer {
 	snap := rt.mcpRegistry.Snapshot()
 	out := make([]vibekit.MCPSnapshotServer, 0, len(snap))
@@ -530,21 +468,18 @@ func (rt *Runtime) MCPSnapshot() []vibekit.MCPSnapshotServer {
 // tracks the live integration set.
 func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.SetOnChange(fn) }
 
-// SetPreBridgeSpawn wires a callback fired right before any kiro-cli
-// bridge starts (both fresh `session/new` and `session/load` paths in
-// getOrCreateBridge). Used to refresh `environment.md` so the latest
-// per-repo steering inventory is on disk by the time kiro-cli reads
-// it during session creation.
+// SetPreBridgeSpawn wires a callback fired right before any kiro-cli bridge
+// starts. Used to refresh `environment.md` so the latest per-repo steering
+// inventory is on disk by the time kiro-cli reads it during session
+// creation.
 //
-// The callback receives the per-request context so it can short-circuit
-// on client disconnection. It runs synchronously on the spawn path, so
-// it must be fast (the existing steering.Generate is bounded by the
-// workspace walk + skip-if-unchanged write — typically a few ms).
+// The callback receives the per-request context so it can short-circuit on
+// client disconnection; it runs synchronously on the spawn path, so it must
+// be fast.
 //
-// The hook lives on the coordinator — its one reader — because a copy
-// held here would be captured by newBridgeCoordinator before the
-// composition root has called this, and a nil captured at construction
-// is permanent.
+// The hook lives on the coordinator — its one reader — because a copy held
+// here would be captured by newBridgeCoordinator before the composition
+// root has called this, and a nil captured at construction is permanent.
 func (rt *Runtime) SetPreBridgeSpawn(fn func(context.Context)) { rt.coord.preBridgeSpawn = fn }
 
 // RegisterRoutes wires /api/events (SSE), /api/command (POST), and
@@ -572,9 +507,9 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 // Bridges are Stopped BEFORE the inflight wait: a stuck prompt Call returns
 // only through its own bridge's teardown, so waiting first deadlocks.
 //
-// ctx is the only bound on those waits, and it must be: webhttp.Run's pre-drain
-// hook, where this runs, is synchronous, so an unbounded wait spends the grace
-// the HTTP drain needed. The error names the FIRST wait to exceed the budget.
+// ctx is the only bound on those waits: webhttp.Run's pre-drain hook, where
+// this runs, is synchronous, so an unbounded wait spends the grace the HTTP
+// drain needed. The error names the FIRST wait to exceed the budget.
 func (rt *Runtime) Shutdown(ctx context.Context) error {
 	slog.Info("agent runtime draining")
 	rt.lifecycle.draining.Store(true)
@@ -596,19 +531,12 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 		sb.bridge.Stop()
 	}
 
-	// 1b. There is no pending-write flush at shutdown any more. It existed because a
-	// staged write blocked an fs handler until a human answered, and a shutting-down
-	// server could never deliver that answer — so every such handler had to be
-	// unblocked with accepted=false. KAS holds the writes now, so no vibekit
-	// goroutine is parked waiting on a verdict and there is nothing to unblock.
+	// 1b. There is no pending-write flush at shutdown any more. KAS holds the
+	// writes now, so no vibekit goroutine is parked waiting on a verdict.
 
 	// 1c. Cancel the push service's request context so any pending
-	// browser-push HTTP round-trips unblock via context cancellation
-	// rather than draining their 10s client Timeout one-by-one. The
-	// fan-out sites (bridge_buffer, bridge_fs, translate_permission)
-	// launch Send goroutines under rt.lifecycle.inflight; without this step
-	// inflight.Wait below would serialise across their full timeout
-	// budget on a wedged vendor.
+	// browser-push HTTP round-trips unblock via context cancellation rather
+	// than draining their 10s client Timeout one-by-one.
 	if rt.push != nil {
 		rt.push.Close()
 	}
@@ -621,9 +549,7 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 
 	// 2b. Join the background loops. Step 0 signalled them; this is the wait
 	// that makes "the runtime has stopped" true of them. All THREE are in the
-	// group: the two New starts plus the MCP notifier, whose callback is the
-	// environment.md generator and so has real work to be caught in the middle
-	// of.
+	// group: the two New starts plus the MCP notifier.
 	if teardownErr == nil {
 		teardownErr = awaitBounded(ctx, "background loops", rt.lifecycle.loops.Wait)
 	}
@@ -638,9 +564,8 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 		teardownErr = awaitBounded(ctx, "agent terminals", rt.agentTerms.drainAll)
 	}
 
-	// 5. Tear down shell + SSE clients. These run whatever the budget did: the
-	// PTY child and the SSE clients must be told to go even when nothing is left
-	// to watch them leave with — kill signals first and only then waits on ctx.
+	// 5. Tear down shell + SSE clients. These run whatever the budget did:
+	// kill signals first and only then waits on ctx.
 	rt.shellMgr.kill(ctx)
 	rt.bus.fanout.Shutdown()
 	if teardownErr != nil {
@@ -679,9 +604,7 @@ const bridgeIdleTimeout = 30 * time.Minute
 // --- Broadcast ---
 
 // AuthTokenUnavailable reports the last SSO token failure, for the readiness
-// endpoint. An app-facing forward for the same reason Broadcast is one: the latch
-// belongs to the inbound ladder that writes it, and internal/composition should
-// not have to know that to ask a readiness question.
+// endpoint.
 func (rt *Runtime) AuthTokenUnavailable() bool {
 	if rt.inbound == nil {
 		return false
@@ -691,32 +614,26 @@ func (rt *Runtime) AuthTokenUnavailable() bool {
 
 // Broadcast sends a ServerEvent to every connected SSE client.
 //
-// The one forward to the bus that survives, and deliberately: it is the
-// APP-FACING door. internal/server wants RegisterRoutes, Broadcast and Shutdown
-// off one value, and internal/composition publishes prewarm and tool-job events;
-// making either hop through an accessor to reach a one-method contract would add
-// a call that carries no information. Every caller INSIDE this package uses
-// h.bus.Broadcast, because in here the bus is right there and routing through the
-// runtime is the topology this refactor removes. Used by the
-// chat store (chat_created / chat_updated / message_* etc.) and by the runtime
-// itself for turn_ended / permission_needed / error.
+// The one forward to the bus that survives: it is the APP-FACING door.
+// Every caller INSIDE this package uses h.bus.Broadcast directly. Used by
+// the chat store and by the runtime itself for turn_ended / permission_needed
+// / error.
 func (rt *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	rt.bus.emit(evt)
 }
 
-// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
-// routes that must stop accepting work before the HTTP drain begins: commands and
-// the event stream.
+// refuseWhenDraining answers 503 once Shutdown has flipped draining, for the
+// two routes that must stop accepting work before the HTTP drain begins:
+// commands and the event stream.
 //
-// It is a ROUTE wrapper, not a member of the global middleware chain, because the
-// chain covers /api/health, /api/version and the static assets too and none of
-// those should start failing while the process winds down — a health probe in
-// particular is what reports the wind-down.
+// It is a ROUTE wrapper, not a member of the global middleware chain,
+// because the chain covers /api/health, /api/version and static assets too,
+// and none of those should start failing while the process winds down.
 //
-// It is needed at all because webhttp's own drain gate flips LATER: draining goes
-// true at the start of agent.Shutdown, the library's gate when srv.Shutdown begins,
-// and the window between the two is the last-instant-reconnect race. The library
-// gate remains the backstop after this one.
+// It is needed at all because webhttp's own drain gate flips LATER: draining
+// goes true at the start of agent.Shutdown, the library's gate when
+// srv.Shutdown begins, and the window between the two is the
+// last-instant-reconnect race.
 func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rt.lifecycle.draining.Load() {
@@ -735,9 +652,7 @@ const sweepSessionsInterval = 1 * time.Hour
 // sweepSessionsLoop runs an initial orphan-session sweep at startup, then
 // repeats every sweepSessionsInterval until shutdown. It reaps on-disk KAS
 // session state left behind by archived-chat purges, crashes, or a pre-v3
-// install — the direct Reap on chat delete handles the common case. The
-// goroutine exits immediately when the reaper is unwired (e.g. tests), and
-// on h.lifecycle.done otherwise.
+// install.
 func (rt *Runtime) sweepSessionsLoop() {
 	if rt.sessionReaper == nil || rt.sessionRefs == nil {
 		return
@@ -755,23 +670,17 @@ func (rt *Runtime) sweepSessionsLoop() {
 	}
 }
 
-// sweepSessionsOnce runs one orphan-session sweep. The keep-list is
+// sweepSessionsOnce runs one orphan-session sweep. The keep-list is every
+// session in every chat's CHAIN union every LIVE session, and both halves
+// are needed: age is not evidence that a session is disposable.
 //
-//	every session in every active + archived chat's CHAIN  ∪  every LIVE session
+// The live half exempts any bridge holding a session no chat references —
+// without it the sweep deletes on-disk KAS state from under a live
+// subprocess once it ages past the 10-minute create-race guard.
 //
-// and both halves are needed for the same reason: age is not evidence that a
-// session is disposable.
-//
-// The live half used to be one ad-hoc exemption for the utility bridge, whose
-// own comment named the failure mode — without it the sweep deletes on-disk
-// KAS state from under a live subprocess once it ages past the 10-minute
-// guard, because that guard is a create-race cushion and not a liveness test.
-// Any bridge holding a session that no chat references hits the same bug, so
-// the exemption is now general rather than a special case beside a gap.
-//
-// A sweep is SKIPPED entirely when the keep-list is incomplete. Sweeping with
-// a partial list deletes the sessions of whatever chat could not be read; not
-// sweeping only postpones reclaiming disk until the next hour.
+// A sweep is SKIPPED entirely when the keep-list is incomplete: sweeping
+// with a partial list deletes the sessions of whatever chat could not be
+// read.
 func (rt *Runtime) sweepSessionsOnce() {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
@@ -790,8 +699,8 @@ func (rt *Runtime) sweepSessionsOnce() {
 }
 
 // liveSessionIDs returns the ACP session id of every bridge vibekit currently
-// holds: each chat bridge plus the utility session. These are exempt from the
-// sweep at any age — a live subprocess is using the directory.
+// holds: each chat bridge plus the utility session. These are exempt from
+// the sweep at any age.
 func (rt *Runtime) liveSessionIDs() []string {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
@@ -805,14 +714,11 @@ func (rt *Runtime) liveSessionIDs() []string {
 	return ids
 }
 
-// utilityLiveSessionID asks the utility session for its live ACP session id, or
-// "" when no runtime has been built or it is stopped.
+// utilityLiveSessionID asks the utility session for its live ACP session id,
+// or "" when no runtime has been built or it is stopped.
 //
-// peek, not get: this is the orphan-session sweep asking whether a utility
-// session's id must be spared, and building one to answer would create the
-// session it is inspecting. It was also the goroutine on the losing side of the
-// race — it read the field under the lifetime mutex while the builder wrote it
-// under a sync.Once, which orders nothing against a reader that never builds.
+// peek, not get: building one to answer would create the session it is
+// inspecting.
 func (rt *Runtime) utilityLiveSessionID() string {
 	u := rt.utility.peek()
 	if u == nil {
@@ -823,41 +729,29 @@ func (rt *Runtime) utilityLiveSessionID() string {
 
 // stopUtilityBridge stops the utility session if one was built.
 //
-// take, so the slot is cleared and stopped as one step and nothing else can be
-// holding the runtime by the time Stop is called. Only reached from Shutdown,
-// after the inflight wait, so an in-flight turn holds a lease on the session
-// being stopped only when that wait ran out of budget — the same degradation the
-// cull path takes, where a lease-held chunk channel just closes.
+// take, so the slot is cleared and stopped as one step and nothing else can
+// be holding the runtime by the time Stop is called.
 func (rt *Runtime) stopUtilityBridge() {
 	if u := rt.utility.take(); u != nil {
 		u.session.Stop()
 	}
 }
 
-// RestartUtilitySession drops the utility session so the next use rebuilds it.
+// RestartUtilitySession drops the utility session so the next use rebuilds
+// it.
 //
-// Its caller is a security-profile change: the presets ride the session door, so a
-// session already running still carries the previous profile and the policy view it
-// answers would keep describing it. Recycling is the only way to re-send them,
-// because KAS exposes no method to change a live session's policy.
-//
-// Safe as a user-triggered action for the same reason the idle cull is safe on a
-// 60-second timer: take() clears the slot before stopping, so nothing can be
-// holding the runtime by then, and an in-flight lease degrades exactly as it does
-// on the cull path — its chunk channel closes and its turn reports a failure the
-// caller already handles. A profile change is rarer than that timer by orders of
-// magnitude.
+// Its caller is a security-profile change: the presets ride the session
+// door, so a session already running still carries the previous profile.
+// Recycling is the only way to re-send them, since KAS exposes no method to
+// change a live session's policy.
 func (rt *Runtime) RestartUtilitySession() { rt.stopUtilityBridge() }
 
-// cullIdleUtilityBridge stops the utility session once it has been idle
-// for longer than bridgeIdleTimeout. Runs every 60 seconds. Exits on
-// Shutdown via h.lifecycle.done so a late tick can't race teardown.
+// cullIdleUtilityBridge stops the utility session once it has been idle for
+// longer than bridgeIdleTimeout. Runs every 60 seconds.
 //
-// CHAT bridges are deliberately NOT swept. A chat open in a tab owns its
-// process for as long as the tab is open: nothing auto-kills the process,
-// its turn, or its runs, and closing the tab kills all of it. The utility
-// session is the one bridge with no tab to own it — it is a pool of one-shot
-// text generators — so an idle timer is the right bound there and only there.
+// CHAT bridges are deliberately NOT swept: a chat open in a tab owns its
+// process for as long as the tab is open. The utility session is the one
+// bridge with no tab to own it.
 func (rt *Runtime) cullIdleUtilityBridge() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -871,13 +765,9 @@ func (rt *Runtime) cullIdleUtilityBridge() {
 	}
 }
 
-// cullIdleUtilityBridgeOnce runs one utility-session sweep. stopIfIdle owns the
-// victim-capture dance (the session mutex is short-held, so this never waits
-// behind an in-flight text turn; acquire bumps lastActiveAt at turn start, so a
-// live turn is trivially "recently active"). peek rather than get, because a
-// sweep that BUILT a utility bridge in order to check whether one was idle would
-// be creating work forever. Lowercase rather than inlined so the sweep is
-// testable without driving a real ticker.
+// cullIdleUtilityBridgeOnce runs one utility-session sweep. peek rather than
+// get, because a sweep that BUILT a utility bridge to check whether one was
+// idle would be creating work forever.
 func (rt *Runtime) cullIdleUtilityBridgeOnce() {
 	u := rt.utility.peek()
 	if u != nil && u.session.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {

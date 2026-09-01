@@ -1,11 +1,5 @@
-// Config-root resolution for the forge CLIs' own stores.
-//
-// vibekit never parses or writes another program's config file (the one
-// documented exception is glab's read-only discovery parser — see
-// glab_config.go). The paths below are used for exactly two things:
-// pointing the read-only glab parser at its file, and the stat-only
-// "a configuration exists but the CLI binary is missing" probe that
-// backs the cli_missing forge rows (see discover.go).
+// vibekit never parses or writes another program's config file; the one
+// exception is glab's read-only discovery parser (see glab_config.go).
 
 package forges
 
@@ -15,8 +9,7 @@ import (
 	"path/filepath"
 )
 
-// configHome returns the directory the CLIs read configs from.
-// Defaults to $XDG_CONFIG_HOME or $HOME/.config.
+// configHome returns $XDG_CONFIG_HOME or $HOME/.config.
 func configHome() (string, error) {
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return x, nil
@@ -29,8 +22,7 @@ func configHome() (string, error) {
 }
 
 // cliConfigPath returns the well-known config file path for a kind's
-// CLI, or "" for a kind with no probe-able file. Path knowledge only —
-// the file contents are never read here.
+// CLI, or "" for a kind with no probe-able file.
 func cliConfigPath(kind Kind) string {
 	root, err := configHome()
 	if err != nil {
@@ -49,8 +41,8 @@ func cliConfigPath(kind Kind) string {
 }
 
 // cliConfigExists reports whether the kind's CLI has a config file on
-// disk (stat only). Used to distinguish "nothing configured" from
-// "configured but the CLI binary is missing" when discovery cannot run.
+// disk. Used to distinguish "nothing configured" from "configured but
+// the CLI binary is missing" when discovery cannot run.
 func cliConfigExists(kind Kind) bool {
 	p := cliConfigPath(kind)
 	if p == "" {

@@ -29,25 +29,20 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	}
 	// Hook status suppression. On v3 (KAS) a pre-tool-use hook's
 	// ask-permission gate arrives as a kind:"other" tool call tagged
-	// _meta.kiro.hookAsk (there is no ToolKind "hook" in v3's zToolKind).
-	// When the kiro-cli hooks.showStatus setting is off, drop the hook-ask
-	// card. Suppressing the initial tool_call also drops its follow-up
-	// tool_call_update: HandleToolCallUpdate early-returns when the id was
-	// never buffered.
+	// _meta.kiro.hookAsk. When hooks.showStatus is off, drop the
+	// hook-ask card; its follow-up tool_call_update drops too, since
+	// HandleToolCallUpdate early-returns when the id was never buffered.
 	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
-	// Internal engine bookkeeping never reaches the transcript (user decision;
-	// KAS's own TUI hides it too). Beyond noise, the cloud-config fetch runs
-	// DURING session creation — before the prompt's turn opens — so its frame
-	// used to open a wire turn the prompt then displaced, persisting a fragment
-	// message that split the user's turn in two on every fresh session
-	// (the "Agent-initiated turn" phantom) with the tool stuck in_progress
-	// forever. Dropping the frame BEFORE ensureTurnStarted is what prevents
-	// that turn from ever opening. The update must be dropped too, and not
-	// only by the id-not-buffered fallback: TurnFoldTarget OPENS a wire turn
-	// for any frame it is asked about, so the completion arriving alone would
-	// re-create the fragment as an empty turn.
+	// Internal engine bookkeeping never reaches the transcript. The
+	// cloud-config fetch runs during session creation, before the
+	// prompt's turn opens, so its frame used to open a wire turn the
+	// prompt then displaced — a fragment message that split the user's
+	// turn in two on every fresh session. Dropping the frame before
+	// ensureTurnStarted prevents that turn from opening. The update must
+	// be dropped too and not only by the id-not-buffered fallback:
+	// TurnFoldTarget opens a wire turn for any frame it is asked about.
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
 		t.suppressed.add(tc.ToolCallID)
 		return
@@ -141,29 +136,25 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
 }
 
-// parseToolUpdateContent extracts the sanitized output delta, any file diffs,
-// and the terminal id from a tool_call_update's content blocks. Diff paths are
-// normalized to workspace-relative form.
+// parseToolUpdateContent extracts the sanitized output delta, any file
+// diffs, and the terminal id from a tool_call_update's content blocks.
+// Diff paths are normalized to workspace-relative form.
 //
-// A type:"terminal" block is ACP's statement that this tool call's output is a
-// terminal's stream. Its text is deliberately NOT folded into the output delta:
-// the bytes arrive on the terminal/* surface instead, and the id is what lets
-// the tool CARD subscribe to that stream and later persist it. Consuming both
-// would double-render.
+// A type:"terminal" block is ACP's statement that this tool call's output
+// is a terminal's stream. Its text is deliberately not folded into the
+// output delta: the bytes arrive on the terminal/* surface instead, and
+// the id is what lets the tool card subscribe to that stream and later
+// persist it.
 //
-// toolCallID is carried for the DIAGNOSTICS below and nothing else. The two Debug
-// lines exist because this switch is where a content block vibekit does not model
-// disappears: kiro-cli 2.19.2 added structuredContent to the result union, and a
-// structured-only result renders a claim-only card with an empty details region —
-// no error, no log line, no -32601, so the symptom is a card that looks like a
-// tool that produced nothing. Neither line changes behaviour; the point is that
-// the drop becomes findable in `docker logs vibekit` with debug on.
+// toolCallID is carried for diagnostics only. The two Debug lines exist
+// because this switch is where a content block vibekit does not model
+// disappears — kiro-cli 2.19.2 added structuredContent to the result
+// union, and a structured-only result renders a claim-only card with an
+// empty details region, with no error and no log line otherwise.
 //
-// Debug rather than Warn on both, matching unmarshal.go's fall-through and for
-// the same reason: an unmodelled content type is an UPSTREAM ADDITION on a wire
-// that gains members between releases, not a fault in this deployment. A Warn per
-// block would put a recurring line in the operator's log for something only a
-// vibekit release can act on.
+// Debug rather than Warn on both: an unmodelled content type is an
+// upstream addition on a wire that gains members between releases, not a
+// fault in this deployment.
 func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCallContentBlock) toolUpdateContent {
 	var out toolUpdateContent
 	var outputDelta strings.Builder
@@ -321,17 +312,15 @@ func (t *Translator) applyToolCallStatus(
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelThinking}))
 }
 
-// applyToolCallDiffs appends an update's diffs to the card and, once the tool has
-// SUCCEEDED, records the file changes they describe.
+// applyToolCallDiffs appends an update's diffs to the card and, once the
+// tool has succeeded, records the file changes they describe.
 //
-// The ledger — buf.ChangedFiles behind the turn footer's changed_files, and the
-// editor's line gutter — states what reached disk, so only a `completed` status
-// feeds it. KAS repeats a write's diff block on every streaming frame, on the
-// supervised approval frame, and from the write tool's own catch (buildDiffInput
-// with the text it meant to write), so tracking each arrival counted partial
-// streams and claimed a file changed when the write failed. The card keeps every
-// diff: a pending write's is what a reader approves, a failed one's is what it
-// tried to do.
+// Only a `completed` status feeds the ledger: KAS repeats a write's diff
+// block on every streaming frame, on the supervised approval frame, and
+// from the write tool's own catch, so tracking each arrival would count
+// partial streams and claim a file changed when the write failed. The
+// card keeps every diff regardless — a pending write's is what a reader
+// approves, a failed one's is what it tried to do.
 func (t *Translator) applyToolCallDiffs(
 	chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, diffs []vibekit.ToolDiff,
 ) {
@@ -346,40 +335,22 @@ func (t *Translator) applyToolCallDiffs(
 	t.lines.RecordFromDiffs(chatID, diffs, buf.ToolCallCount(), string(tc.Kind))
 }
 
-// adoptTerminalOutput copies a finished terminal's output onto its tool call, so
-// the command's output survives a page reload.
+// adoptTerminalOutput copies a finished terminal's output onto its tool
+// call, so the command's output survives a page reload.
 //
-// The terminal owns the output while it runs and the tool call owns it once the
-// command is done, which is why this is a copy at ONE moment rather than
-// incremental bookkeeping: a terminal's first output arrives before the update
-// that names it, so there is no earlier point where an append could be both
-// correct and complete. The runtime keeps a released terminal's bytes under the same
-// id for the rest of the turn, so this still works after KAS has released it —
-// which it always has by now.
+// A copy at one moment rather than incremental bookkeeping: a terminal's
+// first output arrives before the update that names it, so there is no
+// earlier point where an append could be both correct and complete.
 //
-// The terminal's output WINS over anything already on the tool call, and that is
-// deliberate. Two things can have put text there: an earlier ACP content block
-// (a progress line, a partial), or KAS's synthesized explanation for a command
-// that never spawned. The first is a fragment of what the terminal holds in
-// full, so preferring the tool call would persist the fragment. The second only
-// happens when there IS no terminal, so this never reaches it.
+// The terminal's output wins over anything already on the tool call: an
+// earlier ACP content block is a fragment of what the terminal holds in
+// full, and KAS's synthesized explanation only exists when there is no
+// terminal, so this never overwrites that case.
 //
-// A miss is LOGGED, because a silent one is the shape of every bug this function
-// exists to prevent: a card that renders empty looks exactly like a command that
-// printed nothing, which is how the output of an agent command was invisible for
-// the whole life of this feature with nothing saying so. The warning is worth
-// having only because the runtime distinguishes "no record" from "an empty record" —
-// a silent `mkdir -p` answers ok, so it does not file a false alarm here. What
-// remains is the real failure set: a record evicted before its turn ended, an id
-// KAS named and then reused, a completion arriving after the turn closed.
-//
-// The line carries what the tool call currently HAS rather than suppressing
-// itself when that is non-empty, because the two readings are different and only
-// the reader can tell which applies: `output_bytes=0` is a card that will render
-// empty, while a non-zero count is a fragment from an earlier content block. A
-// condition here would have hidden the first case behind the second, and the fold
-// order makes it unknowable anyway — a same-frame content block is applied after
-// this runs.
+// A miss is logged rather than swallowed, since a card that renders
+// empty looks exactly like a command that printed nothing — the runtime
+// distinguishes "no record" from "an empty record", so a silent
+// `mkdir -p` does not file a false alarm here.
 func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.ToolCall) {
 	if tc.TerminalID == "" {
 		return
@@ -473,22 +444,17 @@ func mergeCheckpoint(tc *vibekit.ToolCall, in *ACPCheckpointMeta) {
 	}
 }
 
-// localPath converts a wire path REFERENCE to a local filesystem path.
+// localPath converts a wire path reference to a local filesystem path.
 //
-// KAS sends some tool-call paths as file:// URIs rather than as paths —
-// measured, a shell-written file arrived as "file:///workspace/hello.sh" in a
-// diff content block. Every consumer downstream treats the value as a path, and
-// none of them survived a URI: filepath.Rel refuses it (Clean turns it into the
-// RELATIVE "file:/workspace/hello.sh", so Rel against an absolute root errors),
-// so it passed through relPath untouched into the turn footer's label and into
-// GET /api/file?path=…, which denied it as outside the granted roots. The
-// user-visible symptom was a changed-file row labelled with a URI whose diff
-// could never load.
+// KAS sends some tool-call paths as file:// URIs rather than plain paths.
+// Every consumer downstream treats the value as a path, and none survive
+// a URI (filepath.Rel refuses it), so the symptom was a changed-file row
+// labelled with a URI whose diff could never load.
 //
-// Anything that is not a local file:// URI is returned unchanged: a path is
-// already a path, and a remote authority ("file://host/share") names a file
-// this process cannot open, so leaving it alone lets the normal
-// outside-the-workspace handling reject it.
+// Anything that is not a local file:// URI is returned unchanged: a
+// remote authority ("file://host/share") names a file this process
+// cannot open, so leaving it alone lets the normal outside-the-workspace
+// handling reject it.
 func localPath(ref string) string {
 	// Cheap gate: a filesystem path has no scheme, and this runs on every
 	// location and diff of every tool call.
@@ -507,21 +473,19 @@ func localPath(ref string) string {
 	return u.Path
 }
 
-// relPath strips the workspace root prefix from an absolute path. A path that
-// is not under the workspace is returned unchanged.
+// relPath strips the workspace root prefix from an absolute path. A path
+// that is not under the workspace is returned unchanged.
 //
-// It is the funnel the ACP-supplied paths that reach the client cross —
-// tool-call diffs on both frames, a turn-approval file row, an init error — so
-// normalising the wire's URI spelling belongs here rather than at each call
-// site. Normalising FIRST also matters: the not-under-the-workspace branch
-// returns its input, and returning the raw URI there would leak the spelling
-// this function exists to remove.
+// The funnel every ACP-supplied path crosses on the way to the client, so
+// normalising the wire's URI spelling belongs here rather than at each
+// call site. Normalising first also matters: the not-under-the-workspace
+// branch returns its input, and returning the raw URI there would leak
+// the spelling this function exists to remove.
 //
-// The escape test is pathinside.RelEscapes on the rel this function already
-// computes for its result, not a leading-".." string prefix: the
-// separator-precise rule keeps a file under a workspace directory whose name
-// merely BEGINS with two dots ("..drafts/main.go") relative, where the string
-// test leaked the absolute path to the client.
+// The escape test is pathinside.RelEscapes on the computed rel, not a
+// leading-".." string prefix: the separator-precise rule keeps a file
+// under a workspace directory whose name merely begins with two dots
+// relative, where the string test would leak the absolute path.
 func (t *Translator) relPath(ref string) string {
 	abs := localPath(ref)
 	workDir := t.workDir
@@ -540,26 +504,18 @@ func (t *Translator) relPath(ref string) string {
 // ensureTurnStarted initializes the buffer for a new turn if not already
 // started: assigns the message id and broadcasts message_created.
 //
-// It owns no crash durability. It used to open the .partial sidecar lazily on
-// the first content chunk; that sidecar is deleted, and a turn interrupted
-// mid-flight is now rebuilt from KAS's own log by the session/load replay
-// projection — measured to hold each sub-message as it completes, so a
-// tool-first turn is covered from its first tool call rather than from its
-// first text.
+// It owns no crash durability: a turn interrupted mid-flight is rebuilt
+// from KAS's own log by the session/load replay projection, which holds
+// each sub-message as it completes.
 func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
 	if !buf.StartTurn(t.newMsgID()) {
 		return
 	}
-	// FALLBACK attribution only. A prompt latches the model at DISPATCH
-	// (CmdPrompt -> LatchTurnModel), which is what closes the window where a fast
-	// switch lands before the old model's first frame; SetModel is first-write-wins,
-	// so for a dispatched turn this read finds a value already there and changes
-	// nothing.
-	//
-	// It stays for the turns nobody dispatched — an agent-opened turn, a priming
-	// reply — where the chat record is the only evidence of what is answering and
-	// no switch can have raced a dispatch that never happened. Dropping it would
-	// leave those turns with no attribution at all.
+	// Fallback attribution only. A prompt latches the model at dispatch,
+	// which closes the window where a fast switch lands before the old
+	// model's first frame. This read stays for turns nobody dispatched —
+	// an agent-opened turn, a priming reply — where the chat record is
+	// the only evidence of what is answering.
 	if !buf.HasModel() {
 		if c, ok := t.chats.Get(ctx, chatID); ok {
 			buf.SetModel(c.Model)

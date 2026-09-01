@@ -47,12 +47,10 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 	var changed bool
 	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
-			// New chat whose first prompt hasn't been sent — the record
-			// exists only client-side. Auto-create it (mirroring
-			// cmdCreateChat's seeding) so the picked mode survives to
-			// session/new via StartOpts.Mode. Without this every mode
-			// pick on a fresh chat 404'd and the pill silently rolled
-			// back to Default. Tombstoned ids are refused by Mutate.
+			// New chat whose first prompt hasn't been sent — auto-create
+			// so the picked mode survives to session/new via
+			// StartOpts.Mode. Without this every pick on a fresh chat
+			// 404'd. Tombstoned ids are refused by Mutate.
 			c.Name = vibekit.DefaultChatName
 			c.CurrentModeID = p.ModeID
 			changed = true
@@ -65,10 +63,9 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 		changed = true
 		return true
 	}); err != nil {
-		// A tombstoned id names a chat deleted in the last ten minutes, which the
-		// store refuses to resurrect — so this is the whole 404 condition, and a
-		// no-op mutation is not part of it: a repeat pick of the mode already in
-		// force changes nothing and is a success.
+		// A tombstoned id names a chat deleted in the last ten minutes,
+		// which the store refuses to resurrect — the whole 404 condition.
+		// A no-op mutation (a repeat pick already in force) is a success.
 		if errors.Is(err, chat.ErrTombstoned) {
 			return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 		}

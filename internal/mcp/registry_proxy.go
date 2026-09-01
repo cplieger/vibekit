@@ -1,11 +1,10 @@
 // Official registry proxy.
 //
 // Queries registry.modelcontextprotocol.io on behalf of the browser,
-// normalising the response to a compact shape the UI can render without
-// knowing the full upstream schema. Primary reason for proxying (vs
-// direct fetch from the browser) is CORS, secondarily we cache results
-// briefly to shield the preview-stability registry from a burst of
-// identical queries when the user types.
+// normalising the response to a compact shape the UI can render. Primary
+// reason for proxying is CORS; secondarily results are cached briefly to
+// shield the registry from a burst of identical queries as the user
+// types.
 //
 // The upstream v0.1 API shape:
 //
@@ -39,8 +38,6 @@ import (
 	"github.com/cplieger/webhttp/v2"
 	"golang.org/x/sync/singleflight"
 )
-
-// Compile-time interface assertion.
 
 const (
 	registryBaseURL  = "https://registry.modelcontextprotocol.io/v0.1"
@@ -80,11 +77,11 @@ type registryCacheEntry struct {
 	body       []byte
 }
 
-// NewRegistryProxy returns a ready-to-use proxy with sensible timeouts
-// and a redirect allowlist. The default http.Client follows up to 10
-// redirects, which would let a compromised or moved upstream bounce
-// the proxy to 169.254.169.254, 127.0.0.1, or a LAN service. We
-// restrict redirects to the registry host itself and cap at 3 hops.
+// NewRegistryProxy returns a ready-to-use proxy with sensible timeouts and
+// a redirect allowlist. The default http.Client follows up to 10
+// redirects, which would let a compromised or moved upstream bounce the
+// proxy to a LAN or metadata service. Redirects are restricted to the
+// registry host itself and capped at 3 hops.
 func NewRegistryProxy() *RegistryProxy {
 	return &RegistryProxy{
 		client: &http.Client{
@@ -153,18 +150,10 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	body, cached, err := p.fetchSearch(r.Context(), q, limit)
 	if err != nil {
 		// Only the REQUEST's own context can report that the client walked
-		// away (tab close, navigation). There is nobody left to answer, so
-		// that path writes no response and logs a Debug breadcrumb.
-		//
-		// The returned ERROR cannot report it, and reading it as if it
-		// could is what shipped as "the registry search is broken": our
-		// own fetch deadline and http.Client.Timeout both satisfy
-		// errors.Is(err, context.DeadlineExceeded), so a slow upstream
-		// took the walked-away branch, returned a bare 200 with no body,
-		// and logged nothing above Debug. The browser decodes an empty 200
-		// as an absent result and prints "Registry unreachable" with no
-		// server-side trace to find. Measured once on the live instance:
-		// status=200 duration_ms=10002, exactly registryTimeout.
+		// away. The returned ERROR cannot: our own fetch deadline and
+		// http.Client.Timeout both satisfy errors.Is(err,
+		// context.DeadlineExceeded), so a slow upstream took the
+		// walked-away branch and returned a bare 200 with no body.
 		if r.Context().Err() != nil {
 			slog.Debug("mcp: registry search abandoned by client",
 				"q", logsafe.Field(q), "limit", limit, "error", err)
@@ -172,10 +161,9 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("mcp: registry search failed",
 			"q", logsafe.Field(q), "limit", limit, "error", err)
-		// Return a generic sentinel to the browser; full detail is in
-		// the slog.Warn above. The error text can leak upstream
-		// operational signals ("refusing redirect to non-registry host
-		// 169.254.169.254") that the browser has no need to see.
+		// Generic sentinel to the browser; full detail is in the Warn
+		// above, since the error text can leak upstream operational
+		// signals.
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
 			"error": "registry unavailable",
 		})
@@ -187,16 +175,13 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, map[string]any{"servers": normalised})
 }
 
-// fetchSearch returns raw upstream response bytes (from cache when
-// fresh). The second return value reports whether the result came from
-// the cache. Concurrent identical misses coalesce to a single upstream
-// request via singleflight, so N browser tabs typing the same query
-// no longer hold N outbound goroutines waiting on the same 10-second
-// HTTP call.
+// fetchSearch returns raw upstream response bytes (from cache when fresh).
+// The second return value reports whether the result came from the
+// cache. Concurrent identical misses coalesce to a single upstream
+// request via singleflight.
 //
 // The leader derives its timeout from the request-scoped context so
 // upstream fetches respect client disconnection and server shutdown.
-// Follower goroutines still respect their own context cancellation.
 func (p *RegistryProxy) fetchSearch(ctx context.Context, q string, limit int) (body []byte, cached bool, err error) {
 	key := searchCacheKey(q, limit)
 
@@ -210,27 +195,14 @@ func (p *RegistryProxy) fetchSearch(ctx context.Context, q string, limit int) (b
 // searchCacheKey composes the upstream-response cache key over the search
 // query and the clamped result limit.
 //
-// `q` is the ONLY field that can carry a separator: it is untrusted HTTP query
-// input, filtered for control characters and length (maxSearchQueryLen) but
-// not for ':' or '\'. `limit` is a clamped decimal in [1, maxSearchLimit] and
-// can never contain either. The pre-keyenc "%s|%d" form was in fact still
-// injective for exactly that reason — the one separator-bearing field sat
-// FIRST and the trailing field was a digit run, so the final '|' always marked
-// the boundary. That is an accident of field order, not a property of the key:
-// appending a third component, or moving `limit` ahead of `q`, would have made
-// two distinct searches share one cache entry, and neither edit looks like it
-// touches key encoding. keyenc.Join escapes each component, so the encoding
-// stays injective under any such edit.
+// `q` is the ONLY field that can carry a separator, filtered for control
+// characters and length but not for ':' or '\'; `limit` is a clamped
+// decimal and can never contain either. keyenc.Join escapes each
+// component, so the encoding stays injective regardless of field order.
 //
-// Consequence of a collision, concretely: one browser's search for a crafted
-// query would be served the cached upstream body of a DIFFERENT query for up
-// to registryCacheTTL, so the MCP add-server list offers servers that do not
-// match what the user typed — and, since the entry is shared, poisons that
-// result for every other client until it expires.
-//
-// The key's bytes changed (':' rather than '|', plus escaping when the query
-// contains ':' or '\'). Nothing persists it: registryCache is an in-memory map
-// with a 60s TTL, rebuilt from scratch on every process start.
+// A collision would serve one browser's search the cached upstream body
+// of a DIFFERENT query, poisoning that result for every client until it
+// expires.
 func searchCacheKey(q string, limit int) string {
 	return keyenc.Join(q, strconv.Itoa(limit))
 }
@@ -497,12 +469,9 @@ type registryWireResponse struct {
 // registryWireEntry is one row of the upstream list: the server document, plus
 // the `_meta` sibling that carries the registry's own bookkeeping.
 //
-// The lifecycle status lives in `_meta`, NOT on the server object — verified
-// against the live registry and its OpenAPI (RegistryExtensions: status is
-// required, enum active|deprecated|deleted, with an optional statusMessage
-// explaining a deprecation). A deprecated entry is still returned by search
-// (only `deleted` is filtered, behind include_deleted), which is exactly why it
-// looked live: vibekit dropped `_meta` entirely and had nothing to badge with.
+// The lifecycle status lives in `_meta`, NOT on the server object — a
+// deprecated entry is still returned by search (only `deleted` is
+// filtered), which is why vibekit needs `_meta` to badge it.
 type registryWireEntry struct {
 	Meta   registryWireMeta   `json:"_meta"`
 	Server registryWireServer `json:"server"`

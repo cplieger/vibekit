@@ -9,33 +9,20 @@ import (
 
 // Transcript search.
 //
-// SERVER-SIDE, because the client cannot honestly search the chat. Its store is
-// a paginated window, so a store-only search trades a DOM-shaped blind spot for
-// a pagination-shaped one while still presenting itself as searching the
-// conversation — and silently searching a window is the one unacceptable
-// outcome, since it looks identical to searching everything right up to the
-// moment it costs someone an answer.
+// SERVER-SIDE, because the client's store is a paginated window: a store-only
+// search would present itself as searching the whole conversation while
+// silently covering only the resident tail. It is also what makes progressive
+// collapse acceptable — a collapse that hides content from search is a
+// data-loss bug, and enumerating here removes every client-side blind spot at
+// once.
 //
-// It is also the counterweight that makes progressive collapse acceptable at
-// all: a collapse that hides content from search is a data-loss bug, not a
-// polish item. The client's DOM walker had three blind spots (non-resident
-// pages, resident rows whose `content-visibility: auto` reports invisible while
-// rendering is skipped, and hidden or collapsed subtrees) and folding would have
-// added a fourth. Enumerating here removes all four at once rather than patching
-// the walker per case.
-//
-// NO INDEX, deliberately. A persistent inverted index would be exactly the
-// second store this architecture exists to avoid, and it would need
-// invalidation on every append. A linear scan over one chat is fast enough at
-// this scale and is stateless, so there is nothing to keep in sync. Revisit only
-// on a profile, and even then the answer is caching the projection rather than
-// indexing it.
+// NO INDEX, deliberately. A persistent inverted index would be a second store
+// to keep in sync, and a linear scan over one chat is fast enough at this
+// scale.
 //
 // LEXICAL, not semantic — specifically not `_kiro/knowledge`, which is
-// workspace-global, indexes files on disk, and is granular at the document
-// level. Pointing it at chat JSON would index vibekit's own serialisation
-// format, pollute the user's code knowledge base with transcript noise, and
-// still not answer "which turn".
+// workspace-global and file-granular. Pointing it at chat JSON would index
+// vibekit's own serialisation format and still not answer "which turn".
 
 // searchExcerptRadius is how much context surrounds a hit in its excerpt.
 const searchExcerptRadius = 60
@@ -63,14 +50,14 @@ const (
 	SegmentMessage SegmentKind = "message"
 )
 
-// SearchHit locates one match. The client fetches only the turns it needs to
-// reveal and highlights locally, so this carries position rather than markup.
-// Position is segment-relative: Offset indexes runes inside the one segment
-// named by SegmentKind + BlockIndex, never a concatenation of the message.
+// SearchHit locates one match. The client fetches only the turns it needs
+// to reveal and highlights locally, so this carries position rather than
+// markup. Position is segment-relative: Offset indexes runes inside the
+// one segment named by SegmentKind + BlockIndex, never a concatenation of
+// the message.
 //
 // NOT wiregen-registered, deliberately: the TS mirror in chat-search.ts is
-// hand-maintained (the generated namespace's SearchHit name is taken by the
-// tools type), so field names here must match its spelling.
+// hand-maintained, so field names here must match its spelling.
 type SearchHit struct {
 	// BlockIndex is the matched segment's block position in the message's
 	// chronological Blocks array. Nil for messages persisted before blocks
@@ -81,12 +68,10 @@ type SearchHit struct {
 	MessageID string `json:"message_id"`
 	// TurnMessageID is the matched turn's OPENING message id.
 	//
-	// Carried alongside MessageID because the two answer different questions and
-	// the client needs both: a hit can land on an assistant message inside a
-	// turn, while the fold state keys on the turn's opener. The turn NUMBER
-	// cannot substitute — it is session-absolute here and window-relative in the
-	// client's projection, so the two agree only when the whole session happens
-	// to be resident.
+	// Carried alongside MessageID because a hit can land on an assistant
+	// message inside a turn while the fold state keys on the turn's opener.
+	// The turn NUMBER cannot substitute — it is session-absolute here and
+	// window-relative in the client's projection.
 	TurnMessageID string `json:"turn_message_id"`
 	Excerpt       string `json:"excerpt"`
 	// Role of the matched message, so a result list can say where a hit came
@@ -113,8 +98,8 @@ type SearchHit struct {
 
 // searchQuery is a parsed query: scoped filters plus the free text.
 //
-// Filters make "the turn where you edited the composer" expressible, which a
-// bare substring cannot do.
+// Filters make "the turn where you edited the composer" expressible, which
+// a bare substring cannot do.
 type searchQuery struct {
 	text string
 	file string
@@ -122,15 +107,13 @@ type searchQuery struct {
 	role string
 	turn int
 	// caseSensitive applies to the FREE TEXT only. The scoped filters stay
-	// case-insensitive whatever the reader asked for: `role:` is an enum, and a
-	// path filter that suddenly cared about case would be a behaviour change
-	// nobody requested by ticking a box labelled "match case".
+	// case-insensitive whatever the reader asked for: `role:` is an enum.
 	caseSensitive bool
 }
 
-// parseSearchQuery splits `file:` / `tool:` / `role:` / `turn:` prefixes out of
-// the raw query. Unknown prefixes stay in the free text rather than being
-// dropped: a reader typing `http://` means it literally.
+// parseSearchQuery splits `file:` / `tool:` / `role:` / `turn:` prefixes out
+// of the raw query. Unknown prefixes stay in the free text rather than
+// being dropped: a reader typing `http://` means it literally.
 func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 	q := searchQuery{turn: -1, caseSensitive: caseSensitive}
 	var text []string
@@ -164,16 +147,12 @@ func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 	return q
 }
 
-// Search scans a chat's messages for a query.
+// Search scans a chat's messages for a query. Turn numbers come from the
+// same projection the timeline rail draws.
 //
-// Turn numbers come from the same projection the timeline rail draws, so a hit's
-// turn number and a rail marker's number are the same thing by construction
-// rather than by two implementations agreeing.
-//
-// caseSensitive governs the FREE TEXT only (see searchQuery). Both halves of the
-// in-chat search have to agree on it — the client highlights and counts in the
-// DOM while this enumerates session-wide — so the flag travels on the request
-// rather than being a server default either side could get wrong.
+// caseSensitive governs the FREE TEXT only. Both halves of the in-chat
+// search have to agree on it, so the flag travels on the request rather
+// than being a server default either side could get wrong.
 func Search(msgs []vibekit.Message, raw string, caseSensitive bool) []SearchHit {
 	q := parseSearchQuery(raw, caseSensitive)
 	if q.text == "" && q.file == "" && q.tool == "" && q.role == "" && q.turn < 0 {
@@ -235,9 +214,9 @@ func messageMatchesFilters(m *vibekit.Message, q *searchQuery, turn int) bool {
 	return true
 }
 
-// messageTouchesFile matches a substring against changed-file paths AND tool
-// locations. Both, because a turn that only READ a file never appears in
-// changed_files, and "the turn where you looked at auth.go" is a real question.
+// messageTouchesFile matches a substring against changed-file paths AND
+// tool locations — a turn that only READ a file never appears in
+// changed_files.
 func messageTouchesFile(m *vibekit.Message, want string) bool {
 	for path := range m.ChangedFiles {
 		if strings.Contains(strings.ToLower(path), want) {
@@ -265,14 +244,12 @@ func messageUsesTool(m *vibekit.Message, want string) bool {
 	return false
 }
 
-// appendMessageHits adds every match within one message, matching each of the
-// message's segments independently — a hit's Offset and SegmentLen are the
-// segment's, so a match can never span two segments.
+// appendMessageHits adds every match within one message, matching each
+// segment independently — a hit's Offset and SegmentLen are the segment's,
+// so a match can never span two segments.
 //
-// A filter-only query (`file:auth.go` with no text) still yields one hit per
-// matching message, so a scoped search without free text is a way to LIST turns
-// rather than a query that finds nothing. That hit locates the MESSAGE
-// (SegmentMessage, offset 0, zero length, no block index), not a span in it.
+// A filter-only query still yields one hit per matching message, so a
+// scoped search without free text lists turns rather than finding nothing.
 func appendMessageHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, turn int, opener string) []SearchHit {
 	if q.text == "" {
 		return append(hits, SearchHit{
@@ -296,9 +273,9 @@ func appendMessageHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, tur
 // appendSegmentHits adds every occurrence of the query text inside one segment.
 func appendSegmentHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, turn int, opener string, seg *segment) []SearchHit {
 	runes := []rune(seg.text)
-	// The haystack is folded only when the query was folded, so the two always
-	// agree; parseSearchQuery owns the needle's side of that. Folding maps rune
-	// to rune, so an index into the folded string is an index into the original.
+	// The haystack is folded only when the query was folded, so the two
+	// always agree. Folding maps rune to rune, so an index into the folded
+	// string is an index into the original.
 	hay := seg.text
 	if !q.caseSensitive {
 		hay = strings.ToLower(seg.text)
@@ -371,10 +348,9 @@ func messageSegments(m *vibekit.Message) []segment {
 	return segs
 }
 
-// legacySegments is the fallback for messages with no block array: the prose
-// and thinking trace as ONE content segment over their concatenation — the
-// shape searchableText always exposed, kept so legacy offsets stay stable —
-// and each tool call's title/output pair, none of it block-addressed.
+// legacySegments is the fallback for messages with no block array: the
+// prose and thinking trace as ONE content segment over their concatenation,
+// plus each tool call's title/output pair, none of it block-addressed.
 func legacySegments(m *vibekit.Message) []segment {
 	text := m.Content
 	if m.Reasoning != "" {
@@ -410,11 +386,9 @@ func toolCallByID(m *vibekit.Message, id string) *vibekit.ToolCall {
 	return nil
 }
 
-// searchableText is everything in a message a reader could plausibly search,
-// concatenated: the prose, the thinking trace, and each tool call's title and
-// output. Matching runs per segment via messageSegments; this concatenation
-// survives only as the excerpt source for filter-only hits, which locate the
-// whole message and so preview its start whatever shape it is stored in.
+// searchableText is everything in a message a reader could plausibly
+// search, concatenated. Matching runs per segment via messageSegments; this
+// survives only as the excerpt source for filter-only hits.
 func searchableText(m *vibekit.Message) string {
 	var b strings.Builder
 	b.Grow(len(m.Content) + len(m.Reasoning) + 64)

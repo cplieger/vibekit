@@ -1,25 +1,20 @@
 // Service-worker push messages.
 //
-// The worker posts to the page in two situations, and they want opposite
-// treatment:
+// The worker posts to the page in two situations wanting opposite treatment:
 //
-//   reason "arrived"  a push landed while this page was FOCUSED, so the worker
-//                     showed no OS notification. That is the one sanctioned
-//                     exception to "every push must show a notification"
-//                     (Chrome enforces userVisibleOnly and would otherwise
-//                     substitute its own generic background notice), and the
-//                     right surface when the user is already looking is an
-//                     ephemeral toast, not a tray banner.
+//   "arrived"  a push landed while this page was focused, so the worker
+//              showed no OS notification (the sanctioned exception to
+//              "every push must show a notification" — Chrome's
+//              userVisibleOnly would otherwise substitute a generic
+//              background notice). Right surface: an ephemeral toast.
 //
-//   reason "clicked"  the user tapped a notification, so they asked to be taken
-//                     somewhere. The worker focuses this page and hands over the
-//                     chat id; the ROUTE is built here because router.ts is the
-//                     single source of truth for routes and the worker compiles
-//                     standalone with no imports.
+//   "clicked"  the user tapped a notification. The worker focuses this page
+//              and hands over the chat id; the route is built here because
+//              router.ts is the single source of truth and the worker
+//              compiles standalone with no imports.
 //
-// Sending the id rather than a URL is also why an existing tab changes route
-// instead of reloading, and why a second window is never opened for a page that
-// is already up.
+// Sending the id rather than a URL is also why an existing tab changes
+// route instead of reloading.
 // ---------------------------------------------------------------------------
 
 import { openChatTab } from "../chat.js";
@@ -55,28 +50,19 @@ function isPushMessage(d: unknown): d is PushPageMessage {
   );
 }
 
-/** Where a clicked notification goes.
- *
- *  A PR subject opens the git view, which is where its pull requests are; the
- *  route is built here rather than in the worker because router.ts is the single
- *  source of truth for routes and the worker compiles standalone with no imports.
- *  Exported for its test: this is the whole of D83's reuse for the new kind. */
+/** Where a clicked notification goes. A PR subject opens the git view;
+ *  the route is built here because router.ts is the single source of
+ *  truth and the worker compiles standalone with no imports. */
 export function routePushMessage(msg: PushPageMessage): void {
   if ((msg.subject ?? "").startsWith(PR_SUBJECT_PREFIX)) {
-    // The git view is where pull requests live, and openChangeSet is the router's
-    // own door to it — so the notification lands on the same surface a transcript
-    // click would, rather than on a second one built for this.
     openChangeSet();
     return;
   }
   if (msg.chatId === "") {
     return;
   }
-  // Reuse the tab if the chat is already open; openChatTab is idempotent
-  // by id and activating it routes the URL through the tab store's own
-  // subscriber, so no manual pushRoute is needed here.
-  // DETACHED: a notification click has nothing after it, and the open activates
-  // the tab itself, which routes the URL through the projection's own subscriber.
+  // openChatTab is idempotent by id; activating routes the URL through
+  // the tab store's own subscriber, so no manual pushRoute is needed.
   void openChatTab(msg.chatId, get(msg.chatId)?.name ?? msg.title);
 }
 

@@ -13,21 +13,13 @@ import (
 )
 
 // emit is the single path for broadcasting an event to SSE clients. It
-// records a chat_status before publishing (apply-before-publish is what keeps a
+// records a chat_status before publishing (apply-before-publish keeps a
 // connect snapshot >= the ring content a new client just replayed), then
-// marshals once and hands it to the shared sse hub, which assigns the monotonic
-// ID, appends to the replay ring, and fans out to subscribed clients
-// (topic = chat ID; events with an empty ChatID are global).
-//
-// It used to fold EVERY event into a turn mirror that rebuilt the in-flight
-// assistant message in parallel with buffer.Buffer. That replica is gone: the
-// buffer already holds the turn and now snapshots it (buffer.Buffer.Snapshot),
-// so the only thing left to record here is the status, which lives on no
-// message and in no replay.
-// Broadcast publishes evt to every connected client. This is the whole event
-// bus contract, and it is named Broadcast rather than emit because four consumer
-// interfaces spell it that way; it used to be a 3-line Runtime forward to emit,
-// which put the runtime in the path of every event in the app.
+// marshals once and hands it to the shared sse hub, which assigns the
+// monotonic ID, appends to the replay ring, and fans out to subscribed
+// clients (topic = chat ID; events with an empty ChatID are global).
+
+// Broadcast publishes evt to every connected client.
 func (b *bus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	b.emit(evt)
 }
@@ -83,19 +75,12 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamInitialState writes the connected handshake and then replays the
-// client's outstanding state — the unanswered permission requests and the
+// client's outstanding state — unanswered permission requests and the
 // in-flight turn — so a reconnecting browser rebuilds its UI exactly as it
-// was. A turn approval rides the permission channel, so it replays with the
-// rest and needs nothing of its own.
-//
-// The handshake's ConnectedPayload carries the ring-buffer floor (oldest
-// replayable event ID) and head (newest) so the client can detect a replay
-// gap: a last-seen ID below the floor means events were lost and it must
-// refetch authoritative state. It also carries the workspace root, the one
-// server fact the client cannot derive and needs before it can open a file
-// named by a relative path. The hook runs after the library's
-// Last-Event-ID replay, so the bounds are consistent with what the client
-// has already received.
+// was. A turn approval rides the permission channel and needs nothing of
+// its own. ConnectedPayload carries the ring-buffer floor/head so the client
+// can detect a replay gap, and the workspace root, the one server fact the
+// client cannot derive and needs before opening a file by relative path.
 func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter vibekit.ChatID) error {
 	connectedEvt := vibekit.NewEvent(vibekit.EventConnected, "", vibekit.ConnectedPayload{
 		Workspace: rt.lifecycle.workDir,
@@ -127,11 +112,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 		return err
 	}
 
-	// There is no staged-op or per-turn-trust replay. Both belonged to vibekit's
-	// own staging queue. A turn approval IS a permission request, so the replay
-	// above already covers it — which is the same reason it needed no new event.
-
-	// Synthesize turn_state for every chat with an OPEN TURN (P8): the in-flight
+	// Synthesize turn_state for every chat with an OPEN TURN: the in-flight
 	// assistant message accumulated so far plus the authoritative busy signal, so
 	// a client connecting mid-turn renders the streaming transcript immediately
 	// and never has to guess at thinking state.
@@ -149,17 +130,13 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 }
 
 // replayWaitingStatus emits a chat_status event for every chat the agent left
-// waiting on a person, skipping the ones with a turn open that replayTurnState
-// already covered.
+// waiting on a person, skipping chats replayTurnState already covered.
 //
-// This is the other half of "the amber dot survives turn end". The client renders
-// waiting_on_user as a dot that outlives the turn, but until this existed the
-// only carrier was the LIVE event: a reader who refreshed, or a second device
-// joining later, saw a blank dot on the one chat that actually wanted them. That
-// is the state a person picking work up on another screen most needs to see.
-//
-// It replays a real chat_status rather than stretching turn_state, because the two
-// mean different things: turn_state asserts a turn is RUNNING.
+// The client renders waiting_on_user as a dot that outlives the turn; without
+// this a reader who refreshed, or a second device joining later, saw a blank
+// dot on the one chat that actually wanted them. Replays a real chat_status
+// rather than stretching turn_state, since turn_state asserts a turn is
+// RUNNING — a different claim.
 func (rt *Runtime) replayWaitingStatus(
 	writeFn func(vibekit.ServerEvent) error,
 	chatFilter vibekit.ChatID,
@@ -189,12 +166,9 @@ func (rt *Runtime) replayWaitingStatus(
 // turn. An absent snapshot still goes out as a bare busy signal.
 //
 // Reading the TURN rather than the prompt slot is what makes an agent-initiated
-// turn visible at all: that turn holds no slot, so a client reconnecting during
-// one was told nothing and rendered idle over a live transcript.
-//
-// A PRIME turn is never served: its frames are a transcript replay vibekit sent
-// itself, so serving them would render the preamble as conversation and then lose
-// it on the next reload.
+// turn visible at all — that turn holds no slot. A PRIME turn is never served:
+// its frames are a transcript replay vibekit sent itself, so serving them
+// would render the preamble as conversation and then lose it on reload.
 func (rt *Runtime) replayTurnState(
 	writeFn func(vibekit.ServerEvent) error,
 	chatFilter vibekit.ChatID,
@@ -227,19 +201,11 @@ func (rt *Runtime) replayTurnState(
 
 // replayPendingPermissions sends the unresolved permission_needed events to
 // a newly connected SSE client, so permission dialogs survive reconnects
-// even when the ring buffer has wrapped.
-//
-// EVERY unresolved request is replayed, however old. A reconnect can happen long
-// after the request was raised, and on vibekit's stdio transport the agent server
-// holds a session/request_permission open until it is answered or the turn is
-// cancelled — it applies no deadline of its own (measured on 2.18.0; see
-// pendingPermsTracker for the two read sites and why they are not a wall clock).
-// So an old card is still a live question, and skipping it would strand the turn
-// waiting for an answer no surface is offering any more. List returns exactly the
-// set TakeIfPresent will still accept an answer for, so the card a client is
-// shown and the answer the server will take cannot disagree. The ORDER is List's
-// too — ascending request id, i.e. the order the agent asked — so this loop
-// writes the queue rather than a set.
+// even when the ring buffer has wrapped. EVERY unresolved request is
+// replayed, however old: the agent server holds a session/request_permission
+// open until answered or cancelled with no deadline of its own, so an old
+// card is still a live question. List returns exactly the set
+// TakeIfPresent will still accept, in the order the agent asked.
 func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
 	for _, evt := range rt.bus.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {

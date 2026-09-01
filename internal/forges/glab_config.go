@@ -41,7 +41,6 @@ func (p *glabParser) parseLine(line string) {
 	if strings.TrimRight(line, " \t") == "" {
 		return
 	}
-	// Top-level key.
 	if !strings.HasPrefix(line, " ") {
 		key := strings.TrimSuffix(strings.TrimSpace(line), ":")
 		if key == "hosts" {
@@ -55,7 +54,6 @@ func (p *glabParser) parseLine(line string) {
 	if !p.inHosts {
 		return
 	}
-	// 4-space indent → host name; 8-space indent → host fields.
 	switch {
 	case strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "        "):
 		p.beginHost(line)

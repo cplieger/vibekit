@@ -75,14 +75,12 @@ export const createFolder = apiAction<CreateArgs>({
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
-  // The one key in this file that was reachably BROKEN. The old form was
-  // `files.rename:${dir}/${original}->${newName}`, and "->" is a legal
-  // filename sequence: renaming "a" to "b->c" and renaming "a->b" to "c" in
-  // the same directory both produced `files.rename:<dir>/a->b->c`. The Go
-  // idempotency middleware then replayed the first cached 200 for the second
-  // rename, so the second rename SILENTLY NEVER HAPPENED for the 5-minute
-  // cache TTL — the UI showed success and the file was untouched. Joining the
-  // three fields as components removes the ambiguity entirely.
+// The one key in this file that was reachably BROKEN: the old form was
+// `files.rename:${dir}/${original}->${newName}`, and "->" is a legal
+// filename sequence — renaming "a" to "b->c" and "a->b" to "c" in the same
+// directory both produced the same key, so the second rename silently
+// replayed the first's cached 200 for the idempotency TTL. Joining the
+// three fields as components removes the ambiguity.
   idempotencyKey: (args) => joinKey("files.rename", args.dir, args.original, args.newName),
   request: ({ dir, original, newName }) => ({
     method: "POST",
@@ -106,24 +104,13 @@ interface DeleteArgs {
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
   scope: (args) => "dir:" + args.dir,
-  // Nested join, per keyenc's composition rule: the sorted filename LIST gets
-  // its own `joinKey`, and that single result becomes ONE component of the
-  // outer key. A "," -joined list could not distinguish the batch ["a,b"] from
-  // the batch ["a","b"], so two different delete requests collapsed into one
-  // dedupe key and the second dispatch was folded into the first's in-flight
-  // promise. Sorting still runs first, so key equality stays order-insensitive.
+  // Nested join: the sorted filename LIST gets its own `joinKey`, becoming
+  // one component of the outer key — a comma-joined list could not
+  // distinguish ["a,b"] from ["a","b"].
   dedupe: (args) => joinKey("files.delete", joinKey(...args.names.slice().sort())),
   // Batch delete must NOT retry: a timeout/network error may mean some
-  // items were already deleted server-side. Retrying would re-attempt
-  // those deletions, causing 404s or deleting newly-created files with
-  // the same name. Caller handles partial failure via loadDir() refresh.
-  //
-  // NOTE: `listEl` (HTMLElement) in args is non-serializable, which would
-  // break structuredClone if retry were enabled. This is safe because:
-  //   1. Delete is intentionally not retryable (see above).
-  //   2. `dedupe` uses a key function that only reads `names`, not `listEl`.
-  //   3. The DOM ref is only consumed by optimistic/rollback which run
-  //      synchronously on the main thread before/after run().
+  // items were already deleted server-side. `listEl` (non-serializable) is
+  // safe here since retry is off and dedupe reads only `names`.
   run: async (args, signal) => {
     const timedSignal = withTimeout(signal, API_TIMEOUT_MS);
     const results = await Promise.all(

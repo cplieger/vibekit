@@ -73,20 +73,14 @@ func testGetMissingReturnsFalse(t *testing.T, s ChatStoreContract) {
 	}
 }
 
-// testGetReturnsIndependentCopy pins the property that makes "Mutate is the only
-// write path" true: a caller holding a chat Get handed it cannot reach the stored
-// one through it.
+// testGetReturnsIndependentCopy pins the property that makes "Mutate is the
+// only write path" true: a caller holding a Get result cannot reach the stored
+// chat through it.
 //
-// The real store gets this for free — Get decodes the file, so the value is new
-// bytes — and the two fakes did NOT, because `clone := *c` copies a struct and
-// shares every slice inside it. Chat has seven slice fields and Message has more,
-// so a caller could edit a stored message's Content, or its Blocks, with no
-// Mutate anywhere. Nothing here asserted it, so both fakes were more permissive
-// than the thing they stand in for, which is the direction that makes a test pass
-// while production breaks.
-//
-// Three depths, because they fail independently: the slice header, an element,
-// and an element's own slice.
+// The real store gets this for free (Get decodes the file into new bytes); both
+// fakes did NOT, because `clone := *c` shares every slice inside the struct.
+// Checked at three depths because they fail independently: the slice header,
+// an element, and an element's own slice.
 func testGetReturnsIndependentCopy(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	const tampered = "tampered"

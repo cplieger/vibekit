@@ -1,12 +1,11 @@
 // Legacy ~/.git-credentials scrubbing.
 //
 // The pre-CLI-native tea integration wrote the forge token in cleartext
-// into ~/.git-credentials (git's "store" helper format) and never
-// removed it on disconnect. Under the CLI-native model tea itself is
-// the credential helper, so those lines are not just leaked material —
-// git consults the global store helper FIRST, so a stale line would
-// shadow tea's live answer. Login and logout for a tea host both scrub
-// the host's lines.
+// into ~/.git-credentials and never removed it on disconnect. Under the
+// CLI-native model tea itself is the credential helper, but git
+// consults the global store helper FIRST, so a stale line would shadow
+// tea's live answer. Login and logout for a tea host both scrub the
+// host's lines.
 
 package forges
 
@@ -24,12 +23,6 @@ import (
 // scrubGitCredentials removes every ~/.git-credentials line that
 // carries a credential for host. Removing the file's last line removes
 // the file. A missing file is a no-op.
-//
-// ctx bounds the rewrite. It used to be context.Background(), which meant a
-// login or logout cancelled mid-flight still wrote the file, and the write is
-// the one step here that touches the disk — both callers already hold a ctx
-// with the CLI command's own timeout on it, so the substitution was discarding
-// a signal that was in scope at every call site.
 func scrubGitCredentials(ctx context.Context, host string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {

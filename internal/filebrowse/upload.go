@@ -28,10 +28,8 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// gosec:G120 is a false positive: r.Body is capped by MaxBytesReader
 	// above, so ParseMultipartForm can't cause memory exhaustion here.
 	if err := r.ParseMultipartForm(multipartMaxMemory); err != nil { //nolint:gosec // G120: size bounded by nginx proxy
-		// Split the error classes so clients can distinguish
-		// "too big, retry smaller" (413) from "invalid multipart"
-		// (400). Client disconnects during upload are dropped at
-		// Debug — there's nothing to respond to.
+		// Split the error classes so clients can distinguish "too big,
+		// retry smaller" (413) from "invalid multipart" (400).
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: upload too large",
 				"limit", maxUploadSize, "error", err)
@@ -50,13 +48,10 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Upload-target-directory gate. The package-doc "Defense layers"
-	// section commits to running isProtectedDir on directory targets;
-	// without this check an agent-triggered upload with dir=/config
-	// would silently land files (including overwrites of push-subs.json
-	// / vapid-keys.json) inside the sensitive container. IsSensitive on
-	// the final per-file path (in writeUploads below) is the second
-	// layer; this gate is the first.
+	// Upload-target-directory gate: without this, an agent-triggered
+	// upload with dir=/config would silently land files inside the
+	// sensitive container. IsSensitive on the final per-file path (in
+	// writeUploads) is the second layer.
 	if isProtectedDir(dirLoc.abs) {
 		slog.Warn("filebrowse: upload blocked on protected dir", "dir", dirLoc.abs)
 		httpreply.Forbidden(w, "upload target is protected")
@@ -85,24 +80,15 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 // respondUploadError maps a writeUploads failure to its HTTP response: an
 // invalid filename is the client's fault (400); a single file crossing the
-// per-file cap is rejected loudly with a 413 (matching the whole-body
-// MaxBytesReader split in handleUpload), never silently truncated; anything
-// else is a 500.
+// per-file cap is rejected loudly with a 413, never silently truncated;
+// anything else is a 500.
 //
-// Every one of those bodies carries the names that DID land, because a
-// partially-failed batch is not rolled back and must not be reported as
-// though nothing happened. Per-file atomicity is the guarantee (each file is
-// whole or absent); the batch is not atomic, and true batch rollback is not
-// available to want — an upload may OVERWRITE, so undoing one needs a backup
-// of every destination, and the rollback can itself fail halfway. So the
-// response tells the truth instead: these landed, then this failed. The
-// client attaches the ones that landed and names the first that did not.
-//
-// The 400 branch goes through WriteJSONStatus rather than httpreply.BadRequest
-// because that helper writes {"error": msg} and cannot carry a second key.
-// It keeps err.Error() (an invalid filename is client-caused and safe to
-// echo); 413 and 500 keep their generic sentinels so no raw filesystem error
-// reaches the wire.
+// Every body carries the names that DID land, because a partially-failed
+// batch is not rolled back: each file is whole or absent, but the batch is
+// not atomic (an upload may overwrite, so undoing one needs a backup of
+// every destination, and the rollback can itself fail halfway). The 400
+// branch goes through WriteJSONStatus rather than httpreply.BadRequest
+// because that helper cannot carry the uploaded-files key.
 func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, err error) {
 	if errors.Is(err, errInvalidFilename) {
 		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
@@ -138,13 +124,11 @@ func uploadErrorJSON(msg string, uploaded []string) map[string]any {
 var errInvalidFilename = errors.New("invalid filename")
 
 // writeUploads copies each multipart file into the target directory
-// atomically via write-temp-then-rename, returning the list of
-// filenames written plus total bytes for observability. On error, the
-// partial temp file is removed; files written earlier in the batch
-// remain on disk, and the names of those files ride the error response
-// (see respondUploadError) so the client can report and use them. The
-// context lets a client disconnect abort the remaining files in a
-// batch upload.
+// atomically via write-temp-then-rename, returning the list of filenames
+// written plus total bytes. On error, the partial temp file is removed;
+// files written earlier in the batch remain on disk, and their names ride
+// the error response. The context lets a client disconnect abort the
+// remaining files in a batch upload.
 func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader) (uploaded []string, total int64, err error) {
 	uploaded = make([]string, 0, len(files))
 	for _, fh := range files {
@@ -158,12 +142,10 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 			return uploaded, total, fmt.Errorf("%w: %q", errInvalidFilename, fh.Filename)
 		}
 		dest := filepath.Join(dirLoc.abs, name)
-		// Per-file sensitive-path gate. isProtectedDir on the target
-		// directory (in handleUpload) catches container-level drops;
-		// this check blocks file-level overwrites of sensitive exact-
-		// match entries like /config/push-subs.json when the target
-		// is a non-sensitive parent that enclosures the sensitive
-		// file. Mirrors the rename-destination check in actionRename.
+		// Per-file sensitive-path gate: isProtectedDir on the target
+		// directory catches container-level drops, this blocks file-level
+		// overwrites of sensitive exact-match entries when the target
+		// directory itself is not sensitive.
 		if IsSensitive(dest) {
 			slog.Warn("filebrowse: upload rejected: sensitive dest",
 				"raw_name", logsafe.Field(fh.Filename), "dest", logsafe.Field(dest))
@@ -180,12 +162,10 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 }
 
 // writeOneUpload streams fh into a temp file inside the handler's *os.Root,
-// fsyncs it, then renames it over dest — kernel-confined to the root like every
-// other write in this handler. On any error the temp is removed so a partial
-// write never surfaces under the user's expected filename. Returns the number
-// of bytes written. ctx lets a client disconnect abort the copy mid-stream
-// (the same guarantee actionCopy provides). countingReader tallies bytes read
-// so the uploaded size is reported even though atomicfile performs the copy.
+// fsyncs it, then renames it over dest — kernel-confined to the root. On any
+// error the temp is removed so a partial write never surfaces under the
+// user's expected filename. ctx lets a client disconnect abort the copy
+// mid-stream.
 type countingReader struct {
 	r io.Reader
 	n int64
@@ -204,18 +184,14 @@ func writeOneUpload(ctx context.Context, dest loc, fh *multipart.FileHeader) (n 
 	}
 	defer func() { _ = src.Close() }()
 
-	// Abort at the next chunk boundary on context cancel. The per-file size
-	// cap is enforced by WithMaxBytes below, which REJECTS an over-cap file
-	// (atomicfile.ErrFileTooLarge, mapped to a 413 in handleUpload) — the
-	// old io.LimitReader here silently truncated it instead.
+	// Abort at the next chunk boundary on context cancel. The per-file cap
+	// is enforced by WithMaxBytes below, which REJECTS an over-cap file
+	// rather than silently truncating it.
 	cr := &countingReader{r: &ctxReader{ctx: ctx, r: src}}
 	// WriteReaderInRoot stages a temp inside the mount's root, fsyncs it,
-	// renames over the root-relative dest, then fsyncs the parent dir — the
-	// durability step the old hand-rolled path omitted — while keeping the
-	// write kernel-confined to the mount like the rest of this handler (a
-	// symlink planted in the tree cannot redirect it outside). It refuses a
-	// symlink dest and removes the temp on any error, so dest is never left
-	// a partial write.
+	// renames over the root-relative dest, then fsyncs the parent dir,
+	// staying kernel-confined to the mount. It refuses a symlink dest and
+	// removes the temp on any error.
 	if _, werr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
 		atomicfile.WithMode(0o600), atomicfile.WithMaxBytes(maxUploadSize)); werr != nil {
 		return cr.n, werr

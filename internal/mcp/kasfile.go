@@ -5,46 +5,24 @@ package mcp
 //
 // Why the file and not the `mcpServers` session parameter:
 //
-//   - It HOT-RELOADS. KAS watches `~/.kiro/settings/mcp.json` (an
-//     `MCPConfigManager` with a `ConfigFileWatcher`) and re-merges on change, so
-//     adding a server connects it mid-session and disabling one drops it in
-//     place. The inline list is read once at session/new, which is where the
-//     "configuration changes apply on the next new chat" wart came from.
-//   - It carries MORE. The inline path funnels through KAS's
-//     `acpServerToWire`, which reads only `command`/`args`/`env` or
-//     `url`/`headers` plus `_meta.kiro.{disabledTools,waitForReady}` — it DROPS
-//     `oauth`, `oauthScopes`, `autoApprove`, `cwd` and `timeout`. So vibekit's
-//     pre-registered OAuth client id and secret, the fields that exist because
-//     Slack, GitHub and Figma do not support dynamic client registration, never
-//     reached the agent on v3 at all. The file delivers them.
+//   - It HOT-RELOADS. KAS watches `~/.kiro/settings/mcp.json` and re-merges
+//     on change, so adding a server connects it mid-session. The inline
+//     list was read once at session/new.
+//   - It carries MORE. The inline path funnelled through KAS's
+//     `acpServerToWire`, which drops `oauth`, `oauthScopes`, `autoApprove`,
+//     `cwd` and `timeout`. The file delivers them.
 //
-// PRECEDENCE IS WHY THIS IS ATOMIC. KAS merges `client > file-based`, so as long
-// as vibekit still sends an inline entry for a server, the inline copy wins and
-// edits to the file appear to do nothing. The inline path had to go in the same
-// change, not after it.
+// PRECEDENCE IS WHY THIS IS ATOMIC. KAS merges `client > file-based`, so as
+// long as vibekit still sends an inline entry, the inline copy wins and
+// edits to the file appear to do nothing.
 //
-// # The file is shared, so unknown keys are preserved
+// The file is shared: KAS also reads `powers.mcpServers` out of it, so a
+// write re-reads the file and replaces ONLY the `mcpServers` key.
 //
-// KAS reads two blocks out of this one file: `mcpServers` (the user level) and
-// `powers.mcpServers` (installed Powers). vibekit owns the first and must not
-// clobber the second, so a write re-reads the file and replaces ONLY the
-// `mcpServers` key. Anything else — `powers`, a comment-bearing key a future KAS
-// adds, a hand-edit — survives.
-//
-// # Two losses, both real
-//
-//   - `env` and `headers` are RECORDS here, where vibekit stores ordered
-//     `KeyPair` slices. So duplicate names collapse (last wins) and ordering is
-//     not preserved on the wire. The store keeps the ordered form, which is what
-//     the editor round-trips; only the rendered file is flattened. The inline
-//     path had exactly the same collapse one layer later (`acpServerToWire`
-//     builds a record too), so nothing regressed — it is just visible now.
-//   - `transport` stops being a wire distinction. KAS infers the transport from
-//     which fields are present and auto-negotiates HTTP vs SSE at connect time;
-//     `type` is accepted and then ignored ("a server declared `type: http`
-//     connects exactly as one with no `type` at all"). So this writer emits no
-//     `type`, and an `sse` server and an `http` server render identically. The
-//     enum stays in the store because it still drives validation and the UI.
+// Two losses, both real: `env`/`headers` are RECORDS on the wire (order not
+// preserved, dup names collapse — the store keeps the ordered form for the
+// editor), and `transport` stops being a wire distinction (KAS infers it
+// from which fields are present, so this writer emits no `type`).
 
 import (
 	"context"
@@ -72,14 +50,12 @@ const kasPowersKey = "powers"
 const kasFileMaxBytes = 4 << 20
 
 // kasServer is one entry of KAS's `mcpServers` map, matching its
-// McpServerWireSchema. Only the fields vibekit has a value for are emitted:
-// every one is `omitempty`, because an explicit null or zero is a different
-// declaration than an absent field (`timeout: 0` fails its `min(1)`).
+// McpServerWireSchema. Only the fields vibekit has a value for are
+// emitted: every one is `omitempty`, because an explicit null or zero is
+// a different declaration than an absent field.
 //
-// Deliberately absent: `type` (an ignored hint — see the package comment),
-// `cwd` and `timeout` and `waitForReady` (vibekit's store has no field for them;
-// they are the schema's superset, reachable by hand-editing the file, and adding
-// UI for them is not this change).
+// Deliberately absent: `type` (an ignored hint), `cwd`, `timeout` and
+// `waitForReady` (no field for them; reachable by hand-editing the file).
 type kasServer struct {
 	Command       string            `json:"command,omitempty"`
 	Args          []string          `json:"args,omitempty"`
@@ -157,14 +133,13 @@ func pairsRecord(in []KeyPair) map[string]string {
 	return out
 }
 
-// writeKASConfig renders the server set into KAS's config file, preserving every
-// top-level key it does not own.
+// writeKASConfig renders the server set into KAS's config file, preserving
+// every top-level key it does not own.
 //
 // Best-effort on the READ: an unparseable or unreadable existing file is
-// replaced rather than treated as fatal. That direction is deliberate — the
-// alternative is refusing to write, which leaves the agent connected to a stale
-// server set with no way for the user to fix it from the UI. A parse failure is
-// logged by the caller.
+// replaced rather than treated as fatal — the alternative leaves the
+// agent connected to a stale server set with no way for the user to fix
+// it from the UI.
 func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -220,16 +195,13 @@ func (s *Store) readKASConfig() map[string]json.RawMessage {
 }
 
 // powerNames returns the server names the file's `powers.mcpServers` block
-// declares. Empty when the file is absent, oversized, unparseable, or carries no
-// powers block — every one of which means "vibekit cannot attribute this name",
-// which is OriginUnknown rather than an error.
+// declares. Empty when the file is absent, oversized, unparseable, or
+// carries no powers block — every one of which means "vibekit cannot
+// attribute this name", which is OriginUnknown rather than an error.
 //
-// This reads the file rather than caching it, and the call site is why that is
-// affordable: AllNames is consulted only for a name vibekit's own config does
-// NOT hold, so a status frame for a configured server (the overwhelming
-// majority) never reaches the disk. Caching instead would trade a rare
-// few-kilobyte read for a staleness window on exactly the event this exists to
-// observe — a Power installed mid-session.
+// This reads the file rather than caching it: AllNames is consulted only
+// for a name vibekit's own config does NOT hold, so a status frame for a
+// configured server never reaches the disk.
 func (s *Store) powerNames() map[string]struct{} {
 	out := map[string]struct{}{}
 	// readKASConfig deletes the key vibekit owns and keeps the rest, so the
@@ -256,11 +228,9 @@ func (s *Store) powerNames() map[string]struct{} {
 
 // kasConfigPath is the file KAS reads for user-level MCP servers.
 //
-// HOME, not the workspace. KAS reads BOTH `~/.kiro/settings/mcp.json` and
-// `<workspace>/.kiro/settings/mcp.json`, and the workspace one sits inside the
-// user's repo where it is a plausible accidental commit of a file holding OAuth
-// client secrets. The home path is also the one that does not depend on which
-// workspace folders a session declares.
+// HOME, not the workspace. KAS reads BOTH the home and workspace paths,
+// and the workspace one sits inside the user's repo where it is a
+// plausible accidental commit of a file holding OAuth client secrets.
 func kasConfigPath() string {
 	return workspace.KiroSettingsPath("mcp.json")
 }

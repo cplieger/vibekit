@@ -1,13 +1,13 @@
 package agent
 
-// The runtime side of a run lease: minting one at launch, releasing it when the run
-// is over, and reading the facts every other run path used to keep its own copy
-// of.
+// The runtime side of a run lease: minting one at launch, releasing it when the
+// run is over, and reading the facts every other run path used to keep its own
+// copy of.
 //
-// One record answers four questions that used to live in four unrelated places:
-// whether a blocking row is vibekit's own orphan (admission), when the run must
-// end (the deadline), whether it runs unattended (the permission floor), and
-// which schedule row to attribute an outcome to. See internal/runlease.
+// One record answers four questions that used to live in four unrelated
+// places: whether a blocking row is vibekit's own orphan (admission), when the
+// run must end (the deadline), whether it runs unattended (the permission
+// floor), and which schedule row to attribute an outcome to.
 
 import (
 	"context"
@@ -22,13 +22,13 @@ import (
 // the lease's whole input set beyond the recipe name.
 //
 // A value rather than two more parameters on the shared launch body: the
-// scheduled fields only make sense together, and the previous idiom (a non-empty
-// scheduleID standing in for "this launch is a schedule's") could not express the
-// third origin at all.
+// scheduled fields only make sense together, and a non-empty scheduleID
+// standing in for "this launch is a schedule's" could not express the third
+// origin at all.
 type launchOrigin struct {
 	// slotAt is the instant this run's own next slot comes due, and it is an
 	// INPUT to the lease's deadline. Zero for a schedule that cannot name its
-	// next slot, and zero for a manual launch of a recipe NOTHING schedules —
+	// next slot, and zero for a manual launch of a recipe nothing schedules —
 	// but not for a manual launch as such: launch fills it in from the
 	// recipe's own enabled schedules, which is what stops a manual run from
 	// holding a scheduled recipe for the whole ceiling (see manualSlot).
@@ -51,37 +51,32 @@ func manualLaunch() launchOrigin {
 	return launchOrigin{origin: runlease.OriginManual}
 }
 
-// scheduledLaunch is the scheduler's, carrying the row to attribute outcomes to
-// and the slot the run may not outlive.
+// scheduledLaunch is the scheduler's, carrying the row to attribute outcomes
+// to and the slot the run may not outlive.
 func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
 	return launchOrigin{origin: runlease.OriginScheduled, scheduleID: scheduleID, slotAt: slotAt}
 }
 
 // manualSlot is the next slot a MANUAL run of this recipe must yield to.
 //
-// This is the whole of the manual-run bug. The Run button's launch carried no
-// slot, so its run took the universal ceiling as its only bound: it held the
-// recipe for up to an hour while the single-run rule refused every scheduled
-// slot underneath it — up to eleven at the schedule floor. The slot is an input
-// to the ONE deadline every run gets (runlease.NextDeadline), so a manual run
-// finding its recipe's next slot here is what makes it yield.
+// The slot is an input to the ONE deadline every run gets
+// (runlease.NextDeadline), so a manual run finding its recipe's next slot here
+// is what makes it yield instead of taking the universal ceiling as its only
+// bound and holding the recipe for up to an hour.
 //
 // Matched on the launch SOURCE, the key both affordances share: a schedule row
 // and the Run button on the same Workflows row carry the same string. Two
 // distinct sources that happen to share a recipe NAME are the single-run rule's
-// business rather than the deadline's — that rule keys on the name and refuses
-// the second launch outright, which is a different mechanism with its own answer.
+// business rather than the deadline's.
 //
-// Floored at NOW through schedule.NextRunFrom, which is the ONE derivation of a
-// schedule's next run and the same call the REST view makes — so the bound agrees
-// with the "next run" the user is reading off the row instead of naming a slot
-// that has already gone. (The runner is the one caller that passes a zero floor,
-// because it alone has to SEE a past slot to tell one it may still fire from one
-// missed while the container was down.)
+// Floored at NOW through schedule.NextRunFrom, the same call the REST view
+// makes, so the bound agrees with the "next run" the user is reading off the
+// row instead of naming a slot that has already gone. (The runner passes a
+// zero floor, because it alone has to SEE a past slot to tell one it may still
+// fire from one missed while the container was down.)
 //
 // Zero when there is no schedule store, no enabled schedule for this source, or
-// no computable next slot. Such a run is bounded by the ceiling alone, which is
-// the behaviour every manual run used to get.
+// no computable next slot. Such a run is bounded by the ceiling alone.
 func (rs *Runs) manualSlot(source string) time.Time {
 	if rs.schedules == nil || source == "" {
 		return time.Time{}
@@ -96,10 +91,8 @@ func (rs *Runs) manualSlot(source string) time.Time {
 		}
 		next, err := schedule.NextRunFrom(e.Spec, e.Anchor, now)
 		if err != nil {
-			// No slot input rather than a launch failure, exactly as the runner
-			// resolves the same error: refusing to run because one of the two
-			// bound inputs cannot be derived would turn a display-level defect
-			// into an outage, and the ceiling still bounds the run.
+			// No slot input rather than a launch failure: the ceiling still
+			// bounds the run.
 			slog.Warn("schedule cannot name its next slot, so a manual run of its recipe "+
 				"is bounded by the ceiling alone", "schedule_id", e.ID, "error", err)
 			continue
@@ -111,12 +104,11 @@ func (rs *Runs) manualSlot(source string) time.Time {
 	return earliest
 }
 
-// leaseStore returns the lease registry, creating an in-memory one if the runtime was
-// built without the durable store.
+// leaseStore returns the lease registry, creating an in-memory one if the
+// runtime was built without the durable store.
 //
-// The fallback is not a degradation to tolerate quietly — it is what a Runtime
-// assembled without a config dir (every unit test) needs, because a lease is no
-// longer optional bookkeeping: it carries the run's wall clock. Durability is the
+// The fallback is what a Runtime assembled without a config dir (every unit
+// test) needs, because a lease carries the run's wall clock. Durability is the
 // part WithRunLeases adds.
 func (rs *Runs) leaseStore() *runlease.Store {
 	rs.mu.Lock()
@@ -131,13 +123,13 @@ func (rs *Runs) leaseStore() *runlease.Store {
 //
 // Called between `new` and `invoke` for a launched run — the earliest point the
 // workflow id exists and still before anything can execute, so no permission
-// request can slip through unmarked. UNATTENDED is set for a scheduled run only:
-// a manual run is attended by definition (the user clicked Run and can answer),
-// and an agent-launched run is the agent's own, on its chat's bridge.
+// request can slip through unmarked. UNATTENDED is set for a scheduled run
+// only: a manual run is attended by definition, and an agent-launched run is
+// the agent's own, on its chat's bridge.
 //
-// A persist failure is logged, not returned: the run is on the wire either way,
-// and the lease is kept in memory, so this process still bounds and attributes
-// it. Failing the launch over it would trade a live run for a bookkeeping error.
+// A persist failure is logged, not returned: the run is on the wire either
+// way, and the lease is kept in memory, so this process still bounds and
+// attributes it.
 func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin) {
 	if workflowID == "" {
 		return
@@ -159,8 +151,8 @@ func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o lau
 }
 
 // releaseLease forgets a run's envelope, for a run that is over or was never
-// started. Idempotent: the terminal frame and the cancel path both release, and
-// neither knows which arrived first.
+// started. Idempotent: the terminal frame and the cancel path both release,
+// and neither knows which arrived first.
 func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return

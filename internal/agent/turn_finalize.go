@@ -79,17 +79,16 @@ type turnStats struct {
 	ElapsedMs    float64
 }
 
-// StartTurn opens chatID's turn — today's full open(), run at bridge-ready
-// immediately before the ACP call, so everything true of the turn for its whole
-// life is stamped with the bridge live: the answering model (no empty-model
-// latch), and the credit reading its spend is measured against (the spawn, the
-// prime and the MCP wait are excluded from the turn's accounting). Admission is
-// NOT here: the reservation was taken synchronously (see turn_admission.go),
-// and the priming turn's own open/finalize runs between the two untouched.
-// It returns the epoch, on which the caller holds a completion handle until
-// ReleaseTurn; zero means ctx died while the chat was finalizing. It WAITS out a
-// finalize in progress, and a prompt-shaped source finding a turn the WIRE started
-// CLOSES it first — no closer can claim that turn, so opening over it would drop
+// StartTurn opens chatID's turn, run at bridge-ready immediately before the ACP
+// call so everything true of the turn is stamped with the bridge live: the
+// answering model, and the credit baseline its spend is measured against
+// (spawn, prime and MCP wait excluded). Admission is NOT here — the
+// reservation was taken synchronously (turn_admission.go), and the priming
+// turn's own open/finalize runs between the two untouched. Returns the epoch,
+// on which the caller holds a completion handle until ReleaseTurn; zero means
+// ctx died while the chat was finalizing. WAITS out a finalize in progress,
+// and a prompt-shaped source finding a turn the WIRE started CLOSES it
+// first — no closer can claim that turn, so opening over it would drop
 // content already streamed to clients.
 func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
 	if source.Acknowledgeable() {

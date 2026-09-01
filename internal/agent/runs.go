@@ -15,27 +15,21 @@ import (
 // recorded abnormal terminations, and the schedule store that drives unattended
 // launches.
 //
-// It exists because that surface was 74 of Runtime's 223 methods — a third of the
-// receiver — over four fields NOTHING outside it touches. The measurement is
-// what made the split obvious rather than aesthetic: `leases`, `schedules`,
-// `runBounds` and the mutex guarding them had zero non-run readers, so they were
-// already a separate object sharing a struct with everything else.
+// It exists because that surface was 74 of Runtime's 223 methods over four
+// fields nothing outside it touches — leases, schedules, runBounds and the
+// mutex guarding them had zero non-run readers.
 //
-// It follows lifetime and bus, with one difference worth naming: those
-// two are field bags that grew methods, and this one carries COLLABORATORS. Run
-// work reaches the bridge manager, the coordinator, the utility runtime, the chat
+// It carries COLLABORATORS rather than a *Runtime back-pointer: run work
+// reaches the bridge manager, the coordinator, the utility runtime, the chat
 // store, the translator and the pending-permission tracker, so those arrive as
-// named dependencies instead of through a *Runtime back-pointer. That was a choice
-// with a cost attached: three methods stay on Runtime for it (see dispatch,
-// dispatchRequest and closeFinishedBridge in run_host.go), because they are
-// the ACP request ladder for a run's bridge — bridge plumbing reached on a run
-// topic rather than run logic — and moving them would have meant handing this
-// type the chat-handler map and six responder methods, which is a back-reference
-// with extra steps.
+// named dependencies. Three methods stay on Runtime regardless (dispatch,
+// dispatchRequest and closeFinishedBridge in run_host.go) because they are the
+// ACP request ladder for a run's bridge, and moving them would have meant
+// handing this type the chat-handler map and six responder methods.
 //
-// The lock protocol did not cross the new boundary: mu guards bounds, and the one
-// place two locks are held (claimExpiredDeadline takes mu then the lease store's
-// own) is entirely inside this type.
+// The lock protocol did not cross the new boundary: mu guards bounds, and the
+// one place two locks are held (claimExpiredDeadline takes mu then the lease
+// store's own) is entirely inside this type.
 type Runs struct {
 	chats     runChatReader
 	translate runTranslator
@@ -74,8 +68,4 @@ type runPermClaimer interface {
 
 // Runs exposes the run surface to the composition root, which starts the orphan
 // sweep and hands it to the schedule runner as its schedule.Launcher.
-//
-// One accessor rather than two Runtime forwards. A forward would put the runtime back in
-// the path of calls that have nothing to do with it, which is the shape this
-// split exists to remove; the two callers want the run surface, so they get it.
 func (rt *Runtime) Runs() *Runs { return rt.runs }

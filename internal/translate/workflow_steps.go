@@ -2,41 +2,17 @@ package translate
 
 // The step-session registry, and the classifier that needs it.
 //
-// THE PROBLEM. A workflow step runs as its own real ACP session, on the
-// launching chat's process (KAS parents a run on the calling chat's session). So
-// a step's frames arrive on that chat's bridge carrying a session id that is
-// neither the chat's nor a subagent's — and every site that reads a differing
-// session id was written when a subagent was the only thing it could mean:
-//
-//   - three callers (code_references, governance, safety) `return` on a
-//     non-empty result, so a step frame is silently DROPPED
-//   - three more (elicitation, permission_handler, user_input) stamp
-//     `SubSessionID`, so a step's ask is emitted as a subagent's ask
-//
-// `deriveSubSession`'s own comment called the mechanism "inert but harmless"
-// because on v3 a subagent rides the parent's session id and attributes via
-// `_meta.kiro.agentSubtaskId`. That was true until a run existed. It is now
-// neither inert nor harmless, and the fix is a distinction rather than a
-// deletion: the frame belongs to the chat, to a subagent, or to a run step.
-//
-// TWO IDENTIFIERS, because KAS exposes the linkage two different ways and
-// neither covers both frame classes:
-//
-//  1. A `session/update` frame is SELF-DESCRIBING: `params.update._meta.kiro.workflow`
-//     = {workflowId, workflowName, nodeId, nodePath[], type} on every step frame
-//     (probe 17; note the path is under `update`, not `params`). Tool frames add
-//     `agentSubtaskId` and `toolOrigin`.
-//  2. A host REQUEST (`session/request_permission`) and the `_kiro/*`
-//     notifications carry no such marker — their params are the method's own
-//     shape. For those the only handle is the session id itself, and the one
-//     frame that ever announces a step's session id is `node_start`.
-//
-// So the registry exists to serve (2), and it is fed by the wire rather than
-// reconstructed: `node_start` is emitted immediately after KAS appends the step
-// to its session tracker and BEFORE the step's turn begins, so a step's session
-// is always known by the time any of its frames arrive. Nothing is persisted —
-// a restart loses the map, and the run's own `inspect` state carries `sessionId`
-// on every node, which is the durable copy.
+// A workflow step runs as its own ACP session on the launching chat's process,
+// so a step's frames arrive on that chat's bridge carrying a session id that is
+// neither the chat's nor a subagent's. A `session/update` frame self-describes
+// via `params.update._meta.kiro.workflow` (note: under `update`, not `params`).
+// A host request or `_kiro/*` notification carries no such marker, so the only
+// handle there is the session id — and the one frame that ever announces a
+// step's session id is `node_start`. The registry serves that second case and
+// is fed live: `node_start` fires before the step's turn begins, so its session
+// is known before any of its frames arrive. Nothing is persisted — a restart
+// loses the map, and the run's own `inspect` state carries `sessionId` on every
+// node as the durable copy.
 
 import (
 	"encoding/json"
@@ -66,19 +42,12 @@ const (
 // FrameAttribution is who a `session/update` frame belongs to, in the form a
 // per-kind handler can act on.
 //
-// It exists because the previous shape lost a distinction the classifier had
-// already made. Handlers received a bare `subSessionID string`, and the
-// dispatcher derived it by collapsing three owners into two values: a subagent
-// got its session id, and BOTH the chat and a run step got "". That is lossy in
-// exactly the direction that matters — every handler reads a non-empty value as
-// "a subagent did this", so a step had to be flattened, and any handler needing
-// to tell a step from the chat had nothing left to read.
-//
-// The cost was a live defect: `HandleSessionInfoUpdate` derived its step flag
-// from `_meta.kiro.workflow`, which a `session_info_update` never carries (KAS's
-// `buildSessionInfoUpdate` composes `_meta.kiro` from the update object alone and
-// merges no `promptMeta`), so the flag was always false and every workflow step's
-// `turn_completion` was counted as one of the launching chat's own turns.
+// Replaces a bare `subSessionID string` that collapsed three owners into two
+// values (a subagent got its id, both the chat and a run step got ""). That
+// cost a live defect: `HandleSessionInfoUpdate` derived its step flag from
+// `_meta.kiro.workflow`, which a `session_info_update` never carries, so the
+// flag was always false and every workflow step's `turn_completion` was
+// counted as one of the launching chat's own turns.
 type FrameAttribution struct {
 	// SubSessionID is the frame's session id when a SUBAGENT owns it, and empty
 	// for the chat and for a run step. Handlers stamp it onto a tool call or an
@@ -120,57 +89,43 @@ func (t *Translator) Attribute(chatID vibekit.ChatID, sessionID string, workflow
 type stepRegistry struct {
 	byID  map[string]StepRef
 	byRun map[string]map[string]struct{}
-	// turns counts tool calls per step INSTANCE, keyed by the RUN plus the
-	// step's display subtask id. Both halves are load-bearing and for different
-	// reasons. The node path rather than the node id, because a repeat node's
-	// second iteration is fresh work and must not inherit the first's count. The
-	// workflow id beside it, because a node path is only unique WITHIN a run, so
-	// two concurrent workflows executing the same path shared one counter: their
-	// combined calls could reach the cap and cancel a run neither step had
-	// exhausted, after which the other might never land on exactly the cap and go
-	// unbounded. `ACPWorkflowMeta.SubtaskID` now carries the run id in its own
-	// first segment, so the two keys no longer differ in what they identify — but
-	// they still differ in KIND, which is why this stays a struct; see
-	// stepTurnKey. Bounded by forgetRun, like the session map beside it.
+	// turns counts tool calls per step INSTANCE, keyed by the run plus the
+	// step's display subtask id. Keyed by node PATH rather than node id so a
+	// repeat's second iteration does not inherit the first's count, and by
+	// workflow id so two concurrent runs sharing a node path do not share a
+	// counter (which could cancel a run neither step had exhausted). Bounded by
+	// forgetRun, like the session map beside it.
 	turns   map[stepTurnKey]int
 	turnRun map[string]map[stepTurnKey]struct{}
-	// runTools holds the in-flight tool calls of a PARENTLESS run's steps, keyed
-	// by run then tool-call id. It exists because a `tool_call_update` has to fold
-	// into its `tool_call` and a run has no buffer to fold into: a chat's calls
-	// live in its assistant-message buffer, and a run deliberately has neither a
-	// message nor a chat (run_host.go). See workflow_step_content.go.
-	//
-	// Here rather than in a store of its own so it inherits this registry's BOUND:
-	// `forgetRun` already runs on the terminal `run_complete`, which is the same
-	// frame KAS's own notification bridge unsubscribes on, so a finished run's
-	// calls are dropped by the mechanism that drops its session map. A second
-	// store would have needed a second copy of that lifecycle to get right.
+	// runTools holds the in-flight tool calls of a parentless run's steps, keyed
+	// by run then tool-call id. A `tool_call_update` must fold into its
+	// `tool_call`, and a run has no buffer to fold into — a chat's calls live in
+	// its assistant-message buffer, a run has neither a message nor a chat (see
+	// run_host.go, workflow_step_content.go). Bounded by forgetRun on the same
+	// terminal `run_complete` frame KAS's own notification bridge unsubscribes on.
 	runTools map[string]map[string]runToolEntry
 	mu       sync.RWMutex
 }
 
 // runToolEntry is one accumulated tool call plus the step row it belongs to.
 //
-// The path is stored rather than re-derived because an UPDATE frame is not
-// guaranteed to carry the workflow meta the create carried — the chat path has the
-// same asymmetry, which is why its own update handler adopts the subtask id late —
-// so the address has to come from what the create recorded.
+// The path is stored rather than re-derived because an update frame is not
+// guaranteed to carry the workflow meta the create carried, so the address must
+// come from what the create recorded.
 type runToolEntry struct {
 	nodePath string
 	call     vibekit.ToolCall
 }
 
-// stepTurnKey is the ENFORCEMENT identity of a step instance: which run, and
+// stepTurnKey is the enforcement identity of a step instance: which run, and
 // which step within it.
 //
-// A struct key rather than a joined string, because the parts are not the
-// program's to escape — a node path comes from a workflow file — and a struct key
-// cannot be forged by a separator inside one of them. It is deliberately separate
-// from the DISPLAY grouping id (ACPWorkflowMeta.SubtaskID, which the client uses
-// to fold a step's blocks into one box inside its run's card): the display id must
-// stay stable and human-shaped, while this one only has to be unique. They now
-// carry the same two facts, and that is a coincidence of the display id gaining
-// its run segment rather than a reason to collapse them.
+// A struct key rather than a joined string, because a node path comes from a
+// workflow file and is not the program's to escape — a struct key cannot be
+// forged by a separator inside one of its parts. Kept separate from the
+// DISPLAY grouping id (ACPWorkflowMeta.SubtaskID) even though both now carry
+// the same two facts: the display id must stay stable and human-shaped, this
+// one only has to be unique.
 type stepTurnKey struct {
 	workflowID string
 	stepKey    string
@@ -268,12 +223,8 @@ func (s *stepRegistry) lookup(sessionID string) (StepRef, bool) {
 // refFor resolves a frame's session id to its run and node, when it is a step's.
 //
 // The empty StepRef for everything else lets an ask handler stamp
-// unconditionally: a non-step ask stamps two empty strings, which omitempty then
-// keeps off the wire. That is why the miss is not an error.
-//
-// On the registry rather than on the Translator, where it was: it is a guard on
-// the map's key, and the map is here. The three ask handlers that call it reach a
-// field instead of a sibling method.
+// unconditionally: a non-step ask stamps two empty strings, which omitempty
+// then keeps off the wire, so the miss is not an error.
 func (s *stepRegistry) refFor(sessionID string) StepRef {
 	if sessionID == "" {
 		return StepRef{}
@@ -284,14 +235,9 @@ func (s *stepRegistry) refFor(sessionID string) StepRef {
 
 // forgetRun drops every step session and turn count of a terminated run.
 //
-// Bounded growth is the point: a long-lived container running many workflows
-// would otherwise accumulate one entry per step forever. `run_complete` is the
-// hook because KAS's own notification bridge unsubscribes on the same frame, so
-// no later frame for that run can arrive.
-//
-// Scoped to the run by construction now that the turn key carries the workflow id:
-// forgetting one run cannot reach a SIBLING run's count, which a bare node-path
-// key made possible whenever two concurrent workflows shared a path.
+// Bounds growth that would otherwise accumulate one entry per step forever.
+// `run_complete` is the hook because KAS's own notification bridge
+// unsubscribes on the same frame, so no later frame for that run can arrive.
 func (s *stepRegistry) forgetRun(workflowID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -381,17 +327,17 @@ func (t *Translator) foreignSession(chatID vibekit.ChatID, sessionID string) boo
 // is told it breached. Exported so the host's own test can pin the same number
 // the counter enforces.
 //
-// Counted on the NEW tool_call frame only, never on an update: one tool call is
-// one turn of the loop, and a call that reports pending → in_progress → completed
-// would otherwise count three times and cap a step at 67 real calls.
+// Counted on the new `tool_call` frame only, never on an update: a call that
+// reports pending → in_progress → completed would otherwise count three times
+// and cap a step at 67 real calls.
 const StepTurnCap = 200
 
 // countStepTurn tallies one of a step's tool calls and reports a breach exactly
 // once per step instance.
 //
-// Exactly once is what the `== StepTurnCap` comparison buys over `>=`: the count
-// keeps rising while the run's cancel travels (KAS decides at a node boundary, so
-// frames keep arriving), and a `>=` here would report every one of them.
+// `== StepTurnCap` rather than `>=`: the count keeps rising while the run's
+// cancel travels (KAS decides at a node boundary), and `>=` would report every
+// frame after the breach instead of just the first.
 func (t *Translator) countStepTurn(wf *ACPWorkflowMeta, stepKey string) {
 	if wf == nil {
 		return

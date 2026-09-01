@@ -72,24 +72,15 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, for
 
 // writeScratchGuidance suggests a scratch location outside every repo.
 //
-// The agent arrives already holding the bundled workflow-orchestration
-// guidance, which names `<workdir>/.agents/tasks/` for plans and review
-// artifacts and `<repo_dir>/.agents/tasks/<repo>-<branch>-<date>/` for
-// publish-pr run dirs. Measured 2026-08-26 across two repos in one afternoon:
-// 42 scratch files written into working trees by workflow and skill sessions
-// following it, which the user then had to separate from real changes by hand.
+// The agent already holds bundled workflow-orchestration guidance naming
+// in-repo artifact paths for plans and review output; measured 2026-08-26, 42
+// scratch files were written into working trees this way across two repos in
+// one afternoon. A canary probe the same day confirmed a workflow STEP session
+// receives only the always-on set (this file plus always-loaded workspace
+// steering), so this generated doc is the only place a rule reaches one.
 //
-// A canary probe the same day established the reach this text needs. A workflow
-// STEP session receives the always-on set only — this file plus always-loaded
-// workspace steering — and no fileMatch or manual steering doc at all, so a
-// generated always-on doc is the only place a rule reaches one. It also showed
-// the orchestration guidance is absent from a step session and present only in
-// the ORCHESTRATOR, which is the seat that chooses artifact paths, so this is
-// aimed at a reader who has both texts.
-//
-// Deliberately a preference, not a prohibition: an agent has legitimate reasons
-// to write inside a repo (a test fixture, a file destined for the commit), and
-// the enforcement lever is a permissions.yaml fs_write deny rule, not prose.
+// Deliberately a preference, not a prohibition — the enforcement lever is a
+// permissions.yaml fs_write deny rule, not prose.
 func writeScratchGuidance(b *strings.Builder, workDir string) {
 	b.WriteString("### Scratch files\n\n")
 	b.WriteString("Prefer a directory OUTSIDE every repo for files that are not headed for a ")
@@ -213,16 +204,14 @@ func readGitOrigin(repoDir string) string {
 	return ""
 }
 
-// readGitBranch returns the current branch name of a git repo by
-// reading `.git/HEAD`. Same rationale as readGitOrigin: no subprocess.
-// Detached-HEAD repos return "" (HEAD points at a sha, not a ref).
+// readGitBranch returns the current branch name of a git repo by reading
+// `.git/HEAD` directly (no subprocess — steering generation runs synchronously
+// and must not block on a wedged one). Detached-HEAD repos return "".
 //
-// The value is cut at the FIRST line and defused, because `.git/HEAD` is a file
-// this package reads directly rather than a name git validated. TrimSpace over
-// the whole file leaves interior newlines alone, so a HEAD whose second line is
-// "## Capabilities" made vibekit write a steering section the agent then read as
-// its own — measured. A branch is one line by definition, so the cut costs
-// nothing that could have been a branch name.
+// Cut at the FIRST line and defused: `.git/HEAD` is workspace content, not a
+// name git validated, and a crafted second line ("## Capabilities") was once
+// rendered as a real steering section — measured. A branch is one line by
+// definition, so the cut costs nothing real.
 func readGitBranch(repoDir string) string {
 	data, err := readCappedFile(filepath.Join(repoDir, ".git", "HEAD"), 1024)
 	if err != nil {
@@ -257,27 +246,19 @@ func hostFromGitURL(url string) string {
 }
 
 // isHostShaped reports whether s could be a DNS host or an IPv4 literal with an
-// optional port: ASCII letters, digits, dot, dash, underscore and colon, and
-// nothing else.
+// optional port: ASCII letters, digits, dot, dash, underscore and colon only.
 //
-// It is a REFUSAL rather than a defusal, and it is load-bearing twice over.
+// Two reasons this refusal is load-bearing. A `.git/config` url comes from a
+// file the agent writes, so without this gate a backtick or bracket could
+// reach environment.md inside the host annotation. And kindFromHost lowercases
+// this value before matching against `github`/`gitlab`/`gitea` — a fold that
+// fails open under Unicode simple case mapping (U+0130/U+212A lowercase to
+// ASCII `i`/`k`, measured to make `g\u0130thub.com` match `github.com`).
+// Restricting the alphabet upstream makes strings.ToLower provably an ASCII
+// fold, which is why the order matters (TestHostGateGuardsTheFold pins it).
 //
-// A `.git/config` url is a line from a file in a tree the agent writes, so
-// without it a backtick or a bracket reached environment.md inside the
-// parenthesised host annotation. And kindFromHost lowercases this value before
-// matching it against `github`, `gitlab`, `gitea` — a MATCH list, which fails
-// OPEN. Exactly two already-assigned runes lowercase into ASCII under Unicode
-// simple case mapping (U+0130 -> "i", U+212A -> "k") and three of those literals
-// contain an `i`, so `g\u0130thub.com` folded to `github.com` and the generator
-// advertised `gh` for a host that is not GitHub (measured on go1.27.0, both
-// before and after this gate). Restricting the alphabet upstream settles the
-// site instead of bounding it: with only ASCII reaching it, strings.ToLower is
-// provably an ASCII fold on any Unicode version. The ORDER is therefore the
-// property, which is why TestHostGateGuardsTheFold pins it.
-//
-// Cost, stated: an IPv6-literal remote (`https://[::1]/x`) loses its host
-// annotation, because `[` and `]` are markdown-significant and no git remote in
-// this container uses one. The repo still renders, without the parenthesis.
+// Cost: an IPv6-literal remote loses its host annotation (`[`/`]` are
+// markdown-significant); the repo still renders, without the parenthesis.
 func isHostShaped(s string) bool {
 	if s == "" {
 		return false
@@ -417,28 +398,14 @@ func findNotableFiles(workDir string) []string {
 	return found
 }
 
-// readFirstLine returns the first non-blank non-heading line of the
-// README at path, capped and sanitised so that hostile repo content
-// can't inject agent instructions into the steering file.
+// readFirstLine returns the first non-blank non-heading line of the README at
+// path, capped and sanitised so hostile repo content cannot inject agent
+// instructions into environment.md (kiro-cli's authoritative agent context).
 //
-// The sanitisation chain is required because the readFirstLine output
-// is written verbatim into ~/.kiro/steering/environment.md which
-// kiro-cli treats as authoritative agent context. An attacker with
-// write access to a workspace repo (including agent-cloned upstreams
-// with crafted READMEs) could otherwise inject markdown link syntax,
-// HTML tags, control characters, or newline escapes that influence
-// agent behaviour.
-//
-// Sanitisation steps (in order):
-//  1. Cap the read at firstLineReadCap so a multi-GiB README can't
-//     OOM the container.
-//  2. Drop CR/LF/tab in the candidate line before truncation so a
-//     newline-smuggled second "line" can't appear in the output.
-//  3. Strip hidden Unicode codepoints (TAG chars, zero-width joiners,
-//     bidi controls) via sanitize.Unicode.
-//  4. Drop lines containing markdown link syntax (inline, reference,
-//     or image), HTML tags, backticks, or bare URLs — each of which
-//     the agent renders or follows.
+// Order: cap the read, strip CR/LF/tab before truncation (so a smuggled
+// newline can't produce a second "line"), strip hidden Unicode, then drop any
+// line containing markdown link syntax, HTML tags, backticks, or a bare URL —
+// a README description line has no legitimate need for any of those.
 func readFirstLine(path string) string {
 	data, err := readCappedFile(path, firstLineReadCap)
 	if err != nil {

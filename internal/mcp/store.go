@@ -135,25 +135,17 @@ type Store struct {
 // New loads the file (or initialises empty) and returns a ready store.
 // onChange is invoked on a fresh goroutine (without the store mutex
 // held) whenever the persisted set is mutated; nil is valid if no one
-// cares. The callback is free to call back into the store — it won't
-// deadlock on the caller's write lock. The ctx is stored for use in
-// fire-and-forget persist paths so writes are cancellable on shutdown.
+// cares. The ctx is stored for use in fire-and-forget persist paths so
+// writes are cancellable on shutdown.
 //
-// Two files, one source of truth. `<configDir>/mcp.json` is vibekit's own record
-// — ordered KeyPairs, the transport enum, ids and timestamps, everything the
-// editor round-trips. KAS's `~/.kiro/settings/mcp.json` is RENDERED from it and
-// is what the agent actually reads (see kasfile.go). The render runs on every
-// persist and once at construction, so a config that predates this code, or a
-// KAS file deleted out from under us, is reconciled at boot rather than on the
-// next edit.
+// Two files, one source of truth. `<configDir>/mcp.json` is vibekit's
+// own record; KAS's `~/.kiro/settings/mcp.json` is RENDERED from it and
+// is what the agent actually reads (see kasfile.go).
 func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {
-	// Required, not defaulted. ctx IS the store's lifetime, and notifyChange
-	// parents fire-and-forget callback work on it (see there). This used to be
-	// accepted as nil and substituted with context.Background() at the point of
-	// use, which meant a caller who forgot it got a goroutine running MCP prewarm
-	// that no shutdown could cancel and nothing waited on — silently, because
-	// the substitution happened deep in an unexported method. Refusing here makes
-	// the mistake a startup error at the one construction site instead.
+	// Required, not defaulted. ctx IS the store's lifetime, and
+	// notifyChange parents fire-and-forget callback work on it. Refusing
+	// here makes a missing ctx a startup error instead of a silent
+	// substitution deep in an unexported method.
 	if ctx == nil {
 		return nil, errors.New("mcp: New requires a non-nil ctx: it is the store's lifetime and parents the change callback")
 	}
@@ -186,13 +178,9 @@ type Option func(*Store)
 
 // WithKASConfigPath overrides where KAS's config file is rendered.
 //
-// This exists for TESTS, and it is a functional option rather than a package
-// var for a specific reason: the default resolves under $HOME, so a test that
-// constructs a store without isolating it writes the developer's own
-// ~/.kiro/settings/mcp.json — which is exactly what happened once. A global
-// override has to be remembered; a required-by-convention option is visible at
-// every call site, and `TestNew_DefaultKASPathIsUnderKiroHome` pins that
-// production still gets the real path.
+// This exists for TESTS: the default resolves under $HOME, so a test
+// that constructs a store without isolating it writes the developer's
+// own ~/.kiro/settings/mcp.json — which is exactly what happened once.
 func WithKASConfigPath(path string) Option {
 	return func(s *Store) { s.kasPath = path }
 }
@@ -212,18 +200,15 @@ func (s *Store) load() error {
 	if err != nil {
 		return fmt.Errorf("read mcp.json: %w", err)
 	}
-	// mcp.json is plaintext API keys in env and header values (see the package
-	// doc), so its 0600 is the whole of its protection — and os.Chmod only ASKS
-	// for that mode. EnforceFile re-stats the descriptor it chmod'ed, so a
-	// filesystem that stores 0660 for the request is reported here instead of
-	// passing as success, and it refuses a symlink at the name rather than
-	// tightening whatever the name currently points at.
+	// mcp.json is plaintext API keys in env and header values, so its
+	// 0600 is the whole of its protection. EnforceFile re-stats the
+	// descriptor it chmod'ed, so a filesystem that stores 0660 is
+	// reported here instead of passing as success, and it refuses a
+	// symlink at the name.
 	//
-	// Warn-and-continue, unchanged: load's error is fatal to New and therefore to
-	// startup, and a /config the operator reshaped must still boot so it can be
-	// repaired from the UI (vibekit invariant 6 — remove the exposure, do not
-	// brick boot on it). The warning names the consequence because it is now
-	// TRUE: today this line cannot fire on a widening filesystem at all.
+	// Warn-and-continue: load's error is fatal to New and therefore to
+	// startup, and a /config the operator reshaped must still boot so it
+	// can be repaired from the UI.
 	if _, chErr := filemode.EnforceFile(s.path, 0o600); chErr != nil {
 		slog.Warn("mcp: mcp.json is not 0600 and could not be made 0600; the API keys in it may be readable by other users on this host",
 			"path", s.path, "error", chErr)
@@ -250,20 +235,12 @@ func (s *Store) load() error {
 	return nil
 }
 
-// notifyChange fires the change callback on a fresh goroutine, parented on the
-// STORE's lifetime rather than the caller's request context. Every caller is an
-// HTTP mutation handler, so a request-scoped parent cancelled the callback the
-// moment the handler returned — and the production callback runs MCP prewarm,
-// which is exactly the fire-and-forget work that must survive the response.
-// This is the use the ctx field was stored for.
-//
-// It deliberately takes NO context. It used to accept one and discard it (the
-// parameter was unnamed), which read at all five call sites as though the
-// caller's ctx mattered here; it never did, and the signature said the opposite
-// of the doc comment. New now rejects a nil store ctx, so the
-// context.Background() substitution this used to make is gone: that fallback
-// turned a forgotten ctx into a prewarm goroutine no shutdown could cancel and
-// nothing waited on.
+// notifyChange fires the change callback on a fresh goroutine, parented on
+// the STORE's lifetime rather than the caller's request context. Every
+// caller is an HTTP mutation handler, so a request-scoped parent would
+// cancel the callback the moment the handler returned — and the
+// production callback runs MCP prewarm, fire-and-forget work that must
+// survive the response.
 func (s *Store) notifyChange() {
 	s.mu.RLock()
 	cb := s.onChange
@@ -285,11 +262,9 @@ func (s *Store) indexLocked(id ServerID) int {
 	return -1
 }
 
-// findByNameLocked returns the stored record whose name matches, or nil. Uses
-// the same case-insensitive rule as hasNameLocked — the no-op path and the
-// conflict path must agree about which record they are talking about, or a
-// "GitHub" re-paste would compare against nothing and then collide with
-// "github".
+// findByNameLocked returns the stored record whose name matches, or nil.
+// Uses the same case-insensitive rule as hasNameLocked — the no-op path
+// and the conflict path must agree about which record they mean.
 func (s *Store) findByNameLocked(name string) *Server {
 	for _, sv := range s.servers {
 		if strings.EqualFold(sv.Name, name) {

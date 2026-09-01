@@ -769,20 +769,11 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 
 // toolsEngineFailure decides what a toolbelt.New failure costs vibekit. A nil
 // return is the DEGRADED verdict — buildToolsEngine hands back no engine and no
-// error, and Build carries on tool-less.
-//
-// ONLY the root-integrity refusal degrades. A manifest this engine refuses to
-// guess at, or an absent required dir, stays a fatal New failure wrapped exactly
-// as it was before the check existed — narrowing by sentinel rather than by "any
-// New error" is what keeps an unrelated regression from being swallowed into a
-// tool-less boot nobody notices.
-//
-// Degraded, not dead, because an unfit root is persistent-volume state this
-// process neither created nor may repair (the check reports only, deliberately),
-// and refusing to boot on it would take away the only way IN to fix it: the
-// operator reaches /config through this container. The entrypoint aborts on ONE
-// condition, a /config that is absent or unwritable, and everything else warns
-// and continues.
+// error, and Build carries on tool-less. Only the root-integrity refusal
+// degrades; every other New failure stays fatal, unchanged from before the
+// check existed. Degraded rather than fatal because an unfit root is
+// persistent-volume state this process cannot repair, and refusing to boot
+// would remove the only way in to fix it (invariant 6).
 func toolsEngineFailure(err error) error {
 	if !errors.Is(err, toolbelt.ErrRootIntegrity) {
 		return fmt.Errorf("tools engine: %w", err)
@@ -792,17 +783,13 @@ func toolsEngineFailure(err error) error {
 }
 
 // logRootIntegrityRefusal reports a root-integrity refusal one line per
-// offending path, then states the consequence. toolbelt logs the same
-// findings itself, but joined into a single field on its own logger; the
-// per-path lines are what an operator can grep and act on individually,
-// and "vibekit is running without tools" is this app's verdict to state,
-// not the library's.
+// offending path, then states the consequence — toolbelt itself joins the
+// findings into one field, but per-path lines are what an operator can grep
+// and act on.
 //
-// The refusal does NOT touch readiness: /api/health's verdict is the
-// kiro-cli install manager's, and wiring a never-self-healing condition
-// into it would report the container unready forever, with no repair path
-// that does not go through the host. The log plus an absent /api/tools
-// mount is the signal.
+// Deliberately does NOT touch /api/health: that verdict belongs to the
+// kiro-cli install manager, and this condition never self-heals, so wiring it
+// in would report the container unready forever with no repair path.
 func logRootIntegrityRefusal(err error) {
 	refusal, ok := errors.AsType[*toolbelt.RootIntegrityError](err)
 	if !ok {
@@ -865,29 +852,15 @@ func openTabStore(dir string) *tabs.Store {
 	return st
 }
 
-// pruneTabs is the tab set's LOAD-TIME crash recovery, and it runs exactly ONCE.
+// pruneTabs is the tab set's LOAD-TIME crash recovery, running exactly ONCE.
+// The membership coordinator is the live integrity mechanism (chat before tab
+// on create, chat before tab-close on delete, with retry) — this exists only
+// for a crash landing between those two writes.
 //
-// The live integrity mechanism is the membership coordinator: it writes the chat
-// record before its tab and removes it before closing its tabs, and it retries a
-// tab close that fails rather than waiting for a restart. This exists for the
-// crash that landed between those two writes. Calling it periodically would be
-// treating recovery as a substitute for ordering — and it would also race the
-// coordinator, which is the only other writer of this store.
-//
-// The resolver answers per KIND, and each answer is a decision:
-//
-//   - A CHAT tab resolves against the chat store. A chat that is gone cannot be
-//     opened, so its tab is a row that can only fail.
-//   - An EDITOR tab is left alone, deliberately. A missing file is not a reason to
-//     close a tab the reader opened: the path is still what they were looking at,
-//     the editor already renders a missing file honestly, and a file that a branch
-//     switch or a build step removed for a minute would otherwise cost the reader
-//     their tab.
-//   - A RUN tab is left alone for the same shape of reason — a finished run is
-//     still reviewable from History, so its id resolving to no live run says
-//     nothing about whether the tab should exist.
-//   - A SINGLETON always resolves: settings, git, files, history and docs are
-//     always there.
+// The resolver answers per KIND: a CHAT tab is checked against the chat store
+// (a gone chat cannot be reopened); EDITOR, RUN and SINGLETON tabs are left
+// alone, because a missing file, a finished run, or a fixed page are not
+// reasons to close the tab that points at them.
 func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 	if st == nil {
 		return
@@ -973,14 +946,11 @@ func startPRStatusPoller(ctx context.Context, mgr *forges.Manager,
 // that does not is a bug to log rather than a shutdown to hang on.
 const backgroundStopGrace = 5 * time.Second
 
-// runBackground starts fn on a cancellable child of ctx and returns the function
-// that stops it.
-//
-// It exists because "shutdown is context cancellation" is only true when someone
-// holds the cancel. Production passes context.Background() into Build, so a loop
-// given that context directly has no owner: the process exiting is what stopped it,
-// which makes the component's contract untestable and false for any caller that
-// shuts services down without exiting.
+// runBackground starts fn on a cancellable child of ctx and returns the stop
+// function. Exists because "shutdown is context cancellation" needs someone to
+// hold the cancel — production passes context.Background() into Build, so a
+// loop given that context directly has no owner and cannot be stopped short of
+// process exit.
 func runBackground(ctx context.Context, name string, fn func(context.Context)) (stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})

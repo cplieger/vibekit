@@ -1,23 +1,16 @@
-// ---------------------------------------------------------------------------
-// The exec view's TREE pane: the execution's structure, as a structure.
+// The exec view's tree pane: the execution's structure, as a structure.
 //
-// This is the half a single column cannot express and the reason the page is not a
-// transcript. A delegated execution nests — a loop body, a parallel's branches, a
-// watch inside a sequence — and every surface before this flattened it to its
-// leaves, so a reader could see that seven steps ran and not that two of them were
-// the same step twice or that three of them ran at once.
+// A delegated execution nests (a loop body, a parallel's branches, a watch
+// inside a sequence); flattening to leaves loses that a step ran twice or that
+// three ran at once.
 //
-// A container is therefore a ROW, not an indent: it carries its own kind glyph, its
-// own rolled-up state, and the one fact that explains it (a repeat's bound, a
-// parallel's join policy, a watch's condition). Those facts come from `nodePlan`,
-// which no client had ever decoded.
+// A container is a ROW, not an indent: its own kind glyph, rolled-up state, and
+// the one fact that explains it (a repeat's bound, a parallel's join policy, a
+// watch's condition), from `nodePlan`.
 //
-// SELECTION, not disclosure, is the interaction. A step's detail belongs in the
-// pane beside it rather than unfolded in place: unfolding pushes every later row
-// down, which on a run being watched moves the thing a reader is looking at, and a
-// dedicated page has somewhere better to put it. Containers still collapse, because
-// hiding a finished loop's twelve passes is a real want.
-// ---------------------------------------------------------------------------
+// SELECTION, not disclosure: unfolding a step in place pushes every later row
+// down, moving what a live-run reader is watching. Containers still collapse
+// (hiding a finished loop's twelve passes is a real want).
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
@@ -27,11 +20,9 @@ import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { STATE_BADGE, STATE_WORD, type ExecState } from "./status.js";
 
-/** The kind glyph. A step gets the agent hexagon the app already uses for
- *  delegated work; a container gets a glyph that says what it DOES, because
- *  "sequence" and "parallel" are not words a reader should have to read to tell
- *  one from the other. A sequence gets none: plain top-to-bottom flow is the
- *  default and a glyph for it would be decoration on every row. */
+/** The kind glyph: a step gets the agent hexagon; a container gets a glyph
+ *  naming what it does, since "sequence"/"parallel" shouldn't require reading.
+ *  A sequence gets none: plain top-to-bottom flow is the default. */
 function kindGlyph(kind: ExecNode["kind"]): Element | null {
   switch (kind) {
     case "repeat":
@@ -50,8 +41,7 @@ function kindGlyph(kind: ExecNode["kind"]): Element | null {
 export interface ExecTreeView {
   readonly root: HTMLElement;
   /** Re-render from a fresh tree. Rows are reconciled by PATH, so a collapsed
-   *  container stays collapsed and the selected row stays selected across the
-   *  refetches a live run drives several times a minute. */
+   *  container and the selected row survive the refetches a live run drives. */
   render(nodes: readonly ExecNode[], selected: string): void;
   /** Advance the durations of the rows still running. */
   tick(): void;
@@ -71,8 +61,8 @@ interface Row {
   collapsed: boolean;
 }
 
-/** Build the tree pane. `onSelect` is injected, so this file points only downward
- *  and the page owns what selection MEANS. */
+/** Build the tree pane. `onSelect` is injected so this file points only
+ *  downward; the page owns what selection means. */
 export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
   const root = el("div", {
     className: "ev-tree",
@@ -87,10 +77,9 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     const label = el("span", { className: "ev-label" });
     const sub = el("span", { className: "ev-sub" });
     const dur = el("span", { className: "ev-dur" });
-    // A SPAN, not a button: the row itself is the control, and a `<button>` inside
+    // A span, not a button: the row itself is the control. A `<button>` inside
     // an element carrying `role="treeitem"` plus a click handler is axe's
-    // `nested-interactive` — the finding the run card and the tab strip both had to
-    // fix, and `aria-hidden` does not clear it.
+    // `nested-interactive`, and `aria-hidden` does not clear it.
     const chevron = el("span", { className: "ev-twist", "aria-hidden": "true" }, chevronEl());
 
     const head = el(
@@ -124,9 +113,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     };
 
     head.addEventListener("click", (e) => {
-      // The twist is a zone of the row rather than a nested control, so the row's
-      // one handler tells them apart by target — which is what keeps the row a
-      // single activation target for a keyboard and a screen reader.
+      // The twist is a zone of the row, not a nested control; the handler tells
+      // them apart by target, keeping the row one activation target.
       if (chevron.contains(e.target as Node) && row.kids !== null) {
         row.collapsed = !row.collapsed;
         applyCollapse(row);
@@ -186,8 +174,7 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     row.dur.textContent = ms > 0 ? formatElapsed(ms) : "";
     row.root.classList.toggle("ev-selected", node.path === selected);
     row.root.setAttribute("aria-selected", String(node.path === selected));
-    // The accessible name is read back off the RENDERED text, so it cannot
-    // disagree with what is on screen.
+    // Read back off the rendered text, so it cannot disagree with the screen.
     row.root.setAttribute(
       "aria-label",
       `${node.label}, ${STATE_WORD[node.state]}${node.subtitle === undefined ? "" : `, ${node.subtitle}`}`,
@@ -203,9 +190,9 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     row.chevron.hidden = false;
     row.kids ??= el("div", { className: "ev-kids", role: "group" });
     row.root.appendChild(row.kids);
-    // Rebuilt as an ORDERING pass: every child row is a reconciled element from
-    // `rows`, so appending in plan order moves the existing nodes rather than
-    // replacing them, and a selected or collapsed descendant survives.
+    // Rebuilt as an ordering pass: appending in plan order moves the existing
+    // reconciled rows rather than replacing them, so a selected or collapsed
+    // descendant survives.
     const kids = row.kids;
     for (const child of node.children) {
       paint(child, depth + 1, selected, kids);
@@ -216,8 +203,8 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
   return {
     root,
     render(nodes, selected) {
-      // Rows the tree no longer describes are dropped from the index, or a run
-      // whose plan was appended to would keep growing a map of dead paths.
+      // Rows the tree no longer describes are dropped, or a run whose plan was
+      // appended to would keep growing a map of dead paths.
       const live = new Set<string>();
       const mark = (n: ExecNode): void => {
         live.add(n.path);
@@ -248,9 +235,9 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
   };
 }
 
-/** Find a node by path. The page's selection is a path, and the detail pane needs
- *  the node — kept here rather than in the model because it is a VIEW concern (a
- *  selection that no longer resolves falls back to the first leaf). */
+/** Find a node by path. Kept here rather than in the model because it is a
+ *  VIEW concern: a selection that no longer resolves falls back to the first
+ *  leaf. */
 export function nodeAt(nodes: readonly ExecNode[], path: string): ExecNode | undefined {
   for (const n of nodes) {
     if (n.path === path) {

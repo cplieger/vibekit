@@ -23,10 +23,8 @@ import (
 //	DELETE /api/mcp/{id}     → remove
 //
 // `import` is its own route rather than a second body shape on POST /api/mcp:
-// that endpoint decodes ONE vibekit record and answers with one, while a paste
-// decodes a foreign shape, can name several servers, and answers with a
-// per-entry outcome list. One route serving both would need a shape flag on the
-// request and a union on the response.
+// that endpoint decodes ONE vibekit record and answers with one, while a
+// paste decodes a foreign shape and can name several servers.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp", s.handleCollection)
 	mux.HandleFunc("/api/mcp/import", s.handleImport)
@@ -198,12 +196,10 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 
 // validationErrorBody is the 400 a failed Validate produces.
 //
-// `error` is what it always was — the joined message text — so a client that only
-// reads that field keeps working unchanged, which matters because the paste
-// panel's parse errors and the store's non-validation 400s still arrive with
-// nothing else. `fields` is the addition: one entry per failure, carrying the
-// wire field name so the form can mark three inputs instead of printing three
-// sentences above one box.
+// `error` is the joined message text, so a client reading only that field
+// keeps working unchanged. `fields` is the addition: one entry per
+// failure, carrying the wire field name so the form can mark inputs
+// individually.
 type validationErrorBody struct {
 	Error  string       `json:"error"`
 	Fields []FieldError `json:"fields,omitempty"`

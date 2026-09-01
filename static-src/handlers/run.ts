@@ -1,37 +1,25 @@
 // ---------------------------------------------------------------------------
 // Workflow-run SSE handlers.
 //
-// Three events, and all three mean the same thing to this client: something about
-// a run changed, go and read it. That is the whole contract — the payloads are
-// deliberately too thin to reconstruct a run from, because a client that
-// accumulated them would garble it. `run_start` re-fires on every resume (three
-// frames were measured for one run), and `node_complete` carries neither
-// `iteration` nor `branchId`, so two passes of one loop are indistinguishable on
-// the wire. `_kiro/workflow/inspect` is the truth; these events only say when to
-// ask it.
+// Three events, all meaning "something about a run changed, go read it" —
+// the payloads are too thin to reconstruct a run from (`run_start` re-fires
+// on every resume; `node_complete` carries neither `iteration` nor
+// `branchId`). `_kiro/workflow/inspect` is the truth; these events only say
+// when to ask it.
 //
-// So this file ROUTES and interprets nothing. One store invalidation, one bus
-// emit, two facts recorded, and the toasts. Every surface that shows a run —
-// the transcript's run card, the `/run/{id}` view, the tab dot — reads
-// `run-store.ts` and re-renders itself when that store changes.
+// So this file routes and interprets nothing: one store invalidation, one
+// bus emit, two facts recorded, and toasts. Every surface that shows a run
+// reads `run-store.ts` and re-renders when that store changes.
 //
-// Surfaces, and why each is reached the way it is:
+// Surfaces: `run-store.ts` by direct import (a leaf over api-client, the one
+// fetch for all readers); the history list over the bus (importing
+// history.ts here would drag chat.ts in behind it); the toast stack by
+// direct import; the tab dot via `run-dots.ts` (needs to know whether the
+// run is parentless).
 //
-//   - `run-store.ts`, by direct import: it is a leaf over api-client, so it drags
-//     nothing in behind it, and it is the ONE fetch for all three readers.
-//   - the history list, over the BUS. Two reasons, and the second is the
-//     load-bearing one: they are UI affordances that should not know about each
-//     other, and importing history.ts from here drags chat.ts in behind it —
-//     which put real network calls into every test that touches this handler.
-//   - the ephemeral stack, by direct import (toast.ts is a leaf over
-//     ui-primitives, so it drags nothing in behind it either).
-//   - the tab dot, via `run-dots.ts`, which needs one fact the store cannot
-//     carry: whether the run is parentless.
-//
-// A run's own transcript needs nothing here: a step's content arrives on the
-// launching chat's connection as ordinary blocks, attributed to the step, through
-// the same handlers that render every other block — and lands inside its run's
-// card because its subtask id names the run.
+// A run's own transcript needs nothing here: a step's content arrives on
+// the launching chat's connection as ordinary blocks through the same
+// handlers that render every other block.
 // ---------------------------------------------------------------------------
 
 import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
@@ -43,45 +31,28 @@ import { autoCloseRunSubTab, openRunSubTab, applyRunStep } from "../run-view.js"
 // ---------------------------------------------------------------------------
 // The signal half: an ephemeral toast at each end of a run.
 //
-// Two different questions, so two different filters. A START is only worth
-// announcing for a SCHEDULED run: a manual launch already has the user's
-// attention, since they clicked Run and a run tab opened in front of them, and an
-// agent-launched one now grows a card in the transcript the reader is watching. A
-// COMPLETION is worth announcing for any run, because nothing else tells anyone:
-// vibekit.PushKind has no run member, and the schedule row only speaks when
-// someone opens /docs/workflows.
-//
-// `scheduled` has to come from the SERVER. A parentless run's frames are
-// workspace-global with an empty chat id and a manual launch is parentless too, so
-// nothing observable here separates the two.
-//
-// The overlap with an open run view is real and narrow: that view repaints its
-// status word in place on this same event, so a reader watching the foreground tab
-// sees one word twice. Fired anyway, because the repaint is silent, has no
-// transition, and deliberately suppresses its loading row on a refetch — it is
-// exactly the change a reader misses — and because the run on screen is the only
-// case that overlaps at all.
+// A START is only worth announcing for a SCHEDULED run: a manual launch
+// already has the user's attention and an agent-launched one grows a card
+// in the transcript. A COMPLETION is worth announcing for any run, since
+// nothing else tells anyone. `scheduled` has to come from the server — a
+// parentless run's frames are workspace-global and a manual launch is
+// parentless too, so nothing observable here separates the two.
 // ---------------------------------------------------------------------------
 
-/** Runs whose start has already been announced. `run_start` re-fires on every
- *  resume (probe 6 measured three frames for one run) and toast.ts coalesces
- *  nothing, so without this one scheduled run produces three identical toasts.
- *  Cleared when the run reports finished, which is also what makes a resumed run
- *  announce itself again: the client stopped believing it was running. Bounded by
- *  the runs this tab has seen start and not finish. */
+/** Runs whose start has already been announced. `run_start` re-fires on
+ *  every resume, so without this a scheduled run produces duplicate
+ *  toasts. Cleared when the run reports finished. */
 const announcedStarts = new Set<string>();
 
-/** How a run's own name reads in a toast, or a generic label for a run this
- *  client has no name for (a page opened mid-run, or a frame carrying no state). */
+/** How a run's own name reads in a toast, or a generic label. */
 function runLabel(name: string | undefined): string {
   return name === undefined || name === "" ? "Workflow run" : name;
 }
 
-/** The completion signal. Level follows the outcome rather than the event, because
- *  "finished" is not a verdict: failed and aborted are failures, cancelled is what
- *  the user asked for, and `paused` is not a completion at all (KAS reports an
- *  onMaxIterations policy stop through this same frame), so it gets no toast — the
- *  run is still this process's to resume, and calling it finished would be wrong. */
+/** The completion signal. Level follows the outcome, not the event: failed
+ *  and aborted are failures, cancelled is what the user asked for, and
+ *  `paused` gets no toast (KAS reports an onMaxIterations stop through this
+ *  same frame; the run is still resumable). */
 function toastCompletion(status: string, name: string | undefined): void {
   const label = runLabel(name);
   switch (status) {
@@ -100,19 +71,12 @@ function toastCompletion(status: string, name: string | undefined): void {
     case "paused":
       return;
     default:
-      // An unrecognised status is still an ending. Better to name it verbatim
-      // than to stay silent or to guess a level for it.
       info(`${label} finished: ${status}`);
   }
 }
 
-// The two ends of a run change the LIST as well as the run: one adds a row, the
-// other settles its outcome. Everything between them only changes the run.
-//
-// The chat id is READ rather than discarded, and it answers two questions at once:
-// a NON-empty one names the chat whose agent launched this run, which is the
-// parent its tab nests under; an empty one means the run is parentless, and its
-// tab has no parent to nest under.
+// The chat id is read rather than discarded: non-empty names the launching
+// chat (the parent tab this run nests under); empty means parentless.
 onSSE("run_started", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
@@ -128,44 +92,31 @@ onSSE("run_started", (chatID, p) => {
 
 onSSE("run_finished", (chatID, p) => {
   trackRun(p.workflow_id);
-  // Recorded even here: the launching chat is what a LATER re-open nests under, and
-  // a client that joined after the run ended still needs it.
+  // Recorded even here: a later re-open nests under the launching chat.
   noteRunChat(p.workflow_id, chatID);
-  // `paused` keeps the run in the live inventory: it is stopped waiting for
-  // something, not over (KAS reports an onMaxIterations policy stop through
-  // this same frame), and the server's lease survives a pause the same way.
-  // Anything else — the four terminal statuses and any status this client
-  // does not recognise — is an ending, matching toastCompletion below.
+  // `paused` stays live: stopped waiting for something, not over. Anything
+  // else is an ending.
   if (p.status !== "paused") {
     noteRunSettled(p.workflow_id);
   }
-  // Deliberately NOT opened. A run that finished before anyone looked has nothing
-  // live to watch, and a tab appearing at the moment work ENDS is noise; History is
-  // the door to a finished run.
+  // Deliberately NOT opened: a run that finished before anyone looked has
+  // nothing live to watch. History is the door to a finished run.
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);
   toastCompletion(p.status, p.name);
-  // AFTER the toast, which is what the closing tab is traded for: the strip stops
-  // carrying a row for work that is over, and the toast is what says the work is
-  // over. Which tabs qualify is run-view.ts's — a tangent's sub-tab is
-  // unreachable from there, and so is any run tab a reader opened themselves.
+  // AFTER the toast: the strip stops carrying a row for work that is over,
+  // and the toast is what says the work is over.
   autoCloseRunSubTab(p.workflow_id, p.status);
 });
 
-// A PARENTLESS run's step content, and the one run event that is not an
-// invalidation — there is nothing to invalidate, because a step's transcript is
-// not in `inspect` and no endpoint serves it. So this is the only frame whose
-// payload is READ rather than used as a signal to refetch.
+// A parentless run's step content — the one run event that is not an
+// invalidation, since a step's transcript is not in `inspect` and no
+// endpoint serves it. Reaches exactly one surface: the run tab holding the
+// card whose step rows the content belongs in.
 //
-// It reaches exactly one surface. The run tab holds the card whose step rows the
-// content belongs in, and it drops a frame naming a run it is not showing; the
-// event is workspace-global (a parentless run has no chat to address), so every
-// client receives every run's steps and the tab is what narrows that.
-//
-// A chat-parented run raises none of these: its steps travel as ordinary blocks on
-// the launching chat's connection and already reach that chat's transcript, keyed
-// by `_meta.kiro.workflow`. See internal/agent/run_host.go for the split.
+// A chat-parented run raises none of these: its steps travel as ordinary
+// blocks on the launching chat's connection, keyed by `_meta.kiro.workflow`.
 onSSE("run_step", (_chatID, p) => {
   applyRunStep(p);
 });
@@ -173,14 +124,12 @@ onSSE("run_step", (_chatID, p) => {
 onSSE("run_progress", (chatID, p) => {
   trackRun(p.workflow_id);
   noteRunChat(p.workflow_id, chatID);
-  // A progress frame is proof of life: a client that missed run_started (a
-  // mid-run join, a rebuild that raced a fresh launch) re-learns the run here.
+  // A progress frame is proof of life: a client that missed run_started
+  // re-learns the run here.
   noteRunLive(p.workflow_id, chatID);
-  // Also opens, because `run_started` can be missed: a client that connects mid-run
-  // gets no replay of it (the run events are not in the SSE replay ring's
-  // pending-state synthesis), so the progress frames are the only door left. It
-  // cannot fight a reader who closed the tab: `openRunSubTab` offers once per run
-  // per client, so a close is final for the automatic path.
+  // Also opens, since `run_started` can be missed (run events are not in
+  // the SSE replay ring). `openRunSubTab` offers once per run per client,
+  // so a close stays final for the automatic path.
   openRunSubTab(p.workflow_id, "Workflow run", chatID);
   invalidateRun(p.workflow_id);
 });

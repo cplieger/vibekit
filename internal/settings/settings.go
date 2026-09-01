@@ -52,10 +52,9 @@ const Filename = filename
 
 // cache provides freshness-checked caching for config.json reads. Staleness is
 // three legs — atomicfile.FileIdentity (mtime AND os.SameFile) plus size —
-// because neither pair alone catches both a rename-published generation of equal
-// length inside one clock tick (same mtime, new inode) and an in-place rewrite of
-// different length (same inode, new size). config.json gets both: the settings
-// handler publishes by rename, the operator edits the volume in place.
+// because neither pair alone catches both a rename-published generation of
+// equal length inside one clock tick (same mtime, new inode) and an in-place
+// rewrite of different length (same inode, new size).
 type cache struct {
 	id        atomicfile.FileIdentity
 	sfGroup   singleflight.Group
@@ -143,15 +142,10 @@ func (c *cache) reload() ([]byte, error) {
 // caller can cache them under that generation's identity.
 //
 // OpenRegular, not os.Open: os.Open on a FIFO blocks in open(2) until a writer
-// appears and no context deadline rescues it (measured on go1.27.0 — os.Open over
-// a FIFO was still blocked past 2s). config.json sits on the /config volume the
-// operator reshapes and the agent's own shell can reach, and the caller runs
-// inside a singleflight slot, so one mkfifo wedged every concurrent settings
-// reader behind it — including the agent-ignore filter and the prompt path.
-// OpenRegular refuses a FIFO, directory, device node or socket with
-// ErrNotRegular, and refuses a symlink at the final component, which stops a link
-// at config.json from making another file's bytes decide the agent read filter and
-// the retention window.
+// appears with no context deadline rescuing it (measured on go1.27.0). Since the
+// caller runs inside a singleflight slot, one mkfifo would wedge every concurrent
+// settings reader behind it. OpenRegular refuses a FIFO, directory, device node
+// or socket with ErrNotRegular, and refuses a symlink at the final component.
 func readRegular(path string) (data []byte, info os.FileInfo, err error) {
 	f, info, err := atomicfile.OpenRegular(path)
 	if err != nil {
@@ -201,15 +195,14 @@ func (c *cache) forget() {
 	c.gen++
 }
 
-// readBytes returns the raw config.json content for configDir with
-// mtime-based caching. Returns (nil, nil) when the file is missing
-// or configDir is empty.
+// readBytes returns the raw config.json content for configDir with mtime-based
+// caching. Returns (nil, nil) when the file is missing or configDir is empty.
 //
-// UNEXPORTED, and that is the aliasing fix: the returned slice IS the cache's
-// own, so a caller that wrote into it would change what every later reader sees,
-// process-wide. Held to the one caller that provably only reads it (parsedMap
-// hands it to json.Unmarshal), the sharing costs nothing and saves a copy of the
-// file per key lookup.
+// UNEXPORTED: the returned slice IS the cache's own, shared process-wide, so an
+// exported accessor would let any caller corrupt every other reader's view —
+// including the agent_ignore_files list that decides which files the agent may
+// read. Held to the one caller that provably only reads it (parsedMap hands it
+// to json.Unmarshal).
 func readBytes(ctx context.Context, configDir string) ([]byte, error) {
 	if configDir == "" {
 		return nil, nil
@@ -229,12 +222,11 @@ var errKeyParse = errors.New("settings: parse")
 // FieldStrict is Field with the unreadability channel kept separate from
 // absence. found reports that the key was PRESENT and decoded; err reports that
 // config.json exists and could not be read or parsed. Exactly one of them is
-// ever meaningful: (zero, false, nil) is a legitimately absent key or a missing
-// file, and (zero, false, err) is a file that is there and unusable.
+// ever meaningful.
 //
 // The split exists because a caller gating a destructive action cannot treat
-// those two the same. Field folds them, which is correct for a caller whose
-// fallback is a display default and wrong for one whose fallback deletes.
+// those two the same; Field folds them, which is correct only for a caller
+// whose fallback is a display default.
 func FieldStrict[T any](ctx context.Context, configDir, key string) (value T, found bool, err error) {
 	var zero T
 	raw, err := parsedMap(ctx, configDir)

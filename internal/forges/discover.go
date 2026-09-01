@@ -1,19 +1,14 @@
-// CLI-native forge discovery (the read verb of auth.go's model).
-//
 // Connection state comes from each CLI's own machine-readable status
-// output — never from parsing its config files:
+// output, never from parsing its config files: gh's `auth status
+// --json hosts`, tea's `logins list -o json`, and glab's read-only
+// config parser (glab ships no JSON status output; see
+// glab_config.go).
 //
-//	gh:   gh auth status --json hosts   (storage-agnostic: sees keyring
-//	      tokens the old hosts.yml parser could not)
-//	tea:  tea logins list -o json
-//	glab: read-only config parser (glab ships no JSON status output;
-//	      see glab_config.go — the one documented exception)
-//
-// Connected derives from PRESENCE (host + login) only. gh's status
-// output also carries a network-tested "state" field per account;
-// consuming it would import network weather into the 30s-TTL forge
-// list, so it is deliberately ignored — Manager.Probe remains the only
-// network-verification, Connected-flipping path.
+// Connected derives from presence (host + login) only. gh's status
+// output also carries a network-tested "state" field; consuming it
+// would import network weather into the 30s-TTL forge list, so it is
+// deliberately ignored — Manager.Probe is the only network-verifying,
+// Connected-flipping path.
 
 package forges
 
@@ -26,18 +21,15 @@ import (
 )
 
 // ghStatusAccount is one account entry in `gh auth status --json hosts`.
-// The full shape carries state/tokenSource/scopes/gitProtocol too; only
-// presence fields are decoded (see the package comment).
 type ghStatusAccount struct {
 	Login  string `json:"login"`
 	Active bool   `json:"active"`
 }
 
-// ghAuthHosts returns host → login for every account gh knows about.
-// gh exits non-zero when any host's check errors AND when no hosts are
-// configured, but still prints the JSON in the former case — so the
-// stdout is decoded regardless of the exit status, and only an
-// undecodable output with a real error propagates.
+// ghAuthHosts returns host -> login for every account gh knows about.
+// gh exits non-zero when any host's check errors AND when no hosts
+// are configured, but still prints the JSON in the former case, so
+// stdout is decoded regardless of exit status.
 func ghAuthHosts(ctx context.Context) (map[string]string, error) {
 	out, err := runCmd(ctx, CmdTimeout, nil, "gh", "auth", "status", "--json", "hosts")
 	if errors.Is(err, ErrNotInstalled) {
@@ -69,16 +61,13 @@ func ghAuthHosts(ctx context.Context) (map[string]string, error) {
 	return hosts, nil
 }
 
-// teaLoginInfo is one entry in `tea logins list -o json`. tea also
-// emits ssh_host and a STRING "default" field; neither is needed.
+// teaLoginInfo is one entry in `tea logins list -o json`.
 type teaLoginInfo struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 	User string `json:"user"`
 }
 
-// host returns the login's URL hostname, or "" when the URL is
-// unparseable.
 func (l teaLoginInfo) host() string {
 	u, err := url.Parse(strings.TrimSpace(l.URL))
 	if err != nil {

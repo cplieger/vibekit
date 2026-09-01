@@ -3,28 +3,15 @@ package translate
 // v3 (KAS) Infrastructure-Safety notification handlers:
 // _kiro/safety/statusChanged and _kiro/safety/propertiesChanged.
 //
-// DEFENSIVE / FORWARD-LOOKING (mirrors code_references.go). KAS's
-// Infrastructure-Safety gate evaluates infrastructure-as-code tool calls
-// (Terraform / CloudFormation / CDK / Docker / k8s / …) against safety
-// properties "formalized" by a remote MCP endpoint (runtime.us-east-1.kiro.dev),
-// and emits these notifications as it runs. But the gate only installs — and so
-// these only fire — when BOTH:
-//   - the client declares the infrastructureSafety capability in initialize
-//     (vibekit does; see internal/bridge/bridge.go), AND
-//   - an AWS governance flag (infraSafetyMonitor|infraSafetyEnforce) is enabled
-//     (modelConfigProvider.isFeatureEnabled — off by default on individual /
-//     Builder-ID accounts, verified absent from _kiro/governance/state on a live
-//     probe).
+// Defensive / forward-looking (mirrors code_references.go). The gate only
+// installs — and these only fire — when both the client declares the
+// infrastructureSafety capability AND an AWS governance flag is enabled
+// (off by default on individual / Builder-ID accounts). So on a normal
+// account these never fire and getProperties returns {properties:[]}.
+// Authoring is entirely out-of-band: properties are formalized remotely;
+// there is no client RPC to create/set/toggle one.
 //
-// So on a normal account these never fire and getProperties returns
-// {properties:[]}. These handlers exist so the state surfaces IF an enterprise
-// account has the gate enabled — the same basis on which code_references was
-// wired. Authoring is entirely out-of-band: properties are formalized remotely;
-// there is no client RPC to create/set/toggle one (verified: 0 setter methods
-// on the acp surface). This is Kiro's infra guardrail, distinct from vibekit's
-// autopilot-backed supervised mode (vibekit-acp.md).
-//
-// Wire shapes (verified against the KAS 2.12 acp-server bundle):
+// Wire shapes:
 //
 //	statusChanged     { status, detail?, blockedProperties?, toolId? }   (no sessionId)
 //	propertiesChanged { sessionId, properties, reason }
@@ -71,21 +58,17 @@ type v3SafetyPropertiesChanged struct {
 }
 
 // HandleSafetyStatusChanged translates _kiro/safety/statusChanged into a
-// safety_status SSE (chat-scoped). status="idle" is forwarded too — the client
-// uses it to clear a stale banner.
+// safety_status SSE (chat-scoped). status="idle" is forwarded too — the
+// client uses it to clear a stale banner.
 //
-// Enforcement model (verified against the KAS 2.12 acp-server bundle): the gate
-// is a PreToolUse hook wrapping the tool executor. In ENFORCE mode a blocked
-// write/shell tool is INTERCEPTED before execution — KAS returns the block as
-// the tool's own result ("The tool was NOT executed") and never calls the inner
-// executor, so it never issues the fs/write_text_file A→C request to us. Vibekit
-// therefore cannot circumvent an enforced block: its fs write handler
-// (agent.respondFSWrite) only ever writes in response to a KAS request, and a
-// blocked tool produces no request. This handler's job is to SURFACE the
-// refusal, not to gate a write (there is no write to gate). A block is
-// non-tool-scoped here: the notification's toolId is the tool NAME (fs_write /
-// str_replace / …), not the per-call tool_call id we round-trip, so it cannot
-// be correlated to a specific rendered tool card.
+// Enforcement model: the gate is a PreToolUse hook wrapping the tool
+// executor. In enforce mode a blocked write/shell tool is intercepted
+// before execution — KAS returns the block as the tool's own result and
+// never issues the fs/write_text_file request to us. This handler's job
+// is to surface the refusal, not to gate a write. A block is
+// non-tool-scoped here: the notification's toolId is the tool NAME, not
+// the per-call tool_call id, so it cannot be correlated to a specific
+// rendered tool card.
 func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3SafetyStatusChanged](msg, "safety/statusChanged")
 	if !ok {
@@ -113,12 +96,10 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibek
 	}
 }
 
-// persistSafetyBlock records an ENFORCE-mode Infrastructure-Safety block as a
-// permanent inline event message on the chat. Chat-scoped: statusChanged
-// carries no sessionId (KAS routes it per-session via the outbound, not in
-// params) and its toolId is a tool name, so the refusal annotates the chat, not
-// a specific tool card. Persist failures are logged, not fatal — a missed
-// breadcrumb never blocks the stream.
+// persistSafetyBlock records an enforce-mode Infrastructure-Safety block
+// as a permanent inline event message on the chat. Chat-scoped:
+// statusChanged carries no sessionId and its toolId is a tool name, so
+// the refusal annotates the chat, not a specific tool card.
 func (t *Translator) persistSafetyBlock(ctx context.Context, chatID vibekit.ChatID, p v3SafetyStatusChanged) {
 	evt := t.newEventMessage(vibekit.EventInfraSafetyBlocked, safetyBlockContent(p))
 	err := t.chats.AppendMessage(ctx, chatID, &evt)

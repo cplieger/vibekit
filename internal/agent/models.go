@@ -38,9 +38,8 @@ func cheapestModel(_ context.Context, catalog []vibekit.SessionModel) string {
 }
 
 // excludedTags are the bracketed markers that disqualify a model from
-// ambient-task selection: the hidden set plus two more. [internal] and
-// [experimental] models are SHOWN in the picker and only skipped here, which is
-// why this policy is runtime's and modeltext.Hidden is not widened to cover it.
+// ambient-task selection: the hidden set plus [internal]/[experimental], which
+// are shown in the picker and only skipped here.
 var excludedTags = append(modeltext.HiddenTags(), "[internal]", "[experimental]")
 
 // modelExcluded returns true if the text contains any bracketed tag

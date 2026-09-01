@@ -70,11 +70,10 @@ func (h *Handler) resolveZipPaths(w http.ResponseWriter, reqPaths []string) (pat
 	return paths, true
 }
 
-// zipStream carries the mutable accounting for one streaming-zip
-// response. Hoisting the directory walk onto named methods (instead of
-// a deeply-nested recursive closure) keeps handleDownloadZip's
-// control-flow flat; the size/count caps and the os.Root confinement
-// are unchanged.
+// zipStream carries the mutable accounting for one streaming-zip response.
+// Hoisting the directory walk onto named methods keeps handleDownloadZip's
+// control-flow flat; the size/count caps and the os.Root confinement are
+// unchanged.
 type zipStream struct {
 	zw         *zip.Writer
 	flusher    http.Flusher
@@ -89,12 +88,11 @@ func (z *zipStream) capped() bool {
 	return z.ctx.Err() != nil || z.fileCount >= maxZipFiles || z.totalBytes >= maxZipBytes
 }
 
-// add writes one entry (file or directory, recursively) into the zip.
-// It returns false to stop the whole stream (caps hit, context
-// cancelled, or a fatal zip-writer error) and true to continue with
-// the next sibling. An unreadable entry is skipped (logged, true).
-// Recursion stays inside l's mount by construction (children join onto
-// the parent's location), so every open goes through that mount's root.
+// add writes one entry (file or directory, recursively) into the zip. It
+// returns false to stop the whole stream and true to continue with the
+// next sibling. An unreadable entry is skipped (logged, true). Recursion
+// stays inside l's mount by construction, so every open goes through that
+// mount's root.
 func (z *zipStream) add(l loc, zipName string) bool {
 	if z.capped() {
 		return false

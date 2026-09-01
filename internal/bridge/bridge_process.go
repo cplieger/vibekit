@@ -290,7 +290,6 @@ func localeEnv() []string {
 // killed the process: see bridge_session.go applyInitialModel /
 // applyInitialEffort for the config-option path that replaces it.
 func buildACPArgs(engine string) []string {
-	// The agent engine determines which ACP methods the agent registers.
 	// Default to v3 (KAS); vibekit is v3-only. v3 requires the host to
 	// answer the _kiro/auth/getAccessToken + _kiro/terminal/shell_type
 	// callbacks (see internal/agent/bridge_v3_auth.go).

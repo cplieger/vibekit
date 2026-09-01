@@ -5,15 +5,11 @@
 // Editing is a FILE write (internal/policyfile) that KAS hot-reloads — not
 // an RPC — so this file is purely the reader.
 //
-// The queries route through the long-lived utility bridge (same pattern as
-// account_usage.go / spec.go / knowledge.go) so the Permissions panel works
-// with no chat open. list is synchronous and explain is a pure simulation
-// (verified to raise no consent prompt), so neither has a side effect on the
-// agent — unlike policy/check, which is deliberately never called.
-//
-// The read pair is declared at its consumer (internal/server's policyProvider);
-// server.WithPolicy(h) in the composition root is what forces the check, so
-// there is no assertion here.
+// The queries route through the long-lived utility bridge so the Permissions
+// panel works with no chat open. list is synchronous and explain is a pure
+// simulation (verified to raise no consent prompt), so neither has a side
+// effect on the agent — unlike policy/check, which is deliberately never
+// called.
 
 package agent
 
@@ -29,16 +25,13 @@ import (
 
 // policyCallTimeout bounds one _kiro/permissions/{list,explain} round-trip.
 // Both hold the single utility mutex across bridge.Call, so without a
-// deadline a wedged list/explain would starve every other utility read
-// (chat auto-rename, explain-error, commit-msg, account-usage). Matches the
-// 45s the knowledge/spec sibling reads use.
+// deadline a wedged list/explain would starve every other utility read.
 const policyCallTimeout = 45 * time.Second
 
-// buildUtility is the lease's constructor, handed to it at wiring time. It lives
-// here rather than inside the lease because of what it CLOSES OVER: two Settings
-// hooks and the token source, all of which point back into runtime services while
-// those same services lease the utility runtime. Keeping the construction at the
-// wiring site is what keeps that bidirectional edge visible.
+// buildUtility is the lease's constructor, handed to it at wiring time. It
+// lives here rather than inside the lease because of what it CLOSES OVER: two
+// Settings hooks and the token source, all of which point back into runtime
+// services while those same services lease the utility runtime.
 func (rt *Runtime) buildUtility() *utilityRuntime {
 	return newUtilityRuntime(
 		rt.lifecycle.shutdownCtx, rt.bridge.factory, rt.Models,
@@ -56,12 +49,10 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 	)
 }
 
-// forwardPolicyNotification hands a _kiro/policy/{changed,error} notification the
-// UTILITY session received to the same translator the chat dispatch table uses,
-// so one decode and one payload shape serve both doors. Both events are
-// broadcast workspace-global (empty chatID) and are pure invalidations, so a
-// chat bridge and the utility session both reporting the same reload costs the
-// client one extra refetch and nothing else.
+// forwardPolicyNotification hands a _kiro/policy/{changed,error} notification
+// the UTILITY session received to the same translator the chat dispatch table
+// uses, so one decode and one payload shape serve both doors. Both events are
+// broadcast workspace-global (empty chatID).
 //
 // context.Background(), like broadcastHooksChanged: forward is a goroutine with
 // no request behind it, and the frame it carries must not be dropped because

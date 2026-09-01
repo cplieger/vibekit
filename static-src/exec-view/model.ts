@@ -1,84 +1,58 @@
-// ---------------------------------------------------------------------------
-// The EXEC VIEW's model: delegated work, as a tree of nodes over time.
+// The exec view's model: delegated work, as a tree of nodes over time.
 //
-// This family renders a full-page view of work THIS agent did not do itself. A
-// workflow run is the first consumer; a subagent or an `orchestrate_subagent`
-// pipeline in its own tab is the next, and the two have the same shape, so the
-// views take this model rather than KAS's `NodeStateSchema`:
+// A workflow run, a subagent, and an `orchestrate_subagent` pipeline share this
+// shape rather than KAS's `NodeStateSchema`, so nothing below names a workflow.
+// Each consumer writes an adapter folding its own source into `ExecRun` (the
+// workflow's is `run-exec-source.ts`); the panes never learn where a node came
+// from.
 //
-//   a workflow run   sequence / repeat / parallel / watch / step, per-step
-//                    sessions, per-step transcripts, per-node timings
-//   a pipeline       one driver, N stages, each stage its own transcript —
-//                    the same tree one level deep
-//   a subagent       one node with a transcript, which is that tree with one leaf
-//
-// So NOTHING below names a workflow. Each consumer writes an ADAPTER that folds
-// its own source into `ExecRun` (the workflow's is `run-exec-source.ts`) and the
-// panes never learn where a node came from. That boundary is what makes the
-// second consumer a new adapter rather than a second page.
-//
-// It is deliberately NOT the wire shape of anything. `run-store.ts` keeps KAS's
-// `state` verbatim because a second representation of a foreign structure is a
-// thing to keep in sync; this is a THIRD kind of type — a presentation model
-// derived on read, held by nobody, and answering only what a pane draws. Adding a
-// field here costs an adapter a line and costs the wire nothing.
-// ---------------------------------------------------------------------------
+// Deliberately not the wire shape of anything, and a third representation
+// alongside `run-store.ts`'s verbatim KAS state: this one is derived on read,
+// held by nobody, and answers only what a pane draws.
 
 import type { ExecState } from "./status.js";
 
-/** What KIND of node this is, which decides its glyph and how it reads.
- *
- *  `group` is the catch-all for a container the source has no better word for,
- *  and it exists so an adapter for a source this file has never seen still has a
- *  legal value — the alternative is an adapter inventing a kind the CSS has no
- *  rule for, which renders as nothing. */
+/** What KIND of node this is: glyph and reading. `group` is the catch-all for a
+ *  container the source has no better word for, so an adapter for an unseen
+ *  source has a legal value rather than inventing one the CSS has no rule for. */
 export type ExecKind = "step" | "sequence" | "repeat" | "parallel" | "watch" | "group";
 
-/** One labelled fact about a node, for the detail pane's identity list.
- *
- *  A LIST rather than named fields, because the interesting facts are the
- *  source's own and differ per source: a workflow step has an agent, a model, an
- *  effort tier and a completion signal, while a pipeline stage has a stage name
- *  and a tool-call id. Naming them here would mean this file grows a field per
- *  source, which is the god-object shape one convenience at a time. */
+/** One labelled fact about a node, for the detail pane's identity list. A LIST
+ *  rather than named fields, because the interesting facts differ per source. */
 export interface ExecFact {
   label: string;
   value: string;
-  /** Rendered monospace: an id, a path, a model name. Prose stays proportional. */
+  /** Rendered monospace: an id, a path, a model name. */
   mono?: boolean;
 }
 
 /** A node of the execution tree. */
 export interface ExecNode {
-  /** Stable, instance-unique address. The tree's react key, the selection key,
-   *  and the key a transcript is filed under — so a repeat's second iteration
-   *  must differ from its first, which a node ID alone cannot do. */
+  /** Stable, instance-unique address: the tree's react key, the selection key, and
+   *  the key a transcript is filed under (a repeat's second iteration must differ
+   *  from its first, which a node ID alone cannot do). */
   path: string;
-  /** What the row says. The step's own name, not its path. */
+  /** What the row says: the step's own name, not its path. */
   label: string;
   kind: ExecKind;
   state: ExecState;
   children: ExecNode[];
-  /** ISO timestamps, when the source has them. Both absent on a node that has
-   *  not started; `end` absent on one still going. */
+  /** ISO timestamps, when the source has them. */
   start?: string;
   end?: string;
-  /** The one-line summary under the label: who ran it, on what. Pre-joined by the
-   *  adapter, because what belongs there is the source's judgement. */
+  /** The one-line summary under the label, pre-joined by the adapter. */
   subtitle?: string;
   /** The identity facts, for the detail pane. */
   facts?: ExecFact[];
-  /** Why this node ended badly, verbatim. Drives the row's emphasis and the
-   *  detail pane's callout. */
+  /** Why this node ended badly, verbatim. */
   failure?: string;
-  /** What the node produced, as markdown. A workflow step's `capturedOutput`; a
-   *  stage's final message. */
+  /** What the node produced, as markdown. */
   output?: string;
   /** Named artifacts the node published. */
   artifacts?: Record<string, string>;
   /** Whether this node can host a live transcript. False for a container, and for
-   *  a leaf whose source streams nothing — which is what lets the detail pane say
-   *  "there is no transcript here" rather than "none has arrived yet". */
+   *  a leaf whose source streams nothing — lets the detail pane say "there is no
+   *  transcript here" rather than "none has arrived yet". */
   transcript?: boolean;
 }
 
@@ -86,36 +60,26 @@ export interface ExecNode {
 export interface ExecRun {
   /** The id the route and the store key on. */
   id: string;
-  /** What to call this execution. */
   label: string;
-  /** The overall state, which is NOT derivable from the nodes: a run can be
-   *  `paused` with every node settled, and a source knows its own answer. */
+  /** The overall state, NOT derivable from the nodes: a run can be `paused` with
+   *  every node settled, and only the source knows its own answer. */
   state: ExecState;
-  /** The tree's roots. A list rather than one root, so a source with several
-   *  top-level nodes needs no synthetic parent. */
+  /** The tree's roots. A list, so a source with several top-level nodes needs no
+   *  synthetic parent. */
   nodes: ExecNode[];
-  /** What this execution was ASKED to do. Rendered in the header, because for a
-   *  workflow run it is the launcher's inputs and nothing in the app has ever
-   *  shown them. */
+  /** What this execution was asked to do. */
   inputs?: Record<string, string>;
   /** Run-level named results, merged from artifacts and captured outputs. */
   outputs?: Record<string, string>;
-  /** One line about why the execution wants a person: an unanswered ask, a pause
-   *  reason, a deliberate stop, a failure. Pre-composed by the adapter, since the
-   *  precedence between those is the source's business. */
+  /** One line about why the execution wants a person, pre-composed by the adapter. */
   alert?: { kind: "input" | "paused" | "stopped" | "failed"; text: string };
-  /** The node the page should OPEN on, when the reader has not clicked one.
+  /** The node the page should open on when the reader has not clicked one.
    *
-   *  A second consumer's requirement rather than the workflow's, and the asymmetry
-   *  is in the doors. A run has ONE door meaning "the run", so the page follows the
-   *  work and opens on whatever wants attention. A subagent expansion has one door
-   *  PER delegate: a stage's link in the transcript means "open THIS stage", and
-   *  landing on a sibling because that sibling happened to be running would answer a
-   *  question nobody asked.
-   *
-   *  Honoured as a pre-registered PICK, not as a preference — a door that names a
-   *  node is a choice, so it also stops the auto-follow, exactly as a click does.
-   *  Absent is the workflow's shape and changes nothing. */
+   *  A run has ONE door meaning "the run", so the page follows the work. A
+   *  subagent expansion has one door PER delegate, so a stage's link means "open
+   *  THIS stage" and landing on a sibling would answer a question nobody asked.
+   *  Honoured as a pre-registered pick: naming a node also stops the auto-follow,
+   *  as a click does. Absent is the workflow's shape. */
   focus?: string;
   /** Whether anything is still moving, so the page knows to run its clock. */
   live: boolean;
@@ -136,9 +100,8 @@ export function flatten(nodes: readonly ExecNode[]): ExecNode[] {
   return out;
 }
 
-/** The nodes that DO work, which is what a progress count and a timeline are
- *  about. A container's duration is its children's span, so counting it would
- *  double-count the time and inflate the step total. */
+/** The nodes that DO work: a container's duration is its children's span, so
+ *  counting it would double-count time and inflate the step total. */
 export function leaves(nodes: readonly ExecNode[]): ExecNode[] {
   return flatten(nodes).filter((n) => n.children.length === 0);
 }
@@ -148,8 +111,8 @@ export interface ExecCounters {
   done: number;
   failed: number;
   /** The 1-based position of the running leaf, or 0 when none is. The RUNNING one
-   *  rather than `done + 1`, because a skipped leaf would shift the count and a
-   *  parallel node has several in flight. */
+   *  rather than `done + 1`: a skipped leaf would shift the count and a parallel
+   *  node has several in flight. */
   current: number;
 }
 
@@ -193,9 +156,8 @@ export function elapsed(start: string | undefined, end: string | undefined): num
 /** The execution's own window: earliest start to latest end, or to now while
  *  anything is still going.
  *
- *  Derived from the LEAVES rather than from a root node's stamps, because a source
- *  may not stamp its containers at all — and the leaves are what a timeline draws,
- *  so the window has to be the one they are placed in or the bars leave the box. */
+ *  Derived from the LEAVES, not a root node's stamps: a source may not stamp its
+ *  containers at all, and the leaves are what a timeline draws. */
 export interface ExecWindow {
   from: number;
   to: number;
@@ -223,7 +185,7 @@ export function window(nodes: readonly ExecNode[], live: boolean): ExecWindow | 
   if (live) {
     to = Math.max(to, Date.now());
   }
-  // A floor of 1ms, so a run that started and finished inside one clock tick
-  // divides by something and its bars have a width rather than collapsing.
+  // A floor of 1ms so a run that starts and finishes in one clock tick still
+  // divides by something and its bars have a width.
   return { from, to, span: Math.max(1, to - from) };
 }

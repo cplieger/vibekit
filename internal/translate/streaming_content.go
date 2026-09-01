@@ -14,12 +14,11 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// emit publishes an event describing frames that folded into buf, unless that turn
-// is MUTED (buffer.Buffer.muted owns why).
+// emit publishes an event describing frames that folded into buf, unless
+// that turn is muted (buffer.Buffer.muted owns why).
 //
-// One funnel rather than a check at each of the eight turn-content broadcast
-// sites: the version that enumerated sites is the version that left three leaks.
-// An event that does not describe folded content goes straight to the bus.
+// One funnel rather than a check at each broadcast site: an event that
+// does not describe folded content goes straight to the bus.
 func (t *Translator) emit(ctx context.Context, buf *buffer.Buffer, evt vibekit.ServerEvent) {
 	if buf != nil && buf.Muted() {
 		return
@@ -63,28 +62,25 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 		subtask = workflowSubtask
 	}
 
-	// kiro-cli's security filter cancelled a tool call: this chunk IS the whole
-	// notice, and no session/prompt response is coming (see interrupt_marker.go).
-	// Detected BEFORE the steer filter so the two never eat each other's text,
-	// and ACTED ON at the very end of this function, because the notice has to
+	// kiro-cli's security filter cancelled a tool call: this chunk is the
+	// whole notice, and no session/prompt response is coming. Detected
+	// before the steer filter so the two never eat each other's text,
+	// acted on at the very end of this function since the notice has to
 	// reach the transcript before the turn is torn down.
 	//
-	// Skipped for a workflow STEP frame. A step's chunks arrive on the launching
-	// chat's connection, but vibekit issued no session/prompt for the step, so
-	// there is no prompt call to release and the only stop verb is run-scoped.
-	// The run's own hour ceiling catches it instead — which mis-attributes the
-	// cause on the History row, and is the follow-up rather than a reason to
-	// cancel the parent chat's live turn from a step's frame.
+	// Skipped for a workflow step frame: a step's chunks arrive on the
+	// launching chat's connection, but vibekit issued no session/prompt
+	// for the step, so there is no prompt call to release. The run's own
+	// hour ceiling catches it instead.
 	interrupted := !isReasoning && workflowSubtask == "" && isInterruptSentinel(chunk.Content.Text)
 
-	// Strip the steering acknowledgement marker before anything reads the text.
-	// All three consumers below — the content builder, the block array and the
-	// SSE delta — take the same string, so filtering once here covers the live
-	// render, the persisted message and the mid-turn reconnect snapshot together.
+	// Strip the steering acknowledgement marker before anything reads the
+	// text. All three consumers below take the same string, so filtering
+	// once here covers the live render, the persisted message and the
+	// mid-turn reconnect snapshot together.
 	//
-	// Text only: KAS's own recordSteeringAcks reads the marker from text entries
-	// and never from reasoning, and one stream means one carry (see
-	// steer_marker.go).
+	// Text only: KAS's own recordSteeringAcks reads the marker from text
+	// entries and never from reasoning, and one stream means one carry.
 	text := chunk.Content.Text
 	if !isReasoning {
 		prev, _ := buf.SteerCarry()
@@ -147,14 +143,9 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 			Refusal:        refusal,
 		}))
 
-	// LAST, and the ordering is the contract rather than tidiness. The host's
-	// teardown takes the buffer, so anything appended after it is lost — the
-	// notice has to be in the buffer and on the wire before the turn can end, or
-	// the user is left with a turn that stopped and no sentence saying why.
-	//
-	// No nil guard on the role, deliberately: requireWired panics at construction
-	// for an unwired one, and a silently-nil interrupt here would put the wedge
-	// back with nothing to say it had.
+	// Last, and the ordering is the contract: the host's teardown takes
+	// the buffer, so anything appended after it is lost — the notice has
+	// to be in the buffer and on the wire before the turn can end.
 	if interrupted {
 		slog.Warn("kiro-cli interrupted its own tool use; ending the turn",
 			"chat_id", chatID, "reason", interruptReason)
@@ -162,17 +153,15 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	}
 }
 
-// broadcastSteerAcks reports what the agent said it did about each steer whose
-// acknowledgement marker just closed.
+// broadcastSteerAcks reports what the agent said it did about each steer
+// whose acknowledgement marker just closed.
 //
-// It re-broadcasts steer_injected rather than introducing a second event type,
-// because the ack is a further fact about a steer the client already tracks by
-// id and the store's merge is already keyed on that id. A new event would have
-// bought nothing but a second handler and a second wire registration.
+// Re-broadcasts steer_injected rather than a new event type, since the
+// ack is a further fact about a steer the client already tracks by id.
 //
-// Text is deliberately EMPTY on this frame. The steer's own text lives in KAS's
-// buffer, not here, so the honest payload carries only what this layer learned;
-// the client merges by id and never overwrites the text it already holds.
+// Text is deliberately empty on this frame: the steer's own text lives
+// in KAS's buffer, so the client merges by id and never overwrites the
+// text it already holds.
 func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, acks []steerAck) {
 	for _, ack := range acks {
 		if ack.SteerID == "" || ack.Text == "" {
@@ -185,17 +174,15 @@ func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.Chat
 	}
 }
 
-// announceTruncation says once, in both directions, that a turn outgrew the
-// buffer and the rest of it is being dropped.
+// announceTruncation says once, in both directions, that a turn outgrew
+// the buffer and the rest of it is being dropped.
 //
-// Dropping is the only option — the cap exists so one pathological turn cannot
-// OOM the process — but dropping SILENTLY was the defect: the reply stopped
-// mid-sentence with nothing in the transcript and nothing in the log to say why,
-// which reads as a hang or as the model giving up.
+// Dropping is the only option — the cap exists so one pathological turn
+// cannot OOM the process — but dropping silently was the defect: the
+// reply stopped mid-sentence with nothing saying why.
 //
-// Exactly once, because frames keep arriving after the cap is hit and a notice
-// per frame would be a worse defect than the silence it replaced. The marker goes
-// where the user is looking and the log line goes where an operator is.
+// Exactly once, since frames keep arriving after the cap is hit and a
+// notice per frame would be worse than the silence it replaced.
 func (t *Translator) announceTruncation(
 	ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, subtask string, buffered int,
 ) {
@@ -230,27 +217,21 @@ func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
 	}
 }
 
-// HandlePlan persists the agent's plan as ONE row per turn.
+// HandlePlan persists the agent's plan as one row per turn.
 //
-// ACP resends the whole entries array on every plan update, so this is an upsert
-// rather than an append: the store overwrites this turn's plan row when there is
-// one. See chat.Store.UpsertTurnPlan for why the row is derived from the turn
-// boundary rather than remembered, and for what appending per frame cost.
-//
-// The id is minted here even on the update path and then discarded by the store,
-// because minting is the translator's (it owns newMsgID) while deciding which
-// row wins is the store's — the alternative is a read here to find out whether
-// an id is needed, which is a second trip and a race with nothing to gain.
+// ACP resends the whole entries array on every plan update, so this is
+// an upsert rather than an append: the store overwrites this turn's plan
+// row when there is one. See chat.Store.UpsertTurnPlan for what
+// appending per frame cost.
 func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p ACPPlanWire
 	if json.Unmarshal(raw, &p) != nil {
 		return
 	}
-	// A plan is turn CONTENT, so it takes the turn's fold target and obeys the same
-	// mute every other content frame obeys. This row is PERSISTED rather than
-	// broadcast, which is why the emit funnel could not cover it: a prime that
-	// emitted a plan wrote a transcript row while every other frame of that turn was
-	// suppressed, so the one turn guaranteed to leave no trace left this one.
+	// A plan is turn content, so it takes the turn's fold target and
+	// obeys the same mute every other content frame obeys: a prime that
+	// emitted a plan would otherwise write a transcript row while every
+	// other frame of that turn was suppressed.
 	if buf := t.buffers.TurnFoldTarget(ctx, chatID); buf != nil && buf.Muted() {
 		return
 	}

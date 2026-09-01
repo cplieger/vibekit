@@ -38,9 +38,9 @@ func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms Pendi
 	default:
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	// Take before responding, as CmdPermission does: the agent advances on the
-	// FIRST answer it receives, so a second tab's answer is both discarded and
-	// invisible, and the question the user actually answered stops being knowable.
+	// Take before responding, as CmdPermission does: the agent advances
+	// on the first answer it receives, so a second tab's answer is both
+	// discarded and invisible.
 	if !perms.TakePendingPerm(cmd.ChatID, p.RequestID, vibekit.SettledByUser) {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}

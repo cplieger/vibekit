@@ -39,7 +39,6 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 	if result.Token == "" {
 		return PollResult{Status: result.Status, Error: result.Error}, nil
 	}
-	// Token in hand. Ensure gh is installed and log it in natively.
 	if err := EnsureCLI(ctx, KindGitHub); err != nil {
 		return PollResult{Status: statusError, Error: fmt.Sprintf("install gh: %v", err)}, nil
 	}
@@ -79,13 +78,11 @@ func LoginWithPAT(ctx context.Context, p LoginPATParams) error {
 	if err := cliLogin(ctx, p.Kind, p.Host, p.Token); err != nil {
 		return err
 	}
-	// Validate end-to-end by calling whoami via the CLI.
 	provider, err := New(p.Kind, p.Host)
 	if err != nil {
 		return err
 	}
 	if _, err := provider.Whoami(ctx); err != nil {
-		// Roll back the bad login.
 		_ = cliLogout(ctx, p.Kind, p.Host)
 		return fmt.Errorf("validate: %w", err)
 	}

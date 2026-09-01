@@ -40,8 +40,8 @@ func CmdElicitationResponse(ctx context.Context, bridges BridgeAccess, perms Pen
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// Take before responding, for the same reason CmdPermission does: an
-	// elicitation form open in two tabs can be submitted twice, and the second
-	// ElicitResult is dropped by the MCP server's caller without a word.
+	// elicitation form open in two tabs can be submitted twice, and the
+	// second ElicitResult is silently dropped.
 	if !perms.TakePendingPerm(cmd.ChatID, p.RequestID, vibekit.SettledByUser) {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}

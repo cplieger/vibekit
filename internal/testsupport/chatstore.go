@@ -2,12 +2,9 @@
 // package's TEST binary needs, plus the contract suites those packages run
 // against both a fake and the real implementation.
 //
-// Membership has one rule: a double belongs here only while at least two
-// packages consume it. Five members left when that stopped being true —
-// NopACPBridge, NopBroadcaster and CaptureBroadcaster had no consumer outside
-// their own tests, and NopChatStore and NopMCPRecorder had exactly one, so they
-// moved into internal/translate's own _test.go where they could be sized to that
-// package's 3-method contract instead of the widest one going.
+// Membership rule: a double belongs here only while at least two packages
+// consume it. A double with a single consumer moves into that package's own
+// _test.go, sized to that package's contract rather than the widest one going.
 package testsupport
 
 import (
