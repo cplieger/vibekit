@@ -130,15 +130,11 @@ export interface ApprovalFile {
 }
 
 /**
- * AptPackage is one installed Debian package this engine does not manage:
- * something a user or an agent installed in the shell. Read-only — there is
- * no manifest row behind it, so nothing updates it and nothing can remove it
- * from here.
- * //
- * Reported so a consumer's tools surface can answer "what is on this box"
- * without pretending the engine installed it. A reader who wants one managed
- * adds it by name, which creates the row; until then the engine touches
- * neither the package nor apt's record of it.
+ * AptPackage is one installed Debian package this engine does not
+ * manage: something a user or an agent installed in the shell.
+ * Read-only, with no manifest row behind it. Reported so a consumer's
+ * tools surface can answer "what is on this box" without pretending the
+ * engine installed it.
  */
 export interface AptPackage {
   name: string;
@@ -1448,14 +1444,9 @@ export interface SearchHit {
   reason?: string;
   /**
  * Match names which field the query hit — see [toolbelt.MatchKind].
- * Empty for the featured set (there was no query) and for an
- * unavailable hit (that block is informational, not ranked against
- * the rest).
- * //
- * It is on the wire because a client cannot work it out: aliases are
- * not projected here, so a hit on `rg` looks exactly like a
- * description match on ripgrep's summary. A client that wants to
- * group, label or filter the weakest tier needs the answer stated.
+ * Empty for the featured set and for an unavailable hit. On the wire
+ * because a client cannot derive it: aliases are not projected here,
+ * so a hit on `rg` would look like a description match otherwise.
  */
   match?: string;
   featured?: boolean;
@@ -1480,34 +1471,16 @@ export interface SearchHit {
 }
 
 /**
- * SearchResponse is the search route's body.
- * //
- * Results carry the INSTALLABLE hits first — catalog entries and Debian
- * packages merged into ONE relevance order — then, only when the caller
- * asked for them, the catalog entries no install source exists for.
- * //
- * The two installable corpora are merged rather than blocked, because
- * blocking them made the best answer unreachable. Both are scored by the
- * same [toolbelt.Match] tiers, so concatenating them put every catalog
- * hit ahead of every Debian one whatever it scored: "python" answered
- * with sixteen catalog tools that merely mention Python in their
- * descriptions, and `python3` — a name-prefix hit, and the thing the
- * reader was looking for — sat seventeenth. Each corpus is still capped
- * independently by the engine, so one cannot crowd the other out of the
- * merge.
- * //
- * The unavailable block stays last and is deliberately NOT merged: it is
- * informational rather than actionable, so ranking it against rows a
- * caller can install would put a dead end above a live option. It is
- * OPT-IN via `?unavailable=1`, absent by default because a dialog
- * offering things to install has no use for a row it cannot act on, while
- * an agent reading this API does — it would rather be told a tool is
- * known and why it cannot be installed than get an empty result and
- * conclude the tool does not exist.
+ * SearchResponse is the search route's body: installable hits merged
+ * into one relevance order via [toolbelt.Match] (catalog and Debian, not
+ * concatenated — a bare concatenation put every catalog hit ahead of
+ * every Debian one regardless of score), then the opt-in unavailable
+ * block, kept separate and unranked since ranking a dead end above a
+ * live option would be wrong.
  * //
  * AptAvailable distinguishes "no Debian package matched" from "the
- * package list could not be consulted", which look identical in an empty
- * result and mean opposite things.
+ * package list could not be consulted" — identical in an empty result,
+ * opposite in meaning.
  */
 export interface SearchResponse {
   results: SearchHit[];
@@ -2089,32 +2062,21 @@ export interface ToolInfo {
   last_error?: string;
   /**
  * Checksum reports how the INSTALLED artifact's integrity was
- * established, copied from ToolStatus.Checksum: "verified" when the
- * definition declared a checksum source and the digest matched,
- * "unverified" when it declared none. Empty means the question does
- * not apply — the tool is not installed, or its source has no
- * artifact to checksum (npm, pip, cargo, go, apt, manual), where the
- * package manager or the distro archive owns verification.
- * //
- * A consumer showing a "no checksum" badge reads THIS, not the
- * source kind: whether verification happened is a fact about the
- * install that ran, and 252 of the catalog's aqua entries declare no
+ * established (copied from ToolStatus.Checksum): "verified" or
+ * "unverified" per the definition's declared checksum source, empty
+ * when the question does not apply (not installed, or a source with
+ * no artifact to checksum). A "no checksum" badge reads THIS, not
+ * the source kind — 252 of the catalog's aqua entries declare no
  * checksum while the other 402 do.
  */
   checksum?: string;
   requires?: string[];
   /**
  * Dependents names the ENABLED entries that require this tool,
- * directly (their Requires) or as the implied backend of their source
- * kind. It is the answer a consumer needs BEFORE it sends a disable
- * or a remove: without it, the only way to learn that typescript is
- * holding up typescript-language-server is to send the request and
- * read the 409 — a round trip whose refusal a browser also records as
- * a console error, for an outcome that was never exceptional.
- * //
- * Advisory, and deliberately not a substitute for the refusal: the
- * engine re-derives the set under the manifest lock, so a consumer
- * acting on a stale inventory is still refused.
+ * directly or as the implied backend of their source kind: what a
+ * consumer needs BEFORE sending a disable/remove, instead of
+ * learning it from a 409. Advisory only — the engine re-derives the
+ * set under the manifest lock, so a stale inventory is still refused.
  */
   dependents?: string[];
   pin?: boolean;
