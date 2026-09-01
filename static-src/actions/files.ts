@@ -75,12 +75,12 @@ export const createFolder = apiAction<CreateArgs>({
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
-// The one key in this file that was reachably BROKEN: the old form was
-// `files.rename:${dir}/${original}->${newName}`, and "->" is a legal
-// filename sequence — renaming "a" to "b->c" and "a->b" to "c" in the same
-// directory both produced the same key, so the second rename silently
-// replayed the first's cached 200 for the idempotency TTL. Joining the
-// three fields as components removes the ambiguity.
+  // The one key in this file that was reachably BROKEN: the old form was
+  // `files.rename:${dir}/${original}->${newName}`, and "->" is a legal
+  // filename sequence — renaming "a" to "b->c" and "a->b" to "c" in the same
+  // directory both produced the same key, so the second rename silently
+  // replayed the first's cached 200 for the idempotency TTL. Joining the
+  // three fields as components removes the ambiguity.
   idempotencyKey: (args) => joinKey("files.rename", args.dir, args.original, args.newName),
   request: ({ dir, original, newName }) => ({
     method: "POST",
