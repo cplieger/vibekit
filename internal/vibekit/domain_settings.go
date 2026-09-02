@@ -42,6 +42,9 @@ type EffectiveSettings struct {
 	// LastEffortModel is the model LastEffort was picked under; the seed applies
 	// only to a chat running that model (settings.KeyLastEffortModel).
 	LastEffortModel string `json:"last_effort_model"`
+	// LastMergeMethod is the PR merge method picked last ("squash" or "rebase"),
+	// the merge dialog's default. Empty means nothing picked yet.
+	LastMergeMethod string `json:"last_merge_method"`
 	// AgentIgnoreFiles is the ignore-file basename list the agent read filter
 	// applies. Its default is non-empty (settings.DefaultAgentIgnoreFiles), which
 	// is why an absent key must not read as the zero value: the client rendered an

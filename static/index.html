@@ -849,6 +849,40 @@
         </footer>
       </dialog>
 
+      <!-- PR merge modal: method chooser (squash/rebase) + confirm. -->
+      <dialog id="pr-merge-dialog" class="pr-dialog pr-merge-dialog" aria-label="Merge pull request">
+        <header class="pr-dialog-header">
+          <h3 class="pr-dialog-title" id="pr-merge-title">Merge pull request</h3>
+          <button type="button" class="icon-btn" data-pr-merge-close aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </header>
+        <div class="pr-dialog-body">
+          <p id="pr-merge-message" class="pr-merge-message"></p>
+          <fieldset class="pr-merge-methods">
+            <legend class="forge-field-label">Merge method</legend>
+            <label class="pr-merge-method">
+              <input type="radio" name="pr-merge-method" value="rebase">
+              <span class="pr-merge-method-text">
+                <span class="pr-merge-method-name">Rebase and merge</span>
+                <span class="pr-merge-method-desc">Replay the branch's commits onto the base, no merge commit.</span>
+              </span>
+            </label>
+            <label class="pr-merge-method">
+              <input type="radio" name="pr-merge-method" value="squash">
+              <span class="pr-merge-method-text">
+                <span class="pr-merge-method-name">Squash and merge</span>
+                <span class="pr-merge-method-desc">Fold the branch into one commit on the base.</span>
+              </span>
+            </label>
+          </fieldset>
+        </div>
+        <footer class="pr-dialog-footer">
+          <button type="button" class="btn-small" data-pr-merge-close>Cancel</button>
+          <button type="button" id="pr-merge-confirm-btn" class="btn-small btn-primary">Merge</button>
+        </footer>
+      </dialog>
+
       <!-- Editor view -->
       <div id="editor-view" class="hidden" data-tab-view>
         <div class="editor-page">

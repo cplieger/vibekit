@@ -465,6 +465,11 @@ export interface EffectiveSettings {
  */
   last_effort_model: string;
   /**
+ * LastMergeMethod is the PR merge method picked last ("squash" or "rebase"),
+ * the merge dialog's default. Empty means nothing picked yet.
+ */
+  last_merge_method: string;
+  /**
  * AgentIgnoreFiles is the ignore-file basename list the agent read filter
  * applies. Its default is non-empty (settings.DefaultAgentIgnoreFiles), which
  * is why an absent key must not read as the zero value: the client rendered an

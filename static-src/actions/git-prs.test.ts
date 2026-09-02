@@ -55,7 +55,7 @@ beforeEach(() => {
 });
 
 const prArgs = { forge_id: "gh1", owner: "org", name: "repo", pr_number: 5 };
-const mergeArgs = { ...prArgs, head_sha: "" };
+const mergeArgs = { ...prArgs, head_sha: "", method: "rebase" as const };
 const rerunArgs = { ...prArgs, head_sha: "" };
 
 /** The request URL of the Nth fetch the action framework issued. */
@@ -125,32 +125,48 @@ describe("closePR optimistic + rollback", () => {
 describe("merge head-commit pin", () => {
   it("sends the head SHA so the forge refuses a moved branch", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await mergePR.dispatch({ ...prArgs, head_sha: "aaaaaaa1111" });
-    expect(requestURL()).toBe("/api/forges/gh1/repos/org/repo/prs/5/merge?head_sha=aaaaaaa1111");
+    await mergePR.dispatch({ ...prArgs, head_sha: "aaaaaaa1111", method: "rebase" });
+    expect(requestURL()).toBe(
+      "/api/forges/gh1/repos/org/repo/prs/5/merge?head_sha=aaaaaaa1111&method=rebase",
+    );
   });
 
   it("omits the pin when the forge reported no head SHA", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
     await mergePR.dispatch(mergeArgs);
-    expect(requestURL()).toBe("/api/forges/gh1/repos/org/repo/prs/5/merge");
+    expect(requestURL()).toBe("/api/forges/gh1/repos/org/repo/prs/5/merge?method=rebase");
   });
 
   it("never asks for auto-merge on a plain merge", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await mergePR.dispatch({ ...prArgs, head_sha: "aaaaaaa1111" });
+    await mergePR.dispatch({ ...prArgs, head_sha: "aaaaaaa1111", method: "rebase" });
     expect(requestURL()).not.toContain("auto=");
+  });
+});
+
+describe("merge method", () => {
+  // The method must ALWAYS travel: an absent ?method= makes the backend
+  // default to a merge commit, which most repos here disallow — the
+  // silent cause of every "merge a green PR fails" report.
+  it("sends the chosen method on the merge route", async () => {
+    mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
+    await mergePR.dispatch({ ...prArgs, head_sha: "", method: "squash" });
+    const url = requestURL();
+    const q = new URLSearchParams(url.slice(url.indexOf("?")));
+    expect(q.get("method")).toBe("squash");
   });
 });
 
 describe("armAutoMerge", () => {
   it("arms on the merge route with auto=1 and the same pin", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await armAutoMerge.dispatch({ ...prArgs, head_sha: "aaaaaaa1111" });
+    await armAutoMerge.dispatch({ ...prArgs, head_sha: "aaaaaaa1111", method: "rebase" });
     const url = requestURL();
     expect(url.startsWith("/api/forges/gh1/repos/org/repo/prs/5/merge?")).toBe(true);
     const q = new URLSearchParams(url.slice(url.indexOf("?")));
     expect(q.get("auto")).toBe("1");
     expect(q.get("head_sha")).toBe("aaaaaaa1111");
+    expect(q.get("method")).toBe("rebase");
     expect(mockFetch.mock.calls[0]![1].method).toBe("POST");
   });
 
@@ -160,7 +176,7 @@ describe("armAutoMerge", () => {
     const groups = makeGroups();
     setPRGroups(groups);
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await armAutoMerge.dispatch({ ...prArgs, head_sha: "" });
+    await armAutoMerge.dispatch({ ...prArgs, head_sha: "", method: "rebase" });
     expect(groups[0]!.prs.map((p) => p.number)).toEqual([10, 5, 3]);
   });
 });

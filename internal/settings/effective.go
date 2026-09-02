@@ -123,6 +123,7 @@ func effectiveSetters(out *vibekit.EffectiveSettings) map[string]func(json.RawMe
 		KeyLastModel:            func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
 		KeyLastEffort:           func(r json.RawMessage) error { return decodeInto(&out.LastEffort, r) },
 		KeyLastEffortModel:      func(r json.RawMessage) error { return decodeInto(&out.LastEffortModel, r) },
+		KeyLastMergeMethod:      func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },
 		KeyKnowledgeEnabled:     func(r json.RawMessage) error { return decodeInto(&out.KnowledgeEnabled, r) },
 		KeyToolSearchEnabled:    func(r json.RawMessage) error { return decodeInto(&out.ToolSearchEnabled, r) },
 		KeyMemoryEnabled:        func(r json.RawMessage) error { return decodeInto(&out.MemoryEnabled, r) },

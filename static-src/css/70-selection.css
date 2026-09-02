@@ -93,6 +93,7 @@
    speak this vocabulary. */
 .ev-row.ev-selected > .ev-row-main,
 .ev-tl-lane.ev-selected,
+.pr-merge-method:has(input:checked),
 .editor-find-case[aria-pressed="true"] {
   background: var(--c-selected-bg);
   border-color: var(--c-selected-border);

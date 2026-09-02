@@ -24,6 +24,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     last_model: "",
     last_effort: "",
     last_effort_model: "",
+    last_merge_method: "",
     knowledge_enabled: true,
     tool_search_enabled: false,
     memory_enabled: false,
