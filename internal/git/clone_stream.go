@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -56,18 +58,7 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 	tctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	cmd := gitExec(tctx, dir, args...)
-	// The transfer runs in its own process group and the kill targets the
-	// GROUP: git spawns helpers (git-remote-https carries the actual
-	// transfer), and a head-only kill leaves the helper holding the stderr
-	// pipe open — so the read loop below would block out the very stall
-	// the watchdog just detected.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	killWholeGroup(cmd)
 	stdout := &cappedBuffer{cap: 64 * 1024}
 	cmd.Stdout = stdout
 	stderr, err := cmd.StderrPipe()
@@ -78,37 +69,66 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 		return "", err
 	}
 
-	// The watchdog kills the subprocess (via the context) when no stderr
-	// token has arrived for cloneStallTimeout. Reset through a coalescing
-	// channel rather than timer.Reset from the read loop, so the reset and
-	// the expiry cannot race.
 	activity := make(chan struct{}, 1)
 	watchdogDone := make(chan struct{})
 	defer close(watchdogDone)
-	go func() {
-		timer := time.NewTimer(cloneStallTimeout)
-		defer timer.Stop()
-		for {
-			select {
-			case <-watchdogDone:
-				return
-			case <-activity:
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(cloneStallTimeout)
-			case <-timer.C:
-				cancel(errCloneStalled)
-				return
-			}
-		}
-	}()
+	go stallWatchdog(activity, watchdogDone, cancel)
 
-	// git's progress updates are \r-separated within a phase and
-	// \n-separated between phases; both are token boundaries here.
+	tail := forwardProgress(stderr, activity, onProgress)
+	waitErr := cmd.Wait()
+	if waitErr != nil {
+		if killErr := transferKillReason(tctx); killErr != nil {
+			return "", killErr
+		}
+	}
+	out := strings.TrimSpace(stdout.String() + "\n" + strings.Join(tail, "\n"))
+	return out, waitErr
+}
+
+// killWholeGroup puts the transfer in its own process group and makes the
+// context kill target the GROUP: git spawns helpers (git-remote-https
+// carries the actual transfer), and a head-only kill leaves the helper
+// holding the stderr pipe open — so the progress read loop would block out
+// the very stall the watchdog just detected.
+func killWholeGroup(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+}
+
+// stallWatchdog cancels the transfer when no activity arrives for
+// cloneStallTimeout. Reset rides a coalescing channel rather than a
+// timer.Reset from the read loop, so the reset and the expiry cannot race.
+func stallWatchdog(activity, done <-chan struct{}, cancel context.CancelCauseFunc) {
+	timer := time.NewTimer(cloneStallTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-activity:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(cloneStallTimeout)
+		case <-timer.C:
+			cancel(errCloneStalled)
+			return
+		}
+	}
+}
+
+// forwardProgress drains the transfer's stderr, feeding the watchdog on
+// every token and forwarding each to onProgress. Returns the last tokens
+// seen, which on an ordinary failure carry git's own message.
+func forwardProgress(stderr io.Reader, activity chan<- struct{}, onProgress func(string)) []string {
 	var tail []string
 	sc := bufio.NewScanner(stderr)
 	sc.Buffer(make([]byte, 0, 64*1024), 64*1024)
@@ -130,24 +150,26 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 			onProgress(token)
 		}
 	}
-	waitErr := cmd.Wait()
-	if waitErr != nil {
-		cause := context.Cause(tctx)
-		switch {
-		case errors.Is(cause, errCloneStalled):
-			return "", fmt.Errorf("the transfer stalled: no progress from git for %s", cloneStallTimeout)
-		case errors.Is(cause, errCloneCeiling):
-			return "", errCloneCeiling
-		}
+	return tail
+}
+
+// transferKillReason names WHY the runner killed the transfer, nil when
+// the failure was git's own.
+func transferKillReason(tctx context.Context) error {
+	cause := context.Cause(tctx)
+	switch {
+	case errors.Is(cause, errCloneStalled):
+		return fmt.Errorf("the transfer stalled: no progress from git for %s", cloneStallTimeout)
+	case errors.Is(cause, errCloneCeiling):
+		return errCloneCeiling
 	}
-	out := strings.TrimSpace(stdout.String() + "\n" + strings.Join(tail, "\n"))
-	return out, waitErr
+	return nil
 }
 
 // scanProgressTokens is a bufio.SplitFunc yielding tokens separated by \r
 // OR \n — git rewrites a phase's progress line in place with \r and ends
 // it with \n, and both mark a complete token.
-func scanProgressTokens(data []byte, atEOF bool) (int, []byte, error) {
+func scanProgressTokens(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	if atEOF && len(data) == 0 {
 		return 0, nil, nil
 	}
