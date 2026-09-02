@@ -219,3 +219,10 @@ method (*PurgeScheduler).Done
 # error.data — the precise defect rpcerr.Text exists to prevent.
 # TestStatusError_UnwrapsToTheCause pins it.
 method (*statusError).Unwrap
+
+
+# cappedBuffer.Write satisfies io.Writer: runTransfer assigns the buffer
+# to exec.Cmd.Stdout, so every call arrives through the interface and no
+# direct call site exists for punused to see. Dropping it makes the
+# assignment a compile error.
+method (*cappedBuffer).Write

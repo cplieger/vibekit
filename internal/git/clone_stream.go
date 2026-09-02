@@ -72,7 +72,10 @@ func runTransfer(ctx context.Context, dir string, onProgress func(string), args 
 	activity := make(chan struct{}, 1)
 	watchdogDone := make(chan struct{})
 	defer close(watchdogDone)
-	go stallWatchdog(activity, watchdogDone, cancel)
+	// The stall window is read ONCE, here on the caller's goroutine, and
+	// handed to the watchdog as a value: the var exists for tests to
+	// shorten, and a goroutine reading it directly races the restore.
+	go stallWatchdog(cloneStallTimeout, activity, watchdogDone, cancel)
 
 	tail := forwardProgress(stderr, activity, onProgress)
 	waitErr := cmd.Wait()
@@ -100,11 +103,11 @@ func killWholeGroup(cmd *exec.Cmd) {
 	}
 }
 
-// stallWatchdog cancels the transfer when no activity arrives for
-// cloneStallTimeout. Reset rides a coalescing channel rather than a
-// timer.Reset from the read loop, so the reset and the expiry cannot race.
-func stallWatchdog(activity, done <-chan struct{}, cancel context.CancelCauseFunc) {
-	timer := time.NewTimer(cloneStallTimeout)
+// stallWatchdog cancels the transfer when no activity arrives for stall.
+// Reset rides a coalescing channel rather than a timer.Reset from the read
+// loop, so the reset and the expiry cannot race.
+func stallWatchdog(stall time.Duration, activity, done <-chan struct{}, cancel context.CancelCauseFunc) {
+	timer := time.NewTimer(stall)
 	defer timer.Stop()
 	for {
 		select {
@@ -117,7 +120,7 @@ func stallWatchdog(activity, done <-chan struct{}, cancel context.CancelCauseFun
 				default:
 				}
 			}
-			timer.Reset(cloneStallTimeout)
+			timer.Reset(stall)
 		case <-timer.C:
 			cancel(errCloneStalled)
 			return
