@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/webhttp/v2"
 )
@@ -128,7 +129,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// spoof-safe resolved client host from webhttp.ClientIP.
 	slog.Info("login: request received",
 		"client_ip", webhttp.ClientIP(r, h.trusted...),
-		"user_agent", r.Header.Get("User-Agent"))
+		"user_agent", logsafe.Field(r.Header.Get("User-Agent")))
 	select {
 	case h.loginSem <- struct{}{}:
 		// Ownership transfers to the reap goroutine below once cmd.Start
