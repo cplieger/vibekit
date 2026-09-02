@@ -1059,31 +1059,66 @@
   color: var(--c-accent);
 }
 
-/* Banner stack: persistent per-chat banners in their own band above the
-   transcript.
+/* Banner stack: persistent per-chat banners on the chat toolbar's own row, to
+   its left.
 
-   TWO THINGS DECIDE ITS PLACEMENT, and both are about staying out from under
-   something. It is a flex child of `#chat-view` rather than of
-   `#messages-wrap-outer`, because that wrapper's scroller is
-   `position: absolute; inset: 0` and therefore painted over the whole wrapper —
-   a banner inside it was visible but unclickable, which is how an
-   `agent_config_error` shipped a CTA nobody could reach. And it starts below the
-   chat toolbar rather than at the top of the view, because `.chat-toolbar` is
-   anchored to that same corner at z-index 10 and is opaque, so a full-width band
-   at the top runs its right end — the action button and the dismiss × — under
-   six navigation buttons. `--below-chat-toolbar` is the toolbar's own derivation
-   (12-chat.css), already used by `.chat-find` and the timeline rail for the same
-   reason; the margin only exists when a banner does, since the stack collapses
-   when empty. */
+   AN OVERLAY, NOT A BAND IN FLOW, and that is what removes a background nobody
+   declared. In flow it carried `margin-block-start: var(--below-chat-toolbar)`,
+   so a banner spawning shrank `#messages-wrap-outer` by that margin plus its own
+   height and the region the transcript vacated painted the only thing under it,
+   which is the `body` canvas at `--c-bg-primary` — read as a hard box from the
+   top of the viewport down past the banner, against `--c-turn-body` cards at a
+   12.5-point lightness step. Nothing painted that box, so there is no
+   `background` here to remove; taking the reserved height away is the fix.
+
+   It stays a child of `#chat-view`, which is BOTH halves of its placement. The
+   containing block is `#chat-area` (`position: relative`; `#chat-view` sets
+   none), whose content-box top is the view area's top because `.chat-toolbar` is
+   absolute and takes no flow space — so one `inset-block-start` puts the two on
+   the same row. And `showView` hides a non-active `[data-tab-view]` with
+   `display: none`, which is what keeps a per-chat banner off Settings, git,
+   files and the rest; hoisting the band to `#chat-area` for the shared row would
+   have cost exactly that.
+
+   THE `z-index` IS LOAD-BEARING. Out of flow it precedes `#messages-wrap-outer`
+   in DOM order, and two positioned `z-index: auto` boxes paint in that order, so
+   the transcript would cover the band and reproduce the defect this element's
+   DOM position exists to prevent: a banner visible but answering no pointer
+   event, which is how an `agent_config_error` once shipped a CTA nobody could
+   reach. 9 clears the transcript, `#model-picker` (5) and `.turn-rail` (4), and
+   stays under `.chat-toolbar` (10) and `.search-pop` (60).
+
+   `inset-inline-end` is the toolbar's measured width plus the toolbar's own
+   right inset plus one gap; `--chat-toolbar-w` is published by
+   `chat-toolbar-metrics.ts`, because CSS cannot ask how wide that element is.
+   No `inset-block-end`, so a long message grows the band downward. */
 .banner-stack {
+  position: absolute;
+  inset-block-start: calc(var(--sp-3) + env(safe-area-inset-top, 0));
+  inset-inline: var(--sp-3) calc(var(--chat-toolbar-w, 0px) + var(--sp-3) + var(--sp-2));
+  z-index: 9;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  padding: 0 var(--sp-3);
-  margin-block-start: var(--below-chat-toolbar);
 
   &:empty {
     display: none;
+  }
+}
+
+/* On a phone the band sits UNDER the toolbar and back IN FLOW, which needs no
+   repositioning: at this width `.chat-toolbar` is `position: static` and paints
+   its own background as the first in-flow child of `#chat-area`, and `#chat-view`
+   is the next flex child, so anything in flow inside it is already below the bar.
+   In flow rather than overlaid because the toolbar occupies and paints that top
+   band, so no canvas is revealed here — the defect above is desktop-only — and a
+   42px overlay on a 390px-wide viewport would sit on top of the live turn.
+   `position: static` also makes the insets and the `z-index` inert, so the side
+   gutter comes back as padding. */
+@media (width <= 48rem) {
+  .banner-stack {
+    position: static;
+    padding-inline: var(--sp-3);
   }
 }
 
@@ -1097,7 +1132,19 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+
+  /* The MENU's full box height, so a banner row and the toolbar beside it read as
+     one row. On `.banner` and not on `.banner-stack`: each row is what the reader
+     compares against the menu, and a floor on the stack would let two banners be
+     shorter than one. A `min-` floor, so a wrapped message still grows the row. */
+  min-block-size: var(--chat-toolbar-h);
   padding: var(--sp-2) var(--sp-3);
+
+  /* The toolbar's own border, because the band is an OVERLAY now: its fill is the
+     canvas colour (see the severity rules below), so over the lighter turn cards
+     an unbordered rectangle reads as a hole punched in the transcript rather than
+     a notice sitting on top of it. Same 1px as `.chat-toolbar` beside it. */
+  border: 1px solid var(--c-border);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
 
@@ -1115,18 +1162,32 @@
   }
 }
 
+/* THE WASH IS MIXED INTO A SURFACE, NOT INTO TRANSPARENCY, and that is forced by
+ * the band being an overlay. At 8% over `transparent` the turn card underneath
+ * reads straight through the banner and collides with its own message — measured
+ * on a scrolled transcript, where a turn's header text was legible through the
+ * notice. In flow over bare canvas the same declaration was fine, which is why it
+ * took the move to surface it.
+ *
+ * THE BASE IS THE CANVAS TOKEN, NOT THE RAISED ONE, and contrast is what decides
+ * it: `--c-bg-secondary` reads as the toolbar's own surface and is tempting for
+ * that reason, but in LIGHT mode it is darker than the canvas, so mixing into it
+ * put the error level at 4.23:1 against the 4.5 its text needs. Over
+ * `--c-bg-primary` every level clears in both themes, and the rendered colour is
+ * byte-identical to what the in-flow band always painted — so the fix changes
+ * what is UNDER the banner and nothing about the banner itself. */
 .banner-error {
-  background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  background: color-mix(in srgb, var(--c-red) 8%, var(--c-bg-primary));
   color: var(--c-red);
 }
 
 .banner-warning {
-  background: color-mix(in srgb, var(--c-yellow) 8%, transparent);
+  background: color-mix(in srgb, var(--c-yellow) 8%, var(--c-bg-primary));
   color: var(--c-yellow);
 }
 
 .banner-info {
-  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+  background: color-mix(in srgb, var(--c-accent) 8%, var(--c-bg-primary));
   color: var(--c-accent);
 }
 
@@ -1146,18 +1207,30 @@
   text-overflow: ellipsis;
 }
 
+/* THE RECEDE IS A HOVER WASH, NOT A RESTING OPACITY. `opacity: 0.6` dimmed the ×
+ * against the banner's own fill, which is the compounded-opacity class
+ * `contrast-audit.mjs` exists to catch: measured on the error banner it read
+ * 3.574:1 against the 4.5 a 20px glyph needs, and 2.992:1 once the fill became an
+ * opaque surface — under the 3:1 floor a graphical object gets. At full ink it is
+ * 5.6:1, the same as the message beside it, which is right because it is the same
+ * ink. The affordance moves to a wash mixed toward the text colour, which is the
+ * house pattern (vibekit-ui.md: interactions INCREASE contrast) and the one
+ * `.tab-close` already uses. */
 .banner-dismiss {
   background: none;
   border: none;
+  border-radius: var(--r-sm);
   cursor: pointer;
   color: inherit;
   font-size: 1.25rem;
   line-height: 1;
   padding: 0 var(--sp-1);
-  opacity: 0.6;
+  transition: background var(--dur-micro) var(--ease-standard);
 
-  &:hover {
-    opacity: 1;
+  @media (any-hover: hover) {
+    &:hover {
+      background: color-mix(in srgb, currentcolor 14%, transparent);
+    }
   }
 }
 
