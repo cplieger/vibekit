@@ -33,16 +33,19 @@ type fakeBridge struct {
 	// blockOn optionally makes Call block (after recording the call) until
 	// the method's channel is closed — for tests proving concurrency
 	// properties (e.g. RPC reads completing while a text turn is in flight).
-	blockOn      map[string]chan struct{}
-	sessionID    string
-	modelID      string
-	effort       string
-	currentMode  string
-	servedModels []string
-	modes        []vibekit.SessionMode
-	models       []vibekit.SessionModel
-	sessionTitle string
-	calls        []string
+	blockOn   map[string]chan struct{}
+	sessionID string
+	modelID   string
+	effort    string
+	// observedEffort is the last level ObserveEffort was handed — the level the
+	// SESSION reported, which the real bridge folds into its differs-only cache.
+	observedEffort string
+	currentMode    string
+	servedModels   []string
+	modes          []vibekit.SessionMode
+	models         []vibekit.SessionModel
+	sessionTitle   string
+	calls          []string
 	// startOpts records the StartOpts of the most recent Start, so a test can
 	// assert what a spawn was actually handed (e.g. that the utility bridge
 	// gets no operator launch flags).
@@ -342,6 +345,24 @@ func (b *fakeBridge) EnsureEffort(_ context.Context, level string) error {
 	b.calls = append(b.calls, "session/set_config_option")
 	b.mu.Unlock()
 	return nil
+}
+
+// ObserveEffort records the level handed over WITHOUT making EnsureEffort
+// differs-only. Deliberate: the real bridge's cache rule has one implementation
+// and a second one here would drift, and the tests over healEffort assert what the
+// HEAL decided to call, not what the cache would have suppressed.
+func (b *fakeBridge) ObserveEffort(level string) {
+	b.mu.Lock()
+	b.observedEffort = level
+	b.mu.Unlock()
+}
+
+// lastObservedEffort reports the level the last ObserveEffort recorded. Empty
+// means the bridge was never told what the session reports.
+func (b *fakeBridge) lastObservedEffort() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.observedEffort
 }
 
 // lastEffort reports the level the last SetEffort applied, for the model-switch

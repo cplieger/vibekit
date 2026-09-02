@@ -137,10 +137,6 @@
   padding-block: 0;
 }
 
-/* When the tab is hidden, Chrome pauses CSS animations. Animations that
-   start at opacity:0 would trap new elements invisible until the tab is
-/* data-tab-hidden animation override moved to end of file (specificity ordering) */
-
 /* Model picker */
 [id="model-picker"] {
   position: absolute;
@@ -206,7 +202,7 @@
     border-color var(--dur-micro),
     background var(--dur-micro),
     transform var(--dur-micro) var(--ease-standard);
-  animation: vk-scale-in var(--dur-enter) var(--ease-enter) both;
+  animation: vk-scale-in var(--dur-enter) var(--ease-enter) backwards;
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -430,13 +426,16 @@
      * Per-block fade is kept too, scoped to non-text container blocks
      * (pre/code, blockquote, table) where wrapping individual text
      * children would harm decorators like the syntax highlighter. */
+    /* Fill mode is `backwards`. One span per 3-10 streamed characters makes this
+     * the site where a forwards fill did visible damage; the rule and the
+     * measurement are at the keyframe library (03-base.css). */
     & [data-vk-chunk-enter] {
-      animation: vk-fade-in var(--dur-micro) var(--ease-enter) both;
+      animation: vk-fade-in var(--dur-micro) var(--ease-enter) backwards;
     }
     & pre[data-vk-block-enter],
     & blockquote[data-vk-block-enter],
     & table[data-vk-block-enter] {
-      animation: vk-fade-in var(--dur-enter) var(--ease-enter) both;
+      animation: vk-fade-in var(--dur-enter) var(--ease-enter) backwards;
     }
 
     /* The mirrored tail is GONE with the user's. Both sides of the bubble
@@ -718,8 +717,8 @@
 }
 
 .load-more-btn:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* Reasoning/thinking block (collapsible).
@@ -856,14 +855,28 @@
 
 /* The trace itself. Flush on the block's own left edge — the shared measure —
  * with block-only padding; the inline indent left with the bar (see
- * `.reasoning-block` above). */
+ * `.reasoning-block` above).
+ *
+ * NO `max-height` AND NO `overflow`. It was `max-height: 300px` +
+ * `overflow-y: auto`, which put a scrollbar inside an OPEN live trace and pinned
+ * the newest text below the fold: the reader watching the model think saw a
+ * frozen box while the growth happened out of sight, because the scroller that
+ * follows the live edge is the TRANSCRIPT's and it cannot see inside a nested
+ * one. Unbounded, the trace grows the document instead, and `getLiveAnchor()`
+ * answers null while no top-level bubble is streaming — which the scroll
+ * controller reads as "follow the document bottom", so the newest line stays on
+ * screen. Collapsing the box is the user's control over its size; a scrollbar was
+ * a second one that fought it.
+ *
+ * `overflow-wrap: anywhere` replaces what the removed overflow was incidentally
+ * containing: the body is raw text under `pre-wrap`, so one long unbroken token —
+ * a URL, a hash, a stack frame — would otherwise run past the card's edge. */
 .reasoning-body {
-  max-height: 300px;
-  overflow-y: auto;
   margin: 0;
   padding: var(--sp-2) 0;
   font-style: italic;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Licensed-code attribution footnote (v3 _kiro/code_references). A quiet,
@@ -915,8 +928,8 @@
 }
 
 .code-refs-summary:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 .code-refs-summary svg {
@@ -959,8 +972,8 @@
 }
 
 .code-refs-link:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
   border-radius: var(--r);
 }
 
@@ -988,7 +1001,7 @@
   margin: var(--sp-4) 0;
   color: var(--c-text-tertiary);
   font-size: var(--fs-sm);
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
   &::before,
   &::after {
@@ -1016,7 +1029,6 @@
        opportunity: a request id or a URL from the backend. */
     max-width: 60%;
     text-align: center;
-    text-wrap: pretty;
     overflow-wrap: anywhere;
   }
 }
@@ -1459,8 +1471,8 @@
 }
 
 .refusal-btn:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 .refusal-btn:disabled {
@@ -1575,6 +1587,6 @@
 }
 
 .steer-note-restore:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }

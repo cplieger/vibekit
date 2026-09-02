@@ -256,6 +256,40 @@ describe("design tokens are declared before they are read", () => {
     }
     expect(literals, "Use var(--r-pill); a stadium is a badge, not a button.").toEqual([]);
   });
+
+  it("declares exactly one spelling of the focus ring", () => {
+    // `outline: 2px solid var(--c-accent)` was written out at 37 sites across 14
+    // stylesheets, so the ring's width and style were a design decision restated
+    // 37 times with no owner. The OFFSET was worse: five values (2px, 1px, -2px,
+    // -1px, 3px) with nothing recording why, and measured side by side 1px and
+    // 2px are indistinguishable on a control standing alone. Two values now,
+    // both tokens — outside the edge, or inside it for a full-bleed row whose
+    // container would clip an outside ring.
+    const literals: string[] = [];
+    for (const sheet of appSheets) {
+      if (sheet.name === "01-tokens.css") {
+        continue;
+      }
+      const lines = stripComments(sheet.text).split("\n");
+      lines.forEach((line, i) => {
+        if (/outline:\s*2px\s+solid\s+var\(--c-accent\)/.test(line)) {
+          literals.push(`${sheet.name}:${i + 1} spells the ring out`);
+        }
+        // An offset is only this vocabulary's when it sits with the ring; a flash
+        // keyframe's transparent outline and the danger ring carry their own.
+        if (
+          /^\s*outline-offset:\s*-?[\d.]/.test(line) &&
+          /outline:\s*var\(--focus-ring\)/.test(lines[i - 1] ?? "")
+        ) {
+          literals.push(`${sheet.name}:${i + 1} spells the offset out`);
+        }
+      });
+    }
+    expect(
+      literals,
+      "Use var(--focus-ring) with var(--focus-offset) or var(--focus-offset-inset).",
+    ).toEqual([]);
+  });
 });
 
 /** Split a stylesheet into `{ selector, body }` for its top-level rules. */

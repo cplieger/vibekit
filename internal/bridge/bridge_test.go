@@ -2206,6 +2206,52 @@ func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
 	}
 }
 
+// ObserveEffort is the OTHER channel the session reports its level on, and
+// without it the differs-only comparison becomes a refusal to repair.
+//
+// The fixture is the live defect: the session door asked for max and the result
+// agreed, so the cache says max; then KAS's own first-prompt model pin moves the
+// session to high and announces it only on the config_option_update notification,
+// which this bridge forwards unread. Comparing max against max, EnsureEffort skips
+// the very call that would put the level back.
+func TestObserveEffort_MakesTheNextEnsureAssert(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	b.mu.Lock()
+	b.effortLevel = "max" // what the session door asked for and the reply confirmed
+	b.mu.Unlock()
+
+	b.ObserveEffort("high") // what the notification says it is running at now
+
+	sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+		func(ctx context.Context) error { return b.EnsureEffort(ctx, "max") })
+	if err != nil {
+		t.Fatalf("EnsureEffort after an observation = %v, want nil", err)
+	}
+	if !bytes.Contains(sent, []byte(`"configId":"effortLevel"`)) || !bytes.Contains(sent, []byte(`"value":"max"`)) {
+		t.Errorf("EnsureEffort did not re-assert the level after the session reported another; frames were:\n%s", sent)
+	}
+}
+
+// An ABSENT report leaves the previous value standing, matching
+// applyEffortConfigOptionLocked: KAS omits the option for a model with no tiers,
+// and "unknown" must not read as "empty" or the next repair would assert against
+// nothing.
+func TestObserveEffort_IgnoresAnEmptyReport(t *testing.T) {
+	b := New("/nonexistent", "/work")
+	b.mu.Lock()
+	b.effortLevel = "max"
+	b.mu.Unlock()
+
+	b.ObserveEffort("")
+
+	b.mu.Lock()
+	got := b.effortLevel
+	b.mu.Unlock()
+	if got != "max" {
+		t.Errorf("cached level after an empty report = %q, want it left at %q", got, "max")
+	}
+}
+
 // TestInitialize_HooksCapabilityOptIn verifies that StartOpts.EnableHooks
 // controls the _meta.kiro.hooks opt-in in the initialize handshake. When true
 // the bridge declares {enabled:true,v2:true} so KAS's v2 hook engine autofires

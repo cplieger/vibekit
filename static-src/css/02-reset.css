@@ -56,18 +56,8 @@
     color: var(--c-text-tertiary);
   }
 
-  /* `text-wrap: wrap` resets the inherited `text-wrap-style` on editable
-     controls (body sets `pretty` below). The UA's `white-space: pre-wrap` on a
-     textarea resets only the MODE half of the shorthand, so `pretty` still
-     reaches the STYLE half — and Safari 26 implements `pretty` as
-     whole-paragraph line-break optimization re-run on every keystroke, which
-     visibly re-wraps the draft while typing: words jump to the next line
-     before the current one is full, jump back as more text lands, and lines
-     end with large gaps. A single-line input never wraps, so the reset is
-     free there. */
   :where(input, textarea, select) {
     caret-color: var(--c-accent);
-    text-wrap: wrap;
   }
 
   :is(
@@ -117,8 +107,8 @@
   }
 
   input[type="checkbox"]:focus-visible {
-    outline: 2px solid var(--c-accent);
-    outline-offset: 2px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
   }
 
   /* Glyph SVGs come from the theme tokens: a data URI cannot read
@@ -173,7 +163,6 @@
     overflow: hidden;
     font-optical-sizing: auto;
     scrollbar-gutter: stable;
-    text-wrap: pretty;
     touch-action: pan-x pan-y;
     /* The web-terminal-ui bundle (in the lowest `web-terminal-ui` layer) sets
        `body { color-scheme: dark }` for its standalone full-page terminal.

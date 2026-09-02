@@ -1,6 +1,6 @@
 // The turn card's header band: the trigger, its meta row, and the three-line
 // clamp the folded-row navigation model depends on.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import {
   buildTurnHeader,
   updateTurnHeader,
@@ -8,6 +8,7 @@ import {
   type TurnHeaderData,
 } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
+import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -144,6 +145,133 @@ describe("the three-line clamp", () => {
     more(h).click();
     updateTurnHeader(h, data({ request: LONG + "tail" }));
     expect(text(h).hasAttribute("data-clamped")).toBe(true);
+  });
+});
+
+// The clamp against REAL layout, which is the only thing that can answer
+// "does this overflow three lines". Everything above builds a detached header,
+// where both `scrollHeight` and `clientHeight` read 0 and the verdict can only
+// be the character guess; these mount the card under the shipped stylesheet and
+// pin what the measurement then says.
+describe("the clamp measured on the page", () => {
+  let styleEl: HTMLStyleElement;
+  let host: HTMLElement;
+
+  beforeAll(() => {
+    styleEl = mountAppCSS();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  afterAll(() => {
+    styleEl.remove();
+    host.remove();
+  });
+
+  afterEach(() => {
+    host.replaceChildren();
+  });
+
+  /** Mount a header at a stated width. */
+  function mount(d: TurnHeaderData, width: number): HTMLElement {
+    host.style.inlineSize = `${String(width)}px`;
+    const h = buildTurnHeader(d);
+    host.replaceChildren(h);
+    return h;
+  }
+
+  /** Wait for the show-more to reach `hidden`. Only for a verdict that must
+   *  CHANGE: a poll whose condition already holds returns before the observer
+   *  has run, which is how a test of an unchanged verdict passes vacuously. */
+  async function settles(h: HTMLElement, hidden: boolean, why: string): Promise<void> {
+    await vi.waitFor(() => {
+      expect(more(h).hidden, why).toBe(hidden);
+    });
+  }
+
+  /** Give the observer its chance, for a verdict that must NOT change. A resize
+   *  callback is delivered after the frame's layout, and a rAF callback runs
+   *  before it, so two frames span one full delivery. */
+  async function observerRuns(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+  }
+
+  /** Prose long enough to trip the 220-character guess, short enough to sit
+   *  well inside three lines of a wide card — the reported shape. */
+  const FITS_THREE_LINES =
+    "in vibekit when submitting a new message i see a show more button even though the " +
+    "whole message i typed is already visible on the page, and it goes away again once " +
+    "the agent starts replying, but it comes back on a finished turn after a restart.";
+
+  const OVERFLOWS = `${FITS_THREE_LINES} `.repeat(8);
+
+  it("offers no show-more for a request that fits, however long the guess thought it was", async () => {
+    // The reported defect. `buildTurnHeader` returns a detached element, so the
+    // character guess offered a show-more here; nothing re-measured after the
+    // card was inserted, and a finished turn gets no further repaint, so the
+    // guess stood for the rest of the session.
+    expect(FITS_THREE_LINES.length, "long enough to trip the character guess").toBeGreaterThan(220);
+
+    const h = buildTurnHeader(data({ request: FITS_THREE_LINES }));
+    expect(more(h).hidden, "the guess, on a detached card").toBe(false);
+
+    host.style.inlineSize = "1100px";
+    host.replaceChildren(h);
+    await settles(h, true, "corrected once the card is laid out");
+    expect(text(h).scrollHeight - text(h).clientHeight, "and it really does fit").toBeLessThan(2);
+  });
+
+  it("keeps the show-more for a request that really overflows", async () => {
+    const h = mount(data({ request: OVERFLOWS }), 1100);
+    await observerRuns();
+    expect(more(h).hidden).toBe(false);
+    expect(text(h).scrollHeight).toBeGreaterThan(text(h).clientHeight);
+  });
+
+  it("re-decides at every width, so narrowing does not hide text with no way to open it", async () => {
+    // The other half of measuring once: three lines of a wide card become five
+    // of a narrow one, and the clamp was cutting the difference away silently.
+    const h = mount(data({ request: FITS_THREE_LINES }), 1100);
+    await settles(h, true, "fits wide");
+
+    host.style.inlineSize = "220px";
+    await settles(h, false, "offered once it no longer fits");
+
+    host.style.inlineSize = "1100px";
+    await settles(h, true, "withdrawn again when it fits");
+  });
+
+  it("does not fold a prompt the reader opened", async () => {
+    const h = mount(data({ request: OVERFLOWS }), 1100);
+    await observerRuns();
+    more(h).click();
+    expect(text(h).hasAttribute("data-clamped")).toBe(false);
+
+    // Expanding changes the text's own box, so the observer fires on the
+    // reader's own gesture. It must leave the expansion alone.
+    host.style.inlineSize = "900px";
+    await observerRuns();
+    expect(text(h).hasAttribute("data-clamped"), "still open").toBe(false);
+    expect(more(h).textContent).toBe("Show less");
+    expect(more(h).hidden).toBe(false);
+  });
+
+  it("leaves a turn the user did not ask for unclamped", async () => {
+    // Its text is a typed trigger line, not a request, so it carries no clamp
+    // and has nothing to offer a show-more for.
+    const h = mount(data({ request: undefined }), 1100);
+    await observerRuns();
+    host.style.inlineSize = "60px";
+    await observerRuns();
+    expect(text(h).scrollHeight, "narrow enough that a clamp would bite").toBeGreaterThan(63);
+    expect(text(h).hasAttribute("data-clamped")).toBe(false);
+    expect(more(h).hidden).toBe(true);
   });
 });
 

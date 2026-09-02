@@ -25,6 +25,7 @@ import { initKnowledge, loadKnowledge } from "./knowledge.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
 import { apiGet } from "./api-client.js";
+import { loadVersions, getVersions } from "./versions.js";
 import { $ } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { initNotificationToggles } from "./settings-notifications.js";
@@ -455,23 +456,22 @@ function initLogoutButton(): void {
 
 // --- About / Diagnostics (Settings → General) ---
 
-interface VersionPayload {
-  vibekit?: string;
-  kiro_cli?: string;
-}
-
-/** Fetches build versions once at Settings init and renders the About
- *  grid. Both values are passive — they don't change until container
- *  restart — so we do not refresh after initial load. */
+/** Render the About grid from the shared version pair.
+ *
+ *  It no longer fetches: `versions.ts` owns GET /api/version, because the sidebar
+ *  status card names both values too and a second request for the same two
+ *  strings is a second thing that can disagree. Both are passive until the
+ *  container restarts, so one read per page load serves every reader. */
 async function loadAbout(): Promise<void> {
-  const v = await apiGet<VersionPayload>("/api/version");
+  await loadVersions();
+  const v = getVersions();
   const vibekitEl = document.getElementById("about-vibekit");
   const kiroEl = document.getElementById("about-kirocli");
   if (vibekitEl !== null) {
-    vibekitEl.textContent = v?.vibekit ?? "—";
+    vibekitEl.textContent = v.vibekit === "" ? "—" : v.vibekit;
   }
   if (kiroEl !== null) {
-    kiroEl.textContent = v?.kiro_cli ?? "—";
+    kiroEl.textContent = v.kiroCli === "" ? "—" : v.kiroCli;
   }
 }
 

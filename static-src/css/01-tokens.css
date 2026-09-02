@@ -660,6 +660,36 @@
      * `999rem` at 5. One spelling, one meaning. */
     --r-pill: 999px;
 
+    /* ---- The focus ring -------------------------------------------------- *
+     * One ring and TWO offsets for the whole app. `outline: 2px solid
+     * var(--c-accent)` was written out at 37 sites across 14 stylesheets with no
+     * owner, and those sites spelled five different offsets (2px, 1px, -2px,
+     * -1px, 3px) with nothing recording why.
+     *
+     * Measured side by side at 3x, 1px and 2px are indistinguishable on a
+     * control standing alone, so four of the five values were carrying no
+     * information. What the offset does have to answer is whether the ring has
+     * room to sit OUTSIDE the control:
+     *
+     *   --focus-offset        outside the edge. 1px rather than 2px because
+     *                         `.chat-find-nav` packs its buttons at `gap: 2px`,
+     *                         so a 2px ring on each would leave zero clearance
+     *                         and the two rings would touch. 1px never collides
+     *                         and reads the same, so it is the safe single value.
+     *   --focus-offset-field  a text field with a 1px border of its own, where an
+     *                         outside ring reads as a double line 1px from the
+     *                         border it duplicates. Overlaying the border with
+     *                         the accent instead is the cleaner of the two,
+     *                         measured at 3x (_ui-qa/focus-1px-after.png).
+     *   --focus-offset-inset  inside the element's own box, for a full-bleed row
+     *                         whose container would clip an outside ring.
+     *
+     * A fourth value means a control none of these fits; say why at the site. */
+    --focus-ring: 2px solid var(--c-accent);
+    --focus-offset: 1px;
+    --focus-offset-field: -1px;
+    --focus-offset-inset: -2px;
+
     /* ---- Motion ---------------------------------------------------------- *
      * ONE curve for the two general durations. `--ease-standard` was a
      * character-identical copy of this value used at 106 sites while

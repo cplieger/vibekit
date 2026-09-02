@@ -1132,7 +1132,15 @@
     </div>
 
     <!-- Remote URL panel: Streamable HTTP or legacy SSE (transport selectable) -->
-    <div class="mcp-mode-panel hidden" data-mcp-mode="remote">
+    <!-- A FORM, not a div, because it collects a credential: Chromium warns that a
+         password field outside a form cannot be reasoned about ("[DOM] Password
+         field is not contained in a form"), since nothing tells the browser which
+         fields belong together or where the submit is. `autocomplete="off"` says
+         these are a SERVER's OAuth credentials rather than the reader's own login,
+         and `novalidate` keeps the panel's own error rendering the only validation
+         surface — the URL field is `type="url"`, and a native bubble beside the
+         server's inline field marking would be two of them disagreeing. -->
+    <form class="mcp-mode-panel hidden" data-mcp-mode="remote" autocomplete="off" novalidate>
       <p class="mcp-mode-hint">Point at a hosted MCP server. Choose Streamable HTTP (the current MCP transport, 2025-03-26 spec) for most servers; pick SSE only for a server that exposes a legacy Server-Sent-Events endpoint. Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
       <label class="tool-form-label">Name
         <input id="mcp-remote-name" class="tool-form-input" type="text" placeholder="e.g. linear">
@@ -1167,11 +1175,11 @@
         <p class="tool-form-hint">Authorization, API keys, etc. Stored locally with 0600 perms; never sent back to the browser once saved.</p>
       </div>
       <p id="mcp-remote-error" class="section-hint mcp-form-error hidden"></p>
-      <button type="button" id="mcp-remote-save" class="btn-save">
+      <button type="submit" id="mcp-remote-save" class="btn-save">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         Save
       </button>
-    </div>
+    </form>
 
     <!-- npm panel: stdio via `npx -y <pkg>` -->
     <div class="mcp-mode-panel hidden" data-mcp-mode="npm">

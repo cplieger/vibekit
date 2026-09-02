@@ -189,7 +189,6 @@
   color: var(--c-text-secondary);
   line-height: 1.55;
   margin: 0;
-  text-wrap: pretty;
 }
 
 /* Section with an inline action bar on the right (e.g. Installed tools + buttons). */
@@ -1634,8 +1633,8 @@ select.native-rule-effect {
 }
 
 select.native-rule-effect:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 /* Effect badges use the theme-split status tokens: the old GitHub-light
    literals (#10894b etc.) were invisible-dim on the dark theme (2.7:1). */
@@ -1774,8 +1773,8 @@ select.native-rule-effect:focus-visible {
 
 .rf-select:focus-visible,
 .rf-input:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-field);
 }
 
 /* Labeled submit button, not an icon pill. Takes the dense tier its fields
@@ -1857,8 +1856,8 @@ select.native-rule-effect:focus-visible {
 }
 
 .diagnostics-result:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 .kiro-config-skel-label {
@@ -1879,8 +1878,8 @@ select.native-rule-effect:focus-visible {
 }
 
 [id="history-table"] .list-row-title:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: -2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-inset);
 }
 
 /* Load-failure state: message + Retry, so it's never a dead end. */

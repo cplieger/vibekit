@@ -50,18 +50,6 @@
   border-radius: var(--r);
 }
 
-.skeleton-git-row {
-  height: 2rem;
-  border-radius: var(--r);
-}
-
-.skeleton-git-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  padding: var(--sp-2) 0;
-}
-
 .skeleton-list-row {
   height: 2rem;
   border-radius: 0;
@@ -87,23 +75,8 @@
   font-family: var(--font-mono);
 }
 
-.mono-sm {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-}
-
-.mono-xs {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-}
-
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Syntax highlighting tokens */
+/* Syntax highlighting tokens. Emitted as `hl-${token.type}` (highlight.ts), so a
+   grep for the literal class names finds nothing — they are live. */
 .hl-keyword {
   color: var(--c-hl-keyword);
   font-weight: var(--fw-medium);
@@ -126,49 +99,22 @@
   color: var(--c-text-secondary);
 }
 
-/* Diff viewer */
-.diff-inline {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  overflow-x: auto;
-}
+/* THE DIFF VOCABULARY IS NOT HERE. This file used to carry `.diff-inline`,
+   `.diff-line`, `.diff-text`, `.diff-add`, `.diff-del`, `.diff-hunk`,
+   `.diff-mini` and `.diff-gutter` — a renderer that no longer exists. The live
+   one is `diff-pane.ts`, whose classes are `.diff-pane*`, `.diff-col*`,
+   `.diff-row*`, `.diff-hunk-toolbar`, `.diff-hunk-btn`, `.diff-none` and
+   `.diff-more`, styled in 60-mcp.css and 20-editor.css.
 
-.diff-line {
-  display: flex;
-}
+   Seven of the eight had no emitter at all. `.diff-gutter` did, and 60-mcp.css
+   redeclares it later in the MANIFEST — but the stale copy was NOT inert, it was
+   a defect: its `width: 3ch` capped the gutter's automatic minimum size, so a
+   line number past three digits was clipped (probed: `12345` in a 21.67px box
+   with a 40px scrollWidth). Without it the gutter grows to fit, 22.5px at two
+   digits and 44.1px at five, and nothing clips. So deleting dead CSS fixed every
+   diff of a file over 999 lines.
 
-.diff-gutter {
-  width: 3ch;
-  flex-shrink: 0;
-  text-align: end;
-  padding-inline-end: var(--sp-2);
-  color: var(--c-text-tertiary);
-  user-select: none;
-}
-
-.diff-text {
-  white-space: pre;
-  flex: 1;
-}
-
-.diff-add {
-  background: color-mix(in srgb, var(--c-green) 12%, transparent);
-  color: var(--c-green);
-}
-
-.diff-del {
-  background: color-mix(in srgb, var(--c-red) 12%, transparent);
-  color: var(--c-red);
-}
-
-.diff-hunk {
-  color: var(--c-blue);
-  font-style: italic;
-}
-
-.diff-mini {
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: var(--sp-2);
-}
+   The near-miss worth recording: a `\b<name>\b` search calls all eight LIVE,
+   because `-` is a non-word character, so `\bdiff-add\b` matches inside
+   `diff-add-count` and `\bdiff-hunk\b` inside `.diff-hunk-btn`. A class token
+   ends where the next character is neither `-` nor a word character. */

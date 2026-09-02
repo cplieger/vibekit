@@ -57,9 +57,10 @@ const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
 };
 
 /** Above this many characters, assume the text overflows three lines when
- *  layout cannot be measured (a detached or unstyled host). Deliberately
- *  generous: a false positive shows an unneeded show-more, a false negative
- *  makes a long prompt unreadable. */
+ *  layout cannot be measured. A first guess only — `watchClamp` below replaces
+ *  it with a measurement as soon as the card is laid out. Deliberately
+ *  generous: a false positive shows an unneeded show-more for one frame, a
+ *  false negative makes a long prompt unreadable for one frame. */
 const CLAMP_FALLBACK_CHARS = 220;
 
 /** Copy handler, injected — the assistant side's Copy already routes through
@@ -106,7 +107,8 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   header.appendChild(row);
 
   const req = el("div", { className: "turn-req" });
-  req.appendChild(el("div", { className: "turn-req-text" }));
+  const reqText = el("div", { className: "turn-req-text" });
+  req.appendChild(reqText);
   const more = el("button", {
     className: "turn-req-more",
     type: "button",
@@ -121,6 +123,7 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   header.appendChild(req);
 
   updateTurnHeader(header, d);
+  watchClamp(reqText);
   return header;
 }
 
@@ -271,6 +274,52 @@ function syncClampAffordance(text: HTMLElement, more: HTMLButtonElement, body: s
       ? measured - visible > 1
       : body.length > CLAMP_FALLBACK_CHARS || countLines(body) > 3;
   more.hidden = !overflows;
+}
+
+/** One observer for every request text on screen, because measurement is the
+ *  only honest answer to "does this overflow three lines" and it is unavailable
+ *  at the moment a header is built. `buildTurnHeader` returns a DETACHED
+ *  element, so both `scrollHeight` and `clientHeight` read 0 there and the first
+ *  verdict can only be the character guess above — which on a prompt that fits
+ *  three lines is the wrong one, and nothing revisited it: a finished turn gets
+ *  no further repaint, so the guess stood for the rest of the session (measured
+ *  at 774px, a 292-character prompt occupies exactly three lines and was offered
+ *  a show-more that opened nothing).
+ *
+ *  A resize callback is delivered after layout and before paint, so the first
+ *  one lands in the same frame the card is inserted and the guess is never
+ *  painted. It also lands at every width the reader resizes to, which the old
+ *  measure-once shape could not: narrowing the window turns three lines into
+ *  four, and the clamp was hiding text with no affordance to open it. */
+let clampWatcher: ResizeObserver | undefined;
+
+function watchClamp(text: HTMLElement): void {
+  clampWatcher ??= new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      // A discarded turn card reports one final zero-size change with its target
+      // already out of the document, so the release needs no hook reaching in
+      // here from the render pass.
+      if (entry.target.isConnected) {
+        reviewClamp(entry.target as HTMLElement);
+      } else {
+        clampWatcher?.unobserve(entry.target);
+      }
+    }
+  });
+  clampWatcher.observe(text);
+}
+
+/** Re-decide one request's show-more against live layout. A turn the user did
+ *  not ask for carries no clamp at all, so it is left alone. */
+function reviewClamp(text: HTMLElement): void {
+  const header = text.closest<HTMLElement>(".turn-header");
+  if (header?.dataset["trigger"] !== "user") {
+    return;
+  }
+  const more = header.querySelector<HTMLButtonElement>(":scope > .turn-req > .turn-req-more");
+  if (more !== null) {
+    syncClampAffordance(text, more, text.textContent);
+  }
 }
 
 function countLines(s: string): number {

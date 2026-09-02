@@ -112,9 +112,11 @@ func (rt *Runtime) initDispatch() {
 		vibekit.ACPUpdatePlan:       ignoreAttribution(rt.translator.HandlePlan),
 		vibekit.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
 		// v3 sub-kinds moved here from v2's _kiro.dev/metadata + commands/available.
-		vibekit.ACPUpdateSessionInfo:  rt.translator.HandleSessionInfoUpdate,
-		vibekit.ACPUpdateUsage:        ignoreAttribution(rt.translator.HandleUsageUpdate),
-		vibekit.ACPUpdateConfigOption: ignoreAttribution(rt.translator.HandleConfigOptionUpdate),
+		vibekit.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
+		vibekit.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),
+		// Wrapped: this frame is the only place vibekit learns that KAS moved the
+		// session's reasoning effort on its own. See healEffort.
+		vibekit.ACPUpdateConfigOption: rt.coord.healEffort(ignoreAttribution(rt.translator.HandleConfigOptionUpdate)),
 	}
 }
 

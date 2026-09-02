@@ -193,9 +193,11 @@ describe("the click target", () => {
     expect(openFileGitDiff).toHaveBeenCalledWith("b.ts");
   });
 
-  it("names the file in each row's title so the target is never a mystery", () => {
+  it("names the file in each row's hover text so the target is never a mystery", () => {
+    // `data-tooltip` rather than `title` since 2026-09: the footer's tooltips
+    // moved onto the app's styled system, which is what every other hover uses.
     const el = buildTurnFooter({ changedFiles: TWO_FILES });
-    expect(rows(el)[0]?.title).toBe("Open the diff for a.ts");
+    expect(rows(el)[0]?.getAttribute("data-tooltip")).toBe("Open the diff for a.ts");
   });
 });
 
@@ -273,5 +275,81 @@ describe("Review changes", () => {
     const all = footer.querySelectorAll(".turn-review-all");
     expect(all).toHaveLength(1);
     expect(all[0]?.textContent).toContain("2 files");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The hover text: what the row does NOT already say
+//
+// It used to be a native `title` carrying the summary line verbatim, so the one
+// hover affordance on the footer restated the text under the pointer and wore
+// the UA chrome instead of the app's styled tooltip. These pin both halves of
+// the replacement: the styled attribute, and that it never repeats the line.
+// ---------------------------------------------------------------------------
+
+describe("the ledger's hover text", () => {
+  function tip(footer: HTMLElement): string | null {
+    return footer.querySelector(".turn-ledger-summary")?.getAttribute("data-tooltip") ?? null;
+  }
+
+  it("is never a native title, and never restates the summary line", () => {
+    const footer = buildTurnFooter({
+      outcome: "completed",
+      commands: 2,
+      changedFiles: { "a.ts": { lines_added: 3, lines_removed: 1 } },
+    });
+    const summary = footer.querySelector<HTMLElement>(".turn-ledger-summary");
+    expect(summary?.hasAttribute("title")).toBe(false);
+    expect(tip(footer)).not.toContain(line(footer));
+  });
+
+  it("names the outcome the glyph stands for when the line does not", () => {
+    // A running turn's accent RING is the only mark saying the turn has not
+    // finished, and `summaryLine` says nothing about it.
+    const footer = buildTurnFooter({ outcome: "running", commands: 1 });
+    expect(tip(footer)).toBe("Still running");
+  });
+
+  it("does not repeat an outcome the line already leads with", () => {
+    const footer = buildTurnFooter({ outcome: "failed", commands: 1 });
+    expect(line(footer)).toContain("Failed");
+    expect(tip(footer)).toBeNull();
+  });
+
+  it("names the disclosure action, and tracks the open state", () => {
+    const footer = buildTurnFooter({
+      outcome: "completed",
+      changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } },
+    });
+    document.body.replaceChildren(footer);
+    expect(tip(footer)).toBe("Show the changed files");
+    footer.querySelector<HTMLElement>(".turn-ledger-summary")?.click();
+    expect(tip(footer)).toBe("Hide the changed files");
+  });
+
+  it("advertises no disclosure on a plain readout", () => {
+    // `summary.disabled` is the honest condition: no files, nothing to open.
+    const footer = buildTurnFooter({ outcome: "completed", commands: 2 });
+    expect(tip(footer)).toBeNull();
+  });
+
+  it("carries both clauses when both apply", () => {
+    const footer = buildTurnFooter({
+      outcome: "running",
+      changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } },
+    });
+    expect(tip(footer)).toBe("Still running \u00b7 Show the changed files");
+  });
+
+  it("puts the styled tooltip on the file row too, not a native title", () => {
+    const footer = buildTurnFooter({
+      outcome: "completed",
+      changedFiles: { "src/a.ts": { lines_added: 1, lines_removed: 0 } },
+    });
+    document.body.replaceChildren(footer);
+    footer.querySelector<HTMLElement>(".turn-ledger-summary")?.click();
+    const row = footer.querySelector<HTMLElement>(".turn-file-row");
+    expect(row?.hasAttribute("title")).toBe(false);
+    expect(row?.getAttribute("data-tooltip")).toBe("Open the diff for src/a.ts");
   });
 });

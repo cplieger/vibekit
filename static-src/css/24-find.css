@@ -292,9 +292,32 @@
     opacity var(--dur-enter) var(--ease-enter);
 }
 
-/* Takes the same shape as the transcript bar's buttons, for the same reasons:
-   see `.chat-find-btn` below for why `line-height: 0` is the centring lever for
-   a replaced element and why these glyphs are SVG rather than text. */
+/* THE BUTTONS OF BOTH FIND BARS. One rule, because they were two byte-identical
+   15-declaration rules plus two identical state rules apiece, and the
+   `.page-find-btn` copy said so in a comment ("takes the same shape as the
+   transcript bar's buttons, for the same reasons") — which is the drift risk
+   written down rather than removed.
+
+   `--btn-h`, matching .fb-search-btn: the two bars disagreed at 1.75rem versus
+   the token, and 1.75rem was also short of the input beside it, so the row read
+   as misaligned before anything was centred.
+
+   `line-height: 0` is the centring half, and it is only correct because these
+   buttons hold an SVG. A replaced element sits on the baseline, so the line box's
+   STRUT is what oversizes it; collapsing the strut leaves a box that is the
+   glyph's own, and `align-items: center` then centres the ink. `.tab-close` and
+   `.shell-header-btn` are the same pairing — it is this app's convention for
+   every correctly-centred icon button.
+
+   The glyphs used to be TEXT (`↑` `↓` `×`), and no authored value could have
+   centred them: `align-items: center` centres a text item's LINE BOX, `×` is a
+   math operator drawn about the math axis, an arrow follows neither the cap nor
+   the x-height band, and each font answers differently — so the offset was
+   platform-dependent by construction. `text-box: trim-both cap alphabetic` (the
+   composer packet's fix for the pill labels) does not reach them either: it trims
+   to the CAP band, and only a letterform fills that. Hence SVG for these three
+   and the trim for `Aa` below, which IS a letterform. */
+.chat-find-btn,
 .page-find-btn {
   display: inline-flex;
   align-items: center;
@@ -315,14 +338,16 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
+.chat-find-btn:hover,
 .page-find-btn:hover {
   color: var(--c-text-primary);
   background: var(--c-hover);
 }
 
+.chat-find-btn:focus-visible,
 .page-find-btn:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 .chat-find-input {
@@ -358,54 +383,7 @@
   gap: 2px;
 }
 
-/* The bar's buttons. `--btn-h`, matching .fb-search-btn: the two bars disagreed
-   at 1.75rem versus the token, and 1.75rem was also short of the input beside
-   it, so the row read as misaligned before anything was centred.
-
-   `line-height: 0` is the centring half, and it is only correct because these
-   buttons hold an SVG. A replaced element sits on the baseline, so the line box's
-   STRUT is what oversizes it; collapsing the strut leaves a box that is the
-   glyph's own, and `align-items: center` then centres the ink. `.tab-close` and
-   `.shell-header-btn` are the same pairing — it is this app's convention for
-   every correctly-centred icon button.
-
-   The glyphs used to be TEXT (`↑` `↓` `×`), and no authored value could have
-   centred them: `align-items: center` centres a text item's LINE BOX, `×` is a
-   math operator drawn about the math axis, an arrow follows neither the cap nor
-   the x-height band, and each font answers differently — so the offset was
-   platform-dependent by construction. `text-box: trim-both cap alphabetic` (the
-   composer packet's fix for the pill labels) does not reach them either: it trims
-   to the CAP band, and only a letterform fills that. Hence SVG for these three
-   and the trim for `Aa` below, which IS a letterform. */
-.chat-find-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  inline-size: var(--btn-h);
-  block-size: var(--btn-h);
-  padding: 0;
-  color: var(--c-text-secondary);
-  background: transparent;
-  border: none;
-  border-radius: var(--r);
-  line-height: 0;
-  cursor: pointer;
-  touch-action: manipulation;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.chat-find-btn:hover {
-  color: var(--c-text-primary);
-  background: var(--c-hover);
-}
-
-.chat-find-btn:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
-}
+/* The bar's buttons take the shared rule above, beside the page find bar's. */
 
 /* Match case: the one LATCHED control in the bar, so it needs a resting-on
    state the momentary buttons beside it do not, and the one whose glyph stays

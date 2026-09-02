@@ -194,6 +194,53 @@ export function closeChatTab(id: string): void {
  *  one catches a newer activation of the SAME chat. */
 let activationGen = 0;
 
+/** Remove a previous activation's failure box from the chat's transcript view.
+ *
+ *  Every activation clears it rather than each success path remembering to: the
+ *  box describes a load the activation now running has superseded, and the
+ *  transcript repaint does not own it — it is appended furniture, which is why
+ *  the Retry button used to remove it by hand. */
+function clearChatLoadError(): void {
+  for (const box of (activeTranscriptView() ?? $.messages).querySelectorAll(".load-error")) {
+    box.remove();
+  }
+}
+
+/** The transcript's failure affordance: what went wrong, and one button that
+ *  tries again.
+ *
+ *  Shared by the two ways a chat can fail to open — its messages did not load,
+ *  and its record is not in this device's store at all — because the reader's
+ *  move is the same either way, and a blank pane is the one answer that is never
+ *  acceptable. Retry re-activates, which re-runs whichever recovery the branch
+ *  that painted the box owns. */
+function paintChatLoadError(message: string, id: string): void {
+  const box = el("div", { className: "load-error" }, el("span", {}, message));
+  const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
+  btn.addEventListener("click", () => {
+    activateChatView(id);
+  });
+  box.appendChild(btn);
+  (activeTranscriptView() ?? $.messages).appendChild(box);
+}
+
+/** Re-read the chat list for a tab whose chat this device's store does not hold,
+ *  and activate it again if the read produces it.
+ *
+ *  One attempt per activation, and it cannot loop: a re-read that still does not
+ *  produce the chat returns, and one that does re-enters activateChatView on the
+ *  ordinary path. The generation check is what makes it safe to fire and forget —
+ *  the reader may have switched tabs while the request was in flight. */
+async function healMissingChat(id: string, gen: number): Promise<void> {
+  if (!(await loadList())) {
+    return;
+  }
+  if (getActiveId() !== id || activationGen !== gen || get(id) === undefined) {
+    return;
+  }
+  activateChatView(id);
+}
+
 /** Point every per-chat view at `id` and load its transcript. This is a chat
  *  tab's `onShow`, exported so the tab factory can name it without this module
  *  having to hand the factory a spec. */
@@ -226,8 +273,21 @@ export function activateChatView(id: string): void {
   setActive(id);
   restoreComposerState(id);
   ensureBound();
+  clearChatLoadError();
   const session = get(id);
   if (session === undefined) {
+    // A tab naming a chat this device's store does not hold. It used to be a
+    // dead end: the pane kept whatever the previous chat left in it, with no
+    // error, no retry and no self-heal, so a reader saw a blank transcript until
+    // they reloaded the whole page. Measured after a forced restart, where a
+    // TRUNCATED /api/chats answer left several open tabs with no store row at
+    // all (the server half of that is internal/chat's shared-scan ownership).
+    //
+    // The store is provably stale against a set the server minted, so the answer
+    // is one re-read. The affordance is painted FIRST, so a re-read that does not
+    // produce the chat leaves something to act on rather than a blank pane.
+    paintChatLoadError("This conversation isn't loaded yet.", id);
+    void healMissingChat(id, gen);
     return;
   }
 
@@ -294,19 +354,7 @@ export function activateChatView(id: string): void {
         return;
       }
       if (!ok) {
-        // Show retry button on failed load.
-        const retry = el(
-          "div",
-          { className: "load-error" },
-          el("span", {}, "Failed to load messages."),
-        );
-        const btn = el("button", { type: "button", className: "btn-small" }, "Retry");
-        btn.addEventListener("click", () => {
-          retry.remove();
-          activateChatView(id);
-        });
-        retry.appendChild(btn);
-        (activeTranscriptView() ?? $.messages).appendChild(retry);
+        paintChatLoadError("Failed to load messages.", id);
         return;
       }
       // The turns that replace the placeholder fade in rather than cutting.

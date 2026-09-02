@@ -39,7 +39,10 @@ import type { TabKind, TabList, TabSubject, TabsChangedPayload } from "../types.
  *  simply never starts. */
 export interface SyncSeam {
   ingest: (frame: TabsChangedPayload) => void;
-  list: () => Promise<void>;
+  /** The answer is deliberately `unknown`: the harness awaits the read and never
+   *  reads its verdict, so declaring `Promise<void>` would only stop it accepting
+   *  the real `listTabs`, which reports whether it adopted a snapshot. */
+  list: () => Promise<unknown>;
 }
 
 let sync: SyncSeam | null = null;

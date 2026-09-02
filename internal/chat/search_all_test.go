@@ -113,6 +113,52 @@ func TestSearchAll(t *testing.T) {
 	}
 }
 
+// A cancelled cross-chat scan may not claim it read every chat.
+//
+// `Scanned` is the number the UI prints ("no matches across N conversations"), so
+// a short scan reporting the OFFERED count tells the reader their text is nowhere
+// when most of their chats were never opened. `Truncated` already means "the
+// answer is short", which is what the copy beside that count is worded for, so the
+// cancelled case rides it instead of adding a wire field.
+//
+// WHAT THIS PINS is the entry-collection half: an already-cancelled context cuts
+// `newestEntries` short, and without its `truncated = true` the empty list takes
+// SearchAll's own early return and publishes `{matches: [], scanned: 0,
+// truncated: false}` — an authoritative "your text is in none of your chats" for a
+// scan that opened none of them.
+//
+// WHAT IT DOES NOT PIN is the fan-out half (`scanned < len(entries)`), and that is
+// stated rather than papered over: reaching it needs the context to die BETWEEN
+// newestEntries returning a full list and Bounded draining it, which no
+// public-API test can schedule. Cancel earlier and the collection loop reports the
+// truncation first; cancel later and there is nothing to cut. The branch is a
+// defence for that real window, `parallel.Bounded`'s own tests pin the count it
+// reads, and a production seam to make it reachable would be worse than the gap.
+func TestSearchAll_CancelledCollectionIsNotAnEmptyAnswer(t *testing.T) {
+	s, _ := newTestStore(t)
+	for _, id := range []string{"c-aaaaaaaa", "c-bbbbbbbb", "c-cccccccc"} {
+		seedChat(t, s, id, "Redis migration", []vibekit.Message{
+			msg("m1", vibekit.RoleUser, "we moved the cache to redis today"),
+		})
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	got := s.SearchAll(ctx, "redis")
+
+	if got.Scanned != 0 {
+		t.Errorf("Scanned = %d over a scan whose collection was cancelled before it "+
+			"read anything, want 0", got.Scanned)
+	}
+	if !got.Truncated {
+		t.Error("Truncated = false after a cancelled collection; the reader is owed " +
+			"the fact that their chats went unread")
+	}
+	if len(got.Matches) != 0 {
+		t.Errorf("Matches = %d from a scan that opened nothing", len(got.Matches))
+	}
+}
+
 // TestSearchAll_EmptyQuery must not fan out over every chat for nothing.
 func TestSearchAll_EmptyQuery(t *testing.T) {
 	s, _ := newTestStore(t)

@@ -693,8 +693,8 @@
 }
 
 .git-file-path:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* Where a rename or copy came from. Secondary to the current path, so it

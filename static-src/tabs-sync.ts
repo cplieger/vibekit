@@ -109,7 +109,7 @@ let draining = false;
 /** The re-list in flight, so a gap detected while one is already running joins it
  *  rather than issuing a second GET. Boot's own list shares this slot, which is
  *  what stops an event that arrives mid-boot from fetching the collection twice. */
-let listInFlight: Promise<void> | null = null;
+let listInFlight: Promise<boolean> | null = null;
 
 /** op_ids this device minted, with the time they were minted. */
 const localOps = new Map<string, number>();
@@ -613,26 +613,32 @@ async function drain(): Promise<void> {
  *
  *  A 409 re-lists and NEVER re-sends: the exact-set check refused the order
  *  because the set moved under the drag, so the arrangement the gesture committed
- *  describes a set that no longer exists. */
-export function listTabs(): Promise<void> {
+ *  describes a set that no longer exists.
+ *
+ *  Answers whether a snapshot was ADOPTED, which is not the same as whether the
+ *  request succeeded: a snapshot below the local version is discarded on purpose
+ *  (mechanism 3) and answers false with nothing wrong. Boot is the one caller that
+ *  reads it — there the strip is empty, so an unadopted read leaves the reader
+ *  with no tabs and nothing saying why. */
+export function listTabs(): Promise<boolean> {
   return relist();
 }
 
-function relist(): Promise<void> {
+function relist(): Promise<boolean> {
   listInFlight ??= readList().finally(() => {
     listInFlight = null;
   });
   return listInFlight;
 }
 
-async function readList(): Promise<void> {
+async function readList(): Promise<boolean> {
   const list = await apiGetTyped("/api/tabs", decodeTabList);
   if (list === null) {
     // Unreachable or undecodable. The projection is left exactly as it stands:
     // an arrangement is re-derivable and a client that cannot read it must still
     // work with what it has. The next event that detects a gap re-lists — and a
     // failed list settles NO pending op, so a verifying remove stays verifying.
-    return;
+    return false;
   }
   if (list.version < localVersion) {
     // MECHANISM 3. This snapshot describes a set we are already ahead of, so
@@ -640,7 +646,7 @@ async function readList(): Promise<void> {
     // Discard it; the frame that advanced us past it was authoritative. A
     // discarded snapshot is NOT authoritative evidence either, so it settles no
     // verifying op.
-    return;
+    return false;
   }
   localVersion = list.version;
 
@@ -676,6 +682,7 @@ async function readList(): Promise<void> {
   // Transition 4 over the snapshot: an op whose committed version the adopted
   // list covers is absorbed, correlation or not.
   absorbCommitted();
+  return true;
 }
 
 /** Reorder `items` to match `order`, which is a PERMUTATION and never a

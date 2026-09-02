@@ -63,7 +63,7 @@ import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import type { Route } from "./router.js";
 import { refreshPickerIfVisible, setPickerModels, initModelPicker } from "./picker.js";
-import { setStatus, refreshRuntimeLine } from "./status.js";
+import { setStatus, refreshRuntimeLine, initStatusVersions } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
@@ -114,6 +114,7 @@ import { initPendingSteers } from "./pending-steers.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
 import { initRuntimeHealth } from "./runtime-health.js";
+import { loadVersions } from "./versions.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
@@ -483,6 +484,13 @@ async function checkAuthAndStart(): Promise<void> {
   // re-checks on every transport gap so recovery self-heals.
   initRuntimeHealth();
 
+  // The vibekit + kiro-cli build pair, for the status card's two lines and
+  // Settings → About. Fire-and-forget: one read per page load, and the lines
+  // repaint through a signal when it lands, so nothing waits on the `--version`
+  // subprocess the server spawns to answer it.
+  initStatusVersions();
+  void loadVersions();
+
   // Pre-conversation catalog so the picker has content before the
   // first chat's session/new lands. Fire-and-forget; session-sourced
   // updates overwrite this the moment a bridge spawns.
@@ -545,7 +553,19 @@ async function checkAuthAndStart(): Promise<void> {
     // accepted rather than papered over — the app is alpha, and an arrangement is
     // re-derivable by opening the tabs again.
     await retentionReady;
-    await listTabs();
+    if (!(await listTabs())) {
+      // The strip is empty at this point, so an unadopted read leaves the reader
+      // with no tabs at all and nothing saying why — the same silent dead end the
+      // chats half above already refuses. Nothing retries on its own: there is no
+      // gap to detect on a boot connection, and a timer here would re-list against
+      // a strip the reader may have started using.
+      toastError("Couldn't restore your tabs.", {
+        label: "Reload",
+        onClick: () => {
+          location.reload();
+        },
+      });
+    }
     activateRestoredTab();
   } catch {
     transport.markHydrated();
@@ -812,7 +832,7 @@ function setupInput(): void {
   makeExpandable($.statusDot, $.statusCard, {
     onExpand: () => {
       loadAccountUsage();
-      refreshRuntimeLine();
+      void refreshRuntimeLine();
     },
   });
 }

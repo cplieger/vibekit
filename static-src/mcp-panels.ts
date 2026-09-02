@@ -126,7 +126,9 @@ const PANEL_SELECTOR = ".mcp-mode-panel[data-mcp-mode]";
 const TAB_SELECTOR = ".mcp-modal-tab[data-mcp-mode]";
 
 function setMode(mode: AddMode, existing: Server | null): void {
-  for (const panel of document.querySelectorAll<HTMLDivElement>(PANEL_SELECTOR)) {
+  // HTMLElement, not HTMLDivElement: the remote panel is a <form> (its password
+  // field has to sit in one), and this loop only touches classList and dataset.
+  for (const panel of document.querySelectorAll<HTMLElement>(PANEL_SELECTOR)) {
     panel.classList.toggle("hidden", panel.dataset["mcpMode"] !== mode);
   }
   for (const btn of document.querySelectorAll<HTMLButtonElement>(TAB_SELECTOR)) {
@@ -471,7 +473,13 @@ function initRemotePanel(existing: Server | null): void {
     appendKeyPair(headers, { name: "", value: "" }, "header");
   };
 
-  byId<HTMLButtonElement>("mcp-remote-save").onclick = (): void => {
+  // The SUBMIT event, not the button's click. The remote panel is a real <form>
+  // (a password field outside one is what Chromium's "[DOM] Password field is not
+  // contained in a form" warns about), so Save is `type="submit"` and Enter in any
+  // field reaches the same path — which is what a form is for. `preventDefault` is
+  // required: the default action navigates.
+  remotePanel().onsubmit = (ev: SubmitEvent): void => {
+    ev.preventDefault();
     const body: Partial<Server> = {
       transport: remoteTransport(transportSel.value),
       name: name.value.trim(),
@@ -492,6 +500,18 @@ function initRemotePanel(existing: Server | null): void {
     }
     void submitServer(body, errEl, byId<HTMLButtonElement>("mcp-remote-save"));
   };
+}
+
+/** The remote panel's form element. Resolved by the same `[data-mcp-mode]`
+ *  attribute the panel loop uses, so there is one way to name a panel. */
+function remotePanel(): HTMLFormElement {
+  const form = document.querySelector<HTMLFormElement>(
+    'form.mcp-mode-panel[data-mcp-mode="remote"]',
+  );
+  if (form === null) {
+    throw new Error("mcp: remote panel form missing");
+  }
+  return form;
 }
 
 function fillRemoteForm(

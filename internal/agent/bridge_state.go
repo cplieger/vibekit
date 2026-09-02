@@ -54,6 +54,12 @@ type sharedBridge struct {
 	mu      sync.Mutex
 	state   bridgeState
 	primed  bool
+	// effortHealed latches the one reactive reasoning-effort repair this bridge
+	// allows (BridgeCoordinator.healEffort). The repair asserts a level and KAS
+	// answers with another config_option_update, so an unbounded reactive repair
+	// is a loop; one bool removes it, and the prompt-time repairEffort stays the
+	// checkpoint for a level that keeps moving back.
+	effortHealed bool
 }
 
 // tryAcquireForPrompt attempts to transition from idle to prompting.
@@ -240,5 +246,19 @@ func (sb *sharedBridge) claimPriming() bool {
 		return false
 	}
 	sb.primed = true
+	return true
+}
+
+// claimEffortHeal reports whether the caller won the one reactive reasoning-effort
+// repair this bridge allows, setting the latch if so. Test-and-set under one lock,
+// like claimPriming: the two callers of a split IsHealed/SetHealed pair would sit
+// back to back, so the gap between them would be a window with no purpose.
+func (sb *sharedBridge) claimEffortHeal() bool {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.effortHealed {
+		return false
+	}
+	sb.effortHealed = true
 	return true
 }

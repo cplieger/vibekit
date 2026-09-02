@@ -82,6 +82,10 @@
 
 .diff-gutter {
   flex: 0 0 3ch;
+  /* NO `width`, and that absence is load-bearing: `min-width: auto` is what lets
+     the column grow past its 3ch basis for a four- or five-digit line number.
+     30-utilities.css carried a stale `width: 3ch` from a retired renderer, which
+     capped that automatic minimum and clipped every line number over 999. */
   text-align: right;
   padding: 0 var(--sp-1);
   /* Hint ink with NO `opacity`. Secondary under `opacity: 0.7` measured 3.565:1
@@ -710,7 +714,6 @@
   color: var(--c-text-secondary);
   line-height: 1.55;
   margin: 0;
-  text-wrap: pretty;
 }
 
 .mcp-form-section {
@@ -1024,8 +1027,8 @@
 }
 
 .mcp-discovery-summary:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
   border-radius: var(--r-sm);
 }
 
@@ -1090,8 +1093,8 @@
 }
 
 .mcp-disc-insert:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 .mcp-disc-insert:disabled {
@@ -1145,8 +1148,8 @@
 }
 
 .mcp-disc-arg-input:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-field);
 }
 
 /* Mobile: stack arg label above its input for 44px-friendly targets. */

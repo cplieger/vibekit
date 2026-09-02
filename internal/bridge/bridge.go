@@ -115,6 +115,9 @@ type Bridge struct {
 	// unconditional round trip. Empty means unknown: KAS omits the option for a
 	// model with no tiers and omits it from every session/load result, and an
 	// unknown level must assert rather than assume a match.
+	//
+	// The session reports it on TWO channels and this bridge reads only one of
+	// them, so ObserveEffort is how the other one lands here.
 	effortLevel string
 	// extraArgs are the filtered operator launch flags for this spawn
 	// (StartOpts.ExtraArgs). Immutable after Start.
@@ -354,6 +357,32 @@ func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 		b.mu.Unlock()
 	}
 	return nil
+}
+
+// ObserveEffort records a reasoning-effort level the SESSION reported on the one
+// channel this bridge does not read: the `config_option_update` notification,
+// which it forwards unread on NotifCh.
+//
+// Without it the cache goes stale-OPTIMISTIC exactly where it matters. KAS moves
+// the level on its own — its first-prompt pinSessionModelId settles an unset model
+// and applies that model's default tier, and a swap made from the IDE or the TUI
+// does the same — and announces it only on that notification. A bridge still
+// believing the level it asked for at the session door then compares equal and
+// skips the very EnsureEffort that would put the level back, so the differs-only
+// comparison silently becomes a refusal to repair.
+//
+// An empty level is ignored, matching applyEffortConfigOptionLocked: an absent
+// report means the level is unknown, not that it is empty. The value is stored
+// unvalidated for the same reason that function stores it unvalidated — it is what
+// the session SAID, and a level vibekit's own vocabulary does not know must still
+// compare unequal to a level it does.
+func (b *Bridge) ObserveEffort(level string) {
+	if level == "" {
+		return
+	}
+	b.mu.Lock()
+	b.effortLevel = level
+	b.mu.Unlock()
 }
 
 // spawn packages this bridge's per-spawn facts for the kascap table's gated

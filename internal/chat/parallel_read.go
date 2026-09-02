@@ -39,7 +39,7 @@ func readHeadersParallel(
 	}
 	results := make([]result, len(valid))
 
-	parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
+	ran := parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
 		h, err := readChatHeader(ce.path, "chat "+ce.id)
 		if err != nil {
 			// ENOENT is a concurrent delete: the chat is genuinely gone.
@@ -57,7 +57,14 @@ func readHeadersParallel(
 	})
 
 	headers := make([]vibekit.ChatHeader, 0, len(valid))
-	complete = true
+	// A cancelled fan-out ran a PREFIX of the items, so the answer is short
+	// whatever the visited slots say. That is the half this used to get wrong: the
+	// unvisited slots are zero-valued, which is neither ok nor lost, so a
+	// truncated scan reported itself COMPLETE and published a subset of the
+	// reader's chats as the whole set — and ReferencedSessionIDs derives the
+	// session reaper's keep-list from the same scan, where a partial list marked
+	// complete authorises deleting the KAS sessions of every chat that was missed.
+	complete = ran == len(valid)
 	for i := range results {
 		switch {
 		case results[i].ok:

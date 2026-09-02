@@ -860,6 +860,82 @@ func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID vibekit.Ch
 	}
 }
 
+// healEffort re-asserts the chat's chosen reasoning-effort level when a
+// config_option_update reports the session running at a different one. It wraps
+// the config-option handler in the dispatch table (see initDispatch).
+//
+// It exists because repairEffort has a hole its own doc comment cannot cover: it
+// runs on OpenBridge's ALREADY-OPEN path, and the turn that SPAWNS the bridge
+// never takes that path. So the one moment the repair is named for — KAS's
+// first-prompt pinSessionModelId settling the model and applying that model's
+// default tier — is the one moment nothing repairs, and a chat whose whole life is
+// a single turn keeps the wrong level. Measured on the live volume: 2 of 13
+// opus-5 chats sat at effort_active=high against a chosen max, and both had
+// exactly one turn.
+//
+// Reactive rather than at the next prompt, because the divergence appears DURING
+// the turn and the next prompt may never come. Runs AFTER next, so the client
+// renders what the session reported before anything changes it and so the chat
+// record already carries this frame's level.
+//
+// LATCHED once per bridge: the repair itself produces another
+// config_option_update, so an unbounded reactive repair is a loop. Past the latch
+// the prompt-time repairEffort owns it, which is the right place for a level
+// something keeps moving back.
+//
+// Best-effort, log-only, and on its own goroutine — this runs on the forward
+// goroutine, so a bridge Call issued inline would block the drain the reply has to
+// arrive on.
+func (bc *BridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdateHandler {
+	return func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
+		next(ctx, chatID, raw, attr)
+		// The chat's OWN frame only. A workflow step's session reports the level
+		// IT runs at, and a subagent's frame would be attributed too; neither says
+		// anything about the level this chat chose. Both fields are tested,
+		// because an empty SubSessionID alone does not mean the chat owns the
+		// frame — a step has one too.
+		if attr.Step || attr.SubSessionID != "" {
+			return
+		}
+		sb := bc.Bridge(chatID)
+		if sb == nil {
+			return
+		}
+		chat, ok := bc.chatStore.Get(ctx, chatID)
+		if !ok {
+			return
+		}
+		// The frame IS the session reporting its level, and the bridge forwards
+		// this channel unread, so hand the report over before deciding anything:
+		// it is what lets EnsureEffort assert here AND at the next prompt, rather
+		// than comparing equal against the level the session door asked for.
+		running := chat.EffortActive
+		sb.bridge.ObserveEffort(running)
+		want := bc.effortFor(ctx, chat)
+		if want == "" || running == "" || want == running {
+			return
+		}
+		if !sb.claimEffortHeal() {
+			slog.Debug("reasoning effort still diverges after one repair; leaving it to the next prompt",
+				"chat_id", chatID, "want", want, "running", running)
+			return
+		}
+		slog.Info("re-asserting the chat's reasoning effort: the session reported a different level",
+			"chat_id", chatID, "want", want, "running", running)
+		// On inflight rather than untracked: Shutdown stops every bridge BEFORE it
+		// waits on this group, which is the ordering a blocked bridge Call needs to
+		// unblock through, and it is what the fs handlers beside it already do.
+		bc.lifecycle.inflight.Go(func() {
+			hctx, cancel := bc.lifecycle.derivedContext()
+			defer cancel()
+			if err := sb.bridge.EnsureEffort(hctx, want); err != nil {
+				slog.Warn("reasoning effort not re-asserted after the session reported another level",
+					"chat_id", chatID, "want", want, "running", running, "error", err)
+			}
+		})
+	}
+}
+
 // effortFor resolves the reasoning-effort level a chat's next session starts
 // at: the chat's own choice, else the last level the user picked anywhere
 // (settings.KeyLastEffort). Empty means send nothing and let the service

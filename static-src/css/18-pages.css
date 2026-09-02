@@ -958,8 +958,8 @@ button.list-row-name:focus-visible {
   outline: none;
 }
 .history-table-row:has(> .list-row-title > .list-row-name:focus-visible) {
-  outline: 2px solid var(--c-accent);
-  outline-offset: -2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-inset);
 }
 
 /* Per-row delete. The one destructive control on this page, and the only manual
