@@ -365,7 +365,7 @@ class ScrollController {
 
   /** Return to Following: pin to the live edge and flush deferred mutations. */
   resume(): void {
-    this.pinToBottom();
+    this.pinToLiveEdge();
   }
 
   /** Enter Reading explicitly — a collapse the user asked for parks them on the
@@ -396,6 +396,10 @@ class ScrollController {
    * never left 0.
    */
   jumpTo(target: HTMLElement, opts: ScrollIntoViewOptions = {}): void {
+    // A jump is a new destination, and a landing at the live edge keeps the state
+    // Following — so the pass's own guard cannot stop it, and the next frame would
+    // overwrite the landing and abort the smooth scroll in flight with it.
+    this.cancelPinPass();
     this.setState(this.landsAtLiveEdge(target, opts.block ?? "start") ? "following" : "reading");
     // Guarded because jsdom does not implement scrollIntoView, and both callers
     // are unit-tested against the DOM they build.
@@ -469,11 +473,15 @@ class ScrollController {
   }
 
   scrollToBottom(): void {
-    this.pinToBottom();
+    this.pinToLiveEdge();
   }
 
-  /** Land at the document's true bottom and HOLD it there while the layout
-   *  settles.
+  /** Land at the live edge and HOLD it there while the layout settles.
+   *
+   *  The live edge is `followTarget`, the same number `autoScrollIfAnchored`
+   *  writes. ONE target for both writers, or the window holds a position
+   *  Following does not mean and the hand-off at its deadline has to move the
+   *  reader.
    *
    *  INSTANT, not smooth: a smooth scroll fires ~50 scroll events whose first is
    *  a whole viewport from the target, so the single-shot `selfScrollTop` marker
@@ -489,11 +497,11 @@ class ScrollController {
    *  sent turn, and it already stops the moment the reader scrolls. Every write
    *  goes through `scrollSelfTo`, so each frame records its own marker and the
    *  listener stays quiet. */
-  private pinToBottom(): void {
+  private pinToLiveEdge(): void {
     this.setState("following");
     this.userScrollingUntil = 0;
     this.pinUntil = Date.now() + PIN_SETTLE_MS;
-    this.pinBottomNow();
+    this.pinLiveEdgeNow();
     this.queuePinFrame();
   }
 
@@ -503,25 +511,43 @@ class ScrollController {
     }
     this.pinFrame = requestAnimationFrame(() => {
       this.pinFrame = 0;
-      // A reader gesture during the pass enters Reading through the ordinary
-      // listener, and that is the pass's stop condition: the reader outranks
-      // their own earlier click.
-      if (this.state !== "following" || Date.now() >= this.pinUntil) {
+      // The reader outranks their own earlier click, and the state alone cannot
+      // see that: a gesture landing inside BOTTOM_TOLERANCE_PX keeps Following,
+      // so the debounce is the condition that catches it — the same guard
+      // `autoScrollIfAnchored` applies. `pinToLiveEdge` zeroes the debounce on
+      // entry and the listener's self-scroll branch never arms it, so the pass's
+      // own writes cannot trip this.
+      if (
+        this.state !== "following" ||
+        Date.now() < this.userScrollingUntil ||
+        Date.now() >= this.pinUntil
+      ) {
         this.pinUntil = 0;
         return;
       }
-      this.pinBottomNow();
+      this.pinLiveEdgeNow();
       this.queuePinFrame();
     });
   }
 
-  /** The MAXIMUM offset, not `scrollHeight`: the same arithmetic the marker is
-   *  clamped to, said once. */
-  private pinBottomNow(): void {
+  /** The clamp is what makes the COMPARE work, rather than tidiness `scrollSelfTo`
+   *  would repeat: a follow target of `scrollHeight` is a whole viewport past the
+   *  maximum, so an unclamped compare never matches and every frame writes. */
+  private pinLiveEdgeNow(): void {
     const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
-    if (this.scrollEl.scrollTop !== max) {
-      this.scrollSelfTo(max, "instant");
+    const landing = Math.max(0, Math.min(this.followTarget(), max));
+    if (this.scrollEl.scrollTop !== landing) {
+      this.scrollSelfTo(landing, "instant");
     }
+  }
+
+  /** Where Following belongs: the anchor's pin while a turn streams, the document
+   *  bottom otherwise. ONE definition, read by both writers — the streaming
+   *  re-pin and the bottom pin's settle pass — so they cannot disagree about the
+   *  position the state means. */
+  private followTarget(): number {
+    const anchor = this.anchorProvider?.() ?? null;
+    return anchor === null ? this.scrollEl.scrollHeight : this.anchorTop(anchor);
   }
 
   private cancelPinPass(): void {
@@ -735,9 +761,12 @@ class ScrollController {
     if (this.state === "reading") {
       return;
     }
-    // Exactly one writer moves the scroller per frame. While a bottom pin runs,
-    // the reader's explicit "take me to the bottom" outranks the anchor pin, and
-    // the pass is re-asserting the maximum every frame anyway.
+    // Exactly one writer moves the scroller per frame, or the second write
+    // overwrites the first's single-shot `selfScrollTop` marker and the orphaned
+    // event is read as a reader gesture. Yielding costs nothing: the pass
+    // re-asserts `followTarget`, the same number this frame would have written,
+    // so the window neither overrides the anchor nor has anything to correct
+    // when it closes.
     if (this.pinFrame !== 0) {
       return;
     }
@@ -750,9 +779,7 @@ class ScrollController {
     this.rafPending = true;
     requestAnimationFrame(() => {
       this.rafPending = false;
-      const anchor = this.anchorProvider?.() ?? null;
-      const target = anchor === null ? this.scrollEl.scrollHeight : this.anchorTop(anchor);
-      this.scrollSelfTo(target, "instant");
+      this.scrollSelfTo(this.followTarget(), "instant");
     });
   }
 
