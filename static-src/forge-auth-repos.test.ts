@@ -110,3 +110,47 @@ describe("repo row clone feedback", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 });
+
+describe("batch clone failure toast", () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+    mocks.cloneDispatch.mockReset();
+    vi.mocked(toastError).mockReset();
+  });
+
+  function repo(name: string): Repo {
+    return {
+      owner: "cplieger",
+      name,
+      full_name: `cplieger/${name}`,
+      clone_url: `https://github.com/cplieger/${name}.git`,
+    };
+  }
+
+  // A bare count ("1 of 63 failed") left the user diffing 63 directories to
+  // find the one missing repo; the toast must NAME what failed.
+  it("names the one repo that failed", async () => {
+    const { cloneAllForAccount } = await import("./forge-auth-repos.js");
+    mocks.cloneDispatch.mockImplementation(({ url }: { url: string }) =>
+      Promise.resolve(url.includes("/loki.git") ? { error: "signal: killed" } : {}),
+    );
+    const btn = document.createElement("button");
+    await cloneAllForAccount([repo("alpha"), repo("loki"), repo("beta")], btn, deps());
+    expect(toastError).toHaveBeenCalledWith("Clone failed for loki (1 of 3 repos)");
+  });
+
+  it("caps the named repos at three and counts the rest", async () => {
+    const { cloneFailureToast } = await import("./forge-auth-repos.js");
+    expect(cloneFailureToast(["a", "b", "c", "d", "e"], 63)).toBe(
+      "Clone failed for a, b, c and 2 more (5 of 63 repos)",
+    );
+  });
+
+  it("toasts nothing when every clone lands", async () => {
+    const { cloneAllForAccount } = await import("./forge-auth-repos.js");
+    mocks.cloneDispatch.mockResolvedValue({});
+    const btn = document.createElement("button");
+    await cloneAllForAccount([repo("alpha"), repo("beta")], btn, deps());
+    expect(toastError).not.toHaveBeenCalled();
+  });
+});

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/workspace"
 	"github.com/cplieger/webhttp/v2"
 )
 
@@ -55,12 +56,19 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 
 // clone runs the clone for handleClone, choosing between a plain
 // `git clone` and adoptDestination by what already sits at the
-// destination.
+// destination — and on failure restores the destination to that
+// pre-clone state. Restoring is load-bearing, not tidiness: a clone
+// killed mid-transfer (the client aborted, the budget expired) leaves
+// a directory holding a commitless .git skeleton, which IsRepo counts
+// as a repository — so discovery lists it as cloned, the Sources row
+// offers "delete local copy", and a re-clone is refused as "already
+// exists", all over a corpse. Measured live on a 511 MB clone.
 func (h *Handler) clone(ctx context.Context, remote string) (string, error) {
 	name := cloneDirName(remote)
 	if name == "" {
 		// The destination is not predictable from this URL, so let git
-		// derive it and report whatever it finds.
+		// derive it and report whatever it finds. No cleanup either: the
+		// destination is unknown here for the same reason.
 		return gitCmd(ctx, h.workDir, "clone", "--", remote)
 	}
 	dir := filepath.Join(h.workDir, name)
@@ -75,12 +83,88 @@ func (h *Handler) clone(ctx context.Context, remote string) (string, error) {
 		return "", fmt.Errorf("%s already exists and is a git repository; delete it or use re-clone to replace it", name)
 	case destOccupied:
 		slog.Info("git clone: adopting an existing directory", "dir", name)
-		return adoptDestination(ctx, dir, remote)
+		out, err := adoptDestination(ctx, dir, remote)
+		if err != nil {
+			// The directory held the user's content before adoption; only the
+			// .git that `git init` created is ours to take back.
+			h.discardCloneDebris(dir, name, false)
+		}
+		return out, err
+	case destEmpty:
+		out, err := gitCmd(ctx, h.workDir, "clone", "--", remote)
+		if err != nil {
+			// The user created this directory, so it stays; everything git
+			// put inside a previously-empty one is debris.
+			h.discardCloneDebris(dir, name, true)
+		}
+		return out, err
 	}
-	// destAbsent and destEmpty are both git's to handle: it creates the
-	// directory, and it clones into an existing empty one. A state added
-	// to destState later lands here too, which is the safe default.
-	return gitCmd(ctx, h.workDir, "clone", "--", remote)
+	// destAbsent: git creates the directory, so a failure removes it whole.
+	// A state added to destState later lands here too, which is the safe
+	// default for the clone itself; its cleanup takes the whole-directory
+	// form because anything at the name was git's creation.
+	out, err := gitCmd(ctx, h.workDir, "clone", "--", remote)
+	if err != nil {
+		if rmErr := h.removeRepoDir(dir); rmErr != nil {
+			slog.Warn("git clone: failed to remove the partial destination", "dir", name, "error", rmErr)
+		}
+	}
+	return out, err
+}
+
+// discardCloneDebris removes what a failed clone or adoption left inside a
+// destination that existed BEFORE the operation. sweepAll removes every
+// entry (a previously-empty directory: whatever is inside is git's);
+// otherwise only .git goes (an adopted directory: the user's content
+// predates the operation and only `git init`'s tree is ours).
+//
+// git cleans its own destination after an ordinary fatal error, so this
+// usually finds nothing; what it exists for is the SIGKILL case (a
+// cancelled request context kills the subprocess), where git never gets
+// the chance. Best-effort: the clone's own error is the answer the caller
+// reports, so a cleanup failure warns rather than masking it.
+func (h *Handler) discardCloneDebris(dir, name string, sweepAll bool) {
+	root, err := os.OpenRoot(h.workDir)
+	if err != nil {
+		slog.Warn("git clone: cleanup could not open the workspace root", "dir", name, "error", err)
+		return
+	}
+	defer func() { _ = root.Close() }()
+	rel, err := workspace.RelPath(h.workDir, dir)
+	if err != nil {
+		slog.Warn("git clone: cleanup refused the destination path", "dir", name, "error", err)
+		return
+	}
+	// Opening the destination through the root refuses a symlink component,
+	// so the removals below cannot be redirected outside the workspace.
+	sub, err := root.OpenRoot(rel)
+	if err != nil {
+		// Gone already (git cleaned up after itself) is the goal state.
+		return
+	}
+	defer func() { _ = sub.Close() }()
+	if !sweepAll {
+		if err := sub.RemoveAll(".git"); err != nil {
+			slog.Warn("git clone: failed to remove the adopted .git", "dir", name, "error", err)
+		}
+		return
+	}
+	f, err := sub.Open(".")
+	if err != nil {
+		slog.Warn("git clone: cleanup could not list the destination", "dir", name, "error", err)
+		return
+	}
+	entries, err := f.Readdirnames(-1)
+	_ = f.Close()
+	if err != nil {
+		slog.Warn("git clone: cleanup could not list the destination", "dir", name, "error", err)
+		return
+	}
+	for _, entry := range entries {
+		if err := sub.RemoveAll(entry); err != nil {
+			slog.Warn("git clone: failed to remove clone debris", "dir", name, "entry", entry, "error", err)
+		}
+	}
 }
 
 // destState describes what occupies a clone destination.

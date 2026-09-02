@@ -1,7 +1,8 @@
 // Tests for retry behavior of forge actions post round-2 changes:
 // - signOut: NOT retryable (destructive DELETE may succeed on timeout)
 // - startDeviceFlow: retryable, no auto-retry (no toast — error: false)
-// - cloneRepo: retryable + retry config, auto-retries, idempotency key reused
+// - cloneRepo: NOT retryable (an interrupted clone can leave a partial
+//   destination, so a retry reports a false "already exists")
 // - connectPAT: retryable + retry config, auto-retries, idempotency key reused
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -28,6 +29,22 @@ afterEach(() => {
 function networkError(): never {
   throw new TypeError("Failed to fetch");
 }
+
+// Capture the timeout budgets composed through @cplieger/fetch's withTimeout.
+// Only cloneRepo's own direct call is intercepted (apiAction's internal
+// timeout composition goes through the package's private module edge).
+const timeoutSpy = vi.hoisted(() => ({ budgets: [] as number[] }));
+vi.mock("@cplieger/fetch", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const orig = await importOriginal<typeof import("@cplieger/fetch")>();
+  return {
+    ...orig,
+    withTimeout: (signal: AbortSignal | undefined, ms: number) => {
+      timeoutSpy.budgets.push(ms);
+      return orig.withTimeout(signal, ms);
+    },
+  };
+});
 
 // ===========================================================================
 // signOut — retryable: false (destructive DELETE that may succeed on timeout),
@@ -64,73 +81,41 @@ describe("forge.signOut retry", () => {
 });
 
 // ===========================================================================
-// cloneRepo — retryable + retry config, auto-retries fire
+// cloneRepo — NOT retryable: an interrupted clone may have left a partial
+// destination server-side, so a retry would hit the "already exists" refusal
+// and report a misleading failure instead of the real one.
 // ===========================================================================
 
 describe("forge.cloneRepo retry", () => {
-  it("auto-retries on network error (2 retries, 3 total attempts)", async () => {
-    let attempt = 0;
-    const fetchSpy = vi.fn<typeof fetch>(() => {
-      attempt++;
-      if (attempt < 3) {
-        return Promise.reject(new TypeError("Failed to fetch"));
-      }
-      return Promise.resolve(new Response('{"output":"ok"}', { status: 200 }));
-    });
-    vi.stubGlobal("fetch", fetchSpy);
-
-    const p = cloneRepo.dispatch({ url: "https://github.com/org/repo" });
-    // First retry at 300ms
-    await vi.advanceTimersByTimeAsync(300);
-    // Second retry at 300*2=600ms
-    await vi.advanceTimersByTimeAsync(600);
-    const result = await p;
-
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    expect(result).toEqual({ output: "ok" });
-    // No error toast since error: false
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  it("idempotency key is REUSED across retries", async () => {
-    let attempt = 0;
-    const fetchSpy = vi.fn<typeof fetch>(() => {
-      attempt++;
-      if (attempt < 3) {
-        return Promise.reject(new TypeError("Failed to fetch"));
-      }
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    });
-    vi.stubGlobal("fetch", fetchSpy);
-
-    const p = cloneRepo.dispatch({ url: "https://github.com/org/repo" });
-    await vi.advanceTimersByTimeAsync(300);
-    await vi.advanceTimersByTimeAsync(600);
-    await p;
-
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    const key1 = headerValue(fetchSpy.mock.calls[0]![1], IDEMPOTENCY_HEADER);
-    const key2 = headerValue(fetchSpy.mock.calls[1]![1], IDEMPOTENCY_HEADER);
-    const key3 = headerValue(fetchSpy.mock.calls[2]![1], IDEMPOTENCY_HEADER);
-    expect(key1).toBeDefined();
-    expect(key1).toBe(key2);
-    expect(key2).toBe(key3);
-  });
-
-  it("no retry toast button (error: false suppresses toast entirely)", async () => {
+  it("does NOT auto-retry on network error", async () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
     const p = cloneRepo.dispatch({ url: "https://github.com/org/repo" });
-    // Exhaust all retries: 300ms + 600ms
-    await vi.advanceTimersByTimeAsync(300);
-    await vi.advanceTimersByTimeAsync(600);
-    await p;
+    // Give any (wrong) retry schedule room to fire.
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await p;
 
-    // 3 fetch calls (1 original + 2 retries)
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    // No toast emitted
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+    // No toast emitted — error: false, the caller aggregates.
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("runs on a clone-sized timeout, not the standard 30s", async () => {
+    timeoutSpy.budgets.length = 0;
+    const fetchSpy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response("{}", { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await cloneRepo.dispatch({ url: "https://github.com/org/repo" });
+
+    // The original defect: the standard 30s API timeout aborted the request,
+    // which killed the server's git subprocess mid-transfer. The budget must
+    // exceed the server's own 10-minute clone bound so the verdict the user
+    // sees is the server's.
+    expect(timeoutSpy.budgets).toEqual([11 * 60_000]);
   });
 });
 
