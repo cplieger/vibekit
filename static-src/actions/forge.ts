@@ -12,7 +12,6 @@ import {
   ActionError,
   classifyFetchError,
 } from "./index.js";
-import { withTimeout } from "@cplieger/fetch";
 
 import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
@@ -20,6 +19,8 @@ import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
 interface CloneArgs {
   url: string;
+  /** Live progress lines from git's own stream, for a button label. */
+  onProgress?: (line: string) => void;
 }
 
 interface DeleteLocalArgs {
@@ -61,46 +62,125 @@ export const signOut = apiAction<SignOutArgs, void>({
   error: "Couldn't sign out",
 });
 
-/** How long the client waits out one clone. Above the server's own
- *  10-minute clone budget (internal/git defaultTimeouts), so the verdict
- *  the user sees is the server's — a git error or the clone's success —
- *  never a client-side abort. The abort was the original defect: the
- *  standard 30s API timeout cancelled the request, which killed the git
- *  subprocess mid-transfer (the handler's context derives from the
- *  request), so any repo too large to clone in 30s could never be cloned
- *  from the UI, and the retry that followed hit the half-cloned
- *  destination's "already exists" refusal. */
-const CLONE_TIMEOUT_MS = 11 * 60_000;
+/** How long the clone may go without the server streaming anything before
+ *  the client gives up. NOT a bound on the clone itself: the server
+ *  streams a progress line whenever git reports one, so a healthy
+ *  transfer of any size resets this continuously — the timeout only fires
+ *  when the stream has genuinely died. This replaced a wall-clock budget,
+ *  whose original 30s cut killed any repo too large to clone in time (the
+ *  abort cancels the request, whose context kills the git subprocess). */
+const CLONE_STALL_TIMEOUT_MS = 3 * 60_000;
+
+/** One line of the clone's NDJSON stream: progress while git transfers,
+ *  then a final output/error envelope. */
+interface CloneStreamLine {
+  progress?: string;
+  output?: string;
+  error?: string;
+}
 
 /** Clone a single repo into the workspace. Error toast suppressed —
  *  callers handle toasting (single-repo toasts directly, batch
  *  aggregates).
  *
- *  Raw fetch on a long timeout rather than apiAction, whose transport pins
- *  the standard 30s timeout with no per-action override (the files.download
- *  precedent). NOT retryable: an interrupted clone may have left a partial
- *  destination server-side, so a retry reports a misleading
+ *  Reads the server's NDJSON progress stream (raw fetch — the apiAction
+ *  transport expects one JSON body on a fixed 30s timeout, and both
+ *  halves are wrong for a transfer that legitimately runs for minutes).
+ *  Liveness is measured, not budgeted: each received chunk re-arms the
+ *  stall timer. NOT retryable: an interrupted clone may have left a
+ *  partial destination server-side, so a retry reports a misleading
  *  "already exists" instead of the real failure. */
 export const cloneRepo = defineAction<CloneArgs, { output?: string; error?: string }>({
   name: "forge.clone_repo",
-  run: async ({ url }, signal) => {
-    let r: Response;
+  run: async ({ url, onProgress }, signal) => {
+    const ctrl = new AbortController();
+    // Aborting the fetch stops the network; cancelling the reader unblocks
+    // a pending read() even when the body stream is not wired to the
+    // signal (a Response handed to us by a test stub, some polyfills).
+    let cancelStream: (() => void) | null = null;
+    const die = (): void => {
+      ctrl.abort();
+      cancelStream?.();
+    };
+    signal.addEventListener("abort", die);
+    let stallTimer = setTimeout(die, CLONE_STALL_TIMEOUT_MS);
+    const armStall = (): void => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(die, CLONE_STALL_TIMEOUT_MS);
+    };
     try {
-      r = await fetch("/api/git/clone", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-        signal: withTimeout(signal, CLONE_TIMEOUT_MS),
-      });
-    } catch (e) {
-      throw classifyFetchError(e, signal);
+      let r: Response;
+      try {
+        r = await fetch("/api/git/clone", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+          signal: ctrl.signal,
+        });
+      } catch (e) {
+        throw classifyFetchError(e, signal);
+      }
+      if (!r.ok) {
+        throw new ActionError("Clone failed", { status: r.status });
+      }
+      if (r.body === null) {
+        throw new ActionError("Clone failed: empty response", { status: 0, code: "invalid" });
+      }
+      const reader = r.body.getReader();
+      cancelStream = () => {
+        void reader.cancel().catch(() => undefined);
+      };
+      const decoder = new TextDecoder();
+      let buf = "";
+      let final: CloneStreamLine | null = null;
+      // Returns the line when it is the final envelope, null for progress
+      // and noise — the assignment stays in this scope so TypeScript's
+      // narrowing sees it.
+      const takeLine = (line: string): CloneStreamLine | null => {
+        if (line === "") {
+          return null;
+        }
+        let obj: CloneStreamLine;
+        try {
+          obj = JSON.parse(line) as CloneStreamLine;
+        } catch {
+          return null; // a torn line is a transport artifact, not an envelope
+        }
+        if (obj.progress !== undefined) {
+          onProgress?.(obj.progress);
+          return null;
+        }
+        return obj;
+      };
+      for (;;) {
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try {
+          chunk = await reader.read();
+        } catch (e) {
+          throw classifyFetchError(e, signal);
+        }
+        if (chunk.done) {
+          break;
+        }
+        armStall();
+        buf += decoder.decode(chunk.value, { stream: true });
+        let nl = buf.indexOf("\n");
+        while (nl >= 0) {
+          final = takeLine(buf.slice(0, nl).trim()) ?? final;
+          buf = buf.slice(nl + 1);
+          nl = buf.indexOf("\n");
+        }
+      }
+      final = takeLine((buf + decoder.decode()).trim()) ?? final;
+      if (final === null) {
+        // No verdict: the stream stalled out or the server died mid-clone.
+        throw new ActionError("Clone interrupted", { status: 0, code: "network" });
+      }
+      return final;
+    } finally {
+      clearTimeout(stallTimer);
+      signal.removeEventListener("abort", die);
     }
-    if (!r.ok) {
-      throw new ActionError("Clone failed", { status: r.status });
-    }
-    // The git endpoints answer 200 with an {error} envelope on git
-    // failure (writeCmdResult); callers read res.error.
-    return (await r.json()) as { output?: string; error?: string };
   },
   error: false,
 });

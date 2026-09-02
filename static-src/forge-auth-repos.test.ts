@@ -146,6 +146,21 @@ describe("batch clone failure toast", () => {
     );
   });
 
+  it("shows git's percent on the button while a repo transfers", async () => {
+    const { cloneAllForAccount } = await import("./forge-auth-repos.js");
+    const btn = document.createElement("button");
+    let duringProgress = "";
+    mocks.cloneDispatch.mockImplementation(
+      ({ onProgress }: { onProgress?: (line: string) => void }) => {
+        onProgress?.("Receiving objects:  42% (215/511)");
+        duringProgress = btn.textContent ?? "";
+        return Promise.resolve({});
+      },
+    );
+    await cloneAllForAccount([repo("loki")], btn, deps());
+    expect(duringProgress).toBe("Cloning 1/1 (42%)…");
+  });
+
   it("toasts nothing when every clone lands", async () => {
     const { cloneAllForAccount } = await import("./forge-auth-repos.js");
     mocks.cloneDispatch.mockResolvedValue({});

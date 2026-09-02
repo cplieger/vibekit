@@ -33,15 +33,12 @@ type gitTimeouts struct {
 	Fetch time.Duration
 	// Push bounds network write operations: push, pull.
 	Push time.Duration
-	// Clone bounds full-transfer operations from the UI git handler.
-	// 10 minutes, sized from measurement rather than symmetry with Push:
-	// a 511 MB repo took 8 minutes to clone from this container, and the
-	// old 2-minute budget made every repo that large permanently
-	// unclonable from the UI (the forges backend allows 15m for the same
-	// reason). The client's own timeout must exceed this so the server's
-	// verdict is what the user sees (static-src/actions/forge.ts).
-	Clone time.Duration
 }
+
+// There is no Clone budget here any more: a clone's liveness is its own
+// progress stream (runTransfer's stall watchdog), bounded overall by
+// cloneCeiling — a fixed transfer budget kills a large repo that is
+// downloading fine, which is the defect that motivated the change.
 
 // defaultTimeouts returns the production timeout policy.
 func defaultTimeouts() gitTimeouts {
@@ -49,7 +46,6 @@ func defaultTimeouts() gitTimeouts {
 		Plumbing: plumbingTimeout,
 		Fetch:    5 * time.Second,
 		Push:     60 * time.Second,
-		Clone:    10 * time.Minute,
 	}
 }
 
