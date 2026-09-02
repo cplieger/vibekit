@@ -26,18 +26,32 @@ interface PinnedPRArgs extends PRArgs {
   head_sha: string;
 }
 
+/** The merge methods the merge dialog offers. The backend accepts "merge"
+ *  too; it is deliberately not offered — every repo this instance manages
+ *  disallows merge commits, and the old always-merge default is the bug the
+ *  chooser exists to fix. */
+export type MergeMethod = "squash" | "rebase";
+
+/** Args for a merge-shaped action: the head pin plus the merge method the
+ *  user chose in the dialog. */
+interface MergePRArgs extends PinnedPRArgs {
+  method: MergeMethod;
+}
+
 /** Build the API path for a PR action (merge/close/reopen/rerun). */
 function prPath(args: PRArgs, action: string): string {
   return `/api/forges/${encodeURIComponent(args.forge_id)}/repos/${encodeURIComponent(args.owner)}/${encodeURIComponent(args.name)}/prs/${args.pr_number}/${action}`;
 }
 
-/** Build the query string for a pinned action. The head pin and the
- *  auto-merge arm ride query params, which is how ?method= already travels
- *  on this route. */
-function pinnedQuery(args: PinnedPRArgs, auto: boolean): string {
+/** Build the query string for a pinned action. The head pin, the merge
+ *  method and the auto-merge arm all ride query params on this route. */
+function pinnedQuery(args: PinnedPRArgs, auto: boolean, method?: MergeMethod): string {
   const q = new URLSearchParams();
   if (args.head_sha !== "") {
     q.set("head_sha", args.head_sha);
+  }
+  if (method !== undefined) {
+    q.set("method", method);
   }
   if (auto) {
     q.set("auto", "1");
@@ -61,19 +75,24 @@ function rollbackRemovePR(_args: PRArgs, op: PRRemoveResult | undefined): void {
 
 // --- Actions ---
 
-/** Merge a pull request, pinned to the head commit the row read. */
-export const mergePR = apiAction<PinnedPRArgs, unknown, PRRemoveResult>({
+/** Merge a pull request with the chosen method, pinned to the head commit
+ *  the row read. The method always travels: the backend's default for an
+ *  absent ?method= is a merge commit, which most repos here disallow —
+ *  the silent cause of every "merge a green PR fails" report. */
+export const mergePR = apiAction<MergePRArgs, unknown, PRRemoveResult>({
   name: "git.merge_pr",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
   request: (args) => ({
     method: "POST",
-    path: prPath(args, "merge") + pinnedQuery(args, false),
+    path: prPath(args, "merge") + pinnedQuery(args, false, args.method),
     body: {},
   }),
   optimistic: optimisticRemovePR,
   rollback: rollbackRemovePR,
-  error: (args) => `Merge failed for PR #${String(args.pr_number)}`,
+  // No custom error string: the framework default carries the server's
+  // message, which names the real refusal (branch protection, disallowed
+  // method, moved head). The old fixed "Merge failed for PR #N" hid it.
   // Not retryable: a timed-out merge may have succeeded server-side. The
   // head pin makes a retry SAFER (a second attempt against a moved head
   // fails closed rather than merging the wrong commit) but not safe, so
@@ -81,15 +100,16 @@ export const mergePR = apiAction<PinnedPRArgs, unknown, PRRemoveResult>({
 });
 
 /** Arm the forge's own auto-merge: it merges once its requirements are
- *  met. Deliberately NOT an optimistic remove — arming does not merge, so
+ *  met. Carries the merge method for the same reason mergePR does.
+ *  Deliberately NOT an optimistic remove — arming does not merge, so
  *  the row must stay and re-render as armed once the server confirms. */
-export const armAutoMerge = apiAction<PinnedPRArgs>({
+export const armAutoMerge = apiAction<MergePRArgs>({
   name: "git.arm_auto_merge",
   scope: (args) => "git:" + args.forge_id + ":" + args.owner + "/" + args.name,
   dedupe: true,
   request: (args) => ({
     method: "POST",
-    path: prPath(args, "merge") + pinnedQuery(args, true),
+    path: prPath(args, "merge") + pinnedQuery(args, true, args.method),
     body: {},
   }),
   error: (args) => `Couldn't arm auto-merge for PR #${String(args.pr_number)}`,

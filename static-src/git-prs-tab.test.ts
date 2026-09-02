@@ -19,6 +19,7 @@ const ensureForges = vi.fn();
 vi.mock("./forge-store.js", () => ({ ensureForges }));
 vi.mock("./bus.js", () => ({ onSSE: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn(async () => true) }));
+vi.mock("./merge-dialog.js", () => ({ openMergeMethodDialog: vi.fn(async () => "rebase") }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
   bindLoadingState: vi.fn(() => vi.fn()),

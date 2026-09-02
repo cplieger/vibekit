@@ -17,6 +17,7 @@ import { relativeTime } from "./utils-format.js";
 import { kindTitle, FORGE_META } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { openMergeMethodDialog } from "./merge-dialog.js";
 import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
@@ -684,15 +685,19 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   );
   merge.addEventListener("click", () => {
     void (async () => {
-      const ok = await confirmDialog(`Merge PR #${pr.number} (${pr.title})?`, "Merge", "normal");
-      if (!ok) {
+      const method = await openMergeMethodDialog({
+        title: "Merge pull request",
+        message: `PR #${pr.number} — ${pr.title}`,
+        confirmLabel: "Merge",
+      });
+      if (method === null) {
         return;
       }
       await withAsyncFeedback(merge, async () => {
         // head_sha pins the merge to the commit this row was rendered
         // from: if something pushed since, the forge refuses instead of
         // landing an unreviewed commit.
-        const res = await mergePR.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" });
+        const res = await mergePR.dispatch({ ...prRef, head_sha: pr.head_sha ?? "", method });
         if (res === null) {
           throw new Error("failed");
         }
@@ -713,16 +718,20 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     arm.setAttribute("data-tooltip", "Let the forge merge this once its checks pass");
     arm.addEventListener("click", () => {
       void (async () => {
-        const ok = await confirmDialog(
-          `Merge PR #${pr.number} (${pr.title}) once its checks pass?`,
-          "Arm auto-merge",
-          "normal",
-        );
-        if (!ok) {
+        const method = await openMergeMethodDialog({
+          title: "Merge when green",
+          message: `PR #${pr.number} — ${pr.title} — merges once its checks pass.`,
+          confirmLabel: "Arm auto-merge",
+        });
+        if (method === null) {
           return;
         }
         await withAsyncFeedback(arm, async () => {
-          const res = await armAutoMerge.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" });
+          const res = await armAutoMerge.dispatch({
+            ...prRef,
+            head_sha: pr.head_sha ?? "",
+            method,
+          });
           if (res === null) {
             throw new Error("failed");
           }

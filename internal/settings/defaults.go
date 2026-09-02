@@ -56,7 +56,16 @@ const (
 	// readers gate on it: BridgeCoordinator.effortFor and the client's
 	// getLastEffortFor. Empty (a pre-pair install) means the seed never applies,
 	// which self-heals on the next pick.
-	KeyLastEffortModel     = "last_effort_model"
+	KeyLastEffortModel = "last_effort_model"
+
+	// KeyLastMergeMethod is the PR merge method the user picked last (squash or
+	// rebase), and the merge dialog's default on the next merge. A seed like
+	// KeyLastEffort: pure memory, never a per-repo policy — the forge refuses a
+	// method a repo disallows, and that refusal reaches the user through the
+	// merge error. Empty means nothing picked yet; the client falls back to
+	// rebase (the method every cplieger repo allows).
+	KeyLastMergeMethod = "last_merge_method"
+
 	KeyNotifyAgentFinished = "notify_agent_finished"
 	KeyNotifyPRStatus      = "notify_pr_status"
 	KeySupervisedDefault   = "supervised_default"
@@ -283,6 +292,7 @@ var KnownKeys = map[string]struct{}{
 	KeyKnowledgeEnabled:     {},
 	KeyLastEffort:           {},
 	KeyLastEffortModel:      {},
+	KeyLastMergeMethod:      {},
 	KeyLastModel:            {},
 	KeyMemoryEnabled:        {},
 	KeyNotificationsEnabled: {},

@@ -281,6 +281,7 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     last_model: reqStr(o, "last_model", "$.effective_settings"),
     last_effort: reqStr(o, "last_effort", "$.effective_settings"),
     last_effort_model: reqStr(o, "last_effort_model", "$.effective_settings"),
+    last_merge_method: reqStr(o, "last_merge_method", "$.effective_settings"),
     agent_ignore_files: o["agent_ignore_files"] === null ? [] : decodeArray(o["agent_ignore_files"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.effective_settings.agent_ignore_files"),
     chat_retention_days: reqNum(o, "chat_retention_days", "$.effective_settings"),
     knowledge_enabled: reqBool(o, "knowledge_enabled", "$.effective_settings"),
