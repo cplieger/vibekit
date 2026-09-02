@@ -396,9 +396,11 @@ class ScrollController {
    * never left 0.
    */
   jumpTo(target: HTMLElement, opts: ScrollIntoViewOptions = {}): void {
-    // A jump is a new destination, and a landing at the live edge keeps the state
-    // Following — so the pass's own guard cannot stop it, and the next frame would
-    // overwrite the landing and abort the smooth scroll in flight with it.
+    // A jump is a new destination, so the pass serving the previous one dies here
+    // — the same ownership rule `attach`, `detach` and `resetScrollState` follow.
+    // The pass's own state guard cannot end it: a landing at the live edge keeps
+    // the state Following, and the next frame would overwrite the landing and
+    // abort the smooth scroll in flight with it.
     this.cancelPinPass();
     this.setState(this.landsAtLiveEdge(target, opts.block ?? "start") ? "following" : "reading");
     // Guarded because jsdom does not implement scrollIntoView, and both callers
@@ -491,8 +493,8 @@ class ScrollController {
    *  animates in (`--fold-slide`) never moves it. Measured in Chromium: a
    *  landing 2000px above the bottom, state stuck at Reading.
    *
-   *  The re-assert is what covers the growth, and it costs ~42 frames of two
-   *  layout reads with no write in the common case. That is not optimised away
+   *  The re-assert is what covers the growth, and it is ~42 frames of measuring
+   *  `followTarget` with no write in the common case. That is not optimised away
    *  with an it-stopped-moving exit: this runs only on an explicit resume or a
    *  sent turn, and it already stops the moment the reader scrolls. Every write
    *  goes through `scrollSelfTo`, so each frame records its own marker and the
@@ -837,7 +839,13 @@ class ScrollController {
       if (document.getElementById("load-more-skeleton") === null) {
         this.endLoadPass();
         const newHeight = this.scrollEl.scrollHeight;
-        this.scrollEl.scrollTop += newHeight - prevHeight;
+        // Through `scrollSelfTo` like every other write this module makes, so the
+        // listener recognises the landing as the controller's own. An unexcused
+        // event is read as a reader gesture, which arms `userScrollingUntil` —
+        // that ends a settle window early, and at a follow position the anchor
+        // puts above the document bottom it also re-derives the state as
+        // Reading, parking the reader and switching the anchor re-pin off.
+        this.scrollSelfTo(this.scrollEl.scrollTop + (newHeight - prevHeight), "instant");
       }
     });
     const safetyTimer = setTimeout(() => {
