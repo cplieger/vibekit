@@ -402,7 +402,6 @@ func TestDefaultTimeouts_budgetsEachOperationClass(t *testing.T) {
 		{field: "Plumbing", got: policy.Plumbing, want: 5 * time.Second},
 		{field: "Fetch", got: policy.Fetch, want: 5 * time.Second},
 		{field: "Push", got: policy.Push, want: 60 * time.Second},
-		{field: "Clone", got: policy.Clone, want: 10 * time.Minute},
 	}
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {

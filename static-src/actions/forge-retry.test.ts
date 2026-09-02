@@ -30,22 +30,6 @@ function networkError(): never {
   throw new TypeError("Failed to fetch");
 }
 
-// Capture the timeout budgets composed through @cplieger/fetch's withTimeout.
-// Only cloneRepo's own direct call is intercepted (apiAction's internal
-// timeout composition goes through the package's private module edge).
-const timeoutSpy = vi.hoisted(() => ({ budgets: [] as number[] }));
-vi.mock("@cplieger/fetch", async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const orig = await importOriginal<typeof import("@cplieger/fetch")>();
-  return {
-    ...orig,
-    withTimeout: (signal: AbortSignal | undefined, ms: number) => {
-      timeoutSpy.budgets.push(ms);
-      return orig.withTimeout(signal, ms);
-    },
-  };
-});
-
 // ===========================================================================
 // signOut — retryable: false (destructive DELETE that may succeed on timeout),
 // error toast WITHOUT Retry button
@@ -102,20 +86,30 @@ describe("forge.cloneRepo retry", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("runs on a clone-sized timeout, not the standard 30s", async () => {
-    timeoutSpy.budgets.length = 0;
-    const fetchSpy = vi.fn<typeof fetch>(() =>
-      Promise.resolve(new Response("{}", { status: 200 })),
-    );
+  it("gives up only on a STALLED stream, never on elapsed time", async () => {
+    // One progress chunk, then silence forever: the stall detector must
+    // abort. The inverse (a slow clone that keeps streaming) is pinned by
+    // the streaming tests in forge-actions.test.ts — liveness is measured
+    // from received chunks, not budgeted by a wall clock.
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+    const fetchSpy = vi.fn<typeof fetch>(() => Promise.resolve(new Response(body)));
     vi.stubGlobal("fetch", fetchSpy);
 
-    await cloneRepo.dispatch({ url: "https://github.com/org/repo" });
-
-    // The original defect: the standard 30s API timeout aborted the request,
-    // which killed the server's git subprocess mid-transfer. The budget must
-    // exceed the server's own 10-minute clone bound so the verdict the user
-    // sees is the server's.
-    expect(timeoutSpy.budgets).toEqual([11 * 60_000]);
+    const p = cloneRepo.dispatch({ url: "https://github.com/org/repo" });
+    // Let the fetch resolve and the reader attach before feeding a chunk.
+    await vi.advanceTimersByTimeAsync(0);
+    controller.enqueue(new TextEncoder().encode('{"progress":"Receiving objects: 1%"}\n'));
+    // Past the 3-minute stall window with nothing arriving: abort.
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    const result = await p;
+    expect(result).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 

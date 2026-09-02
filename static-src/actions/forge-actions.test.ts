@@ -137,6 +137,61 @@ describe("forge.clone_repo", () => {
     expect(r).toBeNull();
     vi.useRealTimers();
   });
+
+  // The clone response is an NDJSON stream: progress lines feed onProgress
+  // (and re-arm the client's stall detector), the final line is the same
+  // output/error envelope the old single-body response carried.
+  it("forwards streamed progress and returns the final envelope", async () => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(enc.encode('{"progress":"Receiving objects: 42% (1/2)"}\n'));
+        c.enqueue(enc.encode('{"progress":"Receiving objects: 100% (2/2)"}\n'));
+        c.enqueue(enc.encode('{"output":"done"}\n'));
+        c.close();
+      },
+    });
+    mockFetch.mockResolvedValue(new Response(body, { status: 200 }));
+    const { cloneRepo } = await import("./forge.js");
+    const seen: string[] = [];
+    const r = await cloneRepo.dispatch({
+      url: "https://x.com/r.git",
+      onProgress: (line) => seen.push(line),
+    });
+    expect(seen).toEqual(["Receiving objects: 42% (1/2)", "Receiving objects: 100% (2/2)"]);
+    expect(r).toEqual({ output: "done" });
+  });
+
+  it("returns the streamed error envelope on a failed clone", async () => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(enc.encode('{"progress":"Receiving objects: 42%"}\n'));
+        c.enqueue(enc.encode('{"error":"the transfer stalled: no progress from git for 1m30s"}\n'));
+        c.close();
+      },
+    });
+    mockFetch.mockResolvedValue(new Response(body, { status: 200 }));
+    const { cloneRepo } = await import("./forge.js");
+    const r = await cloneRepo.dispatch({ url: "https://x.com/r.git" });
+    expect(r?.error).toContain("stalled");
+  });
+
+  // A stream that ends with no final envelope means the server died
+  // mid-clone; that is a failure, not an empty success.
+  it("fails when the stream ends without a verdict", async () => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(enc.encode('{"progress":"Receiving objects: 42%"}\n'));
+        c.close();
+      },
+    });
+    mockFetch.mockResolvedValue(new Response(body, { status: 200 }));
+    const { cloneRepo } = await import("./forge.js");
+    const r = await cloneRepo.dispatch({ url: "https://x.com/r.git" });
+    expect(r).toBeNull();
+  });
 });
 
 describe("forge.connect_pat", () => {

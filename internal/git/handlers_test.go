@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -1109,7 +1110,7 @@ func TestClone_ExistingRepoIsReportedByName(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := NewHandler(workDir)
-	out, err := h.clone(t.Context(), "https://github.com/cplieger/vibekit.git")
+	out, err := h.clone(t.Context(), "https://github.com/cplieger/vibekit.git", nil)
 	if err == nil {
 		t.Fatalf("clone into an existing repo: err = nil, want a refusal (out %q)", out)
 	}
@@ -1126,9 +1127,20 @@ func TestClone_ExistingRepoIsReportedByName(t *testing.T) {
 // reproducible deterministically with the real binary.
 func stageFakeGit(t *testing.T, script string) {
 	t.Helper()
+	stageFakeGitExiting(t, script, 1)
+}
+
+// stageFakeGitExiting is stageFakeGit with the exit code chosen by the
+// test — 0 for a transfer that must SUCCEED after its scripted behavior.
+func stageFakeGitExiting(t *testing.T, script string, exit int) {
+	t.Helper()
 	bin := t.TempDir()
 	fake := filepath.Join(bin, "git")
-	content := "#!/bin/sh\n" + script + "\necho 'fatal: early EOF' >&2\nexit 1\n"
+	tail := "echo 'fatal: early EOF' >&2\nexit 1\n"
+	if exit == 0 {
+		tail = "exit 0\n"
+	}
+	content := "#!/bin/sh\n" + script + "\n" + tail
 	if err := os.WriteFile(fake, []byte(content), 0o755); err != nil { // #nosec G306 -- a test-local executable needs the exec bit
 		t.Fatal(err)
 	}
@@ -1148,7 +1160,7 @@ func TestClone_FailedCloneRemovesTheDestinationItCreated(t *testing.T) {
 	stageFakeGit(t, `mkdir -p loki/.git`)
 	h := NewHandler(work)
 
-	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git")
+	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil)
 	if err == nil {
 		t.Fatal("clone with a failing git: err = nil, want failure")
 	}
@@ -1168,7 +1180,7 @@ func TestClone_FailedCloneEmptiesAPreexistingEmptyDestination(t *testing.T) {
 	stageFakeGit(t, `mkdir -p loki/.git`)
 	h := NewHandler(work)
 
-	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git")
+	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil)
 	if err == nil {
 		t.Fatal("clone with a failing git: err = nil, want failure")
 	}
@@ -1200,7 +1212,7 @@ func TestClone_FailedAdoptionRemovesOnlyTheGitDir(t *testing.T) {
 	stageFakeGit(t, `mkdir -p .git`)
 	h := NewHandler(work)
 
-	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git")
+	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil)
 	if err == nil {
 		t.Fatal("adoption with a failing git: err = nil, want failure")
 	}
@@ -1209,6 +1221,126 @@ func TestClone_FailedAdoptionRemovesOnlyTheGitDir(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dest, "settings", "lsp.json")); statErr != nil {
 		t.Errorf("the user's content must survive the failed adoption: stat err = %v", statErr)
+	}
+}
+
+// A transfer that stops reporting progress is killed by the stall
+// watchdog, and the error names the stall rather than echoing the last
+// progress line as if it were git's verdict.
+func TestRunTransfer_KillsAStalledTransfer(t *testing.T) {
+	prev := cloneStallTimeout
+	cloneStallTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { cloneStallTimeout = prev })
+	work := t.TempDir()
+	// One progress token, then silence far past the stall window.
+	stageFakeGit(t, `echo 'Receiving objects:  42%' >&2
+sleep 30`)
+
+	start := time.Now()
+	out, err := runTransfer(t.Context(), work, nil, "clone", "--progress", "--", "https://github.com/cplieger/loki.git")
+	if err == nil {
+		t.Fatalf("stalled transfer: err = nil, want a stall kill (out %q)", out)
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("err = %q, want it to name the stall", err)
+	}
+	if out != "" {
+		t.Errorf("out = %q, want empty — a killed transfer's tail is a progress line, not a verdict", out)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("stall kill took %v, want well under the fake git's 30s sleep", elapsed)
+	}
+}
+
+// A transfer that keeps reporting progress is NOT killed by the stall
+// watchdog, however slow it is — progress is the liveness signal, not a
+// wall clock. The fake reports past several stall windows and succeeds.
+func TestRunTransfer_ProgressKeepsASlowTransferAlive(t *testing.T) {
+	prev := cloneStallTimeout
+	cloneStallTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { cloneStallTimeout = prev })
+	work := t.TempDir()
+	stageFakeGitExiting(t, `i=0
+while [ $i -lt 8 ]; do
+  echo "Receiving objects: ${i}0%" >&2
+  sleep 0.1
+  i=$((i+1))
+done`, 0)
+
+	var lines []string
+	out, err := runTransfer(t.Context(), work, func(line string) { lines = append(lines, line) },
+		"clone", "--progress", "--", "https://github.com/cplieger/loki.git")
+	if err != nil {
+		t.Fatalf("slow-but-alive transfer: err = %v (out %q), want success", err, out)
+	}
+	if len(lines) < 8 {
+		t.Errorf("onProgress saw %d lines, want all 8", len(lines))
+	}
+}
+
+// An ordinary git failure keeps git's own message so the error envelope
+// names the real cause, exactly as the non-streaming path did.
+func TestRunTransfer_KeepsGitsMessageOnOrdinaryFailure(t *testing.T) {
+	work := t.TempDir()
+	stageFakeGit(t, `echo 'fatal: repository not found' >&2`)
+
+	out, err := runTransfer(t.Context(), work, nil, "clone", "--progress", "--", "https://github.com/cplieger/loki.git")
+	if err == nil {
+		t.Fatal("failing git: err = nil, want failure")
+	}
+	if !strings.Contains(out, "repository not found") {
+		t.Errorf("out = %q, want git's own fatal message", out)
+	}
+}
+
+// The clone response is an NDJSON stream: progress lines while the
+// transfer runs, one final line carrying the output/error envelope.
+func TestHandleClone_StreamsProgressAndAFinalEnvelope(t *testing.T) {
+	prevInterval := progressInterval
+	progressInterval = 0
+	t.Cleanup(func() { progressInterval = prevInterval })
+	work := t.TempDir()
+	stageFakeGitExiting(t, `echo 'Receiving objects: 42%' >&2
+mkdir -p loki/.git`, 0)
+	h := NewHandler(work)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/git/clone",
+		strings.NewReader(`{"url":"https://github.com/cplieger/loki.git"}`))
+	rec := httptest.NewRecorder()
+	h.handleClone(rec, req)
+
+	if ct := rec.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("Content-Type = %q, want application/x-ndjson", ct)
+	}
+	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("stream = %q, want at least a progress line and a final envelope", rec.Body.String())
+	}
+	if !strings.Contains(lines[0], `"progress"`) || !strings.Contains(lines[0], "42%") {
+		t.Errorf("first line = %q, want the forwarded progress", lines[0])
+	}
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, `"output"`) {
+		t.Errorf("final line = %q, want the output envelope", last)
+	}
+}
+
+// A clone that fails ends the stream with the error envelope, so a client
+// reading the final line sees the same contract writeCmdResult provided.
+func TestHandleClone_StreamEndsWithTheErrorEnvelope(t *testing.T) {
+	work := t.TempDir()
+	stageFakeGit(t, `echo 'fatal: repository not found' >&2`)
+	h := NewHandler(work)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/git/clone",
+		strings.NewReader(`{"url":"https://github.com/cplieger/loki.git"}`))
+	rec := httptest.NewRecorder()
+	h.handleClone(rec, req)
+
+	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, `"error"`) || !strings.Contains(last, "repository not found") {
+		t.Errorf("final line = %q, want the error envelope naming git's reason", last)
 	}
 }
 
@@ -1255,7 +1387,7 @@ func TestClone_AdoptsAnOccupiedDestination(t *testing.T) {
 	}
 
 	h := NewHandler(workDir)
-	out, err := h.clone(t.Context(), remote)
+	out, err := h.clone(t.Context(), remote, nil)
 	if err != nil {
 		t.Fatalf("clone into an occupied destination = %v, want nil\n%s", err, out)
 	}
@@ -1287,7 +1419,7 @@ func TestAdoptDestination_ClonesIntoAnOccupiedDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := adoptDestination(t.Context(), dest, remote)
+	out, err := adoptDestination(t.Context(), dest, remote, nil)
 	if err != nil {
 		t.Fatalf("adoptDestination(%q, %q) = %v, want nil\n%s", dest, remote, err, out)
 	}
@@ -1334,7 +1466,7 @@ func TestAdoptDestination_RefusesToOverwriteUntrackedContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := adoptDestination(t.Context(), dest, remote)
+	out, err := adoptDestination(t.Context(), dest, remote, nil)
 	if err == nil {
 		t.Fatalf("adoptDestination(%q, %q) = nil, want a checkout refusal\n%s", dest, remote, out)
 	}

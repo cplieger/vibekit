@@ -6,6 +6,7 @@ package git
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/workspace"
@@ -45,13 +47,55 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 	// prefix above already blocks `--flag=...`, but `--` is cheap and
 	// makes the guarantee lexical rather than prefix-based.
 	slog.Info("git clone", "url", scrubAuth(body.URL))
-	cloneCtx, cancel := context.WithTimeout(r.Context(), h.timeouts.Clone)
+	// From here the response is a PROGRESS STREAM: NDJSON progress lines
+	// while git transfers, then one final line carrying the {output}/{error}
+	// envelope writeCmdResult produces. Streaming is what lets the client
+	// measure that the download is still happening instead of holding a
+	// wall-clock timeout that kills a large repo mid-transfer; the server's
+	// own liveness bound is the stall watchdog in runTransfer, with
+	// cloneCeiling as the runaway backstop.
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	rc := http.NewResponseController(w)
+	lastSent := time.Time{}
+	progress := func(line string) {
+		// Git rewrites its progress line many times a second; one update
+		// per interval is plenty for a liveness signal and a percent label.
+		if time.Since(lastSent) < progressInterval {
+			return
+		}
+		lastSent = time.Now()
+		writeCloneStreamLine(w, rc, map[string]string{"progress": scrubAuth(line)})
+	}
+	cloneCtx, cancel := context.WithTimeoutCause(r.Context(), cloneCeiling, errCloneCeiling)
 	defer cancel()
-	out, err := h.clone(cloneCtx, body.URL)
+	out, err := h.clone(cloneCtx, body.URL, progress)
 	if err != nil {
 		slog.Error("git clone: failed", "url", scrubAuth(body.URL), "error", err, "out", scrubAuth(out))
+		writeCloneStreamLine(w, rc, map[string]string{"error": scrubAuth(cmdFailure(out, err))})
+		return
 	}
-	writeCmdResult(w, out, err)
+	writeCloneStreamLine(w, rc, map[string]string{jsonKeyOutput: scrubAuth(out)})
+}
+
+// progressInterval throttles the progress lines the clone stream forwards.
+// A var so the handler test does not have to pace a fake git in real time.
+var progressInterval = 500 * time.Millisecond
+
+// writeCloneStreamLine writes one NDJSON line of the clone response and
+// flushes it, so the client sees each line as it happens rather than one
+// buffered body at the end — the flush IS the liveness signal.
+func writeCloneStreamLine(w http.ResponseWriter, rc *http.ResponseController, v map[string]string) {
+	line, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	if _, err := w.Write(append(line, '\n')); err != nil {
+		return
+	}
+	// A ResponseWriter with no Flusher underneath buffers until the handler
+	// returns, which degrades to the old single-body behavior; nothing to
+	// repair from here.
+	_ = rc.Flush()
 }
 
 // clone runs the clone for handleClone, choosing between a plain
@@ -63,27 +107,27 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 // as a repository — so discovery lists it as cloned, the Sources row
 // offers "delete local copy", and a re-clone is refused as "already
 // exists", all over a corpse. Measured live on a 511 MB clone.
-func (h *Handler) clone(ctx context.Context, remote string) (string, error) {
+func (h *Handler) clone(ctx context.Context, remote string, onProgress func(string)) (string, error) {
 	name := cloneDirName(remote)
 	if name == "" {
 		// The destination is not predictable from this URL, so let git
 		// derive it and report whatever it finds. No cleanup either: the
 		// destination is unknown here for the same reason.
-		return gitCmd(ctx, h.workDir, "clone", "--", remote)
+		return runTransfer(ctx, h.workDir, onProgress, "clone", "--progress", "--", remote)
 	}
 	dir := filepath.Join(h.workDir, name)
 	if dir == h.workDir {
 		// Unreachable through cloneDirName, which refuses "." and "..".
 		// Kept so a future change there cannot turn the workspace root
 		// into an adoption target.
-		return gitCmd(ctx, h.workDir, "clone", "--", remote)
+		return runTransfer(ctx, h.workDir, onProgress, "clone", "--progress", "--", remote)
 	}
 	switch inspectCloneDest(ctx, dir) {
 	case destRepo:
 		return "", fmt.Errorf("%s already exists and is a git repository; delete it or use re-clone to replace it", name)
 	case destOccupied:
 		slog.Info("git clone: adopting an existing directory", "dir", name)
-		out, err := adoptDestination(ctx, dir, remote)
+		out, err := adoptDestination(ctx, dir, remote, onProgress)
 		if err != nil {
 			// The directory held the user's content before adoption; only the
 			// .git that `git init` created is ours to take back.
@@ -91,7 +135,7 @@ func (h *Handler) clone(ctx context.Context, remote string) (string, error) {
 		}
 		return out, err
 	case destEmpty:
-		out, err := gitCmd(ctx, h.workDir, "clone", "--", remote)
+		out, err := runTransfer(ctx, h.workDir, onProgress, "clone", "--progress", "--", remote)
 		if err != nil {
 			// The user created this directory, so it stays; everything git
 			// put inside a previously-empty one is debris.
@@ -103,7 +147,7 @@ func (h *Handler) clone(ctx context.Context, remote string) (string, error) {
 	// A state added to destState later lands here too, which is the safe
 	// default for the clone itself; its cleanup takes the whole-directory
 	// form because anything at the name was git's creation.
-	out, err := gitCmd(ctx, h.workDir, "clone", "--", remote)
+	out, err := runTransfer(ctx, h.workDir, onProgress, "clone", "--progress", "--", remote)
 	if err != nil {
 		if rmErr := h.removeRepoDir(dir); rmErr != nil {
 			slog.Warn("git clone: failed to remove the partial destination", "dir", name, "error", rmErr)
@@ -215,7 +259,7 @@ func inspectCloneDest(ctx context.Context, dir string) destState {
 // first place: the final checkout REFUSES to overwrite an untracked file,
 // so pre-existing content is either left untouched or the operation fails
 // with git naming the colliding paths. Nothing here deletes or overwrites.
-func adoptDestination(ctx context.Context, dir, remote string) (string, error) {
+func adoptDestination(ctx context.Context, dir, remote string, onProgress func(string)) (string, error) {
 	var combined strings.Builder
 	run := func(args ...string) (string, error) {
 		out, err := gitCmd(ctx, dir, args...)
@@ -231,11 +275,20 @@ func adoptDestination(ctx context.Context, dir, remote string) (string, error) {
 		{"init", "--quiet"},
 		// `--` barrier for the same reason handleClone passes one.
 		{subRemote, "add", remoteOrigin, "--", remote},
-		{subFetch, "--quiet", "--no-tags", remoteOrigin},
 	} {
 		if _, err := run(args...); err != nil {
 			return report(), err
 		}
+	}
+	// The fetch is the adoption's transfer leg — the only step that moves
+	// data over the network — so it runs under the same progress-driven
+	// liveness the plain clone gets (--progress instead of --quiet).
+	if out, err := runTransfer(ctx, dir, onProgress, subFetch, "--progress", "--no-tags", remoteOrigin); err != nil {
+		if out != "" {
+			combined.WriteString(out)
+			combined.WriteString("\n")
+		}
+		return report(), err
 	}
 	// origin/HEAD names the branch a plain clone would have checked out.
 	// A remote with no commits cannot answer, and that is not a failure:

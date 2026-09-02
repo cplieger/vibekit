@@ -178,14 +178,23 @@ export async function cloneAllForAccount(
   let done = 0;
   const failedNames: string[] = [];
   for (const repo of candidates) {
-    btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
+    const position = `Cloning ${String(done + 1)}/${String(candidates.length)}`;
+    btn.textContent = `${position}…`;
     const url = repo.clone_url ?? "";
     if (url === "") {
       failedNames.push(repo.name);
       done++;
       continue;
     }
-    const res = await cloneRepoAction.dispatch({ url });
+    const res = await cloneRepoAction.dispatch({
+      url,
+      // git's own progress stream, throttled server-side; the percent is
+      // what tells a reader a large repo is downloading rather than hung.
+      onProgress: (line) => {
+        const pct = /(\d{1,3})%/.exec(line)?.[1];
+        btn.textContent = pct === undefined ? `${position}…` : `${position} (${pct}%)…`;
+      },
+    });
     if (res === null || (res.error !== undefined && res.error !== "")) {
       failedNames.push(repo.name);
     } else {
