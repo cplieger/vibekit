@@ -945,6 +945,80 @@ describe("a superseded activation paints no failure", () => {
   });
 });
 
+describe("a tab whose chat this device's store does not hold", () => {
+  // Measured after a forced restart: a TRUNCATED /api/chats answer left several
+  // open tabs with no store row, and activateChatView's early return left the
+  // pane holding whatever the previous chat had put there — no error, no retry,
+  // no self-heal, until the reader reloaded the page. (The server half of that
+  // truncation is internal/chat's shared-scan ownership.)
+  function loadedChat(): never {
+    return {
+      id: "c-missing",
+      model: "",
+      message_count: 3,
+      messages: [{ id: "m1" }],
+      usage: { context_size: 0 },
+      has_more: false,
+    } as never;
+  }
+
+  beforeEach(() => {
+    messagesEl.replaceChildren();
+  });
+
+  it("says so instead of leaving a blank pane", async () => {
+    vi.mocked(get).mockReturnValue(undefined);
+    vi.mocked(loadList).mockResolvedValue(false);
+
+    activateChatView("c-missing");
+
+    expect(messagesEl.textContent).toContain("This conversation isn't loaded yet.");
+    expect(messagesEl.querySelector("button")?.textContent).toBe("Retry");
+  });
+
+  it("re-reads the chat list once and activates the chat when it arrives", async () => {
+    // The store answers absent for the first activation and populated once the
+    // re-read has landed, which is exactly what a truncated boot list followed by
+    // a complete one produces.
+    vi.mocked(get).mockReturnValueOnce(undefined).mockReturnValue(loadedChat());
+    vi.mocked(loadList).mockResolvedValue(true);
+
+    activateChatView("c-missing");
+
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-missing");
+    });
+    expect(loadList).toHaveBeenCalledTimes(1);
+    expect(messagesEl.textContent).not.toContain("This conversation isn't loaded yet.");
+  });
+
+  it("does not loop when the re-read still does not produce the chat", async () => {
+    vi.mocked(get).mockReturnValue(undefined);
+    vi.mocked(loadList).mockResolvedValue(true);
+
+    activateChatView("c-missing");
+
+    await vi.waitFor(() => {
+      expect(loadList).toHaveBeenCalledTimes(1);
+    });
+    // A second heal would mean a second read. The affordance stays, which is the
+    // honest end state for a chat the server does not report.
+    await Promise.resolve();
+    expect(loadList).toHaveBeenCalledTimes(1);
+    expect(messagesEl.textContent).toContain("This conversation isn't loaded yet.");
+  });
+
+  it("clears a previous activation's failure box", async () => {
+    vi.mocked(get).mockReturnValue(undefined);
+    vi.mocked(loadList).mockResolvedValue(false);
+
+    activateChatView("c-missing");
+    activateChatView("c-missing");
+
+    expect(messagesEl.querySelectorAll(".load-error")).toHaveLength(1);
+  });
+});
+
 describe("restore: opening a closed conversation from History", () => {
   // The reported symptom was a blank chat page, so the assertion is that the
   // transcript is actually FETCHED and the tab actually opens. Every row the

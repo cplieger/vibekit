@@ -26,7 +26,7 @@
   font-size: var(--fs-base);
   overflow: hidden;
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 /* A claim-only card (read, delete, hook, think, switch_mode) has no depth 1, and
@@ -109,7 +109,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   overflow: hidden;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 /* Cards live in the body region (a uip-disclosure-region: the primitive
@@ -130,9 +130,13 @@
 }
 
 /* Rows sit tighter than standalone cards: a member's claim line is one of
- * several, not a card of its own. */
+ * several, not a card of its own. The dense tier's floor, for the reason the
+ * standalone floor exists (see `.tool-header`): without one, a member row is its
+ * own line box plus this padding, so a run of twelve reads as twelve slightly
+ * different heights. */
 .tool-group-body > .tool-call .tool-header {
   padding-block: var(--sp-1);
+  min-height: var(--ctl-h-dense);
 }
 
 .tool-group-header {
@@ -178,11 +182,25 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
+/* A BOX HEADER READS ONE OF THE TWO CONTROL-HEIGHT TOKENS, never its own line
+ * box. This rule had no floor at all, so a card's header was whatever its
+ * content measured — 22.0px or 25.4px depending on whether the title row
+ * carried a badge, against the 36px `.tool-group-header` and `.run-step-head`
+ * declare from the same token. Measured on a live transcript: 38 headers at two
+ * heights, both short of the group header directly above them, which is the
+ * "some boxes are the wrong height and it looks random" report.
+ *
+ * `--btn-h` is the standalone tier (a header that stands alone in its row);
+ * `--ctl-h-dense` is the tier a member row inside a `.tool-group-body` takes,
+ * declared with that group's tighter padding above. Two tiers rather than one
+ * because the density difference between a card and a row is deliberate; what
+ * was not deliberate is having no floor in either. */
 .tool-header {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) 0.75rem;
+  min-height: var(--btn-h);
   min-width: 0; /* allow ellipsis on flex children */
 }
 
@@ -457,8 +475,8 @@
 }
 
 .tool-disclosure:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* Open: the chevron turns down at the region it revealed. `aria-expanded` is
@@ -618,14 +636,19 @@
   font-size: var(--fs-base);
   overflow: hidden;
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
+/* Same floor as `.tool-header` and `.tool-group-header`, and for the same
+ * reason: measured at 34px on a live transcript against the 36px of the group
+ * header beside it, because the height was the identity row's line box plus this
+ * padding rather than a declared tier. */
 .subagent-header {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
+  min-height: var(--btn-h);
   cursor: pointer;
   user-select: none;
   transition: background var(--dur-micro) var(--ease-standard);
@@ -915,7 +938,7 @@
   border-radius: var(--r);
   padding: var(--sp-2) var(--sp-3);
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 .todo-header {
@@ -1011,7 +1034,7 @@
   padding: var(--sp-3) var(--sp-4);
   font-size: var(--fs-base);
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 .plan-header {
@@ -1856,8 +1879,8 @@
 }
 
 .user-input-option:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 .user-input-option-head {
@@ -1939,8 +1962,8 @@
 }
 
 .user-input-text:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-field);
 }
 
 .user-input-actions {

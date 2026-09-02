@@ -17,6 +17,7 @@ vi.mock("../icons.js", async (importOriginal) => ({
 }));
 
 import { buildSubagentBlock } from "./subagent-block.js";
+import { CHUNK_ENTER_ATTR } from "../smd-renderer.js";
 
 const iconSlot = (root: HTMLElement): HTMLElement =>
   root.querySelector(".subagent-icon") as HTMLElement;
@@ -188,6 +189,58 @@ describe("the tail", () => {
     await new Promise((r) => setTimeout(r, 20));
     const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
     expect(lines).toEqual(["line two", "line three", "line four"]);
+    sa.root.remove();
+  });
+
+  // THE STREAMING SHAPE, which no case above can produce: `smd-renderer.ts` wraps
+  // every text emission in a `<span data-vk-chunk-enter>`, so one sentence is a
+  // run of sibling spans whose boundaries fall wherever a frame's chunk ended.
+  // The element-boundary space this walk adds then lands inside words, and it
+  // moves every frame — the reported "random gaps" that fix themselves on a tab
+  // switch, because the replay path renders `animateText: false` and produces one
+  // text node per block. Built with the real attribute name rather than a literal,
+  // so a rename of the marker fails here instead of silently un-fixing this.
+  it("does not separate the per-chunk spans a streaming delta arrives in", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+
+    const p = document.createElement("p");
+    for (const chunk of ["I am", " crea", "ting a", " workflow"]) {
+      const span = document.createElement("span");
+      span.setAttribute(CHUNK_ENTER_ATTR, "");
+      span.appendChild(document.createTextNode(chunk));
+      p.appendChild(span);
+    }
+    const bubble = document.createElement("div");
+    bubble.className = "message assistant streaming";
+    bubble.appendChild(p);
+    sa.body.appendChild(bubble);
+
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+    expect(lines).toEqual(["I am creating a workflow"]);
+    sa.root.remove();
+  });
+
+  // The other half of the same rule: an element that IS a boundary keeps its
+  // separator, or two blocks glue into one word. Pinned beside the case above so
+  // a fix to one cannot be a regression in the other.
+  it("still separates two blocks whose text carries no newline between them", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+    const para = (t: string): HTMLElement => {
+      const el2 = document.createElement("p");
+      el2.textContent = t;
+      return el2;
+    };
+    const wrap = document.createElement("div");
+    wrap.append(para("first"), para("second"));
+    sa.body.appendChild(wrap);
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+    expect(lines).toEqual(["first second"]);
     sa.root.remove();
   });
 });

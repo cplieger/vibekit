@@ -52,6 +52,36 @@
    Canonical keyframe library (vk-* prefix)
    ========================================================================== */
 
+/* FILL MODE: AN ENTRY ANIMATION TAKES `backwards`, NEVER `both` OR `forwards`.
+ *
+ * Every keyframe set below that declares only `from` ends at the element's own
+ * value, so a forwards fill changes nothing about how it looks and keeps the
+ * FINISHED animation attached to the element for the element's whole life. Two
+ * costs, and the second is a rendering defect rather than bookkeeping:
+ * `getAnimations()` never empties, and Chromium will not treat a text run under
+ * an animated opacity as opaque, so it drops subpixel antialiasing for it.
+ *
+ * Measured as a live defect on the streaming chunk spans (13-messages.css): the
+ * reveal buffer emits 3-10 characters per span, so a settled reply held hundreds
+ * of finished opacity animations, each chunk painting with different
+ * antialiasing from the plain text around it. It reached the user as a strange
+ * font with gaps at random positions, and switching chats "fixed" it because
+ * park/unpark rebuilds the body and the settled render emits no spans.
+ *
+ * `backwards` rather than no fill at all, because two rules pair one of these
+ * with a `--stagger-index` delay (19-files.css, 29-turns.css) and the backwards
+ * half is what holds a delayed row invisible instead of letting it paint, pop,
+ * then fade.
+ *
+ * An EXIT animation is the opposite case and keeps its forwards fill: its last
+ * keyframe is a state the element does not otherwise have, so dropping the fill
+ * snaps it back. Members: `slide-out`, `tab-merge-up` (10-shell-app.css),
+ * `vk-fade-out`, `vk-dock-advance-out` (26-dock.css), `vk-shell-fs-out`
+ * (61-mcp-tools.css) and `drag-gap-open` (10-shell-app.css), which reads as an
+ * entry and is not one: the element declares `height: 0` and the animation ends
+ * open. `animation-fill-css.test.ts` holds both directions.
+ */
+
 @keyframes vk-fade-in {
   from {
     opacity: 0;
@@ -292,7 +322,7 @@
 }
 
 [data-chat-entry] {
-  animation: vk-chat-entry 200ms var(--ease-enter) both;
+  animation: vk-chat-entry 200ms var(--ease-enter) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {

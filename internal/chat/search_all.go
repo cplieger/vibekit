@@ -79,7 +79,7 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 	}
 
 	found := make([]Match, len(entries))
-	parallel.Bounded(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
+	scanned := parallel.Bounded(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
 		found[idx] = searchOneChat(ce, query)
 	})
 
@@ -98,7 +98,18 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 	if len(matches) > maxChatResults {
 		matches = matches[:maxChatResults]
 	}
-	return SearchAllResult{Matches: matches, Scanned: len(entries), Truncated: truncated}
+	// `scanned` is what the fan-out actually READ, not how many entries it was
+	// given. Two different cancellation windows, and only the first is reachable
+	// from a test: a context that dies during collection is reported by
+	// `newestEntries` itself, while one that dies between that return and this
+	// drain is caught only here — so the clause stays as the defence for it rather
+	// than being dropped as unreachable. Truncated already means "the answer is
+	// short, chats went unread", so neither case earns a second wire field.
+	return SearchAllResult{
+		Matches:   matches,
+		Scanned:   scanned,
+		Truncated: truncated || scanned < len(entries),
+	}
 }
 
 // searchOneChat scans one chat file, returning a zero Match when it does not
@@ -177,6 +188,13 @@ func (s *Store) newestEntries(ctx context.Context) (entries []chatEntry, truncat
 	out := make([]chatEntry, 0, len(all))
 	for i := range all {
 		if ctx.Err() != nil {
+			// The list is now SHORT, and `truncated` is the field that says so.
+			// Without this the cancelled case returns fewer entries with the flag
+			// unchanged, and SearchAll's own `len(entries) == 0` early return then
+			// publishes `{matches: [], scanned: 0, truncated: false}` — an
+			// authoritative "your text is in none of your chats" for a scan that
+			// opened none of them.
+			truncated = true
 			break
 		}
 		out = append(out, all[i].ce)

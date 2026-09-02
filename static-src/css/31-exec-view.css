@@ -123,14 +123,25 @@
 .ev-inputs {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+
+  /* The key and the value sit on ONE baseline. Grid's default `stretch` aligns
+     the two boxes, not the text in them, so any difference in font metrics
+     between the columns leaves the label riding above or below its value —
+     visible here because the pair reads as one line. */
+  align-items: baseline;
   gap: 0.15rem var(--sp-3);
   margin: 0;
   font-size: var(--fs-sm);
 }
 
+/* Inherits the grid's family and size, so the key and its value differ in INK
+   and nothing else. It used to declare `--font-mono` at `--fs-xs` against a sans
+   `--fs-sm` value, which is two families and two sizes in one row — reported as
+   `workdir` and `/workspace/vibekit` not lining up. The sibling that does the
+   same job in the detail pane (`.ev-d-k`) never had the mono, and a value that
+   IS machine text opts in there through `.ev-mono`; a run input can be a path or
+   a sentence, so this column does not. */
 .ev-in-k {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   white-space: nowrap;
 }
@@ -232,8 +243,8 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--c-accent);
-    outline-offset: -2px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
   }
 }
 
@@ -395,6 +406,18 @@
   align-items: center;
   gap: var(--sp-1);
 
+  /* The tree row is a CONTROL — it hovers, it takes the app's selection fill and
+     it is this pane's whole click target — so it reads a control-height tier
+     instead of its own line box. Measured before: 24px (an 18px line box plus
+     this padding) against the 36px `.tab` rows in the sidebar beside it and the
+     36px `.tool-group-header` everywhere else, which is the "these do not have
+     the standard box header height" report.
+
+     `--btn-h` rather than `--ctl-h-dense`: the dense tier is for a control
+     sharing a row with taller content, and this row stands alone on its line.
+     The padding stays as the floor's complement for a label that wraps. */
+  min-block-size: var(--btn-h);
+
   /* The indent is the row's, from its own depth, so a nested container needs no
      wrapper with padding — which is what keeps the reconcile an ordering pass over
      flat elements rather than a tree of boxes to rebuild. */
@@ -411,8 +434,8 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--c-accent);
-    outline-offset: -2px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
   }
 }
 
@@ -591,6 +614,19 @@
   display: flex;
   align-items: baseline;
   gap: var(--sp-2);
+
+  /* The band that puts this row on the same rank as the tree row across the seam:
+     both panes start at the same y, and with the tree at `--btn-h` this row's
+     zero-padding line left the two first lines 10px apart (measured; 4px before
+     the tree fix, 2px after this one).
+
+     PADDING rather than `min-block-size`, because `align-items: baseline` is
+     deliberate here — the mono title and the smaller meta share one baseline — and
+     a floor top-aligns the line instead of centring it: measured in Chromium 151,
+     a baseline-aligned single flex line sits at offset 0 in a taller box and
+     `align-content: center` does not move it. Padding is inside the box, so the
+     line lands after it and the baseline survives. */
+  padding-block: var(--sp-2);
   min-width: 0;
 }
 
@@ -652,6 +688,11 @@
 .ev-d-facts {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+
+  /* One baseline per row, same reason as `.ev-inputs`. It bites in both of this
+     list's shapes: a plain value is a size step above its label, and an
+     `.ev-mono` value is the same size in another family. */
+  align-items: baseline;
   gap: 0.15rem var(--sp-3);
   margin: 0;
   font-size: var(--fs-sm);
@@ -793,8 +834,8 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--c-accent);
-    outline-offset: -2px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
   }
 }
 
@@ -845,7 +886,23 @@
   background: var(--c-bg-primary);
   border-radius: var(--r);
   min-width: 0;
-  overflow-x: auto;
+
+  /* BOTH axes stated, because `overflow-x: auto` alone was not doing what it read
+     as: a `visible` sibling axis computes to `auto`, so this box was already a
+     scroll container in the block axis, and a scroll container's automatic minimum
+     size is 0. Its parent is a flex column capped at 12rem, so every one of these
+     shrank to nothing and the 8px padding was all that was left — measured: 16px
+     tall holding 331px of report, a 0px content box, so the text rendered clipped
+     through the middle of its glyphs. `flex-shrink: 0` is what the cap above always
+     meant: the BODY scrolls, the rows do not collapse.
+
+     Then a per-row ceiling, because the region is an INDEX: unshrunk, one 674px
+     report filled the whole 12rem window and buried the other three keys, which
+     costs the roll-up the thing it is for. About four lines each, and each row
+     scrolls its own remainder. */
+  overflow: auto;
+  flex-shrink: 0;
+  max-block-size: 4.5rem;
 }
 
 .ev-r-empty {

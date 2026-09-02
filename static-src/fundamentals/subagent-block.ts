@@ -39,6 +39,7 @@ import { isToolActive } from "../tool-schema.js";
 import { iconEl } from "../icon-el.js";
 import { chevronEl } from "../chevron.js";
 import { ICON_TAB_AGENT, ICON_EXTERNAL } from "../icons.js";
+import { CHUNK_ENTER_ATTR } from "../smd-renderer.js";
 import {
   buildTurnFooter,
   updateTurnFooter,
@@ -51,12 +52,28 @@ const TAIL_LINES = 3;
 
 /** One block's text as lines. Element boundaries become spaces; runs of
  *  whitespace collapse; any newlines the block's own text carries split it
- *  further. */
+ *  further.
+ *
+ *  A PER-CHUNK WRAPPER IS NOT A BOUNDARY. `smd-renderer.ts` wraps every streamed
+ *  text emission in a `<span data-vk-chunk-enter>` so the per-chunk fade can
+ *  animate it, so one streaming sentence is dozens of sibling spans — and the
+ *  space this walk puts at every element boundary then lands INSIDE words, at
+ *  positions that move with each frame's chunk size. That is the reported defect:
+ *  a delegate writing `I am creating a workflow` showed
+ *  `I am crea ting a workflow` in its tail and read correctly again after a tab
+ *  switch, because the replay path renders with `animateText: false` and produces
+ *  one text node per block. Skipping the marked span keeps the boundary rule for
+ *  everything that IS a boundary — two blocks whose `textContent` carries no
+ *  separator between them, which is why the space exists at all. */
 function blockLines(node: Node): string[] {
   const parts: string[] = [];
   const walk = (n: Node): void => {
     if (n.nodeType === Node.TEXT_NODE) {
       parts.push(n.nodeValue ?? "");
+      return;
+    }
+    if (n.nodeType === Node.ELEMENT_NODE && (n as Element).hasAttribute(CHUNK_ENTER_ATTR)) {
+      n.childNodes.forEach(walk);
       return;
     }
     parts.push(" ");

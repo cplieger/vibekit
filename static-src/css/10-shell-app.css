@@ -542,8 +542,8 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--c-accent);
-    outline-offset: 3px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
   }
 }
 

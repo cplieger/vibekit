@@ -214,6 +214,13 @@ type ACPBridge interface {
 	// without paying for a call per prompt. SetModel clears that cache, so
 	// a post-swap call always asserts.
 	EnsureEffort(ctx context.Context, level string) error
+	// ObserveEffort hands the bridge a reasoning-effort level the SESSION
+	// reported on the `config_option_update` notification, which the bridge
+	// forwards unread. It is what keeps EnsureEffort's differs-only comparison
+	// honest against a level KAS moved on its own: the runtime has already
+	// decoded that frame, so the observation costs one method call on a cold
+	// path rather than a second decode of every streaming delta.
+	ObserveEffort(level string)
 	// CallAt is Call plus the read loop position at which the response
 	// arrived, for a caller that must order a LOCAL decision against
 	// notifications still queued behind that response. The prompt paths

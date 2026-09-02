@@ -153,8 +153,8 @@
   }
 
   &:focus-visible {
-    outline: 2px solid var(--c-accent);
-    outline-offset: 1px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
   }
 }
 
@@ -208,11 +208,11 @@
     background var(--dur-micro),
     opacity var(--dur-enter),
     transform var(--dur-enter);
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
   /* Staggered list entry (design system): 30ms per row, capped at 8 by the
-     JS that sets --stagger-index. `both` fill holds delayed rows invisible
-     until their turn. */
+     JS that sets --stagger-index. The `backwards` fill above is what holds a
+     delayed row invisible until its turn. */
   animation-delay: calc(var(--stagger-index, 0) * 30ms);
 
   /* The last row drops the separator's COLOUR, not the edge itself. `none`

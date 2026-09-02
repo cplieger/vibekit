@@ -7,56 +7,17 @@
 // see is the affordance, and an invisible hit target is the same defect in the
 // other direction — vibekit-ui.md's "no dead zones" rule cuts both ways.
 //
-// The stylesheet is assembled from `css/MANIFEST` in declared order, the way
-// `cmd/bundle` concatenates it, because equal-specificity ties in this app are
-// decided by that order rather than by the selectors. Reading the built
-// `static/style.css` instead would test a gitignored artifact that need not
-// exist; this reads the sources and reproduces the cascade.
+// `mountAppCSS` assembles the stylesheet from `css/MANIFEST` in declared order,
+// the way `cmd/bundle` concatenates it, because equal-specificity ties in this
+// app are decided by that order rather than by the selectors.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import manifest from "./css/MANIFEST?raw";
-
-const sheets = import.meta.glob<string>("./css/*.css", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-});
-
-// The manifest also pulls the ui-primitives base in from node_modules, and
-// `import.meta.glob` needs a static pattern per directory.
-const vendor = import.meta.glob<string>("./node_modules/@cplieger/ui-primitives/css/*.css", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-});
-
-/** The manifest's declared order, comments and blanks dropped. */
-function manifestOrder(): string[] {
-  return manifest
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l !== "" && !l.startsWith("#"));
-}
-
-/** A manifest entry's text. Entries are relative to `css/`, so an entry that
- *  climbs out of it (the ui-primitives base) resolves against the package. */
-function sheetFor(entry: string): string | undefined {
-  if (entry.startsWith("../")) {
-    return vendor[`./${entry.slice(3)}`];
-  }
-  return sheets[`./css/${entry}`];
-}
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 let styleEl: HTMLStyleElement;
 let host: HTMLElement;
 
-beforeAll(async () => {
-  const names = manifestOrder();
-  const missing = names.filter((n) => sheetFor(n) === undefined);
-  expect(missing, "every MANIFEST entry resolves to a stylesheet").toEqual([]);
-
-  styleEl = document.createElement("style");
-  styleEl.textContent = names.map((n) => sheetFor(n)).join("\n");
-  document.head.appendChild(styleEl);
+beforeAll(() => {
+  styleEl = mountAppCSS();
 
   host = document.createElement("div");
   document.body.appendChild(host);

@@ -1,28 +1,36 @@
 // Reading the SHIPPED stylesheets as source, for the guards that cannot be
 // written any other way.
 //
-// These suites assert SOURCE facts — which of two rules applies, whether a
-// declaration belongs to a given selector — rather than computed ones, because
-// the test page loads no app stylesheet: nothing links `css/MANIFEST`, so
-// `getComputedStyle` has no cascade to report on. These three helpers are that
-// reader. (Before Browser Mode the reason was happy-dom, which implemented no
-// cascade at all and returned the last declaration parsed rather than the
-// winner. Asserting the computed fact in Chromium instead is a real
-// opportunity, and a separate piece of work from this migration.)
+// Two jobs. `appCSS`/`mountAppCSS` assemble the bundle so a suite can measure
+// real LAYOUT against it. The three readers below assert SOURCE facts — which of
+// two rules applies, whether a declaration belongs to a given selector — which
+// computed style cannot answer: a synthetic hover drives no style recalc, and
+// `CSS.forcePseudoState` is a devtools protocol call rather than something a test
+// page can make.
 //
 // The stylesheets arrive as Vite `?raw` imports rather than `node:fs` reads, so
-// this helper — and the eleven suites that import it — run in the browser
-// project. `import.meta.glob` is eager, so every sheet is inlined at transform
-// time and `loadCSS` is a map lookup.
+// this helper — and the suites that import it — run in the browser project.
+// `import.meta.glob` is eager, so every sheet is inlined at transform time and
+// `loadCSS` is a map lookup.
 //
 // Extracted from pill-press.test.ts when a second suite (tab-dot.test.ts) needed
 // `ruleContaining`. The alternative was a second copy of a brace-matching
 // parser, which is the one kind of duplication a test helper directory exists to
-// prevent.
+// prevent — the same reason the MANIFEST assembly moved here from
+// disclosure-row-css.test.ts when turn-header.test.ts needed it.
 
 import { expect } from "vitest";
+import manifest from "../css/MANIFEST?raw";
 
 const sheets = import.meta.glob<string>("../css/*.css", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+// The manifest also pulls the ui-primitives base in from node_modules, and
+// `import.meta.glob` needs a static pattern per directory.
+const vendor = import.meta.glob<string>("../node_modules/@cplieger/ui-primitives/css/*.css", {
   query: "?raw",
   import: "default",
   eager: true,
@@ -35,6 +43,37 @@ export function loadCSS(name: string): string {
     throw new Error(`no stylesheet ../css/${name}`);
   }
   return hit;
+}
+
+/** The shipped stylesheet, assembled from `css/MANIFEST` in declared order the
+ *  way `cmd/bundle` concatenates it — which is the cascade, since equal-
+ *  specificity ties in this app are decided by that order rather than by the
+ *  selectors. Reading the built `static/style.css` instead would test a
+ *  gitignored artifact that need not exist. */
+function appCSS(): string {
+  const names = manifest
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+  // An entry is relative to `css/`, so one that climbs out of it (the
+  // ui-primitives base) resolves against the package.
+  const text = (entry: string): string | undefined =>
+    entry.startsWith("../") ? vendor[`../${entry.slice(3)}`] : sheets[`../css/${entry}`];
+
+  const missing = names.filter((n) => text(n) === undefined);
+  expect(missing, "every MANIFEST entry resolves to a stylesheet").toEqual([]);
+  return names.map((n) => text(n)).join("\n");
+}
+
+/** Install the shipped stylesheet into the test page, for a suite that measures
+ *  real LAYOUT. Remove the returned element in `afterAll`. A suite asserting a
+ *  SOURCE fact (which of two rules applies, whether a declaration belongs to a
+ *  selector) wants `loadCSS` plus the readers below instead. */
+export function mountAppCSS(): HTMLStyleElement {
+  const style = document.createElement("style");
+  style.textContent = appCSS();
+  document.head.appendChild(style);
+  return style;
 }
 
 /** Every style rule in the sheet, at-rule bodies included, as

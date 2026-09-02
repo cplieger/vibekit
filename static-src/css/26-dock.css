@@ -475,8 +475,8 @@
 
 .steer-act:focus-visible {
   opacity: 1;
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* Expand the hit target to ~44px on touch without growing the glyph. */

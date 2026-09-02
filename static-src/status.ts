@@ -11,7 +11,8 @@ import { $ } from "./dom.js";
 import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
-import { el } from "@cplieger/reactive";
+import { versionsSignal } from "./versions.js";
+import { el, effect } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
@@ -166,13 +167,53 @@ export function setStatus(s: ConnectionStatus): void {
   // value lands on the card: on the dot it would reach nothing.
   $.statusCard.style.setProperty("--status-color", style.color);
   dot.setAttribute("aria-label", `Connection: ${s}`);
-  $.stWs.textContent = s;
+  lastStatus = s;
+  paintConnectionLine();
 
   // Debounced screen-reader announcement (2s stable).
   clearTimeout(statusAnnounceTimer);
   statusAnnounceTimer = setTimeout(() => {
     announce(`Connection ${s}`);
   }, 2000);
+}
+
+/** The status the transport last reported, held so the version arriving later can
+ *  repaint the line without a second status change. */
+let lastStatus: ConnectionStatus = "connecting";
+
+/** The connection line: the status, plus WHICH server, once its version is known.
+ *
+ *  The version rides the CONNECTED line only. `connecting` and `disconnected`
+ *  describe this page's socket rather than the server behind it, and naming a
+ *  build beside "disconnected" would claim knowledge of something the page has
+ *  just lost contact with — while the value is a fact about the container it
+ *  reached, so it belongs exactly where the line says it reached one. */
+function paintConnectionLine(): void {
+  const build = versionsSignal().value.vibekit;
+  $.stWs.textContent =
+    lastStatus === "connected" && build !== "" ? `connected to vibekit ${build}` : lastStatus;
+}
+
+/** Repaint both card lines when the version pair lands.
+ *
+ *  An effect rather than a callback from the loader: the pair arrives once, well
+ *  after the card is built and after the transport's first `connected`, and both
+ *  lines are derived from it plus state this module already holds.
+ *
+ *  Registered from the composition root, NOT at module scope: an effect runs its
+ *  body once on registration, and this one reads `$.stWs`, which throws when the
+ *  element is absent. At import time that is every test of an unrelated export in
+ *  this module, and in production it would make a markup change a module-load
+ *  failure rather than a missing line. */
+export function initStatusVersions(): void {
+  effect(() => {
+    // Read INSIDE the effect so it subscribes; paintConnectionLine reads it again
+    // for its own value. `void` rather than a bare expression, matching
+    // forge-auth.ts: the read is the whole point and the value is not wanted.
+    void versionsSignal().value;
+    paintConnectionLine();
+    $.stKiro.textContent = runtimeStatusLine();
+  });
 }
 
 export function updateContextBar(opts: ContextBarUpdate): void {
@@ -187,10 +228,14 @@ export function updateContextBar(opts: ContextBarUpdate): void {
  *  degraded banner, which is wanted — opening the status surface is exactly
  *  when a stale banner should clear and a real one should appear.
  *  `runtime-health.ts` owns the reason vocabulary; this only renders its line.
- *  Called on popup expand. */
-export function refreshRuntimeLine(): void {
+ *  Called on popup expand.
+ *
+ *  Returns the probe's promise so a caller can wait for the SECOND paint. The
+ *  app's caller does not (it opens a popup and has nothing to sequence), but a
+ *  discarded promise is what makes the two-paint behaviour untestable. */
+export function refreshRuntimeLine(): Promise<void> {
   $.stKiro.textContent = runtimeStatusLine();
-  void checkRuntimeHealth().then(() => {
+  return checkRuntimeHealth().then(() => {
     $.stKiro.textContent = runtimeStatusLine();
   });
 }

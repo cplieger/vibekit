@@ -114,6 +114,17 @@ const TOKEN_TAG_MAP: Readonly<Record<number, string>> = {
  *  when the conversion succeeds, so a half-arrived or unsupported expression is
  *  styled as source without a second code path. */
 const MATH_ATTR = "data-math";
+
+/** The marker every streamed text emission's wrapper span carries, so the
+ *  per-chunk fade in `13-messages.css` can animate each delta once on mount.
+ *
+ *  Exported because a reader that MIRRORS this DOM as text has to know the span
+ *  is a rendering artefact rather than a boundary in the content: one sentence
+ *  arrives as dozens of these, and the delegate card's rolling tail
+ *  (`fundamentals/subagent-block.ts`) put a space at every element boundary, so
+ *  it printed gaps inside words for as long as a delegate streamed. One
+ *  definition, two readers. */
+export const CHUNK_ENTER_ATTR = "data-vk-chunk-enter";
 const MATH_RAW_ATTR = "data-math-raw";
 
 /** Turn a closed equation host's LaTeX into MathML in place.
@@ -284,7 +295,7 @@ function add_text_dom(data: DomRendererData, text: string): void {
   // the expression closes, so a per-chunk wrapper is work thrown away.
   if (data.animateText && tag !== "CODE" && tag !== "PRE" && !parent.hasAttribute(MATH_ATTR)) {
     const span = makeEl("span");
-    span.setAttribute("data-vk-chunk-enter", "");
+    span.setAttribute(CHUNK_ENTER_ATTR, "");
     span.appendChild(document.createTextNode(text));
     parent.appendChild(span);
     return;

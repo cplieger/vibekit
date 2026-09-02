@@ -38,6 +38,7 @@ import { showBanner, clearBannerCodes, GLOBAL_BANNER } from "./banner-stack.js";
 import { onBus, BUS_TRANSPORT_GAP } from "./bus.js";
 import { openSetting } from "./settings-highlight.js";
 import { showLoginModal } from "./modals.js";
+import { getVersions } from "./versions.js";
 import type { BannerLevel } from "./types.js";
 
 const CODE = "runtime_degraded";
@@ -130,9 +131,21 @@ const LINE_UNKNOWN = "kiro-cli unknown";
 
 let runtimeLine = LINE_UNKNOWN;
 
-/** The agent-runtime line as of the last probe. Painted by status.ts. */
+/** The agent-runtime line as of the last probe. Painted by status.ts.
+ *
+ *  The READY line names the version, because "which kiro-cli am I talking to" is
+ *  the question this line gets asked and the answer was two clicks away in
+ *  Settings → About. Only the ready line: every degraded reason is the SERVER's
+ *  own wording rendered verbatim (see the header), and a version appended to
+ *  `kiro-cli installing` would name the pin rather than anything running. Falls
+ *  back to the bare literal while the version is unknown, which is the state a
+ *  first paint is in — status.ts repaints this line when the pair lands. */
 export function runtimeStatusLine(): string {
-  return runtimeLine;
+  if (runtimeLine !== LINE_READY) {
+    return runtimeLine;
+  }
+  const build = getVersions().kiroCli;
+  return build === "" ? LINE_READY : `kiro-cli ${build} ready`;
 }
 
 function reasonOf(body: unknown): string {

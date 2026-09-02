@@ -21,6 +21,22 @@ import { formatElapsed } from "../strings.js";
 import type { FileChange } from "../types.js";
 import type { TurnOutcome } from "../turns.js";
 
+/** The outcome the footer's GLYPH stands for, in words, for the tooltip.
+ *
+ *  Only the outcomes the summary LINE does not already name. `summaryLine` leads
+ *  with "Interrupted" / "Failed" for those two, so repeating them is the defect
+ *  being fixed rather than a fix; `completed` hides the glyph entirely, and the
+ *  absence of a mark IS the clean case. What is left is the set where a reader
+ *  sees a coloured circle and the row says nothing about it — chief among them
+ *  `running`, whose accent ring is the only thing on the footer that says the
+ *  turn has not finished. */
+const OUTCOME_TOOLTIP: Partial<Record<TurnOutcome, string>> = {
+  running: "Still running",
+  cancelled: "Cancelled",
+  refused: "Refused by the model",
+  unknown: "Ended without a recorded outcome",
+};
+
 /** The per-turn summary inputs, sourced from turn metadata on the message. */
 export interface TurnSummaryData {
   credits?: number;
@@ -100,10 +116,14 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
     text.textContent = line;
   }
 
-  // Mobile may ellipsize the tail of a long line; the full statement stays
-  // the accessible name and hover text.
+  // NO native `title`. It carried this same `line` verbatim, so the one hover
+  // affordance on the footer restated the text the reader was already looking at
+  // — and as a UA tooltip it also missed the styled `data-tooltip` treatment every
+  // other hover in the app uses. The accessible name keeps the full statement,
+  // which is what a truncated line on a narrow row needs; the tooltip below says
+  // the things the row does NOT.
   if (summary !== null) {
-    summary.title = line;
+    summary.removeAttribute("title");
     summary.setAttribute("aria-label", line === "" ? "Turn summary" : `Turn summary: ${line}`);
   }
 
@@ -118,6 +138,7 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
       summary.removeAttribute("aria-expanded");
       setFilesOpen(footer, false);
     }
+    syncLedgerTooltip(footer);
   }
 
   const list = footer.querySelector<HTMLElement>(":scope > .turn-ledger-files");
@@ -190,10 +211,12 @@ function renderFileRows(list: HTMLElement, files: [string, FileChange][]): void 
 
 function fileRow(path: string, fc: FileChange): HTMLElement {
   const item = el("li", { className: "turn-ledger-file" });
+  // `data-tooltip`, not `title`: the styled tooltip system is what every other
+  // hover in the app uses, and a UA tooltip beside it reads as foreign chrome.
   const btn = el("button", {
     className: "turn-file-row",
     type: "button",
-    title: `Open the diff for ${path}`,
+    "data-tooltip": `Open the diff for ${path}`,
   }) as HTMLButtonElement;
 
   btn.appendChild(el("span", { className: "turn-file-path" }, path));
@@ -230,7 +253,7 @@ function reviewRow(count: number): HTMLElement | null {
     {
       className: "turn-review-all",
       type: "button",
-      title: "Review every changed file in the git view",
+      "data-tooltip": "Review every changed file in the git view",
     },
     `Review changes (${String(count)} files)`,
   ) as HTMLButtonElement;
@@ -254,4 +277,35 @@ function setFilesOpen(footer: HTMLElement, on: boolean): void {
   if (summary !== null && !summary.disabled) {
     summary.setAttribute("aria-expanded", on ? "true" : "false");
   }
+  syncLedgerTooltip(footer);
+}
+
+/** The ledger's hover text: what the row does NOT already say.
+ *
+ *  Two clauses, either of which may be absent. The OUTCOME names the coloured
+ *  glyph in words for the states `summaryLine` leaves unexplained (see
+ *  OUTCOME_TOOLTIP) — the answer to "what is that hollow circle". The ACTION names
+ *  what the click does, and only when there is something to disclose, so a plain
+ *  readout never advertises a disclosure it does not have. Joined with the same
+ *  separator the summary line uses, and the attribute is removed outright when
+ *  neither clause applies rather than left empty, because an empty `data-tooltip`
+ *  still opens a tip. */
+function syncLedgerTooltip(footer: HTMLElement): void {
+  const summary = footer.querySelector<HTMLButtonElement>(":scope > .turn-ledger-summary");
+  if (summary === null) {
+    return;
+  }
+  const parts: string[] = [];
+  const outcome = OUTCOME_TOOLTIP[(footer.dataset["outcome"] ?? "") as TurnOutcome];
+  if (outcome !== undefined) {
+    parts.push(outcome);
+  }
+  if (!summary.disabled) {
+    parts.push(filesOpen(footer) ? "Hide the changed files" : "Show the changed files");
+  }
+  if (parts.length === 0) {
+    summary.removeAttribute("data-tooltip");
+    return;
+  }
+  summary.setAttribute("data-tooltip", parts.join(" \u00b7 "));
 }

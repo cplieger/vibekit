@@ -32,7 +32,7 @@
   font-size: var(--fs-base);
   overflow: hidden;
   flex-shrink: 0;
-  animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
 /* The outcome tint travels on the whole BORDER, so a scan down the transcript
@@ -73,6 +73,12 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
+
+  /* The same floor `.run-step-head` below and `.tool-group-header` /
+     `.subagent-header` / `.tool-header` in 14-tools.css read. A box header takes a
+     declared control-height tier; leaving it to the identity row's line box is
+     what made sibling cards in one transcript disagree by a few pixels. */
+  min-height: var(--btn-h);
   cursor: pointer;
   user-select: none;
   min-width: 0;

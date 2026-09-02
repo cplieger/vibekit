@@ -58,7 +58,7 @@
 /* Entry animation moved from `.msg-wrap` to the card: a turn arrives as one
  * unit, so the header, body and footer must enter together. */
 .turn[data-chat-entry] {
-  animation: vk-slide-up-pronounced var(--dur-enter) var(--ease-enter) both;
+  animation: vk-slide-up-pronounced var(--dur-enter) var(--ease-enter) backwards;
   animation-delay: calc(var(--stagger-index, 0) * 30ms);
 }
 
@@ -222,8 +222,8 @@
 }
 
 .turn-rewind:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* Disabled while the agent runs: KAS refuses a revert on a live session, so the
@@ -309,8 +309,8 @@
 }
 
 .turn-req-more:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* A turn the user did not ask for: a typed trigger line rather than a
@@ -591,8 +591,8 @@
 }
 
 .turn-ledger-summary:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
   border-radius: var(--r-sm);
 }
 
@@ -739,8 +739,8 @@
 }
 
 .turn-file-row:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: -2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-inset);
 }
 
 .turn-file-path {
@@ -906,8 +906,8 @@
 .rail-marker:focus-visible,
 .rail-cluster:focus-visible,
 .rail-zoom-out:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 .rail-marker[data-outcome="running"] {
@@ -1093,8 +1093,8 @@
 }
 
 .turn-fold-toggle:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
   border-radius: var(--r-sm);
 }
 

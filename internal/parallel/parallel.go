@@ -15,10 +15,20 @@ package parallel
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 )
 
 // Bounded dispatches fn over items with up to maxWorkers concurrent goroutines,
-// stopping early when ctx is cancelled.
+// stopping early when ctx is cancelled, and REPORTS how many items it ran fn for.
+//
+// The count is the whole point of the return value: a cancelled fan-out runs a
+// PREFIX of the work and the caller is the only thing that knows what a short
+// answer means. Answering `done < len(items)` is what lets a caller mark its
+// result incomplete instead of publishing a subset as if it were the whole set —
+// which is exactly what `internal/chat`'s header scan did, silently, because the
+// unvisited result slots were indistinguishable from items that ran and produced
+// nothing. Compare against `len(items)`; a caller that genuinely does not care
+// (a purge pass, where an unvisited chat simply is not purged) ignores it.
 //
 // Workers PULL indices from a shared channel rather than each owning a
 // pre-cut slice, which is what keeps a slow item from stalling the rest: a
@@ -30,9 +40,9 @@ import (
 // caller collects results into a pre-sized slice by index and needs no mutex.
 // The ctx check is per item, so cancellation lands mid-drain rather than only
 // between batches.
-func Bounded[T any](ctx context.Context, items []T, maxWorkers int, fn func(i int, item T)) {
+func Bounded[T any](ctx context.Context, items []T, maxWorkers int, fn func(i int, item T)) (done int) {
 	if len(items) == 0 {
-		return
+		return 0
 	}
 	workers := min(len(items), maxWorkers)
 	work := make(chan int, len(items))
@@ -40,16 +50,27 @@ func Bounded[T any](ctx context.Context, items []T, maxWorkers int, fn func(i in
 		work <- i
 	}
 	close(work)
+	var ran atomic.Int64
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Go(func() {
+			// Counted locally and published once, so the common path costs no
+			// contention: an atomic add per item would serialize eight workers on
+			// one cache line for work whose real bound is disk.
+			local := int64(0)
 			for idx := range work {
 				if ctx.Err() != nil {
-					return
+					// BREAK, never return: a worker that returns here skips the
+					// publish below and its completed items vanish from the count,
+					// which would report a cancelled scan as emptier than it was.
+					break
 				}
 				fn(idx, items[idx])
+				local++
 			}
+			ran.Add(local)
 		})
 	}
 	wg.Wait()
+	return int(ran.Load())
 }

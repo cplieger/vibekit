@@ -132,6 +132,64 @@ func TestBoundedParallel_CancellationLandsOnTheNextItem(t *testing.T) {
 	})
 }
 
+// The RETURN VALUE is what a caller needs to tell a whole answer from a prefix,
+// so it has to survive the cancellation it exists to report.
+//
+// A worker that `return`s on the cancel check instead of breaking skips the
+// publish of its own local count, which loses every item it had already run — the
+// count then under-reports and a caller reading `done == len(items)` still gets
+// the right verdict while `done` itself is a lie to anything that reports it (the
+// cross-chat search publishes it as `Scanned`). Two workers and a cancel partway
+// through is what separates the two: the survivor's tally must include the items
+// it finished before the cancel landed.
+func TestBounded_ReportsWhatItRanUnderCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const cancelAt = 5
+		ctx, cancel := context.WithCancel(t.Context())
+		items := make([]int, 100)
+		var processed atomic.Int32
+
+		done := Bounded(ctx, items, 2, func(i, _ int) {
+			processed.Add(1)
+			if i == cancelAt {
+				cancel()
+			}
+			time.Sleep(time.Millisecond)
+		})
+
+		if got := int32(done); got != processed.Load() {
+			t.Errorf("Bounded reported %d items run, fn ran %d times: the count must "+
+				"survive the cancel that produced it", got, processed.Load())
+		}
+		if done >= len(items) {
+			t.Errorf("Bounded reported %d of %d run after a cancel; a caller cannot "+
+				"tell a prefix from the whole set", done, len(items))
+		}
+	})
+}
+
+// The ordinary path reports every item, or a caller that keys completeness on the
+// count marks a healthy answer incomplete forever.
+func TestBounded_ReportsEveryItemWhenNothingCancels(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		items := make([]int, 25)
+		done := Bounded(t.Context(), items, 4, func(_, _ int) {})
+		if done != len(items) {
+			t.Errorf("Bounded reported %d of %d run with no cancellation, want all",
+				done, len(items))
+		}
+	})
+}
+
+// An empty call reports zero rather than falling through to whatever a caller's
+// own `len(items)` comparison would make of it. `0 == len(nil)` keeps an empty
+// scan COMPLETE, which is the honest verdict: there was nothing to read.
+func TestBounded_EmptyReportsZero(t *testing.T) {
+	if done := Bounded(context.Background(), []int(nil), 4, func(_, _ int) {}); done != 0 {
+		t.Errorf("Bounded over no items reported %d, want 0", done)
+	}
+}
+
 // TestBounded_SlowItemDoesNotStallTheRest is the property the pull-based shape
 // exists for, and neither of the two copies this package replaced covered it.
 //

@@ -56,22 +56,14 @@ let pushState: PushState = { kind: "idle" };
 
 // --- Visibility tracking ---
 
-// The `data-tab-hidden` CSS hook, and nothing else. This handler used to clear
-// the title count here as well — a wholesale clear on becoming visible, which is
-// the shortcut that blanks the cue of a background chat the reader never saw.
-// attention.ts replaces it with the rule that only acknowledges the chat on screen
-// and the sidebar rows actually in view.
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    document.documentElement.removeAttribute("data-tab-hidden");
-  } else {
-    document.documentElement.setAttribute("data-tab-hidden", "");
-  }
-});
-
-if (document.visibilityState !== "visible") {
-  document.documentElement.setAttribute("data-tab-hidden", "");
-}
+// THERE IS NONE HERE. This module used to set a `data-tab-hidden` attribute on
+// <html> for one CSS rule that switched off the transcript's entry animations
+// while the tab was backgrounded. That rule is deleted (61-mcp-tools.css records
+// the measurement: Chromium runs those animations in a hidden tab, so it guarded
+// against nothing), and this was its only writer, so the attribute has no reader
+// and no producer. attention.ts owns every other response to visibility — the
+// title count, the favicon cue and the away summary — and it reads
+// `document.visibilityState` itself.
 
 // --- Cleanup registration ---
 

@@ -71,9 +71,23 @@ func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struc
 // needs. List itself stays best-effort for the UI, where showing most of
 // the sidebar beats showing none of it. Coalesces concurrent sidebar
 // refreshes into a single directory scan.
+//
+// The shared scan runs under a context stripped of the caller's cancellation,
+// because that coalescing is what makes one caller's lifetime everybody's. The
+// client's own boot fires two /api/chats reads and the second ABORTS the first,
+// so the request that opened the singleflight slot is routinely cancelled while a
+// second request is already waiting on its answer — and the answer both then got
+// was a truncated header list. Values are kept; only the deadline and the
+// cancellation are dropped.
+//
+// The scan is bounded by the chat count and by one bounded read per file, and a
+// read already blocks past cancellation on a wedged mount, so what this gives up
+// is the ability to skip work that has not started yet. That is cheap next to
+// answering a caller with a subset of its chats.
 func (s *Store) listWithCompleteness(ctx context.Context) ([]vibekit.ChatHeader, bool) {
+	scanCtx := context.WithoutCancel(ctx)
 	r := sfDo(&s.listSF, "list", func() listResult {
-		headers, complete := s.listOnce(ctx)
+		headers, complete := s.listOnce(scanCtx)
 		return listResult{headers: headers, complete: complete}
 	})
 	if r.headers == nil {
@@ -116,6 +130,15 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	slices.SortFunc(headers, func(a, b vibekit.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
+	if !complete {
+		// The one state this scan can be in that nothing downstream shows a
+		// person: List drops the flag, so the sidebar and the tab strip simply
+		// come up short with no error anywhere. Said here, at the point it is
+		// detected, because a truncated answer is indistinguishable from a
+		// reader having fewer chats than they thought.
+		slog.Warn("chat list: incomplete scan; some chats that exist were not read",
+			"dir", s.dir, "found", len(valid), "returned", len(headers))
+	}
 	slog.Debug("chat list: scan complete",
 		"dir", s.dir,
 		"entries", len(entries),
