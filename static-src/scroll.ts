@@ -56,6 +56,11 @@ const LOAD_MORE_THRESHOLD_PX = 100;
 const BOTTOM_TOLERANCE_PX = 100;
 /** Debounce before re-evaluating the state after a user scroll. */
 const USER_SCROLL_DEBOUNCE_MS = 150;
+/** How long a bottom pin keeps re-asserting the maximum. Derived from the fold
+ *  choreography the pin itself releases: `--fold-slide` runs 0.3s and a close
+ *  flips `content-visibility` at 0.42s (css/29-turns.css), so the document is
+ *  still growing ~450ms after the click. */
+const PIN_SETTLE_MS = 700;
 
 /** The reader's position, as a state rather than an inferred boolean. */
 export type ReadingState = "following" | "reading";
@@ -124,6 +129,10 @@ class ScrollController {
   private anchorProvider: (() => HTMLElement | null) | null = null;
 
   private rafPending = false;
+
+  /** The bottom pin's deadline, and the frame it has queued (0 = none). */
+  private pinUntil = 0;
+  private pinFrame = 0;
 
   /** The scrollTop this controller last wrote, or -1.
    *
@@ -356,9 +365,7 @@ class ScrollController {
 
   /** Return to Following: pin to the live edge and flush deferred mutations. */
   resume(): void {
-    this.setState("following");
-    this.userScrollingUntil = 0;
-    this.scrollSelfTo(this.scrollEl.scrollHeight, "smooth");
+    this.pinToBottom();
   }
 
   /** Enter Reading explicitly — a collapse the user asked for parks them on the
@@ -462,11 +469,67 @@ class ScrollController {
   }
 
   scrollToBottom(): void {
+    this.pinToBottom();
+  }
+
+  /** Land at the document's true bottom and HOLD it there while the layout
+   *  settles.
+   *
+   *  INSTANT, not smooth: a smooth scroll fires ~50 scroll events whose first is
+   *  a whole viewport from the target, so the single-shot `selfScrollTop` marker
+   *  is consumed by an event the listener then reads as a reader gesture — which
+   *  parks the reader, un-hides this control and switches the anchor re-pin off.
+   *  Its target is also frozen at flight start, so height the flush itself
+   *  animates in (`--fold-slide`) never moves it. Measured in Chromium: a
+   *  landing 2000px above the bottom, state stuck at Reading.
+   *
+   *  The re-assert is what covers the growth, and it costs ~42 frames of two
+   *  layout reads with no write in the common case. That is not optimised away
+   *  with an it-stopped-moving exit: this runs only on an explicit resume or a
+   *  sent turn, and it already stops the moment the reader scrolls. Every write
+   *  goes through `scrollSelfTo`, so each frame records its own marker and the
+   *  listener stays quiet. */
+  private pinToBottom(): void {
     this.setState("following");
     this.userScrollingUntil = 0;
-    requestAnimationFrame(() => {
-      this.scrollSelfTo(this.scrollEl.scrollHeight, "instant");
+    this.pinUntil = Date.now() + PIN_SETTLE_MS;
+    this.pinBottomNow();
+    this.queuePinFrame();
+  }
+
+  private queuePinFrame(): void {
+    if (this.pinFrame !== 0) {
+      return;
+    }
+    this.pinFrame = requestAnimationFrame(() => {
+      this.pinFrame = 0;
+      // A reader gesture during the pass enters Reading through the ordinary
+      // listener, and that is the pass's stop condition: the reader outranks
+      // their own earlier click.
+      if (this.state !== "following" || Date.now() >= this.pinUntil) {
+        this.pinUntil = 0;
+        return;
+      }
+      this.pinBottomNow();
+      this.queuePinFrame();
     });
+  }
+
+  /** The MAXIMUM offset, not `scrollHeight`: the same arithmetic the marker is
+   *  clamped to, said once. */
+  private pinBottomNow(): void {
+    const max = Math.max(0, this.scrollEl.scrollHeight - this.scrollEl.clientHeight);
+    if (this.scrollEl.scrollTop !== max) {
+      this.scrollSelfTo(max, "instant");
+    }
+  }
+
+  private cancelPinPass(): void {
+    if (this.pinFrame !== 0) {
+      cancelAnimationFrame(this.pinFrame);
+      this.pinFrame = 0;
+    }
+    this.pinUntil = 0;
   }
 
   /** Hand the scroller to a transcript view: re-root the observers on it and
@@ -474,6 +537,9 @@ class ScrollController {
    *  the park/unpark pair; a freshly created view attaches with
    *  `{scrollTop: 0, readingState: "following"}`. */
   attach(handle: ViewAttachHandle): void {
+    // Before anything else: a live pin pass belongs to the OUTGOING view, and
+    // this method is about to write the incoming one's own scrollTop.
+    this.cancelPinPass();
     this.observeView(handle.el);
     this.userScrollingUntil = 0;
     this.setState(handle.readingState);
@@ -493,6 +559,7 @@ class ScrollController {
     };
     this.deferred = [];
     this.abandonLoadPass();
+    this.cancelPinPass();
     this.userScrollingUntil = 0;
     this.selfScrollTop = -1;
     this.onLoadMore = null;
@@ -566,6 +633,7 @@ class ScrollController {
   resetScrollState(): void {
     this.deferred = [];
     this.abandonLoadPass();
+    this.cancelPinPass();
     this.userScrollingUntil = 0;
     this.selfScrollTop = -1;
     this.setLoadMore(null, false);
@@ -665,6 +733,12 @@ class ScrollController {
    */
   private autoScrollIfAnchored(): void {
     if (this.state === "reading") {
+      return;
+    }
+    // Exactly one writer moves the scroller per frame. While a bottom pin runs,
+    // the reader's explicit "take me to the bottom" outranks the anchor pin, and
+    // the pass is re-asserting the maximum every frame anyway.
+    if (this.pinFrame !== 0) {
       return;
     }
     if (Date.now() < this.userScrollingUntil) {

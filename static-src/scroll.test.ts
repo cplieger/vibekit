@@ -820,48 +820,54 @@ describe("fillViewport", () => {
 // So the scroller here is a real overflowing box, the writes are the platform's
 // own, and the events are the ones a reader would produce.
 // ---------------------------------------------------------------------------
+
+/** Undo the fake and give the singleton's element real overflow. */
+function realScroller(): HTMLElement {
+  const wrap = scroll.getScrollEl();
+  // `Reflect.deleteProperty` rather than `delete`: the keys are computed, and
+  // the point is to drop `fakeScroller`'s redefinitions so the platform's own
+  // metrics and `scrollTo` come back.
+  for (const key of ["scrollHeight", "clientHeight", "scrollTop", "scrollTo"]) {
+    Reflect.deleteProperty(wrap, key);
+  }
+  wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;";
+  if (messagesEl.parentElement !== wrap) {
+    wrap.appendChild(messagesEl);
+  }
+  messagesEl.replaceChildren();
+  wrap.scrollTop = 0;
+  return wrap;
+}
+
+/** A block with real height, appended to the transcript. */
+function block(px: number, className = ""): HTMLElement {
+  const d = document.createElement("div");
+  if (className !== "") {
+    d.className = className;
+  }
+  d.style.cssText = `height:${String(px)}px;`;
+  messagesEl.appendChild(d);
+  return d;
+}
+
+/** Longer than `settle()`: a real scroll event is delivered on its own turn,
+ *  after the frame the write happened in. The argument is for a wait that has to
+ *  outlast a named piece of choreography (a transition, a settle window). */
+async function land(ms = 120): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/** Both real-layout blocks start the same way: no anchor, a real overflowing
+ *  box, an empty transcript, and the reader Following at the top. */
+async function realLayoutReset(): Promise<void> {
+  scroll.setAnchorProvider(null);
+  realScroller();
+  await land();
+  scroll.resetScrollState();
+}
+
 describe("a large tool card below the streaming block", () => {
-  /** Undo the fake and give the singleton's element real overflow. */
-  function realScroller(): HTMLElement {
-    const wrap = scroll.getScrollEl();
-    // `Reflect.deleteProperty` rather than `delete`: the keys are computed, and
-    // the point is to drop `fakeScroller`'s redefinitions so the platform's own
-    // metrics and `scrollTo` come back.
-    for (const key of ["scrollHeight", "clientHeight", "scrollTop", "scrollTo"]) {
-      Reflect.deleteProperty(wrap, key);
-    }
-    wrap.style.cssText = "height:400px;overflow-y:auto;position:relative;";
-    if (messagesEl.parentElement !== wrap) {
-      wrap.appendChild(messagesEl);
-    }
-    messagesEl.replaceChildren();
-    wrap.scrollTop = 0;
-    return wrap;
-  }
-
-  /** A block with real height, appended to the transcript. */
-  function block(px: number, className = ""): HTMLElement {
-    const d = document.createElement("div");
-    if (className !== "") {
-      d.className = className;
-    }
-    d.style.cssText = `height:${String(px)}px;`;
-    messagesEl.appendChild(d);
-    return d;
-  }
-
-  /** Longer than `settle()`: a real scroll event is delivered on its own turn,
-   *  after the frame the write happened in. */
-  async function land(): Promise<void> {
-    await new Promise((r) => setTimeout(r, 120));
-  }
-
-  beforeEach(async () => {
-    scroll.setAnchorProvider(null);
-    realScroller();
-    await land();
-    scroll.resetScrollState();
-  });
+  beforeEach(realLayoutReset);
 
   it("keeps Following when the pin lands far from the document bottom", async () => {
     // The reported failure: the agent streams a sentence, a 900px tool card
@@ -939,5 +945,132 @@ describe("a large tool card below the streaming block", () => {
     // Two distinct pin positions, not two landings on a clamped maximum: the
     // 900px card below keeps both pins short of the document's end.
     expect([first, wrap.scrollTop]).toEqual([1550, 1750]);
+  });
+});
+
+// The reported failure: "the scroll to bottom button showed '108 new blocks', I
+// clicked it, and instead of scrolling to the bottom it scrolled to the start of
+// the last output message." The click's landing is short by exactly the height
+// that arrives AFTER the click — the fold batch the resume itself flushes, or the
+// turn still streaming — and the reader is left parked with the control back on
+// screen, which is why the wrong position sticks.
+//
+// The control's own handler is what these drive (`scrollBtn.click()`, never
+// `scroll.resume()`), because the defect is composed of two mechanisms and one of
+// them lives in the scroll listener the click's write feeds.
+describe("the resume control's landing", () => {
+  beforeEach(realLayoutReset);
+
+  /** Park the reader with a real gesture pair: down to the bottom, then back to
+   *  the top. Two writes rather than one, so the state passes through Following
+   *  and the park is the listener's own verdict rather than a seeded field. */
+  async function park(wrap: HTMLElement): Promise<void> {
+    wrap.scrollTop = wrap.scrollHeight - wrap.clientHeight;
+    await land();
+    wrap.scrollTop = 0;
+    await land();
+  }
+
+  /** The three facts one failure has to name: where the click landed, whether
+   *  the reader is following again, and whether the control took itself down. */
+  function landing(wrap: HTMLElement): {
+    scrollTop: number;
+    state: string;
+    hidden: boolean;
+  } {
+    return {
+      scrollTop: wrap.scrollTop,
+      state: scroll.readingState(),
+      hidden: scrollBtn.classList.contains("hidden"),
+    };
+  }
+
+  it("lands at the true bottom when the resume's own flush grows the transcript", async () => {
+    // `applyFoldPass` wraps every fold, unfold and body mount in
+    // `deferWhileReading`, so a reader who parked mid-turn has the whole batch
+    // waiting on their return — and `setState("following")` flushes it on the
+    // line before the bottom is measured. Those transitions are ANIMATED
+    // (`--fold-slide`), so the height the flush adds arrives over the next
+    // 300-420ms, after any target computed at click time.
+    const wrap = realScroller();
+    block(3000);
+    const late = block(0);
+    late.style.cssText = "block-size:0;overflow:hidden;transition:block-size 300ms linear;";
+    await land();
+
+    await park(wrap);
+    expect(scroll.readingState()).toBe("reading");
+
+    scroll.deferWhileReading(() => {
+      late.style.blockSize = "2000px";
+    });
+    scrollBtn.click();
+    await land(900);
+
+    expect(landing(wrap)).toEqual({
+      scrollTop: wrap.scrollHeight - wrap.clientHeight,
+      state: "following",
+      hidden: true,
+    });
+  });
+
+  it("lands at the true bottom when the turn keeps streaming through the click", async () => {
+    const wrap = realScroller();
+    block(3000);
+    const tail = block(200);
+    await land();
+
+    await park(wrap);
+    expect(scroll.readingState()).toBe("reading");
+
+    scrollBtn.click();
+    await land(60);
+    tail.style.height = "2200px";
+    await land(900);
+
+    expect(landing(wrap)).toEqual({
+      scrollTop: wrap.scrollHeight - wrap.clientHeight,
+      state: "following",
+      hidden: true,
+    });
+  });
+
+  it("hands the scroller back when the reader scrolls during the settle window", async () => {
+    // The pin holds the bottom for a bounded window, and a gesture inside it is
+    // the reader overruling their own click. It must stop the pass rather than
+    // drag them back.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    await park(wrap);
+    scrollBtn.click();
+    await land(60);
+    wrap.scrollTop = 200;
+    await land(400);
+
+    expect({ state: scroll.readingState(), scrollTop: wrap.scrollTop }).toEqual({
+      state: "reading",
+      scrollTop: 200,
+    });
+  });
+
+  it("does not drag an incoming view to the bottom with the outgoing chat's pass", async () => {
+    // `attach` restores the incoming view's own saved position, and a pass still
+    // running for the chat being parked would overwrite it on the next frame.
+    // `readingState: "following"` is load-bearing rather than incidental: under
+    // "reading" the pass's own state guard would stop it, so the case would pass
+    // with the cancellation deleted.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    await park(wrap);
+    scrollBtn.click();
+    await land(60);
+    scroll.attach({ el: messagesEl, scrollTop: 300, readingState: "following" });
+    await land(400);
+
+    expect(wrap.scrollTop).toBe(300);
   });
 });
