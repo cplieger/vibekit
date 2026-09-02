@@ -1118,6 +1118,100 @@ func TestClone_ExistingRepoIsReportedByName(t *testing.T) {
 	}
 }
 
+// stageFakeGit puts a fake `git` first on PATH that mimics a clone killed
+// mid-transfer: it runs the given script (which stages the debris a dead
+// git cannot clean up) and exits 1. A real git removes its destination on
+// an ordinary fatal error, so the SIGKILL shape — the client aborted the
+// request and the context kill left a commitless .git skeleton — is not
+// reproducible deterministically with the real binary.
+func stageFakeGit(t *testing.T, script string) {
+	t.Helper()
+	bin := t.TempDir()
+	fake := filepath.Join(bin, "git")
+	content := "#!/bin/sh\n" + script + "\necho 'fatal: early EOF' >&2\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(content), 0o755); err != nil { // #nosec G306 -- a test-local executable needs the exec bit
+		t.Fatal(err)
+	}
+	// The fake shadows git; the rest of PATH stays, or the script's own
+	// mkdir resolves to nothing and the debris is never staged — which
+	// makes every assertion below pass vacuously.
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A clone that failed after creating its destination must remove it whole:
+// a leftover commitless .git skeleton reads as a cloned repository to
+// discovery, so the UI shows "downloaded", offers delete-local, and refuses
+// a re-clone — all over a corpse. The live instance hit exactly this on a
+// 511 MB clone the client's timeout killed mid-transfer.
+func TestClone_FailedCloneRemovesTheDestinationItCreated(t *testing.T) {
+	work := t.TempDir()
+	stageFakeGit(t, `mkdir -p loki/.git`)
+	h := NewHandler(work)
+
+	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git")
+	if err == nil {
+		t.Fatal("clone with a failing git: err = nil, want failure")
+	}
+	if _, statErr := os.Stat(filepath.Join(work, "loki")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("destination survives the failed clone: stat err = %v, want ErrNotExist", statErr)
+	}
+}
+
+// A clone into a PRE-EXISTING empty directory keeps the directory (the user
+// made it) and removes everything the failed transfer put inside it.
+func TestClone_FailedCloneEmptiesAPreexistingEmptyDestination(t *testing.T) {
+	work := t.TempDir()
+	dest := filepath.Join(work, "loki")
+	if err := os.Mkdir(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stageFakeGit(t, `mkdir -p loki/.git`)
+	h := NewHandler(work)
+
+	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git")
+	if err == nil {
+		t.Fatal("clone with a failing git: err = nil, want failure")
+	}
+	if _, statErr := os.Stat(dest); statErr != nil {
+		t.Fatalf("the user's directory must survive: stat err = %v", statErr)
+	}
+	entries, readErr := os.ReadDir(dest)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("destination holds %d entries after the failed clone, want 0 (first: %s)", len(entries), entries[0].Name())
+	}
+}
+
+// A failed ADOPTION takes back only the .git that `git init` created; the
+// content that made the directory an adoption target predates the operation
+// and is the user's.
+func TestClone_FailedAdoptionRemovesOnlyTheGitDir(t *testing.T) {
+	work := t.TempDir()
+	dest := filepath.Join(work, "loki")
+	if err := os.MkdirAll(filepath.Join(dest, "settings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "settings", "lsp.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The adoption's gitCmds run with the destination as cwd.
+	stageFakeGit(t, `mkdir -p .git`)
+	h := NewHandler(work)
+
+	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git")
+	if err == nil {
+		t.Fatal("adoption with a failing git: err = nil, want failure")
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, ".git")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf(".git survives the failed adoption: stat err = %v, want ErrNotExist", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "settings", "lsp.json")); statErr != nil {
+		t.Errorf("the user's content must survive the failed adoption: stat err = %v", statErr)
+	}
+}
+
 // serveFixtureRepo builds a fixture repo under work and publishes it over
 // git's dumb HTTP protocol, returning the remote URL.
 //

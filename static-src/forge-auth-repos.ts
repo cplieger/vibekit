@@ -176,27 +176,40 @@ export async function cloneAllForAccount(
     return;
   }
   let done = 0;
-  let failed = 0;
+  const failedNames: string[] = [];
   for (const repo of candidates) {
     btn.textContent = `Cloning ${done + 1}/${candidates.length}…`;
     const url = repo.clone_url ?? "";
     if (url === "") {
-      failed++;
+      failedNames.push(repo.name);
       done++;
       continue;
     }
     const res = await cloneRepoAction.dispatch({ url });
     if (res === null || (res.error !== undefined && res.error !== "")) {
-      failed++;
+      failedNames.push(repo.name);
     } else {
       deps.addCloned(repo.name);
       deps.bumpState();
     }
     done++;
   }
-  if (failed > 0) {
-    toastError(`Clone failed for ${String(failed)} of ${String(candidates.length)} repos`);
+  if (failedNames.length > 0) {
+    toastError(cloneFailureToast(failedNames, candidates.length));
   }
+}
+
+/** Word the batch-failure toast, NAMING the failed repos: a bare count
+ *  ("1 of 63 failed") leaves the user diffing 63 directories to find out
+ *  which one. Up to three names in full; the rest as a count. */
+export function cloneFailureToast(failedNames: readonly string[], total: number): string {
+  const shown = failedNames.slice(0, 3).join(", ");
+  const more = failedNames.length - 3;
+  const names = more > 0 ? `${shown} and ${String(more)} more` : shown;
+  if (failedNames.length === 1) {
+    return `Clone failed for ${names} (1 of ${String(total)} repos)`;
+  }
+  return `Clone failed for ${names} (${String(failedNames.length)} of ${String(total)} repos)`;
 }
 
 export async function deleteAllForAccount(

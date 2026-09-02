@@ -107,11 +107,14 @@ describe("forge.clone_repo", () => {
     expect(JSON.parse(opts.body as string)).toEqual({ url: "https://github.com/user/repo.git" });
   });
 
-  it("includes Idempotency-Key header", async () => {
+  // No Idempotency-Key any more: the action does not retry (an interrupted
+  // clone can leave a partial destination, so a retry reports a false
+  // "already exists"), and the key had no other consumer.
+  it("sends no Idempotency-Key header", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const { cloneRepo } = await import("./forge.js");
     await cloneRepo.dispatch({ url: "https://x.com/r.git" });
-    expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
+    expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toBeUndefined();
   });
 
   it("suppresses error toast on failure", async () => {
@@ -121,16 +124,17 @@ describe("forge.clone_repo", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("retries on network error", async () => {
+  it("does NOT retry on network error", async () => {
     vi.useFakeTimers();
     mockFetch
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
       .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }));
     const { cloneRepo } = await import("./forge.js");
     const p = cloneRepo.dispatch({ url: "x" });
-    await vi.advanceTimersByTimeAsync(300);
-    await p;
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    const r = await p;
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(r).toBeNull();
     vi.useRealTimers();
   });
 });

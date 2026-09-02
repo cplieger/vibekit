@@ -4,7 +4,15 @@
 // action.dispatch() calls with button progress and aggregate toast.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  apiAction,
+  defineAction,
+  retryNetwork,
+  RETRY_STANDARD,
+  ActionError,
+  classifyFetchError,
+} from "./index.js";
+import { withTimeout } from "@cplieger/fetch";
 
 import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
 
@@ -53,19 +61,47 @@ export const signOut = apiAction<SignOutArgs, void>({
   error: "Couldn't sign out",
 });
 
+/** How long the client waits out one clone. Above the server's own
+ *  10-minute clone budget (internal/git defaultTimeouts), so the verdict
+ *  the user sees is the server's — a git error or the clone's success —
+ *  never a client-side abort. The abort was the original defect: the
+ *  standard 30s API timeout cancelled the request, which killed the git
+ *  subprocess mid-transfer (the handler's context derives from the
+ *  request), so any repo too large to clone in 30s could never be cloned
+ *  from the UI, and the retry that followed hit the half-cloned
+ *  destination's "already exists" refusal. */
+const CLONE_TIMEOUT_MS = 11 * 60_000;
+
 /** Clone a single repo into the workspace. Error toast suppressed —
  *  callers handle toasting (single-repo toasts directly, batch
- *  aggregates). */
-export const cloneRepo = apiAction<CloneArgs, { output?: string; error?: string }>({
+ *  aggregates).
+ *
+ *  Raw fetch on a long timeout rather than apiAction, whose transport pins
+ *  the standard 30s timeout with no per-action override (the files.download
+ *  precedent). NOT retryable: an interrupted clone may have left a partial
+ *  destination server-side, so a retry reports a misleading
+ *  "already exists" instead of the real failure. */
+export const cloneRepo = defineAction<CloneArgs, { output?: string; error?: string }>({
   name: "forge.clone_repo",
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ url }) => ({
-    method: "POST",
-    path: "/api/git/clone",
-    body: { url },
-  }),
+  run: async ({ url }, signal) => {
+    let r: Response;
+    try {
+      r = await fetch("/api/git/clone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+        signal: withTimeout(signal, CLONE_TIMEOUT_MS),
+      });
+    } catch (e) {
+      throw classifyFetchError(e, signal);
+    }
+    if (!r.ok) {
+      throw new ActionError("Clone failed", { status: r.status });
+    }
+    // The git endpoints answer 200 with an {error} envelope on git
+    // failure (writeCmdResult); callers read res.error.
+    return (await r.json()) as { output?: string; error?: string };
+  },
   error: false,
 });
 
