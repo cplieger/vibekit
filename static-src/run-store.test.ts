@@ -150,6 +150,10 @@ describe("leafNodes walks to the work and skips the scaffolding", () => {
   });
 });
 
+// KAS describes one node two ways: a repeat's iteration container is
+// `<repeatId>#<n>` in the state tree these fixtures reproduce and `iter-<n>` in
+// the `nodePath` it stamps on a step FRAME. The frame's spelling is the key both
+// row producers have to land on, so the tree is translated into it.
 describe("nodePathOf separates two iterations that share a node id", () => {
   it("builds the same path the server joins into a step's subtask id", () => {
     const first = step("work");
@@ -164,8 +168,20 @@ describe("nodePathOf separates two iterations that share a node id", () => {
           type: "repeat",
           status: "running",
           children: [
-            { nodeId: "iter-0", type: "sequence", status: "completed", children: [first] },
-            { nodeId: "iter-1", type: "sequence", status: "running", children: [second] },
+            {
+              nodeId: "loop#0",
+              type: "sequence",
+              status: "completed",
+              iteration: 0,
+              children: [first],
+            },
+            {
+              nodeId: "loop#1",
+              type: "sequence",
+              status: "running",
+              iteration: 1,
+              children: [second],
+            },
           ],
         },
       ],
@@ -176,6 +192,50 @@ describe("nodePathOf separates two iterations that share a node id", () => {
 
   it("falls back to the node id for a node that is not in the tree", () => {
     expect(store.nodePathOf(undefined, step("orphan"))).toEqual(["orphan"]);
+  });
+
+  it("falls back to a repeat child's own id when it carries no iteration", () => {
+    // Every one of the 27 iteration containers on this machine's real runs carries
+    // an `iteration`, so this is the unobserved branch: it must degrade to a row in
+    // the wrong place rather than to `iter-undefined`, which is the same call the
+    // server's own runNodePath makes for a frame with no path.
+    const target = step("work");
+    const root: RunNode = {
+      nodeId: "wf",
+      type: "repeat",
+      status: "running",
+      children: [{ nodeId: "loop#0", type: "sequence", status: "running", children: [target] }],
+    };
+    expect(store.nodePathOf(root, target)).toEqual(["wf", "loop#0", "work"]);
+  });
+
+  it("leaves a parallel BRANCH container spelled as its own id", () => {
+    // Real data: a parallel's branches are named `plan-a`…`plan-d` on both sides and
+    // match byte-for-byte today, so rewriting one would break a working case. The
+    // rule is a repeat's, not every container's.
+    const target = step("plan-a", { branchId: "plan-a" });
+    const root: RunNode = {
+      nodeId: "wf",
+      type: "sequence",
+      status: "running",
+      children: [
+        { nodeId: "investigate", type: "parallel", status: "running", children: [target] },
+      ],
+    };
+    expect(store.nodePathOf(root, target)).toEqual(["wf", "investigate", "plan-a"]);
+  });
+
+  it("rewrites a step sitting DIRECTLY under a repeat", () => {
+    // The rule keys on the PARENT's type, not on the node being a container, so a
+    // repeat whose body is one bare step is addressed the same way KAS addresses it.
+    const target = step("work", { iteration: 2 });
+    const root: RunNode = {
+      nodeId: "wf",
+      type: "repeat",
+      status: "running",
+      children: [target],
+    };
+    expect(store.nodePathOf(root, target)).toEqual(["wf", "iter-2"]);
   });
 });
 

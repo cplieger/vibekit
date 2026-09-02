@@ -330,32 +330,55 @@ export function leafNodes(root: RunNode | undefined): RunNode[] {
   return out;
 }
 
-/** A leaf's stable address within its run, matching the `nodePath` the server
- *  joins into a step's subtask id (`wf:<workflowId>:<a/b/c>`).
+/** What KAS calls this node in a node PATH, which is not always what it calls it
+ *  in the state tree.
+ *
+ *  One node kind diverges: a repeat's per-iteration container is `<repeatId>#<n>`
+ *  in the state tree and `iter-<n>` in the `nodePath` KAS stamps on a step frame.
+ *  Every other node contributes its own `nodeId` and the two spellings agree.
+ *
+ *  Derived from the container's own `iteration` rather than by rewriting the `#`
+ *  suffix off the id, so nothing here depends on how KAS spells a generated id.
+ *  A repeat child carrying no `iteration` falls back to its `nodeId`: a row in
+ *  the wrong place beats content that vanishes, which is the same call the
+ *  server's own `runNodePath` makes when a frame carries no path. */
+export function nodePathSegment(node: RunNode, parent: RunNode | undefined): string {
+  if (parent?.type === "repeat" && node.iteration !== undefined) {
+    return `iter-${String(node.iteration)}`;
+  }
+  return node.nodeId;
+}
+
+/** A leaf's stable address within its run, in the spelling the server joins into
+ *  a step's subtask id (`wf:<workflowId>:<a/b/c>`).
  *
  *  Rebuilt here rather than read off the node, because `NodeState` carries no
  *  path: KAS puts the path on the FRAME and the id on the node, so the two sides
  *  of the join are described differently and the client owns the reconciliation.
- *  A repeat's iterations share a `nodeId`, so the path is what separates them. */
+ *  A repeat's iterations share a `nodeId`, so the path is what separates them.
+ *
+ *  The frame's spelling is canonical and this TRANSLATES the tree into it, which
+ *  is what `nodePathSegment` is for — before it, every step inside a loop got two
+ *  rows, one from the tree and one unpainted from its own content frames. */
 export function nodePathOf(root: RunNode | undefined, target: RunNode): string[] {
   if (root === undefined) {
     return [target.nodeId];
   }
   const found: string[] = [];
-  const walk = (n: RunNode, trail: string[]): boolean => {
-    const here = [...trail, n.nodeId];
+  const walk = (n: RunNode, parent: RunNode | undefined, trail: string[]): boolean => {
+    const here = [...trail, nodePathSegment(n, parent)];
     if (n === target) {
       found.push(...here);
       return true;
     }
     for (const k of n.children ?? []) {
-      if (walk(k, here)) {
+      if (walk(k, n, here)) {
         return true;
       }
     }
     return false;
   };
-  walk(root, []);
+  walk(root, undefined, []);
   return found.length > 0 ? found : [target.nodeId];
 }
 

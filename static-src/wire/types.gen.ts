@@ -1460,8 +1460,10 @@ export interface RunStartedPayload {
  * NodePath, not NodeID, and that is the same choice ACPWorkflowMeta.SubtaskID
  * makes for the transcript: a repeat's iterations share a node id, so an id
  * cannot address one execution and two passes of a loop body would write into
- * each other's rows. Joined with "/" so it is the key the client already builds
- * from `inspect`'s tree (`nodePathOf(...).join("/")`).
+ * each other's rows. Joined with "/", and NOT byte-identical to what a client
+ * derives from `inspect`'s state tree: KAS spells a repeat's iteration container
+ * `iter-<n>` here and `<repeatId>#<n>` there, so the client translates the tree
+ * into this spelling (`static-src/run-store.ts`'s nodePathSegment).
  * //
  * ToolCall is whole rather than a delta because there is no buffer at this end to
  * fold into: a parentless run has no chat, so nothing accumulates its content.

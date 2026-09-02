@@ -28,7 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import { truncate } from "./strings.js";
-import { isNeedInputPause, type RunNode, type RunState } from "./run-store.js";
+import { isNeedInputPause, nodePathSegment, type RunNode, type RunState } from "./run-store.js";
 import type { RunAsks } from "./fundamentals/run-card.js";
 import { stateOf, withAsk, inFlight, type ExecState, type WireStatus } from "./exec-view/status.js";
 import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
@@ -224,17 +224,25 @@ function subtitleOf(node: RunNode, kind: ExecKind, plan: PlanEntry | undefined):
   return bits.join(" \u00b7 ");
 }
 
-/** Fold one state node and its subtree. */
+/** Fold one state node and its subtree.
+ *
+ *  `path` goes through `nodePathSegment`, so a step's tree row is addressed the
+ *  way KAS addresses its FRAMES — otherwise a step inside a loop had its live
+ *  transcript filed under a path no tree node ever selected, which is the other
+ *  symptom of the same key defect that duplicated the transcript's step rows.
+ *  `label` deliberately keeps `nodeId`, so an iteration row still reads
+ *  `build-loop#0`. */
 function toNode(
   node: RunNode,
   trail: readonly string[],
   plans: Map<string, PlanEntry>,
   asks: RunAsks,
+  parent?: RunNode,
 ): ExecNode {
-  const path = [...trail, node.nodeId];
+  const path = [...trail, nodePathSegment(node, parent)];
   const plan = plans.get(node.nodeId);
   const kind = kindOf(node.type);
-  const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks));
+  const children = (node.children ?? []).map((k) => toNode(k, path, plans, asks, node));
   // `node.status` is typed `string` on the wire so an upstream addition falls
   // through `stateOf` rather than failing a decode; `WireStatus` is the set this
   // adapter writes against, and naming it here is what keeps that claim checked
@@ -369,7 +377,9 @@ export function runToExec(
     root === undefined
       ? []
       : root.type === "sequence" && (root.children?.length ?? 0) > 0
-        ? (root.children ?? []).map((k) => toNode(k, [root.nodeId], plans, asks))
+        ? (root.children ?? []).map((k) =>
+            toNode(k, [nodePathSegment(root, undefined)], plans, asks, root),
+          )
         : [toNode(root, [], plans, asks)];
 
   const outputs = new Map<string, string>();
