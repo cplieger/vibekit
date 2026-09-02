@@ -323,6 +323,33 @@ describe("failure-notice carries the route's own remedy", () => {
     }
   });
 
+  // A broken agent file or a dead login is reported per chat, so one fault reaches
+  // N chats as N notices. Each names its own chat, so none may retract another —
+  // which is why the key carries the chat and not the reason alone. What stops N
+  // growing without bound is the toast surface's own sticky cap, not this map.
+  it("leaves another chat's remedy standing", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    reportFailure("c2", "bad agent front matter", remedy);
+    expect(toastCount()).toBe(2);
+    expect(mockDismiss).not.toHaveBeenCalled();
+  });
+
+  // The other direction of the same key: a chat's own repeat still replaces itself
+  // after another chat has reported the identical failure.
+  it("replaces its own repeat after another chat reported the same failure", () => {
+    vi.useFakeTimers();
+    try {
+      reportFailure("c1", "bad agent front matter", remedy);
+      reportFailure("c2", "bad agent front matter", remedy);
+      vi.advanceTimersByTime(6_000);
+      reportFailure("c1", "bad agent front matter", remedy);
+      expect(toastCount()).toBe(3);
+      expect(mockDismiss).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Which is why the handle is held per FAILURE and not per chat: two remedies on
   // one chat are two problems, and the first must still be able to replace its own
   // repeat after the second has arrived.

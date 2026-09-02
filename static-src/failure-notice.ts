@@ -74,7 +74,10 @@ const live = new Map<string, () => void>();
 /** The live remedy-bearing toast per FAILURE rather than per chat. Such a notice
  *  is sticky, so nothing expires it: an identical repeat dismisses the copy it
  *  repeats, and any other failure leaves it standing, because a remedy offered
- *  nowhere else must not be retracted to report something else. */
+ *  nowhere else must not be retracted to report something else. How many stand at
+ *  once is bounded by the surface rather than here — toast.ts's MAX_STICKY — so a
+ *  handle in this map may name a toast that is already gone; dismissing one is a
+ *  no-op. */
 const remedies = new Map<string, () => void>();
 
 /** Report a failure to the user.
