@@ -181,7 +181,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	}
 	remote, rErr := gitCmd(ctx, dir, subRemote, "get-url", remoteOrigin)
 	if rErr != nil {
-		slog.Debug("git remote get-url failed during log", "repo", dir, "error", rErr)
+		slog.Debug("git remote get-url failed during log", "repo", logsafe.Field(dir), "error", logsafe.Field(rErr.Error()))
 	}
 	// Scrubbed once, so the commit prefix is derived from the same
 	// credential-free string the client is handed.
