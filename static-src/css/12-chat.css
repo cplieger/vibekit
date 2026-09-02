@@ -29,8 +29,15 @@
    copy of the calc under a comment claiming the three could not drift apart; a
    copy is exactly how they could. */
 :root {
+  /* The toolbar's FULL box height: its buttons, its own 2 x 0.125rem padding and
+     its 1px border on both edges. Declared because two things need it and one of
+     them is not an offset — `.banner` (13-messages.css) takes it as a
+     `min-block-size` so a banner row and the menu read as the same size, and the
+     offset below derives from it rather than restating its terms. The border was
+     missing from that offset, so the `--sp-2` gap it claims was really 6px. */
+  --chat-toolbar-h: calc(var(--btn-h) + 0.25rem + 2px);
   --below-chat-toolbar: calc(
-    var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
+    var(--sp-3) + var(--chat-toolbar-h) + var(--sp-2) + env(safe-area-inset-top, 0)
   );
 }
 
