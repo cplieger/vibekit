@@ -222,6 +222,10 @@ type ACPPolicyRule struct {
 // NodeID, is what a per-step attribution key is built from: two iterations of
 // one step share a NodeID and must not share a block.
 //
+// That `iter-<n>` is the FRAME spelling only. `_kiro/workflow/inspect`'s state
+// tree names the same container `<repeatId>#<n>`, so a client joining the two
+// translates the tree into this spelling rather than the reverse.
+//
 // WorkflowName, Iteration and BranchID are decoded because the transcript's run
 // card states them: an unnamed run reads as machinery, and two passes of one loop
 // body are otherwise the same row twice. KAS's WorkflowPersistedMetaSchema is the

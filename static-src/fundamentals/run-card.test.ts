@@ -140,10 +140,11 @@ describe("an unanswered ask", () => {
     // A repeat's iterations are separate `iter-N` containers holding the SAME step,
     // so the two rows have distinct node paths and a shared node id. An ask naming
     // `a` therefore matches both, and only the one still in flight can be the asker.
-    const iter = (n: string, status: RunNode["status"]): RunNode => ({
+    const iter = (n: string, iteration: number, status: RunNode["status"]): RunNode => ({
       nodeId: n,
       type: "sequence",
       status: "completed",
+      iteration,
       children: [step("a", status)],
     });
     c.render(
@@ -154,7 +155,7 @@ describe("an unanswered ask", () => {
           nodeId: "wf_1",
           type: "repeat",
           status: "running",
-          children: [iter("iter-0", "completed"), iter("iter-1", "running")],
+          children: [iter("loop#0", 0, "completed"), iter("loop#1", 1, "running")],
         },
       },
       asks(1, ["a"]),
@@ -275,3 +276,84 @@ function buildAndRender(state: RunState, a: RunAsks): HTMLElement {
   c.render(state, a);
   return c.root;
 }
+
+// ---------------------------------------------------------------------------
+// The two row producers must agree on the KEY, and no single-producer test can
+// see it: `render` builds a row per state-tree leaf through `nodePathOf`, while
+// `stepBody` builds one from the `nodePath` KAS stamps on a step FRAME. KAS
+// spells a repeat's iteration container `<repeatId>#<n>` in the state tree and
+// `iter-<n>` in a frame path, so every loop-body step used to get TWO rows — the
+// painted one from the tree and an unpainted twin from its own content, which is
+// what read as "these steps never executed" under a finished run.
+// ---------------------------------------------------------------------------
+describe("the state tree and a step frame address one row", () => {
+  // The shape a real completed loop run has: the iteration container carries its
+  // own generated id AND its `iteration`, which is what the segment rule reads.
+  function loopRun(): RunState {
+    return {
+      workflowId: "wf_1",
+      status: "completed",
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "completed",
+        children: [
+          step("plan", "completed"),
+          {
+            nodeId: "loop",
+            type: "repeat",
+            status: "completed",
+            children: [
+              {
+                nodeId: "loop#0",
+                type: "sequence",
+                status: "completed",
+                iteration: 0,
+                children: [step("code", "completed"), step("review", "completed")],
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  const FRAME_PATH = "wf_1/loop/iter-0/code";
+
+  function codeRow(root: HTMLElement): HTMLElement | null {
+    return root.querySelector<HTMLElement>(`.run-step[data-node="${FRAME_PATH}"]`);
+  }
+
+  it("renders one row per executed step when the state arrives first", () => {
+    const c = card();
+    c.render(loopRun());
+    const body = c.stepBody(FRAME_PATH);
+
+    expect(
+      [...c.root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["node"]),
+    ).toEqual(["wf_1/plan", FRAME_PATH, "wf_1/loop/iter-0/review"]);
+    // Painted, so the frame's row is the state's row rather than a twin beside it.
+    const row = codeRow(c.root);
+    expect(row?.dataset["status"]).toBe("ok");
+    // A settled ok step's mark is the outcome SVG silhouette, not the old ✓ glyph.
+    expect(row?.querySelector(".run-step-glyph svg")).not.toBeNull();
+    // The strongest form of the join: the host the blocks stream into IS that row.
+    expect(row?.contains(body)).toBe(true);
+  });
+
+  it("renders one row per executed step when the frame arrives first", () => {
+    // The order production takes: a step's first content frame routinely beats the
+    // `inspect` fetch that describes it.
+    const c = card();
+    const body = c.stepBody(FRAME_PATH);
+    c.render(loopRun());
+
+    expect(
+      [...c.root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["node"]),
+    ).toEqual(["wf_1/plan", FRAME_PATH, "wf_1/loop/iter-0/review"]);
+    const row = codeRow(c.root);
+    expect(row?.dataset["status"]).toBe("ok");
+    expect(row?.querySelector(".run-step-glyph svg")).not.toBeNull();
+    expect(row?.contains(body)).toBe(true);
+  });
+});

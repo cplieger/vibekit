@@ -63,7 +63,15 @@ describe("runToExec structure", () => {
             nodeId: "loop",
             type: "repeat",
             status: "running",
-            children: [step("work", "running")],
+            children: [
+              {
+                nodeId: "loop#0",
+                type: "sequence",
+                status: "running",
+                iteration: 0,
+                children: [step("work", "running")],
+              },
+            ],
           },
           { nodeId: "watch", type: "watch", status: "pending", children: [] },
         ],
@@ -73,8 +81,19 @@ describe("runToExec structure", () => {
     );
     expect(flatten(run.nodes).map((n) => `${n.kind}:${n.label}`)).toEqual([
       "repeat:loop",
+      "sequence:loop#0",
       "step:work",
       "watch:watch",
+    ]);
+    // The iteration container keeps its own id as its LABEL and contributes KAS's
+    // frame spelling to the PATH: the detail pane addresses a step's live
+    // transcript by path, so a tree keyed on the state tree's `loop#0` selects a
+    // row nothing ever streams into.
+    expect(flatten(run.nodes).map((n) => n.path)).toEqual([
+      "wf_1/loop",
+      "wf_1/loop/iter-0",
+      "wf_1/loop/iter-0/work",
+      "wf_1/watch",
     ]);
     // Only the leaves count as steps: a container's span is its children's, so
     // counting it would inflate the total and double-count the time.

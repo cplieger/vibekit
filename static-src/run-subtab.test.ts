@@ -87,6 +87,10 @@ vi.mock("./run-store.js", () => ({
   runPlan: vi.fn(() => undefined),
   leafNodes: vi.fn(() => []),
   nodePathOf: vi.fn(() => []),
+  // The exec-view adapter's own path key: KAS names a repeat's iteration container
+  // one way in the state tree and another in a step frame's path, so the tree is
+  // translated. Inert here for the same reason as the rest — no state is painted.
+  nodePathSegment: vi.fn((node: { nodeId: string }) => node.nodeId),
   runCounters: vi.fn(() => ({ total: 0, done: 0, failed: 0, current: 0 })),
   runElapsedMs: vi.fn(() => 0),
   runIsLive: vi.fn(() => false),
