@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
-// Banner stack: per-chat persistent banners above the transcript.
+// Banner stack: persistent, acknowledgeable conditions above the transcript.
 //
-// Init errors (agent_not_found, agent_config_error), rate limits (including
-// the v3 system/notify "model under load" notice), and MCP failures surface
-// here. Each banner is keyed on (chat_id, code) so the same error replaces
-// rather than duplicates.
+// Three producers: the runtime-health pair (app-global, GLOBAL_BANNER, re-asserted
+// by a poller on every transport gap) and open_external_url (any chat, deferred
+// until that chat is active). Each banner is keyed on (chat_id, code), so a
+// re-assert replaces in place rather than duplicating — the property a toast has no
+// equivalent for, and the reason these three did not fold into it.
 //
 // Banners are per-device and auto-clear when the underlying condition resolves.
 // The DISMISSALS are per-device too, keyed per chat in localStorage — a phone
@@ -42,7 +43,7 @@ import type { BannerLevel } from "./types.js";
  *     it in a new tab — is the wrong shape for jumping across your own app.
  *
  *  Exactly one of the two is used; `onClick` wins if both are set. */
-export interface BannerLink {
+interface BannerLink {
   readonly label: string;
   readonly href?: string;
   readonly onClick?: () => void;
@@ -353,8 +354,3 @@ export function clearBannersForChat(chatID: string): void {
 // There is no pruneStaleDismissals. It capped ONE flat array of `chat:code` keys
 // at 200 entries, which is the bound a global list needs; the per-chat store owns
 // the bound now and applies it per chat with oldest-first eviction.
-
-/** Auto-clear transient banners (rate_limit) on successful turn end. */
-export function onTurnEnded(chatID: string): void {
-  removeBanner(chatID, "rate_limit");
-}

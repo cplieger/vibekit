@@ -5,7 +5,7 @@
 // These drive the REAL handlers (via the bus capture) and the REAL store, and
 // assert observable outcomes: the rendered turn-summary text, the cleared
 // thinking flag, the drained queued prompt, and the error routing. Sibling
-// subsystems (notify, banner-stack, send-state, chat-commands, git) stay
+// subsystems (notify, failure-notice, send-state, chat-commands, git) stay
 // mocked because a call into them is a command at the handler's boundary.
 // ---------------------------------------------------------------------------
 
@@ -86,9 +86,8 @@ vi.mock("../notify.js", () => ({
 const mockOpenSetting = vi.fn();
 vi.mock("../settings-highlight.js", () => ({ openSetting: mockOpenSetting }));
 
-// The sign-in CTA's destination. Mocked for the same reason banner-stack is: a
-// call into it is a command at the handler's boundary, and the real module wires
-// a whoami poll at import.
+// The sign-in CTA's destination. Mocked because a call into it is a command at the
+// handler's boundary, and the real module wires a whoami poll at import.
 const mockShowLoginModal = vi.fn();
 vi.mock("../modals.js", () => ({ showLoginModal: mockShowLoginModal }));
 
@@ -107,23 +106,6 @@ vi.mock("../turn-rail.js", async (importOriginal) => ({
   ...(await importOriginal<TurnRailModule>()),
   loadTurnRail: vi.fn(() => Promise.resolve()),
   refreshTurnRail: vi.fn(() => Promise.resolve()),
-}));
-
-const mockShowBanner = vi.fn();
-vi.mock("../banner-stack.js", () => ({
-  showBanner: mockShowBanner,
-  onTurnEnded: vi.fn(),
-  // The real literal, not a stub: it is a `const` the graph reads as a chat-id
-  // sentinel, and Browser Mode links the name for real rather than reading it
-  // off a namespace object. A stub here would be a different value.
-  GLOBAL_BANNER: "*",
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports these names, and Browser Mode links for real rather than
-  // reading properties off a namespace object. `undefined` is what the node
-  // runner gave them, so no path under test changes behavior.
-  clearBannerCodes: undefined,
-  clearBannersForChat: undefined,
-  ensureBound: undefined,
 }));
 
 // Capture SSE handlers via shared helper.
@@ -180,13 +162,13 @@ describe("ERROR_ROUTES", () => {
         | { kind: "sign-in"; label: string };
     },
   ][] = [
-    ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
+    ["agent_not_found", { surface: "toast", level: "error", dismissible: true }],
     // A routed error that also names a Settings control: the payload carries a
-    // .kiro/agents path, so the banner links at Custom instructions (D115).
+    // .kiro/agents path, so the toast carries a jump to Custom instructions.
     [
       "agent_config_error",
       {
-        surface: "banner",
+        surface: "toast",
         level: "error",
         dismissible: false,
         action: {
@@ -204,14 +186,14 @@ describe("ERROR_ROUTES", () => {
     [
       "auth_token_unavailable",
       {
-        surface: "banner",
+        surface: "toast",
         level: "error",
         dismissible: false,
         action: { kind: "sign-in", label: "Sign in" },
       },
     ],
-    ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
-    ["compaction_failed", { surface: "banner", level: "error", dismissible: true }],
+    ["rate_limit", { surface: "toast", level: "warning", dismissible: true }],
+    ["compaction_failed", { surface: "toast", level: "error", dismissible: true }],
     // The four failed-ATTEMPT codes. Each ends the turn and each leaves a
     // promptable chat behind, which is why none of them reaches the send button:
     // an alert icon on the control whose job is to send claims the chat is dead,
@@ -230,8 +212,8 @@ describe("ERROR_ROUTES", () => {
     // other code here happened to a live agent.
     ["bridge_start_failed", { surface: "agent-down", level: "error", dismissible: false }],
     // The chat runs, just not in the requested mode, and one click on the mode
-    // pill fixes it — so a dismissible warning banner rather than a failure.
-    ["mode_not_applied", { surface: "banner", level: "warning", dismissible: true }],
+    // pill fixes it — so a warning-classed notice rather than a failure.
+    ["mode_not_applied", { surface: "toast", level: "warning", dismissible: true }],
   ];
 
   it.each(expectedRoutes)(
@@ -453,27 +435,17 @@ describe("turn_ended side effects", () => {
 });
 
 describe("error handler", () => {
-  // The turn lifecycle and the error PROSE are two different questions, and the
-  // routing table's `surface` is what answers the first: a `send-error` means this
-  // send failed, a `banner` means something else is wrong while the turn runs on.
-  // The handler used to clear `thinking` for every code, and `thinking` is what
-  // the renderer reads to decide whether an assistant bubble subscribes to its own
-  // deltas — so a `.kiro/agents` typo, which fires `agent_config_error` at session
-  // construction, froze the whole first turn at its first streamed chunk.
-  it("leaves the turn running for a banner-class error and routes it to showBanner", () => {
+  // The turn lifecycle and the error PROSE are two different questions. The handler
+  // used to clear `thinking` for every code, and `thinking` is what the renderer
+  // reads to decide whether an assistant bubble subscribes to its own deltas — so a
+  // `.kiro/agents` typo, which fires `agent_config_error` at session construction,
+  // froze the whole first turn at its first streamed chunk.
+  it("leaves the turn running for a routed error and reports it", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "rate_limit", message: "slow down" });
     expect(get("chat-1")?.thinking).toBe(true);
-    expect(mockShowBanner).toHaveBeenCalledWith(
-      "chat-1",
-      "rate_limit",
-      "slow down",
-      "warning",
-      true,
-      undefined,
-    );
-    expect(mockReportFailure).not.toHaveBeenCalled();
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "slow down", undefined);
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
@@ -491,38 +463,41 @@ describe("error handler", () => {
     expect(get("chat-1")?.thinking).toBe(true);
   });
 
-  it("leaves a BACKGROUND chat's turn running for a banner-class error too", () => {
+  // A routed error reaches a surface for EVERY chat, not only the one on screen: a
+  // toast claims no shared control, unlike the send button below. failure-notice is
+  // what names the chat, so the chat id arriving here is the whole contract.
+  it("reports a BACKGROUND chat's config error, with its own remedy", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
     fireSSE("error", "chat-1", { code: "agent_config_error", message: "bad agent front matter" });
     expect(get("chat-1")?.thinking).toBe(true);
-    // A banner is still active-chat only, so a background chat's config error must
-    // not claim the reader's banner stack or send button.
-    expect(mockShowBanner).not.toHaveBeenCalled();
+    expect(mockReportFailure).toHaveBeenCalledWith(
+      "chat-1",
+      "bad agent front matter",
+      expect.objectContaining({ label: "Open custom instructions" }),
+    );
     expect(mockSetAgentDown).not.toHaveBeenCalled();
-    // And nothing toasts: a banner-class error is not a failed send.
-    expect(mockReportFailure).not.toHaveBeenCalled();
   });
 
-  // D115: a banner whose route names a setting carries a working in-app jump,
-  // and one whose route does not carries no affordance at all.
-  it("gives agent_config_error a banner action that opens the named control", () => {
+  // A route that names a setting carries a working in-app jump, and one whose route
+  // does not carries no affordance at all.
+  it("gives agent_config_error a toast action that opens the named control", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "agent_config_error", message: "bad agent json" });
 
-    const link = mockShowBanner.mock.calls[0]?.[5] as
+    const action = mockReportFailure.mock.calls[0]?.[2] as
       { label: string; onClick: () => void } | undefined;
-    expect(link?.label).toBe("Open custom instructions");
-    link?.onClick();
+    expect(action?.label).toBe("Open custom instructions");
+    action?.onClick();
     expect(mockOpenSetting).toHaveBeenCalledWith("instructions", "steering-input");
   });
 
-  it("passes no banner action for a routed error that names none", () => {
+  it("passes no toast action for a routed error that names none", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "compaction_failed", message: "nope" });
-    expect(mockShowBanner.mock.calls[0]?.[5]).toBeUndefined();
+    expect(mockReportFailure.mock.calls[0]?.[2]).toBeUndefined();
     expect(mockOpenSetting).not.toHaveBeenCalled();
   });
 
@@ -530,7 +505,7 @@ describe("error handler", () => {
   // JSON-RPC error to KAS, and KAS's answer to that error is to run
   // unauthenticated — the chat opens and every turn fails with nothing on screen
   // saying the runtime is signed out.
-  it("routes the auth failure to a non-dismissible banner with a sign-in CTA", () => {
+  it("routes the auth failure to a toast carrying the sign-in CTA", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", {
@@ -538,24 +513,20 @@ describe("error handler", () => {
       message: "kiro-cli: refresh token expired",
     });
 
-    expect(mockShowBanner).toHaveBeenCalledWith(
+    expect(mockReportFailure).toHaveBeenCalledWith(
       "chat-1",
-      "auth_token_unavailable",
       // kiro-cli's own reason travels through: it names which leg of the login
       // chain is dead, and no wording invented client-side is more specific.
       "kiro-cli: refresh token expired",
-      "error",
-      false,
       expect.objectContaining({ label: "Sign in" }),
     );
-    const link = mockShowBanner.mock.calls[0]?.[5] as
+    const action = mockReportFailure.mock.calls[0]?.[2] as
       { label: string; onClick: () => void } | undefined;
-    link?.onClick();
+    action?.onClick();
     expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
     // Not a Settings jump: the login modal is not in Settings at all.
     expect(mockOpenSetting).not.toHaveBeenCalled();
-    // And neither failure surface: it is not one send that is broken.
-    expect(mockReportFailure).not.toHaveBeenCalled();
+    // And not the send button: it is not one send that is broken.
     expect(mockSetAgentDown).not.toHaveBeenCalled();
   });
 
@@ -569,19 +540,13 @@ describe("error handler", () => {
       setSessions([makeSession("chat-1", { thinking: true })]);
       setActive("chat-1");
       fireSSE("error", "chat-1", { code, message: "boom" });
-      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom");
+      expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "boom", undefined);
       expect(mockSetAgentDown).not.toHaveBeenCalled();
-      expect(mockShowBanner).not.toHaveBeenCalled();
     },
   );
 
-  // NO error code touches the turn lifecycle, and the deleted predicate that used
-  // to decide it — `ERROR_ROUTES[code].surface !== "banner"` — is why: an error's
-  // VISUAL TREATMENT decided whether the turn was over. Six banner codes therefore
-  // never ended one (`auth_token_unavailable` among them, leaving the composer on
-  // Cancel forever), while a toast-surfaced error cleared `thinking` mid-turn and
-  // froze the transcript at its first chunk. The server ends every turn exactly
-  // once now, so an error is a report.
+  // NO error code touches the turn lifecycle: the server ends every turn exactly
+  // once, so an error is a report.
   it.each([
     "prompt_failed",
     "bridge_start_failed",
@@ -615,7 +580,7 @@ describe("error handler", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("chat-2");
     fireSSE("error", "chat-1", { code: "prompt_failed", message: "at capacity" });
-    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity");
+    expect(mockReportFailure).toHaveBeenCalledWith("chat-1", "at capacity", undefined);
 
     mockReportFailure.mockClear();
     fireSSE("error", "chat-1", { code: "bridge_start_failed", message: "spawn failed" });

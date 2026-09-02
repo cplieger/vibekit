@@ -12,39 +12,32 @@
 // never fires. It exists so the state surfaces IF an enterprise account has the
 // gate enabled.
 //
-// Surface: a single transient status banner (banner-stack), shown only while the
-// gate is active and cleared on idle / turn end — nothing when idle/empty. This
-// is Kiro's infra guardrail, called out as distinct from vibekit's own
+// Surface: one transient toast per non-idle status. `idle` is the all-clear, so it
+// raises nothing — there is no notice to retire, because a toast expires on its
+// own. This is Kiro's infra guardrail, called out as distinct from vibekit's own
 // Supervised write-gate. There is no authoring UI: safety properties are
 // formalized out-of-band (a remote endpoint), never created by the client.
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { showBanner, clearBannerCodes } from "../banner-stack.js";
-import type { BannerLevel } from "../types.js";
+import { showToast, type ToastLevel } from "../toast.js";
 import type { SafetyStatusPayload } from "../wire/types.gen.js";
 
-const CODE = "safety_status";
 const MAX_PROPS_SHOWN = 3;
 
 // Latest formalized safety-property descriptions per chat, from
-// safety_properties. Used as context on a status banner when the status itself
+// safety_properties. Used as context on a status toast when the status itself
 // carries no blocked_properties list.
 const activeProps = new Map<string, string[]>();
 
-/** Map a gate status to a banner severity. blocked → error (a write was or
- *  would be stopped); evaluating/error → warning; formalizing → info. */
-function levelFor(status: string): BannerLevel {
-  if (status === "blocked") {
-    return "error";
-  }
-  if (status === "evaluating" || status === "error") {
-    return "warning";
-  }
-  return "info";
+/** Map a gate status to a toast level. Two-way because `ToastLevel` has no
+ *  warning: `blocked` and `error` mean a write was or would be stopped, or the
+ *  check itself broke; everything else is progress with nothing stopped. */
+function levelFor(status: string): ToastLevel {
+  return status === "blocked" || status === "error" ? "error" : "info";
 }
 
-/** Human-readable banner text for a gate status, prefixed so it reads as
+/** Human-readable toast text for a gate status, prefixed so it reads as
  *  Kiro's Infrastructure Safety (distinct from vibekit's Supervised gate). */
 function headlineFor(p: SafetyStatusPayload): string {
   switch (p.status) {
@@ -92,17 +85,9 @@ onSSE("safety_status", (chatID, p) => {
   if (chatID === "") {
     return;
   }
-  // idle is the all-clear: drop any active-gate banner.
+  // idle is the all-clear, and it has nothing to say.
   if (p.status === "idle") {
-    clearBannerCodes(chatID, [CODE]);
     return;
   }
-  const message = withConstraints(headlineFor(p), p, chatID);
-  showBanner(chatID, CODE, message, levelFor(p.status), true);
-});
-
-// A blocked/evaluating state can arrive without a trailing idle (the turn may
-// end first); clear the transient banner on turn end so it can't wedge.
-onSSE("turn_ended", (chatID) => {
-  clearBannerCodes(chatID, [CODE]);
+  showToast(withConstraints(headlineFor(p), p, chatID), levelFor(p.status));
 });

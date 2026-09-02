@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { join } from "@cplieger/keyenc";
-import { error as toastError, errorWithAction } from "./toast.js";
+import { error as toastError, errorWithAction, type ToastRetry } from "./toast.js";
 import { get } from "./store.js";
 import { activateTab, getActiveTabId, tabIdFor } from "./tabs.js";
 import { truncate } from "./strings.js";
@@ -75,8 +75,13 @@ const live = new Map<string, () => void>();
  *  with its chat and carries a jump to it, so the toast cannot be read as being
  *  about whatever is on screen. That is the one thing the old send-button surface
  *  could not do, and why a background failure used to leave nothing but a tab
- *  dot. An empty `chatID` is a workspace-global command, which names no chat. */
-export function reportFailure(chatID: string, message: string): void {
+ *  dot. An empty `chatID` is a workspace-global command, which names no chat.
+ *
+ *  `action` is the route's own remedy (a Settings jump, the login modal). It takes
+ *  the single action slot from the "Open chat" jump and makes the toast STICKY,
+ *  because a remedy offered nowhere else must not expire unread. The chat is still
+ *  NAMED, which is the half that answers whose failure this is. */
+export function reportFailure(chatID: string, message: string, action?: ToastRetry): void {
   const reason = message.trim() !== "" ? message.trim() : NO_REASON;
   // Dedupe on the TEXT, not on the code or the channel: the two channels agree on
   // the prose by construction (one server-side renderer), which is exactly what
@@ -88,11 +93,19 @@ export function reportFailure(chatID: string, message: string): void {
     lastAt = now;
     return;
   }
+  clearFailure(chatID);
+  // Latch AFTER the retraction: clearFailure drops the latch, so latching first
+  // leaves every failure after this chat's first un-deduped, and its twin on the
+  // other channel re-raises the toast that was just replaced.
   lastKey = key;
   lastAt = now;
-
-  clearFailure(chatID);
-  live.set(chatID, raise(chatID, truncate(reason, MAX_TOAST_CHARS)));
+  const dismiss = raise(chatID, truncate(reason, MAX_TOAST_CHARS), action);
+  // Only a notice with no remedy of its own is registered, so a later failure on
+  // this chat cannot retract one: a sticky remedy is the only thing on screen
+  // saying the runtime is broken, and the next failure is not a reason to drop it.
+  if (action === undefined) {
+    live.set(chatID, dismiss);
+  }
 }
 
 /** Retract this chat's failure notice.
@@ -129,19 +142,22 @@ export function clearFailure(chatID: string): void {
  *  and nothing to click — an unattributed failure on a screen with no chat in
  *  sight, which is worse than the tooltip it replaced. The tab id is the honest
  *  answer, because a chat tab's id IS the chat id. */
-function raise(chatID: string, reason: string): () => void {
+function raise(chatID: string, reason: string, action?: ToastRetry): () => void {
   // Resolved once: it answers both "is this chat the one on screen" and "is there
   // a tab to jump to", and "" is the second answer's no.
   const tabID = chatID === "" ? "" : tabIdFor("chat", chatID);
-  if (chatID === "" || tabID === getActiveTabId()) {
-    return toastError(reason);
-  }
-  const name = truncate(get(chatID)?.name ?? "", MAX_NAME_CHARS);
+  const onScreen = chatID === "" || tabID === getActiveTabId();
+  const name = onScreen ? "" : truncate(get(chatID)?.name ?? "", MAX_NAME_CHARS);
   const message = name !== "" ? `${name}: ${reason}` : reason;
+  // A route's own remedy takes the one action slot, and takes it sticky: toast.ts
+  // times out an action reachable another way, and neither of these is.
+  if (action !== undefined) {
+    return toastError(message, action);
+  }
   // No tab, no button. `activateTab` no-ops on an id it does not hold, so offering
   // the jump for a chat with no tab would render a control that does nothing —
   // which teaches a reader to distrust every other one.
-  if (tabID === "") {
+  if (onScreen || tabID === "") {
     return toastError(message);
   }
   return errorWithAction(message, {

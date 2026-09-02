@@ -13,7 +13,9 @@ const { mockDismiss, mockToastError, mockErrorWithAction, mockActivateTab } = vi
   const dismiss = vi.fn();
   return {
     mockDismiss: dismiss,
-    mockToastError: vi.fn((_message: string): (() => void) => dismiss),
+    mockToastError: vi.fn(
+      (_message: string, _retry?: { label?: string; onClick: () => void }): (() => void) => dismiss,
+    ),
     mockErrorWithAction: vi.fn(
       (_message: string, _action: { label?: string; onClick: () => void }): (() => void) => dismiss,
     ),
@@ -89,6 +91,11 @@ function lastToast(): string {
 /** The action the last toast carried, undefined if it carried none. */
 function lastAction(): { label?: string; onClick: () => void } | undefined {
   return mockErrorWithAction.mock.calls.at(-1)?.[1];
+}
+
+/** The retry the last sticky toast carried, undefined if it carried none. */
+function lastStickyAction(): { label?: string; onClick: () => void } | undefined {
+  return mockToastError.mock.calls.at(-1)?.[1];
 }
 
 /** How many toasts were raised, by either entry point. */
@@ -246,6 +253,47 @@ describe("failure-notice dedupes the two channels one failure arrives on", () =>
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // The latch has to survive the retraction that precedes every raise, or it only
+  // ever covers a chat's FIRST failure: replacing a live toast drops the latch, so
+  // latching before that leaves the second failure's twin free to raise a duplicate.
+  it("dedupes both channels on a chat's SECOND distinct failure", () => {
+    reportFailure("c1", "at capacity");
+    reportFailure("c1", "too many requests");
+    reportFailure("c1", "too many requests");
+    expect(toastCount()).toBe(2);
+  });
+});
+
+describe("failure-notice carries the route's own remedy", () => {
+  const remedy = { label: "Open custom instructions", onClick: () => undefined };
+
+  // A routed error's remedy is offered nowhere else, so it takes the one action
+  // slot from "Open chat" AND goes sticky. `error(msg, retry)` is toast.ts's sticky
+  // path and `errorWithAction` its 12s one, so which mock fires IS the assertion.
+  it("names a background chat and carries the remedy, stickily", () => {
+    reportFailure("c2", "bad agent front matter", remedy);
+    expect(mockErrorWithAction).not.toHaveBeenCalled();
+    expect(lastToast()).toBe("Write the docs: bad agent front matter");
+    expect(lastStickyAction()?.label).toBe("Open custom instructions");
+  });
+
+  it("carries it stickily for the chat that IS on screen, unprefixed", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    expect(mockErrorWithAction).not.toHaveBeenCalled();
+    expect(lastToast()).toBe("bad agent front matter");
+    expect(lastStickyAction()?.label).toBe("Open custom instructions");
+  });
+
+  // A sticky remedy is the only thing on screen saying the runtime is broken, so a
+  // later failure on the same chat must not silently dismiss it — which the
+  // per-chat replace would do if a remedy-bearing notice were registered as live.
+  it("is not retracted by a later failure on the same chat", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    reportFailure("c1", "at capacity");
+    expect(mockDismiss).not.toHaveBeenCalled();
+    expect(toastCount()).toBe(2);
   });
 });
 

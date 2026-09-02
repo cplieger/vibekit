@@ -22,7 +22,7 @@ import { pushDecision, collapseSettledDecision, dropTurnDecisions } from "../dec
 import { setAgentDown, clearAgentDown } from "../send-state.js";
 import { reportFailure } from "../failure-notice.js";
 import { refreshGitBadge } from "../git.js";
-import { showBanner, type BannerLink } from "../banner-stack.js";
+import type { ToastRetry } from "../toast.js";
 import { openSetting } from "../settings-highlight.js";
 import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
@@ -202,8 +202,8 @@ onSSE("decision_settled", (chatID, p) => {
 
 // --- Data-driven error classification (imported from error-routing.ts) ---
 
-/** Turns a route's declared action into the banner's link. */
-function bannerLinkFor(action: ErrorAction | undefined): BannerLink | undefined {
+/** Turns a route's declared action into the toast's one action slot. */
+function toastActionFor(action: ErrorAction | undefined): ToastRetry | undefined {
   if (action === undefined) {
     return undefined;
   }
@@ -223,11 +223,8 @@ function bannerLinkFor(action: ErrorAction | undefined): BannerLink | undefined 
   }
 }
 
-// `endsTurn` is deleted. It derived "does this error end the turn" from
-// `ERROR_ROUTES[code].surface`, so a banner's visual treatment decided
-// whether the turn was over, leaving `thinking` stuck true for several
-// codes. The server now ends every turn exactly once via `turn_ended`, so
-// this handler touches no turn state — an error is a report only.
+// This handler touches no turn state: the server ends every turn exactly once
+// via `turn_ended`, so an error is a report only.
 onSSE("error", (chatID, p) => {
   const code = p.code;
   const msg = p.message;
@@ -241,7 +238,7 @@ onSSE("error", (chatID, p) => {
     case "toast":
       // Reported for every chat, not just the active one: a background
       // chat's failure must still surface, since it claims no shared control.
-      reportFailure(chatID, msg);
+      reportFailure(chatID, msg, toastActionFor(route.action));
       break;
     case "agent-down":
       // Active chat only: this DOES paint a shared control, so a background
@@ -250,12 +247,6 @@ onSSE("error", (chatID, p) => {
         setAgentDown(msg !== "" ? msg : "The agent could not be started for this chat.");
       }
       break;
-    case "banner": {
-      if (chatID === getActiveId()) {
-        showBanner(chatID, code, msg, route.level, route.dismissible, bannerLinkFor(route.action));
-      }
-      break;
-    }
     default:
       route.surface satisfies never;
   }

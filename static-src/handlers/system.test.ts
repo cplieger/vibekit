@@ -117,14 +117,6 @@ vi.mock("../model-switcher.js", () => ({
   queueModelSwitch: undefined,
   switchModel: undefined,
 }));
-const mockOnTurnEnded = vi.fn();
-vi.mock("../banner-stack.js", () => ({
-  onTurnEnded: mockOnTurnEnded,
-  showBanner: vi.fn(),
-  dismissBanner: undefined,
-  clearBanners: undefined,
-  mountBannerStack: undefined,
-}));
 
 // Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
 // both transport:gap and mode_changed.
@@ -422,20 +414,19 @@ describe("mode_changed handler", () => {
 // P10: the gap door and the turn_ended door share ONE outcome-independent core.
 //
 // The gap reconciler was a second independent spelling of that teardown and was
-// short by four effects — the transient banners, both in-flight markers and the
-// rail — so a reconnect left a rate-limit banner over a finished turn, a chunk
-// watermark that dropped the next turn's early deltas, and a live-message marker
-// that made a later refetch keep a message the chat file already held.
+// short by three effects — both in-flight markers and the rail — so a reconnect
+// left a chunk watermark that dropped the next turn's early deltas, and a
+// live-message marker that made a later refetch keep a message the chat file
+// already held.
 // ---------------------------------------------------------------------------
 
 describe("the gap reconcile runs the shared turn teardown", () => {
   beforeEach(() => {
     mockRefreshTurnRail.mockClear();
-    mockOnTurnEnded.mockClear();
     mockDrainModelSwitchQueue.mockClear();
   });
 
-  it("clears the in-flight marker and the banners for every chat, the rail for none", () => {
+  it("clears the in-flight marker for every chat, the rail for none", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("");
     noteLiveTurnMessage("chat-1", "m-live");
@@ -443,10 +434,9 @@ describe("the gap reconcile runs the shared turn teardown", () => {
     fireGap();
 
     expect(liveTurnMessage("chat-1")).toBeUndefined();
-    expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-1");
     expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-1");
     // And every chat, not only the active one: a gap describes the connection.
-    expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-2");
+    expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-2");
     // The rail left the shared teardown: a gap makes every chat's index equally
     // unsupportable, which the epoch bump records, so no per-chat GET goes out
     // here (with no active chat, none at all) — each rail heals on activation.

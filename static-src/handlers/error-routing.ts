@@ -6,11 +6,11 @@ import type { BannerLevel } from "../types.js";
 import type { SettingsTab } from "../router.js";
 import type { ErrorCode } from "../wire/types.gen.js";
 
-/** The in-app jump a banner offers, as DATA rather than a callback so the
- *  routing table stays a table — the handler turns it into the banner's action.
- *  Discriminated because the two kinds go to different places: `setting` names a
- *  Settings control the message is really about, `sign-in` opens the login modal,
- *  which is not in Settings at all. Only meaningful on `surface: "banner"`. */
+/** The in-app jump a routed error offers, as DATA rather than a callback so the
+ *  routing table stays a table — the handler maps it onto the toast's one action
+ *  slot. Discriminated because the two kinds go to different places: `setting`
+ *  names a Settings control the message is really about, `sign-in` opens the login
+ *  modal, which is not in Settings at all. */
 export type ErrorAction =
   | { kind: "setting"; tab: SettingsTab; control: string; label: string }
   | { kind: "sign-in"; label: string };
@@ -18,27 +18,31 @@ export type ErrorAction =
 export interface ErrorRoute {
   /** Where this error is reported.
    *
-   *  - `banner`: persistent, per-chat, inside the chat view. The turn is NOT
-   *    ended — a banner means something else is wrong while the work runs on.
-   *  - `toast`: bottom-right, transient, paired with the turn's own transcript
-   *    divider (the server writes the same reason there). This is where a FAILED
-   *    ATTEMPT goes: the send did not land, and the next one may well.
+   *  - `toast`: bottom-right, paired with the turn's own transcript divider (the
+   *    server writes the same reason there). Raised for EVERY chat, and named with
+   *    that chat when its tab is not the one on screen.
    *  - `agent-down`: the send button's alert face. Reserved for "there is no
    *    agent to send to", never for a failed attempt — see send-state.ts.
    */
-  surface: "banner" | "toast" | "agent-down";
+  surface: "toast" | "agent-down";
+  /** Declared for the wire code and read by neither surface: a toast has three
+   *  levels and no dismiss contract. */
   level: BannerLevel;
   dismissible: boolean;
   action?: ErrorAction;
 }
 
 export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
-  agent_not_found: { surface: "banner", level: "error", dismissible: true },
+  agent_not_found: { surface: "toast", level: "error", dismissible: true },
   // The payload names a `.kiro/agents` path, so the message is about authored
   // configuration; Custom instructions is the panel that owns it, and the global
   // instructions box is the control a reader lands on to check their setup.
+  //
+  // Sticky rather than the 12s an action reachable elsewhere gets (toast.ts): a
+  // typo in a `.kiro/agents` file blocks the chat and nothing else on screen says
+  // so, so this notice must not expire unread.
   agent_config_error: {
-    surface: "banner",
+    surface: "toast",
     level: "error",
     dismissible: false,
     action: {
@@ -48,20 +52,18 @@ export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
       label: "Open custom instructions",
     },
   },
-  rate_limit: { surface: "banner", level: "warning", dismissible: true },
-  compaction_failed: { surface: "banner", level: "error", dismissible: true },
+  rate_limit: { surface: "toast", level: "warning", dismissible: true },
+  compaction_failed: { surface: "toast", level: "error", dismissible: true },
   // The chat is running, just not in the mode that was asked for, and the fix is
-  // one click on the mode pill. A banner says so without blocking the composer;
-  // dismissible because the session is usable as it stands.
-  mode_not_applied: { surface: "banner", level: "warning", dismissible: true },
+  // one click on the mode pill, so this reports without blocking the composer.
+  mode_not_applied: { surface: "toast", level: "warning", dismissible: true },
   // kiro-cli could not vend a KAS access token, so the agent runtime is running
   // unauthenticated: the session opened and every service-backed surface behind
-  // it will fail. A banner rather than a toast because it is not one send that is
-  // broken, and not dismissible because nothing else on screen says the runtime
-  // is signed out. The CTA is the login modal: the only action that fixes it is
+  // it will fail. Sticky, because nothing else on screen says the runtime is
+  // signed out. The CTA is the login modal: the only action that fixes it is
   // signing in, and there is no Settings control for that.
   auth_token_unavailable: {
-    surface: "banner",
+    surface: "toast",
     level: "error",
     dismissible: false,
     action: { kind: "sign-in", label: "Sign in" },
