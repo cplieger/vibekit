@@ -865,6 +865,16 @@ async function realLayoutReset(): Promise<void> {
   scroll.resetScrollState();
 }
 
+/** Park the reader with a real gesture pair: down to the bottom, then back to
+ *  the top. Two writes rather than one, so the state passes through Following
+ *  and the park is the listener's own verdict rather than a seeded field. */
+async function park(wrap: HTMLElement): Promise<void> {
+  wrap.scrollTop = wrap.scrollHeight - wrap.clientHeight;
+  await land();
+  wrap.scrollTop = 0;
+  await land();
+}
+
 describe("a large tool card below the streaming block", () => {
   beforeEach(realLayoutReset);
 
@@ -959,16 +969,6 @@ describe("a large tool card below the streaming block", () => {
 // them lives in the scroll listener the click's write feeds.
 describe("the resume control's landing", () => {
   beforeEach(realLayoutReset);
-
-  /** Park the reader with a real gesture pair: down to the bottom, then back to
-   *  the top. Two writes rather than one, so the state passes through Following
-   *  and the park is the listener's own verdict rather than a seeded field. */
-  async function park(wrap: HTMLElement): Promise<void> {
-    wrap.scrollTop = wrap.scrollHeight - wrap.clientHeight;
-    await land();
-    wrap.scrollTop = 0;
-    await land();
-  }
 
   /** The three facts one failure has to name: where the click landed, whether
    *  the reader is following again, and whether the control took itself down. */
@@ -1071,5 +1071,135 @@ describe("the resume control's landing", () => {
     await land(400);
 
     expect(wrap.scrollTop).toBe(300);
+  });
+});
+
+// The other side of that window: while it runs it must hold the position
+// Following MEANS, not a different one. A pass re-asserting the document maximum
+// switched the anchor re-pin off for its whole duration, so for up to 700ms after
+// every sent turn (`buildTurn` calls scrollToBottom for a turn the user sent) the
+// reader was parked BELOW the sentence being written whenever a plan card, an
+// event row or a second message sat under it. Nothing re-asked the question at
+// the deadline either — `autoScrollIfAnchored` runs only from the two observers —
+// so the correction waited for the next mutation and arrived as a jump.
+//
+// Every case here asserts a LANDING POSITION against a measured maximum, so a
+// pass writing the maximum and a pass writing the follow target are
+// distinguishable rather than coincidentally equal.
+describe("the bottom pin's settle window", () => {
+  beforeEach(realLayoutReset);
+
+  /** The reachable shape: a live text block with tall evidence BELOW it, so the
+   *  anchor's pin sits far above the document bottom. Same geometry as "keeps
+   *  Following when the pin lands far from the document bottom" — anchorTop is
+   *  1500 + 200 - 400 + 50 = 1350 against a maximum of 2200. */
+  function pinScene(): { wrap: HTMLElement; streaming: HTMLElement } {
+    const wrap = realScroller();
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    return { wrap, streaming };
+  }
+
+  it("pins the live text block, not the document bottom, while the window runs", async () => {
+    const { wrap, streaming } = pinScene();
+    await land();
+
+    // What `buildTurn` does for a turn the user just sent.
+    scroll.scrollToBottom();
+    await land(60);
+    const opened = wrap.scrollTop;
+
+    streaming.appendChild(document.createTextNode("a streamed chunk"));
+    await land(60);
+    const afterChunk = wrap.scrollTop;
+
+    await land(300);
+    const held = wrap.scrollTop;
+
+    expect({ opened, afterChunk, held, max: wrap.scrollHeight - wrap.clientHeight }).toEqual({
+      opened: 1350,
+      afterChunk: 1350,
+      held: 1350,
+      max: 2200,
+    });
+  });
+
+  it("does not move the reader when the window closes", async () => {
+    const { wrap } = pinScene();
+    await land();
+
+    scroll.scrollToBottom();
+    await land(300);
+    const inside = wrap.scrollTop;
+    // Past PIN_SETTLE_MS, so the anchor re-pin owns the frame again. The hand-off
+    // is what has to move nothing.
+    await land(500);
+    const after = wrap.scrollTop;
+
+    expect({ inside, after }).toEqual({ inside: 1350, after: 1350 });
+  });
+
+  it("keeps following the anchor for growth arriving inside the window", async () => {
+    const { wrap, streaming } = pinScene();
+    await land();
+
+    scroll.scrollToBottom();
+
+    streaming.style.height = "400px";
+    await land(60);
+    const grown = wrap.scrollTop;
+
+    streaming.style.height = "600px";
+    await land(60);
+    const grownAgain = wrap.scrollTop;
+
+    // Both landings are short of their own maximum (2400, then 2600), which is
+    // what the window exists to cover — the growth arrives after the click.
+    expect({ grown, grownAgain }).toEqual({ grown: 1550, grownAgain: 1750 });
+  });
+
+  it("yields to a reader scroll that lands inside the bottom tolerance", async () => {
+    // A gesture landing within BOTTOM_TOLERANCE_PX keeps the state Following, so
+    // the state alone cannot see it: the scroll debounce is what can.
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    await park(wrap);
+    scrollBtn.click();
+    await land(60);
+
+    wrap.scrollTop = 2560;
+    await land(400);
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 2560,
+      state: "following",
+    });
+  });
+
+  it("leaves a jump landing at the live edge where it landed", async () => {
+    // The landing is within BOTTOM_TOLERANCE_PX of the maximum, so the jump keeps
+    // the reader Following and the pass's state check cannot stop it. The next
+    // frame would overwrite the landing and abort the smooth scroll with it.
+    const wrap = realScroller();
+    block(3000);
+    const target = block(200);
+    block(250);
+    await land();
+
+    await park(wrap);
+    scrollBtn.click();
+    await land(60);
+
+    scroll.jumpTo(target, { block: "start" });
+    await land(500);
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: target.offsetTop,
+      state: "following",
+    });
   });
 });
