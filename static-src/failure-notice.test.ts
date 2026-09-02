@@ -264,6 +264,16 @@ describe("failure-notice dedupes the two channels one failure arrives on", () =>
     reportFailure("c1", "too many requests");
     expect(toastCount()).toBe(2);
   });
+
+  // The latch is per chat because a failure's identity is: with one shared slot,
+  // an unrelated chat failing in between un-latches the twin still to arrive on
+  // the other channel, and the failure reports twice.
+  it("dedupes both channels when another chat fails in between", () => {
+    reportFailure("c1", "at capacity");
+    reportFailure("c2", "too many requests");
+    reportFailure("c1", "at capacity");
+    expect(toastCount()).toBe(2);
+  });
 });
 
 describe("failure-notice carries the route's own remedy", () => {
@@ -294,6 +304,34 @@ describe("failure-notice carries the route's own remedy", () => {
     reportFailure("c1", "at capacity");
     expect(mockDismiss).not.toHaveBeenCalled();
     expect(toastCount()).toBe(2);
+  });
+
+  // Nothing expires a sticky notice, so a repeat past the dedupe window is the one
+  // raise that must retract the copy it repeats: two identical remedies standing
+  // side by side indefinitely crowd out the next real error.
+  it("replaces its own repeat rather than standing beside it", () => {
+    vi.useFakeTimers();
+    try {
+      reportFailure("c1", "bad agent front matter", remedy);
+      vi.advanceTimersByTime(6_000);
+      reportFailure("c1", "bad agent front matter", remedy);
+      // Two raised, one retracted: one on screen.
+      expect(toastCount()).toBe(2);
+      expect(mockDismiss).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Which is why the handle is held per FAILURE and not per chat: two remedies on
+  // one chat are two problems, and the first must still be able to replace its own
+  // repeat after the second has arrived.
+  it("replaces its own repeat after a different remedy came in between", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    reportFailure("c1", "refresh token expired", { label: "Sign in", onClick: () => undefined });
+    reportFailure("c1", "bad agent front matter", remedy);
+    expect(toastCount()).toBe(3);
+    expect(mockDismiss).toHaveBeenCalledTimes(1);
   });
 });
 

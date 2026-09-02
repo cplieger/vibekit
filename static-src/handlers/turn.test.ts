@@ -155,22 +155,18 @@ describe("ERROR_ROUTES", () => {
     string,
     {
       surface: string;
-      level: string;
-      dismissible: boolean;
       action?:
         | { kind: "setting"; tab: string; control: string; label: string }
         | { kind: "sign-in"; label: string };
     },
   ][] = [
-    ["agent_not_found", { surface: "toast", level: "error", dismissible: true }],
+    ["agent_not_found", { surface: "toast" }],
     // A routed error that also names a Settings control: the payload carries a
     // .kiro/agents path, so the toast carries a jump to Custom instructions.
     [
       "agent_config_error",
       {
         surface: "toast",
-        level: "error",
-        dismissible: false,
         action: {
           kind: "setting",
           tab: "instructions",
@@ -179,49 +175,38 @@ describe("ERROR_ROUTES", () => {
         },
       },
     ],
-    // D106: the runtime is running UNAUTHENTICATED, so the session opened and
+    // The runtime is running UNAUTHENTICATED, so the session opened and
     // everything behind it will fail. The only fix is signing in, and there is no
     // Settings control for that — which is why the action is a discriminated
     // union rather than a Settings jump with a stretched meaning.
-    [
-      "auth_token_unavailable",
-      {
-        surface: "toast",
-        level: "error",
-        dismissible: false,
-        action: { kind: "sign-in", label: "Sign in" },
-      },
-    ],
-    ["rate_limit", { surface: "toast", level: "warning", dismissible: true }],
-    ["compaction_failed", { surface: "toast", level: "error", dismissible: true }],
+    ["auth_token_unavailable", { surface: "toast", action: { kind: "sign-in", label: "Sign in" } }],
+    ["rate_limit", { surface: "toast" }],
+    ["compaction_failed", { surface: "toast" }],
     // The four failed-ATTEMPT codes. Each ends the turn and each leaves a
     // promptable chat behind, which is why none of them reaches the send button:
     // an alert icon on the control whose job is to send claims the chat is dead,
     // and it is not. The reason lands on a toast and on the turn's own divider.
-    ["switch_failed", { surface: "toast", level: "error", dismissible: false }],
-    ["prompt_failed", { surface: "toast", level: "error", dismissible: false }],
+    ["switch_failed", { surface: "toast" }],
+    ["prompt_failed", { surface: "toast" }],
     // A pick refused before it reached the wire: same surface as switch_failed,
     // which is the other half of choosing a model.
-    ["model_not_served", { surface: "toast", level: "error", dismissible: false }],
+    ["model_not_served", { surface: "toast" }],
     // Empty-turn recovery could not respawn or resend. Routed explicitly rather
     // than left to the unknown-code fallthrough, on the one error whose meaning is
     // "the automatic repair failed".
-    ["recovery_failed", { surface: "toast", level: "error", dismissible: false }],
+    ["recovery_failed", { surface: "toast" }],
     // The ONE code that earns the send button's alert face: kiro-cli could not be
     // spawned, so there is no ACP connection behind this chat to send to. Every
     // other code here happened to a live agent.
-    ["bridge_start_failed", { surface: "agent-down", level: "error", dismissible: false }],
+    ["bridge_start_failed", { surface: "agent-down" }],
     // The chat runs, just not in the requested mode, and one click on the mode
-    // pill fixes it — so a warning-classed notice rather than a failure.
-    ["mode_not_applied", { surface: "toast", level: "warning", dismissible: true }],
+    // pill fixes it — so it reports without touching the send button.
+    ["mode_not_applied", { surface: "toast" }],
   ];
 
-  it.each(expectedRoutes)(
-    "routes %s to the expected surface/level/dismissible",
-    (code, expected) => {
-      expect(ERROR_ROUTES[code as keyof typeof ERROR_ROUTES]).toEqual(expected);
-    },
-  );
+  it.each(expectedRoutes)("routes %s to the expected surface and action", (code, expected) => {
+    expect(ERROR_ROUTES[code as keyof typeof ERROR_ROUTES]).toEqual(expected);
+  });
 
   it("contains exactly the codes this table claims to route", () => {
     expect(Object.keys(ERROR_ROUTES).sort()).toEqual(expectedRoutes.map(([c]) => c).sort());

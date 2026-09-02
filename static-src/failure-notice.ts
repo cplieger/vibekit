@@ -62,12 +62,20 @@ const OPEN_LABEL = "Open chat";
  *  wording points at the one place the cause is still recoverable. */
 const NO_REASON = "The request failed. Check the server log for the cause.";
 
-let lastKey = "";
-let lastAt = 0;
+/** The last failure reported per chat, for the window above. Per chat because a
+ *  failure's identity includes its chat: one shared slot is overwritten by any
+ *  other chat's failure, which un-latches the twin still to arrive. */
+const latched = new Map<string, { key: string; at: number }>();
 
 /** The live toast per chat, so the dead-POST rescue can retract one. Keyed by
  *  chat because two chats can fail independently and each owns its own notice. */
 const live = new Map<string, () => void>();
+
+/** The live remedy-bearing toast per FAILURE rather than per chat. Such a notice
+ *  is sticky, so nothing expires it: an identical repeat dismisses the copy it
+ *  repeats, and any other failure leaves it standing, because a remedy offered
+ *  nowhere else must not be retracted to report something else. */
+const remedies = new Map<string, () => void>();
 
 /** Report a failure to the user.
  *
@@ -89,33 +97,37 @@ export function reportFailure(chatID: string, message: string, action?: ToastRet
   // literal because a reason is arbitrary upstream text and a chat id is not.
   const key = join(chatID, reason);
   const now = Date.now();
-  if (key === lastKey && now - lastAt < DEDUPE_WINDOW_MS) {
-    lastAt = now;
+  const last = latched.get(chatID);
+  if (last?.key === key && now - last.at < DEDUPE_WINDOW_MS) {
+    latched.set(chatID, { key, at: now });
     return;
   }
-  clearFailure(chatID);
-  // Latch AFTER the retraction: clearFailure drops the latch, so latching first
-  // leaves every failure after this chat's first un-deduped, and its twin on the
+  // Retract only what this raise supersedes. A sticky remedy is replaced by its
+  // own repeat and by nothing else; an ordinary notice is replaced by whatever
+  // this chat reports next.
+  if (action !== undefined) {
+    remedies.get(key)?.();
+  } else {
+    clearFailure(chatID);
+  }
+  // Latch AFTER the retraction: clearFailure drops this chat's latch, so latching
+  // first leaves every failure after its first un-deduped, and its twin on the
   // other channel re-raises the toast that was just replaced.
-  lastKey = key;
-  lastAt = now;
+  latched.set(chatID, { key, at: now });
   const dismiss = raise(chatID, truncate(reason, MAX_TOAST_CHARS), action);
-  // Only a notice with no remedy of its own is registered, so a later failure on
-  // this chat cannot retract one: a sticky remedy is the only thing on screen
-  // saying the runtime is broken, and the next failure is not a reason to drop it.
-  if (action === undefined) {
+  if (action !== undefined) {
+    remedies.set(key, dismiss);
+  } else {
     live.set(chatID, dismiss);
   }
 }
 
-/** Retract this chat's failure notice.
+/** Retract this chat's ordinary failure notice.
  *
- *  One caller, and it is the reason this is exported: the prompt POST is the only
- *  long-lived connection here that cannot carry a keepalive, so it can die while
- *  the turn it started runs on fine. actions/chat.ts detects that (the server
- *  echoed our message id) up to two seconds after the toast has already appeared,
- *  and a "send failed" notice standing over a turn that is streaming is worse
- *  than no notice at all. */
+ *  `reportFailure`'s own replace is the only caller and the export is the test
+ *  seam. A remedy-bearing notice is deliberately out of reach: this retracts a
+ *  report that turned out not to describe a failure, which a broken agent file
+ *  is not. */
 export function clearFailure(chatID: string): void {
   const dismiss = live.get(chatID);
   if (dismiss === undefined) {
@@ -125,7 +137,7 @@ export function clearFailure(chatID: string): void {
   // A retraction also clears the dedupe latch. Without this, the retracted
   // failure keeps suppressing its own text for the rest of the window, so a
   // genuine repeat inside five seconds would be silent.
-  lastKey = "";
+  latched.delete(chatID);
   dismiss();
 }
 
@@ -170,7 +182,7 @@ function raise(chatID: string, reason: string, action?: ToastRetry): () => void 
 
 /** Test-only: drop the dedupe latch and every tracked toast handle. */
 export function _resetForTest(): void {
-  lastKey = "";
-  lastAt = 0;
+  latched.clear();
   live.clear();
+  remedies.clear();
 }
