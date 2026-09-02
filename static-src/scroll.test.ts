@@ -331,10 +331,9 @@ describe("readingState", () => {
 const messagesEl = document.getElementById("messages")!;
 const scrollBtn = document.getElementById("scrollBottom")!;
 
-/** Drain the MutationObserver callback, the queued animation frame, and a smooth
- *  scrollTo's deferred write. `behavior: "smooth"` lands on a later frame,
- *  so an assertion on scrollTop after `resume()` needs this; `behavior: "instant"`
- *  lands inside the frame. */
+/** Drain the MutationObserver callback and the queued animation frame. Every pin
+ *  writes synchronously now, so this covers the observer-driven state revalidation
+ *  and the bottom pin's re-assert frames, not a deferred scroll write. */
 async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 25));
 }
