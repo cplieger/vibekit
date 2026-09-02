@@ -839,12 +839,10 @@ class ScrollController {
       if (document.getElementById("load-more-skeleton") === null) {
         this.endLoadPass();
         const newHeight = this.scrollEl.scrollHeight;
-        // Through `scrollSelfTo` like every other write this module makes, so the
-        // listener recognises the landing as the controller's own. An unexcused
-        // event is read as a reader gesture, which arms `userScrollingUntil` —
-        // that ends a settle window early, and at a follow position the anchor
-        // puts above the document bottom it also re-derives the state as
-        // Reading, parking the reader and switching the anchor re-pin off.
+        // Excused through `scrollSelfTo`: an unexcused event is read as a reader
+        // gesture, which arms `userScrollingUntil` — ending a settle window early,
+        // and at a follow position above the document bottom re-deriving the state
+        // as Reading, which parks the reader and switches the anchor re-pin off.
         this.scrollSelfTo(this.scrollEl.scrollTop + (newHeight - prevHeight), "instant");
       }
     });
