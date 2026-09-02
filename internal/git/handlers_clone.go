@@ -188,8 +188,8 @@ func (h *Handler) discardCloneDebris(dir, name string, sweepAll bool) {
 	}
 	defer func() { _ = sub.Close() }()
 	if !sweepAll {
-		if err := sub.RemoveAll(".git"); err != nil {
-			slog.Warn("git clone: failed to remove the adopted .git", "dir", name, "error", err)
+		if rmErr := sub.RemoveAll(".git"); rmErr != nil {
+			slog.Warn("git clone: failed to remove the adopted .git", "dir", name, "error", rmErr)
 		}
 		return
 	}
