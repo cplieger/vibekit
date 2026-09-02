@@ -875,6 +875,21 @@ async function park(wrap: HTMLElement): Promise<void> {
   await land();
 }
 
+/** The three facts one failure of a resume has to name: where the click landed,
+ *  whether the reader is following again, and whether the control took itself
+ *  down. */
+function landing(wrap: HTMLElement): {
+  scrollTop: number;
+  state: string;
+  hidden: boolean;
+} {
+  return {
+    scrollTop: wrap.scrollTop,
+    state: scroll.readingState(),
+    hidden: scrollBtn.classList.contains("hidden"),
+  };
+}
+
 describe("a large tool card below the streaming block", () => {
   beforeEach(realLayoutReset);
 
@@ -934,6 +949,49 @@ describe("a large tool card below the streaming block", () => {
     expect(scroll.readingState()).toBe("reading");
   });
 
+  it("keeps Following when a pagination pass compensates its own height", async () => {
+    // The completion observer gives back the height the older page added above
+    // the reader. Written straight to `scrollTop` it recorded no marker, so the
+    // listener read the controller's own compensation as a reader gesture — and
+    // at an anchored pin `isAtBottom` is false, so it parked the reader, put the
+    // resume control back on screen and switched the anchor re-pin off. The
+    // damage is the chunk AFTER it: the transcript stops following.
+    const wrap = realScroller();
+    block(1500);
+    const streaming = block(200, "message assistant streaming");
+    block(900);
+    scroll.setAnchorProvider(() => streaming);
+    await land();
+
+    scroll.setLoadMore(() => {
+      // What the real caller does: fetch, prepend the page, drop the skeleton —
+      // all after maybeLoadMore has returned and its observer is watching.
+      setTimeout(() => {
+        const page = document.createElement("div");
+        page.style.cssText = "height:600px;";
+        messagesEl.prepend(page);
+        document.getElementById("load-more-skeleton")?.remove();
+      }, 0);
+    }, true);
+    await land();
+
+    // The button forces the fetch whatever the reader's position, which is what
+    // keeps the anchored pin — the geometry the defect needs — in place.
+    document.getElementById("load-more-indicator")!.click();
+    await land();
+
+    streaming.style.height = "400px";
+    streaming.appendChild(document.createTextNode("the chunk after the page landed"));
+    await land();
+
+    // 600 + 1500 + 400 - 400 + 50, short of a 3000 maximum. Parked, the reader
+    // stays where the compensation left them at 1950 and the growth passes them by.
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: 2150,
+      state: "following",
+    });
+  });
+
   it("re-pins on every chunk rather than once per debounce window", async () => {
     // The self-scroll also used to arm the user-scroll debounce, throttling the
     // pin to one landing every 150ms for as long as a turn streamed.
@@ -969,20 +1027,6 @@ describe("a large tool card below the streaming block", () => {
 // them lives in the scroll listener the click's write feeds.
 describe("the resume control's landing", () => {
   beforeEach(realLayoutReset);
-
-  /** The three facts one failure has to name: where the click landed, whether
-   *  the reader is following again, and whether the control took itself down. */
-  function landing(wrap: HTMLElement): {
-    scrollTop: number;
-    state: string;
-    hidden: boolean;
-  } {
-    return {
-      scrollTop: wrap.scrollTop,
-      state: scroll.readingState(),
-      hidden: scrollBtn.classList.contains("hidden"),
-    };
-  }
 
   it("lands at the true bottom when the resume's own flush grows the transcript", async () => {
     // `applyFoldPass` wraps every fold, unfold and body mount in
@@ -1126,19 +1170,46 @@ describe("the bottom pin's settle window", () => {
     });
   });
 
-  it("does not move the reader when the window closes", async () => {
+  it("lands the resume click on the live text block too", async () => {
+    // The other producer of a pin pass, and the one whose landing this changed:
+    // `resume` is reachable only from Reading, and a reader resuming into a live
+    // turn has an anchor registered, so the click now lands where Following means
+    // rather than at the document maximum. That is the same position
+    // `autoScrollIfAnchored` would write on the next chunk, and it still puts the
+    // live block's BOTTOM at the viewport bottom rather than its start — so it is
+    // not a return of the short landing the window was added for.
     const { wrap } = pinScene();
+    await land();
+
+    await park(wrap);
+    expect(scroll.readingState()).toBe("reading");
+
+    scrollBtn.click();
+    await land(300);
+
+    expect(landing(wrap)).toEqual({ scrollTop: 1350, state: "following", hidden: true });
+  });
+
+  it("does not move the reader when the window closes", async () => {
+    const { wrap, streaming } = pinScene();
     await land();
 
     scroll.scrollToBottom();
     await land(300);
     const inside = wrap.scrollTop;
-    // Past PIN_SETTLE_MS, so the anchor re-pin owns the frame again. The hand-off
-    // is what has to move nothing.
+    // Past PIN_SETTLE_MS, so the pass is dead and the anchor re-pin owns the next
+    // frame. The chunk is what makes there BE a next frame: autoScrollIfAnchored
+    // runs from the two observers and nothing else, so with no mutation after the
+    // deadline nothing re-asks the question and the hand-off never happens.
     await land(500);
-    const after = wrap.scrollTop;
+    streaming.appendChild(document.createTextNode("a chunk past the deadline"));
+    await land(60);
+    const handedOff = wrap.scrollTop;
 
-    expect({ inside, after }).toEqual({ inside: 1350, after: 1350 });
+    // Equal is the assertion: the hand-off between the two writers has to move
+    // the reader nowhere. A window holding the maximum reads 2200 then 1350 —
+    // the 850px jump the reader saw as a snap.
+    expect({ inside, handedOff }).toEqual({ inside: 1350, handedOff: 1350 });
   });
 
   it("keeps following the anchor for growth arriving inside the window", async () => {
