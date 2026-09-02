@@ -1538,10 +1538,8 @@ function buildTurn(t: Turn): HTMLElement {
   syncTurnBodyless(card);
   paintMountedCards = true;
 
-  // A new user turn pops the reader back to the bottom. scrollToBottom() does
-  // an explicit RAF-paced scroll that lands on the new card immediately
-  // (suppressScroll would have blocked the auto-scroll for the very turn that
-  // just arrived).
+  // A turn the user just sent overrides Reading: they asked for it, so the pin
+  // takes them to it even if they were parked further up.
   if (t.trigger !== undefined) {
     scrollToBottom();
   }
