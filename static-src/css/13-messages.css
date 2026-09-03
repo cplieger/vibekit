@@ -452,7 +452,7 @@
       font-family: var(--font-mono);
       background: var(--c-code-bg);
       padding: 0.125rem var(--sp-1);
-      border-radius: calc(var(--r) / 2);
+      border-radius: var(--r-sm);
       font-size: 0.9em;
     }
 

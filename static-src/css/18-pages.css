@@ -306,7 +306,12 @@
   min-width: 11rem;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
+
+  /* Same shape and same derivation as the shared popup (11-popups.css). */
+  --menu-inset: var(--sp-1);
+  --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
+
   box-shadow:
     var(--shadow-ambient),
     0 0.25rem 0.75rem oklch(0% 0 none / 40%);
@@ -348,7 +353,7 @@
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-primary);
-  border-radius: calc(var(--r) / 2);
+  border-radius: var(--menu-radius);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -372,7 +377,7 @@
     padding: var(--sp-1) var(--sp-2);
     background: var(--c-bg-primary);
     border: 1px solid var(--c-border);
-    border-radius: calc(var(--r) / 2);
+    border-radius: var(--menu-radius);
     color: var(--c-text-primary);
     font-family: var(--font-mono);
     font-size: var(--fs-xs);

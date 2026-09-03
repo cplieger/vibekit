@@ -127,7 +127,8 @@
      class centers, this one was missed. */
   width: 1.5rem;
   height: 1.5rem;
-  border-radius: var(--r);
+  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
+  border-radius: var(--r-sm);
   display: flex;
   align-items: center;
   justify-content: center;

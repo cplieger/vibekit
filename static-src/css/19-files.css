@@ -286,7 +286,7 @@
   cursor: pointer;
   padding: 0.25rem;
   margin-inline-start: var(--sp-2);
-  border-radius: calc(var(--r) / 2);
+  border-radius: var(--r-sm);
   line-height: 0;
   display: inline-flex;
   align-items: center;

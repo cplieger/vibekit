@@ -146,7 +146,8 @@
   padding: 0;
   border: none;
   background: transparent;
-  border-radius: var(--r);
+  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
+  border-radius: var(--r-sm);
   color: inherit;
   cursor: pointer;
   transition:

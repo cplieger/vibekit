@@ -8,7 +8,12 @@
   right: 0;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
+
+  /* Derived corner for the rows inside; see the note above .popup-item. */
+  --menu-inset: var(--sp-1);
+  --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
+
   min-width: 13.75rem;
   max-height: 20rem;
   overflow-y: auto;
@@ -22,6 +27,20 @@
   padding: var(--sp-1);
 }
 
+/* THE MENU'S DERIVED CORNER. All three of this app's menu surfaces are the same
+   shape — a 1px border and a `--sp-1` list inset — so one derivation serves them,
+   declared on the container the way `--card-radius` and `--pill-radius` are
+   (01-tokens.css: "THE LADDER DOES NOT ANSWER A CORNER", so this is not a token).
+
+   The container moved from `--r` to `--r-lg`. At 6px the concentric inner radius
+   is 6 - 1 - 4 = 1px, which is square to the eye, and the items were shipping 6px
+   (identical to their container) or 3px (`calc(var(--r) / 2)`, a halving rather
+   than a derivation, 2px over). At 12px the inner is 7px — a real corner that is
+   visibly rounder than nothing and visibly tighter than its container.
+
+   It also closes the pair the user named: the composer is `--r-lg` and the
+   top-right menu was `--r`, so the two most-looked-at rounded boxes in the app
+   disagreed by a rung. */
 .popup-item {
   display: flex;
   justify-content: space-between;
@@ -33,7 +52,7 @@
   color: var(--c-text-primary);
   font-size: var(--fs-base);
   cursor: pointer;
-  border-radius: var(--r);
+  border-radius: var(--menu-radius);
   text-align: left;
   gap: var(--sp-2);
 

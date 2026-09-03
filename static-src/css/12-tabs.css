@@ -411,8 +411,13 @@
   z-index: 999;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   padding: var(--sp-1);
+
+  /* Same shape and same derivation as the shared popup (11-popups.css). */
+  --menu-inset: var(--sp-1);
+  --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
+
   box-shadow:
     var(--shadow-ambient),
     0 4px 12px oklch(0% 0 none / 25%);
@@ -428,7 +433,7 @@
   font-size: var(--fs-sm);
   cursor: pointer;
   text-align: left;
-  border-radius: calc(var(--r) / 2);
+  border-radius: var(--menu-radius);
 }
 
 .tab-context-item:hover {

@@ -464,7 +464,14 @@
   font-weight: var(--fw-semibold);
   background: var(--c-accent);
   color: var(--c-on-accent);
-  border-radius: var(--r-md);
+
+  /* A COUNT BADGE IS A STADIUM, and saying so is the fix. It declared --r-md
+     (8px) inside a 7px `--pill-radius` pill, so the inner box was rounder than
+     its container -- and at 14px tall, 8px exceeds half the height, so the
+     browser clamped it to a stadium and the declared rung never rendered. The
+     ladder reserves --r-pill for non-interactive status chips, which is exactly
+     what this is. */
+  border-radius: var(--r-pill);
   padding: 0 0.25rem;
   min-width: 0.875rem;
   text-align: center;
@@ -815,7 +822,13 @@
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   padding: 0.0625rem var(--sp-1);
-  border-radius: var(--r-sm);
+
+  /* --r-pill, not --r-sm: this is a status chip on a row whose own corner is
+     `--card-radius` (3px), so 4px made the chip rounder than the box holding it.
+     A stadium is a deliberate SHAPE rather than a rung, so it does not read as a
+     nesting mistake the way an almost-matching radius does -- the same reading
+     `.pill-badge` above takes. */
+  border-radius: var(--r-pill);
   background: color-mix(in oklch, var(--c-yellow) 18%, transparent);
   color: var(--c-yellow);
 }
@@ -1071,7 +1084,11 @@
   min-block-size: var(--ctl-h-dense);
   padding: 0.25rem var(--sp-2);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+
+  /* Derived from the form that holds it, not the standalone-control rung: the
+     form's own corner is `--card-radius` (3px) and this input sits against it, so
+     `--r` (6px) made the inner box twice as round as its container. */
+  border-radius: var(--card-radius);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
   font: inherit;

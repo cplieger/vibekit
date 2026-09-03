@@ -1642,7 +1642,8 @@ select.native-rule-effect:focus-visible {
   block-size: 1.5rem;
   padding: 0;
   border: none;
-  border-radius: var(--r);
+  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--c-text-tertiary);
   font-size: var(--fs-md);

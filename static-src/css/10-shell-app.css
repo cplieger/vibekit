@@ -432,7 +432,13 @@
   cursor: pointer;
   padding: var(--sp-1);
   flex-shrink: 0;
-  border-radius: var(--r);
+  /* The ladder's rung for a 16-24px box is --r-sm, and this is 24px. It shipped
+     --r (6px), which is the TAB's own radius, so the close button's arc was
+     identical to the row containing it — the one relationship a nested corner may
+     never have. It is centred in a 36px row rather than sitting in the tab's
+     corner, so the concentric rule does not bind here (that rule is for a
+     corner-ADJACENT child) and the rung is the whole answer. */
+  border-radius: var(--r-sm);
   line-height: 0;
   width: 1.5rem;
   height: 1.5rem;
