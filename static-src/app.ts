@@ -29,7 +29,7 @@ import {
   startEvictionSweep,
 } from "./store.js";
 import { loadList } from "./store-load.js";
-import { computed, effect } from "@cplieger/reactive";
+import { computed, effect, touch } from "@cplieger/reactive";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -250,7 +250,7 @@ function init(): void {
   // update path — session-sourced lists are authoritative and
   // overwrite whatever the REST path seeded.
   const modelSig = computed(() => {
-    void activeSession.value;
+    touch(activeSession);
     const active = getActive();
     if (active === undefined) {
       return "";

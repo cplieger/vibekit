@@ -320,7 +320,6 @@ export function handleTableRow(p: Parser, char: string, _pending_with_char: stri
 }
 
 export function handleTableCell(p: Parser, char: string, _pending_with_char: string): boolean {
-  void _pending_with_char;
   if (p.pending === "|") {
     add_text(p);
     end_token(p);

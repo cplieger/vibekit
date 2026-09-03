@@ -44,7 +44,7 @@ import { ICON_SEND, ICON_CANCEL, ICON_ALERT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import { setComposerValue } from "./composer-value.js";
-import { signal, effect } from "@cplieger/reactive";
+import { signal, effect, touch } from "@cplieger/reactive";
 
 // Single source of truth for the "context (nearly) full" state, scoped to the
 // ACTIVE chat (the prompt bar is shared). The VALUE is computed and written by
@@ -331,7 +331,7 @@ class PromptInputController {
     // change). setSendState() calls applyButtonState directly for send-state
     // kind changes (this.state isn't a signal), so both inputs stay in sync.
     effect(() => {
-      void contextFull.value;
+      touch(contextFull);
       this.applyButtonState();
     });
 

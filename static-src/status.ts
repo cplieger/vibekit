@@ -12,7 +12,7 @@ import { formatTokens, formatMetering } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
 import { versionsSignal } from "./versions.js";
-import { el, effect } from "@cplieger/reactive";
+import { el, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
@@ -210,7 +210,7 @@ export function initStatusVersions(): void {
     // Read INSIDE the effect so it subscribes; paintConnectionLine reads it again
     // for its own value. `void` rather than a bare expression, matching
     // forge-auth.ts: the read is the whole point and the value is not wanted.
-    void versionsSignal().value;
+    touch(versionsSignal());
     paintConnectionLine();
     $.stKiro.textContent = runtimeStatusLine();
   });

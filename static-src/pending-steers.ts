@@ -75,7 +75,7 @@
 // simply gone.
 // ---------------------------------------------------------------------------
 
-import { el, computed, effect } from "@cplieger/reactive";
+import { el, computed, effect, touch } from "@cplieger/reactive";
 import { attachClamp } from "./clamp-text.js";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { $ } from "./dom.js";
@@ -120,7 +120,7 @@ export function initPendingSteers(): void {
     );
   });
   effect(() => {
-    void sig.value;
+    touch(sig);
     render(stack);
   });
 }
