@@ -1163,9 +1163,21 @@
   border-color: var(--c-accent);
 }
 
+/* The accent fill, one rung deeper — the same direction every other hover in this
+   app goes, through the token that exists for it.
+
+   It was `filter: brightness(1.08)`, the ONLY filter hover in the whole
+   stylesheet set, and it moved the wrong way in one theme: brightness always goes
+   LIGHTER, while `--c-accent-hover` is authored deeper than the accent in both
+   themes (70% against 75.8% dark, 45% against 50% light). So the app's most
+   prominent button was the one control whose hover both used a private mechanism
+   and, in dark mode, stepped toward white while everything around it stepped
+   toward ink. `--c-accent-hover` had two consumers before this, both for `color`,
+   and none for the accent-filled button it is named for. */
 .btn-small.primary:hover,
 .btn-small.btn-primary:hover {
-  filter: brightness(1.08);
+  background: var(--c-accent-hover);
+  border-color: var(--c-accent-hover);
 }
 
 /* Destructive variant for .btn-small: outlined red. Same family as
