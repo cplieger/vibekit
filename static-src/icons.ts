@@ -9,75 +9,87 @@ import { extToIconKey } from "./file-extensions.js";
 
 // --- Action icons (shared across modules) ---
 
-function svg(size: number, d: string, extra = ""): string {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
+type IconTier = "inline" | "ui" | "lg" | "hero";
+
+/** Build a stroked glyph on the 24-unit grid.
+ *
+ *  `tier` names a SIZE TIER, never a pixel count: `03-base.css` owns the size
+ *  and the stroke, so a tier is one number for the whole app. No width/height
+ *  and no stroke-width is emitted — an <svg> carrying those presentation
+ *  attributes would still lose to the stylesheet, but leaving them in means two
+ *  places claim to decide one thing and only one of them is read. */
+function svg(tier: IconTier, d: string, extra = ""): string {
+  return `<svg class="ic-${tier}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
 }
 
-export const ICON_EDIT = svg(12, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
-export const ICON_EDIT_14 = svg(14, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
-export const ICON_CLOSE = svg(12, '<path d="M18 6L6 18M6 6l12 12"/>');
+export const ICON_EDIT = svg(
+  "inline",
+  '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>',
+);
+export const ICON_EDIT_14 = svg("ui", '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
+export const ICON_CLOSE = svg("inline", '<path d="M18 6L6 18M6 6l12 12"/>');
 export const ICON_TRASH = svg(
-  12,
+  "inline",
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
 );
 export const ICON_TRASH_14 = svg(
-  14,
+  "ui",
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
 );
-export const ICON_PLUS = svg(12, '<path d="M12 5v14M5 12h14"/>');
-export const ICON_PLUS_16 = svg(16, '<path d="M12 5v14M5 12h14"/>');
+export const ICON_PLUS = svg("inline", '<path d="M12 5v14M5 12h14"/>');
+export const ICON_PLUS_16 = svg("ui", '<path d="M12 5v14M5 12h14"/>');
 // Pin icons for the per-tool auto_update toggle. Filled = pinned
 // (auto_update off), outline = tracking upstream (auto_update on).
 export const ICON_PIN = svg(
-  12,
+  "inline",
   '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>',
 );
 // Stroke 2 like its outline twin `ICON_PIN`, so the pin does not change WEIGHT
 // when it changes state. `fill` is the only difference between the two, which is
 // what the state is meant to say.
 export const ICON_PIN_FILLED =
-  '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/></svg>';
+  '<svg class="ic-inline" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/></svg>';
 export const ICON_COPY = svg(
-  14,
+  "ui",
   '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
 );
 export const ICON_COPY_MD =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
 // Angle brackets (Lucide "code"): show the reply's markdown SOURCE instead of
 // its rendering, for when a message renders wrong and the question is whether
 // the model or the parser is at fault.
-export const ICON_SOURCE = svg(14, '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
+export const ICON_SOURCE = svg("ui", '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
 export const ICON_LINK =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 // Open-in-new-tab / external-link icon (Lucide). Used by the
 // repo-picker and forge-auth panels to mark links that leave the app.
 export const ICON_EXTERNAL =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 // Download / clone-into-workspace icon (Lucide).
 export const ICON_DOWNLOAD =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 // Repo (book-style) icon — same shape as the empty-state glyph, used
 // in the per-account collapsible repo summary.
 export const ICON_REPO =
-  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
 export const ICON_EXPORT =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
 export const ICON_X =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-export const ICON_PLAY = svg(14, '<polygon points="5 3 19 12 5 21 5 3"/>');
-export const ICON_CHEVRON_DOWN = svg(16, '<path d="M6 9l6 6 6-6"/>');
-export const ICON_CHEVRON_UP = svg(16, '<path d="M18 15l-6-6-6 6"/>');
-export const ICON_SEND = svg(16, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
-export const ICON_SEND_14 = svg(14, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
+export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
+export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
+export const ICON_SEND = svg("ui", '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
+export const ICON_SEND_14 = svg("ui", '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>');
 // The AI-generate glyph (Lucide "sparkles"), for every button that asks a model
 // to fill a field: the commit box's message button and the branch popover's
 // name suggestion. It replaced a literal ✨ in both, because the branch
 // popover's row puts it directly beside a stroke-drawn send arrow and an emoji
 // renders from a colour font at its own weight and baseline.
 export const ICON_SPARKLE = svg(
-  14,
+  "ui",
   '<path d="m12 3-1.9 5.8a2 2 0 01-1.3 1.3L3 12l5.8 1.9a2 2 0 011.3 1.3L12 21l1.9-5.8a2 2 0 011.3-1.3L21 12l-5.8-1.9a2 2 0 01-1.3-1.3z"/>' +
     '<path d="M5 3v4M3 5h4M19 17v4M17 19h4"/>',
 );
@@ -85,16 +97,16 @@ export const ICON_SPARKLE = svg(
 // the rotation; the arc is an SVG path rather than a bordered box so its
 // geometry does not move with the browser's font metrics.
 export const ICON_SPINNER =
-  '<svg class="icon-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
+  '<svg class="icon-spinner ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
 export const ICON_HOURGLASS = svg(
-  16,
+  "ui",
   '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 013 5.2V19a3 3 0 01-3 3H9a3 3 0 01-3-3v-3.6a6 6 0 013-5.2A6 6 0 016 5z"/>',
 );
 // The one-button activity control's Cancel face: a stop square. Filled — the
 // outline family reads as a checkbox at 16px, and stop-is-filled is the
 // transport convention every player uses.
 export const ICON_CANCEL = svg(
-  16,
+  "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
 );
 
@@ -138,20 +150,20 @@ const MODEL_ROBOT_D =
   '<circle cx="7.5" cy="9" r="2.5" fill="currentColor" stroke="none"/>' +
   '<circle cx="16.5" cy="9" r="2.5" fill="currentColor" stroke="none"/>' +
   '<path d="M8 15q4 4 8 0"/>';
-export const ICON_MODEL = svg(12, MODEL_ROBOT_D);
-export const ICON_MODEL_20 = svg(20, MODEL_ROBOT_D);
+export const ICON_MODEL = svg("inline", MODEL_ROBOT_D);
+export const ICON_MODEL_UI = svg("ui", MODEL_ROBOT_D);
 
 export const ICON_ALERT = svg(
-  16,
+  "ui",
   '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 );
-export const ICON_GIT_UP_ARROW = svg(16, '<path d="M12 19V5M5 12l7-7 7 7"/>');
-export const ICON_GIT_DOWN_ARROW = svg(16, '<path d="M12 5v14M5 12l7 7 7-7"/>');
+export const ICON_GIT_UP_ARROW = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
+export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
 export const ICON_REFRESH =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
 
 export const ICON_FILTER =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
   "</svg>";
 
@@ -167,9 +179,9 @@ export const ICON_FILTER =
  *
  *  ONE producer, consumed by the toolbar button and by the box it opens, so the
  *  two can never disagree about which of the two a page is. */
-export function findGlyph(kind: "search" | "filter", size: number): string {
+export function findGlyph(kind: "search" | "filter"): string {
   return svg(
-    size,
+    "ui",
     kind === "search"
       ? '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>'
       : '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
@@ -177,13 +189,13 @@ export function findGlyph(kind: "search" | "filter", size: number): string {
 }
 
 export const ICON_REPO_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/>' +
   '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' +
   "</svg>";
 
 export const ICON_PR_EMPTY =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<svg class="ic-hero" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<circle cx="6" cy="6" r="3"/>' +
   '<circle cx="6" cy="18" r="3"/>' +
   '<line x1="6" y1="9" x2="6" y2="15"/>' +
@@ -193,13 +205,13 @@ export const ICON_PR_EMPTY =
 // Globe with meridian + equator stripes — used by the repo-picker for
 // "remote, not cloned" entries.
 export const ICON_GLOBE =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 export const ICON_WARN_12 =
-  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
+  '<svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M4.93 19l14.14 0a2 2 0 0 0 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.2 16a2 2 0 0 0 1.73 3Z"/></svg>';
 // Balance-scale icon (Lucide "scale"). Marks the licensed-code attribution
 // chip/footnote (v3 _kiro/code_references) — the universal "license" glyph.
 export const ICON_SCALE_12 = svg(
-  12,
+  "inline",
   '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
 );
 
@@ -207,9 +219,13 @@ export const ICON_SCALE_12 = svg(
 // these two were the only library icons whose host could not tint them, while
 // `outcomeIcon` argues the opposite discipline for the same three colours one
 // screen away. The class is what 17-settings.css colours.
-export const ICON_SAVE_OK = svg(14, '<polyline points="20 6 9 17 4 12"/>', ' class="icon-save-ok"');
+export const ICON_SAVE_OK = svg(
+  "ui",
+  '<polyline points="20 6 9 17 4 12"/>',
+  ' class="icon-save-ok"',
+);
 export const ICON_SAVE_FAIL = svg(
-  14,
+  "ui",
   '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   ' class="icon-save-fail"',
 );
@@ -221,42 +237,42 @@ export const ICON_SAVE_FAIL = svg(
 // specific icon than their coarse kind suggests.
 
 const ICON_TOOL_READ = svg(
-  14,
+  "ui",
   '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
 );
-const ICON_TOOL_EDIT = svg(14, '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
+const ICON_TOOL_EDIT = svg("ui", '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/>');
 const ICON_TOOL_DELETE = svg(
-  14,
+  "ui",
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
 );
 const ICON_TOOL_MOVE = svg(
-  14,
+  "ui",
   '<path d="M5 9l-3 3 3 3"/><path d="M19 15l3-3-3-3"/><path d="M2 12h20"/>',
 );
-const ICON_TOOL_SEARCH = svg(14, '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>');
-const ICON_TOOL_EXECUTE = svg(14, '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>');
+const ICON_TOOL_SEARCH = svg("ui", '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>');
+const ICON_TOOL_EXECUTE = svg("ui", '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>');
 const ICON_TOOL_THINK = svg(
-  14,
+  "ui",
   '<path d="M9 22c0-1 0-2 1-3"/><path d="M15 22c0-1 0-2-1-3"/><path d="M7 16h10"/><path d="M12 2a7 7 0 017 7c0 4-3 6-4 8H9c-1-2-4-4-4-8a7 7 0 017-7z"/>',
 );
 const ICON_TOOL_FETCH = svg(
-  14,
+  "ui",
   '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 010 20"/><path d="M12 2a15 15 0 000 20"/>',
 );
 const ICON_TOOL_SWITCH = svg(
-  14,
+  "ui",
   '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/>',
 );
 const ICON_TOOL_FALLBACK = svg(
-  14,
+  "ui",
   '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
 );
 const ICON_TOOL_FOLDER = svg(
-  14,
+  "ui",
   '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
 const ICON_TOOL_TERMINAL = svg(
-  14,
+  "ui",
   '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
 );
 // MCP (Model Context Protocol): a plug icon — "external integration the
@@ -264,7 +280,7 @@ const ICON_TOOL_TERMINAL = svg(
 // downward cord. Reads as "something you connect" at 14px without needing
 // colour or detail.
 const ICON_TOOL_MCP = svg(
-  14,
+  "ui",
   '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>',
 );
 
@@ -338,12 +354,12 @@ export function toolIcon(kind: ToolKind, title: string): string {
  *  makes the large-arc flag immaterial. */
 const OUTCOME_DISC = "M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20z";
 
-const ICON_OUTCOME_OK = svg(14, `<path d="${OUTCOME_DISC}" fill="currentColor" stroke="none"/>`);
+const ICON_OUTCOME_OK = svg("ui", `<path d="${OUTCOME_DISC}" fill="currentColor" stroke="none"/>`);
 
 /** Apex up, base y=20.5 from x=2.5 to 21.5 — base 19, height 17, so near
  *  equilateral and unmistakable against the disc at a glance. */
 const ICON_OUTCOME_FAIL = svg(
-  14,
+  "ui",
   '<path d="M12 3.5L21.5 20.5H2.5z" fill="currentColor" stroke="none"/>',
 );
 
@@ -351,7 +367,7 @@ const ICON_OUTCOME_FAIL = svg(
  *  is 9.85, so the bar ends 3.35 units short of the rim and the outline stays
  *  unbroken — which is what separates a stop from a plain disc. */
 const ICON_OUTCOME_WARN = svg(
-  14,
+  "ui",
   `<path d="${OUTCOME_DISC}M5.5 10.25h13v3.5h-13z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
@@ -359,7 +375,7 @@ const ICON_OUTCOME_WARN = svg(
  *  four corners sit 8.19 from the centre, so this disc's rim is unbroken too and
  *  only the bar's ANGLE separates a policy refusal from a stop. */
 const ICON_OUTCOME_DENIED = svg(
-  14,
+  "ui",
   `<path d="${OUTCOME_DISC}M7.58 18.894L18.894 7.58L16.42 5.106L5.106 16.42z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
 );
 
@@ -400,24 +416,24 @@ export function outcomeIcon(state: OutcomeGlyph): string {
 // each bundled mode gets a distinct glyph. The wrench belongs to the subagent,
 // whose comment says so; a conversation gets the bubble.
 export const ICON_TAB_CHAT = svg(
-  14,
+  "ui",
   '<path d="M22 17a2 2 0 01-2 2H6.828a2 2 0 00-1.414.586l-2.202 2.202A.71.71 0 012 21.286V5a2 2 0 012-2h16a2 2 0 012 2z"/>',
 );
 export const ICON_TAB_PLAN = svg(
-  14,
+  "ui",
   '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 8h8M8 13h5"/>',
 );
 // Spec role tab icon (Lucide "list-checks") — the spec agent drives the
 // structured requirements/design/tasks workflow, so a checklist reads right.
 export const ICON_TAB_SPEC = svg(
-  14,
+  "ui",
   '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
 );
 // Generic custom-agent tab icon (hexagon module + core dot). The one
 // common glyph shared by every workspace custom agent (and bundled
 // non-workflow agents like semantic_reviewer) in the mode picker.
 export const ICON_TAB_AGENT = svg(
-  14,
+  "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/>',
 );
 // --- Subagent header icons (SubagentBlock in the chat transcript) ---
@@ -429,12 +445,12 @@ export const ICON_TAB_AGENT = svg(
 // Introspect (Lucide "book-open") — answers questions about Kiro from the
 // official docs.
 export const ICON_SUBAGENT_INTROSPECT = svg(
-  14,
+  "ui",
   '<path d="M12 7v14"/><path d="M3 18a1 1 0 01-1-1V4a1 1 0 011-1h5a4 4 0 014 4 4 4 0 014-4h5a1 1 0 011 1v13a1 1 0 01-1 1h-6a3 3 0 00-3 3 3 3 0 00-3-3z"/>',
 );
 // Context gatherer (Lucide "search") — explores the codebase read-only.
 export const ICON_SUBAGENT_GATHERER = svg(
-  14,
+  "ui",
   '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
 );
 // General task execution (Lucide "hammer") — does delegated work. It was the
@@ -445,63 +461,63 @@ export const ICON_SUBAGENT_GATHERER = svg(
 // does-work metaphor so the concept still reads, with a silhouette that
 // separates from the wrench's open jaw at 14px.
 export const ICON_SUBAGENT_TASK = svg(
-  14,
+  "ui",
   '<path d="m15 12-9.373 9.373a1 1 0 01-3.001-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0119 8.172v-.344a2 2 0 00-.586-1.414l-1.657-1.657A6 6 0 0012.516 3H9l1.243 1.243A6 6 0 0112 8.485V10l2 2h1.172a2 2 0 011.414.586L18.5 14.5"/>',
 );
 // Custom agent creator (hexagon module + plus) — builds new agents; keeps
 // the agent-hexagon design language with a create affordance.
 export const ICON_SUBAGENT_CREATOR = svg(
-  14,
+  "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><path d="M12 9v6M9 12h6"/>',
 );
 // Model-refusal callout icon (Lucide "octagon-alert").
 export const ICON_REFUSAL = svg(
-  14,
+  "ui",
   '<path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 011.414.586l4.688 4.688A2 2 0 0122 8.688v6.624a2 2 0 01-.586 1.414l-4.688 4.688a2 2 0 01-1.414.586H8.688a2 2 0 01-1.414-.586l-4.688-4.688A2 2 0 012 15.312V8.688a2 2 0 01.586-1.414l4.688-4.688A2 2 0 018.688 2z"/>',
 );
 // Quick Spec mode icon (Lucide "file-check") — a single doc with a check,
 // distinct from Spec's multi-item checklist: the fast one-pass spec flow.
 export const ICON_TAB_QUICK_SPEC = svg(
-  14,
+  "ui",
   '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/>',
 );
 // Bug Fix mode icon (Lucide "bug").
 export const ICON_TAB_BUG = svg(
-  14,
+  "ui",
   '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 116 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 014-4h4a4 4 0 014 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
 );
 // Autonomous mode icon (Lucide "bot") — the self-driving agent loop.
 export const ICON_TAB_AUTONOMOUS = svg(
-  14,
+  "ui",
   '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
 );
-export const ICON_TAB_SETTINGS = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>`;
+export const ICON_TAB_SETTINGS = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>`;
 // The git-branch glyph (Lucide "git-branch"), under two names for the two
 // jobs it does: the git TAB's icon, and the leading glyph of the branch popover's
 // create field. One path, so the two can never drift apart.
 export const ICON_GIT_BRANCH = svg(
-  14,
+  "ui",
   '<circle cx="18" cy="17" r="3"/><circle cx="6" cy="5" r="3"/><path d="M6 20V8a9 9 0 009 9"/>',
 );
 export const ICON_TAB_GIT = ICON_GIT_BRANCH;
-export const ICON_TAB_EDITOR = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
+export const ICON_TAB_EDITOR = `<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
 export const ICON_TAB_FILES = svg(
-  14,
+  "ui",
   '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
-export const ICON_TAB_HISTORY = svg(14, '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
+export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 /** The Kiro configuration browser: an open book. The freed spec-board toolbar
  *  slot, and the one glyph on the page — the categories are text, because a
  *  five-icon set for five word-labelled tabs teaches nothing. */
 export const ICON_TAB_DOCS = svg(
-  14,
+  "ui",
   '<path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/>',
 );
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never
  *  mistaken for a conversation. */
 export const ICON_TAB_RUN = svg(
-  14,
+  "ui",
   '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
 );
 /** The nesting marker a SUB-TAB carries instead of its kind glyph (Lucide
@@ -516,7 +532,7 @@ export const ICON_TAB_RUN = svg(
  *  at 14px the shared weight rendered as a hairline the eye read as an artifact
  *  of the glyph beside it rather than as structure. */
 export const ICON_TAB_SUBTAB =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v7a4 4 0 004 4h12"/><path d="m15 10 5 5-5 5"/></svg>';
+  '<svg class="ic-ui ic-subtab" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v7a4 4 0 004 4h12"/><path d="m15 10 5 5-5 5"/></svg>';
 /** Forge brand marks (Simple Icons, CC0), one set for the whole app.
  *
  *  There were TWO: this 24-viewBox set in `forge-auth.ts` and a hand-drawn

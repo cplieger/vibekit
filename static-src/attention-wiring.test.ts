@@ -57,7 +57,7 @@ vi.mock("./icons.js", () => ({
   ICON_HOURGLASS: "",
   ICON_CANCEL: "",
   ICON_MODEL: "",
-  ICON_MODEL_20: "",
+  ICON_MODEL_UI: "",
   ICON_ALERT: "",
   ICON_GIT_UP_ARROW: "",
   ICON_GIT_DOWN_ARROW: "",

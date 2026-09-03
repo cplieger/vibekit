@@ -729,10 +729,31 @@
      * attributes, which any author declaration beats with no specificity
      * contest) and the pairs below are chosen for the arithmetic:
      *
-     *   --icon-inline  12px @ stroke 2     -> 1.0 device px
-     *   --icon-ui      16px @ stroke 2.25  -> 1.5 device px  (18px @ 2 on coarse)
-     *   --icon-lg      24px @ stroke 2     -> 2.0 device px
-     *   --icon-hero    48px @ stroke 1.5   -> 3.0 device px
+     * CRISP MEANS A WHOLE **CSS** PIXEL, not a whole device pixel, and an earlier
+     * draft of this comment got that wrong. A 1.5px stroke is 3 device px at
+     * DPR 2 and 1.5 at DPR 1 — crisp on a retina screen, blurred on a plain one.
+     * Only an integer CSS length is crisp at BOTH.
+     *
+     * Getting there by arithmetic (rendered = stroke-width * size / 24, so pick
+     * a stroke per size) was tried and REJECTED: it makes the stroke a function
+     * of the size, so the moment any per-site rule overrides the size the stroke
+     * is wrong and nothing says so. Measured live: a 14px override against the
+     * ui tier's stroke rendered 0.78 CSS px.
+     *
+     * `vector-effect: non-scaling-stroke` removes the coupling instead — the
+     * stroke stops scaling with the viewBox, so `stroke-width: 1` is 1 CSS px at
+     * every size and the two values below are the whole story. Verified in
+     * Chromium 151: it does NOT inherit from the <svg> (a declaration there
+     * computes to `none`), so 03-base.css sets it on the SHAPES.
+     *
+     *   --icon-inline  12px, --icon-ui 16px (18 coarse)  -> stroke 1 CSS px
+     *   --icon-lg      24px, --icon-hero 48px            -> stroke 2 CSS px
+     *
+     * A filled glyph ignores all of this harmlessly. Because the stroke no
+     * longer depends on the size, the coarse tier needs no stroke override.
+     *
+     * Against today's dominant 14px at stroke 2 units (1.167 CSS px) the ui tier
+     * is a hair lighter and a little larger.
      *
      * --icon-ui is the chrome glyph and absorbs the old 14px and 18px groups.
      * Its stroke is a token too, so the coarse tier grows the glyph without
@@ -755,21 +776,19 @@
     --icon-ui: 1rem;
     --icon-lg: 1.5rem;
     --icon-hero: 3rem;
-    --icon-stroke-inline: 2;
-    --icon-stroke-ui: 2.25;
+    --icon-stroke-inline: 1;
+    --icon-stroke-ui: 1;
     --icon-stroke-lg: 2;
-    --icon-stroke-hero: 1.5;
+    --icon-stroke-hero: 2;
   }
 
   :root[data-pointer="coarse"] {
     --icon-ui: 1.125rem;
-    --icon-stroke-ui: 2;
   }
 
   @media (width <= 48rem) {
     :root:not([data-pointer="fine"]) {
       --icon-ui: 1.125rem;
-      --icon-stroke-ui: 2;
     }
   }
 

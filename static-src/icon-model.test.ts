@@ -23,13 +23,16 @@
 // Node environment: no DOM, the icon is text.
 
 import { describe, it, expect } from "vitest";
-import { ICON_MODEL, ICON_MODEL_20 } from "./icons.js";
+import { ICON_MODEL, ICON_MODEL_UI } from "./icons.js";
 
-/** Every render size this glyph ships at. Both are real call sites: the composer's
- *  model pill (model-switcher.ts) and the empty-chat picker's heading (picker.ts).
- *  A new size belongs here, because the floors below are evaluated at the
- *  smallest member. */
-const RENDER_SIZES = [12, 20];
+/** Every render size this glyph ships at, in CSS pixels. Both are real call
+ *  sites: the composer's model pill (model-switcher.ts) at the inline tier and
+ *  the empty-chat picker's heading (picker.ts) at the ui tier. The second used
+ *  to be 20, which was the number its own markup spelled; the tiers in
+ *  01-tokens.css put it at 16 on a fine pointer and 18 on a coarse one, so 16 is
+ *  the smaller of the two it can render at. A new size belongs here, because the
+ *  floors below are evaluated at the smallest member. */
+const RENDER_SIZES = [12, 16];
 
 interface Circle {
   cx: number;
@@ -76,8 +79,19 @@ function eyes(svg: string): [Circle, Circle] {
 }
 
 /** Declared once on the root, so every stroked edge spends half of it outward. */
-function strokeWidth(svg: string): number {
-  return attr(/^<svg[^>]*>/.exec(svg)![0], "stroke-width");
+/** The stroke the glyph was DRAWN against, in viewBox units.
+ *
+ *  It is no longer an attribute on the tag: 03-base.css owns the rendered
+ *  stroke and decouples it from the size with `vector-effect:
+ *  non-scaling-stroke`, so one authored number could not describe both tiers
+ *  anyway. The geometry asserted below is still laid out against 2 units on the
+ *  24-unit grid — that is what makes the head's painted box square and centred —
+ *  so the value is declared here rather than read back off a tag that no longer
+ *  carries it. */
+const DRAWN_STROKE_UNITS = 2;
+
+function strokeWidth(): number {
+  return DRAWN_STROKE_UNITS;
 }
 
 /** The head: the glyph's only rect, and its whole silhouette. */
@@ -162,12 +176,19 @@ describe("the model glyph", () => {
       body(ICON_MODEL),
       "the 12px and 20px glyphs were two byte-identical literals in index.html before this; " +
         "if their bodies differ now the shared `d` has been forked again",
-    ).toBe(body(ICON_MODEL_20));
+    ).toBe(body(ICON_MODEL_UI));
 
-    for (const size of RENDER_SIZES) {
-      const svg = size === 12 ? ICON_MODEL : ICON_MODEL_20;
-      expect(svg, `the ${String(size)}px call site must render at ${String(size)}px`).toContain(
-        `width="${String(size)}" height="${String(size)}"`,
+    // The two differ only by SIZE TIER now. Neither carries a width, because
+    // 03-base.css owns the pixels: the old pair spelled 12 and 20 in their own
+    // markup, which is what let them drift in the first place.
+    expect(ICON_MODEL).toContain('class="ic-inline"');
+    expect(ICON_MODEL_UI).toContain('class="ic-ui"');
+    // Scoped to the OPENING TAG: the head rect carries a legitimate width and
+    // height of its own, in viewBox units.
+    for (const svg of [ICON_MODEL, ICON_MODEL_UI]) {
+      const openTag = /^<svg[^>]*>/.exec(svg)![0];
+      expect(openTag, "the size belongs to the tier, not to the tag").not.toMatch(
+        /\s(?:width|height)=/,
       );
     }
   });
@@ -181,7 +202,7 @@ describe("the model glyph", () => {
     // and it will show up here as a margin over one unit or a non-square box.
     const svg = ICON_MODEL;
     const side = viewBoxSide(svg);
-    const half = strokeWidth(svg) / 2;
+    const half = strokeWidth() / 2;
     const h = headRect(svg);
     const box = {
       top: h.y - half,
@@ -208,7 +229,7 @@ describe("the model glyph", () => {
     // offset. Deepening the dip (1 unit read as a straight dash at 12px) is only
     // safe while the curve plus its stroke stays off the head's inner edge.
     const svg = ICON_MODEL;
-    const half = strokeWidth(svg) / 2;
+    const half = strokeWidth() / 2;
     const h = headRect(svg);
     const m = mouth(svg);
     const [left, right] = eyes(svg);

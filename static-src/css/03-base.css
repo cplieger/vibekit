@@ -332,5 +332,75 @@
 }
 
 /* ==========================================================================
+   Icon size tiers
+
+   An icon declares WHICH TIER it is and nothing about its pixels. `svg()` in
+   icons.ts emits the class and no width/height, so the size and the stroke are
+   both here — one number per tier for the whole app, which is what makes
+   "shrink every chrome glyph" a one-line experiment instead of a sweep.
+
+   The stroke comes from CSS, not the markup, and it is DECOUPLED from the size
+   by `vector-effect: non-scaling-stroke`, so `stroke-width: 1` renders 1 CSS
+   pixel at any size — crisp at DPR 1 and DPR 2 alike, and immune to a per-site
+   rule that overrides the size (see 01-tokens.css for the arithmetic this
+   replaced and the 0.78px it measured). `vector-effect` does NOT inherit from
+   the <svg>, verified in Chromium 151, so it is set on the SHAPES.
+
+   Setting size and stroke here is legal because width, height and stroke-width
+   on an <svg> are PRESENTATION attributes, which any author declaration beats
+   with no specificity contest — which is also why these rules can sit at ZERO
+   specificity inside :where() and still take effect. That is deliberate: every
+   per-site rule that already sizes an icon keeps winning, so this layer is a
+   default, not an override.
+
+   A filled glyph (the Seti file icons, the forge marks) ignores the stroke
+   harmlessly. `flex-shrink: 0` is here because an icon in a flex row must not
+   be squeezed into an ellipse by a long label beside it.
+   ========================================================================== */
+
+:where(.ic-inline, .ic-ui, .ic-lg, .ic-hero) {
+  flex-shrink: 0;
+}
+
+:where(.ic-inline, .ic-ui, .ic-lg, .ic-hero)
+  :where(path, circle, line, rect, polyline, polygon, ellipse) {
+  vector-effect: non-scaling-stroke;
+}
+
+:where(.ic-inline) {
+  inline-size: var(--icon-inline);
+  block-size: var(--icon-inline);
+  stroke-width: var(--icon-stroke-inline);
+}
+
+:where(.ic-ui) {
+  inline-size: var(--icon-ui);
+  block-size: var(--icon-ui);
+  stroke-width: var(--icon-stroke-ui);
+}
+
+:where(.ic-lg) {
+  inline-size: var(--icon-lg);
+  block-size: var(--icon-lg);
+  stroke-width: var(--icon-stroke-lg);
+}
+
+:where(.ic-hero) {
+  inline-size: var(--icon-hero);
+  block-size: var(--icon-hero);
+  stroke-width: var(--icon-stroke-hero);
+}
+
+/* The tab strip's nesting arrow is STRUCTURE, not a glyph, and it is the one
+   icon that wants a heavier stroke than its tier: at this size the shared
+   weight read as an artifact of the glyph beside it rather than as an indent.
+   It carried stroke-width 3 in its own markup, which this layer would now
+   override, so the exception moved here where it sits next to the rule it
+   breaks. 2 CSS px under non-scaling-stroke, so it stays crisp at both DPRs. */
+:where(.ic-subtab) {
+  stroke-width: 2;
+}
+
+/* ==========================================================================
    Sidebar
    ========================================================================== */

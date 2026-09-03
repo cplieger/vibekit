@@ -80,16 +80,19 @@ describe("the collapse is animated, not a display swap", () => {
 
 describe("the glyph says which of the two a page has", () => {
   it("draws a magnifier for a search and a funnel for a filter", () => {
-    expect(findGlyph("search", 18)).toContain("<circle");
-    expect(findGlyph("search", 18)).not.toContain("<polygon");
-    expect(findGlyph("filter", 18)).toContain("<polygon");
-    expect(findGlyph("filter", 18)).not.toContain("<circle");
+    expect(findGlyph("search")).toContain("<circle");
+    expect(findGlyph("search")).not.toContain("<polygon");
+    expect(findGlyph("filter")).toContain("<polygon");
+    expect(findGlyph("filter")).not.toContain("<circle");
   });
 
-  it("draws them at the caller's size, so the toolbar and the box agree by construction", () => {
-    // One producer for both consumers — the button (18) and the field's leading
-    // glyph (14) — is what stops a page promising a search and opening a filter.
-    expect(findGlyph("search", 18)).toContain('width="18"');
-    expect(findGlyph("filter", 14)).toContain('width="14"');
+  it("draws them at one size tier, so the toolbar and the box agree by construction", () => {
+    // One producer for both consumers — the toolbar button and the field's
+    // leading glyph — is what stops a page promising a search and opening a
+    // filter. They used to pass 18 and 14; the size is a TIER now, so the
+    // agreement is structural rather than something two callers must remember.
+    expect(findGlyph("search")).toContain('class="ic-ui"');
+    expect(findGlyph("filter")).toContain('class="ic-ui"');
+    expect(findGlyph("search")).not.toContain("width=");
   });
 });

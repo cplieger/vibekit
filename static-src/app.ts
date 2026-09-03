@@ -320,7 +320,7 @@ function init(): void {
       return;
     }
     const verb = kind === "search" ? "Search" : "Filter";
-    $.findBtn.replaceChildren(iconEl(findGlyph(kind, 18)));
+    $.findBtn.replaceChildren(iconEl(findGlyph(kind)));
     $.findBtn.setAttribute("aria-label", verb);
     $.findBtn.setAttribute("data-tooltip", `${verb} (Ctrl+F)`);
   };

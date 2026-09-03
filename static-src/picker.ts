@@ -30,7 +30,7 @@ import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives
 import { reconcile } from "./reconcile.js";
 import { el, computed, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
-import { ICON_MODEL_20 } from "./icons.js";
+import { ICON_MODEL_UI } from "./icons.js";
 
 /** Static header copy for the model picker. Describes the model choice
  *  itself — tool access is a per-mode concern on v3, not a model property,
@@ -99,7 +99,7 @@ class ModelPickerController {
     // which is why the null branch existed; icons.ts owns the geometry now and
     // the model pill renders the same `d` at 12px.
     label.replaceChildren(
-      iconEl(ICON_MODEL_20),
+      iconEl(ICON_MODEL_UI),
       document.createTextNode(" "),
       document.createTextNode(PICKER_LABEL),
     );

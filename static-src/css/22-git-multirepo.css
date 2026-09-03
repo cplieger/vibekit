@@ -70,8 +70,8 @@
 }
 
 .git-multirepo-empty-icon svg {
-  width: 48px;
-  height: 48px;
+  inline-size: var(--icon-hero);
+  block-size: var(--icon-hero);
 }
 
 .git-multirepo-empty-title {
