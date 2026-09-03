@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"mime"
@@ -81,21 +82,12 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 
-	limit := parseLimitParam(r)
-	beforeID := r.URL.Query().Get("before_id")
-
 	msgs := c.Messages
 	end := len(msgs)
-	if beforeID != "" {
+	if beforeID := r.URL.Query().Get("before_id"); beforeID != "" {
 		end = indexOfMessage(msgs, beforeID)
 	}
-	start := max(end-limit, 0)
-	// NOT slices.Clone: cloning a sub-slice of a NIL messages array yields
-	// nil and marshals as `null`, where make+copy yields a non-nil empty
-	// slice and marshals as `[]`. The wire decoder rejects `null` for an
-	// array.
-	window := make([]vibekit.Message, end-start)
-	copy(window, msgs[start:end])
+	window, start := messageWindow(msgs[:end], parseLimitParam(r), parseMaxBytesParam(r))
 
 	// `draft` rides here as its own field, keeping the composer autosave
 	// off the SSE fan-out and off the list response.
@@ -105,6 +97,53 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		"has_more": start > 0,
 		"draft":    c.Draft,
 	})
+}
+
+// messageWindow returns the newest messages of msgs that fit BOTH budgets, plus
+// the index the window starts at — so a caller can answer has_more honestly.
+//
+// A message count alone is not a budget. It defaulted to 50 while the five live
+// chats held 2, 4, 10, 10 and 13 messages, so the "paginated window" was every
+// real conversation whole, and a SIX-message chat answered 13,010,641 bytes: one
+// assistant message can carry 580 blocks and 353 tool calls. Bytes are what the
+// client is actually waiting for, so bytes are what the window is measured in.
+//
+// The messages are marshalled HERE, once, and returned as raw JSON. Measuring
+// one encoding and shipping another would be a second implementation of "how
+// big is this", and the cut has to be decided on the bytes that go on the wire.
+//
+// The cut is always at a message boundary and the newest message always goes
+// through whole, however big it is. The envelope is the client's reconcile unit,
+// so a half-message has no honest `blocks` array — and a budget that could
+// return nothing would make the newest message of an over-budget chat
+// unreachable.
+func messageWindow(msgs []vibekit.Message, limit, maxBytes int) ([]json.RawMessage, int) {
+	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
+	// `null` for an array. Same guard as the one the make+copy here replaced.
+	window := make([]json.RawMessage, 0, min(limit, len(msgs)))
+	spent := 0
+	start := len(msgs)
+	for i := range slices.Backward(msgs) {
+		if len(window) == limit {
+			break
+		}
+		raw, err := json.Marshal(msgs[i])
+		if err != nil {
+			// A Message holds no type encoding/json can refuse, so this is
+			// unreachable; stop rather than serve a window with a hole in it.
+			slog.Warn("chat window: message marshal failed",
+				"message_id", msgs[i].ID, "error", err)
+			break
+		}
+		if len(window) > 0 && spent+len(raw) > maxBytes {
+			break
+		}
+		spent += len(raw)
+		window = append(window, raw)
+		start = i
+	}
+	slices.Reverse(window)
+	return window, start
 }
 
 // handleTurns serves GET /api/chats/{id}/turns: the chat's session-wide turn
@@ -161,13 +200,47 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vi
 // and honouring values in the inclusive 1..500 range; anything else (absent,
 // non-numeric, <=0, >500) falls back to the default.
 func parseLimitParam(r *http.Request) int {
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
-			limit = n
-		}
+	return clampedQueryInt(r, "limit", 50, 1, 500)
+}
+
+// Byte budget bounds for the transcript window. The default is what a first
+// paint is worth waiting for; the ceiling is what a reader who scrolled up may
+// ask for at once. Neither is a limit on the chat — has_more plus before_id is
+// how the rest is reached.
+const (
+	defaultMaxBytes = 1 << 20 // 1 MiB
+	maxMaxBytes     = 8 << 20 // 8 MiB
+)
+
+// parseMaxBytesParam returns the validated ?max_bytes= budget for the
+// transcript window, defaulting to defaultMaxBytes and honouring the inclusive
+// 1 KiB..maxMaxBytes range.
+//
+// The floor is 1 KiB rather than 1 byte because a budget below one message's
+// envelope selects exactly one message however small it is set, so anything
+// under it is indistinguishable from zero and only hides a client bug.
+func parseMaxBytesParam(r *http.Request) int {
+	return clampedQueryInt(r, "max_bytes", defaultMaxBytes, 1<<10, maxMaxBytes)
+}
+
+// clampedQueryInt returns the named query parameter when it parses as an
+// integer inside the inclusive [lo, hi] range, and def for anything else —
+// absent, non-numeric, or out of range.
+//
+// Out of range falls back to the DEFAULT rather than clamping to the nearer
+// bound: a caller that asked for something this endpoint will not serve has a
+// bug, and silently serving the ceiling instead would let it keep believing the
+// number it sent.
+func clampedQueryInt(r *http.Request, name string, def, lo, hi int) int {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return def
 	}
-	return limit
+	n, err := strconv.Atoi(v)
+	if err != nil || n < lo || n > hi {
+		return def
+	}
+	return n
 }
 
 // indexOfMessage returns the position of the message with the given id, the

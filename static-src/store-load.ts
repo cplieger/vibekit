@@ -50,6 +50,19 @@ const decodeChatGetResponseLocal: Decoder<{
   };
 };
 
+/**
+ * Byte budget for one transcript window, the second half of the pagination
+ * request beside `limit`.
+ *
+ * A message COUNT was never a budget for this workload: the client asked for 50
+ * while the five open chats held 2, 4, 10, 10 and 13 messages, so every real
+ * conversation came back whole — and a six-message chat measured 13,010,641
+ * bytes, because one assistant message can carry 580 blocks and 353 tool calls.
+ * The server cuts at a message boundary and reports `has_more` against the
+ * bytes, so paging up from here is what reaches the rest.
+ */
+const DEFAULT_WINDOW_BYTES = 1 << 20;
+
 // --- Abort controllers ---
 let listController: AbortController | null = null;
 const msgControllers = new Map<string, AbortController>();
@@ -158,11 +171,15 @@ export async function loadMessages(
   chatID: string,
   beforeID?: string,
   limit = 50,
+  maxBytes = DEFAULT_WINDOW_BYTES,
 ): Promise<boolean> {
   msgControllers.get(chatID)?.abort();
   const controller = new AbortController();
   msgControllers.set(chatID, controller);
-  const params = new URLSearchParams({ limit: String(limit) });
+  const params = new URLSearchParams({
+    limit: String(limit),
+    max_bytes: String(maxBytes),
+  });
   if (beforeID !== undefined) {
     params.set("before_id", beforeID);
   }
