@@ -247,7 +247,9 @@ describe("a pause that means a step is waiting on a person", () => {
   });
 
   it("quotes any other reason verbatim, because it is not about the reader", () => {
-    expect(pausedWith("waiting on a watch condition")).toBe("Waiting: waiting on a watch condition");
+    expect(pausedWith("waiting on a watch condition")).toBe(
+      "Waiting: waiting on a watch condition",
+    );
     expect(pausedWith("")).toBe("Waiting");
   });
 
@@ -262,8 +264,9 @@ describe("a pause that means a step is waiting on a person", () => {
         asks(0, []),
       ),
     );
-    expect(text).toBe("A step is waiting for your answer \u00b7 after a transient error (Throttli" +
-      "ngException)");
+    expect(text).toBe(
+      "A step is waiting for your answer \u00b7 after a transient error (Throttli" + "ngException)",
+    );
   });
 });
 
