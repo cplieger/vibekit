@@ -645,8 +645,17 @@ type Chat struct {
 	// here would put a 10 MiB image in the chat file for a prompt that may never
 	// be sent. Store.SetAttachments keeps the retention contract Draft has — it
 	// does not stamp UpdatedAt.
-	Attachments     []string       `json:"attachments,omitempty"`
-	AvailableModels []SessionModel `json:"available_models,omitempty"`
+	Attachments []string `json:"attachments,omitempty"`
+	// There is no AvailableModels or AvailableModes. They are a WORKSPACE fact
+	// and were stamped onto every chat record and every ChatHeader: measured at
+	// 59 modes across 29 chats, identical in all of them, and 93.1% of a 1.25 MiB
+	// /api/chats response that a boot fetched twice. The one copy lives in
+	// agent.Catalog and is served once; what stays here is this chat's CHOICE
+	// (Model, CurrentModeID, Effort), which is the part that genuinely differs
+	// between chats.
+	//
+	// ServedModelIDs is NOT the same kind of thing and stays — see below.
+	//
 	// ServedModelIDs is every model id this chat's last session advertised,
 	// UNFILTERED, which AvailableModels is not (it drops end-of-life entries for
 	// the picker). It is persisted for one reason: the `--model` launch flag is
@@ -654,15 +663,15 @@ type Chat struct {
 	// session's advertised set is the only evidence about whether the stored model
 	// is still one the account can run. Empty means unknowable, and ModelServed
 	// then allows the send. Deliberately NOT on ChatHeader: the client validates
-	// nothing, it renders AvailableModels.
-	ServedModelIDs []string      `json:"served_model_ids,omitempty"`
-	AvailableModes []SessionMode `json:"available_modes,omitempty"`
+	// nothing, it renders the workspace catalog.
+	ServedModelIDs []string `json:"served_model_ids,omitempty"`
 	// EffortLevels is the reasoning-effort vocabulary the last session
-	// advertised, from the `effortLevel` config option's own `options[]`. A live
-	// session catalog like AvailableModels, kept beside it for the same reason:
-	// the control has to render before any frame arrives. EMPTY means the current
-	// model has no effort tiers at all, which is how kiro-cli's own TUI decides to
-	// refuse the command.
+	// advertised, from the `effortLevel` config option's own `options[]`. It
+	// stays per-chat where the mode and model catalogs did not, and the reason is
+	// that it is the vocabulary of THIS chat's model rather than of the
+	// workspace: two chats on different models disagree about which tiers exist.
+	// EMPTY means the current model has no effort tiers at all, which is how
+	// kiro-cli's own TUI decides to refuse the command.
 	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
 	// EffortActive is the level the session is RUNNING at, from that option's
 	// `currentValue`. Distinct from Effort, which is what this chat CHOSE: a chat
@@ -781,8 +790,6 @@ func (c *Chat) Header() ChatHeader {
 		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
 		Effort:              c.Effort,
-		AvailableModes:      c.AvailableModes,
-		AvailableModels:     c.AvailableModels,
 		EffortLevels:        c.EffortLevels,
 		EffortActive:        c.EffortActive,
 		Usage:               c.Usage,
@@ -811,12 +818,14 @@ type ChatHeader struct {
 	// EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
 	// the control renders from the ACTIVE chat's header, and an empty chat never
 	// fetches its full record.
-	EffortActive        string               `json:"effort_active,omitempty"`
-	EffortLevels        []SessionEffortLevel `json:"effort_levels,omitempty"`
-	ID                  string               `json:"id"`
-	CompactionWatermark string               `json:"compaction_watermark,omitempty"`
-	AvailableModels     []SessionModel       `json:"available_models,omitempty"`
-	AvailableModes      []SessionMode        `json:"available_modes,omitempty"`
+	EffortActive string               `json:"effort_active,omitempty"`
+	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
+	// There is no AvailableModels or AvailableModes. Between them they were 98.6%
+	// of the 1.25 MiB /api/chats response and identical in all 29 headers; the
+	// workspace catalog is served once instead. CurrentModeID above is the part
+	// that belongs on a header — it is this chat's choice, not the vocabulary.
+	ID                  string `json:"id"`
+	CompactionWatermark string `json:"compaction_watermark,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's. Carried on the header because the
 	// retention sweep derives its keep-list from header reads rather than
 	// loading every chat in full.

@@ -28,7 +28,6 @@ import { activeSession, getActive } from "./store.js";
 import { createSession } from "./chat.js";
 import { setMode } from "./actions/chat.js";
 import { apiGet } from "./api-client.js";
-import type { SessionMode } from "./types.js";
 import {
   type PickerMode,
   catalogBaseModes,
@@ -66,27 +65,28 @@ export function initRolePicker(): void {
   // Keep the pill's icon + label in sync with the active chat's mode.
   effect(() => {
     const s = activeSession.value;
-    refreshPill(s?.current_mode_id ?? "", s?.available_modes ?? []);
+    refreshPill(s?.current_mode_id ?? "");
   });
 }
 
-function refreshPill(modeID: string, modes: readonly SessionMode[]): void {
+function refreshPill(modeID: string): void {
   byId<HTMLElement>("role-pill-icon").replaceChildren(iconEl(iconForMode(normalizeModeID(modeID))));
-  byId<HTMLSpanElement>("role-pill-label").textContent = labelForMode(modeID, modes);
+  byId<HTMLSpanElement>("role-pill-label").textContent = labelForMode(modeID);
 }
 
-/** The modes to offer: the live session's availableModes when present
- *  (authoritative — carries bundled modes AND workspace agents, with the
- *  shadowing already resolved by KAS, so no entry can be marked), else the
- *  catalog merged with the workspace agents from kiro-config.
+/** The modes to offer: the workspace catalog merged with the workspace agents
+ *  from kiro-config.
  *
- *  The shadow-marking window is therefore exactly "empty chat, no bridge yet":
- *  once a session exists KAS has picked, and this list is its report. */
+ *  There is no longer a per-session branch. It used to prefer the active chat's
+ *  `available_modes` because KAS had already resolved the shadowing there, but
+ *  that list was the same 59 entries on every one of 29 chats and 93.1% of the
+ *  chat-list response. The catalog now carries KAS's own report once a session
+ *  has run (the server prefers it over the session-less template), so the
+ *  resolution is not lost — what changes is that the merge's shadow marking is
+ *  always on rather than only before the first bridge, which is the honest
+ *  answer: a workspace agent shadows a bundled mode of the same id whether or
+ *  not a session has started. */
 function currentModes(): PickerMode[] {
-  const live = getActive()?.available_modes ?? [];
-  if (live.length > 0) {
-    return live.map((mode) => ({ mode }));
-  }
   return mergeCatalogAndWorkspace(catalogBaseModes(), customAgents);
 }
 

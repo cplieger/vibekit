@@ -859,7 +859,7 @@ describe("the chat tab's tooltip carries the mode as well as the activity", () =
   const TAB_ID = "tb_c1";
 
   function driveEffect(over: Record<string, unknown>): void {
-    const s = { id: "c1", name: "Fix the parser", available_modes: [], ...over };
+    const s = { id: "c1", name: "Fix the parser", ...over };
     // One open tab for c1; its row effect reads the chat through watchSession.
     vi.mocked(openChatRefs).mockReturnValue(["c1"]);
     vi.mocked(watchSession).mockReturnValue(s as never);

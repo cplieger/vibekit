@@ -115,8 +115,6 @@ function session(id: string, over: Partial<Session> = {}): Session {
     model: "auto",
     acp_session_id: "",
     current_mode_id: "",
-    available_modes: [],
-    available_models: [],
     usage: {
       context_pct: 0,
       context_size: 0,

@@ -51,6 +51,7 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Sessions:   rt.coord,
 		Terminals:  rt.agentTerms,
 		HookStatus: rt.hookStatus,
+		Catalog:    rt.catalog,
 		WorkDir:    rt.lifecycle.workDir,
 		MCP:        rt.mcpRegistry,
 		Governance: rt.config,

@@ -69,6 +69,7 @@ type hostDouble interface {
 	SessionResolver
 	TerminalReader
 	HookStatusReader
+	ModelCatalog
 	RunOriginAccess
 	RunBoundsAccess
 	TurnInterruptAccess
@@ -103,6 +104,7 @@ func rolesOf(d hostDouble) *Roles {
 		Sessions:      d,
 		Terminals:     d,
 		HookStatus:    d,
+		Catalog:       d,
 		WorkDir:       d.WorkDir(),
 		MCP:           d.MCPRecorder(),
 		Governance:    d,

@@ -263,7 +263,8 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 }
 
 // EffortForSwitch resolves against the TARGET model: the seed when it was picked
-// under that model, else the target's own catalog default, else nothing.
+// under that model, else the target's own default from the WORKSPACE catalog,
+// else nothing.
 func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 	catalog := []vibekit.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high"},
@@ -291,9 +292,9 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 			}
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
-			chat := &vibekit.Chat{ID: "c1", Effort: "low", Model: "m1", AvailableModels: catalog}
+			h.coord.catalog.SetModels(catalog)
 
-			got := h.coord.EffortForSwitch(t.Context(), chat, test.target)
+			got := h.coord.EffortForSwitch(t.Context(), test.target)
 
 			if got != test.want {
 				t.Errorf("EffortForSwitch(target=%q, seed=%q under %q) = %q, want %q — the chat's own choice must never leak into a switch",
@@ -640,65 +641,33 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 }
 
 // TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted pins the resume half of
-// the catalog contract: a fact the load result did not carry must not be written.
+// the mode contract: a fact the load result did not carry must not be written.
 //
 // A resumed bridge is freshly constructed, so it answers the zero value for
-// anything absent — and `session/load` omits the model catalog routinely, because
-// KAS resolves ListAvailableModels asynchronously (measured on kiro-cli 2.20.0).
-// Writing those zeros wiped the catalog the chat file had carried since its
-// previous session. The mode half is the one with no repair channel afterwards.
+// anything absent, and writing those zeros wiped what the chat file had carried
+// since its previous session.
+//
+// The mode and model CATALOGS are no longer written here — they are a workspace
+// fact and the same empty-is-not-an-answer rule now lives on Catalog, where
+// TestCatalog_AnEmptyListIsNotAnEmptyCatalog pins it.
 func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
-	seededModes := []vibekit.SessionMode{{ID: "spec", Name: "Spec"}}
-	seededModels := []vibekit.SessionModel{{ID: "seeded-model", Name: "Seeded"}}
-
 	cases := map[string]struct {
-		mode       string
-		modes      []vibekit.SessionMode
-		models     []vibekit.SessionModel
-		wantMode   string
-		wantModes  []vibekit.SessionMode
-		wantModels []vibekit.SessionModel
+		mode     string
+		wantMode string
 	}{
-		"a silent result changes nothing": {
-			mode: "", modes: nil, models: nil,
-			wantMode: "spec", wantModes: seededModes, wantModels: seededModels,
-		},
-		"an empty list is not an empty catalog": {
-			mode: "", modes: []vibekit.SessionMode{}, models: []vibekit.SessionModel{},
-			wantMode: "spec", wantModes: seededModes, wantModels: seededModels,
-		},
-		"what the result DOES carry is written": {
-			mode:  "vibe",
-			modes: []vibekit.SessionMode{{ID: "vibe", Name: "Default"}},
-			models: []vibekit.SessionModel{
-				{ID: "fresh-model", Name: "Fresh"},
-			},
-			wantMode:   "vibe",
-			wantModes:  []vibekit.SessionMode{{ID: "vibe", Name: "Default"}},
-			wantModels: []vibekit.SessionModel{{ID: "fresh-model", Name: "Fresh"}},
-		},
+		"a silent result changes nothing":       {mode: "", wantMode: "spec"},
+		"what the result DOES carry is written": {mode: "vibe", wantMode: "vibe"},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := &vibekit.Chat{
-				Name:            "A",
-				CurrentModeID:   "spec",
-				AvailableModes:  seededModes,
-				AvailableModels: seededModels,
-			}
-			br := &fakeBridge{currentMode: tc.mode, modes: tc.modes, models: tc.models}
+			c := &vibekit.Chat{Name: "A", CurrentModeID: "spec"}
+			br := &fakeBridge{currentMode: tc.mode}
 
 			applyLoadedSessionFacts(c, br, "")
 
 			if c.CurrentModeID != tc.wantMode {
 				t.Errorf("CurrentModeID = %q, want %q", c.CurrentModeID, tc.wantMode)
-			}
-			if !slices.Equal(c.AvailableModes, tc.wantModes) {
-				t.Errorf("AvailableModes = %v, want %v", c.AvailableModes, tc.wantModes)
-			}
-			if !slices.Equal(c.AvailableModels, tc.wantModels) {
-				t.Errorf("AvailableModels = %v, want %v", c.AvailableModels, tc.wantModels)
 			}
 		})
 	}

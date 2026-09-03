@@ -130,14 +130,7 @@ export type {
 // the generated naming. The generated type is PermissionNeededPayload.
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
-import type {
-  Message,
-  SessionEffortLevel,
-  SessionMode,
-  SessionModel,
-  SteerOrigin,
-  Usage,
-} from "./wire/types.gen.js";
+import type { Message, SessionEffortLevel, SteerOrigin, Usage } from "./wire/types.gen.js";
 
 // --- Client-only types ---
 
@@ -295,8 +288,12 @@ export interface Session {
   model: string;
   acp_session_id: string;
   current_mode_id: string;
-  available_modes: SessionMode[];
-  available_models: SessionModel[];
+  // There is no available_modes / available_models. They are a WORKSPACE
+  // vocabulary, not a per-session one: 59 modes repeated across 29 chats,
+  // identical in all of them, and 98.6% of a 1.25 MiB /api/chats response the
+  // boot fetched twice. roles.ts holds the one copy, fed by
+  // /api/config-template. `current_mode_id` above stays because it is this
+  // chat's CHOICE from that vocabulary.
   /** The reasoning-effort tiers this session offers (the `effortLevel` config
    *  option's own choices). Empty means the current model has no tiers, which is
    *  what kiro-cli's TUI treats as "effort is not available on this model". */

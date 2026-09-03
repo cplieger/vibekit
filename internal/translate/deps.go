@@ -115,6 +115,9 @@ type Roles struct {
 	Terminals TerminalReader
 	// HookStatus reports whether hook status display is on.
 	HookStatus HookStatusReader
+	// Catalog is where a live config_option_update's model list lands: the
+	// workspace's ONE copy, not a field on the chat that happened to see it.
+	Catalog    ModelCatalog
 	MCP        MCPRecorder
 	Governance GovernanceAccess
 	RunOrigin  RunOriginAccess
@@ -168,6 +171,17 @@ type SessionResolver interface {
 // off, tool calls of kind "hook" are suppressed from the transcript.
 type HookStatusReader interface {
 	IsHookStatusEnabled() bool
+}
+
+// ModelCatalog is the workspace's model vocabulary, which a live
+// config_option_update updates.
+//
+// One method, and deliberately WRITE-only from here: this package folds frames
+// and has no reason to read the catalog back. It reports whether the list
+// changed because the caller's contract is the same — the chat store only
+// persists and broadcasts on a change, so a repeated frame has to answer false.
+type ModelCatalog interface {
+	SetModels(models []vibekit.SessionModel) bool
 }
 
 // TerminalReader returns an agent terminal's rendered output: plain text
@@ -225,6 +239,7 @@ type Translator struct {
 	sessions      SessionResolver
 	terminals     TerminalReader
 	hookStatus    HookStatusReader
+	catalog       ModelCatalog
 	mcp           MCPRecorder
 	governance    GovernanceAccess
 	runOrigin     RunOriginAccess
@@ -257,6 +272,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		sessions:      r.Sessions,
 		terminals:     r.Terminals,
 		hookStatus:    r.HookStatus,
+		catalog:       r.Catalog,
 		workDir:       r.WorkDir,
 		mcp:           r.MCP,
 		governance:    r.Governance,

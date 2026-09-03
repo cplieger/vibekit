@@ -276,10 +276,14 @@ export interface ChatHeader {
  */
   effort_active?: string;
   effort_levels?: SessionEffortLevel[];
+  /**
+ * There is no AvailableModels or AvailableModes. Between them they were 98.6%
+ * of the 1.25 MiB /api/chats response and identical in all 29 headers; the
+ * workspace catalog is served once instead. CurrentModeID above is the part
+ * that belongs on a header — it is this chat's choice, not the vocabulary.
+ */
   id: string;
   compaction_watermark?: string;
-  available_models?: SessionModel[];
-  available_modes?: SessionMode[];
   /**
  * PriorACPSessionIDs mirrors Chat's. Carried on the header because the
  * retention sweep derives its keep-list from header reads rather than

@@ -76,7 +76,7 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientComman
 			rt.persistModelPick(ctx, cmd.ChatID, model)
 			return responseOK2, nil
 		}
-		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model, rt.coord.EffortForSwitch(ctx, chat, model)) {
+		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model, rt.coord.EffortForSwitch(ctx, model)) {
 			rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
 			return responseOK2, nil
 		}
@@ -146,7 +146,7 @@ func (rt *Runtime) switchByRestart(
 		// Through the bridge this function HOLDS, never a fresh lookup by chat
 		// id: the old bridge's exit cleanup can evict the manager entry after the
 		// new one registered.
-		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.EffortForSwitch(ctx, chat, model)) {
+		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.EffortForSwitch(ctx, model)) {
 			slog.Warn("model switch: the resumed session kept its own model",
 				"chat_id", cmd.ChatID, "model", model)
 		}
