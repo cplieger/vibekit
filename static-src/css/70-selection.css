@@ -84,6 +84,12 @@
 .pill-expandable.pill-expanded:not(.status-dot),
 .icon-btn.active,
 .icon-btn[aria-pressed="true"],
+/* The shell panel's header toggles: full screen, and the key-toolbar trigger.
+   Both wrote aria-pressed and neither was in this list, so each announced its
+   state to a screen reader and showed the user nothing — the defect the
+   toggle-state rule in vibekit-ui.md exists to prevent, one class short of
+   being covered by .icon-btn above. */
+.shell-header-btn[aria-pressed="true"],
 .turn-action-btn[aria-pressed="true"],
 .chat-find-case[aria-pressed="true"],
 .fb-search-case[aria-pressed="true"],
@@ -127,6 +133,7 @@
   .pill-expandable.pill-expanded:not(.status-dot):hover,
   .icon-btn.active:hover,
   .icon-btn[aria-pressed="true"]:hover,
+  .shell-header-btn[aria-pressed="true"]:hover,
   .turn-action-btn[aria-pressed="true"]:hover,
   .chat-find-case[aria-pressed="true"]:hover,
   .fb-search-case[aria-pressed="true"]:hover,
@@ -167,6 +174,7 @@
 .pill-expandable.pill-expanded:not(.status-dot):active,
 .icon-btn.active:active,
 .icon-btn[aria-pressed="true"]:active,
+.shell-header-btn[aria-pressed="true"]:active,
 .turn-action-btn[aria-pressed="true"]:active,
 .chat-find-case[aria-pressed="true"]:active,
 .fb-search-case[aria-pressed="true"]:active,

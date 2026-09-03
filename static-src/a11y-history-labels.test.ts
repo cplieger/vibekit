@@ -90,8 +90,8 @@ describe("a11y: History row accessible names", () => {
     const open = row.querySelector<HTMLElement>("button.list-row-name")!;
     // The name still opens with the action, then states the verdict.
     expect(open.getAttribute("aria-label")).toBe("Open nightly-sweep, failed");
-    // The glyph carrying it is decorative: the name already says the word.
-    expect(row.querySelector(".tool-outcome-badge")?.getAttribute("aria-hidden")).toBe("true");
+    // The slot carrying the mark is decorative: the name already says the word.
+    expect(row.querySelector(".tool-icon")?.getAttribute("aria-hidden")).toBe("true");
     expect(row.textContent).not.toContain("failed");
 
     document.body.removeChild(host);

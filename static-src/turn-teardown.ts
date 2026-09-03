@@ -8,11 +8,10 @@
 // about how anything finished and instead UNLATCHES what it can no longer support.
 //
 // What they share is everything else, and until this module existed the gap door
-// spelled it independently and was short by four effects — the transient banners,
-// the two in-flight markers and the rail — so a reconnect left a rate-limit banner
-// over a finished turn, a chunk watermark that dropped the next turn's early
-// deltas, and a live-message marker that made the next refetch keep a message the
-// chat file already held.
+// spelled it independently and was short by three effects — the two in-flight
+// markers and the rail — so a reconnect left a chunk watermark that dropped the
+// next turn's early deltas, and a live-message marker that made the next refetch
+// keep a message the chat file already held.
 //
 // Deliberately NOT here, and each absence is the asymmetry rather than an
 // oversight: the outcome latches (a gap knows no outcome), the finished
@@ -31,7 +30,6 @@
 import { setThinking, clearSnapshotSeq, clearLiveTurnMessage, get, tabStatusFor } from "./store.js";
 import { setTabStatus, tabIdFor } from "./tabs.js";
 import { hasPendingDecision } from "./decision-dock.js";
-import { onTurnEnded } from "./banner-stack.js";
 import { drainModelSwitchQueue } from "./model-switcher.js";
 
 /** Bring one chat's local turn state to rest.
@@ -47,9 +45,6 @@ export function clearTurnState(chatID: string): void {
   // the chat file now holds under a different shape.
   clearSnapshotSeq(chatID);
   clearLiveTurnMessage(chatID);
-  // One owner for which banners a turn boundary retires, so a second transient
-  // code added there reaches both doors instead of one.
-  onTurnEnded(chatID);
   // A queued mid-turn model switch drains on the turn ending. On the gap door the
   // turn_ended that would have drained it may be among the dropped events, which
   // is what left the switch stranded behind a stuck `.pending` pill.

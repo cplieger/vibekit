@@ -14,7 +14,7 @@ import type { BuildToolCardOpts } from "./tool-card-opts.js";
 import { escText, windowOutput, windowSpans, humanName } from "./strings.js";
 import { renderOutput } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
-import { fileIcon, toolIcon } from "./icons.js";
+import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { chevronEl } from "./chevron.js";
 import { openFileDiff } from "./editor-openers.js";
@@ -220,9 +220,10 @@ function buildHeader(
     header.appendChild(duration);
   }
 
-  // No status WORD. Outcome rides the per-kind glyph (see applyOutcome): a
-  // finished card printing the literal enum value `completed` was the claim
-  // "Tool call completed", which says nothing the row does not already say.
+  // No status WORD, and no second mark either. The row carries ONE mark — the
+  // glyph above (see applyOutcome) — and a finished card printing the literal
+  // enum value `completed` was the claim "Tool call completed", which says
+  // nothing the row does not already say.
 
   // A claim-only card has nothing to reveal, so it gets no toggle AT ALL rather
   // than a hidden one: a `display: none` button is still a button in the
@@ -254,26 +255,52 @@ type OutcomeStatus = ToolStatus | "aborted";
  *  `in_progress` are one thing to a reader, and a refusal is its own state. */
 type OutcomeState = "ok" | "fail" | "warn" | "denied" | "running";
 
-/** Paint a card's outcome onto its glyph, and give the card an accessible name.
+/** What a `.tool-icon` slot holds: the glyph it was BUILT with, and the state
+ *  currently painted into it. Keyed on the element so `applyOutcome` needs no
+ *  signature change and no caller has to supply the identity glyph twice. */
+interface IconMark {
+  identity: Element | null;
+  painted: OutcomeState | null;
+}
+const iconMarks = new WeakMap<HTMLElement, IconMark>();
+
+/** Paint a row's ONE outcome mark, and give the row an accessible name.
  *
- *  ONE writer for the CARD vocabulary, and two sites deliberately outside it, so
- *  do not read the count as three. Callers: this builder, the tool-card update
- *  path (`messages-tools.ts`), and a History run row (`history.ts`). The two that
- *  paint an outcome without coming through here are `tool-group.ts`
- *  paintGroupOutcome, which writes a group header's verdict as text and needs no
- *  badge, and `fundamentals/subagent-block.ts` applyIcon, which hand-rolls both
- *  the tint classes and a `.tool-outcome-badge` of its own. That second one is
- *  what the "one writer" claim this comment used to make was hiding, and the copy
- *  cost it both channels until 2026-08-26: its badge host lacked the `.tool-icon`
- *  class, so the mark had no containing block (it painted ~190px away at the
- *  header's edge) and the `is-*` classes matched no rule. Route a new site through
- *  this function rather than copying a block, or it inherits that class of defect.
+ *  ONE MARK PER ROW, and its SHAPE is what changes for a non-success state.
+ *  `ok` and `running` keep the row's own identity glyph (per-kind for a tool
+ *  card, `ICON_TAB_RUN` for a History row) and only its tint moves; `fail`,
+ *  `warn` and `denied` REPLACE that glyph with a general road-sign silhouette
+ *  from `icons.ts` (`outcomeIcon`), red for a failure and yellow for the two
+ *  stops, each a distinct shape. So hue stays a channel and is never the only
+ *  one, and WCAG 1.4.1 is satisfied by the shape swap rather than by the second
+ *  mark this replaced (a 7px character badge composited on the glyph's corner,
+ *  which said the same thing twice). The status word is still not visible text:
+ *  the accessible name carries it ("Edited auth.go, succeeded").
  *
- *  Tint alone would fail WCAG 1.4.1 — a green and a red glyph of identical shape
- *  are one channel — so a settled card also carries a SHAPE: a small check or
- *  cross composited on the glyph. The status word is not restored as visible
- *  text; the accessible name carries it instead ("Edited auth.go, succeeded"),
- *  and a programmatic name is not visible text.
+ *  THE IDENTITY GLYPH IS CAPTURED, NOT RECOMPUTED. Callers mount it before the
+ *  first call — this builder, the update path (`messages-tools.ts`) reusing what
+ *  the builder mounted, and `history.ts`, whose glyph is `ICON_TAB_RUN` and not
+ *  a `toolIcon` at all — so re-deriving it here would repaint a run row with a
+ *  tool glyph. `dataset.title` cannot stand in for the raw title either: it holds
+ *  the DISPLAY title, while `toolIcon` keys its overrides on the raw one. The
+ *  contract is therefore that the identity glyph is in the slot before the first
+ *  call. A slot with none keeps whatever it has for `ok`/`running`, because this
+ *  function does not own content it never wrote — but a silhouette it wrote
+ *  itself IS its own, so a return to `ok` clears that instead of leaving a red
+ *  triangle standing under an `is-ok` class.
+ *
+ *  Repeated calls are idempotent: the mark is written with `replaceChildren` and
+ *  only when the state has actually changed, so two SVGs in one `.tool-icon` is
+ *  unrepresentable. The slot is `aria-hidden` — the mark is decorative, because
+ *  the word is in the name.
+ *
+ *  TWO SITES PAINT AN OUTCOME WITHOUT CALLING THIS, and both are deliberate:
+ *  `tool-group.ts` paintGroupOutcome, whose slot has no identity glyph to keep,
+ *  and `fundamentals/subagent-block.ts` applyIcon, which owns its own identity
+ *  glyph and spinner. What they share with this function is the GLYPH SET and its
+ *  resolver in `icons.ts`, which is the thing that makes a half-migrated
+ *  vocabulary unrepresentable — saying "one writer" is what previously hid the
+ *  fact that a copy existed at all.
  *
  *  `nameTarget` is the element the name lands on, defaulting to the glyph's own
  *  host because on a tool card they are one element. A History row separates
@@ -305,34 +332,42 @@ export function applyOutcome(
   if (icon !== null) {
     icon.classList.remove("is-ok", "is-fail", "is-warn", "is-running", "is-denied");
     icon.classList.add(`is-${state}`);
-    // The shape half. Rebuilt rather than toggled so a re-render cannot stack
-    // two badges on one glyph.
-    icon.querySelector(".tool-outcome-badge")?.remove();
-    if (state !== "running") {
-      icon.appendChild(
-        el(
-          "span",
-          { className: "tool-outcome-badge", "aria-hidden": "true" },
-          OUTCOME_BADGE[state],
-        ),
-      );
+    icon.setAttribute("aria-hidden", "true");
+    let mark = iconMarks.get(icon);
+    if (mark === undefined) {
+      const built = icon.firstElementChild;
+      mark = {
+        identity: built === null ? null : (built.cloneNode(true) as Element),
+        painted: null,
+      };
+      iconMarks.set(icon, mark);
+    }
+    if (mark.painted !== state) {
+      // The identity glyph for a success or a live call; the shared silhouette
+      // otherwise. `replaceChildren` plus the guard is what makes a repeat paint
+      // a no-op instead of a second SVG.
+      const keepIdentity = state === "ok" || state === "running";
+      const wanted = keepIdentity
+        ? (mark.identity?.cloneNode(true) ?? null)
+        : iconEl(outcomeIcon(state));
+      // `painted` is recorded only when the slot is actually written, so it
+      // always describes what the slot HOLDS.
+      if (wanted !== null) {
+        icon.replaceChildren(wanted);
+        mark.painted = state;
+      } else if (mark.painted !== null) {
+        // No identity glyph to restore, and the slot is holding a silhouette
+        // THIS function put there. It owns that content, so a return to
+        // `ok`/`running` clears it rather than leaving a red triangle under an
+        // `is-ok` class. A slot this function has never written is left alone.
+        icon.replaceChildren();
+        mark.painted = state;
+      }
     }
   }
   const subject = info.fileBasename !== "" ? `${displayTitle} ${info.fileBasename}` : displayTitle;
   nameTarget.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
-
-/** The shape half of the vocabulary, one glyph per settled state.
- *
- *  A shield for a refusal and a triangle for a stop are distinct in SHAPE, not
- *  only in tint, for the same WCAG 1.4.1 reason the check and cross are shapes —
- *  which matters twice over here, because both are amber. */
-const OUTCOME_BADGE: Readonly<Record<Exclude<OutcomeState, "running">, string>> = {
-  ok: "\u2713",
-  fail: "\u2717",
-  warn: "\u26A0",
-  denied: "\u26D4",
-};
 
 /** The word the accessible name uses. Deliberately not the wire enum: "pending"
  *  and "in_progress" both mean the same thing to a listener. */

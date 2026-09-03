@@ -23,7 +23,7 @@ func TestStubDeps_Contract(t *testing.T) {
 	if _, ok := d.Get(ctx, "no-such-chat"); ok {
 		t.Error("Get on the nop store reported found")
 	}
-	if d.TurnFoldTarget(ctx, "c1") == nil {
+	if d.TurnFoldTarget(ctx, "c1", vibekit.TurnSourceWireTurnStart) == nil {
 		t.Error("TurnFoldTarget returned nil")
 	}
 	d.RecordFromDiffs("c1", nil, 0, "")
@@ -86,7 +86,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("buffer_and_line_methods_work", func(t *testing.T) {
-		if d.TurnFoldTarget(ctx, "c1") == nil {
+		if d.TurnFoldTarget(ctx, "c1", vibekit.TurnSourceWireTurnStart) == nil {
 			t.Error("TurnFoldTarget returned nil")
 		}
 		d.RecordFromDiffs("c1", nil, 0, "")

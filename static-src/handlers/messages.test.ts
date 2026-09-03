@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, get } from "../store.js";
+import { setSessions, get, liveTurnMessage, tabStatusFor } from "../store.js";
 import type { Session, Message } from "../types.js";
 
 const mockMarkGitDirty = vi.fn();
@@ -114,14 +114,112 @@ describe("message_chunk", () => {
 // ---------------------------------------------------------------------------
 
 describe("streaming evidence marks the turn live", () => {
-  it("message_created flips thinking on a chat at rest", () => {
-    fireSSE("message_created", "chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
+  it("a chunk with no subtask id flips thinking on a chat at rest", () => {
+    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hi", block_index: 0 });
     expect(get("chat-1")?.thinking).toBe(true);
   });
 
-  it("message_chunk flips it too, covering a dropped or reordered created frame", () => {
-    fireSSE("message_chunk", "chat-1", { message_id: "m1", delta: "hi", block_index: 0 });
+  it("a SUBAGENT's chunk flips it too: a delegate halts the main agent", () => {
+    fireSSE("message_chunk", "chat-1", {
+      message_id: "m1",
+      delta: "hi",
+      block_index: 0,
+      agent_subtask_id: "3f2b1c00-0000-4000-8000-000000000000",
+    });
     expect(get("chat-1")?.thinking).toBe(true);
+  });
+
+  // A chat-parented workflow run executes on the LAUNCHING chat's session, so its
+  // steps' frames arrive on this chat's connection — while the launching turn has
+  // already ended (run_workflow returns as soon as the run is created). Latching
+  // here made the chat's tab dot read "working" for the whole run, and nothing
+  // cleared it: a step's own turn_end is dropped server-side by the workflow
+  // attribution gate. The RUN's own tab dot carries that liveness.
+  it("a workflow STEP's chunk does NOT flip thinking", () => {
+    fireSSE("message_chunk", "chat-1", {
+      message_id: "m1",
+      delta: "the step wrote this",
+      block_index: 0,
+      agent_subtask_id: "wf:wf-1:root/step",
+    });
+    expect(get("chat-1")?.thinking).toBe(false);
+  });
+
+  it("a step's chunk still lands in the transcript", () => {
+    fireSSE("message_created", "chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
+    fireSSE("message_chunk", "chat-1", {
+      message_id: "m1",
+      delta: "the step wrote this",
+      block_index: 0,
+      agent_subtask_id: "wf:wf-1:root/step",
+    });
+    const blocks = get("chat-1")?.messages.find((m) => m.id === "m1")?.blocks;
+    expect(blocks?.[0]?.text).toBe("the step wrote this");
+  });
+
+  // message_created carries NO attribution, so it cannot tell a step's turn from
+  // the chat's own — which is why the latch moved off it entirely. The chunk that
+  // follows one frame later is the door, and it can.
+  it("message_created alone does not flip thinking", () => {
+    fireSSE("message_created", "chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
+    expect(get("chat-1")?.thinking).toBe(false);
+  });
+
+  it("message_created still marks the message unpersisted and upserts it", () => {
+    fireSSE("message_created", "chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
+    expect(get("chat-1")?.messages.map((m) => m.id)).toEqual(["m1"]);
+    expect(liveTurnMessage("chat-1")).toBe("m1");
+  });
+
+  // The connect replay. A step-driven turn's snapshot is the ONLY copy of that
+  // step's in-flight transcript (nothing persists it), so the event is emitted and
+  // marked rather than skipped: apply the message, do not claim the chat is working.
+  it("a workflow_step turn_state applies its message without latching thinking", () => {
+    fireSSE("turn_state", "chat-1", {
+      message: { id: "m1", role: "assistant", ts: 0, content: "step output" },
+      chunk_seq: 3,
+      workflow_step: true,
+    });
+    expect(get("chat-1")?.thinking).toBe(false);
+    expect(get("chat-1")?.messages.map((m) => m.id)).toEqual(["m1"]);
+    expect(liveTurnMessage("chat-1")).toBe("m1");
+  });
+
+  it("an ordinary turn_state still latches thinking", () => {
+    fireSSE("turn_state", "chat-1", {
+      message: { id: "m1", role: "assistant", ts: 0, content: "the agent is working" },
+      chunk_seq: 3,
+    });
+    expect(get("chat-1")?.thinking).toBe(true);
+  });
+
+  // The reported symptom, end to end: the launching chat's TAB DOT. Driven through
+  // the real handlers rather than by handing `tabStatusFor` a built session, which
+  // would pass with the attribution gates deleted. `tab-dot.test.ts` owns the
+  // mapping itself; this owns what the handlers feed it.
+  it("a chat whose only activity is a workflow step does not read as working", () => {
+    fireSSE("message_created", "chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
+    fireSSE("message_chunk", "chat-1", {
+      message_id: "m1",
+      delta: "the step wrote this",
+      block_index: 0,
+      agent_subtask_id: "wf:wf-1:root/step",
+    });
+    fireSSE("turn_state", "chat-1", {
+      message: { id: "m1", role: "assistant", ts: 0, content: "the step wrote this" },
+      chunk_seq: 1,
+      workflow_step: true,
+    });
+    expect(tabStatusFor(get("chat-1"))).not.toBe("working");
+  });
+
+  it("the same chat DOES read as working once its own agent streams", () => {
+    fireSSE("message_chunk", "chat-1", {
+      message_id: "m2",
+      delta: "and now the chat's own reply",
+      block_index: 0,
+    });
+    expect(tabStatusFor(get("chat-1"))).toBe("working");
   });
 
   it("a chunk on an already-live turn leaves the agent's declared status standing", () => {

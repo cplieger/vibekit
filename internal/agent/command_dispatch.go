@@ -22,6 +22,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Lifecycle:   rt.lifecycle,
 		MCP:         rt.mcpRegistry,
 		TurnOutcome: rt,
+		Steers:      rt.steerLedger,
 		Tokens:      tokenSourceOrNil(rt.kiroToken),
 	})
 

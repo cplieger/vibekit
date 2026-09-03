@@ -228,12 +228,23 @@ export function lineDiff(
   newText: string,
   opts: { ignoreWhitespace?: boolean } = {},
 ): DiffLine[] {
+  return diffLineArrays(splitLines(oldText), splitLines(newText), opts);
+}
+
+/** Diff two already-split line arrays.
+ *
+ *  The array seam exists for `lineDelta`, whose line vocabulary differs from the
+ *  renderer's and cannot be reached through a string: a lone "\n" is ONE empty
+ *  line, and stripping that newline leaves "", which `splitLines` reads as none. */
+function diffLineArrays(
+  a: string[],
+  b: string[],
+  opts: { ignoreWhitespace?: boolean },
+): DiffLine[] {
   const normalize =
     opts.ignoreWhitespace === true
       ? (s: string): string => s.replace(/\s+/g, " ").trim()
       : (s: string): string => s;
-  const a = splitLines(oldText);
-  const b = splitLines(newText);
   const aNorm = opts.ignoreWhitespace === true ? a.map(normalize) : a;
   const bNorm = opts.ignoreWhitespace === true ? b.map(normalize) : b;
 
@@ -343,6 +354,31 @@ function diffMiddle(
     j++;
   }
   return out;
+}
+
+/** Split for COUNTING: `splitLines` minus the element a final newline produces.
+ *
+ *  Its Go twin is `splitDiffLines` in `internal/buffer/linediff.go`, and the two
+ *  must agree on every input or the footers below disagree about one file.
+ *  `splitLines` keeps that element because the diff RENDERER draws its row, so
+ *  "a\nb\n" is three lines there and two here. */
+function splitDeltaLines(s: string): string[] {
+  const lines = splitLines(s);
+  if (s.endsWith("\n")) {
+    lines.pop();
+  }
+  return lines;
+}
+
+/** How many lines a change added and removed — the numbers a footer states.
+ *
+ *  Its Go twin is `lineDelta` in `internal/buffer/linediff.go`, which computes
+ *  the same counts for the turn footer; the two footers render the same
+ *  component, so they must agree on the same file or one of them is lying. The
+ *  shared fixture is `internal/buffer/testdata/line_delta.json`. */
+export function lineDelta(oldText: string, newText: string): { added: number; removed: number } {
+  const s = stats(diffLineArrays(splitDeltaLines(oldText), splitDeltaLines(newText), {}));
+  return { added: s.adds, removed: s.dels };
 }
 
 // ---------------------------------------------------------------------------

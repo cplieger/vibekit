@@ -39,20 +39,26 @@ func (r *turnRegistry) bindPending(chatID vibekit.ChatID) (bound bool, displaced
 	return true, 0
 }
 
-// displaceableWireTurn reports the epoch of an open turn the WIRE started, which a
-// prompt-shaped open must close before taking the chat. A prompt source CAN meet
-// one: a wireTurnStart turn holds no prompt slot, so admission control never
-// refused it, and no closer can claim it — displacing it without closing it loses
-// content already broadcast to every client. Only a wire-started turn: a local
-// shell turn already refuses to begin while a turn is open.
-func (r *turnRegistry) displaceableWireTurn(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+// displaceableEngineTurn reports the epoch of an open turn the ENGINE started,
+// which a prompt-shaped open must close before taking the chat. A prompt source
+// CAN meet one: an engine-opened turn holds no prompt slot, so admission control
+// never refused it, and no closer can claim it — displacing it without closing it
+// loses content already broadcast to every client. Only an engine-opened turn
+// (Source.EngineOpened): a local shell turn already refuses to begin while a turn
+// is open.
+//
+// A WORKFLOW STEP's turn is displaceable for exactly the same reason and it is the
+// one that makes this rule load-bearing rather than theoretical: a chat-parented
+// run's steps fold onto the launching chat for minutes after the launching turn
+// ended, so a prompt sent during a run is the ordinary case, not an edge.
+func (r *turnRegistry) displaceableEngineTurn(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if lc.state != turnOpen || lc.cur == nil {
 		return 0, false
 	}
-	if lc.cur.Source != vibekit.TurnSourceWireTurnStart {
+	if !lc.cur.Source.EngineOpened() {
 		return 0, false
 	}
 	return lc.cur.Epoch, true
@@ -72,11 +78,16 @@ func (r *turnRegistry) foldTarget(chatID vibekit.ChatID) (*buffer.Buffer, bool) 
 	return lc.cur.Buf, true
 }
 
-// openWire opens a turn the WIRE started: a turn_start with nothing pending to
+// openWire opens a turn the ENGINE started: a turn_start with nothing pending to
 // bind, or a fold arriving with no turn open at all. It takes no completion
 // handle — nothing awaits a turn it did not open, and a handle nobody releases
 // retains the record for the life of the process.
-func (r *turnRegistry) openWire(ctx context.Context, chatID vibekit.ChatID, model string, credits CreditBaseline) *Turn {
+//
+// The source is the caller's, because the two engine-opened sources are the same
+// kind of turn and differ only in whose work it is: a fold carrying a workflow
+// step's own marker opens the RUN's turn (TurnSourceWorkflowStep), and everything
+// else opens this chat's (TurnSourceWireTurnStart).
+func (r *turnRegistry) openWire(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource, model string, credits CreditBaseline) *Turn {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return nil
@@ -85,7 +96,7 @@ func (r *turnRegistry) openWire(ctx context.Context, chatID vibekit.ChatID, mode
 	if lc.state == turnOpen && lc.cur != nil {
 		return lc.cur
 	}
-	t := lc.openLocked(chatID, vibekit.TurnSourceWireTurnStart, model, credits)
+	t := lc.openLocked(chatID, source, model, credits)
 	t.acked = true
 	return t
 }
@@ -104,6 +115,8 @@ func (r *turnRegistry) reclassify(ctx context.Context, chatID vibekit.ChatID) bo
 	if pre == nil || !pre.acked || !pre.Source.Acknowledgeable() {
 		return false
 	}
+	// The agent's OWN turn, never a step's: `agentInitiated` rides the chat's
+	// content frames, and a step's marker is what routes a step elsewhere.
 	agentTurn := lc.openLocked(chatID, vibekit.TurnSourceWireTurnStart, pre.Model, pre.Credits)
 	agentTurn.acked = true
 	// Opened moves with the buffer: the agent's turn began when those frames did,

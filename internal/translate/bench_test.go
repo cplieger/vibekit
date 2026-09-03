@@ -27,6 +27,10 @@ type baseDeps struct {
 	// assert the per-step turn cap fired once and named the right step without a
 	// agent behind it.
 	stepCapBreaches []stepCapBreach
+	// foldSources records the turn source every fold site stated, in order, so a
+	// test can assert a workflow step's frame would open the RUN's turn rather
+	// than the chat's.
+	foldSources []vibekit.TurnOpenSource
 	// turnInterrupts records every InterruptTurn call, so a test can assert the
 	// sentinel ended the turn exactly once and named its cause, with no bridge
 	// behind it.
@@ -48,6 +52,10 @@ type baseDeps struct {
 	// brackets records every turn-lifecycle call, so a test can assert which
 	// bracket a frame drove without a turn registry behind it.
 	brackets []turnBracket
+	// userSteers are the steer ids this double reports as the USER's, standing
+	// in for the host's ledger of what vibekit itself sent. Absent means the
+	// agent's, which is the real ledger's answer too.
+	userSteers map[string]bool
 }
 
 // termRendered is one terminal's rendered output in the stub registry.
@@ -68,6 +76,15 @@ func newBaseDeps() *baseDeps {
 func (d *baseDeps) Output(terminalID string) (string, []vibekit.TextSpan, bool) {
 	t, ok := d.terminals[terminalID]
 	return t.text, t.spans, ok
+}
+
+// SteerOrigin stands in for the host's steer ledger. Absent from the set means
+// the agent's, matching command.SteerLedger, whose answer is total.
+func (d *baseDeps) SteerOrigin(_ vibekit.ChatID, steerID string) vibekit.SteerOrigin {
+	if d.userSteers[steerID] {
+		return vibekit.SteerOriginUser
+	}
+	return vibekit.SteerOriginAgent
 }
 
 func (d *baseDeps) Broadcast(ctx context.Context, evt vibekit.ServerEvent) {
@@ -96,8 +113,22 @@ func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, ms
 	return d.store.UpsertTurnPlan(ctx, chatID, msg)
 }
 
-func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID vibekit.ChatID) *buffer.Buffer {
+// TurnFoldTarget records the SOURCE each fold site stated, so a test can assert
+// which kind of turn a frame would have opened. The buffer itself is per chat
+// here, which is what keeps the fold sites' own behaviour observable without a
+// turn registry.
+func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer {
+	d.foldSources = append(d.foldSources, source)
 	return d.bufStore.GetOrInit(chatID)
+}
+
+// lastFoldSource is the source the most recent fold site stated, and whether any
+// fold happened at all.
+func (d *baseDeps) lastFoldSource() (vibekit.TurnOpenSource, bool) {
+	if len(d.foldSources) == 0 {
+		return 0, false
+	}
+	return d.foldSources[len(d.foldSources)-1], true
 }
 
 // The three turn-bracket operations, recorded rather than performed: the host

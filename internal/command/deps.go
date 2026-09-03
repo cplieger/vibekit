@@ -345,6 +345,13 @@ type TurnOutcomeAccess interface {
 	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, reason string)
 }
 
+// SteerRecorder is the one method CmdSteer needs of the steer ledger: record that
+// THIS server sent a steer, under the id KAS returned for it. Write-only on
+// purpose — the read is the translate layer's, on its own role.
+type SteerRecorder interface {
+	RecordUserSteer(chatID vibekit.ChatID, steerID string)
+}
+
 // Roles is the wiring-time role set: the host names which of its
 // interfaces answers each role once, at registration, and
 // RegisterDefaults hands every handler only the roles that handler's
@@ -375,6 +382,9 @@ type Roles struct {
 	Lifecycle   LifecycleAccess
 	MCP         MCPAccess
 	TurnOutcome TurnOutcomeAccess
+	// Steers records the steers this server sent, so the translate layer can
+	// tell the user's own words from a workflow reporting into the same buffer.
+	Steers SteerRecorder
 	// Tokens is the KAS credential cache, and it may also be nil: a
 	// runtime built without WithKiroCLIPath vends no token at all.
 	Tokens TokenSource

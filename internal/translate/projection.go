@@ -100,6 +100,34 @@ const workflowProgressIDPrefix = "wf-progress-"
 // workflowProgressKind is the semantic discriminator on the same row.
 const workflowProgressKind = "workflow-progress"
 
+// The two discriminators on a `send_message` note's durable copy.
+//
+// `deliverSendMessage` appends it as
+//
+//	id:      `notify-${randomUUID()}`
+//	payload: {type: "user", source: "steer", content: <the message>,
+//	          _meta: {kiro: {notification: {kind: "system-notification", …}}}}
+//
+// so it replays on the SAME frame type a real prompt does, and neither
+// discriminator above matches it: the id prefix is `notify-`, not
+// `wf-progress-`, and the kind is `system-notification`, not
+// `workflow-progress`. That is why the question a workflow step asked used to
+// come back as a user bubble on the launching chat, attributed to the reader.
+const (
+	stepNoticeIDPrefix = "notify-"
+	stepNoticeKind     = "system-notification"
+)
+
+// isStepNotice reports whether a replayed user chunk is really a step's note.
+//
+// BOTH discriminators, for isWorkflowProgress's reason: the id prefix is the one
+// measured to reach the wire on every content frame, and checking the semantic
+// field too means this keeps working if the id format moves.
+func isStepNotice(m *ACPKiroMeta) bool {
+	return strings.HasPrefix(m.Kiro.MessageID, stepNoticeIDPrefix) ||
+		m.Kiro.Notification.Kind == stepNoticeKind
+}
+
 // isWorkflowProgress reports whether a replayed user chunk is really a workflow
 // progress row.
 //
@@ -204,6 +232,20 @@ func (p *Projection) ingestUserText(raw json.RawMessage) {
 	// for the run card, not something the user said, so it must not become a
 	// user bubble full of JSON.
 	if isWorkflowProgress(&c.Meta) {
+		return
+	}
+	// A workflow step's own note rides the same frame type too. It is prose a step
+	// addressed to a person, so it is KEPT rather than dropped — it is the only
+	// durable copy of a question the ask registry holds in memory — but as an
+	// EVENT, because attributing it to the user is the defect: the transcript said
+	// the reader had typed the step's question.
+	//
+	// Emitted whole and immediately rather than accumulated, unlike a user
+	// message: KAS writes the note as one row, so there is no second chunk to
+	// wait for, and folding it into `userText` would splice it into a real
+	// prompt's text if one were mid-accumulation.
+	if isStepNotice(&c.Meta) {
+		p.appendStepNotice(&c)
 		return
 	}
 	if !p.userPending {
@@ -473,6 +515,23 @@ func (p *Projection) frameTS(timestamp string) int64 {
 		return ts
 	}
 	return p.turnStart
+}
+
+// appendStepNotice emits a step's note as an inline event message.
+//
+// Its own id and timestamp come off the wire like every other projected row, so
+// two loads of one session produce the same transcript.
+func (p *Projection) appendStepNotice(c *replayChunk) {
+	if c.Content.Text == "" {
+		return
+	}
+	p.messages = append(p.messages, vibekit.Message{
+		ID:        p.idOr(c.Meta.Kiro.MessageID),
+		Role:      vibekit.RoleEvent,
+		EventKind: vibekit.EventStepNotice,
+		Content:   c.Content.Text,
+		Ts:        replayTS(c.Meta.Kiro.Timestamp),
+	})
 }
 
 // flushUser emits the accumulated user-message text as one user message.

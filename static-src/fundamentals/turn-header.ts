@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { attachClamp, type ClampHandle } from "../clamp-text.js";
 import { chevronEl } from "../chevron.js";
 import { linkifyPaths } from "../linkify.js";
 import { iconEl } from "../icon-el.js";
@@ -56,12 +57,10 @@ const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
   failed: "This turn failed",
 };
 
-/** Above this many characters, assume the text overflows three lines when
- *  layout cannot be measured. A first guess only — `watchClamp` below replaces
- *  it with a measurement as soon as the card is laid out. Deliberately
- *  generous: a false positive shows an unneeded show-more for one frame, a
- *  false negative makes a long prompt unreadable for one frame. */
-const CLAMP_FALLBACK_CHARS = 220;
+/** The clamp's shape: three lines, and a 220-character guess for the frame
+ *  before the card is laid out. The machinery is `clamp-text.ts`'s, shared with
+ *  the steer note and the dock row; only these two numbers are the header's. */
+const CLAMP = { lines: 3, fallbackChars: 220 } as const;
 
 /** Copy handler, injected — the assistant side's Copy already routes through
  *  the actions framework, and this reaches it from a pure `fundamentals/`
@@ -113,18 +112,28 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
     className: "turn-req-more",
     type: "button",
   }) as HTMLButtonElement;
-  more.hidden = true;
-  more.addEventListener("click", () => {
-    setExpanded(header, !isExpanded(header));
-  });
   req.append(more);
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
 
+  clampOf(header, reqText, more);
   updateTurnHeader(header, d);
-  watchClamp(reqText);
   return header;
+}
+
+/** The request text's clamp. Idempotent, so a repaint reaches the one the build
+ *  wired rather than a second. The expanded flag lives on the HEADER, which is
+ *  what lets `updateTurnHeader` preserve a user expansion across a same-content
+ *  repaint. */
+function clampOf(header: HTMLElement, text: HTMLElement, more: HTMLButtonElement): ClampHandle {
+  return attachClamp(text, more, {
+    ...CLAMP,
+    isExpanded: () => isExpanded(header),
+    setExpanded: (on) => {
+      setExpanded(header, on);
+    },
+  });
 }
 
 function buildCopyButton(header: HTMLElement): HTMLButtonElement {
@@ -189,12 +198,14 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     return;
   }
 
+  const clamp = clampOf(header, text, more);
   if (d.request === undefined) {
     // No user message: naming the trigger is honest, fabricating one is not.
     header.dataset["trigger"] = "system";
     text.textContent = "Agent-initiated turn";
-    text.removeAttribute("data-clamped");
-    more.hidden = true;
+    // A typed trigger line is not a request, so it carries no clamp at all —
+    // and a later resize must not put one back.
+    clamp.disable();
     return;
   }
 
@@ -203,9 +214,11 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   if (text.textContent !== body) {
     text.textContent = body;
     linkifyPaths(text);
-    setExpanded(header, false);
+    // New content is a new request, and the expansion belonged to the old one.
+    clamp.collapse();
+  } else {
+    clamp.sync();
   }
-  syncClampAffordance(text, more, body);
 }
 
 /** Draw the request's attachment pills, rebuilding only when the list changed
@@ -237,97 +250,13 @@ function isExpanded(header: HTMLElement): boolean {
   return header.dataset["expanded"] === "";
 }
 
+/** Where the expanded flag is STORED. The clamp itself owns the attribute, the
+ *  label and `aria-expanded` (clamp-text.ts); this is only the bit `updateTurnHeader`
+ *  reads to keep a reader's expansion across a repaint. */
 function setExpanded(header: HTMLElement, on: boolean): void {
-  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
-  const more = header.querySelector<HTMLButtonElement>(":scope > .turn-req > .turn-req-more");
   if (on) {
     header.dataset["expanded"] = "";
-    text?.removeAttribute("data-clamped");
   } else {
     delete header.dataset["expanded"];
-    text?.setAttribute("data-clamped", "");
   }
-  if (more !== null) {
-    more.textContent = on ? "Show less" : "Show more";
-    more.setAttribute("aria-expanded", on ? "true" : "false");
-  }
-}
-
-/** Decide whether the show-more is needed, and keep the clamp attribute in
- *  sync. Measurement is the truth when layout is available; the character
- *  fallback covers the no-layout case so a long prompt is never clamped with
- *  no way to open it. */
-function syncClampAffordance(text: HTMLElement, more: HTMLButtonElement, body: string): void {
-  const header = text.closest<HTMLElement>(".turn-header");
-  if (header !== null && isExpanded(header)) {
-    more.hidden = false;
-    return;
-  }
-  text.setAttribute("data-clamped", "");
-  more.textContent = "Show more";
-  more.setAttribute("aria-expanded", "false");
-
-  const measured = text.scrollHeight;
-  const visible = text.clientHeight;
-  const overflows =
-    measured > 0 && visible > 0
-      ? measured - visible > 1
-      : body.length > CLAMP_FALLBACK_CHARS || countLines(body) > 3;
-  more.hidden = !overflows;
-}
-
-/** One observer for every request text on screen, because measurement is the
- *  only honest answer to "does this overflow three lines" and it is unavailable
- *  at the moment a header is built. `buildTurnHeader` returns a DETACHED
- *  element, so both `scrollHeight` and `clientHeight` read 0 there and the first
- *  verdict can only be the character guess above — which on a prompt that fits
- *  three lines is the wrong one, and nothing revisited it: a finished turn gets
- *  no further repaint, so the guess stood for the rest of the session (measured
- *  at 774px, a 292-character prompt occupies exactly three lines and was offered
- *  a show-more that opened nothing).
- *
- *  A resize callback is delivered after layout and before paint, so the first
- *  one lands in the same frame the card is inserted and the guess is never
- *  painted. It also lands at every width the reader resizes to, which the old
- *  measure-once shape could not: narrowing the window turns three lines into
- *  four, and the clamp was hiding text with no affordance to open it. */
-let clampWatcher: ResizeObserver | undefined;
-
-function watchClamp(text: HTMLElement): void {
-  clampWatcher ??= new ResizeObserver((entries) => {
-    for (const entry of entries) {
-      // A discarded turn card reports one final zero-size change with its target
-      // already out of the document, so the release needs no hook reaching in
-      // here from the render pass.
-      if (entry.target.isConnected) {
-        reviewClamp(entry.target as HTMLElement);
-      } else {
-        clampWatcher?.unobserve(entry.target);
-      }
-    }
-  });
-  clampWatcher.observe(text);
-}
-
-/** Re-decide one request's show-more against live layout. A turn the user did
- *  not ask for carries no clamp at all, so it is left alone. */
-function reviewClamp(text: HTMLElement): void {
-  const header = text.closest<HTMLElement>(".turn-header");
-  if (header?.dataset["trigger"] !== "user") {
-    return;
-  }
-  const more = header.querySelector<HTMLButtonElement>(":scope > .turn-req > .turn-req-more");
-  if (more !== null) {
-    syncClampAffordance(text, more, text.textContent);
-  }
-}
-
-function countLines(s: string): number {
-  let n = 1;
-  for (const ch of s) {
-    if (ch === "\n") {
-      n++;
-    }
-  }
-  return n;
 }

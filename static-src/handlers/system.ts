@@ -22,7 +22,7 @@ import {
   clearTurnDone,
   bumpSyncEpoch,
 } from "../store.js";
-import { dropDecisions } from "../decision-dock.js";
+import { dropDecisions, dropRunDecisions } from "../decision-dock.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
@@ -85,6 +85,11 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     forgetSteers(s.id);
     clearTurnState(s.id);
   }
+  // A run's own asks are keyed to `run:<workflowId>`, which is no chat and so has
+  // no session row for the loop above to reach. Same reasoning as dropDecisions:
+  // the connect replay re-offers whatever is still open, and it does NOT replay
+  // the settle, so an ask answered during the outage would otherwise keep its card.
+  dropRunDecisions();
   // No tab reconcile here: the tab set is its own server-owned collection,
   // so a gap is answered by re-reading it (app.ts wires `transport:gap` to
   // `listTabs`); a deleted chat's tabs are already closed by the coordinator.

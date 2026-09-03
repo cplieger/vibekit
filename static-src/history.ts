@@ -622,8 +622,8 @@ function buildRow(row: HistoryRow): HTMLElement {
     title,
     showStatus ? el("span", { className: "history-status" }, row.status.replace(/_/g, " ")) : null,
     // The glyph the verdict is painted onto. `.tool-icon` is the DOM contract of
-    // the shared outcome vocabulary (a relative box for the composited badge),
-    // and the run's own icon is what carries the tint.
+    // the shared outcome vocabulary, and the run's own icon is the identity glyph
+    // `applyOutcome` captures and tints.
     row.outcome !== null ? el("span", { className: "tool-icon" }, iconEl(ICON_TAB_RUN)) : null,
     el(
       "span",

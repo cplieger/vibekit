@@ -48,6 +48,46 @@ describe("every outcome the wire can send has a treatment", () => {
     expect(refused.body.trim()).not.toBe(unknown.body.trim());
   });
 
+  it("paints the transcript's in-flight marks with the TAB STRIP's ink", () => {
+    // One fact, one violet. Both of these used to take `--c-accent`, a
+    // near-neighbour of the tab dot's `--c-dot-working`, so "a turn is running"
+    // carried two colours depending on which surface you read it from. The two
+    // marks are asserted together because that agreement is the whole point —
+    // repointing one and not the other would leave the transcript disagreeing
+    // with itself.
+    const dot = ruleContaining(turns, '.turn-header[data-outcome="running"] .turn-dot');
+    expect(dot.body).toContain("var(--c-dot-working)");
+    expect(dot.body).not.toContain("--c-accent");
+
+    const marker = ruleContaining(turns, '.rail-marker[data-outcome="running"]');
+    expect(marker.body).toContain("var(--c-dot-working)");
+    expect(marker.body).not.toContain("--c-accent");
+  });
+
+  it("keeps the header dot breathing, since motion is its second channel", () => {
+    // The dot renders only below 48rem, where the tab strip is off-canvas, so it
+    // is the off-screen-work case the pulsing-dot ruling carves out
+    // (13-messages.css). Motion is also what separates `running` from a still
+    // outcome without relying on hue — dropping it would leave the two
+    // yellow/red/neutral outcomes and this one separable by colour alone.
+    const dot = ruleContaining(turns, '.turn-header[data-outcome="running"] .turn-dot');
+    expect(dot.body).toMatch(/animation:\s*vk-breathe/u);
+  });
+
+  it("shows no ledger glyph at all for a running turn", () => {
+    // The footer says how a turn ENDED. Its accent ring was indistinguishable
+    // from the resting green one at 8px and its tooltip was the only channel
+    // saying otherwise, so the arm went — and it had to become `display: none`
+    // rather than a deletion, because the base rule is a green ring meaning
+    // CLEAN and falling through to it puts a finished turn's mark on a live one.
+    const rule = ruleContaining(turns, '.turn-footer[data-outcome="running"] .turn-ledger-glyph');
+    expect(rule.body).toMatch(/display:\s*none/u);
+    expect(rule.body).not.toMatch(/border-color:/u);
+    // Folded into `completed`'s rule, which is the honest shape: the two states
+    // want the same treatment for the same reason.
+    expect(rule.selector).toContain('.turn-footer[data-outcome="completed"] .turn-ledger-glyph');
+  });
+
   it("never leaves the ledger glyph reading as a clean turn", () => {
     // The resting glyph is `border: 1.5px solid var(--c-green)` with no fill — a
     // green ring. So an outcome with no rule of its own does not render as

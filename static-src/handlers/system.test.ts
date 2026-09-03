@@ -117,14 +117,6 @@ vi.mock("../model-switcher.js", () => ({
   queueModelSwitch: undefined,
   switchModel: undefined,
 }));
-const mockOnTurnEnded = vi.fn();
-vi.mock("../banner-stack.js", () => ({
-  onTurnEnded: mockOnTurnEnded,
-  showBanner: vi.fn(),
-  dismissBanner: undefined,
-  clearBanners: undefined,
-  mountBannerStack: undefined,
-}));
 
 // Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
 // both transport:gap and mode_changed.
@@ -382,6 +374,37 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(hasPendingDecision("a")).toBe(false);
   });
 
+  it("drops a RUN-keyed ask too, which the per-session sweep cannot reach", async () => {
+    // The sweep above walks `getSessions()`, and `run:<workflowId>` is no chat, so
+    // a parentless run's ask — and any ask the server reconstructed for a run
+    // nothing hosts — escaped it. The replay re-offers what is still open and does
+    // NOT replay the settle, so an ask answered during the outage kept its card:
+    // the click then answered 409 and the dock spliced a closed question.
+    const { pushDecision, runPendingAsks, _resetForTest } = await import("../decision-dock.js");
+    _resetForTest();
+    setSessions([makeSession("a")]);
+    pushDecision({
+      kind: "run_input",
+      chatID: "run:wf_1",
+      runID: "wf_1",
+      askID: "reconciled:root/review",
+      payload: {
+        workflow_id: "wf_1",
+        ask_id: "reconciled:root/review",
+        node_id: "review",
+        step_session_id: "sess_step",
+        agent_name: "reviewer",
+        question: "",
+        asked_at: "2026-09-03T10:00:00Z",
+      },
+      submit: vi.fn(),
+    });
+    expect(runPendingAsks("wf_1").count).toBe(1);
+
+    fireGap();
+    expect(runPendingAsks("wf_1").count).toBe(0);
+  });
+
   it("clears every session's steers, because they are claims it can no longer support", () => {
     // Steers are KAS's state and the gap means the frames that resolved or
     // dropped them may be among the lost ones. A chip saying "the agent hasn't
@@ -389,8 +412,8 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     // cannot make it, so it stops making it. Same reasoning as clearing
     // `thinking` on every chat above.
     setSessions([makeSession("a"), makeSession("b", { thinking: true })]);
-    recordSteerQueued("a", { id: "steer-a", text: "one" });
-    recordSteerQueued("b", { id: "steer-b", text: "two" });
+    recordSteerQueued("a", { id: "steer-a", text: "one", origin: "user" });
+    recordSteerQueued("b", { id: "steer-b", text: "two", origin: "user" });
 
     fireGap();
     expect(steerCount("a")).toBe(0);
@@ -422,20 +445,19 @@ describe("mode_changed handler", () => {
 // P10: the gap door and the turn_ended door share ONE outcome-independent core.
 //
 // The gap reconciler was a second independent spelling of that teardown and was
-// short by four effects — the transient banners, both in-flight markers and the
-// rail — so a reconnect left a rate-limit banner over a finished turn, a chunk
-// watermark that dropped the next turn's early deltas, and a live-message marker
-// that made a later refetch keep a message the chat file already held.
+// short by three effects — both in-flight markers and the rail — so a reconnect
+// left a chunk watermark that dropped the next turn's early deltas, and a
+// live-message marker that made a later refetch keep a message the chat file
+// already held.
 // ---------------------------------------------------------------------------
 
 describe("the gap reconcile runs the shared turn teardown", () => {
   beforeEach(() => {
     mockRefreshTurnRail.mockClear();
-    mockOnTurnEnded.mockClear();
     mockDrainModelSwitchQueue.mockClear();
   });
 
-  it("clears the in-flight marker and the banners for every chat, the rail for none", () => {
+  it("clears the in-flight marker for every chat, the rail for none", () => {
     setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
     setActive("");
     noteLiveTurnMessage("chat-1", "m-live");
@@ -443,10 +465,9 @@ describe("the gap reconcile runs the shared turn teardown", () => {
     fireGap();
 
     expect(liveTurnMessage("chat-1")).toBeUndefined();
-    expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-1");
     expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-1");
     // And every chat, not only the active one: a gap describes the connection.
-    expect(mockOnTurnEnded).toHaveBeenCalledWith("chat-2");
+    expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-2");
     // The rail left the shared teardown: a gap makes every chat's index equally
     // unsupportable, which the epoch bump records, so no per-chat GET goes out
     // here (with no active chat, none at all) — each rail heals on activation.

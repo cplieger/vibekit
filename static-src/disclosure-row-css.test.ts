@@ -11,7 +11,7 @@
 // the way `cmd/bundle` concatenates it, because equal-specificity ties in this
 // app are decided by that order rather than by the selectors.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 let styleEl: HTMLStyleElement;
 let host: HTMLElement;
@@ -62,6 +62,18 @@ function mount(node: HTMLElement): HTMLElement {
 
 function css(el: Element, prop: string): string {
   return getComputedStyle(el).getPropertyValue(prop);
+}
+
+/** The content-visibility of a `<details>`' UA content box.
+ *
+ *  The ONLY local read measured to discriminate a skipped disclosure subtree: a
+ *  skipped button still reports a full-size `getBoundingClientRect` (24x24 for
+ *  these) and still computes `display: inline-flex`, so box and display
+ *  assertions stay green while the subtree is unpainted and unhittable. Hit
+ *  testing discriminates too but not in this file's synthetic host, where the
+ *  transcript ancestors mounted above cover the probe point. */
+function contentSkipped(details: Element): boolean {
+  return getComputedStyle(details, "::details-content").contentVisibility === "hidden";
 }
 
 /** Every rule that writes one of `props` for `el`, counting `:hover` rules as
@@ -222,20 +234,79 @@ describe("tool card summary affordance", () => {
   });
 });
 
+/** A `<details>` whose content must render INLINE above its media rule, with one
+ *  real button inside so the box it reports is a paint box rather than an empty
+ *  span's zero.
+ *
+ *  `display` on the elements is NOT the observable here: the UA hides a closed
+ *  disclosure through `::details-content`, whose box survives `display: contents`
+ *  on the details, so every element can read `display: inline-flex` while the
+ *  subtree is content-visibility-skipped — unpainted, zero-size, out of the a11y
+ *  tree. That is what shipped: four turn actions and both file-browser New
+ *  actions were unreachable at every desktop width, with the summary hidden so
+ *  nothing could open them. Assert the BOX. */
+function inlineDisclosure(
+  menuClass: string,
+  contentClass: string,
+  btnClass: string,
+): HTMLDetailsElement {
+  const details = document.createElement("details");
+  details.className = menuClass;
+  const summary = document.createElement("summary");
+  summary.className = `${btnClass} ${menuClass === "turn-actions-more" ? "turn-action-more" : "fb-new-trigger"}`;
+  const content = document.createElement("span");
+  content.className = contentClass;
+  const btn = document.createElement("button");
+  btn.className = btnClass;
+  btn.textContent = "x";
+  content.appendChild(btn);
+  details.append(summary, content);
+  return details;
+}
+
 describe("turn action overflow", () => {
-  it("keeps secondary actions inline and the More summary hidden on desktop", () => {
-    const details = document.createElement("details");
-    details.className = "turn-actions-more";
-    const summary = document.createElement("summary");
-    summary.className = "turn-action-btn turn-action-more";
-    const secondary = document.createElement("span");
-    secondary.className = "turn-actions-secondary";
-    details.append(summary, secondary);
-    mount(details);
+  it("renders the secondary actions inline with the More summary hidden on desktop", () => {
+    const details = inlineDisclosure(
+      "turn-actions-more",
+      "turn-actions-secondary",
+      "turn-action-btn",
+    );
+    const slot = document.createElement("span");
+    slot.className = "turn-actions-buttons";
+    slot.appendChild(details);
+    mount(slot);
+
+    const summary = details.querySelector("summary")!;
 
     expect(details.open).toBe(false);
     expect(css(summary, "display")).toBe("none");
-    expect(css(secondary, "display")).toBe("inline-flex");
+    // Closed, summary-less, and NOT skipped: the four actions really render.
+    expect(contentSkipped(details)).toBe(false);
+  });
+});
+
+describe("file browser New menu", () => {
+  it("renders both actions in the toolbar row with the trigger hidden on desktop", () => {
+    const bar = document.createElement("div");
+    bar.className = "view-toolbar-inner";
+    const details = inlineDisclosure("fb-new-menu", "fb-new-actions", "icon-btn");
+    const second = document.createElement("button");
+    second.className = "icon-btn";
+    second.textContent = "y";
+    details.querySelector(".fb-new-actions")!.appendChild(second);
+    bar.appendChild(details);
+    mount(bar);
+
+    const summary = details.querySelector("summary")!;
+    const [a, b] = [...details.querySelectorAll<HTMLElement>(".fb-new-actions > .icon-btn")];
+
+    // The trigger is phone-only. `.view-toolbar-inner .icon-btn` used to restate
+    // `display` at (0,2,0) and outrank this hide, so it rendered on desktop.
+    expect(css(summary, "display")).toBe("none");
+    expect(contentSkipped(details)).toBe(false);
+    // Side by side on one row, not stacked inside the UA's block content box.
+    expect(b!.getBoundingClientRect().y).toBe(a!.getBoundingClientRect().y);
+    expect(b!.getBoundingClientRect().x).toBeGreaterThan(a!.getBoundingClientRect().x);
   });
 });
 
@@ -461,7 +532,14 @@ describe("sub-page menu bars", () => {
     expect(css(label, "display")).toBe("none");
   });
 
-  it("places the active-section title after the menu bar", () => {
+  // One element, two positions. On desktop the title LEADS the bar, and that is
+  // load-bearing rather than cosmetic: `.chat-toolbar` floats over the top-right
+  // corner of every view, so a full-width bar with nothing above it renders its
+  // right end underneath those buttons. Below 48rem the title FOLLOWS the bar,
+  // where the labels are gone and this line is the only text naming the active
+  // section. The layout half is asserted at whichever width the test page has;
+  // the narrow half is asserted as a source fact so it is pinned either way.
+  it("leads the menu bar on desktop and follows it on a narrow bar", () => {
     const header = document.createElement("header");
     header.className = "settings-header";
     const title = document.createElement("div");
@@ -471,6 +549,105 @@ describe("sub-page menu bars", () => {
     header.append(title, bar);
     mount(header);
 
-    expect(Number(css(title, "order"))).toBeGreaterThan(Number(css(bar, "order")));
+    const titleBox = title.getBoundingClientRect();
+    const barBox = bar.getBoundingClientRect();
+    if (matchMedia("(width <= 48rem)").matches) {
+      expect(Number(css(title, "order"))).toBeGreaterThan(Number(css(bar, "order")));
+      expect(titleBox.top).toBeGreaterThanOrEqual(barBox.bottom);
+    } else {
+      expect(Number(css(title, "order"))).toBe(Number(css(bar, "order")));
+      expect(titleBox.bottom).toBeLessThanOrEqual(barBox.top);
+    }
+
+    expect(ruleBody(loadCSS("17-settings.css"), ".settings-title-row")).toMatch(
+      /@media\s*\(width\s*<=\s*48rem\)\s*\{[^}]*order:\s*1/,
+    );
+  });
+});
+
+// The steer note is a CARD on the tool-card box, not a left rail. `#vibekit-ui`
+// reserves a leading rail for work this agent did not do itself — the run card
+// and the delegated-work card — so a steer carrying one was borrowing the wrong
+// vocabulary, and the whole of Bug 4 was that it did.
+describe("the mid-turn steer note's box", () => {
+  function note(state: "read" | "dropped", origin: "user" | "agent"): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "steer-note";
+    el.dataset["state"] = state;
+    el.dataset["origin"] = origin;
+    const head = document.createElement("div");
+    head.className = "steer-note-head";
+    const label = document.createElement("span");
+    label.className = "steer-note-label";
+    label.textContent = "Your mid-turn message";
+    head.append(label);
+    const body = document.createElement("div");
+    body.className = "steer-note-body";
+    const text = document.createElement("div");
+    text.className = "steer-note-text";
+    text.textContent = "actually target main";
+    body.append(text);
+    el.append(head, body);
+    return mount(el);
+  }
+
+  it("resolves to the tool card's own fill and radius", () => {
+    const n = note("read", "user");
+    const card = document.createElement("div");
+    card.className = "tool-call";
+    const reference = mount(card);
+    // Read off `.tool-call` rather than hardcoded, so the two cannot drift: the
+    // claim is that they are the SAME box, not that either is a given colour.
+    const wantBG = css(reference, "background-color");
+    const wantRadius = css(reference, "border-top-left-radius");
+
+    mount(n);
+    expect(css(n, "background-color")).toBe(wantBG);
+    expect(css(n, "border-top-left-radius")).toBe(wantRadius);
+  });
+
+  it("carries a 1px border on every side, and no rail on any of them", () => {
+    for (const state of ["read", "dropped"] as const) {
+      const n = note(state, "user");
+      for (const side of ["top", "right", "bottom", "left"] as const) {
+        const w = Number.parseFloat(css(n, `border-${side}-width`));
+        expect(w, `${state} border-${side}-width`).toBeCloseTo(1, 1);
+      }
+    }
+  });
+
+  // The rail's actual writer, so a re-added `border-inline-start: 3px` fails here
+  // rather than only being noticed on screen.
+  it("has no rule anywhere writing a leading border wider than 1px", () => {
+    const sheet = loadCSS("13-messages.css");
+    for (const sel of [".steer-note", '.steer-note[data-state="dropped"]']) {
+      const body = ruleBody(sheet, sel);
+      expect(body, sel).not.toMatch(/border-inline-start:\s*[2-9]/);
+      expect(body, sel).not.toMatch(/border-(inline-start|left)-width:\s*[2-9]/);
+    }
+    // And nowhere else in the slice either: the rail could come back on any
+    // selector, so the whole sheet is the honest scope for its absence.
+    expect(sheet).not.toMatch(/\.steer-note[^{]*\{[^}]*border-inline-start:\s*[2-9]/);
+  });
+
+  // Both origins keep the accent-mixed border: both are genuinely input into a
+  // running turn, and the origin is carried by the LABEL and the GLYPH rather
+  // than by a hue, which WCAG 1.4.1 would forbid as the only channel anyway.
+  it("gives the two origins the same border, since the label is what separates them", () => {
+    const mine = note("read", "user");
+    const mineBorder = css(mine, "border-top-color");
+    const theirs = note("read", "agent");
+    expect(css(theirs, "border-top-color")).toBe(mineBorder);
+  });
+
+  // The transcript has ONE measure and the card is it. This carried
+  // `--content-max-w`, the same 122px-dead-gutter defect removed from
+  // `.message.assistant` and `.turn-req-text`.
+  it("takes the card's own width rather than capping its own measure", () => {
+    host.style.inlineSize = "900px";
+    const n = note("read", "user");
+    expect(css(n, "max-width")).toBe("none");
+    expect(n.getBoundingClientRect().width).toBeCloseTo(900, 0);
+    host.style.removeProperty("inline-size");
   });
 });

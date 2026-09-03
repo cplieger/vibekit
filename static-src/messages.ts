@@ -1506,9 +1506,14 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
  *  an open card's mount is byte-identical to the pre-tier renderer's. */
 function buildTurn(t: Turn): HTMLElement {
   const card = el("div", { className: "turn" });
-  // No `data-outcome` on the CARD: the outcome is carried by the header dot,
-  // the footer glyph and the rail marker, and the leading-edge hairline that
-  // was this attribute's only reader is gone (29-turns.css).
+  // No `data-outcome` on the CARD: the leading-edge hairline that was this
+  // attribute's only reader is gone (29-turns.css). Three surfaces carry the
+  // outcome instead, and none of them reads the card: the rail marker at every
+  // width the rail is shown, the footer glyph for every outcome EXCEPT
+  // `completed` and `running` — one rule hides it for both, because the clean
+  // case needs no mark and the footer only says how a turn ENDED — and the header
+  // dot only below 48rem, where the tab strip is off-canvas and the transcript is
+  // the only place the outcome can be read.
   // The permalink target. `#turn-{n}` addresses a turn from a ledger row, a
   // search hit or the rail.
   card.id = turnAnchorID(t.n);

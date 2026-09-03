@@ -7,5 +7,6 @@ exports[`EVENT_RENDER_MAP exhaustiveness > boundary metadata snapshot 1`] = `
   "infra_safety_blocked",
   "interrupted",
   "model_switched",
+  "step_notice",
 ]
 `;

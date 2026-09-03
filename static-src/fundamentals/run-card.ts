@@ -23,13 +23,14 @@
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
-import { STATE_BADGE, STATE_WORD, stateOf, withAsk } from "../exec-view/status.js";
+import { STATE_WORD, paintStateMark, stateOf, withAsk } from "../exec-view/status.js";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
 import {
+  isNeedInputPause,
   leafNodes,
   nodePathOf,
   runCounters,
@@ -64,6 +65,25 @@ export interface RunAsks {
 }
 
 const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
+
+/** The pause reason as a sentence a reader can act on.
+ *
+ *  The two `need_input` literals get replaced rather than quoted. KAS writes
+ *  `Step requested user input via send_message.` for a step's own question and
+ *  `Step '<id>' is waiting for user input.` when a plain Resume re-parks one, and
+ *  both name a TOOL and a mechanism where what the reader needs to know is that
+ *  somebody owes an answer. The arm ABOVE this one already renders the question
+ *  itself whenever the ask reached the dock, so this is the case where it did not —
+ *  a restart lost the text, or this client has not been handed it yet. */
+function pauseSentence(reason: string | undefined): string {
+  if (reason === undefined || reason === "") {
+    return "Waiting";
+  }
+  if (isNeedInputPause(reason)) {
+    return "A step is waiting for your answer";
+  }
+  return `Waiting: ${reason}`;
+}
 
 /** A run's status as one scannable word. `paused` reads "waiting", not
  *  "paused": KAS pauses for a watch, a retry budget, and a loop policy alike,
@@ -271,7 +291,7 @@ export function buildRunCard(
     const shown = withAsk(state, asks.nodes.has(node.nodeId));
     row.root.dataset["status"] = shown;
     row.root.dataset["nodeType"] = node.type;
-    row.glyph.textContent = STATE_BADGE[shown];
+    paintStateMark(row.glyph, shown);
     // Via a local, not directly: `undefined` is not a valid value for an
     // optional property under exactOptionalPropertyTypes.
     if (node.startedAt === undefined) {
@@ -392,11 +412,7 @@ export function buildRunCard(
       }
     } else if (state?.status === "paused") {
       kind = "paused";
-      parts.push(
-        state.pauseReason === undefined || state.pauseReason === ""
-          ? "Waiting"
-          : `Waiting: ${state.pauseReason}`,
-      );
+      parts.push(pauseSentence(state.pauseReason));
       const code = state.pauseDetail?.code;
       if (code !== undefined && code !== "") {
         parts.push(`after a transient error (${code})`);

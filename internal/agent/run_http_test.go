@@ -9,11 +9,13 @@ package agent
 // map reached through a test-only accessor.
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/runlease"
@@ -215,4 +217,154 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 		t.Errorf("chat_id = %q for a pre-upgrade row, want empty (no chat to exempt)",
 			out.Runs[0].ChatID)
 	}
+}
+
+// answerReq builds a POST /api/runs/{id}/answer request with its path value set,
+// which the handler reads rather than parsing the URL.
+func answerReq(t *testing.T, id, askID, text string) *http.Request {
+	t.Helper()
+	body, err := json.Marshal(vibekit.RunAnswerRequest{AskID: askID, Text: text})
+	if err != nil {
+		t.Fatalf("Setup: marshalling the answer body: %s", err)
+	}
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/runs/"+id+"/answer", bytes.NewReader(body))
+	req.SetPathValue("id", id)
+	return req
+}
+
+// TestHandleAnswer pins the endpoint's own guards and the ONE status that is not
+// a fault: a 409 means another surface answered first or the step moved on, which
+// is a state of the world rather than something the reader can redo.
+func TestHandleAnswer(t *testing.T) {
+	t.Run("it refuses a non-POST", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleAnswer(rec, httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/answer", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("GET = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		}
+	})
+
+	t.Run("it refuses a missing id", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleAnswer(rec, httptest.NewRequest(http.MethodPost, "/api/runs//answer", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("no id = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("an empty answer is a 400", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "  "))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("an empty answer = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("an unknown ask is a 409 naming the situation", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "the main branch"))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("an unknown ask = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "already been answered") {
+			t.Errorf("the 409 body = %s, want it to name the situation", rec.Body.String())
+		}
+	})
+
+	t.Run("a run with no bridge is a 409 too", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		h.runs.asks.Add(&runAsk{
+			chatID: "run:wf_1",
+			payload: vibekit.RunInputNeededPayload{
+				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
+			},
+		})
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "the main branch"))
+		if rec.Code != http.StatusConflict {
+			t.Errorf("an unhosted run = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+		}
+	})
+
+	t.Run("the happy path answers 200", func(t *testing.T) {
+		h, _, br := newTestHub()
+		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+		h.runs.asks.Add(&runAsk{
+			chatID: "run:wf_1",
+			payload: vibekit.RunInputNeededPayload{
+				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
+			},
+		})
+		rec := httptest.NewRecorder()
+		h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "the main branch"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the happy path = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+	})
+}
+
+// TestSetStepStatus pins the allowlist and the bridge resolution.
+func TestSetStepStatus(t *testing.T) {
+	t.Run("it accepts running as the continue-without-answering verb", func(t *testing.T) {
+		h, _, br := newTestHub()
+		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+		h.runs.asks.Add(&runAsk{
+			chatID: "run:wf_1",
+			payload: vibekit.RunInputNeededPayload{
+				WorkflowID: "wf_1", AskID: "a1", NodeID: "review",
+			},
+		})
+
+		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepRunning); err != nil {
+			t.Fatalf("SetStepStatus(running) = %v, want nil", err)
+		}
+		// `running` clears KAS's completionSignal and re-drives the step with its
+		// DEFAULT continuation, so whatever it asked is no longer answerable and
+		// every surface still showing that card has to be told.
+		if h.runs.asks.HasRun("wf_1") {
+			t.Error("continuing the step left its question live")
+		}
+		settled := settledPayloads(t, h)
+		if len(settled) != 1 {
+			t.Fatalf("run_input_settled events = %d, want 1", len(settled))
+		}
+		// SettledByUser HERE, unlike the node-completion door: this verb is only ever
+		// reached by a reader clicking Continue-without-answering, so it IS their
+		// decision and another window is correctly told a person made it.
+		if got := settled[0]["settled_by"]; got != string(vibekit.SettledByUser) {
+			t.Errorf("settled_by = %q, want %q", got, vibekit.SettledByUser)
+		}
+	})
+
+	t.Run("an unknown status is still refused", func(t *testing.T) {
+		h, _, br := newTestHub()
+		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", "paused"); err == nil {
+			t.Error("SetStepStatus(paused) = nil, want a refusal")
+		}
+	})
+
+	t.Run("a chat-parented run resolves the launching chat's bridge", func(t *testing.T) {
+		h, cs, br := newTestHub()
+		// An AGENT-launched run has no bridge of its own and never will: KAS parents
+		// it on the calling chat's session. Keyed on `run:<id>` alone this whole
+		// population answered errRunNotHosted unconditionally, which is exactly the
+		// population an agent creates.
+		cs.Chats["c1"] = &vibekit.Chat{ID: "c1", ACPSessionID: "sess_parent"}
+		h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+		br.callResults = map[string]json.RawMessage{
+			methodKiroWorkflowList: json.RawMessage(
+				`{"runs":[{"workflowId":"wf_1","name":"publish","status":"paused","parentSessionId":"sess_parent"}]}`,
+			),
+		}
+
+		if err := h.runs.SetStepStatus(t.Context(), "wf_1", "review", runStepCompleted); err != nil {
+			t.Errorf("SetStepStatus on an agent-launched run = %v, want nil", err)
+		}
+	})
 }

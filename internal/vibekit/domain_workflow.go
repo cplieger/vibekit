@@ -164,6 +164,82 @@ type RunStepPayload struct {
 	Delta      string      `json:"delta,omitempty"`
 }
 
+// RunInputNeededPayload is the payload for type="run_input_needed": a workflow
+// STEP asked a question and the run is parked until somebody answers it.
+//
+// The FIFTH run event, and the second that is not an invalidation. It carries its
+// payload for the same reason run_step does and the three invalidations do not:
+// the question text is on no endpoint. KAS parks the run with one fixed literal
+// in `state.pauseReason` and an empty `pauseDetail`, so `inspect` can say a step
+// wants input and can never say what it asked.
+//
+// WorkflowID is the IDENTITY, never a chat id. The envelope's chat id is the
+// launching chat for an agent-parented run and empty for a parentless one, so the
+// ask must be findable from the run in both cases.
+//
+// Question MAY BE EMPTY, and a consumer has to render that case. The ask registry
+// is in memory, so a restart loses the text while the run stays parked; the read
+// path then synthesises an ask from the paused leaf rather than stranding the
+// user, and an empty question is what that ask carries.
+//
+// There is deliberately no Severity field. KAS's `send_message` carries four, and
+// only `warning` parks a run — the other three advance, complete or fail the step
+// with no wait — so the translator drops them and a severity here would be a
+// field with one possible value.
+type RunInputNeededPayload struct {
+	WorkflowID string `json:"workflow_id"`
+	// AskID is the ask's identity within its run, and the value an answer names.
+	// Composed server-side with keyenc so it cannot be forged by a separator
+	// inside one of its parts: the notification's own id for a live ask, the
+	// paused leaf's node PATH for one synthesised after a restart. The second
+	// spelling has to be deterministic, because the read path that mints it runs
+	// on every refetch and a fresh id per read would stack duplicate cards.
+	AskID string `json:"ask_id"`
+	// NodeID addresses the asking step, and it is what every ask surface in this
+	// app already joins on (the run card marks the row whose node id an ask
+	// names). MAY BE EMPTY: KAS puts the node id on the notification only when the
+	// caller is a step, and a run blocked by an unattributable ask is still
+	// blocked, so the count travels separately from the row.
+	//
+	// There is deliberately no NodePath. The step-session registry holds a node
+	// ID and no path, so a live ask could never carry one, and a field populated
+	// on the restart-reconcile path alone would invite a reader to rely on it.
+	NodeID string `json:"node_id"`
+	// StepSessionID is the ANSWER ADDRESS: a `session/prompt` sent to the paused
+	// step's own session is what KAS reroutes into the run. Empty when the notify
+	// frame carried no caller session, in which case the answer path resolves it
+	// from a fresh `inspect`.
+	StepSessionID string `json:"step_session_id"`
+	AgentName     string `json:"agent_name"`
+	Question      string `json:"question"`
+	AskedAt       string `json:"asked_at"`
+}
+
+// RunInputSettledPayload is the payload for type="run_input_settled": the ask is
+// answered or waived, so every surface still showing it must retire the card.
+//
+// Its own event rather than a member of decision_settled, whose payload is keyed
+// by an int64 JSON-RPC request id. A run ask has no open request behind it, so a
+// second identity field on that payload would make one shape carry two mutually
+// exclusive keys — one per family — and neither consumer could tell which to read
+// without first knowing the kind.
+type RunInputSettledPayload struct {
+	WorkflowID string    `json:"workflow_id"`
+	AskID      string    `json:"ask_id"`
+	SettledBy  SettledBy `json:"settled_by"`
+}
+
+// RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
+//
+// Text empty is a 400 rather than a waive. Continuing without an answer is a
+// DIFFERENT verb (POST /api/runs/{id}/step with status `running`), because it
+// drives the step with KAS's default continuation instead of the user's words and
+// a reader must not reach it by submitting an empty box.
+type RunAnswerRequest struct {
+	AskID string `json:"ask_id"`
+	Text  string `json:"text"`
+}
+
 // RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
 //
 // The recipe is named by its `source` exactly as `_kiro/workflow/listRecipes`

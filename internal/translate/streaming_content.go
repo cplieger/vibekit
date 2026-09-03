@@ -48,19 +48,24 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	if chunk.Meta.Kiro.AgentInitiated {
 		t.turns.ReviseTurnBinding(ctx, chatID)
 	}
-	buf := t.buffers.TurnFoldTarget(ctx, chatID)
-	t.ensureTurnStarted(ctx, chatID, buf)
-
 	// A workflow STEP's frames arrive on this chat's connection with an EMPTY
 	// agentSubtaskId (KAS stamps that only on tool frames), so without this the
 	// step's prose extends the parent agent's trailing block — empty matches
 	// empty. The step's own `_meta.kiro.workflow` supplies an instance-unique
 	// key instead; see ACPWorkflowMeta.SubtaskID.
+	//
+	// Read BEFORE the fold, because it also decides what kind of turn a fold with
+	// no open turn opens: the FRAME's own marker rather than the dispatcher's
+	// attribution, which is self-describing and stays right when the step registry
+	// is cold after a restart.
 	subtask := chunk.Meta.Kiro.AgentSubtaskID
 	workflowSubtask := chunk.Meta.Kiro.Workflow.SubtaskID()
 	if workflowSubtask != "" {
 		subtask = workflowSubtask
 	}
+
+	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(workflowSubtask != ""))
+	t.ensureTurnStarted(ctx, chatID, buf)
 
 	// kiro-cli's security filter cancelled a tool call: this chunk is the
 	// whole notice, and no session/prompt response is coming. Detected
@@ -232,7 +237,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw 
 	// obeys the same mute every other content frame obeys: a prime that
 	// emitted a plan would otherwise write a transcript row while every
 	// other frame of that turn was suppressed.
-	if buf := t.buffers.TurnFoldTarget(ctx, chatID); buf != nil && buf.Muted() {
+	if buf := t.buffers.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart); buf != nil && buf.Muted() {
 		return
 	}
 	msg := vibekit.Message{

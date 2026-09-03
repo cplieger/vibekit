@@ -1,0 +1,110 @@
+{
+  "_comment": [
+    "Which KAS pauseReason means a workflow step is waiting on a PERSON, as a table",
+    "both languages must satisfy.",
+    "",
+    "The rule is implemented twice on purpose and neither copy can go, because they",
+    "answer different questions. The server's (internal/agent/run_ask.go",
+    "needInputPause) decides whether to reconstruct an answerable ask for a run this",
+    "process found already parked — the ask registry is in memory, so a container",
+    "restart leaves the run waiting with the question text gone. The client's",
+    "(static-src/run-store.ts isNeedInputPause) decides what a reader is told when",
+    "no ask reached this client at all, so the pause alert says a step is waiting for",
+    "an answer instead of restating a KAS literal.",
+    "",
+    "This file is the contract between them, on internal/chat/testdata/",
+    "turn_outcomes.json's pattern. It is read by TestNeedInputPauseContract (Go) and",
+    "by run-store-pause.node.test.ts (TypeScript). A KAS wording change applied in",
+    "one language fails the other language's test, which is the only mechanism",
+    "keeping the two in agreement — there is no code generation for behaviour, and",
+    "the two failures it prevents are opposite and both silent: the server stops",
+    "reconstructing asks after a restart while the client keeps rewriting the alert,",
+    "or the reverse.",
+    "",
+    "`reason` is the verbatim pauseReason string; `want` is whether it means a person",
+    "owes an answer. The three true spellings are KAS's own: send_message's park,",
+    "the fallback a plain Resume re-parks under (resume clears the run's pauseReason",
+    "and leaves the step node's completionSignal, so the next executeStep parks again",
+    "naming the node), and the same condition on a step that asked for a message.",
+    "The false rows are the OTHER pause reasons KAS writes, which must not reach the",
+    "predicate: mistaking one for a question offers a card nobody can answer, and it",
+    "would take the run's real reason off the reader's screen."
+  ],
+  "cases": [
+    {
+      "name": "send_message's own park",
+      "reason": "Step requested user input via send_message.",
+      "want": true
+    },
+    {
+      "name": "the re-park fallback naming its node",
+      "reason": "Step 'review' is waiting for user input.",
+      "want": true
+    },
+    {
+      "name": "the re-park fallback for a step awaiting a message",
+      "reason": "Step 'review' is waiting for the next user message.",
+      "want": true
+    },
+    {
+      "name": "a node id carrying a quote does not break the match",
+      "reason": "Step 'it's here' is waiting for user input.",
+      "want": true
+    },
+    {
+      "name": "an empty node id still matches",
+      "reason": "Step '' is waiting for user input.",
+      "want": true
+    },
+    {
+      "name": "the restart-orphan reason is involuntary, not a question",
+      "reason": "Interrupted by agent restart; the previously running step was paused for resume.",
+      "want": false
+    },
+    {
+      "name": "a transient network pause is involuntary",
+      "reason": "Transient connection error (EAI_AGAIN); the run is paused and can be resumed.",
+      "want": false
+    },
+    {
+      "name": "an interrupted step is involuntary",
+      "reason": "Step interrupted (agent shutdown or connection reset); will resume.",
+      "want": false
+    },
+    {
+      "name": "a near miss on the interpolated end is refused",
+      "reason": "Step 'review' is waiting.",
+      "want": false
+    },
+    {
+      "name": "a policy stop at maxIterations is not a question",
+      "reason": "Repeat 'loop' reached maxIterations.",
+      "want": false
+    },
+    {
+      "name": "a failed run is not a question",
+      "reason": "Run failed: the step exited non-zero.",
+      "want": false
+    },
+    {
+      "name": "an empty reason is not a question",
+      "reason": "",
+      "want": false
+    },
+    {
+      "name": "the prefix alone is not enough",
+      "reason": "Step 'review' completed.",
+      "want": false
+    },
+    {
+      "name": "the suffix alone is not enough",
+      "reason": "The build is waiting for user input.",
+      "want": false
+    },
+    {
+      "name": "a near miss on the send_message literal is refused",
+      "reason": "Step requested user input via send_message",
+      "want": false
+    }
+  ]
+}

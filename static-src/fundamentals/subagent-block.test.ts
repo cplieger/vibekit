@@ -17,6 +17,8 @@ vi.mock("../icons.js", async (importOriginal) => ({
 }));
 
 import { buildSubagentBlock } from "./subagent-block.js";
+import { outcomeIcon } from "../icons.js";
+import { iconEl } from "../icon-el.js";
 import { CHUNK_ENTER_ATTR } from "../smd-renderer.js";
 
 const iconSlot = (root: HTMLElement): HTMLElement =>
@@ -38,9 +40,20 @@ describe("buildSubagentBlock icon", () => {
     sa.setIcon('<svg data-icon="introspect"></svg>');
     expect(iconSlot(sa.root).querySelector('svg[data-icon="introspect"]')).not.toBeNull();
 
-    // A later status change keeps the installed glyph.
+    // A FAILURE replaces the installed glyph with the shared failure silhouette:
+    // one mark per row, and its SHAPE is what changes for a non-success state.
     sa.setStatus("failed");
+    expect(iconSlot(sa.root).querySelector('svg[data-icon="introspect"]')).toBeNull();
+    expect(iconSlot(sa.root).querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("fail")) as HTMLElement).outerHTML,
+    );
+    expect(iconSlot(sa.root).querySelectorAll("svg")).toHaveLength(1);
+
+    // Back to a success and the installed identity glyph returns, so the card
+    // cannot be stranded on a mark it borrowed.
+    sa.setStatus("completed");
     expect(iconSlot(sa.root).querySelector('svg[data-icon="introspect"]')).not.toBeNull();
+    expect(iconSlot(sa.root).querySelectorAll("svg")).toHaveLength(1);
   });
 
   it("setIcon while active defers the glyph until the subagent settles", () => {
@@ -130,7 +143,7 @@ describe("the tail", () => {
   // A LINE IS A BLOCK. This is the shape the block dispatcher actually appends —
   // elements, whose text carries no newline characters — and it is the shape the
   // test above cannot produce. Reading `body.textContent.split("\n")` here yields
-  // ONE line of glued words (`✓ Grep Search spaghetti ✓ File Search …`), which the
+  // ONE line of glued words (`Grep Search spaghetti File Search …`), which the
   // nowrap + ellipsis then clips at the card width: the beginning of the whole
   // run instead of its last three lines.
   it("takes one line per BLOCK, not per newline in concatenated text", async () => {
@@ -148,8 +161,11 @@ describe("the tail", () => {
     const card = (title: string, sub: string): HTMLElement => {
       const d = document.createElement("div");
       d.className = "tool-call";
+      // A real settled card's mark is an SVG, so the icon slot contributes NO
+      // text to the tail — which is why the expected lines below carry no glyph.
       const icon = document.createElement("span");
-      icon.textContent = "\u2713";
+      icon.className = "tool-icon";
+      icon.appendChild(iconEl(outcomeIcon("ok")));
       const name = document.createElement("span");
       name.textContent = title;
       const subtitle = document.createElement("div");
@@ -169,11 +185,7 @@ describe("the tail", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
-    expect(lines).toEqual([
-      "\u2713 Grep Search .",
-      "I've counted 47 Go modules.",
-      "\u2713 Send Message report",
-    ]);
+    expect(lines).toEqual(["Grep Search .", "I've counted 47 Go modules.", "Send Message report"]);
     sa.root.remove();
   });
 

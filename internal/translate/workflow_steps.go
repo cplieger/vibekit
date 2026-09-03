@@ -80,6 +80,20 @@ func (t *Translator) Attribute(chatID vibekit.ChatID, sessionID string, workflow
 	return FrameAttribution{}
 }
 
+// foldSource is the turn source a fold site states when it finds no open turn.
+//
+// A chat-parented run executes on the launching chat's SESSION, so a step's
+// frames fold onto that chat and a turn opened for one is the RUN's rather than
+// the chat's — a distinction the client needs, because nothing closes such a turn
+// (the attribution gate drops a step's own turn_end) and a client reading it as
+// the chat working says so for the whole run.
+func foldSource(step bool) vibekit.TurnOpenSource {
+	if step {
+		return vibekit.TurnSourceWorkflowStep
+	}
+	return vibekit.TurnSourceWireTurnStart
+}
+
 // stepRegistry maps a step's ACP session id to the run and node it belongs to,
 // and counts each step instance's tool calls for the turn cap.
 //

@@ -76,6 +76,7 @@
 // ---------------------------------------------------------------------------
 
 import { el, computed, effect } from "@cplieger/reactive";
+import { attachClamp } from "./clamp-text.js";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { $ } from "./dom.js";
 import { activeSession, getActiveId } from "./store.js";
@@ -85,6 +86,13 @@ import { confirm } from "./confirm.js";
 import { ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { PendingSteer } from "./types.js";
+
+/** Lines a dock row shows before its opener appears. Four, matching the
+ *  transcript note: the bar grows upward into the transcript, so an unbounded row
+ *  here costs the reader the conversation, and four plus an opener is the
+ *  compromise — the row already carries the whole text in its `title` and in its
+ *  accessible name. */
+const DOCK_CLAMP_LINES = 4;
 
 let bound = false;
 let prevWaiting = 0;
@@ -171,14 +179,18 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
     el("span", { className: "steer-state-label" }, sending ? "Sending" : "Sent"),
   );
 
-  // No truncation here. The row is full width and the text clamps to two lines
-  // in CSS, which fits several times what the old 60-character chip did, and the
-  // clamp degrades to the whole text rather than to an ellipsis nothing can open.
-  const body = el(
-    "span",
-    { className: "steer-body" },
-    el("span", { className: "steer-text" }, oneLine(steer.text)),
-  );
+  // No truncation here: the text clamps to four lines in CSS and the button
+  // below OPENS it, so the whole message is in the DOM and reachable rather than
+  // cut at an ellipsis. Still collapsed to one line, unlike the transcript note:
+  // this is composer furniture and the bar grows upward into the transcript, so
+  // an unbounded row here costs the reader the conversation.
+  const text = el("span", { className: "steer-text" }, oneLine(steer.text));
+  const more = el("button", {
+    className: "steer-more",
+    type: "button",
+  }) as HTMLButtonElement;
+  // A SIBLING of the clamped element, or the clamp would hide its own opener.
+  const body = el("span", { className: "steer-body" }, text, more);
 
   const row = el(
     "li",
@@ -201,6 +213,7 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
   if (actions !== null) {
     row.appendChild(actions);
   }
+  attachClamp(text, more, { lines: DOCK_CLAMP_LINES });
   return row;
 }
 

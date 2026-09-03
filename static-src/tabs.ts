@@ -213,6 +213,51 @@ const internal: Internal = {
  *  Bounded by `forgetRow`: an entry goes when its tab leaves the projection. */
 const nameOverrides = new Map<string, string>();
 
+/** Tab ids in ACTIVATION order, most recent first: what a close hands the active
+ *  view over to. IN MEMORY ONLY — boot restores tabs with no history, so a cold
+ *  strip's first close falls back to position 0.
+ *
+ *  A plain array rather than a signal, for `nameOverrides`' reason: nothing
+ *  renders it, so making it reactive would wake the render and view effects for a
+ *  value no subscriber reads. Two invariants — head is `state.active`, and no
+ *  closed id is held, bounded by `forgetRow`, which every removal calls. */
+const activationHistory: string[] = [];
+
+function noteActivation(id: string): void {
+  const at = activationHistory.indexOf(id);
+  if (at >= 0) {
+    activationHistory.splice(at, 1);
+  }
+  activationHistory.unshift(id);
+}
+
+function forgetActivation(id: string): void {
+  const at = activationHistory.indexOf(id);
+  if (at >= 0) {
+    activationHistory.splice(at, 1);
+  }
+}
+
+/** Put a captured entry back behind its ANCHOR — the id that preceded it when it
+ *  was captured — or at the head when it had none. An anchor closed since falls to
+ *  the TAIL: the entry ranked behind it, so understating its recency drops a
+ *  preference, where the head would invert one. */
+function restoreActivation(id: string, anchor: string): void {
+  if (anchor === "") {
+    activationHistory.unshift(id);
+    return;
+  }
+  const at = activationHistory.indexOf(anchor);
+  activationHistory.splice(at < 0 ? activationHistory.length : at + 1, 0, id);
+}
+
+/** The most recently activated tab still open, or "" when the history holds
+ *  none. `hasRow` is the second line of defence behind the prune: a stale entry
+ *  can never be picked even if a future removal path forgets to forget. */
+function mostRecentOpenTab(): string {
+  return activationHistory.find((id) => hasRow(id)) ?? "";
+}
+
 /** Reactive version counter. Effects subscribed via `tabsEffect()` re-run on
  *  every emit(). State is mutated in place; this counter is the signal those
  *  mutations trip. */
@@ -286,6 +331,9 @@ function buildRow(subject: TabSubject): TabRow {
  *  longer holds the tab) so neither can leak. */
 function forgetRow(row: TabRow): void {
   nameOverrides.delete(subjectKey(row.subject.kind, row.subject.ref));
+  // The one function every removal door already calls, which is what makes the MRU
+  // prune structural and prunes a whole cascade in the loop that removes it.
+  forgetActivation(row.subject.id);
   callbacks.onClosed?.(row.subject.id);
 }
 
@@ -456,19 +504,26 @@ function reset(subjects: readonly TabSubject[]): void {
   // translated. app.ts performs the one boot activation afterwards, which is what
   // keeps a re-list from re-fetching a view's content.
   //
-  // A LATER re-list that dropped the active tab: fall back to the first tab and
+  // A LATER re-list that dropped the active tab: hand over to the successor and
   // activate it properly, because the reader is looking at a view whose tab is
   // gone. `local: false` — a set this device did not author must not respawn a
   // chat here.
   if (state.active === "") {
     const saved = activeView();
     state.active = saved !== "" && hasRow(saved) ? saved : (state.tabs[0]?.subject.id ?? "");
+    if (state.active !== "") {
+      // The one place a real id reaches `state.active` without passing through
+      // activateTab, so the one place the MRU invariant is restored by hand. No
+      // behaviour rests on it: boot follows with activateRestoredTab, and a later
+      // re-list can only land on `tabs[0]`, the successor fallback anyway.
+      noteActivation(state.active);
+    }
     emit();
     return;
   }
   if (!hasRow(state.active)) {
     emit();
-    activateFirst(false);
+    activateSuccessor(false);
     return;
   }
   emit();
@@ -528,9 +583,9 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
   }
 
   if (lostActive) {
-    // An active view naming no open tab falls back to the FIRST tab, which is the
-    // same rule the boot read applies.
-    activateFirst(local);
+    // An active view naming no open tab hands over to the most recently visited
+    // tab still open, which is the same rule every other removal path applies.
+    activateSuccessor(local);
   }
   emit();
 }
@@ -595,22 +650,26 @@ export function activateTab(id: string): void {
   }
   state.active = id;
   setActiveView(id);
+  noteActivation(id);
   emit();
   row.spec.onShow?.();
   callbacks.onActivate?.(id);
 }
 
-/** Fall back to the first tab, or to nothing when the strip is empty.
+/** Hand the active view over to a departed tab's successor: the most recently
+ *  visited tab still open, else the first, else nothing on an empty strip.
+ *  Recency, not position — a pin or a sub-tab routinely puts a stranger first.
  *
  *  `local` gates the empty-strip respawn: a strip emptied by ANOTHER device's
  *  close must not create a chat here. Nobody asked for one, and it would then
  *  propagate back as an addition every other device has to absorb — which is the
  *  shape of the loop that minted a chat every 1.5s on the live instance. */
-function activateFirst(local: boolean): void {
-  const first = state.tabs[0];
-  if (first !== undefined) {
+function activateSuccessor(local: boolean): void {
+  const recent = mostRecentOpenTab();
+  const next = recent !== "" ? recent : (state.tabs[0]?.subject.id ?? "");
+  if (next !== "") {
     state.active = "";
-    activateTab(first.subject.id);
+    activateTab(next);
     return;
   }
   state.active = "";
@@ -729,6 +788,10 @@ interface CapturedClose {
   at: number;
   /** The name overrides the gesture's forgetRow dropped, keyed by subject. */
   overrides: Map<string, string>;
+  /** The MRU entries the gesture's forgetRow dropped, each ANCHORED on the id ahead of it
+   *  (`""` = the head) and ordered by original slot, so a removed anchor is back before its
+   *  follower. Exact behind a SURVIVING anchor; a vanished one appends, understating recency. */
+  history: { id: string; after: string }[];
   /** The active tab, when it was inside the subtree; "" otherwise. What a
    *  rollback re-activates. */
   activeTabID: string;
@@ -758,6 +821,7 @@ function subtreeRows(row: TabRow): TabRow[] {
 
 function captureClose(row: TabRow): CapturedClose {
   const rows = subtreeRows(row);
+  const ids = new Set(rows.map((r) => r.subject.id));
   const overrides = new Map<string, string>();
   for (const r of rows) {
     const key = subjectKey(r.subject.kind, r.subject.ref);
@@ -766,11 +830,19 @@ function captureClose(row: TabRow): CapturedClose {
       overrides.set(key, name);
     }
   }
-  const ids = new Set(rows.map((r) => r.subject.id));
+  // Walked in HISTORY order, not projection order: that is what makes the array
+  // ascending by slot, so an ascending restore puts a removed anchor back first.
+  const history: { id: string; after: string }[] = [];
+  for (const [at, id] of activationHistory.entries()) {
+    if (ids.has(id)) {
+      history.push({ id, after: activationHistory[at - 1] ?? "" });
+    }
+  }
   return {
     rows,
     at: state.tabs.findIndex((t) => t.subject.id === row.subject.id),
     overrides,
+    history,
     activeTabID: ids.has(state.active) ? state.active : "",
     storeActive: "",
     refused: false,
@@ -796,7 +868,7 @@ function applyGestureRemoval(c: CapturedClose): void {
     // Reversible: a chat successor's own activation moves the store pointer,
     // and the empty strip renders the empty-state surface (the view effect).
     // scheduleEmpty defers itself while this remove is pending.
-    activateFirst(true);
+    activateSuccessor(true);
   }
   syncStoreActive(c);
   emit();
@@ -864,6 +936,14 @@ function rollbackClose(c: CapturedClose): void {
     state.tabs.splice(Math.min(Math.max(c.at, 0), state.tabs.length), 0, ...restorable);
     internal.everOpened = true;
     applyPinOrder();
+  }
+  // `hasRow`, not the rows THIS call spliced: the verify-settled path's reset already
+  // rebuilt the row, and it IS the no-closed-id invariant: a reopen under a new id is rowless.
+  for (const { id, after } of c.history) {
+    if (!hasRow(id) || activationHistory.includes(id)) {
+      continue;
+    }
+    restoreActivation(id, after);
   }
   // Text typed into the EMPTY-STATE composer was parked nowhere (no live
   // chat), so it survives only through the box. Filed as the restored chat's
@@ -1020,13 +1100,20 @@ const DOT_PHRASE: Readonly<Record<TabDotStatus, string>> = {
   working: "working",
   waiting: "waiting for you",
   input: "needs a decision",
-  // "operation" rather than "turn": the latch behind this state is set for every
-  // `error` frame naming the chat, which includes `switch_failed` and
-  // `bridge_start_failed` — failures with no turn in them. The breadth is
-  // deliberate and useful, so the phrase is what had to widen. It is the only
-  // channel a screen-reader user has here, so it must not claim more than its
-  // producer supports.
-  failed: "last operation failed",
+  // The latch behind this state has ONE live producer: `turn_ended` carrying
+  // outcome `failed` or `refused` (handlers/turn.ts → store.ts `setTurnFailed`).
+  // Its two other callers re-derive the same verdict — `relatchTurnVerdict` off
+  // the persisted `turn_outcome`, and the send action restoring the snapshot it
+  // took. So a turn is the only thing that can set it, and the phrase says so.
+  //
+  // It used to read "last operation failed" for a breadth the code no longer has:
+  // the `error` handler set this latch for every frame naming the chat,
+  // `switch_failed` and `bridge_start_failed` among them, and it stopped touching
+  // turn state when `endsTurn` was removed (handlers/turn.ts records that). This
+  // is the only channel a screen-reader user has here, so it must claim exactly
+  // what its producer supports — which now means the narrower word, not the
+  // wider one.
+  failed: "turn failed",
   done: "turn finished",
   dirty: "unsaved changes",
 };
@@ -2045,6 +2132,7 @@ export function _resetForTest(): void {
   internal.renderQueued = false;
   internal.everOpened = false;
   nameOverrides.clear();
+  activationHistory.length = 0;
   lastAnnouncedTab = "";
   // Re-register the target: a test that reset tabs-sync dropped it.
   registerTabsTarget(target);

@@ -392,12 +392,13 @@
   width: 100%;
 }
 
+/* Size floor only. `display`, `align-items` and `justify-content` are already
+   `.icon-btn`'s (10-shell-app.css) and restating them here at (0,2,0) outranked
+   the phone-only `.fb-new-trigger` hide below, which rendered its trigger on
+   desktop. */
 .view-toolbar-inner .icon-btn {
   min-width: var(--btn-h);
   min-height: var(--btn-h);
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .fb-path {
@@ -425,11 +426,28 @@
 }
 
 /* New-file and new-folder share one mobile door but stay as two direct desktop
-   actions. `display: contents` keeps one set of real buttons, so resizing never
-   creates a second state or a second handler. */
-.fb-new-menu,
-.fb-new-actions {
+   actions. One set of real buttons, so resizing never creates a second state or
+   a second handler. */
+.fb-new-menu {
   display: contents;
+}
+
+/* Its own flex row, not `display: contents`: dissolving it drops both buttons
+   into the UA's block-level ::details-content box, where they stack instead of
+   joining the toolbar row. Gap matches `.view-toolbar-inner`'s so the pair
+   spaces like the plain buttons beside it. */
+.fb-new-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* Same pairing as the turn footer's overflow (61-mcp-tools.css): `display:
+   contents` removes the details' own box, not the ::details-content box the UA
+   hides a closed disclosure through, so the inline layout needs the skip
+   cancelled or both buttons are unpainted and unhittable. */
+.fb-new-menu::details-content {
+  content-visibility: visible;
 }
 
 .fb-new-trigger,

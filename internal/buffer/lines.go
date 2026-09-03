@@ -3,7 +3,6 @@ package buffer
 import (
 	"container/heap"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -110,19 +109,20 @@ func (lt *LineTracker) Record(chatID vibekit.ChatID, filePath string, r LineRang
 }
 
 // RecordFromDiffs extracts line ranges from tool call diffs.
+//
+// One range per DIFF HUNK, in new-text line numbers. It used to record a single
+// 1..len(NewText) range, which with KAS's whole-file NewText marked every line
+// of the file as agent-modified — so a one-line edit painted accent dots down
+// the whole editor gutter. A whole-file rewrite still yields one full-span
+// range, which is correct; see lineHunks for the deletion case.
 func (lt *LineTracker) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
 	for _, d := range diffs {
 		if d.Path == "" || d.NewText == "" {
 			continue
 		}
-		lines := strings.Count(d.NewText, "\n")
-		if !strings.HasSuffix(d.NewText, "\n") {
-			lines++
+		for _, h := range lineHunks(d.OldText, d.NewText) {
+			lt.Record(chatID, d.Path, LineRange{StartLine: h.StartLine, EndLine: h.EndLine, Turn: turn, Kind: kind})
 		}
-		if lines == 0 {
-			lines = 1
-		}
-		lt.Record(chatID, d.Path, LineRange{StartLine: 1, EndLine: lines, Turn: turn, Kind: kind})
 	}
 }
 

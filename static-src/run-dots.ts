@@ -17,6 +17,16 @@
 // and no run is. The double-counting the exclusion was avoiding is not real either:
 // the chat is idle by then, so the two dots describe different things.
 //
+// That "goes idle" is now TRUE rather than intended, and it was not when this was
+// written. A chat-parented run executes on the launching chat's session, so a
+// step's frames arrive on that chat's connection and used to open a turn there
+// that latched `thinking` and re-latched it on every reconnect — so the launching
+// chat read `working` for the whole run and this module's premise was false for
+// exactly the runs it excluded. The turn is now marked as the RUN's on both sides
+// (`vibekit.TurnSourceWorkflowStep`, `turn_state.workflow_step`, and the `wf:`
+// gate in `handlers/messages.ts`), which is what leaves the run's liveness to the
+// dot below and nothing else.
+//
 // The dot element needs no new markup. `createTabEl` builds a `.tab-status-dot`
 // on EVERY row and paints it `""` for non-chat kinds, parking it in the trailing
 // slot beside the pin marker where the editor's unsaved mark already lives, and
@@ -40,7 +50,7 @@
 import { effect, signal } from "@cplieger/reactive";
 import { setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
 import { runStatusFor } from "./store.js";
-import { hasPendingDecision } from "./decision-dock.js";
+import { runPendingAsks } from "./decision-dock.js";
 import { runState } from "./run-store.js";
 
 /** The runs this client has seen an event for, and the version counter that makes
@@ -98,11 +108,18 @@ function repaint(): void {
       // and its dot stayed blank until an unrelated dock churn repainted it.
       continue;
     }
-    // Both keys the dock files a run's asks under, the same join
-    // `mountRunDecisionDock` makes: `run_id` on the payload for an agent-launched
-    // run, the synthetic chat id for a parentless one. Asking both costs one extra
-    // map read and means a relocated ask cannot go unnoticed.
-    const asking = hasPendingDecision(`run:${workflowID}`) || hasPendingDecision(workflowID);
+    // The SAME join the other two run surfaces make (the transcript's card and the
+    // exec page both take `runPendingAsks`), rather than two `hasPendingDecision`
+    // reads.
+    //
+    // The pair it replaced could not see a chat-parented run's ask at all. That
+    // predicate keys on a CHAT id: `run:<workflowId>` is the synthetic one a
+    // parentless run's asks are filed under, so that read worked, while the second
+    // read passed a WORKFLOW id where a chat id was expected and matched nothing
+    // ever — an agent-launched run's ask sits under the launching chat's id with
+    // the run stamped on the payload, which only a scan over `runID` finds. So the
+    // one population whose asks arrive on a chat bridge had no amber dot.
+    const asking = runPendingAsks(workflowID).count > 0;
     // TRACKED read, deliberately: the run's cell resolving (the fetch an
     // invalidation coalesces into) is exactly the moment the dot must repaint,
     // and `run_progress` for an already-tracked run bumps nothing else here.
@@ -121,7 +138,7 @@ export function installRunDotSubscriber(): void {
     // frames (the open_tab round trip) or restored on boot paints without a
     // fresh run event.
     void tabSetVersion();
-    // Subscribes to the dock queue too: hasPendingDecision reads queueVersion,
+    // Subscribes to the dock queue too: runPendingAsks reads queueVersion,
     // so an ask arriving for a background run repaints its dot with no run
     // event. And to every tracked run's own cell, through repaint's runState
     // reads.

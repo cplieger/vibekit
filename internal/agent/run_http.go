@@ -76,6 +76,12 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rr.runs.translate.RecordRunSteps(raw)
+	// A run parked on a person with no ask on this server gets one reconstructed
+	// from its state — the container-restart path, since the ask registry is in
+	// memory while the run is not. The response stays a VERBATIM passthrough: the
+	// synthesised ask travels on the `run_input_needed` SSE every open client
+	// already consumes, so nothing is spliced into `raw`.
+	rr.runs.reconcileNeedInput(r.Context(), id, raw)
 	httpreply.WriteRawJSON(w, raw)
 }
 
@@ -247,6 +253,47 @@ func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 	webhttp.Ok(w)
 }
 
+// handleAnswer: POST /api/runs/{id}/answer — answer a step parked on a question.
+//
+// Its own handler rather than a runVerb, for handleStepStatus's reason: it carries
+// a body (which ask, and the words), where the verb table's issue signature is
+// id-only.
+//
+// A REST call on the run surface rather than a `/api/command` envelope, because
+// every other run mutation is REST and this ask is not chat-scoped — a parentless
+// run's ask has no chat id to put in that envelope.
+func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		httpreply.BadRequest(w, "missing workflow id")
+		return
+	}
+	var body vibekit.RunAnswerRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	err := rr.runs.AnswerInput(r.Context(), id, body.AskID, body.Text)
+	switch {
+	case err == nil:
+		webhttp.Ok(w)
+	case errors.Is(err, errAskAlreadySettled):
+		// A state of the world rather than a fault: another surface got there
+		// first, or the step moved on. The client retires its card on the
+		// `run_input_settled` frame either way.
+		httpreply.Conflict(w, err.Error())
+	case errors.Is(err, errRunNotHosted):
+		httpreply.Conflict(w, err.Error())
+	default:
+		slog.Warn("run answer failed", "workflow_id", id, "ask_id", body.AskID,
+			"error", err, "detail", rpcerr.Details(err))
+		httpreply.BadRequest(w, rpcerr.Text(err))
+	}
+}
+
 // runVerb describes one run-control verb: how to issue it, and which run
 // statuses it is legal from.
 //
@@ -292,7 +339,7 @@ var (
 		name:   "resume",
 		issue:  (*Runs).Resume,
 		method: http.MethodPost,
-		from:   []string{"paused"},
+		from:   []string{runStatusPaused},
 	}
 	// Retry's window is exactly the two statuses at which a run's own bridge has
 	// already been closed, which is why Retry re-hosts instead of requiring

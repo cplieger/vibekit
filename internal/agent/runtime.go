@@ -207,6 +207,12 @@ type Runtime struct {
 	tabs       *tabs.Store
 	membership *command.Membership
 
+	// steerLedger records the mid-turn steers this server sent, which is the
+	// only thing that tells the user's own words from a workflow reporting into
+	// the same KAS buffer. Written by the steer command, read by the translate
+	// layer, cleared at a chat's teardown.
+	steerLedger *command.SteerLedger
+
 	// Embedded ahead of the scalars below to keep govet fieldalignment happy:
 	// it carries pointers, so it must not sit after ciBusy.
 
@@ -357,6 +363,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		lifecycle: lc,
 		chats:     chatStore,
 		perms:     sseP,
+		bus:       sseP,
 	}
 
 	h := &Runtime{
@@ -408,6 +415,9 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	configP.utility = h.utility.get
 	configP.broadcast = sseP.Broadcast
 
+	// Before both consumers below: the steer command writes it and the
+	// translator reads it, and requireWired refuses a nil translate role.
+	h.steerLedger = command.NewSteerLedger()
 	h.translator = translate.New(h.translateRoles())
 	runs.translate = h.translator
 	h.dispatcher = command.New()

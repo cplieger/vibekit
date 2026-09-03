@@ -456,6 +456,11 @@ def show_pairs(
 # muted metadata mixes toward the FILL (no hue to protect, stays on the row's
 # own axis), a status hue mixes toward the row's INK (lightens on dark, darkens
 # on light, and `color-mix(in oklch)` leaves H alone so the hue survives).
+#
+# No `--c-selected-accent-fg` row: it was the editor `dirty` dot's on-selected
+# ink, the 2026-08-31 ruling deleted that role, and nothing in the stylesheets
+# declares or reads it. It printed "not declared" here rather than crashing, which
+# is why it outlived the six reads in DOT_STATES that did crash.
 SELECTED_INKS: list[tuple[str, str, str]] = [
     # (token, the colour it is mixed with, the direction label)
     ("--c-selected-muted-fg", "var(--c-selected-bg)", "toward fill"),
@@ -463,7 +468,6 @@ SELECTED_INKS: list[tuple[str, str, str]] = [
     ("--c-selected-red-fg", "var(--c-red)", "toward ink"),
     ("--c-selected-yellow-fg", "var(--c-yellow)", "toward ink"),
     ("--c-selected-blue-fg", "var(--c-blue)", "toward ink"),
-    ("--c-selected-accent-fg", "var(--c-accent)", "toward ink"),
 ]
 
 # The fill a selected row can be in. The floor is resting AND hover: hover is
@@ -603,15 +607,28 @@ AMBIENT_CANDIDATES = [
 # The tab activity dot (12-tabs.css / 70-selection.css).
 #
 # A status dot is a graphical object conveying information, so its floor is
-# WCAG 1.4.11's 3:1 rather than 4.5:1 — and it has to clear that on FIVE fills,
-# because a tab row is either unselected (the sidebar, or the sidebar under the
-# hover wash) or selected (three rungs of its own fill). The selected column is
-# why the on-selected ink family exists: the dot declares its own colour, so
-# `--c-selected-fg` never reaches it.
+# WCAG 1.4.11's 3:1 rather than 4.5:1. A tab row presents five fills — unselected
+# (the sidebar, or the sidebar under the hover wash) and selected (three rungs of
+# its own fill) — and the same ink paints the dot on all five, because selection
+# belongs to the ROW and never to the status ink (user ruling, 2026-08-31; see
+# --c-dot-idle in 01-tokens.css and the note at the end of 70-selection.css).
+#
+# So the FLOOR is the two unselected fills and the selected rungs are REPORTED.
+# That is not a relaxation: this table used to read an on-selected ink family
+# (`--c-selected-dot-*-fg`) in the selected columns, and the ruling deleted every
+# one of those tokens, so those columns were measuring inks no stylesheet
+# declares — six reads that made `css-contrast.py dot` exit on a KeyError before
+# it printed the channel matrix. Measured with the ink the CSS actually paints, a
+# floor on `selected` and `sel+hover` is sixteen standing failures across the two
+# themes (light misses on every state), which is a cost the ruling accepted when
+# it chose a byte-identical hue over a legible one. `main()` already applies this
+# reasoning to `--c-bg-elevated`: report the number, gate where the app can hold
+# the line.
 # ---------------------------------------------------------------------------
 
-# The fills a tab row can present. Held = the states a pointer RESTS in; press
-# is transient and reported rather than held, the same rule show_selected uses.
+# The fills a tab row can present. Held = the two UNSELECTED fills; every
+# selected rung is reported rather than gated, for the reason stated at the
+# section header above.
 DOT_FILLS: list[tuple[str, str]] = [
     ("resting", "--c-bg-secondary"),
     ("hover", "over(var(--c-hover), var(--c-bg-secondary))"),
@@ -621,12 +638,12 @@ DOT_SELECTED_FILLS: list[tuple[str, str]] = [
     ("sel+hover", "--c-selected-bg-hover"),
     ("sel+press", "--c-selected-bg-press"),
 ]
-DOT_HELD = ["resting", "hover", "selected", "sel+hover"]
+DOT_HELD = ["resting", "hover"]
 
-# (state, unselected ink, on-selected ink, channels). The unselected ink is the
-# status seed; the selected one is that seed's member of the on-selected family,
-# which is what the `.tab.active` rule in 70-selection.css switches --dot-color
-# to. `channels` is the state's NON-COLOUR identity, transcribed from the CSS:
+# (state, ink, channels). ONE ink per state, on every fill: there is no
+# on-selected column any more, because 70-selection.css declares no rule that
+# re-points --dot-color on a selected row (see the section header above).
+# `channels` is the state's NON-COLOUR identity, transcribed from the CSS:
 #
 #   fill     hollow | solid | donut   (donut only under prefers-reduced-motion)
 #   surround none | ring               (a static hard 2px ring)
@@ -639,41 +656,35 @@ DOT_HELD = ["resting", "hover", "selected", "sel+hover"]
 # twice — once with motion available and once with it removed, because
 # 40-a11y.css zeroes every animation under prefers-reduced-motion and the
 # vocabulary has to survive that.
-DOT_STATES: list[tuple[str, str, str, dict[str, str]]] = [
+DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
     (
         "idle",
         "var(--c-dot-idle)",
-        "--c-selected-muted-fg",
         {"fill": "hollow", "surround": "none", "motion": "still", "shape": "circle"},
     ),
     (
         "working",
         "--c-dot-working",
-        "--c-selected-dot-working-fg",
         {"fill": "solid", "surround": "none", "motion": "animated", "shape": "circle"},
     ),
     (
         "waiting",
         "--c-dot-input",
-        "--c-selected-dot-input-fg",
         {"fill": "hollow", "surround": "ring", "motion": "still", "shape": "circle"},
     ),
     (
         "input",
         "--c-dot-input",
-        "--c-selected-dot-input-fg",
         {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"},
     ),
     (
         "failed",
         "--c-dot-failed",
-        "--c-selected-dot-failed-fg",
         {"fill": "solid", "surround": "none", "motion": "still", "shape": "diamond"},
     ),
     (
         "done",
         "--c-dot-done",
-        "--c-selected-dot-done-fg",
         {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"},
     ),
     # Editor tabs only. It can never share a strip position with a chat state,
@@ -681,7 +692,6 @@ DOT_STATES: list[tuple[str, str, str, dict[str, str]]] = [
     (
         "dirty",
         "--c-accent",
-        "--c-selected-accent-fg",
         {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"},
     ),
 ]
@@ -765,42 +775,42 @@ def as_expr(ink: str) -> str:
 
 def show_dot(themes: list[Theme]) -> None:
     print("TAB ACTIVITY DOT (WCAG 1.4.11: 3:1 for a graphical object; the floor is")
-    print("every fill a tab row can present EXCEPT press, which is transient)")
+    print("the two UNSELECTED fills, and the three selected rungs are reported —")
+    print("selection never re-tints a status ink, so their lower ratios are a cost")
+    print("that ruling accepted rather than a regression this can gate)")
     print()
     for th in themes:
         print(f"  {th.name}:")
         cols = [c for c, _ in DOT_FILLS + DOT_SELECTED_FILLS]
         print(
-            f"    {'state':<10} {'ink':<26} "
+            f"    {'state':<10} {'ink':<20} "
             + " ".join(f"{c:<11}" for c in cols)
             + " verdict"
         )
-        for state, unsel, sel, _ch in DOT_STATES:
+        for state, ink, _ch in DOT_STATES:
             row, held = [], []
-            for cols_, ink in ((DOT_FILLS, unsel), (DOT_SELECTED_FILLS, sel)):
-                for col, fill in cols_:
-                    bg = th.flat(fill)
-                    r = contrast(th.resolve(as_expr(ink)).over(bg), bg)
-                    row.append(f"{fmt(r)}:1")
-                    if col in DOT_HELD:
-                        held.append((col, r))
+            for col, fill in DOT_FILLS + DOT_SELECTED_FILLS:
+                bg = th.flat(fill)
+                r = contrast(th.resolve(as_expr(ink)).over(bg), bg)
+                row.append(f"{fmt(r)}:1")
+                if col in DOT_HELD:
+                    held.append((col, r))
             worst_col, worst = min(held, key=lambda kv: kv[1])
             verdict = (
                 "PASS"
                 if worst >= DOT_FLOOR
                 else f"FAIL ({worst_col} {fmt(worst)}:1, want {DOT_FLOOR}:1)"
             )
-            ink = f"{unsel} / {sel.replace('--c-selected-', '')}"
             print(
-                f"    {state:<10} {ink:<26} "
+                f"    {state:<10} {ink:<20} "
                 + " ".join(f"{c:<11}" for c in row)
                 + f" {verdict}"
             )
         print()
 
     print("IDLE-RING SWEEP: the smallest 1%-step ink fraction clearing 3:1 on the")
-    print("UNSELECTED fills in BOTH themes. The selected fills take")
-    print("--c-selected-muted-fg instead, which is already sized at 4.5:1.")
+    print("UNSELECTED fills in BOTH themes, which is the whole floor — a selected")
+    print("row paints this same ring rather than an on-selected substitute.")
     print()
     print(f"  {'construction':<52} {'min %':<7} held min")
     for base in ("var(--c-text-primary)", "var(--c-text-secondary)"):
@@ -831,7 +841,7 @@ def show_dot(themes: list[Theme]) -> None:
     print("of fill / surround / motion / shape, with motion available AND removed.")
     print()
     print(f"  {'state':<10} {'fill':<8} {'surround':<9} {'motion':<10} shape")
-    for state, _u, _s, ch in DOT_STATES:
+    for state, _ink, ch in DOT_STATES:
         tag = "  (editor tab)" if state == DOT_CHAT_ONLY else ""
         print(
             f"  {state:<10} {ch['fill']:<8} {ch['surround']:<9} {ch['motion']:<10} {ch['shape']}{tag}"
@@ -839,7 +849,7 @@ def show_dot(themes: list[Theme]) -> None:
     print()
 
     aliases = {frozenset(p) for p in DOT_ALIASES}
-    chat = [(s, ch) for s, _u, _sel, ch in DOT_STATES if s != DOT_CHAT_ONLY]
+    chat = [(s, ch) for s, _ink, ch in DOT_STATES if s != DOT_CHAT_ONLY]
     for pass_name, reduce_motion in (
         ("motion available", False),
         ("prefers-reduced-motion", True),
@@ -873,10 +883,10 @@ def show_dot(themes: list[Theme]) -> None:
     print("also separates here separates twice.")
     for th in themes:
         rows = []
-        for state, unsel, _sel, _ch in DOT_STATES:
+        for state, ink, _ch in DOT_STATES:
             if state == DOT_CHAT_ONLY:
                 continue
-            c = th.resolve(as_expr(unsel)).over(th.flat("--c-bg-secondary"))
+            c = th.resolve(as_expr(ink)).over(th.flat("--c-bg-secondary"))
             rows.append((state, c.luminance(), c.hex()))
         rows.sort(key=lambda r: -r[1])
         print(f"  {th.name}:")
@@ -928,20 +938,18 @@ def show_dot_hues(themes: list[Theme]) -> None:
 def dot_held_worst(th: Theme, expr: str) -> tuple[str, float]:
     """The worst contrast an ink reads on any HELD tab-row fill.
 
-    The raw ink is what an unselected row paints; a selected row switches
-    --dot-color to that ink's member of the on-selected family, so the selected
-    columns are measured through the same 56% mix the token file declares.
+    One ink across every fill, because that is what the stylesheets paint: the
+    56% mix toward `--c-selected-fg` this used to apply to the selected columns
+    belonged to an on-selected ink family the 2026-08-31 ruling deleted. The held
+    set is the two unselected fills (DOT_HELD), so a sweep sizes a candidate
+    against the surfaces the floor is actually held on.
     """
     held = []
-    for cols, is_sel in ((DOT_FILLS, False), (DOT_SELECTED_FILLS, True)):
-        ink = (
-            f"color-mix(in oklch, var(--c-selected-fg) 56%, {expr})" if is_sel else expr
-        )
-        for col, fill in cols:
-            if col not in DOT_HELD:
-                continue
-            bg = th.flat(fill)
-            held.append((col, contrast(th.resolve(ink).over(bg), bg)))
+    for col, fill in DOT_FILLS + DOT_SELECTED_FILLS:
+        if col not in DOT_HELD:
+            continue
+        bg = th.flat(fill)
+        held.append((col, contrast(th.resolve(expr).over(bg), bg)))
     return min(held, key=lambda kv: kv[1])
 
 
@@ -1551,6 +1559,14 @@ def main() -> int:
             ("red on bg-primary", "--c-red", "--c-bg-primary", 4.5),
             ("yellow on bg-primary", "--c-yellow", "--c-bg-primary", 4.5),
             ("danger on bg-primary", "--c-danger", "--c-bg-primary", 4.5),
+            # The one status ink that LEAVES the tab strip: the turn header dot
+            # and the timeline rail marker both paint `running` with it
+            # (29-turns.css), and the header's own band is --c-bg-tertiary, which
+            # no tab row ever presents — so `dot` cannot measure it and this is
+            # its home. 3.0 because it is an 8px graphic. The rail's own surface,
+            # --c-bg-primary, is 11px text at 4.5:1 and is not measured anywhere
+            # yet.
+            ("dot-working on bg-tertiary", "--c-dot-working", "--c-bg-tertiary", 3.0),
         ]
         # A status hue is INK as often as it is a fill — a red row label, an
         # accent link inside a card, a yellow badge — and until this block

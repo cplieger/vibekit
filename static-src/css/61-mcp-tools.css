@@ -105,10 +105,18 @@
   flex-shrink: 0;
 }
 
-/* One action set, two layouts. Desktop forces the closed details content inline
-   and hides its summary; phone reverses that in the media rule below. */
+/* One action set, two layouts. Desktop dissolves the details box and hides its
+   summary so the buttons sit inline; phone reverses that in the media rule below. */
 .turn-actions-more {
   display: contents;
+}
+
+/* `display: contents` removes the details' OWN box and not the ::details-content
+   box the UA hides a closed disclosure through, so the inline layout needs the
+   skip cancelled too. Without it all four secondary buttons are unpainted and
+   unhittable at every width above the media rule, with no summary to open. */
+.turn-actions-more::details-content {
+  content-visibility: visible;
 }
 
 .turn-actions-secondary {

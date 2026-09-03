@@ -27,6 +27,9 @@ import { info, success, error } from "../toast.js";
 import { invalidateRun, noteRunChat, noteRunLive, noteRunSettled } from "../run-store.js";
 import { trackRun } from "../run-dots.js";
 import { autoCloseRunSubTab, openRunSubTab, applyRunStep } from "../run-view.js";
+import { pushDecision, collapseSettledRunInput } from "../decision-dock.js";
+import { answerRunInput, continueRunStep } from "../actions/runs.js";
+import { notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
 
 // ---------------------------------------------------------------------------
 // The signal half: an ephemeral toast at each end of a run.
@@ -119,6 +122,57 @@ onSSE("run_finished", (chatID, p) => {
 // blocks on the launching chat's connection, keyed by `_meta.kiro.workflow`.
 onSSE("run_step", (_chatID, p) => {
   applyRunStep(p);
+});
+
+// A workflow STEP asked a person a question and its run is parked until somebody
+// answers. The one run event that reaches the interaction dock, and the reason it
+// carries a payload rather than an invalidation: KAS parks the run with a fixed
+// pauseReason literal and an empty pauseDetail, so refetching `inspect` says a
+// step wants input and never says what it asked.
+//
+// The chat id comes off the ENVELOPE, exactly as the three request-shaped asks
+// take theirs: the launching chat for an agent-parented run, `run:<workflowId>`
+// for a parentless one. That is what puts the card in the parent tab's composer
+// dock and in the run tab's at once, since one Decision matches both hosts.
+//
+// `notifyIfHidden` like the other three, and with the strongest case of the four:
+// this ask blocks a run indefinitely and the run may have no surface anyone is
+// looking at.
+onSSE("run_input_needed", (chatID, p) => {
+  trackRun(p.workflow_id);
+  // The launching chat, like run_started and run_progress record it. It matters most
+  // on the connect replay: after a reload the replayed ask can be the FIRST frame
+  // this client sees for a run, and without it the run card's footer link opens the
+  // tab top-level instead of beside the conversation that launched it. A parentless
+  // run's ask arrives keyed to the synthetic `run:<workflowId>`, which noteRunChat
+  // refuses — that is not a chat id.
+  noteRunChat(p.workflow_id, chatID);
+  notifyIfHidden(NOTIFY_TITLE, "A workflow step is waiting for your answer");
+  pushDecision({
+    kind: "run_input",
+    chatID,
+    runID: p.workflow_id,
+    askID: p.ask_id,
+    payload: p,
+    submit: (text) => {
+      if (text === null) {
+        // Continue without answering. Addressed by NODE rather than by ask, because
+        // that is what the step-status verb takes — which is also why the card does
+        // not offer the button at all for an ask carrying no node id (the verb refuses
+        // 400 without one). The server settles the ask when the status write lands.
+        void continueRunStep.dispatch({ workflowID: p.workflow_id, nodeID: p.node_id });
+        return;
+      }
+      void answerRunInput.dispatch({ workflowID: p.workflow_id, ask_id: p.ask_id, text });
+    },
+  });
+});
+
+// Its twin, and it does the same job `decision_settled` does for the three
+// request-shaped asks: every surface is offered the ask and only the first answer
+// is accepted, so something has to retire the cards that lost.
+onSSE("run_input_settled", (_chatID, p) => {
+  collapseSettledRunInput(p.workflow_id, p.ask_id, p.settled_by);
 });
 
 onSSE("run_progress", (chatID, p) => {

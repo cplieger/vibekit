@@ -21,7 +21,7 @@
 // has no controls (there is no server-side id to clear yet), Discard always
 // clears every unread message, and Edit is offered only when exactly one is
 // unread. Each of those is a case below.
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 
 // The controls dispatch an action and open a confirm; the stack's rendering and
 // its wire discipline are what is under test, and the real modules would pull
@@ -53,6 +53,7 @@ import {
 } from "./store.js";
 import { initPendingSteers } from "./pending-steers.js";
 import type { Session } from "./types.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -152,7 +153,7 @@ describe("the steer stack", () => {
   // have already been sent, so it belongs beside the box in the bottom bar, the
   // same way a permission ask does.
   it("renders into the bottom-bar stack rather than inside the composer", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
     expect(firstRow().closest("#steer-stack")).not.toBeNull();
     expect(firstRow().closest("#prompt-box")).toBeNull();
   });
@@ -160,16 +161,16 @@ describe("the steer stack", () => {
   it("hides the stack entirely when there is nothing in it", () => {
     const stack = document.getElementById("steer-stack");
     expect(stack?.classList.contains("hidden")).toBe(true);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     expect(stack?.classList.contains("hidden")).toBe(false);
   });
 
   // A new message appears at the BOTTOM and pushes the older ones up, so the
   // render order is arrival order.
   it("stacks oldest first, so a new message lands at the bottom", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "first" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "second" });
-    recordSteerQueued("chat-1", { id: "steer-3", text: "third" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "third", origin: "user" });
     expect(rows().map(textOf)).toEqual(["first", "second", "third"]);
   });
 
@@ -178,7 +179,7 @@ describe("the steer stack", () => {
   // "Sent" is the fact the stack exists to state: it has left, it is not a
   // draft, and the agent has not seen it yet.
   it("says a message has been sent and is waiting", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
 
     const row = firstRow();
     expect(row.dataset["state"]).toBe("sent");
@@ -205,14 +206,19 @@ describe("the steer stack", () => {
   // so the message leaves it and lands in the transcript instead. Its being read
   // with nothing said about it is a mark with no ack.
   it("takes a message the agent has read out of the stack entirely", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
-    promoteSteer("chat-1", "steer-1", "use tabs instead");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "use tabs instead", "user");
 
     expect(rows()).toHaveLength(0);
     // It was the last one, so the stack goes away rather than sitting empty.
     expect(stackHidden()).toBe(true);
     expect(steerMarks("chat-1")).toEqual([
-      { id: "steer-1", text: "use tabs instead", anchor: { msgID: "", blockIndex: 0 } },
+      {
+        id: "steer-1",
+        text: "use tabs instead",
+        origin: "user",
+        anchor: { msgID: "", blockIndex: 0 },
+      },
     ]);
     expect(steerMarks("chat-1")[0]?.ack).toBeUndefined();
   });
@@ -221,9 +227,9 @@ describe("the steer stack", () => {
   // which is where the change of course actually happened. The dock never renders
   // it: an ack line here was the agent's own words inside the message box.
   it("carries what the agent did on the mark rather than on a dock row", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main" });
-    promoteSteer("chat-1", "steer-1", "actually target main");
-    promoteSteer("chat-1", "steer-1", "", "rebased onto main instead");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "actually target main", "user");
+    promoteSteer("chat-1", "steer-1", "", "user", "rebased onto main instead");
 
     expect(rows()).toHaveLength(0);
     expect(document.querySelectorAll("#steer-stack .steer-ack")).toHaveLength(0);
@@ -237,7 +243,7 @@ describe("the steer stack", () => {
   // A dropped steer leaves the stack the same way a read one does — the dock's
   // lifetime is the turn, and the transcript keeps the record.
   it("takes a message dropped at a turn boundary out of the stack", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "never read this" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "never read this", origin: "user" });
     dropSteers("chat-1", ["steer-1"]);
 
     expect(rows()).toHaveLength(0);
@@ -254,7 +260,7 @@ describe("the steer stack", () => {
     expect(firstRow().querySelector(".steer-state-label")?.textContent).toBe("Sending");
     expect(actions(firstRow())).toEqual([]);
 
-    recordSteerQueued("chat-1", { id: "steer-m-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "user" });
     expect(firstRow().querySelector(".steer-state-label")?.textContent).toBe("Sent");
     expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
   });
@@ -267,13 +273,17 @@ describe("the steer stack", () => {
   it("puts the whole message in the DOM and leaves the clamping to CSS", () => {
     const long =
       "stop rewriting the parser and instead widen the existing front-matter struct with the missing field";
-    recordSteerQueued("chat-1", { id: "steer-1", text: long });
+    recordSteerQueued("chat-1", { id: "steer-1", text: long, origin: "user" });
     expect(textOf(firstRow())).toBe(long);
     expect(textOf(firstRow())).not.toContain("\u2026");
   });
 
   it("collapses whitespace so a multi-line message is one block", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "first line\n\n   second line" });
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "first line\n\n   second line",
+      origin: "user",
+    });
     expect(textOf(firstRow())).toBe("first line second line");
     expect(firstRow().getAttribute("aria-label")).toBe(
       "Sent, waiting for the agent: first line second line",
@@ -284,10 +294,10 @@ describe("the steer stack", () => {
   // the case where a shared render would put one answer on the other's message —
   // which is now a case about the marks, since both rows have left the stack.
   it("keeps each steer's acknowledgement on its own mark", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "first ask" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "second ask" });
-    promoteSteer("chat-1", "steer-1", "first ask", "answered the first");
-    promoteSteer("chat-1", "steer-2", "second ask", "answered the second");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "first ask", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "second ask", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "first ask", "user", "answered the first");
+    promoteSteer("chat-1", "steer-2", "second ask", "user", "answered the second");
 
     expect(rows()).toHaveLength(0);
     expect(steerMarks("chat-1").map((m) => [m.text, m.ack])).toEqual([
@@ -303,9 +313,9 @@ describe("the steer stack", () => {
   // The other row is left standing so the emptiness is the promotion's doing
   // rather than an empty stack.
   it("offers no controls on a message the agent has read, having no row for it", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "read one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "still waiting" });
-    promoteSteer("chat-1", "steer-1", "read one");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "read one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "still waiting", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "read one", "user");
     expect(rows().map(textOf)).toEqual(["still waiting"]);
   });
 
@@ -317,15 +327,15 @@ describe("the steer stack", () => {
   });
 
   it("offers Edit and Discard on the only unread message", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
   });
 
   // Edit is discard-plus-retype, so offering it with two unread would silently
   // drop the other. THE case this rule exists for.
   it("withholds Edit once more than one message is unread", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     for (const row of rows()) {
       expect(actions(row)).toEqual(["Discard all 2 unread messages"]);
     }
@@ -335,13 +345,13 @@ describe("the steer stack", () => {
   // steer the agent reads stops being one of them by leaving. So two unread
   // withholding Edit becomes one unread offering it the moment the first is read.
   it("counts only what is left waiting when deciding whether Edit is safe", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     for (const row of rows()) {
       expect(actions(row)).toEqual(["Discard all 2 unread messages"]);
     }
 
-    promoteSteer("chat-1", "steer-1", "one");
+    promoteSteer("chat-1", "steer-1", "one", "user");
     expect(rows()).toHaveLength(1);
     expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
   });
@@ -350,7 +360,7 @@ describe("the steer stack", () => {
   // toward the total either: one confirmed row beside one pending one still
   // offers Edit.
   it("does not count a still-sending row toward the unread total", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "confirmed" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "confirmed", origin: "user" });
     recordSteerSent("chat-1", "m-2", "still sending");
     const [confirmed, sending] = rows();
     expect(actions(confirmed as HTMLElement)).toEqual([
@@ -361,7 +371,7 @@ describe("the steer stack", () => {
   });
 
   it("fills the composer and clears the buffer when a message is edited", async () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
     clickAction(firstRow(), "Edit");
     await vi.waitFor(() => {
       expect(clearDispatch).toHaveBeenCalledWith({ chatID: "chat-1" });
@@ -375,7 +385,7 @@ describe("the steer stack", () => {
   // One unread message, so the label and the effect already agree and a dialog
   // would be a click that teaches nothing.
   it("discards a single unread message without asking", async () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     clickAction(firstRow(), "Discard");
     await vi.waitFor(() => {
       expect(clearDispatch).toHaveBeenCalledWith({ chatID: "chat-1" });
@@ -386,8 +396,8 @@ describe("the steer stack", () => {
   // With several unread, a × beside one row looks like it removes that row, so
   // the count is named before anything goes.
   it("confirms before discarding when more than one would go", async () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     clickAction(firstRow(), "Discard");
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
@@ -397,12 +407,132 @@ describe("the steer stack", () => {
 
   it("sends nothing when the multi-message confirm is declined", async () => {
     confirmMock.mockResolvedValueOnce(false);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     clickAction(firstRow(), "Discard");
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
     });
     expect(clearDispatch).not.toHaveBeenCalled();
+  });
+});
+
+// The clamp, measured against real layout under the shipped stylesheet — the only
+// thing that can answer "does this row overflow four lines". The stack element is
+// the module's own (captured at init), so these cases re-parent it into a narrow
+// host rather than building a second one.
+describe("the row's clamp", () => {
+  let styleEl: HTMLStyleElement;
+  let host: HTMLElement;
+
+  beforeAll(() => {
+    styleEl = mountAppCSS();
+    host = document.createElement("div");
+    host.style.inlineSize = "320px";
+    document.body.appendChild(host);
+    const stack = document.getElementById("steer-stack");
+    if (stack === null) {
+      throw new Error("no #steer-stack");
+    }
+    host.appendChild(stack);
+  });
+
+  beforeEach(() => {
+    // Same one-line reset as the suite above: a fresh session has no steers, so
+    // the render empties the stack. Repeated rather than hoisted because these
+    // cases are a sibling describe with their own layout host.
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+  });
+
+  afterAll(() => {
+    styleEl.remove();
+    host.remove();
+  });
+
+  function textEl(row: HTMLElement): HTMLElement {
+    const t = row.querySelector<HTMLElement>(".steer-text");
+    if (t === null) {
+      throw new Error("no .steer-text");
+    }
+    return t;
+  }
+
+  function moreEl(row: HTMLElement): HTMLButtonElement {
+    const b = row.querySelector<HTMLButtonElement>(".steer-more");
+    if (b === null) {
+      throw new Error("no .steer-more");
+    }
+    return b;
+  }
+
+  /** Wait for the opener to reach `hidden`, for a verdict that must CHANGE. */
+  async function settles(row: HTMLElement, hidden: boolean, why: string): Promise<void> {
+    await vi.waitFor(() => {
+      expect(moreEl(row).hidden, why).toBe(hidden);
+    });
+  }
+
+  /** Two frames span one full resize delivery, for a verdict that must NOT
+   *  change. */
+  async function observerRuns(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
+  }
+
+  const LONG = "rebase onto main and re-run the census against both bundles first ".repeat(6);
+
+  it("offers no opener for a message that fits", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+    await observerRuns();
+    expect(moreEl(firstRow()).hidden).toBe(true);
+  });
+
+  it("offers one for a message that does not, with the whole text still in the DOM", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
+    const row = firstRow();
+    await settles(row, false, "offered for a message past four lines");
+    expect(textEl(row).textContent).toContain("bundles first");
+    expect(textEl(row).scrollHeight).toBeGreaterThan(textEl(row).clientHeight);
+  });
+
+  it("un-clamps on the click", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
+    const row = firstRow();
+    await settles(row, false, "offered");
+
+    moreEl(row).click();
+    expect(textEl(row).hasAttribute("data-clamped")).toBe(false);
+    expect(moreEl(row).textContent).toBe("Show less");
+  });
+
+  // The row is a grid whose middle track is `minmax(0, 1fr)`, and that is what
+  // keeps the actions on the row: an `auto` middle track sizes to the text and
+  // pushes them off. Opening the clamp grows the row's HEIGHT, so the controls
+  // have to still be in their own column afterwards.
+  it("keeps Edit and Discard on the row at the expanded height", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
+    const row = firstRow();
+    await settles(row, false, "offered");
+    expect(actions(row).length, "one unread message, so Edit is offered too").toBe(2);
+
+    const before = row.getBoundingClientRect().height;
+    moreEl(row).click();
+    await observerRuns();
+
+    expect(row.getBoundingClientRect().height, "the row grew").toBeGreaterThan(before);
+    const textBox = textEl(row).getBoundingClientRect();
+    for (const btn of row.querySelectorAll<HTMLElement>(".steer-act")) {
+      const box = btn.getBoundingClientRect();
+      expect(box.x, "still in the actions column, right of the message").toBeGreaterThan(textBox.x);
+      expect(box.right, "and still inside the row").toBeLessThanOrEqual(
+        row.getBoundingClientRect().right + 1,
+      );
+    }
   });
 });

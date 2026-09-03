@@ -265,7 +265,9 @@ describe("the pipeline shape", () => {
       subagentPath("sub_a"),
       subagentPath("sub_b"),
     ]);
-    expect(root?.label).toBe("Pipeline");
+    // The row names what it HOLDS, not the object: the header one row up already
+    // reads `Subagent pipeline`, so repeating those words here stutters.
+    expect(root?.label).toBe("Stages");
     // The EXECUTION's name, not the stage the tab names: the header states the whole
     // pipeline's progress and elapsed time beside it.
     expect(run.label).toBe("Subagent pipeline");
@@ -319,17 +321,41 @@ describe("the pipeline shape", () => {
 
   // `input` is whatever the model produced, so a shape this adapter does not recognise
   // must yield no rows rather than throw on a page whose other half renders fine.
+  // TWO stages, so the malformed input is judged against the GROUP shape: at one the
+  // pipeline promotes and the assertion below would describe the flat shape instead.
   it("survives a driver whose input is not the expected shape", () => {
     for (const bad of [undefined, null, "text", 42, { stages: "nope" }, { stages: [1, null] }]) {
       const odd = [
         msg([
           driver("orc_1", { input: bad } as Partial<ToolCall>),
           invocation("invoke_subagent_orc_1_stage_a", "sub_a"),
+          invocation("invoke_subagent_orc_1_stage_b", "sub_b"),
         ]),
       ];
       const run = exec(odd, "sub_a");
-      expect(run.nodes[0]?.children).toHaveLength(1);
+      expect(run.nodes[0]?.children).toHaveLength(2);
       expect(run.inputs).toBeUndefined();
     }
+  });
+
+  // The page's own rule is `run.nodes.length > 1 || any node has children`, so a group
+  // over its only child forces open a tree pane holding one navigable row and one row
+  // that is not navigable at all. Promotion here is the twin of the transcript's.
+  it("promotes a lone stage to the root, rendering no group row", () => {
+    const solo = [
+      msg([
+        driver("orc_solo", { input: { task: "do it", stages: [{ name: "a" }] } }),
+        invocation("invoke_subagent_orc_solo_stage_a", "sub_solo"),
+      ]),
+    ];
+    const run = exec(solo, "sub_solo");
+    expect(run.nodes).toHaveLength(1);
+    expect(run.nodes[0]?.path).toBe(subagentPath("sub_solo"));
+    expect(run.nodes[0]?.children).toHaveLength(0);
+    expect(run.nodes[0]?.transcript).toBe(true);
+    // The pipeline is still named and still states what it was asked to do: both are
+    // ExecRun fields the header renders, not row fields.
+    expect(run.label).toBe("Subagent pipeline");
+    expect(run.inputs).toEqual({ Task: "do it" });
   });
 });

@@ -168,3 +168,101 @@ func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 		t.Fatalf("events = %+v — a steer consumed inside a subagent must still be reported", *events)
 	}
 }
+
+// --- Origin: whose words the steer carries -------------------------------
+//
+// The one field on these payloads that is not decoded from the frame. Nothing on
+// the wire separates the user's own correction from a workflow reporting into the
+// same buffer — measured on the live store, all three producers persist
+// identically as `{"type":"user","source":"steer"}` — so the answer comes from
+// the ledger of what THIS server sent.
+
+func TestSteeringQueued_OriginIsUserForASteerThisServerSent(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	deps.userSteers = map[string]bool{"steer-m-1": true}
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{
+			"messageId": "steer-m-1",
+			"content":   "use tabs",
+		}), FrameAttribution{})
+
+	p, ok := (*events)[0].Payload.(vibekit.SteerQueuedPayload)
+	if !ok {
+		t.Fatalf("payload type = %T", (*events)[0].Payload)
+	}
+	if p.Origin != vibekit.SteerOriginUser {
+		t.Errorf("origin = %q, want %q for an id the ledger holds", p.Origin, vibekit.SteerOriginUser)
+	}
+}
+
+// An id the ledger does not hold is the agent's, and this is the reported
+// defect: a workflow's report rendered as something the user had typed.
+func TestSteeringQueued_OriginIsAgentForAnIDTheLedgerDoesNotHold(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{
+			"messageId": "notify-wf-9",
+			"content":   "A workflow you launched completed.",
+		}), FrameAttribution{})
+
+	p, ok := (*events)[0].Payload.(vibekit.SteerQueuedPayload)
+	if !ok {
+		t.Fatalf("payload type = %T", (*events)[0].Payload)
+	}
+	if p.Origin != vibekit.SteerOriginAgent {
+		t.Errorf("origin = %q, want %q", p.Origin, vibekit.SteerOriginAgent)
+	}
+}
+
+// The injected frame carries it too, and that is load-bearing rather than
+// symmetric: both agent injection paths append straight to KAS's buffer and only
+// `_session/steer` broadcasts a queued frame, so for the case Origin exists to
+// name, the injected frame is the ONLY one the client ever sees.
+func TestSteeringInjected_CarriesTheOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		known bool
+		want  vibekit.SteerOrigin
+	}{
+		{"the user's own", true, vibekit.SteerOriginUser},
+		{"a workflow's report", false, vibekit.SteerOriginAgent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, events, _ := depsWithStore(t, "c1")
+			if tc.known {
+				deps.userSteers = map[string]bool{"steer-1": true}
+			}
+			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+				steerFrame(t, "steering_injected", map[string]any{
+					"messageId": "steer-1",
+					"content":   "use tabs",
+				}), FrameAttribution{})
+
+			p, ok := (*events)[0].Payload.(vibekit.SteerInjectedPayload)
+			if !ok {
+				t.Fatalf("payload type = %T", (*events)[0].Payload)
+			}
+			if p.Origin != tc.want {
+				t.Errorf("origin = %q, want %q", p.Origin, tc.want)
+			}
+		})
+	}
+}
+
+// A frame carrying a severity still leaves as an agent_notice and produces no
+// steer at all, so Origin never has to answer for one. The severity gate and the
+// ledger answer different questions: the gate catches the one shape KAS marks,
+// and the ledger covers everything else the agent injects.
+func TestSteeringQueued_ASeverityStillPreemptsTheSteerEntirely(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{
+			"messageId":            "notify-1",
+			"content":              "[notification/warning] a step is waiting",
+			"notificationSeverity": "warning",
+		}), FrameAttribution{})
+
+	if len(*events) != 1 || (*events)[0].Type != vibekit.EventAgentNotice {
+		t.Fatalf("events = %+v, want one agent_notice and no steer", *events)
+	}
+}

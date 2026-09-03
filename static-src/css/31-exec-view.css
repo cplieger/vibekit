@@ -124,6 +124,13 @@
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
 
+  /* The same card skin `.ev-tl`, `.ev-pane` and `.ev-results` carry, so the
+     instructions read as a card among the cards rather than as loose text under
+     the identity row. */
+  padding: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border-radius: var(--r-lg);
+
   /* The key and the value sit on ONE baseline. Grid's default `stretch` aligns
      the two boxes, not the text in them, so any difference in font metrics
      between the columns leaves the label riding above or below its value —
@@ -132,6 +139,16 @@
   gap: 0.15rem var(--sp-3);
   margin: 0;
   font-size: var(--fs-sm);
+}
+
+/* REQUIRED, not defensive. There is no author `[hidden]` rule anywhere in this
+   tree, so the UA sheet's `[hidden] { display: none }` loses the specificity tie
+   to the bare class above and a hidden `.ev-inputs` computes `display: grid` and
+   stays in layout — measured visible at 17px. Harmless while it painted nothing;
+   an empty card the moment the skin above landed. Every other `.ev-*` element
+   declaring a `display` already carries this companion. */
+.ev-inputs[hidden] {
+  display: none;
 }
 
 /* Inherits the grid's family and size, so the key and its value differ in INK
@@ -455,23 +472,44 @@
   place-items: center;
   inline-size: 1rem;
   color: var(--c-text-control);
-  transition: transform var(--dur-micro) var(--ease-standard);
 }
 
+/* REMOVED from layout, not kept as an empty box. A row with no disclosure carried
+   20px of phantom indent — the 1rem box plus the row's 4px flex `gap`, which a
+   `visibility: hidden` cannot collapse — and it read as oversized padding before
+   the activity mark. A flat workflow (the common case: `runToExec` unwraps a
+   sequential root, so every row is a depth-0 leaf) has no container siblings for
+   the empty box to align with in the first place. */
 .ev-twist[hidden] {
-  /* Kept in layout as an EMPTY box rather than removed, so a leaf's glyph lines up
-     with its siblings' instead of shifting left by the twist's width. */
-  display: grid;
-  visibility: hidden;
+  display: none;
 }
 
-.ev-collapsed > .ev-row-main > .ev-twist {
-  transform: rotate(-90deg);
+/* Open points DOWN, closed points RIGHT, matching every other disclosure in the
+   app. The wrapper carries NO transform: it used to rotate -90deg on a collapsed
+   row while the chevron already owns its own closed -90deg, so the two composed
+   to -180deg — UP when closed, and a bare RIGHT when open.
+
+   Child combinators are load-bearing here for the reason `.ev-state` records
+   below: `.ev-kids` nests INSIDE `.ev-row`, so a descendant selector would flip
+   every chevron in the subtree from one expanded ancestor.
+
+   A leading `.ev-row` would be a fifth compound part, breaching
+   `selector-max-specificity` (0,4,3), and buys nothing: only a row has an
+   `.ev-row-main`.
+
+   `.ev-collapsed`, which `tree.ts` applyCollapse still toggles beside the
+   attribute, is styled by NOTHING in this tree — no rule here reads it. Do not
+   go looking for one. */
+[aria-expanded="true"] > .ev-row-main > .ev-twist > .disclosure-chevron {
+  --chev-turn: 0deg;
 }
 
-/* The state glyph. Same eight-state vocabulary as the run card's, because it is the
-   same vocabulary module — a character for the five settled and asking states, a ring
-   for the two in-flight ones.
+/* The state mark. Same eight-state vocabulary as the run card's, because it is the
+   same vocabulary module: a solid road-sign SVG from the shared outcome set for the
+   three settled outcomes, a character for the two states that keep one (`?` for an
+   unanswered ask, an en dash for skipped), and a ring for the three in-flight ones.
+   The slot is already grid-centred and sized, so it renders both kinds; `font-size`
+   stays for the two characters.
 
    EVERY state rule below uses the child combinator, and that is load-bearing rather
    than tidy. `.ev-kids` nests INSIDE `.ev-row`, so `.ev-row[data-state=x] .ev-state`
@@ -837,6 +875,27 @@
     outline: var(--focus-ring);
     outline-offset: var(--focus-offset-inset);
   }
+}
+
+/* The disclosure's glyph, LEADING the header the way the app's other two section
+   headers do (`.tool-group-header`, `.reasoning-summary`) and the way `.ev-twist`
+   does in this same stylesheet — so the page ends up with one arrow position
+   rather than two. `align-self: center` because `.ev-r-head` is
+   `align-items: baseline` and an SVG-only grid box has no useful baseline. */
+.ev-r-twist {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  inline-size: 1rem;
+  color: var(--c-text-control);
+}
+
+/* Keyed on the TRIGGER's own `aria-expanded` — the flag `createDisclosure`
+   writes, and the shape every other disclosure here uses. `page.ts`'s
+   `.collapsed` class is its own `onToggle` bookkeeping, one step further out. */
+.ev-r-head[aria-expanded="true"] > .ev-r-twist > .disclosure-chevron {
+  --chev-turn: 0deg;
 }
 
 .ev-r-title {

@@ -33,6 +33,11 @@ type ACPChunkWire struct {
 
 // ACPToolCallContentBlock is one element in a tool_call or
 // tool_call_update's content array.
+//
+// On a type:"diff" block, OldText/NewText are KAS's whole-file contents for its
+// edit tools rather than the changed fragment (a hunk pair also arrives from
+// some tools). Anything deriving a line count from them must diff the two sides
+// — see internal/buffer/linediff.go.
 type ACPToolCallContentBlock struct {
 	Type    string `json:"type"`
 	Path    string `json:"path"`

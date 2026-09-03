@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
-// Banner stack: per-chat persistent banners above the transcript.
+// Banner stack: persistent, acknowledgeable conditions above the transcript.
 //
-// Init errors (agent_not_found, agent_config_error), rate limits (including
-// the v3 system/notify "model under load" notice), and MCP failures surface
-// here. Each banner is keyed on (chat_id, code) so the same error replaces
-// rather than duplicates.
+// Three producers: the runtime-health pair (app-global, GLOBAL_BANNER, re-asserted
+// by a poller on every transport gap) and open_external_url (any chat, deferred
+// until that chat is active). Each banner is keyed on (chat_id, code), so a
+// re-assert replaces in place rather than duplicating — the property a toast has no
+// equivalent for, and the reason these three did not fold into it.
 //
 // Banners are per-device and auto-clear when the underlying condition resolves.
 // The DISMISSALS are per-device too, keyed per chat in localStorage — a phone
@@ -42,7 +43,7 @@ import type { BannerLevel } from "./types.js";
  *     it in a new tab — is the wrong shape for jumping across your own app.
  *
  *  Exactly one of the two is used; `onClick` wins if both are set. */
-export interface BannerLink {
+interface BannerLink {
   readonly label: string;
   readonly href?: string;
   readonly onClick?: () => void;
@@ -207,23 +208,26 @@ function updateBannerLink(node: HTMLDivElement, link: BannerLink): void {
   }
 }
 
-/** One glyph per severity, MIRRORING `tool-card.ts`'s `OUTCOME_BADGE` rather
- *  than inventing a second vocabulary: `error` takes its `fail` cross and
- *  `warning` its `warn` triangle, so a reader who has learned the transcript's
- *  outcome shapes reads a banner with no second lesson.
+/** One glyph per severity, and they are CHARACTERS on purpose.
  *
- *  `info` has no member over there — that vocabulary only covers SETTLED tool
- *  outcomes, and an informational notice is not one — so U+2139 INFORMATION
- *  SOURCE is chosen here: it is the conventional glyph for the meaning, it is
- *  distinct in SHAPE from both the cross and the triangle (which is the whole
- *  point of the channel), and it carries text presentation by default, so it
- *  renders as a glyph in the banner's own colour rather than as an emoji that
- *  would ignore it.
+ *  These used to mirror a settled-outcome character table in `tool-card.ts`, so a
+ *  reader who had learned the transcript's shapes read a banner with no second
+ *  lesson. That table is gone: the transcript's outcome vocabulary is SVG
+ *  road-sign silhouettes now (`icons.ts` `outcomeIcon`), written into a row's own
+ *  glyph slot. A banner has no such slot — it is a text notice, and each glyph is
+ *  a restatement for the eye beside a message that already carries the meaning in
+ *  words — so it keeps characters rather than borrowing marks built for a 14px
+ *  icon box. What survives from the old rule is the part that mattered: the three
+ *  are distinct in SHAPE, so a level is never readable by hue alone (WCAG 1.4.1).
+ *
+ *  U+2139 INFORMATION SOURCE for `info`: the conventional glyph for the meaning,
+ *  distinct from both the cross and the triangle, and it carries text
+ *  presentation by default, so it renders in the banner's own colour rather than
+ *  as an emoji that would ignore it.
  *
  *  This is deliberately NOT a call to `applyOutcome`: that function requires a
  *  `.tool-icon` child and overwrites `aria-label`, which would clobber the
- *  banner's accessible text. The vocabulary is mirrored; the function is not
- *  reused. */
+ *  banner's accessible text. */
 const LEVEL_GLYPH: Readonly<Record<BannerLevel, string>> = {
   error: "\u2717",
   warning: "\u26A0",
@@ -353,8 +357,3 @@ export function clearBannersForChat(chatID: string): void {
 // There is no pruneStaleDismissals. It capped ONE flat array of `chat:code` keys
 // at 200 entries, which is the bound a global list needs; the per-chat store owns
 // the bound now and applies it per chat with oldest-first eviction.
-
-/** Auto-clear transient banners (rate_limit) on successful turn end. */
-export function onTurnEnded(chatID: string): void {
-  removeBanner(chatID, "rate_limit");
-}

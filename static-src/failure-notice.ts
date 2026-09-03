@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { join } from "@cplieger/keyenc";
-import { error as toastError, errorWithAction } from "./toast.js";
+import { error as toastError, errorWithAction, type ToastRetry } from "./toast.js";
 import { get } from "./store.js";
 import { activateTab, getActiveTabId, tabIdFor } from "./tabs.js";
 import { truncate } from "./strings.js";
@@ -62,12 +62,23 @@ const OPEN_LABEL = "Open chat";
  *  wording points at the one place the cause is still recoverable. */
 const NO_REASON = "The request failed. Check the server log for the cause.";
 
-let lastKey = "";
-let lastAt = 0;
+/** The last failure reported per chat, for the window above. Per chat because a
+ *  failure's identity includes its chat: one shared slot is overwritten by any
+ *  other chat's failure, which un-latches the twin still to arrive. */
+const latched = new Map<string, { key: string; at: number }>();
 
 /** The live toast per chat, so the dead-POST rescue can retract one. Keyed by
  *  chat because two chats can fail independently and each owns its own notice. */
 const live = new Map<string, () => void>();
+
+/** The live remedy-bearing toast per FAILURE rather than per chat. Such a notice
+ *  is sticky, so nothing expires it: an identical repeat dismisses the copy it
+ *  repeats, and any other failure leaves it standing, because a remedy offered
+ *  nowhere else must not be retracted to report something else. How many stand at
+ *  once is bounded by the surface rather than here — toast.ts's MAX_STICKY — so a
+ *  handle in this map may name a toast that is already gone; dismissing one is a
+ *  no-op. */
+const remedies = new Map<string, () => void>();
 
 /** Report a failure to the user.
  *
@@ -75,8 +86,13 @@ const live = new Map<string, () => void>();
  *  with its chat and carries a jump to it, so the toast cannot be read as being
  *  about whatever is on screen. That is the one thing the old send-button surface
  *  could not do, and why a background failure used to leave nothing but a tab
- *  dot. An empty `chatID` is a workspace-global command, which names no chat. */
-export function reportFailure(chatID: string, message: string): void {
+ *  dot. An empty `chatID` is a workspace-global command, which names no chat.
+ *
+ *  `action` is the route's own remedy (a Settings jump, the login modal). It takes
+ *  the single action slot from the "Open chat" jump and makes the toast STICKY,
+ *  because a remedy offered nowhere else must not expire unread. The chat is still
+ *  NAMED, which is the half that answers whose failure this is. */
+export function reportFailure(chatID: string, message: string, action?: ToastRetry): void {
   const reason = message.trim() !== "" ? message.trim() : NO_REASON;
   // Dedupe on the TEXT, not on the code or the channel: the two channels agree on
   // the prose by construction (one server-side renderer), which is exactly what
@@ -84,25 +100,37 @@ export function reportFailure(chatID: string, message: string): void {
   // literal because a reason is arbitrary upstream text and a chat id is not.
   const key = join(chatID, reason);
   const now = Date.now();
-  if (key === lastKey && now - lastAt < DEDUPE_WINDOW_MS) {
-    lastAt = now;
+  const last = latched.get(chatID);
+  if (last?.key === key && now - last.at < DEDUPE_WINDOW_MS) {
+    latched.set(chatID, { key, at: now });
     return;
   }
-  lastKey = key;
-  lastAt = now;
-
-  clearFailure(chatID);
-  live.set(chatID, raise(chatID, truncate(reason, MAX_TOAST_CHARS)));
+  // Retract only what this raise supersedes. A sticky remedy is replaced by its
+  // own repeat and by nothing else; an ordinary notice is replaced by whatever
+  // this chat reports next.
+  if (action !== undefined) {
+    remedies.get(key)?.();
+  } else {
+    clearFailure(chatID);
+  }
+  // Latch AFTER the retraction: clearFailure drops this chat's latch, so latching
+  // first leaves every failure after its first un-deduped, and its twin on the
+  // other channel re-raises the toast that was just replaced.
+  latched.set(chatID, { key, at: now });
+  const dismiss = raise(chatID, truncate(reason, MAX_TOAST_CHARS), action);
+  if (action !== undefined) {
+    remedies.set(key, dismiss);
+  } else {
+    live.set(chatID, dismiss);
+  }
 }
 
-/** Retract this chat's failure notice.
+/** Retract this chat's ordinary failure notice.
  *
- *  One caller, and it is the reason this is exported: the prompt POST is the only
- *  long-lived connection here that cannot carry a keepalive, so it can die while
- *  the turn it started runs on fine. actions/chat.ts detects that (the server
- *  echoed our message id) up to two seconds after the toast has already appeared,
- *  and a "send failed" notice standing over a turn that is streaming is worse
- *  than no notice at all. */
+ *  `reportFailure`'s own replace is the only caller and the export is the test
+ *  seam. A remedy-bearing notice is deliberately out of reach: this retracts a
+ *  report that turned out not to describe a failure, which a broken agent file
+ *  is not. */
 export function clearFailure(chatID: string): void {
   const dismiss = live.get(chatID);
   if (dismiss === undefined) {
@@ -112,7 +140,7 @@ export function clearFailure(chatID: string): void {
   // A retraction also clears the dedupe latch. Without this, the retracted
   // failure keeps suppressing its own text for the rest of the window, so a
   // genuine repeat inside five seconds would be silent.
-  lastKey = "";
+  latched.delete(chatID);
   dismiss();
 }
 
@@ -129,19 +157,22 @@ export function clearFailure(chatID: string): void {
  *  and nothing to click — an unattributed failure on a screen with no chat in
  *  sight, which is worse than the tooltip it replaced. The tab id is the honest
  *  answer, because a chat tab's id IS the chat id. */
-function raise(chatID: string, reason: string): () => void {
+function raise(chatID: string, reason: string, action?: ToastRetry): () => void {
   // Resolved once: it answers both "is this chat the one on screen" and "is there
   // a tab to jump to", and "" is the second answer's no.
   const tabID = chatID === "" ? "" : tabIdFor("chat", chatID);
-  if (chatID === "" || tabID === getActiveTabId()) {
-    return toastError(reason);
-  }
-  const name = truncate(get(chatID)?.name ?? "", MAX_NAME_CHARS);
+  const onScreen = chatID === "" || tabID === getActiveTabId();
+  const name = onScreen ? "" : truncate(get(chatID)?.name ?? "", MAX_NAME_CHARS);
   const message = name !== "" ? `${name}: ${reason}` : reason;
+  // A route's own remedy takes the one action slot, and takes it sticky: toast.ts
+  // times out an action reachable another way, and neither of these is.
+  if (action !== undefined) {
+    return toastError(message, action);
+  }
   // No tab, no button. `activateTab` no-ops on an id it does not hold, so offering
   // the jump for a chat with no tab would render a control that does nothing —
   // which teaches a reader to distrust every other one.
-  if (tabID === "") {
+  if (onScreen || tabID === "") {
     return toastError(message);
   }
   return errorWithAction(message, {
@@ -154,7 +185,7 @@ function raise(chatID: string, reason: string): () => void {
 
 /** Test-only: drop the dedupe latch and every tracked toast handle. */
 export function _resetForTest(): void {
-  lastKey = "";
-  lastAt = 0;
+  latched.clear();
   live.clear();
+  remedies.clear();
 }

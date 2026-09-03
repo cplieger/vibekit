@@ -149,6 +149,14 @@
   min-height: var(--btn-h);
   display: flex;
   align-items: center;
+
+  /* The SAME gap a member card's `.tool-header` uses, so the group header and
+     the rows under it are one component rather than two densities. It has to be
+     declared here now: the verdict slot used to be a 0.85rem box holding a
+     0.7rem character, and that leftover box width WAS the spacing — an SVG fills
+     its box, so the mark sat against the summary text. Container spaces its
+     children; do not put this back on the children. */
+  gap: var(--sp-2);
   font-variant-numeric: tabular-nums;
   transition:
     background var(--dur-micro),
@@ -170,10 +178,6 @@
 
 .tool-group-header > .disclosure-chevron {
   color: var(--c-text-tertiary);
-
-  /* The header declares no `gap` (its icon slot has a fixed width instead), so
-     the chevron carries the same 0.25rem the `::before` did. */
-  margin-inline-end: 0.25rem;
 }
 
 .tool-summary {
@@ -230,12 +234,14 @@
   padding-inline-end: calc(0.75rem + 1.5rem + var(--sp-2));
 }
 
-/* THE OUTCOME LIVES HERE. The per-kind glyph carries whether-it-worked by tint
-   PLUS a composited check/cross, because tint alone is a single channel and
-   would fail WCAG 1.4.1 exactly as a bare coloured dot does. The status WORD is
-   gone from the visible row; the card's aria-label carries it. */
+/* THE OUTCOME LIVES HERE, AS THE ROW'S ONE MARK. On success the row keeps its own
+   per-kind glyph and only the tint moves; for `fail`, `warn` and `denied` the
+   glyph itself is REPLACED by a general road-sign silhouette from icons.ts
+   (`outcomeIcon`, written by tool-card.ts applyOutcome). So hue is still a channel
+   and never the only one, and WCAG 1.4.1 is satisfied by the SHAPE changing rather
+   than by a second mark beside the first. The status WORD is gone from the visible
+   row; the card's aria-label carries it. */
 .tool-icon {
-  position: relative;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -262,16 +268,16 @@
 }
 
 /* A policy refusal is amber, not red: the tool did not break, it was not run.
-   The shield badge carries the same distinction in shape, because tint alone is
-   one channel (WCAG 1.4.1). */
+   Amber is shared with a stop, so the SHAPE separates them: a horizontal bar
+   knocked out of the disc for a stop, a diagonal one for a policy refusal
+   (WCAG 1.4.1 — tint alone would be one channel). */
 .tool-icon.is-denied {
   color: var(--c-yellow);
 }
 
 /* Stopped rather than finished (a cancelled or aborted workflow run). Amber for
-   the same reason a refusal is: the work did not fail, it did not complete. That
-   makes SHAPE the only thing separating the two, which is exactly what the
-   triangle-versus-shield badge pair is for. */
+   the same reason a refusal is: the work did not fail, it did not complete. Same
+   shape rule as above — the bar's angle is what tells the two apart. */
 .tool-icon.is-warn {
   color: var(--c-yellow);
 }
@@ -302,76 +308,6 @@
 
 .tool-denial-row > code {
   overflow-wrap: anywhere;
-}
-
-/* THE BADGE OWNS A CORNER OUTSIDE THE GLYPH, NOT A CORNER OF IT.
- *
- * It used to be an 8px text glyph with padding — 8.3 x 9.6 CSS px, or 69% of the
- * 14px icon's height — sitting 4px INSIDE the icon's right edge, so its opaque
- * disc covered everything past (9.7, 6.8): the whole lower-right quadrant of
- * every tool glyph. For `search` that quadrant IS the magnifier's handle, which
- * runs from 9.71 to 12.66 CSS px, so a completed grep rendered as a bare ring
- * with a tick beside it and the icon stopped saying "search" at all. Measured on
- * the live transcript: 0 of the handle's 2.95px visible. The terminal glyph lost
- * half its underscore the same way.
- *
- * The offsets are derived from that handle rather than chosen: a 7px badge
- * pushed 6px out puts its inner corner at (13, 13), past the handle's far end,
- * so nothing a glyph draws (they all stay inside viewBox 2..22, i.e. 1.2..12.8px)
- * passes under it. Keep both offsets and the box size in step if either moves.
- * The geometry is load-bearing rather than cosmetic, and dropping the background
- * below does not replace it: with the old offsets the MARK'S OWN INK sits on the
- * handle (measured: 256 of 5394 sampled points inside the handle's stroke, versus
- * 0 now), so a transparent badge there crosses the handle with a second diagonal
- * stroke in the same colour instead of erasing it. That collision is why the
- * punch-out existed at all.
- *
- * The box is SIZED rather than left to the glyph's own metrics because the four
- * badge characters are not one width: at font-size 0.5rem the check measured
- * 8.3px and the no-entry sign 11.58px, which is 83% of the icon it decorates.
- * A fixed box plus centring makes all four states the same object.
- *
- * NO BACKGROUND, and that follows from the geometry above. The old rule punched a
- * `--c-bg-secondary` disc out of the card so the glyph could be read underneath
- * it, which after the badge moved off the glyph buys nothing and costs one
- * artefact. Measured over all 15 glyphs in the set with `isPointInStroke`: none
- * paints inside the badge's box (four come within half a stroke of its corner and
- * stop), so there is nothing left to punch out. And the disc named ONE surface
- * while the badge appears on THREE — a tool card, a History run row, a subagent
- * header — of which two repaint under it: `.list-row:hover` goes
- * `--c-bg-tertiary` and `.subagent-header:hover` composites an 8% accent wash,
- * and against either the disc showed as a circle in the wrong shade. A card is
- * the only one that never changes, which is why this looked correct for as long
- * as it did. Transparent gives the mark the same contrast against the same
- * surface as the glyph it belongs to, verified at 3.43:1 or better on every
- * surface and state in both themes. Restore a background only together with
- * evidence that a glyph reaches under the mark.
- *
- * `.tool-group-icon` is NOT a badge site, despite sharing the `.tool-icon` class:
- * `tool-group.ts` paints a group's verdict as the slot's own `textContent`, so a
- * group header has no `.tool-outcome-badge` to position (measured live: 73 group
- * headers, 0 badges). Nothing here reaches it.
- *
- * EVERY OFFSET ABOVE ASSUMES THE ICON IS THE BADGE'S CONTAINING BLOCK, which is
- * what `.tool-icon`'s `position: relative` provides, so a badge host has to carry
- * that class. `.subagent-icon` builds the same badge (subagent-block.ts applyIcon)
- * and did not until 2026-08-26: the mark resolved against `.subagent-block` — a
- * containing block only because its entry animation ends on a transform — and
- * landed about 190px right of the glyph, at the header's own corner. It predated
- * these offsets and survived them (they moved it from +189.7/+2.6 to +193/+8.8),
- * so the mark had never been on that glyph. Fixed by adding `tool-icon` to the
- * span, which also restores the tint its `is-*` classes select on. */
-.tool-outcome-badge {
-  position: absolute;
-  inset-block-end: -0.375rem;
-  inset-inline-end: -0.375rem;
-  display: grid;
-  place-items: center;
-  width: 0.4375rem;
-  height: 0.4375rem;
-  font-size: 0.45rem;
-  line-height: 1;
-  font-weight: var(--fw-semibold);
 }
 
 .tool-title {
@@ -411,25 +347,23 @@
    printing the literal enum value `completed` was the claim "Tool call
    completed", which restates nothing the row does not already say. */
 
-/* THE GROUP HEADER CARRIES A VERDICT, NOT A GLYPH, and the distinction is worth
-   stating because the class list says otherwise. It shares `.tool-icon` for the
-   tint classes (`is-ok` / `is-fail` / `is-running`) and nothing else:
-   `tool-group.ts` paintGroupOutcome writes the check or cross as this slot's own
-   `textContent`, so there is no per-kind glyph here and no `.tool-outcome-badge`
-   to position (measured on a live transcript: 73 group headers, 0 badges). A
-   reader looking for the magnifier a collapsed group of twelve searches "should"
-   show will not find one; the summary text names the kind in words instead.
+/* THE GROUP HEADER CARRIES A VERDICT RATHER THAN A KIND, and it shares
+   `.tool-icon` for the tint classes (`is-ok` / `is-fail` / `is-running`).
+   `tool-group.ts` paintGroupOutcome writes an `outcomeIcon` node here — the same
+   shared silhouette set every other outcome surface reads — so a collapsed group
+   of twelve searches shows a verdict and not a magnifier; the KIND is named in
+   the summary text instead.
 
-   Hence the three declarations, all load-bearing for a TEXT slot rather than an
-   SVG one: the fixed width holds the label still when a running group's verdict
-   is the empty string, and the font-size and weight size the character. This
-   comment previously read "wears the same glyph" and sent at least one reader
-   hunting for an SVG that has never been built here. */
+   THE SQUARE IS RESERVED ON PURPOSE. A running group has no child at all, so
+   without a fixed box the counted summary beside it shifts the moment the group
+   settles. That is what the old text slot's fixed width bought, kept here as an
+   icon slot's own size. */
 .tool-group-icon {
-  width: 0.85rem;
-  font-size: 0.7rem;
-  font-weight: var(--fw-semibold);
-  text-align: center;
+  display: grid;
+  place-items: center;
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  flex-shrink: 0;
 }
 
 /* THE DISCLOSURE CHEVRON'S BUTTON. Named `.tool-disclosure`, not
@@ -658,21 +592,21 @@
   background: color-mix(in srgb, var(--c-accent) 8%, transparent);
 }
 
-/* Identity glyph: an SVG per known bundled subagent (roles.ts
-   iconForSubagent), hexagon fallback for custom ones. Accent-tinted to read
-   as part of the header identity next to .subagent-name, and that accent is
-   what a RUNNING delegate keeps; a settled one takes its outcome colour from
-   `.tool-icon.is-ok` / `.is-fail`.
+/* The delegate's ONE mark. On success it is the identity glyph — an SVG per known
+   bundled subagent (roles.ts iconForSubagent), hexagon fallback for custom ones —
+   and on a failure subagent-block.ts applyIcon REPLACES it with the shared failure
+   silhouette, so the shape moves and not only the hue.
 
-   THE ELEMENT ALSO CARRIES `.tool-icon`, and this rule must not fight it.
-   subagent-block.ts appends the same check/cross mark a tool card carries, so the
-   span needs that class twice over: for the `position: relative` the badge is
-   positioned against, and for the `.tool-icon.is-*` selectors the state classes
-   need. Both were missing until 2026-08-26 — the mark painted ~190px away at the
-   header's edge and the tint never applied. The declarations below that `.tool-icon`
-   also sets are kept rather than deleted so this rule still reads as a complete
-   description of the slot; it wins on `color` by source order, which is what keeps
-   a running delegate accent. */
+   Accent-tinted to read as part of the header identity next to .subagent-name, and
+   that accent is what a RUNNING delegate keeps; a settled one takes its outcome
+   colour from `.tool-icon.is-ok` / `.is-fail`.
+
+   THE ELEMENT ALSO CARRIES `.tool-icon`, and this rule must not fight it: those
+   `is-*` selectors are what the state classes applyIcon sets are matched by, and
+   they matched no rule at all until the class was added in 2026-08-26. The
+   declarations below that `.tool-icon` also sets are kept rather than deleted so
+   this rule still reads as a complete description of the slot; it wins on `color`
+   by source order, which is what keeps a running delegate accent. */
 .subagent-icon {
   display: inline-flex;
   align-items: center;
@@ -789,8 +723,13 @@
 }
 
 /* The tail: rolling activity, shown only while RUNNING and COLLAPSED —
-   expanding shows the real thing, and a settled card's last word is its
-   footer. Fixed max-height so a burst of long lines cannot grow the card. */
+   expanding shows the real thing, and a settled card's last word is its footer.
+
+   NO block-size cap, deliberately: the bound is per-line and horizontal —
+   `TAIL_LINES` (3) caps the count and each line is `nowrap`, so a burst of long
+   lines cannot grow the card. Adding a cap would reproduce `.run-step-capture`'s
+   defect, since `overflow: hidden` clips at the PADDING box and a capped box with
+   block-end padding paints the clipped line inside that band. */
 .subagent-tail {
   display: none;
   padding: var(--sp-1) var(--sp-3) var(--sp-2);

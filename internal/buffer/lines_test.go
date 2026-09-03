@@ -138,9 +138,9 @@ func TestFileHeap_Pop(t *testing.T) {
 	}
 }
 
-// TestLineTracker_RecordFromDiffs_LineCounts verifies the recorded range
-// spans line 1 to the newline-derived end line, with and without a
-// trailing newline.
+// TestLineTracker_RecordFromDiffs_LineCounts verifies the recorded range spans
+// the whole new text when there is no old text to diff against — a file
+// creation really did change every line — with and without a trailing newline.
 func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -166,5 +166,34 @@ func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
 				t.Errorf("EndLine = %d, want %d", got, tt.wantEnd)
 			}
 		})
+	}
+}
+
+// TestLineTracker_RecordFromDiffs_OneLineEdit is the editor gutter's half of the
+// whole-file-diff bug: with KAS's whole-file NewText the tracker used to record
+// 1..300 for a one-line edit, so the gutter painted an accent dot on every line.
+func TestLineTracker_RecordFromDiffs_OneLineEdit(t *testing.T) {
+	old := bigFile(300)
+	lt := NewLineTracker()
+	lt.RecordFromDiffs("chat", []vibekit.ToolDiff{
+		{Path: "big.go", OldText: old, NewText: replaceLine(old, 149, "line 149 EDITED")},
+	}, 1, "edit")
+	ranges := lt.Get("chat", "big.go")
+	if len(ranges) != 1 {
+		t.Fatalf("ranges = %d (%+v), want 1", len(ranges), ranges)
+	}
+	if ranges[0].StartLine != 150 || ranges[0].EndLine != 150 {
+		t.Errorf("range = %d-%d, want 150-150", ranges[0].StartLine, ranges[0].EndLine)
+	}
+}
+
+// TestLineTracker_RecordFromDiffs_NoOpWrite pins that a write which changed
+// nothing marks nothing: there is no modified line to paint.
+func TestLineTracker_RecordFromDiffs_NoOpWrite(t *testing.T) {
+	same := "a\nb\nc\n"
+	lt := NewLineTracker()
+	lt.RecordFromDiffs("chat", []vibekit.ToolDiff{{Path: "f.go", OldText: same, NewText: same}}, 1, "edit")
+	if got := lt.Get("chat", "f.go"); got != nil {
+		t.Errorf("no-op write recorded %+v, want no ranges", got)
 	}
 }

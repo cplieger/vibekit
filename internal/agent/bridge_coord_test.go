@@ -960,11 +960,11 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// The first frame has no turn to fold into, so it opens one and pays for the facts.
-	h.coord.TurnFoldTarget(ctx, chatID)
+	h.coord.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart)
 	before := cs.Gets.Load()
 
 	for range 20 {
-		h.coord.TurnFoldTarget(ctx, chatID)
+		h.coord.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart)
 	}
 
 	if got := cs.Gets.Load(); got != before {

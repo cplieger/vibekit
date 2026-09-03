@@ -343,6 +343,43 @@ describe("runToExec alert precedence", () => {
     expect(run.alert?.text).toContain("ThrottlingException");
   });
 
+  // The two need-input literals reach the reader as a sentence about THEM rather
+  // than verbatim, and on this page the alert also has to say what the Resume
+  // BUTTON beside it will do: KAS's resume clears the run's pause reason and leaves
+  // the step node's own signal, so the next step execution parks again.
+  it("rewrites a need-input pause and warns that Resume alone re-parks it", () => {
+    for (const reason of [
+      "Step requested user input via send_message.",
+      "Step 'review' is waiting for user input.",
+      "Step 'review' is waiting for the next user message.",
+    ]) {
+      const run = runToExec(
+        "wf_1",
+        stateWith(step("a", "paused"), { status: "paused", pauseReason: reason }),
+        undefined,
+        NO_ASKS,
+      );
+      expect(run.alert?.kind, reason).toBe("paused");
+      expect(run.alert?.text, reason).toBe(
+        "A step is waiting for your answer \u2014 Resume alone will park it again; " +
+          "answer or waive it in the dock",
+      );
+      // The literal itself never reaches the reader: it names a tool and a node id
+      // where the reader needs to know somebody owes an answer.
+      expect(run.alert?.text, reason).not.toContain("send_message");
+    }
+  });
+
+  it("quotes any other pause reason verbatim", () => {
+    const run = runToExec(
+      "wf_1",
+      stateWith(step("a", "paused"), { status: "paused", pauseReason: "watching for a file" }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.text).toBe("Waiting: watching for a file");
+  });
+
   it("raises no alert on a run that wants nothing", () => {
     const run = runToExec(
       "wf_1",

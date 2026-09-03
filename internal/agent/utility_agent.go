@@ -93,7 +93,7 @@ func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort
 	drainLeftoverChunks(lease.chunks)
 
 	resp, err := lease.bridge.Call(ctx, vibekit.MethodPrompt, utilitySessionParams(lease.bridge, map[string]any{
-		"prompt": []map[string]any{vibekit.TextBlock(utilitySystemPrompt + prompt)},
+		vibekit.KeyPrompt: []map[string]any{vibekit.TextBlock(utilitySystemPrompt + prompt)},
 	}))
 	if err != nil {
 		ua.session.resetIf(lease.gen)

@@ -394,3 +394,95 @@ func TestStartTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T
 		t.Error("the prompt's turn did not get a fresh buffer, so the agent's tail folds into it")
 	}
 }
+
+// A WORKFLOW STEP's frames open a turn attributed to the RUN, not to the chat.
+//
+// A chat-parented run executes on the LAUNCHING chat's session, so its steps' frames
+// arrive on that chat's connection and fold here — and the launching turn has
+// already ended by then, because run_workflow returns as soon as the run is created.
+// Opened as an ordinary wireTurnStart turn, that made the launching chat read as
+// working for the whole run: the client latches `thinking` off the resulting frames,
+// and nothing ever closes such a turn, because a step's own turn_end is dropped by
+// the workflow attribution gate.
+func TestFold_AStepsFrameOpensTheRunsTurnRatherThanTheChats(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	const chatID vibekit.ChatID = "c1"
+	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	h.translateACPEvent(chatID, newStepChunkMsg("the step wrote this", "wf-1", "root/step"))
+
+	epoch, open := h.coord.turns.openEpoch(chatID)
+	if !open {
+		t.Fatal("a step's fold opened no turn, so the step's content belongs to nothing")
+	}
+	lc := h.coord.turns.lifecycleFor(chatID)
+	lc.mu.Lock()
+	source := lc.cur.Source
+	lc.mu.Unlock()
+	if source != vibekit.TurnSourceWorkflowStep {
+		t.Errorf("turn %d source = %v, want workflowStep: the chat would read as working "+
+			"for the whole run", epoch, source)
+	}
+	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "the step wrote this" {
+		t.Error("the step's fold did not land in the turn's own buffer")
+	}
+}
+
+// A step's frame arriving while the CHAT's own turn is open folds into it and does
+// NOT reclassify it. The source is read on the open only: a run launched mid-turn
+// streams its first step before the launching turn ends, and reclassifying there
+// would make the chat's own live turn read as the run's.
+func TestFold_AStepsFrameDoesNotReclassifyTheChatsOpenTurn(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	const chatID vibekit.ChatID = "c1"
+	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	defer h.ReleaseTurn(chatID, epoch)
+
+	h.translateACPEvent(chatID, newStepChunkMsg("a step of a run this turn launched", "wf-1", "root/step"))
+
+	lc := h.coord.turns.lifecycleFor(chatID)
+	lc.mu.Lock()
+	source := lc.cur.Source
+	lc.mu.Unlock()
+	if source != vibekit.TurnSourcePrompt {
+		t.Errorf("open turn source = %v, want prompt: the chat's own live turn was reclassified", source)
+	}
+}
+
+// A prompt DISPLACES a step-driven turn rather than opening over it, exactly as it
+// does an agent-initiated one. Both are engine-opened and hold no admission slot,
+// so no closer can claim one — and opening over it would drop content already
+// broadcast to every client. This is the ordinary case rather than an edge: a
+// chat-parented run's steps hold the chat for minutes after its own turn ended, so
+// the next prompt meets one.
+func TestStartTurn_PromptDisplacesAStepDrivenTurn(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	const chatID vibekit.ChatID = "c1"
+	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	h.translateACPEvent(chatID, newStepChunkMsg("the step got this far", "wf-1", "root/step"))
+	stepTurn, _ := h.coord.turns.openEpoch(chatID)
+
+	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	defer h.ReleaseTurn(chatID, epoch)
+
+	c, _ := cs.Get(ctx, chatID)
+	if !hasAssistantContent(c, "the step got this far") {
+		t.Errorf("the displaced step turn's content was not persisted, so it vanishes on the "+
+			"next reload; messages = %+v", c.Messages)
+	}
+	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(vibekit.StopReasonUnknown)}) {
+		t.Errorf("turn_ended stops = %v, want exactly one %q", got, vibekit.StopReasonUnknown)
+	}
+	if open, _ := h.coord.turns.openEpoch(chatID); open != epoch {
+		t.Errorf("open epoch = %d, want the prompt's %d (the step's was %d)", open, epoch, stepTurn)
+	}
+	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "" {
+		t.Error("the prompt's turn did not get a fresh buffer, so the step's tail folds into it")
+	}
+}

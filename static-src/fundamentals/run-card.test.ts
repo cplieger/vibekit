@@ -36,8 +36,19 @@ function rowStates(root: HTMLElement): string[] {
   return [...root.querySelectorAll<HTMLElement>(".run-step")].map((e) => e.dataset["status"] ?? "");
 }
 
+/** Each step's mark, described: `"icon"` for a state that paints a silhouette,
+ *  otherwise the character it paints (`""` for a CSS ring). The three settled
+ *  outcomes are SVGs now, so reading textContent alone would report every one of
+ *  them as empty. */
 function glyphs(root: HTMLElement): string[] {
-  return [...root.querySelectorAll<HTMLElement>(".run-step-glyph")].map((e) => e.textContent ?? "");
+  return [...root.querySelectorAll<HTMLElement>(".run-step-glyph")].map((e) =>
+    e.querySelector("svg") === null ? (e.textContent ?? "") : "icon",
+  );
+}
+
+/** The markup of each step's SVG mark, for the distinctness check below. */
+function iconMarkup(root: HTMLElement): string[] {
+  return [...root.querySelectorAll<HTMLElement>(".run-step-glyph svg")].map((e) => e.outerHTML);
 }
 
 function statusWord(root: HTMLElement): string {
@@ -82,7 +93,7 @@ describe("a step's own state", () => {
     expect(glyphs(c.root)).toEqual(["", ""]);
   });
 
-  it("keeps every settled state's badge character", () => {
+  it("gives every settled state its own mark", () => {
     const c = card();
     c.render(
       runOf(
@@ -95,7 +106,15 @@ describe("a step's own state", () => {
       ),
     );
     expect(rowStates(c.root)).toEqual(["ok", "fail", "warn", "skipped", "pending"]);
-    expect(glyphs(c.root)).toEqual(["\u2713", "\u2717", "\u26A0", "\u2013", ""]);
+    // The three settled OUTCOMES take a silhouette; `skipped` keeps its en dash
+    // (nothing happened, and a dash was never one of the marks the ruling removed)
+    // and `pending` is a CSS ring.
+    expect(glyphs(c.root)).toEqual(["icon", "icon", "icon", "\u2013", ""]);
+    // The shape channel at this surface: three states, three different shapes, so
+    // hue is never the only thing separating them (WCAG 1.4.1).
+    const marks = iconMarkup(c.root);
+    expect(marks).toHaveLength(3);
+    expect(new Set(marks).size).toBe(3);
   });
 
   it("names the state in the row's accessible label", () => {
@@ -195,6 +214,56 @@ describe("an unanswered ask", () => {
     expect(alertText(buildAndRender(state, asks(1, ["a"], "Approve")))).toBe(
       "Waiting for your answer: Approve",
     );
+  });
+});
+
+// A pause reason is KAS's own prose and reaches the reader verbatim, EXCEPT for
+// the two literals that mean a person owes an answer. Those name a tool and a
+// mechanism where the reader needs to know somebody is waiting on them, and this
+// arm is the case where the question itself never arrived — a restart lost the
+// text, or this client has not been handed it yet.
+describe("a pause that means a step is waiting on a person", () => {
+  function pausedWith(reason: string): string {
+    return alertText(
+      buildAndRender({ ...runOf("paused", step("a", "paused")), pauseReason: reason }, asks(0, [])),
+    );
+  }
+
+  it("replaces the send_message literal with a sentence about the reader", () => {
+    expect(pausedWith("Step requested user input via send_message.")).toBe(
+      "A step is waiting for your answer",
+    );
+  });
+
+  it("replaces the re-park literal too, whose node id sits in the middle", () => {
+    // A plain Resume clears the RUN's pause reason and leaves the step node's
+    // signal, so the next step execution parks again under this fallback.
+    expect(pausedWith("Step 'review' is waiting for user input.")).toBe(
+      "A step is waiting for your answer",
+    );
+    expect(pausedWith("Step 'review' is waiting for the next user message.")).toBe(
+      "A step is waiting for your answer",
+    );
+  });
+
+  it("quotes any other reason verbatim, because it is not about the reader", () => {
+    expect(pausedWith("waiting on a watch condition")).toBe("Waiting: waiting on a watch condition");
+    expect(pausedWith("")).toBe("Waiting");
+  });
+
+  it("keeps the transient-error code beside the sentence", () => {
+    const text = alertText(
+      buildAndRender(
+        {
+          ...runOf("paused", step("a", "paused")),
+          pauseReason: "Step requested user input via send_message.",
+          pauseDetail: { code: "ThrottlingException" },
+        },
+        asks(0, []),
+      ),
+    );
+    expect(text).toBe("A step is waiting for your answer \u00b7 after a transient error (Throttli" +
+      "ngException)");
   });
 });
 

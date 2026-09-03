@@ -679,7 +679,7 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.C
 	epoch := bc.StartTurn(ctx, chatID, vibekit.TurnSourcePrime)
 	defer bc.ReleaseTurn(chatID, epoch)
 	resp, seq, err := sb.bridge.CallAt(ctx, vibekit.MethodPrompt, command.SessionParams(sb, map[string]any{
-		"prompt": []map[string]any{vibekit.TextBlock(prime)},
+		vibekit.KeyPrompt: []map[string]any{vibekit.TextBlock(prime)},
 	}))
 	if err != nil {
 		slog.Error("prime failed", "chat_id", chatID, "error", err)
@@ -1135,7 +1135,7 @@ func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID vibekit.C
 	}
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, AnyOpen: true})
 	model, credits := bc.turnOpenFacts(ctx, chatID, vibekit.TurnSourceWireTurnStart)
-	bc.turns.openWire(ctx, chatID, model, credits)
+	bc.turns.openWire(ctx, chatID, vibekit.TurnSourceWireTurnStart, model, credits)
 }
 
 // WireTurnEnd is the engine's own turn_end bracket, and the closer whose outcome
@@ -1150,11 +1150,16 @@ func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID vibekit.Cha
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireEnd, Stop: stop, AnyOpen: true})
 }
 
-// TurnFoldTarget returns the buffer this chat's frames fold into, opening a
-// wireTurnStart turn when none is open. It is what replaced a per-chat buffer
-// created lazily on the first frame: a fold with no open turn is a turn vibekit
-// did not prompt, and it needs a record for the same reasons every other turn
-// does.
+// TurnFoldTarget returns the buffer this chat's frames fold into, opening a turn
+// of the caller's stated source when none is open. It is what replaced a per-chat
+// buffer created lazily on the first frame: a fold with no open turn is a turn
+// vibekit did not prompt, and it needs a record for the same reasons every other
+// turn does.
+//
+// The SOURCE comes from the frame, because a chat-parented workflow run executes
+// on the launching chat's session: a step's frames fold here, and a turn opened
+// for one belongs to the RUN. It is used only on the open — a step folding into
+// the chat's own live turn does not reclassify that turn.
 //
 // The CHEAP question comes first. openWire discards both facts on every call but
 // the one that actually opens a turn, and reading them is a full chat-file read
@@ -1165,12 +1170,12 @@ func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID vibekit.Cha
 // loop under its own bookkeeping. The benign race is already handled: openWire
 // re-checks under the lifecycle mutex, and the facts are deliberately NOT read
 // under it — the lock order is lifecycle then chat store, never the reverse.
-func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID) *buffer.Buffer {
+func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer {
 	if buf, ok := bc.turns.foldTarget(chatID); ok {
 		return buf
 	}
-	model, credits := bc.turnOpenFacts(ctx, chatID, vibekit.TurnSourceWireTurnStart)
-	t := bc.turns.openWire(ctx, chatID, model, credits)
+	model, credits := bc.turnOpenFacts(ctx, chatID, source)
+	t := bc.turns.openWire(ctx, chatID, source, model, credits)
 	if t == nil {
 		// ctx died while the chat was finalizing. A throwaway buffer keeps the
 		// handler's shape rather than making every fold site nil-check: the frame is

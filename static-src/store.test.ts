@@ -485,7 +485,7 @@ describe("Store steer projection", () => {
     recordSteerSent("chat-1", "m-42", "actually use tabs");
     expect(steerIDFor("m-42")).toBe("steer-m-42");
     expect(get("chat-1")?.steers).toEqual([
-      { id: "steer-m-42", text: "actually use tabs", pending: true },
+      { id: "steer-m-42", text: "actually use tabs", origin: "user", pending: true },
     ]);
   });
 
@@ -513,10 +513,10 @@ describe("Store steer projection", () => {
   // and nothing else — a sibling still waiting is a different message.
   it("forgets one pending row and leaves a confirmed sibling alone", () => {
     resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "earlier" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "earlier", origin: "user" });
     recordSteerSent("chat-1", "m-2", "just sent");
     forgetSteer("chat-1", steerIDFor("m-2"));
-    expect(get("chat-1")?.steers).toEqual([{ id: "steer-1", text: "earlier" }]);
+    expect(get("chat-1")?.steers).toEqual([{ id: "steer-1", text: "earlier", origin: "user" }]);
   });
 
   it("deletes the field when the forgotten row was the last one", () => {
@@ -540,10 +540,11 @@ describe("Store steer projection", () => {
 
   it("records a queued steer as waiting, with no pending flag", () => {
     resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "actually use tabs" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually use tabs", origin: "user" });
     expect(steerCount("chat-1")).toBe(1);
     expect(get("chat-1")?.steers?.[0]).toEqual({
       id: "steer-1",
+      origin: "user",
       text: "actually use tabs",
     });
   });
@@ -554,8 +555,14 @@ describe("Store steer projection", () => {
   it("confirms the pending row in place when the ids agree", () => {
     resetStore("chat-1");
     recordSteerSent("chat-1", "m-1", "use tabs instead");
-    recordSteerQueued("chat-1", { id: steerIDFor("m-1"), text: "use tabs instead" });
-    expect(get("chat-1")?.steers).toEqual([{ id: "steer-m-1", text: "use tabs instead" }]);
+    recordSteerQueued("chat-1", {
+      id: steerIDFor("m-1"),
+      text: "use tabs instead",
+      origin: "user",
+    });
+    expect(get("chat-1")?.steers).toEqual([
+      { id: "steer-m-1", text: "use tabs instead", origin: "user" },
+    ]);
   });
 
   // The safety net for a KAS whose id convention has drifted: the oldest pending
@@ -564,8 +571,14 @@ describe("Store steer projection", () => {
   it("adopts a server id onto the pending row when only the text matches", () => {
     resetStore("chat-1");
     recordSteerSent("chat-1", "m-1", "use tabs instead");
-    recordSteerQueued("chat-1", { id: "kas-generated-7", text: "use tabs instead" });
-    expect(get("chat-1")?.steers).toEqual([{ id: "kas-generated-7", text: "use tabs instead" }]);
+    recordSteerQueued("chat-1", {
+      id: "kas-generated-7",
+      text: "use tabs instead",
+      origin: "user",
+    });
+    expect(get("chat-1")?.steers).toEqual([
+      { id: "kas-generated-7", text: "use tabs instead", origin: "user" },
+    ]);
   });
 
   // With two in flight, the server's id lands on the OLDEST match, so the second
@@ -574,10 +587,10 @@ describe("Store steer projection", () => {
     resetStore("chat-1");
     recordSteerSent("chat-1", "m-1", "same words");
     recordSteerSent("chat-1", "m-2", "same words");
-    recordSteerQueued("chat-1", { id: "kas-1", text: "same words" });
+    recordSteerQueued("chat-1", { id: "kas-1", text: "same words", origin: "user" });
     expect(get("chat-1")?.steers).toEqual([
-      { id: "kas-1", text: "same words" },
-      { id: "steer-m-2", text: "same words", pending: true },
+      { id: "kas-1", text: "same words", origin: "user" },
+      { id: "steer-m-2", text: "same words", origin: "user", pending: true },
     ]);
   });
 
@@ -589,7 +602,7 @@ describe("Store steer projection", () => {
       fc.property(fc.integer({ min: 1, max: 6 }), (repeats) => {
         resetStore("chat-1");
         for (let i = 0; i < repeats; i++) {
-          recordSteerQueued("chat-1", { id: "steer-1", text: "same message" });
+          recordSteerQueued("chat-1", { id: "steer-1", text: "same message", origin: "user" });
         }
         expect(steerCount("chat-1")).toBe(1);
       }),
@@ -598,7 +611,7 @@ describe("Store steer projection", () => {
 
   it("ignores a queued frame with an empty id", () => {
     resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "", text: "nowhere" });
+    recordSteerQueued("chat-1", { id: "", text: "nowhere", origin: "user" });
     expect(steerCount("chat-1")).toBe(0);
   });
 
@@ -606,12 +619,13 @@ describe("Store steer projection", () => {
 
   it("moves a read steer out of the dock and anchors it in the turn", () => {
     chatWithTurn("chat-1", 2);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
-    promoteSteer("chat-1", "steer-1", "use tabs instead");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "use tabs instead", "user");
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1")).toEqual([
       {
         id: "steer-1",
+        origin: "user",
         text: "use tabs instead",
         anchor: { msgID: "a-1", blockIndex: 2 },
       },
@@ -623,7 +637,7 @@ describe("Store steer projection", () => {
   it("promotes a still-pending row through the text fallback", () => {
     chatWithTurn("chat-1", 1);
     recordSteerSent("chat-1", "m-1", "use tabs instead");
-    promoteSteer("chat-1", "kas-generated-7", "use tabs instead");
+    promoteSteer("chat-1", "kas-generated-7", "use tabs instead", "user");
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["kas-generated-7"]);
   });
@@ -635,15 +649,16 @@ describe("Store steer projection", () => {
   // would watch it jump down the turn.
   it("merges a later acknowledgement onto the mark without blanking it", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
-    promoteSteer("chat-1", "steer-1", "use tabs instead");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "use tabs instead", "user");
     // A second block arrives between the two frames, so a re-anchor would be
     // visible as the note jumping down the turn.
     upsertMessage("chat-1", { id: "a-1", role: "assistant", ts: 2, blocks: turnBlocks(2) });
-    promoteSteer("chat-1", "steer-1", "", "switched the file to tabs");
+    promoteSteer("chat-1", "steer-1", "", "user", "switched the file to tabs");
     expect(steerMarks("chat-1")).toEqual([
       {
         id: "steer-1",
+        origin: "user",
         text: "use tabs instead",
         ack: "switched the file to tabs",
         anchor: { msgID: "a-1", blockIndex: 1 },
@@ -655,9 +670,9 @@ describe("Store steer projection", () => {
   // replays every unanswered frame, so the two can arrive in either order.
   it("keeps an acknowledgement when a read frame is replayed after it", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    promoteSteer("chat-1", "steer-1", "", "did the thing");
-    promoteSteer("chat-1", "steer-1", "one");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "", "user", "did the thing");
+    promoteSteer("chat-1", "steer-1", "one", "user");
     expect(steerMarks("chat-1")[0]?.ack).toBe("did the thing");
     expect(steerMarks("chat-1")).toHaveLength(1);
   });
@@ -667,11 +682,12 @@ describe("Store steer projection", () => {
   // transcript showing the agent change course with nothing explaining why.
   it("marks an injected steer it never saw queued", () => {
     chatWithTurn("chat-1", 0);
-    promoteSteer("chat-1", "steer-ghost", "from another tab");
+    promoteSteer("chat-1", "steer-ghost", "from another tab", "user");
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1")).toEqual([
       {
         id: "steer-ghost",
+        origin: "user",
         text: "from another tab",
         anchor: { msgID: "a-1", blockIndex: 0 },
       },
@@ -683,13 +699,13 @@ describe("Store steer projection", () => {
   // and cannot be matched to anything the user wrote.
   it("ignores an acknowledgement for a steer it never saw", () => {
     chatWithTurn("chat-1", 1);
-    promoteSteer("chat-1", "steer-unknown", "", "did something");
+    promoteSteer("chat-1", "steer-unknown", "", "user", "did something");
     expect(get("chat-1")?.steer_marks).toBeUndefined();
   });
 
   it("ignores a promotion with an empty id", () => {
     chatWithTurn("chat-1", 1);
-    promoteSteer("chat-1", "", "nowhere");
+    promoteSteer("chat-1", "", "nowhere", "user");
     expect(get("chat-1")?.steer_marks).toBeUndefined();
   });
 
@@ -697,9 +713,9 @@ describe("Store steer projection", () => {
   // Appending it as confirmed would put a delivered message back in the dock.
   it("does not resurrect a dock row for an already-promoted id", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    promoteSteer("chat-1", "steer-1", "one");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "one", "user");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1")).toHaveLength(1);
   });
@@ -709,7 +725,7 @@ describe("Store steer projection", () => {
   it("rebinds an anchor-less mark to the first assistant message that arrives", () => {
     resetStore("chat-1");
     appendMessage("chat-1", { id: "u-1", role: "user", ts: 1, content: "go" });
-    promoteSteer("chat-1", "steer-1", "read before anything landed");
+    promoteSteer("chat-1", "steer-1", "read before anything landed", "user");
     expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
 
     appendMessage("chat-1", { id: "a-9", role: "assistant", ts: 2, content: "here" });
@@ -720,12 +736,13 @@ describe("Store steer projection", () => {
 
   it("promotes a dropped steer as undelivered, keeping its text", () => {
     chatWithTurn("chat-1", 3);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "never read" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "never read", origin: "user" });
     dropSteers("chat-1", ["steer-1"]);
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1")).toEqual([
       {
         id: "steer-1",
+        origin: "user",
         text: "never read",
         dropped: true,
         anchor: { msgID: "a-1", blockIndex: 3 },
@@ -738,19 +755,19 @@ describe("Store steer projection", () => {
   // claiming they were missed would be false.
   it("leaves an already-promoted id alone rather than marking it undelivered", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    promoteSteer("chat-1", "steer-1", "one");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "one", "user");
     dropSteers("chat-1", ["steer-1"]);
     expect(steerMarks("chat-1")).toEqual([
-      { id: "steer-1", text: "one", anchor: { msgID: "a-1", blockIndex: 1 } },
+      { id: "steer-1", text: "one", origin: "user", anchor: { msgID: "a-1", blockIndex: 1 } },
     ]);
   });
 
   it("drops only the named ids", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
-    recordSteerQueued("chat-1", { id: "steer-3", text: "three" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "three", origin: "user" });
     dropSteers("chat-1", ["steer-1", "steer-3"]);
     expect(get("chat-1")?.steers?.map((e) => e.id)).toEqual(["steer-2"]);
     expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["steer-1", "steer-3"]);
@@ -761,7 +778,7 @@ describe("Store steer projection", () => {
   // would repaint on every turn boundary.
   it("deletes the field when the last steer goes", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     dropSteers("chat-1", ["steer-1"]);
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1")).toHaveLength(1);
@@ -769,8 +786,8 @@ describe("Store steer projection", () => {
 
   it("treats an empty id list as drop-everything, which is what a turn boundary means", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     dropSteers("chat-1", []);
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1").map((m) => m.dropped)).toEqual([true, true]);
@@ -778,7 +795,7 @@ describe("Store steer projection", () => {
 
   it("is a no-op for ids it does not hold, and for an unknown chat", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     const before = get("chat-1")?.steers;
     dropSteers("chat-1", ["steer-nope"]);
     // Same array identity: a no-op must not churn the session, or every
@@ -797,12 +814,12 @@ describe("Store steer projection", () => {
   // removing it locally would hide a message still on its way.
   it("takes the confirmed rows out on an explicit discard and keeps the pending one", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     recordSteerSent("chat-1", "m-2", "still sending");
     const removed = dropConfirmedSteers("chat-1");
     expect(removed.map((e) => e.id)).toEqual(["steer-1", "steer-m-2"]);
     expect(get("chat-1")?.steers).toEqual([
-      { id: "steer-m-2", text: "still sending", pending: true },
+      { id: "steer-m-2", text: "still sending", origin: "user", pending: true },
     ]);
     // No note, which is the point: the user took the message back.
     expect(get("chat-1")?.steer_marks).toBeUndefined();
@@ -819,8 +836,8 @@ describe("Store steer projection", () => {
   // rather than reconstructing it from the entries taken.
   it("restores a discard snapshot in its original order", () => {
     resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
     const removed = dropConfirmedSteers("chat-1");
     expect(get("chat-1")?.steers).toBeUndefined();
     restoreSteers("chat-1", removed);
@@ -832,12 +849,64 @@ describe("Store steer projection", () => {
   // no evidence. Marks already established are facts and stay.
   it("forgets the dock on a gap without marking anything undelivered", () => {
     chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "read one" });
-    promoteSteer("chat-1", "steer-1", "read one");
-    recordSteerQueued("chat-1", { id: "steer-2", text: "unresolved" });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "read one", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "read one", "user");
+    recordSteerQueued("chat-1", { id: "steer-2", text: "unresolved", origin: "user" });
     forgetSteers("chat-1");
     expect(get("chat-1")?.steers).toBeUndefined();
     expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["steer-1"]);
+  });
+});
+
+// The one field on a steer that is not the user's text: whose words it is.
+// Nothing on the wire separates the user's correction from a workflow reporting
+// into the same KAS buffer, so the server resolves it and the client carries it
+// unchanged — the note's TITLE is what it decides.
+describe("Store steer origin", () => {
+  it("carries an agent-origin queued frame through to the mark", () => {
+    chatWithTurn("chat-1", 1);
+    recordSteerQueued("chat-1", {
+      id: "notify-wf-9",
+      text: "A workflow you launched completed.",
+      origin: "agent",
+    });
+    expect(get("chat-1")?.steers?.[0]?.origin).toBe("agent");
+
+    promoteSteer("chat-1", "notify-wf-9", "A workflow you launched completed.", "agent");
+    expect(steerMarks("chat-1")[0]?.origin).toBe("agent");
+  });
+
+  // A dropped steer has no injected frame to read an origin off, so the mark
+  // takes the dock entry's — which came from the queued frame the server stamped.
+  it("keeps an agent origin on a steer the boundary dropped unread", () => {
+    chatWithTurn("chat-1", 0);
+    recordSteerQueued("chat-1", { id: "notify-wf-9", text: "step failed", origin: "agent" });
+    dropSteers("chat-1", ["notify-wf-9"]);
+    const mark = steerMarks("chat-1")[0];
+    expect(mark?.dropped).toBe(true);
+    expect(mark?.origin).toBe("agent");
+  });
+
+  // The ack frame must not rewrite it. Both frames carry an origin and the server
+  // resolves both from one ledger, but that ledger is TTL'd: a long gap between
+  // the read and the acknowledgement could have the second frame answer `agent`
+  // for a message the first correctly named as the user's.
+  it("writes the origin once, on the frame that creates the mark", () => {
+    chatWithTurn("chat-1", 1);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+    promoteSteer("chat-1", "steer-1", "use tabs", "user");
+    promoteSteer("chat-1", "steer-1", "", "agent", "switched to tabs");
+    const mark = steerMarks("chat-1")[0];
+    expect(mark?.ack, "the ack still lands").toBe("switched to tabs");
+    expect(mark?.origin, "and the origin is the first frame's").toBe("user");
+  });
+
+  // The optimistic row's own claim, which the server's frame then confirms under
+  // the same id: this device POSTed it, so `user` is a fact rather than a guess.
+  it("marks a locally submitted steer as the user's", () => {
+    resetStore("chat-1");
+    recordSteerSent("chat-1", "m-42", "actually use tabs");
+    expect(get("chat-1")?.steers?.[0]?.origin).toBe("user");
   });
 });
 
@@ -1671,6 +1740,7 @@ describe("Store normalizeMessage", () => {
       tool_calls: [
         {
           id: "t-1",
+          origin: "user",
           title: "readFile",
           kind: "read" as const,
           status: "completed" as const,
@@ -1678,6 +1748,7 @@ describe("Store normalizeMessage", () => {
         },
         {
           id: "t-2",
+          origin: "user",
           title: "bash",
           kind: "execute" as const,
           status: "completed" as const,
@@ -2526,22 +2597,23 @@ describe("Store setCodeReferences", () => {
 describe("Store steer projection, frame by frame", () => {
   it("refreshes only the replayed steer, leaving its siblings alone", () => {
     resetStore("st-1");
-    recordSteerQueued("st-1", { id: "s-1", text: "one" });
-    recordSteerQueued("st-1", { id: "s-2", text: "two" });
-    promoteSteer("st-1", "s-1", "one");
-    recordSteerQueued("st-1", { id: "s-2", text: "two, corrected" });
+    recordSteerQueued("st-1", { id: "s-1", text: "one", origin: "user" });
+    recordSteerQueued("st-1", { id: "s-2", text: "two", origin: "user" });
+    promoteSteer("st-1", "s-1", "one", "user");
+    recordSteerQueued("st-1", { id: "s-2", text: "two, corrected", origin: "user" });
     // The promoted one is out of the dock; the replay corrected its sibling in
     // place rather than appending a third row.
-    expect(get("st-1")?.steers).toEqual([{ id: "s-2", text: "two, corrected" }]);
+    expect(get("st-1")?.steers).toEqual([{ id: "s-2", text: "two, corrected", origin: "user" }]);
     expect(steerMarks("st-1").map((m) => m.id)).toEqual(["s-1"]);
   });
 
   it("records an acknowledgement that rides the steer's first frame", () => {
     resetStore("st-2");
-    promoteSteer("st-2", "s-ghost", "from another tab", "switched the file to tabs");
+    promoteSteer("st-2", "s-ghost", "from another tab", "user", "switched the file to tabs");
     expect(steerMarks("st-2")).toEqual([
       {
         id: "s-ghost",
+        origin: "user",
         text: "from another tab",
         ack: "switched the file to tabs",
         anchor: { msgID: "", blockIndex: 0 },
@@ -2553,18 +2625,23 @@ describe("Store steer projection, frame by frame", () => {
     // An empty ack is the absence of one. A note carrying `ack: ""` renders a
     // verdict line with nothing in it.
     resetStore("st-3");
-    promoteSteer("st-3", "s-ghost", "from another tab", "");
+    promoteSteer("st-3", "s-ghost", "from another tab", "user", "");
     expect(steerMarks("st-3")).toEqual([
-      { id: "s-ghost", text: "from another tab", anchor: { msgID: "", blockIndex: 0 } },
+      {
+        id: "s-ghost",
+        text: "from another tab",
+        origin: "user",
+        anchor: { msgID: "", blockIndex: 0 },
+      },
     ]);
   });
 
   it("adds no verdict when a read frame's acknowledgement is empty", () => {
     resetStore("st-4");
-    recordSteerQueued("st-4", { id: "s-1", text: "use tabs" });
-    promoteSteer("st-4", "s-1", "use tabs", "");
+    recordSteerQueued("st-4", { id: "s-1", text: "use tabs", origin: "user" });
+    promoteSteer("st-4", "s-1", "use tabs", "user", "");
     expect(steerMarks("st-4")).toEqual([
-      { id: "s-1", text: "use tabs", anchor: { msgID: "", blockIndex: 0 } },
+      { id: "s-1", text: "use tabs", origin: "user", anchor: { msgID: "", blockIndex: 0 } },
     ]);
   });
 });

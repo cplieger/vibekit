@@ -36,12 +36,15 @@ import { activeSession } from "./store.js";
 import { buildPermissionCard } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
+import { buildRunInputCard } from "./run-input.js";
 import { info } from "./toast.js";
+import { join } from "@cplieger/keyenc";
 import type { RunAsks } from "./fundamentals/run-card.js";
 import type {
   PermissionNeededPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
+  RunInputNeededPayload,
   SettledBy,
 } from "./types.js";
 
@@ -76,12 +79,53 @@ interface UserInputDecision {
   submit: (action: "answered" | "dismissed", answer?: string) => void;
 }
 
+/** A workflow STEP asking a question, and the one kind that is not
+ *  request-shaped.
+ *
+ *  The other three are an open JSON-RPC request with an int64 id: something
+ *  upstream is blocked on a response and the ask dies with the bridge carrying it.
+ *  This one is DURABLE — the run stays parked across a bridge death and a
+ *  container restart — has no request id at all, and is answered by a fresh
+ *  `session/prompt` the server addresses to the paused step's own session. So it
+ *  carries a STRING id, which is what moved the dock's internal key to a
+ *  per-kind composition (`decisionIdentity`) rather than the bare request number.
+ *
+ *  `submit(null)` is CONTINUE WITHOUT ANSWERING: the step is re-driven with KAS's
+ *  default continuation instead of the user's words. It exists for the
+ *  post-restart case where the question text is gone (the ask registry is in
+ *  memory) and a reader cannot answer what they cannot read. */
+interface RunInputDecision {
+  kind: "run_input";
+  chatID: string;
+  runID?: string;
+  /** The ask's identity within its run, server-composed. */
+  askID: string;
+  payload: RunInputNeededPayload;
+  submit: (text: string | null) => void;
+}
+
 /** The dock's input. Only the union is exported — a caller enqueues a
  *  decision, and the per-kind shapes are this module's business. */
-export type Decision = PermissionDecision | ElicitationDecision | UserInputDecision;
+export type Decision =
+  PermissionDecision | ElicitationDecision | UserInputDecision | RunInputDecision;
+
+/** The three REQUEST-shaped kinds: an open JSON-RPC request with an int64 id.
+ *  Named so `decision_settled`, which is keyed by that id, can be typed against
+ *  exactly the kinds it can name. */
+type RequestDecision = PermissionDecision | ElicitationDecision | UserInputDecision;
+
+function isRequestDecision(d: Decision): d is RequestDecision {
+  return d.kind !== "run_input";
+}
 
 /** Per-chat FIFO of unanswered decisions. The head is the one on screen. */
 const queues = new Map<string, Decision[]>();
+
+/** The queue key a run OWNS, the twin of `runChatPrefix` in
+ *  `internal/agent/run_host.go`. A parentless run's asks are keyed to it (there is
+ *  no chat), and so is any ask this server reconstructed for a run nothing hosts.
+ *  It is deliberately not a chat id: no tab and no session row answers to it. */
+const RUN_CHAT_PREFIX = "run:";
 
 /** Bumped on every queue mutation so the render effect re-runs. The active
  *  chat id alone is not enough of a trigger: a decision arriving for the chat
@@ -160,7 +204,7 @@ export function mountDecisionDock(hostEl: HTMLElement): void {
 export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
   addHost(hostEl, (d) => {
     const id = runID();
-    return id !== "" && (d.runID === id || d.chatID === `run:${id}`);
+    return id !== "" && (d.runID === id || d.chatID === `${RUN_CHAT_PREFIX}${id}`);
   });
 }
 
@@ -200,9 +244,11 @@ function activeChatID(): string {
 /** Enqueue a decision and show it when its chat is the one on screen. */
 export function pushDecision(d: Decision): void {
   const q = queues.get(d.chatID) ?? [];
-  // A re-delivered request (SSE reconnect replays every unanswered permission)
-  // must not stack a second copy of itself.
-  if (q.some((existing) => existing.kind === d.kind && existing.requestID === d.requestID)) {
+  // A re-delivered ask (SSE connect replays every unanswered permission AND every
+  // parked step's question) must not stack a second copy of itself. Per-kind
+  // identity, so a run ask's string id and a request id cannot be compared.
+  const id = decisionIdentity(d);
+  if (q.some((existing) => existing.kind === d.kind && decisionIdentity(existing) === id)) {
     return;
   }
   q.push(d);
@@ -223,6 +269,26 @@ export function dropDecisions(chatID: string): void {
     return;
   }
   bump();
+}
+
+/** Drop every ask a RUN owns, which the per-chat sweep above cannot reach.
+ *
+ *  That sweep walks the chat store, so a `run:<workflowId>` key escaped it. The
+ *  replay re-offers what is still open and does NOT replay the settle, so an ask
+ *  ANSWERED during the outage kept its card: the click answered 409 and the dock
+ *  spliced a closed question. Keyed on the PREFIX, not on `runID`: an ask keyed to
+ *  a launching chat carries one too, and `dropDecisions` owns that queue. */
+export function dropRunDecisions(): void {
+  let dropped = false;
+  for (const chatID of [...queues.keys()]) {
+    if (chatID.startsWith(RUN_CHAT_PREFIX)) {
+      queues.delete(chatID);
+      dropped = true;
+    }
+  }
+  if (dropped) {
+    bump();
+  }
 }
 
 /** Drop the decisions a TURN owned, leaving a workflow run's alone.
@@ -295,7 +361,7 @@ export function runPendingAsks(workflowID: string): RunAsks {
   if (workflowID === "") {
     return { count: 0, nodes, label: "" };
   }
-  const runKey = `run:${workflowID}`;
+  const runKey = `${RUN_CHAT_PREFIX}${workflowID}`;
   let count = 0;
   let label = "";
   for (const q of queues.values()) {
@@ -330,8 +396,17 @@ function askLabel(d: Decision): string {
       return d.payload.message ?? "";
     case "user_input":
       return d.payload.question;
+    case "run_input":
+      // Empty is the post-restart case rather than an error: the ask registry is in
+      // memory, so the text is gone while the run is still parked and the server
+      // reconstructs an ask from its state with no question on it.
+      return d.payload.question === "" ? RUN_INPUT_FALLBACK : d.payload.question;
   }
 }
+
+/** What a run ask reads as when its question text did not survive. Shared with the
+ *  card so the dock's line and the card's heading cannot disagree. */
+export const RUN_INPUT_FALLBACK = "A step is waiting for your answer";
 
 /** Retire a decision ANOTHER surface answered (`decision_settled`), and say who
  *  answered it.
@@ -352,12 +427,16 @@ function askLabel(d: Decision): string {
  *  person who just clicked. */
 export function collapseSettledDecision(
   chatID: string,
-  kind: Decision["kind"],
+  // The three REQUEST-shaped kinds only, and narrowed rather than widened to the
+  // whole union: `decision_settled`'s payload is keyed by an int64 request id, and
+  // a run ask has none. Its retirement is `collapseSettledRunInput` below.
+  kind: RequestDecision["kind"],
   requestID: number,
   settledBy: SettledBy,
 ): void {
   const q = queues.get(chatID);
-  const i = q?.findIndex((d) => d.kind === kind && d.requestID === requestID) ?? -1;
+  const i =
+    q?.findIndex((d) => d.kind === kind && isRequestDecision(d) && d.requestID === requestID) ?? -1;
   if (q === undefined || i < 0) {
     return;
   }
@@ -365,7 +444,7 @@ export function collapseSettledDecision(
   if (q.length === 0) {
     queues.delete(chatID);
   }
-  const key = decisionKey(chatID, kind, requestID);
+  const key = decisionKey(chatID, kind, String(requestID));
   if (hosts.some((h) => h.renderedKey === key)) {
     // The toast announces itself into the shared live region (politely), so a
     // second announce() call here would read the same sentence twice.
@@ -374,15 +453,24 @@ export function collapseSettledDecision(
   bump();
 }
 
-/** What the reader is told about a card that collapsed under them. The two
+/** What the reader is told about a card that collapsed under them. The three
  *  causes call for different reactions, so they read differently: another window
- *  means a person decided, and the unattended floor means a deadline did. */
+ *  means a person decided, the unattended floor means a deadline did, and `moot`
+ *  means NOBODY decided — the thing being asked about moved on or ended, so a
+ *  sentence claiming an answer would be one the reader can disprove. */
 function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
   const subject = settledSubject(kind);
-  if (settledBy === "unattended") {
-    return `${subject} was answered automatically because nobody was watching.`;
+  switch (settledBy) {
+    case "unattended":
+      return `${subject} was answered automatically because nobody was watching.`;
+    case "moot":
+      return `${subject} is no longer waiting for an answer.`;
+    case "user":
+      return `${subject} was answered in another window.`;
+    default:
+      settledBy satisfies never;
+      return `${subject} is no longer waiting for an answer.`;
   }
-  return `${subject} was answered in another window.`;
 }
 
 function settledSubject(kind: Decision["kind"]): string {
@@ -393,9 +481,49 @@ function settledSubject(kind: Decision["kind"]): string {
       return "The input request";
     case "user_input":
       return "The agent's question";
+    case "run_input":
+      return "The workflow step's question";
     default:
       kind satisfies never;
       return "The request";
+  }
+}
+
+/** Retire a run ask that was answered or waived elsewhere (`run_input_settled`).
+ *
+ *  Its own entry point rather than a widened `collapseSettledDecision`, because the
+ *  two events carry different identities: that one is keyed by an int64 request id,
+ *  this one by a string ask id. Threading both through one function would mean a
+ *  parameter that is only meaningful for half its callers.
+ *
+ *  The run ask is found by scanning EVERY queue rather than one, for
+ *  `runPendingAsks`' reason: an ask is keyed to the launching chat for an
+ *  agent-parented run and to `run:<workflowId>` for a parentless one, and the
+ *  settle event names only the run. */
+export function collapseSettledRunInput(
+  workflowID: string,
+  askID: string,
+  settledBy: SettledBy,
+): void {
+  if (workflowID === "" || askID === "") {
+    return;
+  }
+  for (const [chatID, q] of queues) {
+    const i = q.findIndex(
+      (d) => d.kind === "run_input" && d.askID === askID && d.payload.workflow_id === workflowID,
+    );
+    if (i < 0) {
+      continue;
+    }
+    q.splice(i, 1);
+    if (q.length === 0) {
+      queues.delete(chatID);
+    }
+    if (hosts.some((h) => h.renderedKey === decisionKey(chatID, "run_input", askID))) {
+      info(settledMessage("run_input", settledBy));
+    }
+    bump();
+    return;
   }
 }
 
@@ -443,10 +571,25 @@ function matching(h: DockHost): Decision[] {
   return out;
 }
 
+/** Identity of one decision WITHIN its kind: the int64 request id for the three
+ *  request-shaped asks, the server-composed ask id for a run ask.
+ *
+ *  It became a string when the fourth kind arrived, and minting a synthetic number
+ *  for that kind was the alternative: it would have had to share one id space with
+ *  real JSON-RPC request ids, which start at zero per bridge, so a collision was
+ *  the ordinary case rather than a race. */
+function decisionIdentity(d: Decision): string {
+  return d.kind === "run_input" ? d.askID : String(d.requestID);
+}
+
 /** Identity of one decision as a string, so "what is rendered" can be compared
- *  against an event naming a decision this module may not be holding. */
-function decisionKey(chatID: string, kind: Decision["kind"], requestID: number): string {
-  return `${chatID}\u0000${kind}\u0000${String(requestID)}`;
+ *  against an event naming a decision this module may not be holding.
+ *
+ *  keyenc rather than a template join: a run ask id is arbitrary text the server
+ *  composed out of wire values, and a separator inside one part would let two
+ *  different decisions produce one key. */
+function decisionKey(chatID: string, kind: Decision["kind"], identity: string): string {
+  return join(chatID, kind, identity);
 }
 
 function renderHost(h: DockHost): void {
@@ -465,7 +608,7 @@ function renderHost(h: DockHost): void {
   // Rebuilding a card the user is filling in would discard their typing, so a
   // render for the same decision is a no-op. Only the depth line, which lives
   // outside the card, updates in place. This branch MUST NOT start a phase.
-  const key = decisionKey(head.chatID, head.kind, head.requestID);
+  const key = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   const depth = mine.length;
   if (key === h.renderedKey) {
     updateDepth(h, depth);
@@ -571,7 +714,7 @@ function swap(h: DockHost, head: Decision | undefined, depth: number): void {
 function show(h: DockHost, head: Decision, depth: number): void {
   h.el.replaceChildren(buildCard(head), depthRow(depth));
   h.el.classList.remove("hidden");
-  h.renderedKey = decisionKey(head.chatID, head.kind, head.requestID);
+  h.renderedKey = decisionKey(head.chatID, head.kind, decisionIdentity(head));
   announce(announcementFor(head));
 }
 
@@ -697,6 +840,8 @@ function announcementFor(d: Decision): string {
       return "A tool is requesting input";
     case "user_input":
       return "The agent has a question";
+    case "run_input":
+      return "A workflow step is waiting for your answer";
     default:
       d satisfies never;
       return "";
@@ -721,6 +866,12 @@ function buildCard(d: Decision): HTMLElement {
       return buildUserInputCard(d.payload, (action, answer) => {
         settle(d, () => {
           d.submit(action, answer);
+        });
+      });
+    case "run_input":
+      return buildRunInputCard(d.payload, (text) => {
+        settle(d, () => {
+          d.submit(text);
         });
       });
     default:

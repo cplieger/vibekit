@@ -164,6 +164,7 @@ import {
   tabIdForRoute,
   getActiveTabId,
   getActiveTabKind,
+  tabSetVersion,
   activeChatRef,
   setOnEmpty,
   setTabPinned,
@@ -387,27 +388,29 @@ describe("openEditorView (multi-instance by path)", () => {
 });
 
 describe("closeTab", () => {
-  // The successor is the FIRST tab, not the neighbour, and that is the rule the
-  // refactor states in one place: an active view naming no open tab falls back to
-  // the first tab, checked on the boot read and on every applied removal. One rule
-  // for two paths, rather than a neighbour walk here and a first-tab fallback
-  // there that can disagree about which tab the reader lands on.
+  // The successor is the most recently visited tab still open, and the FIRST tab
+  // is only the fallback for an exhausted history — one rule, stated in one place,
+  // checked on the boot read and on every applied removal. Position is not the
+  // input: `openChats("a","b","c")` activates each in turn, so the history reads
+  // [c,b,a], and activating `b` makes it [b,c,a]. Closing `b` prunes it and leaves
+  // `c` at the head. In the second case activating `c` hits activateTab's
+  // already-active return and changes nothing, so closing `c` leaves `b`.
   it.each([
     {
-      desc: "closing the active tab falls back to the FIRST tab",
+      desc: "closing the active tab activates the most recently visited open tab",
       setup: ["a", "b", "c"],
       activate: "b",
       close: "b",
-      expectActive: "a",
+      expectActive: "c",
       expectHas: ["a", "c"],
       expectGone: ["b"],
     },
     {
-      desc: "falls back to the first tab even when the closed one was last",
+      desc: "activates the previously visited tab when the closed one was last",
       setup: ["a", "b", "c"],
       activate: "c",
       close: "c",
-      expectActive: "a",
+      expectActive: "b",
       expectHas: ["a", "b"],
       expectGone: ["c"],
     },
@@ -709,6 +712,284 @@ describe("activateTab", () => {
 
     expect(getActiveTabId()).toBe(chatID("b"));
     expect(sidebar.classList.contains("open")).toBe(false);
+  });
+});
+
+// The history is in memory only and it is not observable directly, so every case
+// here reads it through the one decision that consumes it: which tab a close hands
+// the active view to. The four closeTab cases above pin the core rule; these pin
+// the properties that rule has to hold ACROSS the other tab mechanisms.
+describe("MRU activation history", () => {
+  // A close removes a parent AND its whole subtree as one mutation, so the walk
+  // has to skip every id that went rather than the one that was clicked. `first`
+  // is what makes the case discriminating: the child is the most recent entry and
+  // sits inside the removed set, and the tab it hands over to is neither the
+  // removed child nor position 0.
+  it("skips a whole closed subtree, not just the clicked tab", async () => {
+    expect.assertions(2);
+    await openChats("first", "a");
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    // History: [c, p, a, first]. Re-activating the parent puts it at the head, so
+    // the subtree holds the two most recent entries.
+    activateTab(chatID("p"));
+
+    await closeTab(chatID("p"));
+
+    expect(getActiveTabId()).toBe(chatID("a"));
+    expect(hasTab("chat", "c")).toBe(false);
+  });
+
+  // The first-tab rule is the FALLBACK now, not the rule, and it still has to
+  // work: a cold boot restores a strip with no history, and `activate: false` opens
+  // never claim recency for a tab the reader has not visited.
+  it("falls back to the first tab when the history is exhausted", async () => {
+    expect.assertions(2);
+    await openChat("a");
+    await openChat("b", { activate: false });
+    await openChat("c", { activate: false });
+    // History: [a] alone — neither automatic open activated anything.
+    await closeTab(chatID("a"));
+
+    expect(getActiveTabId()).toBe(chatID("b"));
+    expect(await rowRefs()).toEqual(["b", "c"]);
+  });
+
+  // Two halves: a non-active close does not move the active tab, and the close
+  // that follows it still picks by recency rather than by position. Four tabs,
+  // because with three the second close leaves one survivor and both rules agree
+  // on it — so the case would pass whatever the successor rule was.
+  it("closing a non-active tab leaves active alone", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c", "d");
+    activateTab(chatID("b")); // history [b, d, c, a]
+
+    await closeTab(chatID("d"));
+    expect(getActiveTabId()).toBe(chatID("b"));
+
+    await closeTab(chatID("b"));
+    expect(getActiveTabId()).toBe(chatID("c"));
+  });
+
+  // A reorder replaces `state.tabs` without changing set membership, so it must
+  // not touch recency. The dropped order puts `b` first, so the assertion separates
+  // "most recent" from "position 0" — under the old rule both closes landed there.
+  it("is not affected by a reorder", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    activateTab(chatID("a")); // history [a, c, b]
+    commitDrop?.([chatID("b"), chatID("a"), chatID("c")]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["b", "a", "c"]);
+
+    await closeTab(chatID("a"));
+    expect(getActiveTabId()).toBe(chatID("c"));
+  });
+
+  // The `tabs_changed` door, which is a different production call site from the
+  // gesture's: a frame carrying `removed_ids` applies the removal and then picks a
+  // successor with `local: false`. The PRUNE itself is deliberately not asserted
+  // anywhere — `mostRecentOpenTab` also filters on `hasRow` and server-minted ids
+  // are never reused, so a stale entry is inert and no test could distinguish it.
+  // What is observable is the pick, so that is what these two pin.
+  it("hands over to the most recent survivor when another device closes the active tab", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    activateTab(chatID("b")); // history [b, c, a]
+
+    tabServer.closeRemotely(chatID("b"));
+    await settleTabs();
+
+    expect(hasTab("chat", "b")).toBe(false);
+    expect(getActiveTabId()).toBe(chatID("c"));
+  });
+
+  // `removed_ids` is a LIST, and a remote close of a parent is where it carries
+  // more than one id. The child is the entry behind the head, so a walk that
+  // skipped only the id it was handed would land on a row that is gone.
+  it("skips every id a remote removal names, not just the first", async () => {
+    expect.assertions(2);
+    await openChats("first", "a");
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    activateTab(chatID("p")); // history [p, c, a, first]
+
+    tabServer.closeRemotely(chatID("p"));
+    await settleTabs();
+
+    expect(hasTab("chat", "c")).toBe(false);
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  // The ONE path on which a missing prune-and-restore is observable: a refused
+  // close puts the row back under its ORIGINAL id, so an entry dropped at gesture
+  // time has to come back with it. Without the restore the history reads [a, c]
+  // and the next close hands over to `c` — a tab visited longer ago than the one
+  // whose close was refused.
+  it("a refused close restores the closed tab's place in the history", async () => {
+    expect.assertions(4);
+    await openChats("a", "b", "c");
+    activateTab(chatID("b"));
+    activateTab(chatID("a")); // history [a, b, c]
+    tabServer.failNext("close_tab");
+
+    // Non-active, so the rollback restores the row without moving the active tab.
+    await closeTab(chatID("b"));
+    expect(hasTab("chat", "b")).toBe(true);
+    expect(await rowRefs()).toEqual(["a", "b", "c"]);
+    expect(getActiveTabId()).toBe(chatID("a"));
+
+    await closeTab(chatID("a"));
+    expect(getActiveTabId()).toBe(chatID("b"));
+  });
+
+  // The OTHER path rollbackClose serves, and the one a gate on the rows THIS call
+  // spliced cannot reach: a close whose dispatch got no answer is settled by an
+  // authoritative list that still names the tab, and readList adopts that snapshot
+  // BEFORE running the callback — so the row is already back and nothing is
+  // spliced. History [act, x, y, first], so the hand-over target is neither the
+  // entry behind it nor position 0.
+  it("a verify-settled restore returns the closed tab's place in the history", async () => {
+    expect.assertions(3);
+    await openChats("first", "y", "x", "act"); // history [act, x, y, first]
+    const doomedTab = chatID("x");
+
+    // No answer at all: the response is held and the dispatch canceled, which is
+    // the branch a real 5s timeout takes. Manual mode keeps the echo frame back,
+    // or a matching op_id would confirm the op instead.
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    const closing = closeTab(doomedTab);
+    closeTabCommand.cancel();
+    tabServer.releaseResponses();
+    await closing;
+    expect(hasTab("chat", "x")).toBe(false);
+
+    // The authoritative list still holds the row: the close never committed.
+    const held = tabServer
+      .subjects()
+      .map((s) => ({ ...s }))
+      .concat([{ id: doomedTab, kind: "chat", ref: "x", parent: "", pinned: false, owns: true }]);
+    tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+    await listTabs();
+    expect(hasTab("chat", "x")).toBe(true);
+
+    // With the slot restored the active tab's close hands over to `x`; without it
+    // the history reads [act, y, first] and `y` takes over instead.
+    await closeTab(chatID("act"));
+    expect(getActiveTabId()).toBe(chatID("x"));
+  });
+
+  // The captured slot is an ANCHOR, not an index, because the dispatch AWAIT sits
+  // between the capture and the restore and every entry an index was measured
+  // against can move across it. The reviewer's traced case verbatim: history
+  // [b,a,c], `c` closed, `d` opened before the refusal lands. The anchor answers
+  // [d,b,a,c]; an absolute index answered [d,b,c,a], ranking `c` ahead of a tab
+  // visited more recently. `first` is never visited, so the expected answer is
+  // neither the buggy one nor the position-0 fallback.
+  it("restores a rank the await window moved, not the index it was captured at", async () => {
+    expect.assertions(5);
+    await openChat("first", { activate: false });
+    await openChats("a", "b", "c"); // history [c, b, a]
+    activateTab(chatID("a"));
+    activateTab(chatID("b")); // history [b, a, c] — `c` is the tail, behind `a`
+    tabServer.failNext("close_tab");
+    tabServer.holdResponses();
+
+    // Both dispatches in flight at once, the OPEN released first, so its
+    // activation lands inside the close's window and the history reads [d, b, a].
+    const opening = openChat("d");
+    const closing = closeTab(chatID("c"));
+
+    // That interleaving is what the case DISCRIMINATES on, so it is asserted, off
+    // the projection's own reactive seam rather than after the awaits — by then
+    // both have run and neither order is observable. Released the other way round
+    // the rollback restores against [b, a] and the two designs agree, so the case
+    // would keep passing while catching nothing.
+    const seen: { active: string; back: boolean }[] = [];
+    const stop = effect(() => {
+      tabSetVersion();
+      seen.push({ active: getActiveTabId(), back: hasTab("chat", "c") });
+    });
+
+    tabServer.releaseResponses();
+    await opening;
+    await closing;
+    stop();
+    // The frame the rollback landed on: `d` already active, so at the head.
+    expect(seen.find((s) => s.back)).toEqual({ active: chatID("d"), back: true });
+    expect(hasTab("chat", "c")).toBe(true);
+    expect(getActiveTabId()).toBe(chatID("d"));
+
+    // The rank, read the only way it is observable: `c` came back BEHIND `a`, so
+    // closing `d` then `b` hands over to `a` rather than to the restored tab.
+    await closeTab(chatID("d"));
+    expect(getActiveTabId()).toBe(chatID("b"));
+    await closeTab(chatID("b"));
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  // A parent-plus-subtree close removes entries that can be ADJACENT in the
+  // history, and their order among themselves has to survive the round trip. Each
+  // anchors on its immediate predecessor whether or not that one also went, so the
+  // capture is ordered by SLOT and the restore replays it, which is what has `c`
+  // back before `p` asks for it. The child is the more recent of the two here on
+  // purpose: that is the orientation where slot order and the subtree's own
+  // parent-first order disagree, so both halves of the rule are load-bearing.
+  it("returns adjacent removed siblings in their original relative order", async () => {
+    expect.assertions(5);
+    await openChat("first", { activate: false });
+    await openChat("a");
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "c", parent: chatID("p") });
+    await openChat("b"); // history [b, c, p, a] — the pair, adjacent, mid-history
+    await openChat("d", { activate: false });
+    tabServer.failNext("close_tab");
+    tabServer.holdResponses();
+
+    const closing = closeTab(chatID("p"));
+    // The reader's gesture inside the window, synchronous: history [d, b, a].
+    activateTab(chatID("d"));
+    tabServer.releaseResponses();
+    await closing;
+    expect(hasTab("chat", "p")).toBe(true);
+    expect(hasTab("chat", "c")).toBe(true);
+
+    // [d, b, c, p, a]: the pair is back behind `b`, and `c` still outranks `p`.
+    await closeTab(chatID("d"));
+    expect(getActiveTabId()).toBe(chatID("b"));
+    await closeTab(chatID("b"));
+    expect(getActiveTabId()).toBe(chatID("c"));
+    await closeTab(chatID("c"));
+    expect(getActiveTabId()).toBe(chatID("p"));
+  });
+
+  // The anchor is a survivor, so another device can close it inside the same
+  // window. The entry ranked BEHIND it, so the tail is the defensible answer:
+  // understating recency drops a preference, where the head would invert a real
+  // one — and the head would make `c` the answer to the FIRST close below.
+  it("falls back to the tail when the anchor itself was closed in the window", async () => {
+    expect.assertions(4);
+    await openChat("first", { activate: false });
+    await openChats("a", "c", "s", "b"); // history [b, s, c, a]
+    await openChat("d", { activate: false });
+    tabServer.failNext("close_tab");
+    tabServer.holdResponses();
+
+    const closing = closeTab(chatID("c")); // anchored on `s`
+    tabServer.closeRemotely(chatID("s")); // and `s` goes, mid-window
+    activateTab(chatID("d")); // history [d, b, a]
+    tabServer.releaseResponses();
+    await closing;
+    expect(hasTab("chat", "c")).toBe(true);
+    expect(hasTab("chat", "s")).toBe(false);
+
+    // [d, b, a, c], so `a` outranks the restored tab; the captured index put `c`
+    // in front of it.
+    await closeTab(chatID("d"));
+    expect(getActiveTabId()).toBe(chatID("b"));
+    await closeTab(chatID("b"));
+    expect(getActiveTabId()).toBe(chatID("a"));
   });
 });
 

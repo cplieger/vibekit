@@ -2,6 +2,21 @@
 // timeline, detail pane, transcript run card). See vibekit-ui.md for the
 // three design rules this encodes (shape carries state, motion means in
 // flight, quiet default).
+//
+// THE MARK TABLE IS ONE TAGGED RECORD, not a character map beside an icon map.
+// Two tables keyed on the same `ExecState` can both answer for one state, so a
+// row could paint a glyph AND a character; a tagged union makes that
+// unrepresentable, and `paintStateMark` keeps the two consumers from spelling the
+// write differently. This module is the app's only status vocabulary and a second
+// private copy of it is a recurring defect.
+//
+// Two states keep a CHARACTER, deliberately. `input` is the one step state a
+// reader must ACT on, and a `?` says that where a silhouette cannot; `skipped`
+// means nothing happened, and a dash was never one of the marks the glyph ruling
+// removed.
+
+import { outcomeIcon } from "../icons.js";
+import { iconEl } from "../icon-el.js";
 
 /** A node's state, as every exec surface reports it. */
 export type ExecState =
@@ -13,19 +28,46 @@ export type ExecState =
 export type WireStatus =
   "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
-/** The character a state paints. Empty for the three with none; CSS gives those a
- *  ring instead (hollow/still/spinning), so tint is never the only channel
- *  (WCAG 1.4.1). */
-export const STATE_BADGE: Readonly<Record<ExecState, string>> = {
-  pending: "",
-  running: "",
-  waiting: "",
-  input: "?",
-  ok: "\u2713",
-  fail: "\u2717",
-  warn: "\u26A0",
-  skipped: "\u2013",
+/** The one mark a state carries, tagged so a state cannot carry two. `none` is a
+ *  state CSS draws a ring for (hollow / still / spinning). */
+type StateMark =
+  | { readonly kind: "none" }
+  | { readonly kind: "char"; readonly text: string }
+  | { readonly kind: "icon"; readonly svg: string };
+
+/** Exactly one mark per state, so tint is never the only channel (WCAG 1.4.1):
+ *  the three settled outcomes are solid road-sign SVGs from the shared set, two
+ *  states keep a character, and the three in-flight states are CSS rings. */
+export const STATE_MARK: Readonly<Record<ExecState, StateMark>> = {
+  pending: { kind: "none" },
+  running: { kind: "none" },
+  waiting: { kind: "none" },
+  input: { kind: "char", text: "?" },
+  ok: { kind: "icon", svg: outcomeIcon("ok") },
+  fail: { kind: "icon", svg: outcomeIcon("fail") },
+  warn: { kind: "icon", svg: outcomeIcon("warn") },
+  skipped: { kind: "char", text: "\u2013" },
 };
+
+/** Write a state's mark into a slot. The one writer, so the run card and the exec
+ *  tree cannot spell one state two ways. Idempotent: `replaceChildren` leaves the
+ *  slot holding exactly the current mark however often it is called. */
+export function paintStateMark(slot: HTMLElement, state: ExecState): void {
+  const mark = STATE_MARK[state];
+  // Every kind named, no `default`: a kind added later then paints nothing
+  // visibly unhandled rather than being absorbed into one of these arms.
+  switch (mark.kind) {
+    case "icon":
+      slot.replaceChildren(iconEl(mark.svg));
+      break;
+    case "char":
+      slot.replaceChildren(mark.text);
+      break;
+    case "none":
+      slot.replaceChildren();
+      break;
+  }
+}
 
 /** The word an accessible name uses. Not the wire enum: "aborted"/"failed" read
  *  as one thing to a listener, and "pending" reads better as "not started". */

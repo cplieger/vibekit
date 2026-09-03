@@ -447,3 +447,56 @@ func TestHandlePlan_AMutedTurnPersistsNothing(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleAssistantChunk_AStepsFrameStatesTheRunsTurnSource pins which KIND of
+// turn a fold with no open turn opens.
+//
+// A chat-parented run executes on the LAUNCHING chat's session, so a step's frames
+// fold onto that chat — and its launching turn has already ended, because
+// run_workflow returns as soon as the run is created. Opened as the chat's own
+// engine turn, that turn made every client read the chat as working for the length
+// of the run, with nothing to close it: a step's own turn_end is dropped by the
+// attribution gate above.
+//
+// The FRAME's own `_meta.kiro.workflow` decides, not the dispatcher's attribution:
+// it is self-describing, so it stays right when the step registry is cold after a
+// restart.
+func TestHandleAssistantChunk_AStepsFrameStatesTheRunsTurnSource(t *testing.T) {
+	stepMeta := map[string]any{
+		"kiro": map[string]any{
+			"workflow": map[string]any{
+				"workflowId": "wf-1",
+				"nodePath":   []string{"root", "step"},
+				"type":       "step",
+			},
+		},
+	}
+	cases := []struct {
+		name string
+		meta map[string]any
+		want vibekit.TurnOpenSource
+	}{
+		{name: "a workflow step's frame", meta: stepMeta, want: vibekit.TurnSourceWorkflowStep},
+		{name: "the chat's own frame", meta: nil, want: vibekit.TurnSourceWireTurnStart},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newBaseDeps()
+			tr := New(rolesOf(d))
+			frame := map[string]any{"content": map[string]any{"type": "text", "text": "hi"}}
+			if tc.meta != nil {
+				frame["_meta"] = tc.meta
+			}
+
+			tr.HandleAssistantChunk(t.Context(), "c1", mustJSON(t, frame), false)
+
+			got, ok := d.lastFoldSource()
+			if !ok {
+				t.Fatal("the frame never reached a fold site, so it landed nowhere")
+			}
+			if got != tc.want {
+				t.Errorf("fold source = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

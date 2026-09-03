@@ -90,6 +90,12 @@ vi.mock("./run-store.js", () => ({
   runCounters: vi.fn(() => ({ total: 0, done: 0, failed: 0, current: 0 })),
   runElapsedMs: vi.fn(() => 0),
   runIsLive: vi.fn(() => false),
+  // The pause predicate, imported by the run card AND the exec source so both
+  // alerts recognise a step waiting on a person. Inert here for the same reason as
+  // the rest — `runState` answers undefined, so no alert is built — but it has to
+  // EXIST, because a browser-mode mock is linked as real ESM: a name any module in
+  // the graph reaches must be on the factory or collection fails outright.
+  isNeedInputPause: vi.fn(() => false),
 }));
 
 vi.mock("./run-dots.js", () => ({ refreshRunDots: vi.fn(), trackRun: vi.fn() }));

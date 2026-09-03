@@ -79,6 +79,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerQueued, chatID, vibekit.SteerQueuedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
+			Origin:  t.steerOrigin(chatID, k.MessageID),
 		}))
 		return true
 
@@ -89,6 +90,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
+			Origin:  t.steerOrigin(chatID, k.MessageID),
 		}))
 		return true
 
@@ -105,4 +107,18 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		return true
 	}
 	return false
+}
+
+// steerOrigin answers whose words a steer carries.
+//
+// The severity check above cannot stand in for it: that catches the one shape KAS
+// marks (a `[notification/<sev>]` prefix), while the auto-wake nudge carries none
+// and a `send_message` note reaches vibekit only on the INJECTED frame.
+//
+// No ledger answers agent, because the inverse is the defect this field fixes.
+func (t *Translator) steerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin {
+	if t.steers == nil {
+		return vibekit.SteerOriginAgent
+	}
+	return t.steers.SteerOrigin(chatID, steerID)
 }

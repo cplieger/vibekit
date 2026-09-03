@@ -55,6 +55,8 @@ import type {
   RunStepPayload,
   RunProgressPayload,
   RunFinishedPayload,
+  RunInputNeededPayload,
+  RunInputSettledPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -137,6 +139,17 @@ export interface SSEPayloads {
   readonly run_progress: RunProgressPayload;
   readonly run_finished: RunFinishedPayload;
   readonly run_step: RunStepPayload;
+  // A workflow STEP asking a person a question, and the second run event that
+  // carries its payload rather than saying "refetch". It has to: KAS parks the run
+  // with one fixed pauseReason literal and an empty pauseDetail, so `inspect` says
+  // a step wants input and never says what it asked. Keyed to the LAUNCHING chat
+  // when the run has one and to `run:<workflowId>` when it does not, which is the
+  // same pair the three request-shaped asks use.
+  readonly run_input_needed: RunInputNeededPayload;
+  // Its twin: retire the card on every surface that did not answer. Separate from
+  // decision_settled because a run ask is identified by a string rather than by an
+  // int64 request id.
+  readonly run_input_settled: RunInputSettledPayload;
 }
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined

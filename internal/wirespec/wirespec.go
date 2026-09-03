@@ -129,10 +129,16 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.LiveRunsResponse](),
 	wiregen.TypeRef[vibekit.RunLaunchRequest](),
 	wiregen.TypeRef[vibekit.RunLaunchedResponse](),
+	// POST /api/runs/{id}/answer's body, registered for RunLaunchRequest's
+	// reason: a request shape the client composes is generated rather than
+	// hand-mirrored, so a field rename cannot land on one side only.
+	wiregen.TypeRef[vibekit.RunAnswerRequest](),
 	wiregen.TypeRef[vibekit.RunStartedPayload](),
 	wiregen.TypeRef[vibekit.RunProgressPayload](),
 	wiregen.TypeRef[vibekit.RunFinishedPayload](),
 	wiregen.TypeRef[vibekit.RunStepPayload](),
+	wiregen.TypeRef[vibekit.RunInputNeededPayload](),
+	wiregen.TypeRef[vibekit.RunInputSettledPayload](),
 	wiregen.TypeRef[vibekit.ToolJobChangedPayload](),
 	wiregen.TypeRef[vibekit.ToolJobOutputPayload](),
 	wiregen.TypeRef[vibekit.TerminalCreatedPayload](),
@@ -169,8 +175,11 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// (internal/chat's deriveTurnOutcome and turns.ts's), so a hand-written union
 	// on the client is a second enumeration of one vocabulary that the shared
 	// fixture pins the BEHAVIOUR of and nothing pins the SPELLING of.
-	"TurnOutcome":      {},
-	"SafetyStatus":     {},
+	"TurnOutcome":  {},
+	"SafetyStatus": {},
+	// SteerOrigin is registered for TabKind's reason: the client's label switch
+	// over it must be TOTAL, and the two origins want different words.
+	"SteerOrigin":      {},
 	"RunProgressKind":  {},
 	"DecisionKind":     {},
 	"SettledBy":        {},
@@ -237,6 +246,8 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "run_progress", TypeName: "RunProgressPayload"},
 	{EventType: "run_finished", TypeName: "RunFinishedPayload"},
 	{EventType: "run_step", TypeName: "RunStepPayload"},
+	{EventType: "run_input_needed", TypeName: "RunInputNeededPayload"},
+	{EventType: "run_input_settled", TypeName: "RunInputSettledPayload"},
 	{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 	{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
 	{EventType: "tool_call", TypeName: "ToolCallPayload"},

@@ -1554,47 +1554,65 @@
 }
 
 /* ==========================================================================
-   The mid-turn steer note — a correction, rendered where it landed
+   The mid-turn steer note — a message delivered into a running turn
    ==========================================================================
 
-   A message sent while the turn was already running. It waits in the bottom
-   dock until the agent reads it, then leaves the dock and appears HERE, between
-   the blocks the turn had produced and the ones that came after. It replaced a
-   green checkmark on the dock row, which said the agent had read the message
-   and nothing else — so the transcript showed the agent changing course with
-   nothing explaining why.
+   Sent while the turn was already running. It waits in the bottom dock until the
+   agent reads it, then leaves the dock and appears HERE, between the blocks the
+   turn had produced and the ones that came after.
 
-   IT HAS TO BE DISTINCT FROM THE TURN HEADER, because both are the user's own
-   words and only one of them started the work. Two vocabularies the reader
-   already knows, recombined: the accent TINT means user input (the same wash
-   `.turn-header` carries) and the accent LEFT EDGE means steer (the dock row's
-   own edge), so the note reads as the object that just left the dock. The
-   uppercase label is what says "mid-turn" rather than "this is the prompt", and
-   it is why the state is never carried by colour alone (WCAG 1.4.1).
+   A CARD ON THE TOOL-CARD BOX, and that is the whole visual decision: the same
+   `--c-bg-secondary` fill, 1px border, `--r` radius, `overflow: hidden` and
+   `vk-slide-up` entry that `.tool-call` and `.subagent-block` carry
+   (14-tools.css), with `.subagent-block`'s accent-mixed border as the resting
+   colour. The transcript has exactly one idiom for a block that is not prose, so
+   the note reads as a sibling of the evidence beside it. It replaced a 3px accent
+   LEFT RAIL, which `#vibekit-ui` reserves for work this agent did not do itself —
+   the run card and the delegated-work card — so a steer carrying one was
+   borrowing the wrong vocabulary. The head reuses `.tool-header`'s shape and the
+   glyph slot is `.tool-icon` itself, so nothing here re-derives either.
 
-   Two states: `read` (accent, optionally with the agent's own account of what
-   it did) and `dropped` (a turn boundary cleared the buffer first — neutral
-   edge, aside ink, and one control to put the text back in the message box).
-   ========================================================================== */
+   TWO ORIGINS, separated by the LABEL and the GLYPH rather than by a hue: KAS's
+   steering buffer is the only inbound channel into a live turn, so it carries the
+   user's own corrections AND a workflow reporting its result into the chat that
+   launched it. Both keep the accent-mixed border, because both are genuinely
+   input into a running turn. `data-origin` is on the root for a rule that ever
+   needs it; today only the label's words differ.
 
+   Two states on top: `read` (optionally with the agent's own account of what it
+   did) and `dropped` (a turn boundary cleared the buffer first — neutral border,
+   aside ink, and one control to put the text back in the message box).
+
+   NO `max-width` here. It carried `--content-max-w`, and `#vibekit-ui` records
+   that the transcript has ONE measure and the card is it: that cap is the same
+   122px-dead-gutter defect removed from `.message.assistant` and
+   `.turn-req-text`. */
 .steer-note {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-
-  /* The prose measure, matching `.reasoning-block`: the note is read as text
-     beside the assistant's own, not as evidence like a diff. */
-  max-width: var(--content-max-w);
-  margin-block: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  border-inline-start: 3px solid var(--c-accent);
+  background: var(--c-bg-secondary);
+  border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
   border-radius: var(--r);
-  background: color-mix(in srgb, var(--c-accent) 8%, var(--c-bg-secondary));
+  overflow: hidden;
+  flex-shrink: 0;
   font-size: var(--fs-sm);
+  animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 }
 
-/* The word, not only the tint. Uppercase and tracked out so it reads as a
-   status rather than as the first line of the message. */
+/* `.tool-header`'s shape, so the note's head and a tool card's sit on one
+   density. Not a `.tool-header` itself: this row is not a disclosure summary and
+   must not inherit a rule written for one. */
+.steer-note-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  min-height: var(--btn-h);
+  min-width: 0;
+}
+
+/* The word, not only the glyph. Uppercase and tracked out so it reads as a
+   status rather than as the first line of the message. It is also the ONE channel
+   that names the origin, which is why it is never carried by colour alone
+   (WCAG 1.4.1). */
 .steer-note-label {
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -1603,22 +1621,63 @@
   color: var(--c-accent);
 }
 
-/* Two lines at the prose measure, clamped rather than single-line-ellipsised so
-   a long message still gives its shape; the accessible name carries the whole
-   of it. */
+/* Concentric with the head: same inline padding, so the message's left edge is
+   the label's. */
+.steer-note-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-3) var(--sp-2);
+}
+
+/* The message, in the shape it was typed: newlines survive and a long word
+   wraps rather than widening the card. */
 .steer-note-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  align-self: stretch;
   color: var(--c-text-primary);
   line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* THE CLAMP, four lines, behind the attribute the opener toggles — the turn
+   header's own mechanism (29-turns.css, clamp-text.ts). Not an ellipsis that
+   cuts: every character stays in the DOM and in the accessibility tree, which is
+   what keeps find-in-chat able to match the reader's own words. */
+.steer-note-text[data-clamped] {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Skinned on `.turn-req-more` (29-turns.css), because it is the same control:
+   a text button that opens a clamp. */
+.steer-note-more {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.steer-note-more:hover {
+  color: var(--c-accent);
+}
+
+.steer-note-more:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* What the agent said it DID about the steer, from its own acknowledgement
-   marker. One step down in weight from the message, because the message above
-   it is the part the reader wrote and already knows. */
+   marker. One step down in weight from the message, because the message above it
+   is the part the reader wrote and already knows. */
 .steer-note-ack {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
@@ -1628,10 +1687,10 @@
    chosen (`--c-text-aside`), never an `opacity`, because an opacity multiplies
    the measured contrast and is invisible to both contrast gates. */
 .steer-note[data-state="dropped"] {
-  border-inline-start-color: var(--c-border);
-  background: var(--c-bg-secondary);
+  border-color: var(--c-border);
 }
 
+.steer-note[data-state="dropped"] .tool-icon,
 .steer-note[data-state="dropped"] .steer-note-label,
 .steer-note[data-state="dropped"] .steer-note-text {
   color: var(--c-text-aside);
@@ -1642,6 +1701,7 @@
    the label rather than stretched across the note. */
 .steer-note-restore {
   align-self: flex-start;
+  margin-block-start: var(--sp-1);
   padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--c-border);
   border-radius: var(--r);

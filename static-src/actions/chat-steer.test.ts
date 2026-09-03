@@ -66,6 +66,10 @@ describe("steerChat — the POST body confirms the chip", () => {
     expect(recordSteerQueued).toHaveBeenCalledWith("c1", {
       id: "kas-7",
       text: "also check the logs",
+      // `user` is a FACT on this path rather than a guess: this is the reply to
+      // this device's own POST, and the server has just recorded the same id in
+      // the ledger its own `steer_queued` frame is stamped from.
+      origin: "user",
     });
   });
 

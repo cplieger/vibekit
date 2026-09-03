@@ -31,11 +31,11 @@ import { recordSteerQueued, promoteSteer, dropSteers } from "../store.js";
 import { info, success, error } from "../toast.js";
 
 onSSE("steer_queued", (chatID, p) => {
-  recordSteerQueued(chatID, { id: p.steer_id, text: p.text });
+  recordSteerQueued(chatID, { id: p.steer_id, text: p.text, origin: p.origin });
 });
 
 onSSE("steer_injected", (chatID, p) => {
-  promoteSteer(chatID, p.steer_id, p.text, p.ack);
+  promoteSteer(chatID, p.steer_id, p.text, p.origin, p.ack);
 });
 
 // Named ids only. KAS clears its buffer at every turn boundary and the

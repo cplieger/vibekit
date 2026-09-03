@@ -21,9 +21,14 @@ import (
 // Keyed by the open turn rather than by chat, since a buffer keyed by chat
 // would outlive the turn that filled it.
 type BufferAccess interface {
-	// TurnFoldTarget returns the chat's open turn's buffer, opening a
-	// wireTurnStart turn when none is open. Never nil.
-	TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID) *buffer.Buffer
+	// TurnFoldTarget returns the chat's open turn's buffer, opening a turn of the
+	// given source when none is open. Never nil.
+	//
+	// The source is the CALLER's statement about the frame in hand — a workflow
+	// step's frames fold here too, and a turn opened for one is the RUN's rather
+	// than this chat's. It is read only on the open, so a frame folding into a
+	// turn that is already open cannot change what that turn is.
+	TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer
 }
 
 // TurnBoundary is the wire's own turn bracket, which KAS emits for every
@@ -45,6 +50,16 @@ type TurnBoundary interface {
 // to the one method translate needs.
 type LineRecorder interface {
 	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
+}
+
+// SteerOrigins answers whose words a mid-turn steer carries.
+//
+// A role rather than a decode because the wire cannot say: the user's corrections
+// and a workflow's reports arrive on one buffer identically, so the host's ledger
+// of what vibekit itself sent is the discriminator. Total by construction, so no
+// handler has to decide what an unknown id means.
+type SteerOrigins interface {
+	SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin
 }
 
 // ChatRecords is the chat store as this package uses it: read a chat,
@@ -84,6 +99,9 @@ type Roles struct {
 	Turns TurnBoundary
 	// Lines is the changed-line tracker at 1 method.
 	Lines LineRecorder
+	// Steers answers whose words a steer carries: the ledger of what this
+	// server sent.
+	Steers SteerOrigins
 	// PendingPerms registers an unanswered decision for reconnect replay.
 	PendingPerms PendingPermAdder
 	// Respond answers a server-to-client request on the chat's bridge.
@@ -200,6 +218,7 @@ type Translator struct {
 	buffers       BufferAccess
 	turns         TurnBoundary
 	lines         LineRecorder
+	steers        SteerOrigins
 	pendingPerms  PendingPermAdder
 	respond       Responder
 	push          Pusher
@@ -231,6 +250,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		buffers:       r.Buffers,
 		turns:         r.Turns,
 		lines:         r.Lines,
+		steers:        r.Steers,
 		pendingPerms:  r.PendingPerms,
 		respond:       r.Respond,
 		push:          r.Push,

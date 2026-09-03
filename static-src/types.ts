@@ -24,6 +24,7 @@ export type {
   Role,
   SafetyStatus,
   SettledBy,
+  SteerOrigin,
   StopReason,
   TabKind,
   ToolKind,
@@ -104,6 +105,9 @@ export type {
   RunProgressPayload,
   RunFinishedPayload,
   RunStepPayload,
+  RunInputNeededPayload,
+  RunInputSettledPayload,
+  RunAnswerRequest,
   Recipe,
   RecipesResponse,
   RunLaunchRequest,
@@ -131,6 +135,7 @@ import type {
   SessionEffortLevel,
   SessionMode,
   SessionModel,
+  SteerOrigin,
   Usage,
 } from "./wire/types.gen.js";
 
@@ -211,6 +216,12 @@ export interface PendingSteer {
    *  one this device sent. */
   id: string;
   text: string;
+  /** Whose words these are, resolved SERVER-side (`vibekit.SteerOrigin`).
+   *
+   *  Required rather than optional: the fallback a reader would reach for is "the
+   *  user's", which is the wrong answer for the case this names. The one local
+   *  writer is `recordSteerSent`, where it is a fact about this device's POST. */
+  origin: SteerOrigin;
   /** Written on SUBMIT and cleared by `steer_queued`: this row is the local
    *  claim that a POST is in flight, and its id is derived rather than
    *  confirmed. Absent on every entry the server has acknowledged. */
@@ -246,6 +257,11 @@ export interface SteerAnchor {
 export interface SteerMark {
   id: string;
   text: string;
+  /** Whose words these are, carried over from the dock entry or read off the
+   *  frame that promoted it. What decides the note's TITLE, which is the whole
+   *  reason the field exists: one label made a workflow's report read as
+   *  something the reader had typed. */
+  origin: SteerOrigin;
   /** What the agent said it DID about the steer, from the acknowledgement
    *  marker KAS asks it to close its response with. Arrives later than the read
    *  frame and on a different channel (the text stream, not the steering one),
@@ -303,13 +319,21 @@ export interface Session {
   /** Agent-declared one-line description of what it is working on
    *  (chat_status SSE). Shown as the chat tab's tooltip. */
   agent_status_text?: string;
-  /** This chat's last turn or bridge operation failed (`error` SSE naming this
-   *  chat). Client-only and latched, for the same reason `agent_status` is: the
-   *  failure is a settled fact until the next turn, and a background chat's
-   *  failure is otherwise invisible — `handlers/turn.ts` deliberately routes the
-   *  error PROSE only for the active chat, to keep one chat's failure off
-   *  another's send button. Cleared by the next `setThinking(id, true)` and by
-   *  the transport-gap reconciler, exactly like `agent_status`. */
+  /** This chat's last TURN failed — `turn_ended` carrying outcome `failed` or
+   *  `refused`. Client-only and latched, for the same reason `agent_status` is:
+   *  the failure is a settled fact until the next turn, and a background chat's
+   *  failure is otherwise invisible, because the ONE error surface that paints a
+   *  SHARED control — the agent-down send face — is deliberately withheld from a
+   *  background chat by `handlers/turn.ts`, to keep one chat's failure off
+   *  another's send button. Its sibling surface is a toast, which is raised for
+   *  every chat and withheld from none. Cleared by the next
+   *  `setThinking(id, true)` and by the transport-gap reconciler, exactly like
+   *  `agent_status`.
+   *
+   *  NOT set by the `error` SSE: that handler stopped touching turn state when
+   *  `endsTurn` was removed, so a `switch_failed` or `bridge_start_failed` frame
+   *  reports without latching. `tabs.ts`'s narrow "turn failed" dot phrase is
+   *  written against exactly this breadth. */
   turn_failed?: boolean;
   /** This chat's last turn finished. Client-only and latched, the mirror of
    *  `turn_failed`.

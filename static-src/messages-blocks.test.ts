@@ -38,10 +38,16 @@ const {
   disposeAssistantBody,
   resetBlockRenders,
   buildDetachedBody,
+  openContainerKeys,
 } = await import("./messages-blocks.js");
 const { blockKey, blockTextSigs, blockThinkingSigs, ensureBlockTextSig, clearAllBlockSigs } =
   await import("./store-signals.js");
 const { setActive } = await import("./store.js");
+const { outcomeIcon } = await import("./icons.js");
+const { iconEl } = await import("./icon-el.js");
+
+/** The shared failure mark, as markup, for the delegate-card assertions below. */
+const failMark = (): string => (iconEl(outcomeIcon("fail")) as HTMLElement).outerHTML;
 
 /** The chat every render in this file belongs to. It is part of the per-tool
  *  signal key, so a mount and its writer have to name the same one — and it
@@ -481,12 +487,17 @@ describe("a pipeline's stages render inside the orchestrate call that started th
 
   it("puts a stage's box inside the pipeline's body, not beside it", () => {
     const wrap = render(
-      [toolUse("d-one"), toolUse(stageID("d-one", "plan"), "u-one"), text("planning", "u-one")],
-      [driver("d-one", 1), stage("d-one", "plan", "u-one")],
+      [
+        toolUse("d-one"),
+        toolUse(stageID("d-one", "plan"), "u-one"),
+        text("planning", "u-one"),
+        toolUse(stageID("d-one", "code"), "u-one-b"),
+      ],
+      [driver("d-one", 2), stage("d-one", "plan", "u-one"), stage("d-one", "code", "u-one-b")],
     );
     // ONE top-level object for the whole pipeline, where there were two.
     expect(shape(wrap)).toEqual(["pipeline(d-one)"]);
-    expect(nested(wrap)).toEqual(["u-one"]);
+    expect(nested(wrap)).toEqual(["u-one", "u-one-b"]);
     const body = wrap.querySelector(".subagent-container .subagent-block .subagent-body");
     expect(body?.textContent).toContain("planning");
   });
@@ -509,30 +520,39 @@ describe("a pipeline's stages render inside the orchestrate call that started th
       [
         toolUse("d-p1"),
         toolUse(stageID("d-p1", "plan"), "u-p1"),
+        toolUse(stageID("d-p1", "code"), "u-p1-b"),
         toolUse("d-p2"),
         toolUse(stageID("d-p2", "plan"), "u-p2"),
+        toolUse(stageID("d-p2", "code"), "u-p2-b"),
       ],
       [
-        driver("d-p1", 1),
+        driver("d-p1", 2),
         stage("d-p1", "plan", "u-p1"),
-        driver("d-p2", 1),
+        stage("d-p1", "code", "u-p1-b"),
+        driver("d-p2", 2),
         stage("d-p2", "plan", "u-p2"),
+        stage("d-p2", "code", "u-p2-b"),
       ],
     );
     expect(shape(wrap)).toEqual(["pipeline(d-p1)", "pipeline(d-p2)"]);
-    expect(nested(wrap)).toEqual(["u-p1", "u-p2"]);
+    expect(nested(wrap)).toEqual(["u-p1", "u-p1-b", "u-p2", "u-p2-b"]);
   });
 
   it("is order-independent: a stage arriving BEFORE its driver builds the same one box", () => {
     const wrap = render(
-      [toolUse(stageID("d-rev", "plan"), "u-rev"), text("planning", "u-rev"), toolUse("d-rev")],
-      [driver("d-rev", 1), stage("d-rev", "plan", "u-rev")],
+      [
+        toolUse(stageID("d-rev", "plan"), "u-rev"),
+        text("planning", "u-rev"),
+        toolUse(stageID("d-rev", "code"), "u-rev-b"),
+        toolUse("d-rev"),
+      ],
+      [driver("d-rev", 2), stage("d-rev", "plan", "u-rev"), stage("d-rev", "code", "u-rev-b")],
     );
     expect(shape(wrap)).toEqual(["pipeline(d-rev)"]);
-    expect(nested(wrap)).toEqual(["u-rev"]);
+    expect(nested(wrap)).toEqual(["u-rev", "u-rev-b"]);
     // The driver still names the box, so `bindPipeline` FOUND it rather than
     // building a second one beside it.
-    expect(nameOf(boxes(wrap)[0])).toBe("Pipeline · 1 stage");
+    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
   });
 
   it("leaves a plain unorchestrated subagent at the top level", () => {
@@ -559,24 +579,33 @@ describe("a pipeline's stages render inside the orchestrate call that started th
   });
 
   it("keeps the driver id whole when a stage NAME contains the separator", () => {
-    // `lastIndexOf`, not `indexOf`: a stage name is author-supplied, so a stage
-    // called `run_stage_two` must not cut the parent id short.
+    // `indexOf`, not `lastIndexOf`: only the RIGHT half can carry a separator,
+    // since a driver id is machine-minted and a stage name is author-supplied, so
+    // a stage called `run_stage_two` must still resolve to its own driver.
     const wrap = render(
-      [toolUse("d-sep"), toolUse(stageID("d-sep", "run_stage_two"), "u-sep")],
-      [driver("d-sep", 1), stage("d-sep", "run_stage_two", "u-sep")],
+      [
+        toolUse("d-sep"),
+        toolUse(stageID("d-sep", "run_stage_two"), "u-sep"),
+        toolUse(stageID("d-sep", "code"), "u-sep-b"),
+      ],
+      [
+        driver("d-sep", 2),
+        stage("d-sep", "run_stage_two", "u-sep"),
+        stage("d-sep", "code", "u-sep-b"),
+      ],
     );
     expect(boxes(wrap)[0]?.dataset["pipeline"]).toBe("d-sep");
-    expect(nested(wrap)).toEqual(["u-sep"]);
+    expect(nested(wrap)).toEqual(["u-sep", "u-sep-b"]);
   });
 
   it("names the box from the driver's own declared stage count", () => {
     const wrap = render([toolUse("d-three")], [driver("d-three", 3)]);
-    expect(nameOf(boxes(wrap)[0])).toBe("Pipeline · 3 stages");
+    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 3 stages");
   });
 
   it("names it plainly when the driver declares no stages", () => {
     const wrap = render([toolUse("d-none")], [driver("d-none")]);
-    expect(nameOf(boxes(wrap)[0])).toBe("Pipeline");
+    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline");
   });
 
   // -------------------------------------------------------------------------
@@ -586,9 +615,11 @@ describe("a pipeline's stages render inside the orchestrate call that started th
   // -------------------------------------------------------------------------
 
   it("spins the STAGE and not the pipeline", () => {
+    // The driver declares 2 and only one has arrived: a legitimate mid-run state,
+    // and one that keeps the container this test is about.
     const wrap = render(
       [toolUse("d-spin"), toolUse(stageID("d-spin", "plan"), "u-spin")],
-      [driver("d-spin", 1, "in_progress"), stage("d-spin", "plan", "u-spin", "in_progress")],
+      [driver("d-spin", 2, "in_progress"), stage("d-spin", "plan", "u-spin", "in_progress")],
     );
     const pipeline = boxes(wrap)[0];
     const inner = wrap.querySelector<HTMLElement>(
@@ -603,24 +634,29 @@ describe("a pipeline's stages render inside the orchestrate call that started th
   });
 
   it("keeps the pipeline's identity glyph while it runs, with no outcome mark yet", () => {
-    const wrap = render([toolUse("d-glyph")], [driver("d-glyph", 1, "in_progress")]);
+    const wrap = render([toolUse("d-glyph")], [driver("d-glyph", 2, "in_progress")]);
     const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
     // A leaf empties this slot to become a ring; a container must not.
     expect(icon?.querySelector("svg")).not.toBeNull();
     expect(icon?.classList.contains("subagent-spinner")).toBe(false);
-    // No outcome yet, so no check and no cross.
-    expect(icon?.querySelector(".tool-outcome-badge")).toBeNull();
+    // ONE mark, and while it runs that mark is still the identity glyph — not an
+    // outcome silhouette.
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
+    expect(icon?.querySelector("svg")?.outerHTML).not.toBe(failMark());
   });
 
   it("gives the pipeline its outcome mark once it settles", () => {
-    const wrap = render([toolUse("d-fail")], [driver("d-fail", 1, "failed")]);
+    // TWO declared, not one: at one this would pass by exercising the
+    // settled-with-no-stage fallback, which has its own named test below.
+    const wrap = render([toolUse("d-fail")], [driver("d-fail", 2, "failed")]);
     const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
     expect(icon?.classList.contains("is-fail")).toBe(true);
-    expect(icon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u2717");
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(failMark());
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
   });
 
   it("carries activity dots, and a leaf carries none", () => {
-    const wrap = render([toolUse("d-dots")], [driver("d-dots", 1, "in_progress")]);
+    const wrap = render([toolUse("d-dots")], [driver("d-dots", 2, "in_progress")]);
     const pipeline = boxes(wrap)[0];
     expect(
       pipeline?.querySelector(".subagent-busy")?.querySelectorAll(".activity-dot"),
@@ -643,12 +679,232 @@ describe("a pipeline's stages render inside the orchestrate call that started th
     // into one line of glued words. The dots are its progress cue instead.
     const wrap = render(
       [toolUse("d-tail"), toolUse(stageID("d-tail", "plan"), "u-tail")],
-      [driver("d-tail", 1, "in_progress"), stage("d-tail", "plan", "u-tail", "in_progress")],
+      [driver("d-tail", 2, "in_progress"), stage("d-tail", "plan", "u-tail", "in_progress")],
     );
     expect(boxes(wrap)[0]?.querySelector(":scope > .subagent-tail")).toBeNull();
     // The stage keeps its own.
     const inner = wrap.querySelector(".subagent-container > .subagent-body > .subagent-block");
     expect(inner?.querySelector(":scope > .subagent-tail")).not.toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // ONE STAGE MEANS NO CONTAINER. A container over a single card is two
+  // disclosures, two headers and two ledgers for one piece of work, and 7 of the
+  // 8 pipelines on the live volume declare exactly one stage — so promotion is
+  // the common case rather than an edge.
+  //
+  // Blocks arrive incrementally and out of order, so the count comes from the
+  // DRIVER's declared `stages` (complete the moment its tool call lands: the
+  // server writes `ToolCall.Input` on the create frame and never on an update)
+  // with the stages seen so far as the lower bound while the driver is not yet
+  // resident. A sibling arriving later therefore RE-PARENTS the promoted card
+  // into a container instead of rebuilding it, which is what carries its
+  // streaming text, its disclosure state and its page link across the upgrade.
+  // -------------------------------------------------------------------------
+
+  /** Render a message, then grow that SAME message with more blocks and calls —
+   *  the incremental-arrival shape, where a pipeline that had one stage on the
+   *  first pass gains a second on the next. */
+  function renderThenGrow(
+    first: { blocks: Record<string, unknown>[]; calls: ToolCall[] },
+    second: { blocks: Record<string, unknown>[]; calls: ToolCall[] },
+    between?: (wrap: HTMLElement) => void,
+  ): HTMLElement {
+    const wrap = document.createElement("div");
+    const id = `m-${String(Math.random())}`;
+    const msg = (b: Record<string, unknown>[], c: ToolCall[]): Message =>
+      ({ id, role: "assistant", content: "", blocks: b, tool_calls: c }) as unknown as Message;
+    buildAssistantBody(wrap, msg(first.blocks, first.calls), CHAT_ID, true);
+    between?.(wrap);
+    updateAssistantBody(
+      wrap,
+      msg([...first.blocks, ...second.blocks], [...first.calls, ...second.calls]),
+      CHAT_ID,
+      true,
+    );
+    return wrap;
+  }
+
+  it("renders no container for a pipeline of ONE stage", () => {
+    const wrap = render(
+      [toolUse("d-solo"), toolUse(stageID("d-solo", "plan"), "u-solo"), text("planning", "u-solo")],
+      [driver("d-solo", 1), stage("d-solo", "plan", "u-solo")],
+    );
+    expect(boxes(wrap)).toHaveLength(0);
+    expect(shape(wrap)).toEqual(["card(u-solo)"]);
+    const body = wrap.querySelector(".assistant-blocks > .subagent-block > .subagent-body");
+    expect(body?.textContent).toContain("planning");
+  });
+
+  it("a promoted stage keeps its page link", () => {
+    const wrap = render(
+      [toolUse("d-link"), toolUse(stageID("d-link", "plan"), "u-link")],
+      [driver("d-link", 1), stage("d-link", "plan", "u-link")],
+    );
+    // Direct-child `.subagent-foot`, because a container IS a `.subagent-block`
+    // too: a descendant selector would find the nested stage's own link and pass
+    // whether or not the stage was promoted.
+    const link = wrap.querySelector<HTMLAnchorElement>(
+      ".assistant-blocks > .subagent-block > .subagent-foot > a.subagent-open",
+    );
+    expect(link?.getAttribute("href")).toBe("/chat/c-blocks/subagent/u-link");
+
+    // The negative half: a CONTAINER deliberately has none, because opening any
+    // stage's page already shows the whole pipeline.
+    const multi = render(
+      [
+        toolUse("d-link2"),
+        toolUse(stageID("d-link2", "plan"), "u-link2"),
+        toolUse(stageID("d-link2", "code"), "u-link2-b"),
+      ],
+      [
+        driver("d-link2", 2),
+        stage("d-link2", "plan", "u-link2"),
+        stage("d-link2", "code", "u-link2-b"),
+      ],
+    );
+    expect(boxes(multi)[0]?.querySelector(":scope > .subagent-foot a.subagent-open")).toBeNull();
+  });
+
+  it("upgrades a promoted stage into a container when a sibling arrives", () => {
+    // The driver declares NOTHING, so the first pass counts the one stage it can
+    // see and promotes it; the second stage then has to re-parent that card.
+    const wrap = renderThenGrow(
+      {
+        blocks: [
+          toolUse("d-up"),
+          toolUse(stageID("d-up", "plan"), "u-up-a"),
+          text("planning hard", "u-up-a"),
+          // A member with a countable kind, so the pipeline's ledger has a row to
+          // show: `setSummary` withholds the footer for an empty summary.
+          toolUse("cmd-up", "u-up-a"),
+        ],
+        calls: [driver("d-up"), stage("d-up", "plan", "u-up-a"), call("cmd-up", "npm test")],
+      },
+      {
+        blocks: [toolUse(stageID("d-up", "code"), "u-up-b")],
+        calls: [stage("d-up", "code", "u-up-b")],
+      },
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-up)"]);
+    expect(nested(wrap)).toEqual(["u-up-a", "u-up-b"]);
+    // MOVED, not rebuilt: the first stage's own streamed text came with it.
+    const moved = wrap.querySelector(
+      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-up-a"]',
+    );
+    expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("planning hard");
+    expect(moved?.querySelector(".subagent-foot a.subagent-open")).not.toBeNull();
+    // The upgraded container paints its OWN header: the count comes from the
+    // stages it now holds, and the status from the DRIVER, which has settled — not
+    // from `live`, which would read as running over finished work.
+    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
+    expect(boxes(wrap)[0]?.classList.contains("running")).toBe(false);
+    expect(boxes(wrap)[0]?.querySelector(".subagent-icon")?.classList.contains("is-ok")).toBe(true);
+    // The third channel the self-paint writes. Direct child of the container's OWN
+    // foot, because the promoted stage carries a ledger of its own one level down.
+    expect(
+      boxes(wrap)[0]?.querySelector(":scope > .subagent-foot > .subagent-footer"),
+    ).not.toBeNull();
+  });
+
+  it("keeps both stages in one container when the driver declared only one", () => {
+    // The declared count is a FLOOR, not the answer: at `declared ?? observed` this
+    // pipeline read as promoted and BOTH stages rendered as flat siblings, which is
+    // the shape the stage-to-driver join was added to remove.
+    const wrap = render(
+      [
+        toolUse("d-short"),
+        toolUse(stageID("d-short", "plan"), "u-short-a"),
+        toolUse(stageID("d-short", "code"), "u-short-b"),
+      ],
+      [
+        driver("d-short", 1),
+        stage("d-short", "plan", "u-short-a"),
+        stage("d-short", "code", "u-short-b"),
+      ],
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-short)"]);
+    expect(nested(wrap)).toEqual(["u-short-a", "u-short-b"]);
+    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
+  });
+
+  it("names a stage-built container before the driver's block arrives", () => {
+    // The one order in which the CONSTRUCTOR's own label is the title: the driver's
+    // CALL is resident, so its declared count is known, but its BLOCK never renders,
+    // so `bindPipeline` never runs and nothing paints the box afterwards. No status
+    // assertion: with no driver painted, the constructor's `live ? … : …` is a
+    // deliberate guess rather than a fact.
+    const wrap = render(
+      [toolUse(stageID("d-pre", "plan"), "u-pre"), toolUse(stageID("d-pre", "code"), "u-pre-b")],
+      [driver("d-pre", 2), stage("d-pre", "plan", "u-pre"), stage("d-pre", "code", "u-pre-b")],
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-pre)"]);
+    expect(nested(wrap)).toEqual(["u-pre", "u-pre-b"]);
+    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
+  });
+
+  it("carries a promoted stage's OPEN disclosure through the upgrade", () => {
+    // The disclosure controller and the `sub:<subtask>` key are both properties of
+    // the node, not of its position, so re-parenting must preserve both. A rebuild
+    // would fold the card the reader had opened.
+    const wrap = renderThenGrow(
+      {
+        blocks: [toolUse("d-open"), toolUse(stageID("d-open", "plan"), "u-open-a")],
+        calls: [driver("d-open"), stage("d-open", "plan", "u-open-a")],
+      },
+      {
+        blocks: [toolUse(stageID("d-open", "code"), "u-open-b")],
+        calls: [stage("d-open", "code", "u-open-b")],
+      },
+      (w) => {
+        const header = w.querySelector<HTMLElement>(
+          '.assistant-blocks > .subagent-block[data-subtask="u-open-a"] > .subagent-header',
+        );
+        header?.click();
+        expect(openContainerKeys().has("u-open-a")).toBe(true);
+      },
+    );
+    const moved = wrap.querySelector<HTMLElement>(
+      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-open-a"]',
+    );
+    expect(moved?.classList.contains("collapsed")).toBe(false);
+    expect(openContainerKeys().has("u-open-a")).toBe(true);
+    // Its sibling arrived collapsed, as every delegate card does.
+    const sibling = wrap.querySelector<HTMLElement>(
+      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-open-b"]',
+    );
+    expect(sibling?.classList.contains("collapsed")).toBe(true);
+  });
+
+  it("upgrades when a late driver declares two stages", () => {
+    // Only ONE stage ever arrives; the upgrade is driven purely by the driver's
+    // declared count landing after its stage did.
+    const wrap = renderThenGrow(
+      {
+        blocks: [toolUse(stageID("d-late", "plan"), "u-late"), text("early work", "u-late")],
+        calls: [stage("d-late", "plan", "u-late")],
+      },
+      { blocks: [toolUse("d-late")], calls: [driver("d-late", 2)] },
+    );
+    expect(shape(wrap)).toEqual(["pipeline(d-late)"]);
+    expect(nested(wrap)).toEqual(["u-late"]);
+    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
+    const moved = wrap.querySelector(
+      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-late"]',
+    );
+    expect(moved?.querySelector(":scope > .subagent-body")?.textContent).toContain("early work");
+  });
+
+  it("still renders a box for a driver that settled having dispatched no stage", () => {
+    // The one case where a promoted-count driver keeps its box: nothing stands in
+    // for it, and a block that renders nothing is a lost block. Deferred to the
+    // settle so it can never displace a stage still on its way.
+    const wrap = render([toolUse("d-nodisp")], [driver("d-nodisp", 1, "failed")]);
+    expect(boxes(wrap)).toHaveLength(1);
+    const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
+    expect(icon?.classList.contains("is-fail")).toBe(true);
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(failMark());
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
   });
 });
 

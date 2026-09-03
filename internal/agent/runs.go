@@ -34,14 +34,25 @@ type Runs struct {
 	chats     runChatReader
 	translate runTranslator
 	perms     runPermClaimer
+	bus       runBroadcaster
 	schedules *schedule.Store `wiring:"optional"`
 	leases    *runlease.Store `wiring:"optional"`
 	bridges   *bridgeManager
 	coord     *BridgeCoordinator
 	utility   func() *utilityRuntime
 	lifecycle *lifetime
-	bounds    runBoundsState
-	mu        sync.Mutex
+	// asks holds the questions a workflow step has asked and nobody has answered.
+	// Its own registry rather than a share of pendingPerms — a run ask is durable
+	// and string-keyed where a permission is request-shaped and dies with its
+	// bridge. A VALUE, whose zero is usable, so a bare &Runs{} works; see
+	// run_ask.go.
+	//
+	// Ahead of bounds because fieldalignment says so: runBoundsState ends in a
+	// slice, whose length and capacity words are not pointers, so a pointer-bearing
+	// field placed after it pushes the GC's scan range past them.
+	asks   pendingRunAsks
+	bounds runBoundsState
+	mu     sync.Mutex
 }
 
 // runChatReader is the chat store as the run surface uses it: one method, to
@@ -52,12 +63,28 @@ type runChatReader interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 }
 
-// runTranslator is the translator as the run surface uses it: the three
-// run-shaped notifications, and nothing else of its wide surface.
+// runTranslator is the translator as the run surface uses it: the two
+// run-shaped notifications it wraps, the step-session seed, and the one decode
+// that turns a step's `send_message` into an answerable ask.
 type runTranslator interface {
 	HandleRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 	HandleRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 	RecordRunSteps(raw json.RawMessage)
+	// SessionNotifyAsk derives the ask a `_kiro/session/notify` frame carries, or
+	// reports false when the frame is not one. A DERIVATION rather than a handler:
+	// this surface owns the ask's whole lifecycle (record, replay, answer, settle),
+	// so it owns the broadcast too — see run_ask.go.
+	SessionNotifyAsk(msg *vibekit.RPCResponse) (vibekit.RunInputNeededPayload, bool)
+}
+
+// runBroadcaster is the event fan-out as the run surface uses it: publish an
+// ask, and publish its settlement.
+//
+// The ask half is the only run event vibekit itself originates — every other one
+// is a translated KAS frame — because the answer path and the take-once claim are
+// both this surface's, so nothing upstream is in a position to announce them.
+type runBroadcaster interface {
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 }
 
 // runPermClaimer is the pending-decision tracker as the unattended floor uses

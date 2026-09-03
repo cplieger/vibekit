@@ -304,10 +304,20 @@ describe("the ledger's hover text", () => {
   });
 
   it("names the outcome the glyph stands for when the line does not", () => {
-    // A running turn's accent RING is the only mark saying the turn has not
-    // finished, and `summaryLine` says nothing about it.
+    // `summaryLine` leads with a word only for `interrupted` and `failed`, so a
+    // cancelled turn shows a coloured circle the row says nothing about.
+    const footer = buildTurnFooter({ outcome: "cancelled", commands: 1 });
+    expect(tip(footer)).toBe("Cancelled");
+  });
+
+  it("says nothing about a running turn, which no longer carries a glyph", () => {
+    // REWRITTEN, not weakened: this case asserted "Still running", which was the
+    // one state in the app whose whole explanation was a hover. The footer reports
+    // how a turn ENDED — 29-turns.css folds `running` into `completed`'s
+    // `display: none` — so there is no circle left to name, and a tooltip naming
+    // an invisible mark is worse than none.
     const footer = buildTurnFooter({ outcome: "running", commands: 1 });
-    expect(tip(footer)).toBe("Still running");
+    expect(tip(footer)).toBeNull();
   });
 
   it("does not repeat an outcome the line already leads with", () => {
@@ -334,11 +344,13 @@ describe("the ledger's hover text", () => {
   });
 
   it("carries both clauses when both apply", () => {
+    // `running` used to be this case's outcome; it names nothing now, so the pair
+    // is demonstrated with one that still does.
     const footer = buildTurnFooter({
-      outcome: "running",
+      outcome: "cancelled",
       changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } },
     });
-    expect(tip(footer)).toBe("Still running \u00b7 Show the changed files");
+    expect(tip(footer)).toBe("Cancelled \u00b7 Show the changed files");
   });
 
   it("puts the styled tooltip on the file row too, not a native title", () => {

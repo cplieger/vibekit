@@ -30,6 +30,7 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/retry", rr.handleRetry)
 	mux.HandleFunc("DELETE /api/runs/{id}", rr.handleDelete)
 	mux.HandleFunc("POST /api/runs/{id}/step", rr.handleStepStatus)
+	mux.HandleFunc("POST /api/runs/{id}/answer", rr.handleAnswer)
 	mux.HandleFunc("GET /api/recipes", rr.handleRecipes)
 	rr.registerSchedule(mux)
 }

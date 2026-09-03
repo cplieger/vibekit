@@ -11,14 +11,17 @@
 // FAILURE IS NOT NOISE, and that is the axis the grouping rules turn on.
 // Collapsing exists to hide items that are individually uninteresting; a failed
 // call is the opposite. So: a group holding a failure never auto-collapses, one
-// that fails while already collapsed re-opens itself, the header's glyph is
-// tinted to the WORST status inside it (one red member makes a red header, so the
-// reader can act on a closed group without opening it), and the summary NAMES
-// the failure rather than averaging it away — `Ran 12 commands · 1 failed`.
+// that fails while already collapsed re-opens itself, the header's mark takes
+// the SHAPE and tint of the WORST status inside it (one red member makes a red
+// triangle, so the reader can act on a closed group without opening it), and the
+// summary NAMES the failure rather than averaging it away — `Ran 12 commands ·
+// 1 failed`.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
+import { iconEl } from "./icon-el.js";
+import { outcomeIcon } from "./icons.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
@@ -125,12 +128,12 @@ export function buildToolGroupShell(): HTMLDivElement {
     // nothing and the affordance had to be discovered. It is present in both
     // states now and rotates, like every other disclosure in the app.
     chevronEl(),
-    // The header's verdict slot. It shares `.tool-icon` for the tint classes and
-    // NOT for the glyph: paintGroupOutcome writes the check or cross straight into
-    // this span's textContent, so a group header shows a verdict where a member
-    // card shows its per-kind glyph plus a corner badge. The comment here used to
-    // claim "same glyph slot as a member card", which is why the CSS rule carries
-    // a text slot's declarations and no reader could find the SVG.
+    // The header's verdict slot: an ICON slot, sharing `.tool-icon` for the tint
+    // classes. paintGroupOutcome writes `outcomeIcon("ok")` / `outcomeIcon("fail")`
+    // into it as a node and leaves it EMPTY while the group runs, so a collapsed
+    // group of twelve searches shows a verdict rather than a magnifier — the KIND
+    // is named in the summary text instead. The box stays reserved for that empty
+    // state, or the count text shifts when the group settles.
     el("span", { className: "tool-group-icon tool-icon" }),
     el("span", { className: "tool-group-count" }),
   ) as HTMLDivElement;
@@ -175,9 +178,15 @@ function countFailures(calls: HTMLElement[]): number {
   return calls.filter((c) => c.dataset["outcome"] === "fail").length;
 }
 
-/** Tint the group's glyph to the worst status inside it, with the same
- *  check/cross shape a member card carries. Reads the members' own
- *  `data-outcome`, so there is one source for the state. */
+/** Tint the group's mark to the worst status inside it, and give it the SHAPE
+ *  that state carries. Reads the members' own `data-outcome`, so there is one
+ *  source for the state.
+ *
+ *  The mark comes from the shared set (`icons.ts` `outcomeIcon`) rather than from
+ *  `applyOutcome`: this slot has no identity glyph to keep for a success, so the
+ *  silhouette is what a clean group shows too. `running` shows nothing — the
+ *  members carry their own spinners — and the reserved box is what keeps the
+ *  summary text from shifting when the group settles. */
 function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], failures: number): void {
   const icon = group.querySelector<HTMLElement>(".tool-group-icon");
   if (icon === null) {
@@ -188,7 +197,11 @@ function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], failures: n
   group.dataset["outcome"] = state;
   icon.classList.remove("is-ok", "is-fail", "is-running");
   icon.classList.add(`is-${state}`);
-  icon.textContent = state === "fail" ? "\u2717" : state === "ok" ? "\u2713" : "";
+  if (state === "running") {
+    icon.replaceChildren();
+  } else {
+    icon.replaceChildren(iconEl(outcomeIcon(state)));
+  }
   icon.setAttribute("aria-hidden", "true");
 }
 

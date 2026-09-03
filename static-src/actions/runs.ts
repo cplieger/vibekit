@@ -9,6 +9,7 @@
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type {
   RecipesResponse,
+  RunAnswerRequest,
   RunLaunchRequest,
   RunLaunchedResponse,
   WorkflowRunRow,
@@ -102,6 +103,74 @@ export const retryRun = runControl("retry", "Couldn't retry the run");
  *  reloads the run from disk — which is why the button is offered on any paused
  *  run rather than only on one this browser started. */
 export const resumeRun = runControl("resume", "Couldn't resume the run");
+
+/** Answer the question a parked workflow step asked.
+ *
+ *  The server claims the ask BEFORE it sends, so exactly one surface can answer it
+ *  — two browser tabs and a run tab are all offered the same card. A 409 means
+ *  somebody else got there first or the step moved on, and the card is retired by
+ *  the `run_input_settled` frame either way, so the message is worth showing but
+ *  there is nothing for the reader to redo.
+ *
+ *  NO argument-composite idempotency key, deliberately: inside that cache's window
+ *  a repeated dispatch replays a cached success and never runs, and a re-sent
+ *  answer must actually reach the step. The server's take-once claim is the guard,
+ *  which is the same division `files.rename` learned the hard way. */
+export const answerRunInput = apiAction<{ workflowID: string } & RunAnswerRequest, { ok: boolean }>(
+  {
+    name: "runs.answer_input",
+    request: ({ workflowID, ask_id, text }) => ({
+      method: "POST",
+      path: `/api/runs/${encodeURIComponent(workflowID)}/answer`,
+      body: { ask_id, text },
+    }),
+    // The SERVER's sentence ALONE on the refusal that actually happens, because a
+    // prefix in front of it contradicts it. A static `error` string does not replace
+    // the server's message, it PREFIXES it (`emitErrorToast`: `${spec}: ${err.message}`
+    // — measured, and the opposite of what it looks like), so the 409 read "Couldn't
+    // send your answer to the step: that question has already been answered, or the
+    // step it belonged to has moved on" — asserting a failure and then explaining that
+    // nothing needed sending. The same prefix also leaked the library's own
+    // empty-body placeholder as "…to the step: HTTP 500".
+    error: (_args, err) => serverSentence(err) ?? "Couldn't send your answer to the step",
+  },
+);
+
+/** The server's own error sentence, or null when there is no sentence to show.
+ *
+ *  `@cplieger/fetch` lifts a `{"error": "..."}` body onto `message`, and falls back
+ *  to the literal `HTTP <status>` when the body was empty or unparseable — so the
+ *  field is present either way and its presence proves nothing. Both of the empty
+ *  cases are compared exactly rather than sniffed, because that fallback is a
+ *  string the library documents rather than a shape to guess at, and a transport
+ *  failure carries `status === 0` with a browser sentence about a fetch. */
+function serverSentence(err: {
+  readonly message: string;
+  readonly status?: number;
+}): string | null {
+  const status = err.status ?? 0;
+  if (status < 400 || err.message === "" || err.message === `HTTP ${String(status)}`) {
+    return null;
+  }
+  return err.message;
+}
+
+/** Let a parked step carry on with NO answer.
+ *
+ *  `set_step_status running` rather than Resume, and the difference is the whole
+ *  reason this verb exists: KAS's resume clears the run's pause reason and leaves
+ *  the step node's `need_input` signal, so the next step execution re-parks under a
+ *  different sentence. Setting the status clears the signal, and the step then runs
+ *  with its own default continuation instead of the user's words. */
+export const continueRunStep = apiAction<{ workflowID: string; nodeID: string }, { ok: boolean }>({
+  name: "runs.continue_step",
+  request: ({ workflowID, nodeID }) => ({
+    method: "POST",
+    path: `/api/runs/${encodeURIComponent(workflowID)}/step`,
+    body: { node_id: nodeID, status: "running" },
+  }),
+  error: "Couldn't let the step continue",
+});
 
 /** Delete a run and its on-disk state.
  *

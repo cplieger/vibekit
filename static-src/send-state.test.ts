@@ -137,8 +137,8 @@ describe("send-state precedence", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    recordSteerQueued(id, { id: "steer-1", text: "one" });
-    recordSteerQueued(id, { id: "steer-2", text: "two" });
+    recordSteerQueued(id, { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued(id, { id: "steer-2", text: "two", origin: "user" });
     expect(lastPushed()).toEqual({ kind: "idle" });
 
     setThinking(id, true);

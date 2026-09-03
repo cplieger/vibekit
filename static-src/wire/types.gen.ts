@@ -6,7 +6,7 @@ export type DecisionKind = "permission" | "elicitation" | "user_input";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served" | "auth_token_unavailable";
 
-export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked" | "turn_outcome";
+export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked" | "turn_outcome" | "step_notice";
 
 export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
@@ -18,7 +18,9 @@ export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type SettledBy = "user" | "unattended";
+export type SettledBy = "user" | "unattended" | "moot";
+
+export type SteerOrigin = "user" | "agent";
 
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests";
 
@@ -1273,6 +1275,19 @@ export interface Repo {
 }
 
 /**
+ * RunAnswerRequest is POST /api/runs/{id}/answer's body: answer one parked step.
+ * //
+ * Text empty is a 400 rather than a waive. Continuing without an answer is a
+ * DIFFERENT verb (POST /api/runs/{id}/step with status `running`), because it
+ * drives the step with KAS's default continuation instead of the user's words and
+ * a reader must not reach it by submitting an empty box.
+ */
+export interface RunAnswerRequest {
+  ask_id: string;
+  text: string;
+}
+
+/**
  * RunFinishedPayload is the payload for type="run_finished": terminal. Status is
  * KAS's own run-level status (completed / failed / aborted / paused — a policy
  * pause at `onMaxIterations` reports through here too, since KAS emits
@@ -1293,6 +1308,81 @@ export interface RunFinishedPayload {
   workflow_id: string;
   status: string;
   name?: string;
+}
+
+/**
+ * RunInputNeededPayload is the payload for type="run_input_needed": a workflow
+ * STEP asked a question and the run is parked until somebody answers it.
+ * //
+ * The FIFTH run event, and the second that is not an invalidation. It carries its
+ * payload for the same reason run_step does and the three invalidations do not:
+ * the question text is on no endpoint. KAS parks the run with one fixed literal
+ * in `state.pauseReason` and an empty `pauseDetail`, so `inspect` can say a step
+ * wants input and can never say what it asked.
+ * //
+ * WorkflowID is the IDENTITY, never a chat id. The envelope's chat id is the
+ * launching chat for an agent-parented run and empty for a parentless one, so the
+ * ask must be findable from the run in both cases.
+ * //
+ * Question MAY BE EMPTY, and a consumer has to render that case. The ask registry
+ * is in memory, so a restart loses the text while the run stays parked; the read
+ * path then synthesises an ask from the paused leaf rather than stranding the
+ * user, and an empty question is what that ask carries.
+ * //
+ * There is deliberately no Severity field. KAS's `send_message` carries four, and
+ * only `warning` parks a run — the other three advance, complete or fail the step
+ * with no wait — so the translator drops them and a severity here would be a
+ * field with one possible value.
+ */
+export interface RunInputNeededPayload {
+  workflow_id: string;
+  /**
+ * AskID is the ask's identity within its run, and the value an answer names.
+ * Composed server-side with keyenc so it cannot be forged by a separator
+ * inside one of its parts: the notification's own id for a live ask, the
+ * paused leaf's node PATH for one synthesised after a restart. The second
+ * spelling has to be deterministic, because the read path that mints it runs
+ * on every refetch and a fresh id per read would stack duplicate cards.
+ */
+  ask_id: string;
+  /**
+ * NodeID addresses the asking step, and it is what every ask surface in this
+ * app already joins on (the run card marks the row whose node id an ask
+ * names). MAY BE EMPTY: KAS puts the node id on the notification only when the
+ * caller is a step, and a run blocked by an unattributable ask is still
+ * blocked, so the count travels separately from the row.
+ * //
+ * There is deliberately no NodePath. The step-session registry holds a node
+ * ID and no path, so a live ask could never carry one, and a field populated
+ * on the restart-reconcile path alone would invite a reader to rely on it.
+ */
+  node_id: string;
+  /**
+ * StepSessionID is the ANSWER ADDRESS: a `session/prompt` sent to the paused
+ * step's own session is what KAS reroutes into the run. Empty when the notify
+ * frame carried no caller session, in which case the answer path resolves it
+ * from a fresh `inspect`.
+ */
+  step_session_id: string;
+  agent_name: string;
+  question: string;
+  asked_at: string;
+}
+
+/**
+ * RunInputSettledPayload is the payload for type="run_input_settled": the ask is
+ * answered or waived, so every surface still showing it must retire the card.
+ * //
+ * Its own event rather than a member of decision_settled, whose payload is keyed
+ * by an int64 JSON-RPC request id. A run ask has no open request behind it, so a
+ * second identity field on that payload would make one shape carry two mutually
+ * exclusive keys — one per family — and neither consumer could tell which to read
+ * without first knowing the kind.
+ */
+export interface RunInputSettledPayload {
+  workflow_id: string;
+  ask_id: string;
+  settled_by: SettledBy;
 }
 
 /**
@@ -1620,6 +1710,12 @@ export interface SteerInjectedPayload {
  * the agent closed its response without a marker.
  */
   ack?: string;
+  /**
+ * Origin is whose words these are, as on SteerQueuedPayload. On BOTH because an
+ * agent-injected steer has no queued frame (KAS 2.21.0 broadcasts one only from
+ * `_session/steer`), so for the case Origin names, this frame is the only one.
+ */
+  origin: SteerOrigin;
 }
 
 /**
@@ -1630,15 +1726,16 @@ export interface SteerInjectedPayload {
  * event is the ONLY source for every other device — and for the sender itself
  * after a reconnect. The chip row is a projection of server state, so it has to
  * be reconstructible from the events alone.
- * //
- * Everything here is the USER's own outbound message. A notice KAS classified as
- * coming from a workflow step or a subagent arrives on the same wire channel but
- * leaves as EventAgentNotice, so no consumer of this payload has to ask whose
- * words it is holding.
  */
 export interface SteerQueuedPayload {
   steer_id: string;
   text: string;
+  /**
+ * Origin is whose words these are, resolved server-side against the steers
+ * this server sent. NO omitempty: an absent field lets the client invent a
+ * fallback, and the one it would pick is wrong for a workflow's report.
+ */
+  origin: SteerOrigin;
 }
 
 /** SystemTool is one image-baked binary surfaced read-only (Config.System). */
@@ -2033,8 +2130,14 @@ export interface ToolDenialRule {
  * ToolDiff is a before/after text change from a write tool call. Sent
  * by kiro-cli in tool_call notifications for edit operations. Path is
  * workspace-relative (absolute paths from kiro-cli are normalised via
- * agent.relPath before being stored here); OldText/NewText are the
- * changed fragments, not full-file contents.
+ * agent.relPath before being stored here).
+ * //
+ * OldText/NewText carry the WHOLE FILE for KAS's edit tools (measured on the
+ * live volume: 325 of 413 persisted fragments are whole-file shaped). A hunk
+ * pair is also accepted — some tools send one — so a consumer must DIFF the two
+ * sides rather than count their newlines: counting reported the entire file as
+ * removed and re-added for a one-line edit. internal/buffer/linediff.go is the
+ * one line-delta primitive, and its TypeScript twin is diff.ts's lineDelta.
  */
 export interface ToolDiff {
   path: string;
@@ -2193,6 +2296,18 @@ export interface TurnStatePayload {
  * Message (see MessageChunkPayload.Seq).
  */
   chunk_seq?: number;
+  /**
+ * WorkflowStep marks a replayed turn that belongs to a workflow RUN rather
+ * than to this chat: a chat-parented run executes on the launching chat's
+ * session, so a step's frames opened this turn.
+ * //
+ * The contract for a client: APPLY the snapshot, do NOT set thinking. The
+ * snapshot is the only copy of an in-flight step's transcript (it is never
+ * persisted), so the event still has to be emitted — but the chat's own agent
+ * is idle, and a client that reads this turn as the chat working says so for
+ * the whole run, on every reconnect, with nothing to clear it.
+ */
+  workflow_step?: boolean;
 }
 
 /** Usage is a chat's last-known context and billing snapshot. */

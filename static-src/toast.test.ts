@@ -254,6 +254,65 @@ describe("toast — queue + max-visible", () => {
   });
 });
 
+// A sticky toast never expires, and the stack promotes from its queue only when
+// something is dismissed or times out — so an unbounded sticky set is a stack
+// that stops delivering. One fault is reported per chat, so the copies arrive on
+// their own. See MAX_STICKY.
+describe("toast — the sticky set is bounded", () => {
+  const retry = { label: "Sign in", onClick: vi.fn() };
+
+  function texts(): string[] {
+    return [...toasts()].map((t) => t.textContent ?? "");
+  }
+
+  // Two remedies are two problems offering two different actions, so both stand.
+  it("keeps two sticky toasts", () => {
+    error("remedy one", retry);
+    error("remedy two", retry);
+    vi.advanceTimersByTime(500);
+    flushRaf();
+    expect(toasts().length).toBe(2);
+  });
+
+  it("dismisses the oldest sticky when a third arrives", () => {
+    error("remedy one", retry);
+    error("remedy two", retry);
+    error("remedy three", retry);
+    vi.advanceTimersByTime(500); // the evicted toast's leave
+    flushRaf();
+    expect(toasts().length).toBe(2);
+    expect(texts().some((x) => x.includes("remedy one"))).toBe(false);
+    expect(texts().some((x) => x.includes("remedy three"))).toBe(true);
+  });
+
+  // THE CASE THE CAP EXISTS FOR. Three sticky notices would hold every slot
+  // indefinitely, so this error would sit in the queue unseen for the rest of the
+  // page's life — including the next background chat's, which is the failure the
+  // toast surface is supposed to have removed.
+  it("lets an ordinary error reach the screen after a third remedy", () => {
+    error("remedy one", retry);
+    error("remedy two", retry);
+    error("remedy three", retry);
+    vi.advanceTimersByTime(500);
+    flushRaf();
+    error("something else broke");
+    flushRaf();
+    expect(texts().some((x) => x.includes("something else broke"))).toBe(true);
+  });
+
+  // A 12s error expires on its own, so it is not part of the population being
+  // bounded and a remedy must not evict one.
+  it("does not count a plain error against the cap", () => {
+    error("plain one");
+    error("plain two");
+    error("remedy", retry);
+    vi.advanceTimersByTime(500);
+    flushRaf();
+    expect(texts().some((x) => x.includes("plain one"))).toBe(true);
+    expect(texts().some((x) => x.includes("remedy"))).toBe(true);
+  });
+});
+
 describe("toast — accessibility attributes", () => {
   it("toast is keyboard-focusable (tabindex=0)", () => {
     info("hi");

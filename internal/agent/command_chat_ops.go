@@ -11,6 +11,11 @@ import (
 // KAS session state); false for the archive path, which must stay reversible.
 func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
 	rt.bus.ClearPendingPermsForChat(chatID)
+	// A workflow step's question keyed to this chat's dock. The chat going away
+	// also cancels the runs its sessions launched, so such an ask is answerable by
+	// nobody afterwards and replaying it would put a card on a conversation that
+	// no longer exists.
+	rt.runs.asks.ClearChat(chatID)
 	// waiting_on_user survives ClearAtTurnEnd past turn end; the chat going away
 	// must clear it too, or a reconnect replays a status for a chat that's gone.
 	rt.bus.chatStatus.Clear(chatID)
@@ -21,6 +26,9 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, 
 		rt.reapChatSession(ctx, chatID)
 	}
 	rt.lines.Clear(chatID)
+	// A steer's lifetime is one turn, so the chat going away means every id
+	// recorded for it can only ever answer a frame that will not arrive.
+	rt.steerLedger.ForgetChat(chatID)
 }
 
 // reapChatSession removes the chat's on-disk KAS session state on permanent
