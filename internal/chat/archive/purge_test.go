@@ -252,92 +252,6 @@ func TestPurgeScheduler_StopWithoutStart(t *testing.T) {
 	sched.Stop()
 }
 
-// TestOldestChatMTime covers the helper that the scheduler uses to
-// time its next wake-up.
-func TestOldestChatMTime(t *testing.T) {
-	t.Run("missing dir returns false", func(t *testing.T) {
-		dir := t.TempDir() // never created
-		if _, ok := OldestChatMTime(t.Context(), dir); ok {
-			t.Error("ok = true for missing chat dir, want false")
-		}
-	})
-
-	t.Run("empty dir returns false", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if _, ok := OldestChatMTime(t.Context(), dir); ok {
-			t.Error("ok = true for empty chat dir, want false")
-		}
-	})
-
-	t.Run("returns mtime of oldest chat file", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		oldestPath := writeAgedChat(t, dir, "oldest", 72*time.Hour)
-		writeAgedChat(t, dir, "middle", 48*time.Hour)
-		writeAgedChat(t, dir, "newest", 24*time.Hour)
-
-		info, err := os.Stat(oldestPath)
-		if err != nil {
-			t.Fatalf("stat oldest: %v", err)
-		}
-		got, ok := OldestChatMTime(t.Context(), dir)
-		if !ok {
-			t.Fatal("ok = false, want true")
-		}
-		if !got.Equal(info.ModTime()) {
-			t.Errorf("oldest mtime = %v, want %v", got, info.ModTime())
-		}
-	})
-
-	t.Run("ignores non-chat files and dirs", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		// An old non-.json file that must be ignored.
-		txt := filepath.Join(dir, "old.txt")
-		if err := os.WriteFile(txt, []byte("x"), 0o600); err != nil {
-			t.Fatalf("write txt: %v", err)
-		}
-		ancient := time.Now().Add(-1000 * time.Hour)
-		if err := os.Chtimes(txt, ancient, ancient); err != nil {
-			t.Fatalf("chtimes txt: %v", err)
-		}
-		chatPath := writeAgedChat(t, dir, "thechat", 24*time.Hour)
-
-		info, err := os.Stat(chatPath)
-		if err != nil {
-			t.Fatalf("stat chat: %v", err)
-		}
-		got, ok := OldestChatMTime(t.Context(), dir)
-		if !ok {
-			t.Fatal("ok = false, want true")
-		}
-		if !got.Equal(info.ModTime()) {
-			t.Errorf("oldest mtime = %v, want the .json file's mtime %v (the older .txt must be ignored)", got, info.ModTime())
-		}
-	})
-
-	t.Run("cancelled context returns false", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		writeAgedChat(t, dir, "present", 24*time.Hour)
-
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		if _, ok := OldestChatMTime(ctx, dir); ok {
-			t.Error("ok = true for cancelled context, want false")
-		}
-	})
-}
-
 // recvWithin receives one chat ID from ch or fails after d.
 func recvWithin(t *testing.T, ch <-chan vibekit.ChatID, d time.Duration) vibekit.ChatID {
 	t.Helper()
@@ -404,58 +318,97 @@ func TestPurgeScheduler_RescheduleWithZeroRetentionDoesNotPurge(t *testing.T) {
 	}
 }
 
-// TestPurgeScheduler_NextWaitZeroRetentionReturnsFalse verifies nextWait
-// reports "nothing to schedule" (ok=false) when retention is 0, even with
-// a non-empty chat dir. Retention 0 means keep-forever, so the scheduler
-// must not arm a timer.
-func TestPurgeScheduler_NextWaitZeroRetentionReturnsFalse(t *testing.T) {
-	svc, _, dir := newPurgeTestService(t)
-	writeAgedChat(t, dir, "present", 1*time.Hour)
+// The wake-up a pass with nothing to purge arms, which is the regression this
+// scheduler exists to prevent: aging from the oldest chat FILE's mtime floored at
+// 5s meant an exempt chat (never removed at any age) held that floor in the past
+// permanently, so the loop re-scanned every 5 seconds forever, full-decoding every
+// chat file each time.
+func TestPurgeScheduler_APassWithNothingToPurgeBacksOff(t *testing.T) {
+	svc, _, dir := newPurgeTestService(t,
+		WithOpenTabs(func(vibekit.ChatID) bool { return true }))
+	// Far past the window and exempt: the shape that used to pin the floor.
+	writeAgedChat(t, dir, "pinned", 500*time.Hour)
+	sched := NewPurgeScheduler(svc, func() time.Duration { return time.Hour })
 
-	sched := NewPurgeScheduler(svc,
-		func() time.Duration { return 24 * time.Hour })
-
-	if _, ok := sched.nextWait(t.Context(), 0); ok {
-		t.Error("nextWait(0) ok = true, want false: retention 0 disables scheduling")
+	first := sched.armWait(time.Hour, svc.Purge(t.Context(), time.Hour))
+	if first < idleBase {
+		t.Fatalf("first idle wait = %v, want at least %v: an exempt chat must not pull the "+
+			"wake-up down to the floor", first, idleBase)
+	}
+	second := sched.armWait(time.Hour, svc.Purge(t.Context(), time.Hour))
+	if second <= first {
+		t.Errorf("second idle wait = %v, want longer than the first (%v): consecutive passes "+
+			"that purge nothing must back off", second, first)
+	}
+	if !exists(t, filepath.Join(dir, "pinned.json")) {
+		t.Error("the exempt chat was purged; the premise of this test is gone")
 	}
 }
 
-// TestPurgeScheduler_NextWaitPositiveRetentionReturnsTrue verifies that
-// with a positive retention and a non-empty chat dir nextWait schedules a
-// wake-up (ok=true). The complement of the zero-retention case: a
-// positive retention must arm the next purge.
-func TestPurgeScheduler_NextWaitPositiveRetentionReturnsTrue(t *testing.T) {
+// Retention off is not a reason to go dark, and not a reason to spin either: the
+// settings path does not Trigger, so the loop re-checks on the ceiling.
+func TestPurgeScheduler_RetentionOffWaitsTheCeiling(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
 	writeAgedChat(t, dir, "present", 1*time.Hour)
+	sched := NewPurgeScheduler(svc, func() time.Duration { return 0 })
 
-	sched := NewPurgeScheduler(svc,
-		func() time.Duration { return 24 * time.Hour })
-
-	if _, ok := sched.nextWait(t.Context(), 24*time.Hour); !ok {
-		t.Error("nextWait(24h) ok = false, want true: a non-empty chat dir with positive retention must schedule a wake-up")
+	if got := sched.armWait(0, PurgeResult{}); got != maxWait {
+		t.Errorf("armWait(retention off) = %v, want the %v ceiling", got, maxWait)
 	}
 }
 
-// TestPurgeScheduler_NextWaitFloorsAtMinWait verifies that when the oldest
-// chat file's retention deadline is already well in the past, nextWait
-// floors the returned delay at the 5s minimum rather than a non-positive
-// value (which would busy-spin the scheduler goroutine).
-func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
-	svc, _, dir := newPurgeTestService(t)
-	// Oldest file is 100h old; with a 1h retention its deadline is ~99h
-	// in the past, so time.Until(deadline) is strongly negative and the
-	// result must clamp to the minWait floor.
-	writeAgedChat(t, dir, "ancient", 100*time.Hour)
+// A pass that KEPT a chat on age alone arms a timer at that chat's own deadline,
+// and the earliest one wins. This is the wake-up that replaced the mtime scan, so
+// it has to be the chat's activity stamp plus the window and nothing else.
+func TestPurgeScheduler_ArmsTheEarliestAgeKeptDeadline(t *testing.T) {
+	svc, store, dir := newPurgeTestService(t)
+	retention := time.Hour
+	// One chat 10 minutes old (deadline ~50m away), one 50 minutes old (~10m).
+	// Both are kept; the closer deadline is what the loop must arm.
+	store.header = &RetentionHeader{UpdatedAt: time.Now().Add(-50 * time.Minute).UnixMilli()}
+	writeAgedChat(t, dir, "nearer", 0)
+	sched := NewPurgeScheduler(svc, func() time.Duration { return retention })
 
-	sched := NewPurgeScheduler(svc,
-		func() time.Duration { return 1 * time.Hour })
-
-	wait, ok := sched.nextWait(t.Context(), 1*time.Hour)
-	if !ok {
-		t.Fatal("nextWait ok = false, want true for a non-empty chat dir")
+	res := svc.Purge(t.Context(), retention)
+	if res.NextDeadline.IsZero() {
+		t.Fatal("a pass that kept a chat on age reported no deadline; the loop has nothing to arm")
 	}
-	if wait != 5*time.Second {
-		t.Errorf("nextWait floored to %v, want 5s: a deadline in the past must clamp to minWait, not 0", wait)
+	got := sched.armWait(retention, res)
+	if got < 9*time.Minute || got > 11*time.Minute {
+		t.Errorf("armWait = %v, want ~10m (a chat 50m into a 1h window)", got)
+	}
+}
+
+// A deadline moments away, or already reached, arms the floor rather than a
+// zero-length timer: an age-kept deadline is in the future by construction, but a
+// boundary case must not turn the loop into a hot spin either.
+func TestPurgeScheduler_FloorsADeadlineThatIsUponUs(t *testing.T) {
+	svc, _, _ := newPurgeTestService(t)
+	sched := NewPurgeScheduler(svc, func() time.Duration { return time.Hour })
+
+	got := sched.armWait(time.Hour, PurgeResult{Kept: 1, NextDeadline: time.Now()})
+	if got != minWait {
+		t.Errorf("armWait for a deadline that is upon us = %v, want the %v floor", got, minWait)
+	}
+}
+
+// A pass that PURGED something resets the back-off: work happening is evidence
+// the store is in use, so the next idle pass starts from the base again rather
+// than inheriting an hour-long wait.
+func TestPurgeScheduler_APurgeResetsTheBackOff(t *testing.T) {
+	svc, _, _ := newPurgeTestService(t)
+	sched := NewPurgeScheduler(svc, func() time.Duration { return time.Hour })
+
+	for range 4 {
+		sched.armWait(time.Hour, PurgeResult{})
+	}
+	grown := sched.idleWait
+	if grown <= idleBase {
+		t.Fatalf("idle wait after four empty passes = %v, want more than %v", grown, idleBase)
+	}
+	if got := sched.armWait(time.Hour, PurgeResult{Purged: 1}); got != idleBase {
+		t.Errorf("armWait after a pass that purged = %v, want the %v base (grown wait was %v)",
+			got, idleBase, grown)
 	}
 }
 
@@ -475,15 +428,10 @@ func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 
 	// A chat that ran on two sessions before falling out of the window.
 	chatPath := writeAgedChat(t, dir, "chained", 48*time.Hour)
-	// purgeReferenceTime reads the chat through the STORE now (chats no longer
-	// live in a separate directory the purge package parses itself), so the
-	// chain has to come from the fake's Load.
-	store.loadResult = &vibekit.Chat{
-		ID:                 "chained",
-		Name:               "C",
-		ACPSessionID:       "sess_new",
-		PriorACPSessionIDs: []string{"sess_old"},
-	}
+	// purgeReferenceTime reads the chat through the STORE's retention projection,
+	// so the chain has to come from the fake's header. The composition of the two
+	// id fields into a chain is vibekit's own and is pinned where it lives.
+	store.header = &RetentionHeader{SessionChain: []string{"sess_old", "sess_new"}}
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(chatPath, old, old); err != nil {
 		t.Fatalf("chtimes: %v", err)
@@ -552,7 +500,7 @@ func TestPurge_WithoutTheLivePredicateStillPurges(t *testing.T) {
 
 // TestPurgeScheduler_AlwaysArmsATimer pins the invariant the loop depends on
 // and that nothing previously covered: purgeAndReschedule must NEVER return a
-// nil timer. It used to return (nil, nil) whenever nextWait reported not-ok,
+// nil timer. It used to return (nil, nil) whenever it had nothing to schedule,
 // which left the loop with no wake-up at all and no way back except Trigger(),
 // whose only production caller is Start.
 //
@@ -597,15 +545,13 @@ func TestPurgeScheduler_AlwaysArmsATimer(t *testing.T) {
 }
 
 // TestPurgeScheduler_CapsTheArmedWait pins the ceiling on how long the loop may
-// sleep. Without it the armed wait was the oldest chat's age plus the whole
-// retention window, so a 30-day retention slept ~29 days and no settings change
-// could shorten it: the loop was already asleep when the change happened and
-// nothing woke it.
+// sleep. Without it the armed wait was the chat's whole remaining window, so a
+// 30-day retention slept ~30 days and no settings change could shorten it: the
+// loop was already asleep when the change happened and nothing woke it.
 //
-// The assertion is on nextWait EXCEEDING the ceiling for a realistic input, and
-// on the ceiling being the smaller of the two. An earlier version of this test
-// asserted `min(wait, maxWait) == maxWait` after a skip guard, which is
-// arithmetically true whenever the guard passes and therefore tested nothing.
+// The premise is asserted first — the pass's own deadline really is beyond the
+// ceiling for this input — so the test cannot pass by the cap and the deadline
+// agreeing for an unrelated reason.
 func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
 	// Brand new chat plus a long retention: the natural deadline is far beyond
@@ -614,20 +560,13 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 	retention := 30 * 24 * time.Hour
 	sched := NewPurgeScheduler(svc, func() time.Duration { return retention })
 
-	natural, ok := sched.nextWait(t.Context(), retention)
-	if !ok {
-		t.Fatal("nextWait reported no work for a chat that exists")
-	}
-	// The premise: without a cap this is what would have been armed.
+	res := svc.Purge(t.Context(), retention)
+	natural := time.Until(res.NextDeadline)
 	if natural <= maxWait {
 		t.Fatalf("natural wait %v does not exceed the %v ceiling, so this test's "+
 			"premise no longer holds; pick a longer retention", natural, maxWait)
 	}
-	// The property, read off the function the LOOP calls rather than recomputed
-	// here. An earlier version of this test computed min(natural, maxWait) itself
-	// and asserted it equalled maxWait, which is arithmetically true whatever
-	// production does — it stayed green with the clamp deleted from purge.go.
-	if armed, _ := sched.armWait(t.Context(), retention); armed != maxWait {
+	if armed := sched.armWait(retention, res); armed != maxWait {
 		t.Errorf("armWait = %v, want the %v ceiling (natural wait was %v)",
 			armed, maxWait, natural)
 	}
@@ -646,8 +585,8 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 // written seconds ago.
 func TestPurge_ChatWithoutAnActivityTimestampAgesFromMtime(t *testing.T) {
 	svc, store, dir := newPurgeTestService(t)
-	// Load succeeds for every id, with no UpdatedAt set.
-	store.loadResult = &vibekit.Chat{}
+	// The projection reads for every id, with no UpdatedAt set.
+	store.header = &RetentionHeader{}
 
 	freshPath := writeAgedChat(t, dir, "fresh01", 0)
 	stalePath := writeAgedChat(t, dir, "stale01", 48*time.Hour)
@@ -703,26 +642,24 @@ func TestPurge_PassSummaryReportsWhatThePassDid(t *testing.T) {
 // rather than a second rule. Store.SetDraft deliberately does not stamp
 // UpdatedAt — a 600ms autosave would push the purge cutoff out a whole window
 // per keystroke — so the age test structurally cannot see a chat someone is
-// typing in. Without this, a paragraph typed into a month-old chat looks exactly
-// as abandoned as one nobody has touched, right up to the moment the reaper takes
-// both, and the draft is the only copy of the words.
+// typing in, and the draft is the only copy of the words.
+//
+// What COUNTS as drafting is the projection's answer, not this package's, so an
+// empty draft and bare attachments are pinned on the read that decides them
+// (chat.TestLoadRetentionHeader_*), where the input can be expressed at all.
 func TestPurge_NeverPurgesAChatHoldingADraft(t *testing.T) {
 	cases := map[string]struct {
-		draft     string
+		drafting  bool
 		wantKept  bool
 		wantReaps []string
 	}{
 		"a chat with an unsent draft is defended": {
-			draft:     "half a question I have not sent yet",
+			drafting:  true,
 			wantKept:  true,
 			wantReaps: nil,
 		},
-		// The exemption is exactly the non-empty draft, not "has a draft field".
-		// An empty draft is how a sent or abandoned message clears, so treating
-		// it as work in progress would make every chat that ever had one
-		// permanent.
-		"an empty draft defends nothing": {
-			draft:     "",
+		"a chat with nothing unsent is not": {
+			drafting:  false,
 			wantKept:  false,
 			wantReaps: []string{"aged"},
 		},
@@ -732,14 +669,14 @@ func TestPurge_NeverPurgesAChatHoldingADraft(t *testing.T) {
 			var rec purgeRecorder
 			svc, store, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
 			p := writeAgedChat(t, dir, "aged", 72*time.Hour)
-			// The draft reaches the purge decision through the store's Load, which
-			// is the one read purgeReferenceTime already makes.
-			store.loadResult = &vibekit.Chat{ID: "aged", Name: "C", Draft: tc.draft}
+			// The draft flag reaches the decision through the retention projection,
+			// which is the one read purgeReferenceTime already makes.
+			store.header = &RetentionHeader{Drafting: tc.drafting}
 
 			svc.Purge(t.Context(), 24*time.Hour)
 
 			if got := exists(t, p); got != tc.wantKept {
-				t.Errorf("chat survived = %v, want %v (draft %q)", got, tc.wantKept, tc.draft)
+				t.Errorf("chat survived = %v, want %v (drafting %v)", got, tc.wantKept, tc.drafting)
 			}
 			if got := rec.sorted(); !slices.Equal(got, tc.wantReaps) {
 				t.Errorf("onPurge fired for %v, want %v", got, tc.wantReaps)
@@ -748,22 +685,23 @@ func TestPurge_NeverPurgesAChatHoldingADraft(t *testing.T) {
 	}
 }
 
-// The exemption covers the DRAFT and deliberately not the attachments beside it:
-// an attachment is a path to a file that lives on disk in its own right, so
-// purging the chat loses a reference, while a draft is the only copy of the text.
-func TestPurge_StagedAttachmentsAloneDoNotDefendAChat(t *testing.T) {
-	var rec purgeRecorder
-	svc, store, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
-	p := writeAgedChat(t, dir, "aged", 72*time.Hour)
-	store.loadResult = &vibekit.Chat{ID: "aged", Name: "C", Attachments: []string{"docs/spec.pdf"}}
+// A chat kept by a DRAFT contributes no deadline, which is the exemption half of
+// the anti-spin rule. Its age is already past the window and will stay there for
+// as long as the words are unsent, so a wake-up derived from it fires
+// immediately, purges nothing, and re-arms the same instant forever.
+func TestPurge_AnExemptChatContributesNoDeadline(t *testing.T) {
+	svc, store, dir := newPurgeTestService(t)
+	writeAgedChat(t, dir, "drafting", 72*time.Hour)
+	store.header = &RetentionHeader{Drafting: true}
 
-	svc.Purge(t.Context(), 24*time.Hour)
+	res := svc.Purge(t.Context(), 24*time.Hour)
 
-	if exists(t, p) {
-		t.Error("a chat holding only staged attachments survived; the file it names is still on disk")
+	if res.Kept != 1 {
+		t.Fatalf("kept = %d, want 1: the drafting chat must be kept", res.Kept)
 	}
-	if got := rec.sorted(); !slices.Equal(got, []string{"aged"}) {
-		t.Errorf("onPurge fired for %v, want [aged]", got)
+	if !res.NextDeadline.IsZero() {
+		t.Errorf("NextDeadline = %v, want none: an exempt chat's age is not a wake-up",
+			res.NextDeadline)
 	}
 }
 
@@ -842,10 +780,10 @@ func TestPurge_TheOpenTabAndDraftExemptionsAreIndependent(t *testing.T) {
 		WithOpenTabs(func(id vibekit.ChatID) bool { return id == "open-no-draft" }))
 	openNoDraft := writeAgedChat(t, dir, "open-no-draft", 72*time.Hour)
 	draftNoTab := writeAgedChat(t, dir, "draft-no-tab", 72*time.Hour)
-	// One loadResult serves both entries; only the drafting one needs it non-empty,
-	// so the open-tab chat is defended by its tab alone — the tab predicate runs
-	// before the record is even read.
-	store.loadResult = &vibekit.Chat{ID: "draft-no-tab", Name: "C", Draft: "unsent"}
+	// One header serves both entries; only the drafting one needs it, so the
+	// open-tab chat is defended by its tab alone — the tab predicate runs before
+	// the record is even read.
+	store.header = &RetentionHeader{Drafting: true}
 
 	svc.Purge(t.Context(), 24*time.Hour)
 

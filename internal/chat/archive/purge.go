@@ -33,13 +33,29 @@ const (
 	purgeErr                         // stat/remove failed
 )
 
-// Purge deletes chats whose last activity is older than maxAge.
+// PurgeResult reports one pass, and is what the scheduler times its next wake-up
+// from. NextDeadline is the earliest instant a chat this pass KEPT ON AGE becomes
+// purgeable, zero when the pass has nothing to wait for.
+//
+// Only age-kept chats contribute: an EXEMPT chat (live bridge, open tab, unsent
+// draft) is pinned outside the age test while the exemption holds, so a wake-up
+// derived from its age has already passed and can never arrive again. An age-kept
+// deadline is in the future by construction, so a timer aimed at it cannot spin.
+type PurgeResult struct {
+	NextDeadline time.Time
+	Purged       int
+	Kept         int
+	Errors       int
+}
+
+// Purge deletes chats whose last activity is older than maxAge, and reports the
+// pass so the caller can time the next one.
 //
 // It scans the MAIN chat directory, because chats no longer move: "archived" is
 // computed from a chat's age against the retention window rather than stored as
 // a state. So the same directory holds live and expired chats, and the age test
 // plus the live-chat exemption are what separate them.
-func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
+func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	dir := s.store.Dir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -47,36 +63,40 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
 			slog.Error("chat purge: readdir",
 				"dir", dir, "error", err)
 		}
-		return
+		return PurgeResult{}
 	}
 	valid := collectPurgeEntries(entries, dir)
 	if len(valid) == 0 {
-		return
+		return PurgeResult{}
 	}
 
 	cutoff := time.Now().Add(-maxAge)
 	const maxWorkers = 8
-	var purgedCount, keptCount, errCount int32
-	var mu sync.Mutex
-	parallel.Bounded(ctx, valid, maxWorkers, func(_ int, entry purgeEntry) {
-		var counter *int32
-		switch s.purgeOne(entry, cutoff) {
-		case purgePurged:
-			counter = &purgedCount
-		case purgeKept:
-			counter = &keptCount
-		case purgeErr:
-			counter = &errCount
-		case purgeSkipped:
-		}
-		if counter != nil {
-			mu.Lock()
-			*counter++
-			mu.Unlock()
-		}
+	// Per-index results, reduced serially below: a worker writes only its own slot,
+	// so the fan-out needs no lock at all.
+	outcomes := make([]purgeOutcome, len(valid))
+	deadlines := make([]time.Time, len(valid))
+	parallel.Bounded(ctx, valid, maxWorkers, func(i int, entry purgeEntry) {
+		outcomes[i], deadlines[i] = s.purgeOne(entry, cutoff, maxAge)
 	})
 
-	logPurgeResult(int(purgedCount), int(keptCount), int(errCount), maxAge)
+	var res PurgeResult
+	for i, outcome := range outcomes {
+		switch outcome {
+		case purgePurged:
+			res.Purged++
+		case purgeKept:
+			res.Kept++
+		case purgeErr:
+			res.Errors++
+		case purgeSkipped:
+		}
+		if d := deadlines[i]; !d.IsZero() && (res.NextDeadline.IsZero() || d.Before(res.NextDeadline)) {
+			res.NextDeadline = d
+		}
+	}
+	logPurgeResult(res, maxAge)
+	return res
 }
 
 // collectPurgeEntries filters a directory listing down to valid chat
@@ -97,17 +117,21 @@ func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 	return valid
 }
 
-// purgeOne removes a single chat when its last activity is older than
-// cutoff. Holds the per-chat mutex across the stat+remove so a concurrent
-// mutate can't race the delete.
-func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
+// purgeOne removes a single chat when its last activity is older than cutoff, and
+// reports when it becomes purgeable if it does not: the returned deadline is
+// non-zero only for a chat kept by AGE, and an exempt chat contributes none (see
+// PurgeResult).
+//
+// Holds the per-chat mutex across the stat+remove so a concurrent mutate cannot
+// race the delete.
+func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time, maxAge time.Duration) (purgeOutcome, time.Time) {
 	// A chat someone is USING is never purged, regardless of age. This is a
 	// hard rule, not a heuristic: a chat open in a tab with a live bridge is
 	// active work, and retention is about abandoned work. Without it, a
 	// long-running conversation older than the window would be deleted out
 	// from under its own tab.
 	if s.isLive != nil && s.isLive(vibekit.ChatID(entry.name)) {
-		return purgeKept
+		return purgeKept, time.Time{}
 	}
 	// The second exemption: a chat with an OPEN TAB is never purged either. Same
 	// rule, different fact — a reader can have a chat open on the strip with no
@@ -125,7 +149,7 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	// someone to satisfy a timer. The draft exemption below has the same shape and
 	// the same answer.
 	if s.hasOpenTab != nil && s.hasOpenTab(vibekit.ChatID(entry.name)) {
-		return purgeKept
+		return purgeKept, time.Time{}
 	}
 	m := s.store.Lock(vibekit.ChatID(entry.name))
 	m.Lock()
@@ -133,10 +157,10 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	if err != nil {
 		m.Unlock()
 		if errors.Is(err, os.ErrNotExist) {
-			return purgeSkipped
+			return purgeSkipped, time.Time{}
 		}
 		slog.Warn("chat purge: stat", "name", entry.name, "error", err)
-		return purgeErr
+		return purgeErr, time.Time{}
 	}
 	// Age from the chat's own UpdatedAt, with mtime only as the unreadable-file
 	// fallback (see purgeReferenceTime). Capture the chain BEFORE the remove:
@@ -155,70 +179,54 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	// where it needs no chat load and cannot invert the lock order.
 	if drafting {
 		m.Unlock()
-		return purgeKept
+		return purgeKept, time.Time{}
 	}
 	if !refTime.Before(cutoff) {
 		m.Unlock()
-		return purgeKept
+		return purgeKept, refTime.Add(maxAge)
 	}
 	if err := os.Remove(entry.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		m.Unlock()
 		slog.Warn("chat purge: remove", "chat_id", entry.name, "error", err)
-		return purgeErr
+		return purgeErr, time.Time{}
 	}
 	m.Unlock()
 	if s.onPurge != nil {
 		s.onPurge(vibekit.ChatID(entry.name), chain)
 	}
-	return purgePurged
+	return purgePurged, time.Time{}
 }
 
 // purgeReferenceTime returns the time a purge decision ages from, the chat's
-// session chain, and whether the chat holds an unsent draft.
+// session chain, and whether it holds an unsent draft — all three from ONE projected
+// read. Caller holds the per-chat mutex.
 //
-// The reference time is the chat's own UpdatedAt — its last activity — falling
-// back to the file mtime when the chat cannot be read. UpdatedAt rather than
-// mtime because mtime moves for reasons that are not activity (a metadata
-// rewrite, a settings-driven field change), and a purge that ages from those
-// would keep resetting its own clock.
-//
-// The chain and the draft flag ride along because this is the ONE place that
-// already loads the chat, and the purge needs both: `onPurge` fires after
-// os.Remove(entry.path), so by then the file is gone and the session ids are
-// unreadable, and the draft is a field the age test cannot reach. Widening this
-// read costs no extra I/O and needs no second hook. Caller holds the per-chat
-// mutex.
-//
-// An unreadable chat reports no draft, which is the safe direction here: a file
-// the store cannot decode has no draft anyone can recover, so defending it would
-// keep a corrupt chat forever.
+// The reference time is the chat's own UpdatedAt, falling back to the file mtime when
+// the chat cannot be read: mtime moves for reasons that are not activity, so a purge
+// aging from it would keep resetting its own clock. An unreadable chat reports no
+// draft, the safe direction — nobody could recover a draft the store cannot decode.
 func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string, drafting bool) {
-	c, err := s.store.Load(vibekit.ChatID(entry.name))
+	h, err := s.store.LoadRetentionHeader(vibekit.ChatID(entry.name))
 	if err != nil {
 		return mtime, nil, false
 	}
-	chain := c.SessionChain()
-	// The DRAFT alone, and not the staged attachments beside it. An attachment is
-	// a path to a file that lives on disk in its own right, so purging the chat
-	// loses a reference; a draft is the only copy of the words themselves.
-	drafting = c.Draft != ""
-	if c.UpdatedAt <= 0 {
-		return mtime, chain, drafting
+	if h.UpdatedAt <= 0 {
+		return mtime, h.SessionChain, h.Drafting
 	}
-	return time.UnixMilli(c.UpdatedAt), chain, drafting
+	return time.UnixMilli(h.UpdatedAt), h.SessionChain, h.Drafting
 }
 
 // logPurgeResult emits the end-of-pass summary at Warn when any entry
 // errored, otherwise at Info.
-func logPurgeResult(purged, kept, errs int, maxAge time.Duration) {
-	if errs > 0 {
+func logPurgeResult(res PurgeResult, maxAge time.Duration) {
+	if res.Errors > 0 {
 		slog.Warn("chat purge: pass complete with errors",
-			"purged", purged, "kept", kept, "errors", errs,
+			"purged", res.Purged, "kept", res.Kept, "errors", res.Errors,
 			"max_age", maxAge)
 		return
 	}
 	slog.Info("chat purge: pass complete",
-		"purged", purged, "kept", kept,
+		"purged", res.Purged, "kept", res.Kept,
 		"max_age", maxAge)
 }
 
@@ -236,9 +244,13 @@ type PurgeScheduler struct {
 	triggerCh chan struct{}
 	stopCh    chan struct{}
 	done      chan struct{}
-	once      sync.Once
-	started   bool
-	mu        sync.Mutex
+	// idleWait is the current back-off for a pass with nothing to wait for. Owned
+	// by the loop goroutine (and by a test calling purgeAndReschedule directly),
+	// never read from anywhere else, so it needs no lock.
+	idleWait time.Duration
+	once     sync.Once
+	started  bool
+	mu       sync.Mutex
 }
 
 // NewPurgeScheduler builds a scheduler that runs purges based on the
@@ -320,10 +332,15 @@ func stopTimer(t *time.Timer) {
 	}
 }
 
+// purgeBudget bounds one pass. A pass is bounded work — one projected read and
+// at most one unlink per chat — so overrunning this means the filesystem is
+// wedged, and the loop is better off re-evaluating than waiting.
+const purgeBudget = 5 * time.Minute
+
 // purgeAndReschedule runs one purge pass (when retention is positive)
 // and always returns an armed timer, so the loop can never go dark.
 //
-// It used to return (nil, nil) whenever nextWait reported not-ok, which is
+// It used to return (nil, nil) whenever it had nothing to schedule, which is
 // reachable two ways: retention <= 0, and an EMPTY chat directory. Both are
 // ordinary states, and both left the loop with a nil timer channel whose only
 // remaining wake-up was Trigger() — which has exactly one production caller,
@@ -332,102 +349,61 @@ func stopTimer(t *time.Timer) {
 // and back killed purging permanently, because the toggle path does not
 // Trigger. Neither failure was observable: no log, no metric, just a chat
 // directory that grows forever while the setting says otherwise.
-//
-// A poll ceiling fixes both, and also fixes a third, quieter problem: the
-// armed wait was uncapped, so a 30-day retention slept ~29 days and no
-// setting change could shorten it. Re-checking at most maxWait later costs one
-// directory stat per interval and makes every retention change take effect
-// within one interval regardless of what was armed when it happened.
 func (p *PurgeScheduler) purgeAndReschedule(ctx context.Context) (timer *time.Timer, timerC <-chan time.Time) {
 	retention := p.retention()
+	var res PurgeResult
 	if retention > 0 {
-		purgeCtx, purgeCancel := context.WithTimeout(ctx, 5*time.Minute)
-		p.svc.Purge(purgeCtx, retention)
+		purgeCtx, purgeCancel := context.WithTimeout(ctx, purgeBudget)
+		res = p.svc.Purge(purgeCtx, retention)
 		purgeCancel()
 	}
-	wait, hadWork := p.armWait(ctx, retention)
-	slog.Debug("chat purge scheduled", "in", wait, "retention", retention, "had_work", hadWork)
+	wait := p.armWait(retention, res)
+	slog.Debug("chat purge scheduled", "in", wait, "retention", retention,
+		"purged", res.Purged, "kept", res.Kept, "has_deadline", !res.NextDeadline.IsZero())
 	t := time.NewTimer(wait)
 	return t, t.C
 }
 
-// armWait is how long the loop sleeps before its next pass: the natural deadline
-// when there is one, the poll interval when there is not, capped either way.
-//
-// Extracted from purgeAndReschedule so a test can assert on the value the loop
-// actually arms. It was inline, and the test asserted `min(natural, cap) == cap`
-// by recomputing the clamp itself — which stayed green when the clamp was deleted
-// from production, because the test was proving arithmetic rather than behaviour.
-func (p *PurgeScheduler) armWait(ctx context.Context, retention time.Duration) (wait time.Duration, hadWork bool) {
-	natural, ok := p.nextWait(ctx, retention)
-	if !ok {
-		// Nothing to purge right now (retention off, or no chats yet). Re-check
-		// on the poll interval rather than going dark. hadWork is returned so the
-		// log can tell this apart from a real deadline that happened to be capped
-		// at the same value; without it the two states logged identically.
-		return maxWait, false
-	}
-	return min(natural, maxWait), true
-}
+// Wait bounds. minWait floors a deadline that is nearly upon us, maxWait ceilings
+// everything: it is how stale an armed wake-up can be after a retention change
+// (the settings path does not Trigger), and the re-check interval when retention
+// is off. idleBase is the first wait after a pass with nothing to wait for, and
+// it doubles per consecutive such pass up to maxWait.
+const (
+	minWait  = 5 * time.Second
+	maxWait  = 1 * time.Hour
+	idleBase = 1 * time.Minute
+)
 
-// maxWait bounds how long the purge loop may sleep between passes. It is the
-// ceiling on how stale an armed wake-up can be after a retention change, and
-// the re-check interval when there is nothing scheduled at all.
-const maxWait = 1 * time.Hour
-
-// nextWait computes how long to sleep before the next purge: the oldest
-// chat file's age plus the retention window, floored at minWait.
-// Returns ok=false when retention is disabled or the directory is empty.
-func (p *PurgeScheduler) nextWait(ctx context.Context, retention time.Duration) (time.Duration, bool) {
+// armWait is how long the loop sleeps before its next pass, and where the spin
+// lived. Two rules prevent one. The wake-up comes from the PASS, never from the
+// directory: it used to be the oldest chat FILE's mtime plus the window floored at
+// 5s, and an exempt chat holds that floor in the past permanently, so the loop
+// re-scanned every 5 seconds forever. And a pass with nothing to wait for BACKS OFF
+// rather than re-asking a question only an unobserved change can answer
+// differently; a purge resets it, being evidence the store is in use.
+func (p *PurgeScheduler) armWait(retention time.Duration, res PurgeResult) time.Duration {
 	if retention <= 0 {
-		return 0, false
+		// Keep-forever. Re-check on the ceiling rather than going dark, so turning
+		// retention back on takes effect within one interval.
+		p.idleWait = 0
+		return maxWait
 	}
-	oldest, ok := OldestChatMTime(ctx, p.svc.store.Dir())
-	if !ok {
-		return 0, false
+	if !res.NextDeadline.IsZero() {
+		p.idleWait = 0
+		return min(max(time.Until(res.NextDeadline), minWait), maxWait)
 	}
-	const minWait = 5 * time.Second
-	deadline := oldest.Add(retention)
-	return max(time.Until(deadline), minWait), true
+	if res.Purged > 0 {
+		p.idleWait = 0
+	}
+	p.idleWait = nextIdleWait(p.idleWait)
+	return p.idleWait
 }
 
-// OldestChatMTime returns the mtime of the oldest chat file and true, or the
-// zero time and false if the directory is empty or unreadable.
-//
-// Only a wake-up heuristic for the scheduler, never a purge decision: purgeOne
-// ages from the chat's UpdatedAt and exempts live chats. Waking too early costs
-// one no-op pass.
-func OldestChatMTime(ctx context.Context, storeDir string) (time.Time, bool) {
-	if ctx.Err() != nil {
-		return time.Time{}, false
+// nextIdleWait doubles an idle wait, starting at idleBase and capped at maxWait.
+func nextIdleWait(current time.Duration) time.Duration {
+	if current <= 0 {
+		return idleBase
 	}
-	entries, err := os.ReadDir(storeDir)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("purge scheduler: readdir",
-				"dir", storeDir, "error", err)
-		}
-		return time.Time{}, false
-	}
-	if len(entries) == 0 {
-		return time.Time{}, false
-	}
-	var oldest time.Time
-	found := false
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), chatFileSuffix) {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			slog.Warn("purge scheduler: stat",
-				"name", e.Name(), "error", err)
-			continue
-		}
-		if !found || info.ModTime().Before(oldest) {
-			oldest = info.ModTime()
-			found = true
-		}
-	}
-	return oldest, found
+	return min(current*2, maxWait)
 }

@@ -1,7 +1,6 @@
 package git
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -20,12 +18,14 @@ type Option func(*Handler)
 
 // Handler implements git HTTP endpoints (non-AI operations).
 type Handler struct {
-	fetchFlight  singleflight.Group
-	repoFlight   singleflight.Group
-	statusFlight singleflight.Group
-	pullFlight   singleflight.Group
-	workDir      string
-	timeouts     gitTimeouts
+	fetchFlight singleflight.Group
+	repoFlight  singleflight.Group
+	pullFlight  singleflight.Group
+	// statusCache is the dashboard's snapshot holder. It replaced a singleflight
+	// slot every caller queued behind — see status_cache.go.
+	statusCache statusCache
+	workDir     string
+	timeouts    gitTimeouts
 }
 
 // NewHandler returns a Handler scoped to workDir.
@@ -107,23 +107,6 @@ type gitStatusResp struct {
 	Stashes  int       `json:"stashes"`
 	IsRepo   bool      `json:"is_repo"`
 	HasDirty bool      `json:"has_dirty"`
-}
-
-func parseGitStatus(ctx context.Context, dir string) []gitFile {
-	raw, err := gitExec(ctx, dir, "status", "--porcelain=v1", "-z", "-uall").CombinedOutput()
-	if err != nil {
-		// Cancellation (per-repo budget, server shutdown) SIGKILLs the
-		// subprocess — an expected partial result, not a git failure;
-		// keep WARN for genuine errors only so a busy dashboard doesn't
-		// flood the log with kill noise.
-		if ctx.Err() != nil {
-			slog.Debug("git status canceled", "repo", dir, "cause", ctx.Err())
-			return nil
-		}
-		slog.Warn("git status failed", "repo", logsafe.Field(dir), "error", logsafe.Field(err.Error()), "out", scrubAuth(string(raw)))
-		return nil
-	}
-	return parseGitStatusOutput(raw)
 }
 
 // handlePRFetch fetches a pull request's head ref into a local branch

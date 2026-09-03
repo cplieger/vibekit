@@ -28,60 +28,136 @@ type allRepoStatus struct {
 	gitStatusResp
 }
 
-// statusAllBudget bounds one full status-all scan; perRepoBudget bounds
-// each repo inside it so a single wedged repo degrades to a partial row
-// instead of stalling the whole dashboard.
+// Scan budgets. statusScanBudget bounds one full scan; perRepoBudget bounds each
+// repo inside it so a single wedged repo degrades to a partial row instead of
+// stalling the whole dashboard. statusMaxAge is how old a snapshot may be before
+// a read refreshes behind its answer — under the client's 15s poll, so an idle
+// poll finds a snapshot it can answer from AND leaves a fresh one behind.
+// statusColdWait bounds the one read that has nothing to answer with.
 const (
-	statusAllBudget = 30 * time.Second
-	perRepoBudget   = 10 * time.Second
+	statusScanBudget = 30 * time.Second
+	perRepoBudget    = 10 * time.Second
+	statusMaxAge     = 10 * time.Second
+	statusColdWait   = perRepoBudget
+	// scanConcurrency caps repos scanned in parallel. Each is two short-lived git
+	// subprocesses, so this bounds fork+exec pressure rather than CPU.
+	scanConcurrency = 8
 )
 
-// handleStatusAll fans out collectStatus across every cloned repo
-// under workDir (plus workDir itself if it's a repo) and returns a
-// merged array. This is what the Changes tab on the git page fetches
-// once per refresh, instead of N round-trips for N repos.
+// handleStatusAll answers the multi-repo dashboard from the newest completed scan
+// plus its age, and refreshes behind the answer (status_cache.go says why).
 //
-// The scan is singleflighted and DETACHED from the request context:
-// boot fires several concurrent callers (changes tab + badge poll), so
-// concurrent callers join one scan, an abandoned scan runs to
-// completion (bounded by statusAllBudget), and the next poll gets a
-// fast answer.
-//
-// By default the network fetch (`fetch --quiet`) is skipped inside each
-// per-repo collectStatus call: doing N fetches in parallel on every
-// 15s badge poll is too aggressive for slow forges. ?fetch=1 (the
-// user-initiated "Refresh all" / git-tab activation) opts in so
-// ahead/behind counts are refreshed against the remotes. Fetching
-// callers get their own singleflight key so a cheap poll never
-// piggybacks a fetch-less result onto them (and vice versa).
+// Two callers still wait, and only they: the FIRST read of a process, which has
+// nothing to answer with, and `?fetch=1`, the "Refresh all" gesture whose whole
+// point is fresh data. The plain poll skips the network fetch deliberately — N
+// parallel fetches every 15 seconds is too aggressive for slow forges — and every
+// scan is detached from the request, so an abandoned poll still leaves a snapshot.
 func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	doFetch := r.URL.Query().Get("fetch") == "1"
-	key := "status-all"
+	key := statusKeyPoll
 	if doFetch {
-		key = "status-all-fetch"
+		key = statusKeyFetch
 	}
-	v, _, _ := h.statusFlight.Do(key, func() (any, error) {
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), statusAllBudget)
-		defer cancel()
-		repos := h.cachedDiscoverRepos(sctx)
-		results := make([]allRepoStatus, len(repos))
-		g, gctx := errgroup.WithContext(sctx)
-		g.SetLimit(8)
-		for i, e := range repos {
-			g.Go(func() error {
-				rctx, rcancel := context.WithTimeout(gctx, perRepoBudget)
-				defer rcancel()
-				st := collectStatus(rctx, e.Dir, h.timeouts, &h.fetchFlight, doFetch)
-				results[i] = allRepoStatus{Repo: e.Name, gitStatusResp: st}
-				return nil
-			})
-		}
-		_ = g.Wait()
-		return results, nil
+	snap, running := h.statusCache.read(key)
+	if doFetch || snap.stale(statusMaxAge) {
+		running = h.refreshStatusAll(r, key, doFetch)
+	}
+	if wait := h.coldWait(snap, doFetch); wait > 0 {
+		snap = h.awaitStatusAll(r, key, running, wait)
+		_, running = h.statusCache.read(key)
+	}
+	webhttp.WriteJSON(w, statusAllResp{
+		Repos:    snap.rows(),
+		AgeMS:    snap.age().Milliseconds(),
+		Scanning: running != nil,
 	})
-	results, _ := v.([]allRepoStatus)
-	// Treated as read-only by every singleflight sharer.
-	webhttp.WriteJSON(w, map[string]any{jsonKeyRepos: results})
+}
+
+// statusAllResp is the dashboard's answer: the newest completed scan, how old it
+// is, and whether one is running behind it.
+//
+// The age is what lets a client show data it knows is a few seconds old instead of
+// waiting for certainty, and it is why the answer can be immediate at all.
+type statusAllResp struct {
+	Repos    []allRepoStatus `json:"repos"`
+	AgeMS    int64           `json:"age_ms"`
+	Scanning bool            `json:"scanning"`
+}
+
+// coldWait is how long this read may wait for the scan in flight: nothing for an
+// ordinary poll that has a snapshot, the cold budget for the first read of a
+// process, and the whole-scan budget for a forced refresh.
+func (h *Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
+	switch {
+	case doFetch:
+		return statusScanBudget
+	case snap == nil:
+		return statusColdWait
+	default:
+		return 0
+	}
+}
+
+// refreshStatusAll starts a scan for key unless one is already in flight, and
+// returns the channel that closes when the scan in flight publishes.
+//
+// The scan runs on its own goroutine under a context DETACHED from the request:
+// its lifetime is the scan budget, and a client that walks away mid-poll must not
+// abort work the next poll would otherwise repeat from scratch.
+func (h *Handler) refreshStatusAll(r *http.Request, key string, doFetch bool) chan struct{} {
+	done, started := h.statusCache.claim(key)
+	if !started {
+		return done
+	}
+	parent := context.WithoutCancel(r.Context())
+	go func() {
+		ctx, cancel := context.WithTimeout(parent, statusScanBudget)
+		defer cancel()
+		// Publishes unconditionally, including an empty result: the claim is
+		// released here and nowhere else, so a scan that returns nothing must still
+		// hand the slot back or this variant never refreshes again.
+		h.statusCache.publish(key, h.scanRepos(ctx, doFetch))
+	}()
+	return done
+}
+
+// awaitStatusAll waits for the scan in flight to publish, bounded by budget and by
+// the request going away, then returns whatever the holder has. A caller that
+// times out answers from the older snapshot (or an empty one) rather than holding
+// the request open.
+func (h *Handler) awaitStatusAll(r *http.Request, key string, running chan struct{}, budget time.Duration) *statusSnapshot {
+	if running != nil {
+		timer := time.NewTimer(budget)
+		defer timer.Stop()
+		select {
+		case <-running:
+		case <-r.Context().Done():
+		case <-timer.C:
+		}
+	}
+	snap, _ := h.statusCache.read(key)
+	return snap
+}
+
+// scanRepos collects the status of every cloned repo under workDir (plus workDir
+// itself if it is a repo), bounded per repo so one wedged repository degrades to a
+// partial row.
+func (h *Handler) scanRepos(ctx context.Context, doFetch bool) []allRepoStatus {
+	repos := h.cachedDiscoverRepos(ctx)
+	results := make([]allRepoStatus, len(repos))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(scanConcurrency)
+	for i, e := range repos {
+		g.Go(func() error {
+			rctx, rcancel := context.WithTimeout(gctx, perRepoBudget)
+			defer rcancel()
+			st := collectStatus(rctx, e.Dir, h.timeouts, &h.fetchFlight, doFetch)
+			results[i] = allRepoStatus{Repo: e.Name, gitStatusResp: st}
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return results
 }
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {

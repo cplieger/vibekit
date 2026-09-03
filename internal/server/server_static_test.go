@@ -216,3 +216,83 @@ func TestSpaHandler_headOnTheShellIsLengthOnly(t *testing.T) {
 		t.Errorf("Content-Length = %q, want %d", got, len(body))
 	}
 }
+
+// A content-addressed chunk is served immutable, end to end.
+//
+// The name is the real shape cmd/bundle emits (esbuild's
+// `chunks/[name]-[hash]`, 8 uppercase base32 characters), so this is the header
+// a browser actually receives for the ~45 lazy chunks a boot pulls. Each one
+// used to cost a revalidation round trip per load — all 304, all 0 ms
+// server-side, and all avoidable, because a hashed name cannot change content.
+func TestSpaHandler_hashedChunkIsImmutable(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html":                    {Data: []byte("<html></html>")},
+		"app.js":                        {Data: []byte("console.log(1)")},
+		"chunks/api-client-4K73XYBF.js": {Data: []byte("export const x = 1")},
+	}
+	h := spaHandler(fsys)
+
+	req := httptest.NewRequest(http.MethodGet, "/chunks/api-client-4K73XYBF.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != immutableAsset {
+		t.Errorf("Cache-Control = %q, want %q", got, immutableAsset)
+	}
+	if rec.Header().Get("ETag") == "" {
+		t.Error("hashed asset lost its ETag; an immutable answer still needs one for a forced reload")
+	}
+	// The stable-named entry beside it must NOT inherit that policy: a release
+	// replaces app.js's bytes under the same name.
+	reqApp := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	recApp := httptest.NewRecorder()
+	h.ServeHTTP(recApp, reqApp)
+	if got := recApp.Header().Get("Cache-Control"); got != revalidateAsset {
+		t.Errorf("app.js Cache-Control = %q, want %q", got, revalidateAsset)
+	}
+}
+
+// The policy is a claim about the NAME, and the near misses are what make it safe:
+// a year-long immutable answer for a name whose bytes can change is unrecoverable
+// from the server side, so anything that is not exactly the bundler's own output
+// shape has to fall back to revalidating.
+func TestAssetCachePolicy(t *testing.T) {
+	cases := map[string]string{
+		// The bundler's own shape, and its sourcemap sibling.
+		"chunks/api-client-4K73XYBF.js":     immutableAsset,
+		"chunks/api-client-4K73XYBF.js.map": immutableAsset,
+		"chunks/banner-stack-KYMDPXPX.js":   immutableAsset,
+		// Stable names whose content a release replaces.
+		"app.js":            revalidateAsset,
+		"sw.js":             revalidateAsset,
+		"style.css":         revalidateAsset,
+		"favicon.svg":       revalidateAsset,
+		"icon-192.png":      revalidateAsset,
+		"exec-view/page.js": revalidateAsset,
+		"":                  revalidateAsset,
+		"index.html":        noStoreHTML,
+		"docs/index.html":   noStoreHTML,
+		// Near misses: a hash-looking name outside the chunk directory, a short or
+		// lowercase hash, a hash on a non-JS extension, and a nested path.
+		"assets/app-4K73XYBF.js":         revalidateAsset,
+		"chunks/api-client-4K73XY.js":    revalidateAsset,
+		"chunks/api-client-4k73xybf.js":  revalidateAsset,
+		"chunks/api-client-4K73XYBF.css": revalidateAsset,
+		"chunks/deep/thing-4K73XYBF.js":  revalidateAsset,
+		"chunks/4K73XYBF.js":             revalidateAsset,
+		"prefix/chunks/x-4K73XYBF.js":    revalidateAsset,
+	}
+	for path, want := range cases {
+		// The case key is a path, and `-run` treats "/" as a subtest separator, so a
+		// slash-bearing name could not be selected. The path itself is in the
+		// failure message, which is what identifies the input.
+		t.Run(strings.ReplaceAll(path, "/", "_"), func(t *testing.T) {
+			if got := assetCachePolicy(path); got != want {
+				t.Errorf("assetCachePolicy(%q) = %q, want %q", path, got, want)
+			}
+		})
+	}
+}
