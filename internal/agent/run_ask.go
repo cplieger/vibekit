@@ -35,6 +35,13 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// scrubLog strips the CR and LF a wire-sourced value could carry to forge extra
+// log lines (CWE-117). A real workflow id, node id or pause reason never contains
+// them, so it is a no-op on honest input and a barrier on hostile input.
+func scrubLog(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
+}
+
 // runAskKey is a pending ask's identity: the run it parks, plus the ask within
 // that run.
 //
@@ -326,12 +333,12 @@ func (rs *Runs) handleSessionNotify(ctx context.Context, chatID vibekit.ChatID, 
 	a := &runAsk{chatID: chatID, payload: p}
 	if !rs.asks.Add(a) {
 		slog.Debug("run ask: already recorded, not re-broadcast",
-			"workflow_id", p.WorkflowID, "ask_id", p.AskID)
+			"workflow_id", scrubLog(p.WorkflowID), "ask_id", scrubLog(p.AskID))
 		return
 	}
 	slog.Info("a workflow step is waiting for an answer",
-		"workflow_id", p.WorkflowID, "node_id", p.NodeID,
-		"agent", p.AgentName, "chat_id", chatID)
+		"workflow_id", scrubLog(p.WorkflowID), "node_id", scrubLog(p.NodeID),
+		"agent", scrubLog(p.AgentName), "chat_id", chatID)
 	rs.bus.Broadcast(ctx, a.event())
 }
 
@@ -356,8 +363,8 @@ func (rs *Runs) settleAskForNode(
 ) {
 	for _, a := range rs.asks.TakeNode(workflowID, nodeID) {
 		slog.Info("a parked step moved on, so its question is retired",
-			"workflow_id", workflowID, "node_id", nodeID, "ask_id", a.payload.AskID,
-			"settled_by", string(by))
+			"workflow_id", scrubLog(workflowID), "node_id", scrubLog(nodeID),
+			"ask_id", scrubLog(a.payload.AskID), "settled_by", string(by))
 		rs.announceSettled(ctx, a, by)
 	}
 }
@@ -370,7 +377,8 @@ func (rs *Runs) settleAskForNode(
 func (rs *Runs) settleAsksForRun(ctx context.Context, workflowID string) {
 	for _, a := range rs.asks.TakeRun(workflowID) {
 		slog.Info("a run ended still holding a question, so the card is retired",
-			"workflow_id", workflowID, "node_id", a.payload.NodeID, "ask_id", a.payload.AskID)
+			"workflow_id", scrubLog(workflowID), "node_id", scrubLog(a.payload.NodeID),
+			"ask_id", scrubLog(a.payload.AskID))
 		rs.announceSettled(ctx, a, vibekit.SettledByMoot)
 	}
 }
@@ -392,7 +400,7 @@ func (rs *Runs) restoreAsk(ctx context.Context, a *runAsk) {
 		return
 	}
 	slog.Info("an answer did not reach the step, so its question is offered again",
-		"workflow_id", a.payload.WorkflowID, "ask_id", a.payload.AskID)
+		"workflow_id", scrubLog(a.payload.WorkflowID), "ask_id", scrubLog(a.payload.AskID))
 	rs.bus.Broadcast(ctx, a.event())
 }
 
@@ -536,8 +544,8 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 		return
 	}
 	slog.Info("a parked run had no ask on this server, so one was reconstructed from its state",
-		"workflow_id", workflowID, "node_id", leaf.NodeID, "chat_id", a.chatID,
-		"pause_reason", res.State.PauseReason)
+		"workflow_id", scrubLog(workflowID), "node_id", scrubLog(leaf.NodeID), "chat_id", a.chatID,
+		"pause_reason", scrubLog(res.State.PauseReason))
 	rs.bus.Broadcast(ctx, a.event())
 }
 
