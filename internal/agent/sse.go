@@ -112,6 +112,15 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, floor, head uint64, chatFi
 		return err
 	}
 
+	// Then the questions a workflow STEP is parked on. Beside the permissions
+	// rather than folded into them because the two registries have different
+	// lifetimes — see run_ask.go — but the replay reason is identical and stronger
+	// here: a parked run has no deadline of its own, so an ask this client saw an
+	// hour ago is still the only thing between that run and its next step.
+	if err := rt.replayPendingRunAsks(writeEvent, chatFilter); err != nil {
+		return err
+	}
+
 	// Synthesize turn_state for every chat with an OPEN TURN: the in-flight
 	// assistant message accumulated so far plus the authoritative busy signal, so
 	// a client connecting mid-turn renders the streaming transcript immediately
@@ -185,6 +194,11 @@ func (rt *Runtime) replayTurnState(
 		payload := vibekit.TurnStatePayload{
 			Status:      status.Status,
 			Description: status.Description,
+			// A step-driven turn is EMITTED and MARKED rather than skipped: the
+			// snapshot is the only copy of the in-flight step transcript, so skipping
+			// it would lose that content on every refresh, while an unmarked one makes
+			// the launching chat read as busy for the whole run.
+			WorkflowStep: facts.Source == vibekit.TurnSourceWorkflowStep,
 		}
 		if msg, seq, ok := facts.Buf.Snapshot(); ok {
 			payload.Message = &msg
@@ -208,6 +222,23 @@ func (rt *Runtime) replayTurnState(
 // TakeIfPresent will still accept, in the order the agent asked.
 func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
 	for _, evt := range rt.bus.pendingPerms.List(chatFilter) {
+		if err := writeFn(evt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replayPendingRunAsks sends every unanswered workflow-step question to a newly
+// connected client, so a reload, a second device and a transport gap all
+// converge on the same set with no client-side accumulation.
+//
+// The client's dock de-duplicates a re-delivered ask by its id, so the replay is
+// idempotent by construction — which is what lets the eager clear a
+// `transport:gap` performs be followed by this burst rather than reconciled
+// against it.
+func (rt *Runtime) replayPendingRunAsks(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
+	for _, evt := range rt.runs.asks.List(chatFilter) {
 		if err := writeFn(evt); err != nil {
 			return err
 		}

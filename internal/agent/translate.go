@@ -64,6 +64,11 @@ func (rt *Runtime) initDispatch() {
 		// start/pause/finish — run_start is the only frame for an AGENT-launched run.
 		methodWFRunStart:    rt.runs.observeStart,
 		methodWFRunComplete: rt.runs.observeComplete,
+		// A workflow step's question. The ONLY frame carrying it, and it used to
+		// fall through to the Debug tail below, which lost the text, its run and
+		// its step together. Registered on the run bridge's door too — see
+		// (*Runtime).dispatch.
+		methodKiroSessionNotify: rt.runs.handleSessionNotify,
 	}
 	for method, kind := range map[string]vibekit.RunProgressKind{
 		methodWFNodeStart:     vibekit.RunProgressNodeStart,

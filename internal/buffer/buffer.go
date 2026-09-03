@@ -485,27 +485,51 @@ func (buf *Buffer) AppendToolUseBlock(toolCallID, subtaskID string) int {
 }
 
 // TrackFileChanges accumulates per-file change stats from tool call diffs.
+//
+// The counts are a real line diff (lineDelta), not the newline count of each
+// side: KAS sends WHOLE-FILE OldText/NewText for its edit tools, so counting
+// newlines reported the entire file as removed and re-added for a one-line
+// change — measured at ~100x on the live volume, which is the "+1944 −1944 for
+// one edited line" the turn footer showed.
+//
+// Per-fragment SUMMATION is kept: two edits to one file in one turn report the
+// sum of both, which is honest turn churn. The path is recorded even when the
+// delta is 0/0 (a no-op write still wrote the file, and the footer renders that
+// row with no +/−).
+//
+// The deltas are computed BEFORE the lock: the diff is the expensive part and
+// this mutex also serves Snapshot() on the streaming goroutine.
 func (buf *Buffer) TrackFileChanges(diffs []vibekit.ToolDiff, isNewFile bool) {
+	type delta struct {
+		path    string
+		added   int
+		removed int
+	}
+	deltas := make([]delta, 0, len(diffs))
+	for _, d := range diffs {
+		if d.Path == "" {
+			continue
+		}
+		added, removed := lineDelta(d.OldText, d.NewText)
+		deltas = append(deltas, delta{path: d.Path, added: added, removed: removed})
+	}
+	if len(deltas) == 0 {
+		return
+	}
+
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	if buf.ChangedFiles == nil {
 		buf.ChangedFiles = make(map[string]*vibekit.FileChange)
 	}
-	for _, d := range diffs {
-		if d.Path == "" {
-			continue
-		}
-		fc, ok := buf.ChangedFiles[d.Path]
+	for _, d := range deltas {
+		fc, ok := buf.ChangedFiles[d.path]
 		if !ok {
 			fc = &vibekit.FileChange{IsNewFile: isNewFile}
-			buf.ChangedFiles[d.Path] = fc
+			buf.ChangedFiles[d.path] = fc
 		}
-		if d.NewText != "" {
-			fc.LinesAdded += strings.Count(d.NewText, "\n")
-		}
-		if d.OldText != "" {
-			fc.LinesRemoved += strings.Count(d.OldText, "\n")
-		}
+		fc.LinesAdded += d.added
+		fc.LinesRemoved += d.removed
 	}
 }
 

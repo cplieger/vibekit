@@ -369,9 +369,12 @@ func TestRecordToolStart(t *testing.T) {
 	}
 }
 
-// TestTrackFileChanges_LineCounts verifies per-file added/removed line
-// counts derive from the newline counts in the new and old text.
-func TestTrackFileChanges_LineCounts(t *testing.T) {
+// TestTrackFileChanges_CountsARealDiff verifies the per-file added/removed
+// counts are a line DIFF of the two sides, not a newline count of each.
+//
+// Nothing is common between these two texts, so every line of the old side is
+// removed and every line of the new side added: 4 old lines out, 3 new lines in.
+func TestTrackFileChanges_CountsARealDiff(t *testing.T) {
 	buf := &Buffer{}
 	buf.TrackFileChanges([]vibekit.ToolDiff{
 		{Path: "f.go", NewText: "a\nb\nc", OldText: "x\ny\nz\nw"},
@@ -380,12 +383,64 @@ func TestTrackFileChanges_LineCounts(t *testing.T) {
 	if fc == nil {
 		t.Fatal(`ChangedFiles["f.go"] is nil`)
 	}
-	// "a\nb\nc" has 2 newlines; "x\ny\nz\nw" has 3.
-	if got, want := fc.LinesAdded, 2; got != want {
+	if got, want := fc.LinesAdded, 3; got != want {
 		t.Errorf("LinesAdded = %d, want %d", got, want)
 	}
-	if got, want := fc.LinesRemoved, 3; got != want {
+	if got, want := fc.LinesRemoved, 4; got != want {
 		t.Errorf("LinesRemoved = %d, want %d", got, want)
+	}
+}
+
+// TestTrackFileChanges_OneLineEditInALargeFile is the reported bug: KAS sends
+// whole-file OldText/NewText, so a one-line edit used to report the whole file
+// as removed and re-added (+300 −300 here).
+func TestTrackFileChanges_OneLineEditInALargeFile(t *testing.T) {
+	old := bigFile(300)
+	buf := &Buffer{}
+	buf.TrackFileChanges([]vibekit.ToolDiff{
+		{Path: "big.go", OldText: old, NewText: replaceLine(old, 149, "line 149 EDITED")},
+	}, false)
+	fc := buf.ChangedFiles["big.go"]
+	if fc == nil {
+		t.Fatal(`ChangedFiles["big.go"] is nil`)
+	}
+	if got, want := fc.LinesAdded, 1; got != want {
+		t.Errorf("LinesAdded = %d, want %d", got, want)
+	}
+	if got, want := fc.LinesRemoved, 1; got != want {
+		t.Errorf("LinesRemoved = %d, want %d", got, want)
+	}
+}
+
+// TestTrackFileChanges_NoOpWriteStillRecordsThePath pins the row a footer shows
+// for a file the agent wrote without changing: present, with no +/− to state.
+func TestTrackFileChanges_NoOpWriteStillRecordsThePath(t *testing.T) {
+	same := "a\nb\nc\n"
+	buf := &Buffer{}
+	buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "f.go", OldText: same, NewText: same}}, false)
+	fc := buf.ChangedFiles["f.go"]
+	if fc == nil {
+		t.Fatal(`ChangedFiles["f.go"] is nil for a no-op write`)
+	}
+	if fc.LinesAdded != 0 || fc.LinesRemoved != 0 {
+		t.Errorf("no-op write = +%d/-%d, want +0/-0", fc.LinesAdded, fc.LinesRemoved)
+	}
+}
+
+// TestTrackFileChanges_SumsFragments pins per-fragment summation: two one-line
+// edits to one path in one turn report that turn's whole churn.
+func TestTrackFileChanges_SumsFragments(t *testing.T) {
+	buf := &Buffer{}
+	buf.TrackFileChanges([]vibekit.ToolDiff{
+		{Path: "f.go", OldText: "a\nb\nc\n", NewText: "a\nB\nc\n"},
+		{Path: "f.go", OldText: "a\nB\nc\n", NewText: "a\nB\nC\n"},
+	}, false)
+	fc := buf.ChangedFiles["f.go"]
+	if fc == nil {
+		t.Fatal(`ChangedFiles["f.go"] is nil`)
+	}
+	if fc.LinesAdded != 2 || fc.LinesRemoved != 2 {
+		t.Errorf("two one-line edits = +%d/-%d, want +2/-2", fc.LinesAdded, fc.LinesRemoved)
 	}
 }
 

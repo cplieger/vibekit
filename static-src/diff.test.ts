@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import {
+  lineDelta,
   lineDiff,
   windowHunks,
   stats,
@@ -275,6 +276,50 @@ describe("stats", () => {
 
   it("returns zeros for empty input", () => {
     expect(stats([])).toEqual({ adds: 0, dels: 0, ctx: 0 });
+  });
+});
+
+describe("lineDelta", () => {
+  /** An n-line file, "line <i>\n" per line. */
+  const bigFile = (n: number): string =>
+    Array.from({ length: n }, (_, i) => `line ${String(i)}\n`).join("");
+
+  const cases: { name: string; old: string; new: string; added: number; removed: number }[] = [
+    {
+      name: "one line edited in a 300-line file",
+      old: bigFile(300),
+      new: bigFile(300).replace("line 149\n", "line 149 EDITED\n"),
+      added: 1,
+      removed: 1,
+    },
+    { name: "a 2-line file creation", old: "", new: "line1\nline2\n", added: 2, removed: 0 },
+    { name: "a file emptied", old: "x\ny\n", new: "", added: 0, removed: 2 },
+    { name: "no-op write", old: "a\nb\nc\n", new: "a\nb\nc\n", added: 0, removed: 0 },
+    { name: "pure insertion", old: "a\nd\n", new: "a\nb\nc\nd\n", added: 2, removed: 0 },
+    { name: "pure deletion", old: "a\nb\nc\nd\n", new: "a\nd\n", added: 0, removed: 2 },
+    { name: "whole-file replacement", old: "a\nb\n", new: "x\ny\n", added: 2, removed: 2 },
+    {
+      name: "a trailing newline is not a line",
+      old: "a\nb",
+      new: "a\nb\n",
+      added: 0,
+      removed: 0,
+    },
+    { name: "CRLF to LF", old: "a\r\nb\r\n", new: "a\nb\n", added: 0, removed: 0 },
+    { name: "both sides empty", old: "", new: "", added: 0, removed: 0 },
+  ];
+
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(lineDelta(c.old, c.new)).toEqual({ added: c.added, removed: c.removed });
+    });
+  }
+
+  it("counts a file creation without the trailing empty line splitLines keeps", () => {
+    // lineDiff itself reports 3 adds here: splitLines keeps the empty line a
+    // final newline produces, because the diff renderer draws that row.
+    expect(stats(lineDiff("", "a\nb\n")).adds).toBe(3);
+    expect(lineDelta("", "a\nb\n").added).toBe(2);
   });
 });
 

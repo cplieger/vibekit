@@ -195,3 +195,35 @@ describe("compacted event summary", () => {
     expect(node?.textContent ?? "").toContain("Conversation compacted");
   });
 });
+
+// A workflow step's `send_message` notification. The dock holds the question in
+// MEMORY, so this row is the only durable copy of it — which is why the content is
+// the label rather than being dropped for a fixed sentence, the way a workflow
+// progress row is.
+describe("step_notice event (a workflow step spoke to the reader)", () => {
+  it("renders the step's own words rather than a fixed sentence", () => {
+    const node = buildEvent({
+      id: "n1",
+      role: "event",
+      event_kind: "step_notice",
+      content: "Ship it?",
+      ts: 0,
+    } as Message);
+    expect(node).not.toBeNull();
+    // A boundary rather than a bubble: the author is neither side of the
+    // conversation, so it takes the neutral face the other markers use.
+    expect(node?.className).toContain("boundary-switched");
+    expect(node?.querySelector(".boundary-label")?.textContent).toBe("Step: Ship it?");
+  });
+
+  it("falls back to a label when the frame carried no text", () => {
+    const node = buildEvent({
+      id: "n2",
+      role: "event",
+      event_kind: "step_notice",
+      ts: 0,
+    } as Message);
+    expect(node).not.toBeNull();
+    expect(node?.textContent ?? "").toContain("A workflow step sent a message");
+  });
+});

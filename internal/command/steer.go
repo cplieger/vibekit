@@ -70,7 +70,13 @@ const reasonNoTurn = "no_turn"
 // delivered to an idle chat — or into a `!cmd` shell turn — would sit
 // unread with the chip stuck "queued". A wire-started turn is steerable:
 // the engine's own turn drains the buffer at its next node boundary.
-func CmdSteer(ctx context.Context, bridges BridgeAccess, outcome TurnOutcomeAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSteer(
+	ctx context.Context,
+	bridges BridgeAccess,
+	outcome TurnOutcomeAccess,
+	steers SteerRecorder,
+	cmd *vibekit.ClientCommand,
+) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -130,6 +136,10 @@ func CmdSteer(ctx context.Context, bridges BridgeAccess, outcome TurnOutcomeAcce
 		slog.Info("steer dropped", "chat", cmd.ChatID, "reason", result.Dropped)
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerDropped)
 	}
+
+	// The id KAS RETURNED, which is what every later frame carries, and the
+	// ONLY evidence anywhere that these words are the user's.
+	steers.RecordUserSteer(cmd.ChatID, result.MessageID)
 
 	// No event is broadcast here: KAS answers a successful steer with its
 	// own `steering_queued` frame, which the translate layer turns into

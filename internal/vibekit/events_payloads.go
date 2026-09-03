@@ -146,6 +146,17 @@ const (
 	// collapsed card needs to know a machine made this choice, and on which
 	// side it defaults.
 	SettledByUnattended SettledBy = "unattended"
+	// SettledByMoot means NOBODY answered and nobody had to: the question stopped
+	// being answerable on its own. A workflow step's ask reaches this when its node
+	// moves on (answered from the TUI, or failed, or aborted) and when its run ends
+	// while still holding it.
+	//
+	// It exists because the other two both ASSERT an answer, and a card retired
+	// under one of them tells the reader their question was decided when it was
+	// discarded. Only a run ask can carry it — a request-shaped ask is claimed by
+	// whoever responds to its JSON-RPC request, so there is no third party to
+	// retire it out from under them.
+	SettledByMoot SettledBy = "moot"
 )
 
 // DecisionSettledPayload is the payload for type="decision_settled": the
@@ -235,6 +246,16 @@ type TurnStatePayload struct {
 	// ChunkSeq is the sequence number of the last delta folded into
 	// Message (see MessageChunkPayload.Seq).
 	ChunkSeq int64 `json:"chunk_seq,omitempty"`
+	// WorkflowStep marks a replayed turn that belongs to a workflow RUN rather
+	// than to this chat: a chat-parented run executes on the launching chat's
+	// session, so a step's frames opened this turn.
+	//
+	// The contract for a client: APPLY the snapshot, do NOT set thinking. The
+	// snapshot is the only copy of an in-flight step's transcript (it is never
+	// persisted), so the event still has to be emitted — but the chat's own agent
+	// is idle, and a client that reads this turn as the chat working says so for
+	// the whole run, on every reconnect, with nothing to clear it.
+	WorkflowStep bool `json:"workflow_step,omitempty"`
 }
 
 // ErrorCode identifies an SSE error event class. Using a typed string
@@ -593,14 +614,13 @@ type SettingsUpdatedPayload struct{}
 // event is the ONLY source for every other device — and for the sender itself
 // after a reconnect. The chip row is a projection of server state, so it has to
 // be reconstructible from the events alone.
-//
-// Everything here is the USER's own outbound message. A notice KAS classified as
-// coming from a workflow step or a subagent arrives on the same wire channel but
-// leaves as EventAgentNotice, so no consumer of this payload has to ask whose
-// words it is holding.
 type SteerQueuedPayload struct {
 	SteerID string `json:"steer_id"`
 	Text    string `json:"text"`
+	// Origin is whose words these are, resolved server-side against the steers
+	// this server sent. NO omitempty: an absent field lets the client invent a
+	// fallback, and the one it would pick is wrong for a workflow's report.
+	Origin SteerOrigin `json:"origin"`
 }
 
 // AgentNoticePayload is the payload for type="agent_notice": a progress notice a
@@ -644,6 +664,10 @@ type SteerInjectedPayload struct {
 	// "read: rebased onto main instead". Empty on the read frame, and empty when
 	// the agent closed its response without a marker.
 	Ack string `json:"ack,omitempty"`
+	// Origin is whose words these are, as on SteerQueuedPayload. On BOTH because an
+	// agent-injected steer has no queued frame (KAS 2.21.0 broadcasts one only from
+	// `_session/steer`), so for the case Origin names, this frame is the only one.
+	Origin SteerOrigin `json:"origin"`
 }
 
 // SteerClearedPayload is the payload for type="steer_cleared": the steers named

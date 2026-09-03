@@ -13,7 +13,9 @@ const { mockDismiss, mockToastError, mockErrorWithAction, mockActivateTab } = vi
   const dismiss = vi.fn();
   return {
     mockDismiss: dismiss,
-    mockToastError: vi.fn((_message: string): (() => void) => dismiss),
+    mockToastError: vi.fn(
+      (_message: string, _retry?: { label?: string; onClick: () => void }): (() => void) => dismiss,
+    ),
     mockErrorWithAction: vi.fn(
       (_message: string, _action: { label?: string; onClick: () => void }): (() => void) => dismiss,
     ),
@@ -89,6 +91,11 @@ function lastToast(): string {
 /** The action the last toast carried, undefined if it carried none. */
 function lastAction(): { label?: string; onClick: () => void } | undefined {
   return mockErrorWithAction.mock.calls.at(-1)?.[1];
+}
+
+/** The retry the last sticky toast carried, undefined if it carried none. */
+function lastStickyAction(): { label?: string; onClick: () => void } | undefined {
+  return mockToastError.mock.calls.at(-1)?.[1];
 }
 
 /** How many toasts were raised, by either entry point. */
@@ -246,6 +253,112 @@ describe("failure-notice dedupes the two channels one failure arrives on", () =>
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // The latch has to survive the retraction that precedes every raise, or it only
+  // ever covers a chat's FIRST failure: replacing a live toast drops the latch, so
+  // latching before that leaves the second failure's twin free to raise a duplicate.
+  it("dedupes both channels on a chat's SECOND distinct failure", () => {
+    reportFailure("c1", "at capacity");
+    reportFailure("c1", "too many requests");
+    reportFailure("c1", "too many requests");
+    expect(toastCount()).toBe(2);
+  });
+
+  // The latch is per chat because a failure's identity is: with one shared slot,
+  // an unrelated chat failing in between un-latches the twin still to arrive on
+  // the other channel, and the failure reports twice.
+  it("dedupes both channels when another chat fails in between", () => {
+    reportFailure("c1", "at capacity");
+    reportFailure("c2", "too many requests");
+    reportFailure("c1", "at capacity");
+    expect(toastCount()).toBe(2);
+  });
+});
+
+describe("failure-notice carries the route's own remedy", () => {
+  const remedy = { label: "Open custom instructions", onClick: () => undefined };
+
+  // A routed error's remedy is offered nowhere else, so it takes the one action
+  // slot from "Open chat" AND goes sticky. `error(msg, retry)` is toast.ts's sticky
+  // path and `errorWithAction` its 12s one, so which mock fires IS the assertion.
+  it("names a background chat and carries the remedy, stickily", () => {
+    reportFailure("c2", "bad agent front matter", remedy);
+    expect(mockErrorWithAction).not.toHaveBeenCalled();
+    expect(lastToast()).toBe("Write the docs: bad agent front matter");
+    expect(lastStickyAction()?.label).toBe("Open custom instructions");
+  });
+
+  it("carries it stickily for the chat that IS on screen, unprefixed", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    expect(mockErrorWithAction).not.toHaveBeenCalled();
+    expect(lastToast()).toBe("bad agent front matter");
+    expect(lastStickyAction()?.label).toBe("Open custom instructions");
+  });
+
+  // A sticky remedy is the only thing on screen saying the runtime is broken, so a
+  // later failure on the same chat must not silently dismiss it — which the
+  // per-chat replace would do if a remedy-bearing notice were registered as live.
+  it("is not retracted by a later failure on the same chat", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    reportFailure("c1", "at capacity");
+    expect(mockDismiss).not.toHaveBeenCalled();
+    expect(toastCount()).toBe(2);
+  });
+
+  // Nothing expires a sticky notice, so a repeat past the dedupe window is the one
+  // raise that must retract the copy it repeats: two identical remedies standing
+  // side by side indefinitely crowd out the next real error.
+  it("replaces its own repeat rather than standing beside it", () => {
+    vi.useFakeTimers();
+    try {
+      reportFailure("c1", "bad agent front matter", remedy);
+      vi.advanceTimersByTime(6_000);
+      reportFailure("c1", "bad agent front matter", remedy);
+      // Two raised, one retracted: one on screen.
+      expect(toastCount()).toBe(2);
+      expect(mockDismiss).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A broken agent file or a dead login is reported per chat, so one fault reaches
+  // N chats as N notices. Each names its own chat, so none may retract another —
+  // which is why the key carries the chat and not the reason alone. What stops N
+  // growing without bound is the toast surface's own sticky cap, not this map.
+  it("leaves another chat's remedy standing", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    reportFailure("c2", "bad agent front matter", remedy);
+    expect(toastCount()).toBe(2);
+    expect(mockDismiss).not.toHaveBeenCalled();
+  });
+
+  // The other direction of the same key: a chat's own repeat still replaces itself
+  // after another chat has reported the identical failure.
+  it("replaces its own repeat after another chat reported the same failure", () => {
+    vi.useFakeTimers();
+    try {
+      reportFailure("c1", "bad agent front matter", remedy);
+      reportFailure("c2", "bad agent front matter", remedy);
+      vi.advanceTimersByTime(6_000);
+      reportFailure("c1", "bad agent front matter", remedy);
+      expect(toastCount()).toBe(3);
+      expect(mockDismiss).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Which is why the handle is held per FAILURE and not per chat: two remedies on
+  // one chat are two problems, and the first must still be able to replace its own
+  // repeat after the second has arrived.
+  it("replaces its own repeat after a different remedy came in between", () => {
+    reportFailure("c1", "bad agent front matter", remedy);
+    reportFailure("c1", "refresh token expired", { label: "Sign in", onClick: () => undefined });
+    reportFailure("c1", "bad agent front matter", remedy);
+    expect(toastCount()).toBe(3);
+    expect(mockDismiss).toHaveBeenCalledTimes(1);
   });
 });
 

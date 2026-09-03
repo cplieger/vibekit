@@ -517,22 +517,23 @@
   cursor: pointer;
   box-sizing: border-box;
 
-  /* Connecting (default/yellow): gentle breathing pulse */
+  /* Connecting (default/yellow): gentle breathing pulse. Motion here means an
+     UNSETTLED state, which is this app's motion axis, so it stays. */
   animation: vk-breathe 2s ease-in-out infinite;
 
-  /* Connected (green): infrequent ripple ping */
+  /* Connected (green): a STILL disc. It used to carry a `vk-ping` ripple on an
+     `::after` overlay every 4 seconds, forever — a dot pulsing in the healthy
+     steady state, in the same green the tab dot uses for a finished turn, next to
+     a card showing credits, which is why it read as a work indicator rather than
+     as a transport light. This dot has never reported a turn.
+     The `::after` went with the animation rather than just the animation: the
+     overlay was an opaque green disc at `inset: 0` and `vk-ping` was the only
+     thing fading it, so removing one declaration would have left a solid layer
+     covering the dot. `@keyframes vk-ping` stays in 03-base.css — the cloned-repo
+     indicator in 22-git-multirepo.css still uses it. */
   &.connected {
     background: var(--c-green);
     animation: none;
-  }
-
-  &.connected::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    background: var(--c-green);
-    animation: vk-ping 4s ease-out infinite;
   }
 
   /* Disconnected (red): static, no animation */
@@ -585,14 +586,9 @@
     animation: none;
   }
 
-  .status-dot.connected::after {
-    inset: auto;
-    top: 50%;
-    left: 50%;
-    width: 0.5rem;
-    height: 0.5rem;
-    translate: -50% -50%;
-  }
+  /* No `.status-dot.connected::after` twin here. It only re-centred the ripple
+     overlay inside the 44px touch box and set no `content`, so with the desktop
+     rule gone the pseudo never generates and this was a dead layer. */
 }
 
 /* User button + popup */

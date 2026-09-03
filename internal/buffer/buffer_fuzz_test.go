@@ -63,5 +63,39 @@ func FuzzBufferTrackFileChanges(f *testing.F) {
 				t.Fatal("ChangedFiles contains empty-string key")
 			}
 		}
+
+		// Oracle for the counts: each side's line count bounds its own tally,
+		// nothing is negative, and identical texts change nothing. The last one
+		// is the property the newline count could never hold — it reported a
+		// whole file removed and re-added for a write that changed nothing.
+		bound := make(map[string][2]int, len(diffs))
+		unchanged := make(map[string]bool, len(diffs))
+		for _, d := range diffs {
+			if d.Path == "" {
+				continue
+			}
+			b := bound[d.Path]
+			b[0] += len(splitDiffLines(d.NewText))
+			b[1] += len(splitDiffLines(d.OldText))
+			bound[d.Path] = b
+			if _, seen := unchanged[d.Path]; !seen {
+				unchanged[d.Path] = true
+			}
+			if d.OldText != d.NewText {
+				unchanged[d.Path] = false
+			}
+		}
+		for path, fc := range buf.ChangedFiles {
+			if fc.LinesAdded < 0 || fc.LinesRemoved < 0 {
+				t.Fatalf("%s: negative counts +%d/-%d", path, fc.LinesAdded, fc.LinesRemoved)
+			}
+			b := bound[path]
+			if fc.LinesAdded > b[0] || fc.LinesRemoved > b[1] {
+				t.Fatalf("%s: counts +%d/-%d exceed line counts +%d/-%d", path, fc.LinesAdded, fc.LinesRemoved, b[0], b[1])
+			}
+			if unchanged[path] && (fc.LinesAdded != 0 || fc.LinesRemoved != 0) {
+				t.Fatalf("%s: unchanged text reported +%d/-%d, want +0/-0", path, fc.LinesAdded, fc.LinesRemoved)
+			}
+		}
 	})
 }

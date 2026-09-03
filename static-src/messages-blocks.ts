@@ -39,11 +39,8 @@
 // appended into that box's body, which is the same one-invocation-hosts-N-children
 // shape the run card uses for workflow steps.
 //
-// Before that join the two rendered as flat siblings with no relation the DOM
-// could express, and both spun: the driver as an ordinary tool card at 0.8s, the
-// stage box at 0.6s, so two rings beat against each other for one delegated task.
-// The pipeline box is therefore built with the `container` activity variant, which
-// keeps its glyph and shows activity dots only while it is collapsed.
+// EXCEPT at exactly ONE stage, which renders no container: that stage's own card
+// is promoted where the container would have gone. See `pipelineHasContainer`.
 // ---------------------------------------------------------------------------
 
 import type { Message, Block, ToolCall, PlanStatus, FileChange, SteerMark } from "./types.js";
@@ -57,7 +54,7 @@ import {
   peekToolCallSig,
   clearToolCallSig,
 } from "./store-signals.js";
-import { lineDiff, stats } from "./diff.js";
+import { lineDelta } from "./diff.js";
 import { isInternalToolTitle, isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
 import {
@@ -86,7 +83,7 @@ import {
 // path (initToolCallbacks) — the same header renderer the block dispatcher uses.
 export { refreshGroupHeader };
 import { iconForSubagent, isSubagentInvocation, subagentLabel, subagentName } from "./roles.js";
-import { ICON_TAB_RUN } from "./icons.js";
+import { parseStepSubtask, type StepSubtask } from "./step-subtask.js";
 import { buildRunCard, type RunCardView } from "./fundamentals/run-card.js";
 import { invalidateRun, runState, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -295,6 +292,11 @@ interface MsgRender {
   /** orchestrate tool-call id → its stage subtask ids, in first-seen order. The
    *  pipeline footer's ledger sums over these. */
   pipelineStages: Map<string, string[]>;
+  /** orchestrate tool-call id → its declared `stages` length, `0` when that field is
+   *  absent or malformed, and a FLOOR rather than the answer (`pipelineStageCount`).
+   *  Complete on arrival: the server writes `ToolCall.Input` on the create frame and
+   *  never on an update, so there is no partial-input window. */
+  pipelineDeclared: Map<string, number>;
   /** workflow id → the run card THIS render hosts. Keyed by RUN, not by
    *  subtask, because one card holds every step of one run — the step rows inside
    *  it are keyed by node path (see `runContainerFor`). Only the HOST render of a
@@ -409,6 +411,7 @@ function buildBody(
     pipelines: new Map(),
     stagePipeline: new Map(),
     pipelineStages: new Map(),
+    pipelineDeclared: new Map(),
     runs: new Map(),
     runEffects: new Map(),
     disposers: [],
@@ -811,6 +814,7 @@ function flushSteerNotes(
       st.blocksEl,
       buildSteerNote({
         text: mark.text,
+        origin: mark.origin,
         ...(mark.ack !== undefined ? { ack: mark.ack } : {}),
         dropped: mark.dropped === true,
         onRestore: () => {
@@ -923,38 +927,83 @@ function subagentOpenerFor(st: MsgRender, subtask: string): { open?: SubagentOpe
   };
 }
 
-/** Where a stage's own box goes: its pipeline's body when the stage belongs to
- *  one, otherwise the top level. Creating the pipeline box here is what makes the
- *  two arrival orders equivalent — the orchestrate call and its first stage race
- *  on the wire, and after a refresh the orchestrate call is persisted while the
- *  stage's blocks are not. Whichever arrives first builds the box; the other
- *  finds it. Same contract as `runCardFor`. */
+/** Where a stage's own box goes: its pipeline's body when that pipeline has a
+ *  container, otherwise the top level. Building the box here makes the two arrival
+ *  orders equivalent — call and first stage race on the wire, and a refresh
+ *  persists the call but not the stage's blocks. Same contract as `runCardFor`.
+ *
+ *  An EXISTING container wins over the count, so that check is first: the count can
+ *  rise after a container exists, and a stage beside a container its own pipeline
+ *  owns is the flat-siblings shape the join removed. */
 function stageHostFor(st: MsgRender, subtask: string, live: boolean): HTMLElement {
   const pipelineID = st.stagePipeline.get(subtask);
   if (pipelineID === undefined) {
     return st.blocksEl;
   }
+  const existing = st.pipelines.get(pipelineID);
+  if (existing !== undefined) {
+    return existing.body;
+  }
+  if (!pipelineHasContainer(st, pipelineID)) {
+    return st.blocksEl;
+  }
   return pipelineBoxFor(st, pipelineID, live).body;
 }
 
-/** Get or build the PIPELINE box for one orchestrate tool call.
+/** Write the driver's header onto its box: the label from the stage COUNT, the
+ *  status and the footer ledger from the driver's own call. */
+function paintPipeline(st: MsgRender, box: SubagentView, driver: ToolCall): void {
+  box.setName(pipelineLabel(st, driver.id));
+  box.setStatus(driver.status);
+  box.setSummary(pipelineSummary(st, driver));
+}
+
+/** Get or build the PIPELINE box for one orchestrate tool call. Built with the
+ *  `container` activity variant (fundamentals/subagent-block.ts).
  *
- *  The `container` activity variant is the whole point: its stages carry the
- *  spinners, so this card keeps its identity glyph and shows activity dots only
- *  while it is collapsed. See fundamentals/subagent-block.ts SubagentActivity. */
+ *  It also ADOPTS any stage of its own sitting at the top level, which is the
+ *  upgrade path after a lone stage was promoted. A RE-PARENT, never a rebuild: the
+ *  move carries the disclosure, the tail observer, the reveal loop, every effect
+ *  and the page link with the node, so nothing streamed or toggled is lost. A box the
+ *  STAGE path built also paints ITSELF — the self-paint at the tail says why. */
 function pipelineBoxFor(st: MsgRender, pipelineID: string, live: boolean): SubagentView {
   const existing = st.pipelines.get(pipelineID);
   if (existing !== undefined) {
     return existing;
   }
-  const box = buildSubagentBlock("Pipeline", live ? "in_progress" : "completed", {
-    activity: "container",
-  });
-  box.setIcon(ICON_TAB_RUN);
+  const box = buildSubagentBlock(
+    pipelineLabel(st, pipelineID),
+    live ? "in_progress" : "completed",
+    { activity: "container" },
+  );
   box.root.dataset["pipeline"] = pipelineID;
   st.pipelines.set(pipelineID, box);
-  closeToolGroup(st, st.blocksEl);
-  appendBlock(st, st.blocksEl, box.root);
+  const promoted = (st.pipelineStages.get(pipelineID) ?? [])
+    .map((subtask) => st.subagents.get(subtask))
+    .filter((v): v is SubagentView => v?.root.parentElement === st.blocksEl);
+  const first = promoted[0];
+  if (first === undefined) {
+    closeToolGroup(st, st.blocksEl);
+    appendBlock(st, st.blocksEl, box.root);
+  } else {
+    // Lands where the first adopted stage sat, keeping transcript order. Neither
+    // `appendBlock` nor `closeToolGroup`: nothing is posted after an open trace
+    // by swapping a node already in place, and that stage's append closed the
+    // group.
+    first.root.replaceWith(box.root);
+  }
+  for (const v of promoted) {
+    box.body.appendChild(v.root);
+  }
+  // A box the STAGE path built paints itself, because nothing else will: the driver's
+  // own paint may have run already and returned early (this pipeline looked promoted
+  // then), and its effect re-runs only when the tool call CHANGES, which a settled
+  // driver has none of. Left out, such a box keeps the countless title, reads its
+  // status from `live` — running, over finished work — and never attaches its ledger.
+  const driver = peekToolCallSig(st.chatID, pipelineID);
+  if (driver !== undefined) {
+    paintPipeline(st, box, driver);
+  }
   return box;
 }
 
@@ -1425,17 +1474,22 @@ function mountTodo(st: MsgRender, msgId: string, container: HTMLElement, tc: Too
   });
 }
 
-/** Wire the PIPELINE invocation tool's status and label onto its box header, and
- *  the box's footer ledger onto every stage's members.
+/** Wire the PIPELINE invocation's SHAPE and header onto its box, and the box's
+ *  footer ledger onto every stage's members.
  *
- *  Deliberately not folded into `bindSubagent`: the label comes from the stage
- *  COUNT rather than a subagent name, the icon is fixed, and the ledger sums
- *  across stages instead of over one subtask's members. */
+ *  A PROMOTED pipeline paints nothing, so `driverNeedsBox` gates the whole paint.
+ *  The writing itself is `paintPipeline`, which `pipelineBoxFor` also runs — one
+ *  owner, and the WHY for painting unconditionally is stated there. Not folded into
+ *  `bindSubagent`: the label comes from the stage COUNT, and the ledger sums across
+ *  stages rather than one subtask's members. */
 function bindPipeline(st: MsgRender, msgId: string, tc: ToolCall, live: boolean): void {
-  const box = pipelineBoxFor(st, tc.id, live);
-  box.setName(pipelineLabel(tc));
-  box.setStatus(tc.status);
-  box.setSummary(pipelineSummary(st, tc));
+  const paint = (next: ToolCall): void => {
+    if (!driverNeedsBox(st, next)) {
+      return;
+    }
+    paintPipeline(st, pipelineBoxFor(st, tc.id, live), next);
+  };
+  paint(tc);
   const sig = ensureToolCallSig(st.chatID, tc.id, tc);
   let last = tc;
   const cleanup = effect(() => {
@@ -1443,14 +1497,7 @@ function bindPipeline(st: MsgRender, msgId: string, tc: ToolCall, live: boolean)
     if (next === last) {
       return;
     }
-    if (next.status !== last.status) {
-      box.setStatus(next.status);
-    }
-    const label = pipelineLabel(next);
-    if (label !== pipelineLabel(last)) {
-      box.setName(label);
-    }
-    box.setSummary(pipelineSummary(st, next));
+    paint(next);
     last = next;
   });
   pushLifetimeEffect(st, msgId, () => {
@@ -1556,11 +1603,15 @@ function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): 
       reads++;
     }
     for (const d of tc.diffs ?? []) {
-      const s = stats(lineDiff(d.old_text ?? "", d.new_text));
+      // lineDelta rather than stats(lineDiff(...)): it strips the trailing
+      // newline first, so these numbers match the ones the SERVER computes for
+      // the turn footer (internal/buffer/linediff.go) rather than counting the
+      // empty line a final newline leaves behind.
+      const s = lineDelta(d.old_text ?? "", d.new_text);
       const cur = changed[d.path] ?? { lines_added: 0, lines_removed: 0 };
       changed[d.path] = {
-        lines_added: cur.lines_added + s.adds,
-        lines_removed: cur.lines_removed + s.dels,
+        lines_added: cur.lines_added + s.added,
+        lines_removed: cur.lines_removed + s.removed,
       };
     }
   }
@@ -1645,36 +1696,8 @@ function mountPlan(wrap: HTMLElement, m: Message): void {
 // Subagent + todo classification / parsing
 // ---------------------------------------------------------------------------
 
-/** The prefix the server stamps on a WORKFLOW STEP's subtask id
- *  (`internal/translate/wire.go` ACPWorkflowMeta.SubtaskID:
- *  `"wf:" + workflowId + ":" + nodePath`). */
-const STEP_PREFIX = "wf:";
-
-/** A step subtask id, split into the two containers it names. */
-interface StepSubtask {
-  workflowID: string;
-  nodePath: string;
-}
-
-/** Parse `wf:<workflowId>:<a/b/c>`, or null for a subagent's uuid.
- *
- *  One `indexOf` rather than a `split`, because a node path may not contain a
- *  colon but nothing here should depend on that: taking the FIRST colon after the
- *  prefix makes the workflow id unambiguous and hands everything after it to the
- *  path, whatever it contains. A malformed id (no second colon, or an empty half)
- *  returns null and falls through to the subagent branch, which renders it as a
- *  delegate box rather than losing the block. */
-function parseStepSubtask(subtask: string): StepSubtask | null {
-  if (!subtask.startsWith(STEP_PREFIX)) {
-    return null;
-  }
-  const rest = subtask.slice(STEP_PREFIX.length);
-  const sep = rest.indexOf(":");
-  if (sep <= 0 || sep === rest.length - 1) {
-    return null;
-  }
-  return { workflowID: rest.slice(0, sep), nodePath: rest.slice(sep + 1) };
-}
+// STEP_PREFIX / parseStepSubtask moved to step-subtask.ts: `handlers/messages.ts`
+// needs the same question and must not import this module's render graph.
 
 /** The tool call that STARTS a workflow run. Matched on the workflow id the
  *  server decoded off its `rawOutput`, never on the title: KAS titles it "Run
@@ -1727,20 +1750,20 @@ function isPipelineInvocation(tc: ToolCall): boolean {
   return tc.title === "Orchestrate Sub-agent";
 }
 
-/** Learn which pipeline each stage subtask belongs to, from the message's tool
- *  calls alone.
+/** Learn which pipeline each stage subtask belongs to, and how many stages each
+ *  DRIVER declared, from the message's tool calls alone.
  *
- *  This is the join, and it is done from the TOOL CALL ARRAY rather than from the
- *  frames precisely so it has no ordering dependency: a stage's text block carries
- *  only a bare subtask uuid, which names nothing, while the stage's invocation
- *  carries both that uuid and its pipeline's id. Scanning the whole array means a
- *  stage whose text arrived before its invocation is still placed correctly on the
- *  next pass, so the two arrival orders agree.
- *
- *  Idempotent and append-only: it runs on every render pass, and a stage keeps the
- *  pipeline it was first seen under. */
+ *  Read from the TOOL CALL ARRAY rather than the frames so it has no ordering
+ *  dependency: a stage's text block carries a bare subtask uuid, while its
+ *  invocation carries that uuid AND its pipeline's id, so a stage whose text
+ *  arrived first is still placed on the next pass. The driver branch precedes the
+ *  subtask guard because a driver has none. A stage keeps its first pipeline. */
 function indexPipelines(st: MsgRender, m: Message): void {
   for (const tc of m.tool_calls ?? []) {
+    if (isPipelineInvocation(tc)) {
+      st.pipelineDeclared.set(tc.id, declaredStageCount(tc));
+      continue;
+    }
     const subtask = tc.agent_subtask_id ?? "";
     if (subtask === "") {
       continue;
@@ -1759,21 +1782,17 @@ function indexPipelines(st: MsgRender, m: Message): void {
   }
 }
 
-/** The pipeline box's header label: its stage count, which is the one fact worth
- *  reading on a collapsed box. The count comes from the invocation's own declared
- *  `stages` when it has them and otherwise from the stages seen so far, so a
- *  pipeline still names itself honestly while it is being discovered. The `task`
- *  field is deliberately not used — it is a paragraph of prose, and this is a
- *  one-line header that ellipsizes. */
-function pipelineLabel(tc: ToolCall): string {
-  const n = declaredStageCount(tc);
-  if (n === 1) {
-    return "Pipeline · 1 stage";
-  }
-  if (n > 1) {
-    return `Pipeline · ${String(n)} stages`;
-  }
-  return "Pipeline";
+/** The pipeline box's header label: its KIND plus its stage count.
+ *
+ *  "Subagent pipeline", not "Pipeline": the bare word names no kind, and this app
+ *  has a second container for delegated work — the run card, titled with its
+ *  workflow's own recipe name. Byte-identical to `subagent-exec-source.ts`'s
+ *  `ExecRun.label` for the same object, so transcript and page agree. No one-stage
+ *  form, because a one-stage pipeline renders no container. `task` is unused: it is
+ *  prose, and this header ellipsizes. */
+function pipelineLabel(st: MsgRender, pipelineID: string): string {
+  const n = pipelineStageCount(st, pipelineID);
+  return n > 1 ? `Subagent pipeline · ${String(n)} stages` : "Subagent pipeline";
 }
 
 function declaredStageCount(tc: ToolCall): number {
@@ -1785,6 +1804,42 @@ function declaredStageCount(tc: ToolCall): number {
     }
   }
   return 0;
+}
+
+/** How many stages this pipeline has, as best this render can tell: the GREATER of the
+ *  driver's declared count and the stages seen so far.
+ *
+ *  Both are lower bounds, which is why neither wins outright. Declared is the only
+ *  source that knows a stage still on its way; observed is the only one that knows a
+ *  driver dispatched MORE than it declared — where taking declared alone promoted
+ *  every one of them to a flat sibling with no relation the DOM expresses. */
+function pipelineStageCount(st: MsgRender, pipelineID: string): number {
+  const declared = st.pipelineDeclared.get(pipelineID) ?? 0;
+  return Math.max(declared, (st.pipelineStages.get(pipelineID) ?? []).length);
+}
+
+/** Whether this pipeline renders a CONTAINER at all.
+ *
+ *  ONE stage is PROMOTED instead: a container over a single card is two
+ *  disclosures, two headers and two ledgers for one piece of work, and the
+ *  promoted card keeps the page link a container lacks. Every other count keeps
+ *  the container, ZERO included — a driver with no stage has nothing standing in
+ *  for it, and a block that renders nothing is a lost block. */
+function pipelineHasContainer(st: MsgRender, pipelineID: string): boolean {
+  return pipelineStageCount(st, pipelineID) !== 1;
+}
+
+/** Whether the DRIVER's own block has a box to render.
+ *
+ *  Its own function rather than `pipelineHasContainer` at the call site because of
+ *  the one exception: a driver that SETTLED having dispatched no stage would
+ *  otherwise be invisible. Deferring to the settle is what stops that fallback
+ *  displacing a stage still on its way. */
+function driverNeedsBox(st: MsgRender, tc: ToolCall): boolean {
+  if (pipelineHasContainer(st, tc.id)) {
+    return true;
+  }
+  return !isToolActive(tc.status) && (st.pipelineStages.get(tc.id)?.length ?? 0) === 0;
 }
 
 /** kiro-cli's todo tracker surfaces as a `todo_list` tool call. Match the tool

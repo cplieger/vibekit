@@ -19,7 +19,12 @@ import type { RunState } from "./run-store.js";
 const m = {
   painted: [] as { id: string; status: string }[],
   tabs: new Set<string>(),
-  asking: new Set<string>(),
+  // One entry per unanswered ask, as the dock holds it: the chat id it is FILED
+  // under plus the run stamped on its payload. Two fields rather than one set of
+  // keys, because the two keyings are exactly what the join has to reconcile — a
+  // parentless run's ask is filed under `run:<id>` with no chat, an
+  // agent-launched one under the LAUNCHING chat with the run on the payload.
+  asks: [] as { chatID: string; runID: string }[],
   states: new Map<string, RunState>(),
 };
 
@@ -41,9 +46,16 @@ vi.mock("./tabs.js", () => ({
 // loses the dependency that makes it repaint.
 const queueVersion = signal(0);
 vi.mock("./decision-dock.js", () => ({
-  hasPendingDecision: vi.fn((id: string) => {
+  // The RUN-scoped reader, and the fake performs the real join rather than a set
+  // lookup: `hasPendingDecision` is a CHAT-keyed predicate, so passing it a
+  // workflow id matched nothing ever and an agent-launched run's ask — the one
+  // population whose asks arrive on a chat bridge — never reached this dot.
+  // Production importing that name again fails the suite at link time.
+  runPendingAsks: vi.fn((workflowID: string) => {
     void queueVersion.value;
-    return m.asking.has(id);
+    const runKey = `run:${workflowID}`;
+    const mine = m.asks.filter((a) => a.runID === workflowID || a.chatID === runKey);
+    return { count: mine.length, nodes: new Set<string>(), label: "" };
   }),
 }));
 
@@ -80,7 +92,7 @@ let installed = false;
 beforeEach(() => {
   m.painted.length = 0;
   m.tabs.clear();
-  m.asking.clear();
+  m.asks.length = 0;
   m.states.clear();
   if (!installed) {
     installRunDotSubscriber();
@@ -165,26 +177,55 @@ describe("the status comes from the store, as a tracked read", () => {
 });
 
 describe("the dot repaints on a dock change, with no run event", () => {
-  it("flips to input when an ask lands under the synthetic chat id", () => {
+  it("flips to input when a PARENTLESS run's ask lands under the synthetic chat id", () => {
     m.tabs.add("run:wf_5");
     m.states.set("wf_5", { workflowId: "wf_5", status: "running" });
     trackRun("wf_5");
     m.painted.length = 0;
 
-    m.asking.add("run:wf_5");
+    m.asks.push({ chatID: "run:wf_5", runID: "wf_5" });
     dockChanged();
     expect(m.painted).toEqual([{ id: "run:wf_5", status: "input" }]);
   });
 
-  it("also joins on the bare workflow id, the dock's other key", () => {
+  // The half the chat-keyed predicate could never see: an agent-launched run's ask
+  // is filed under the LAUNCHING chat's id, so only a scan over the payload's run
+  // finds it. Before the run-scoped reader this population had no amber dot at all,
+  // which is the same masking one level up from the transcript's run card.
+  it("flips to input for a CHAT-PARENTED run's ask, filed under the launching chat", () => {
     m.tabs.add("run:wf_6");
     m.states.set("wf_6", { workflowId: "wf_6", status: "running" });
     trackRun("wf_6");
     m.painted.length = 0;
 
-    m.asking.add("wf_6");
+    m.asks.push({ chatID: "c1", runID: "wf_6" });
     dockChanged();
     expect(m.painted).toEqual([{ id: "run:wf_6", status: "input" }]);
+  });
+
+  it("goes back to the run's own status once the ask is answered", () => {
+    m.tabs.add("run:wf_answered");
+    m.states.set("wf_answered", { workflowId: "wf_answered", status: "running" });
+    trackRun("wf_answered");
+    m.asks.push({ chatID: "c1", runID: "wf_answered" });
+    dockChanged();
+    expect(m.painted.at(-1)).toEqual({ id: "run:wf_answered", status: "input" });
+
+    m.asks.length = 0;
+    dockChanged();
+    expect(m.painted.at(-1)).toEqual({ id: "run:wf_answered", status: "working" });
+  });
+
+  it("ignores another run's ask", () => {
+    m.tabs.add("run:wf_7b");
+    m.states.set("wf_7b", { workflowId: "wf_7b", status: "running" });
+    trackRun("wf_7b");
+    m.painted.length = 0;
+
+    m.asks.push({ chatID: "c1", runID: "wf_OTHER" });
+    m.asks.push({ chatID: "run:wf_OTHER", runID: "" });
+    dockChanged();
+    expect(m.painted).toEqual([{ id: "run:wf_7b", status: "working" }]);
   });
 });
 

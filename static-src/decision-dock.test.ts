@@ -54,7 +54,10 @@ import {
   rerenderDocks,
   pushDecision,
   dropDecisions,
+  dropRunDecisions,
   collapseSettledDecision,
+  collapseSettledRunInput,
+  RUN_INPUT_FALLBACK,
   DOCK_PHASE_MS,
   runPendingAsks,
   _resetForTest,
@@ -65,7 +68,7 @@ import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 // load-bearing cascade fact for the reduced-motion disarm below.
 import cssManifest from "./css/MANIFEST?raw";
 import { setSessions, setActive } from "./store.js";
-import type { PermissionNeededPayload, Session } from "./types.js";
+import type { PermissionNeededPayload, RunInputNeededPayload, Session } from "./types.js";
 
 function session(id: string): Session {
   return {
@@ -524,6 +527,282 @@ describe("the run tab's dock", () => {
     expect(chatSubmit).not.toHaveBeenCalled();
     // The chat's own ask is still on screen, unharmed.
     expect(liveCard()).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The FOURTH kind: a workflow step's question.
+//
+// It is the one decision that is not request-shaped — no int64 request id, a
+// string ask id instead — which is why the dock's internal key had to become a
+// per-kind composition. Every case here pins something that composition or the
+// second settle entry point could get wrong, and the whole point of the feature
+// is the first one: the prompt has to reach the PARENT TAB, the chat that
+// launched the run.
+// ---------------------------------------------------------------------------
+
+describe("a workflow step's question", () => {
+  function runInput(over: Partial<RunInputNeededPayload> = {}): RunInputNeededPayload {
+    return {
+      workflow_id: "wf_1",
+      ask_id: "notify:7",
+      node_id: "review",
+      step_session_id: "sess-1",
+      agent_name: "reviewer",
+      question: "Ship it?",
+      asked_at: "2026-09-03T10:00:00Z",
+      ...over,
+    };
+  }
+
+  function pushAsk(
+    chatID: string,
+    over: Partial<RunInputNeededPayload> = {},
+    submit: (text: string | null) => void = vi.fn(),
+  ): typeof submit {
+    const payload = runInput(over);
+    pushDecision({
+      kind: "run_input",
+      chatID,
+      runID: payload.workflow_id,
+      askID: payload.ask_id,
+      payload,
+      submit,
+    });
+    return submit;
+  }
+
+  function mountRunHost(run: () => string): HTMLElement {
+    const el = document.createElement("div");
+    el.id = "run-dock";
+    el.className = "hidden";
+    document.body.appendChild(el);
+    mountRunDecisionDock(el, run);
+    return el;
+  }
+
+  function textarea(h: HTMLElement = host()): HTMLTextAreaElement | null {
+    return liveCard(h)?.querySelector<HTMLTextAreaElement>(".run-input-text") ?? null;
+  }
+
+  it("renders in the PARENT TAB, keyed to the launching chat", () => {
+    // The bug: a step paused to ask and no prompt appeared anywhere. The
+    // envelope's chat id is the launching chat for an agent-parented run, so
+    // the composer dock's own matcher is what puts the card in the parent tab.
+    pushAsk("c1");
+    expect(host().classList.contains("hidden")).toBe(false);
+    expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
+    expect(liveCard()?.textContent).toContain("Ship it?");
+    expect(liveCard()?.textContent).toContain("reviewer \u00b7 step review");
+  });
+
+  it("renders a PARENTLESS run's ask too, keyed to the synthetic run chat", () => {
+    // A manual or scheduled run has no launching chat, so the server keys its
+    // ask to `run:<workflowId>`. That must not regress: the run tab's own dock
+    // is the only surface such a run has.
+    const runHost = mountRunHost(() => "wf_1");
+    pushAsk("run:wf_1");
+    // Not the composer's — `run:wf_1` is not a chat and has no tab.
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(liveCard(runHost)).not.toBeNull();
+  });
+
+  it("shows one ask in BOTH hosts and one answer clears both", () => {
+    const runHost = mountRunHost(() => "wf_1");
+    const submit = pushAsk("c1");
+    expect(liveCard()).not.toBeNull();
+    expect(liveCard(runHost)).not.toBeNull();
+
+    const box = textarea();
+    if (box !== null) {
+      box.value = "  yes, ship it  ";
+    }
+    clickButton("Send answer");
+    // Trimmed, because leading and trailing whitespace is not part of an answer.
+    expect(submit).toHaveBeenCalledWith("yes, ship it");
+    settleMotion();
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(runHost.classList.contains("hidden")).toBe(true);
+  });
+
+  it("sends null for continue-without-answering", () => {
+    // The post-restart door: the ask registry is in memory, so a restart leaves
+    // the run parked with the question gone and a reader cannot answer what they
+    // cannot read. `null` re-drives the step with KAS's own continuation.
+    const submit = pushAsk("c1", { question: "" });
+    expect(liveCard()?.textContent).toContain(RUN_INPUT_FALLBACK);
+    expect(liveCard()?.textContent).toContain("lost when the server restarted");
+    clickButton("Continue without answering");
+    expect(submit).toHaveBeenCalledWith(null);
+  });
+
+  it("refuses an empty answer instead of sending one", () => {
+    const submit = pushAsk("c1");
+    clickButton("Send answer");
+    expect(submit).not.toHaveBeenCalled();
+    // Still on screen: the box is the instruction, and waiving is its own button.
+    expect(liveCard()).not.toBeNull();
+  });
+
+  it("answers an ask at most once", () => {
+    const submit = pushAsk("c1");
+    const box = textarea();
+    if (box !== null) {
+      box.value = "ok";
+    }
+    const send = [...(liveCard()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent === "Send answer",
+    );
+    send?.click();
+    send?.click();
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a re-delivered ask (the connect replay re-offers every parked one)", () => {
+    // The server replays every parked step's question on connect, exactly as it
+    // replays every unanswered permission, so a reconnect must not stack a
+    // second copy. Identity is the ASK ID, not a request number.
+    pushAsk("c1");
+    pushAsk("c1");
+    expect(liveDepth()?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("keys separately from a permission carrying the same number", () => {
+    // A run ask id is arbitrary server-composed text. Pushing a permission with
+    // request id 1 beside an ask id of "1" must leave two decisions, or the
+    // per-kind identity has collapsed into one id space.
+    pushPerm("c1", 1);
+    pushAsk("c1", { ask_id: "1" });
+    expect(liveDepth()?.textContent).toBe("1 more waiting");
+  });
+
+  it("survives a switch away from the parent tab and back", () => {
+    pushAsk("c1");
+    setActive("c2");
+    settleMotion();
+    expect(host().classList.contains("hidden")).toBe(true);
+    setActive("c1");
+    expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
+  });
+
+  describe("runPendingAsks", () => {
+    it("counts an ask under either keying and names its step", () => {
+      pushAsk("c1", { ask_id: "notify:1", node_id: "review" });
+      pushAsk("run:wf_1", { ask_id: "notify:2", node_id: "build" });
+      const a = runPendingAsks("wf_1");
+      expect(a.count).toBe(2);
+      expect([...a.nodes].sort()).toEqual(["build", "review"]);
+      expect(a.label).toBe("Ship it?");
+    });
+
+    it("labels a question-less ask with the shared fallback", () => {
+      // The card's heading and the run card's alert have to read the same
+      // sentence, so the fallback is one exported constant rather than two.
+      pushAsk("run:wf_1", { question: "" });
+      expect(runPendingAsks("wf_1").label).toBe(RUN_INPUT_FALLBACK);
+    });
+
+    it("clears once the ask is answered", () => {
+      const runHost = mountRunHost(() => "wf_1");
+      pushAsk("run:wf_1");
+      expect(runPendingAsks("wf_1").count).toBe(1);
+      const box = textarea(runHost);
+      if (box !== null) {
+        box.value = "done";
+      }
+      clickButton("Send answer", runHost);
+      expect(runPendingAsks("wf_1").count).toBe(0);
+    });
+  });
+
+  describe("dropRunDecisions", () => {
+    it("clears a run-keyed ask, which the per-chat sweep cannot reach", () => {
+      // A transport gap drops every claim the client can no longer support and lets
+      // the connect replay re-offer what is still open. That sweep walks the chat
+      // store, and `run:<workflowId>` is no chat — so an ask ANSWERED during the
+      // outage kept its card (the settle is not replayed), the click answered 409,
+      // and the dock spliced a question that had already closed.
+      const submit = pushAsk("run:wf_1");
+      dropRunDecisions();
+      settleMotion();
+      expect(runPendingAsks("wf_1").count).toBe(0);
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("leaves an ask keyed to a launching CHAT alone", () => {
+      // That queue is the chat's, so `dropDecisions` already owns it in the same
+      // handler; dropping it here would take it down twice and, keyed on runID
+      // instead of the prefix, would reach every chat-keyed run ask as well.
+      pushAsk("c1");
+      dropRunDecisions();
+      expect(runPendingAsks("wf_1").count).toBe(1);
+      expect(liveCard()?.classList.contains("dock-run-input")).toBe(true);
+    });
+  });
+
+  describe("collapseSettledRunInput", () => {
+    it("retires the card and says a person answered elsewhere", () => {
+      const submit = pushAsk("c1");
+      collapseSettledRunInput("wf_1", "notify:7", "user");
+      settleMotion();
+
+      expect(host().classList.contains("hidden")).toBe(true);
+      // Never answered: the step's session already took someone else's words.
+      expect(submit).not.toHaveBeenCalled();
+      expect(mockToastInfo).toHaveBeenCalledWith(
+        "The workflow step's question was answered in another window.",
+      );
+    });
+
+    it("says a machine answered when the unattended floor did", () => {
+      pushAsk("c1");
+      collapseSettledRunInput("wf_1", "notify:7", "unattended");
+      expect(mockToastInfo).toHaveBeenCalledWith(
+        "The workflow step's question was answered automatically because nobody was watching.",
+      );
+    });
+
+    it("claims NO answer when the question merely stopped being answerable", () => {
+      // The reason a run ask needs a third settler the other three kinds do not: the
+      // step's node can move on and the run can end while it is still parked, and
+      // both retire the card without anybody replying. Saying "answered in another
+      // window" there is a sentence the reader can disprove.
+      pushAsk("c1");
+      collapseSettledRunInput("wf_1", "notify:7", "moot");
+      expect(mockToastInfo).toHaveBeenCalledWith(
+        "The workflow step's question is no longer waiting for an answer.",
+      );
+    });
+
+    it("finds a PARENTLESS run's ask, which no chat id names", () => {
+      // The settle event carries only the run, and a parentless ask is keyed to
+      // `run:<id>`, so the lookup has to scan every queue rather than one.
+      const runHost = mountRunHost(() => "wf_1");
+      pushAsk("run:wf_1");
+      collapseSettledRunInput("wf_1", "notify:7", "user");
+      settleMotion();
+      expect(runHost.classList.contains("hidden")).toBe(true);
+      expect(runPendingAsks("wf_1").count).toBe(0);
+    });
+
+    it("leaves an ask belonging to another run alone", () => {
+      pushAsk("c1");
+      collapseSettledRunInput("wf_OTHER", "notify:7", "user");
+      collapseSettledRunInput("wf_1", "notify:OTHER", "user");
+      collapseSettledRunInput("", "notify:7", "user");
+      collapseSettledRunInput("wf_1", "", "user");
+
+      expect(liveCard()).not.toBeNull();
+      expect(mockToastInfo).not.toHaveBeenCalled();
+    });
+
+    it("does not retire a permission with the same number as the ask id", () => {
+      const submit = pushPerm("c1", 7);
+      collapseSettledRunInput("wf_1", "7", "user");
+      expect(liveCard()).not.toBeNull();
+      clickButton("Allow");
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

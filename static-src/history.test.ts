@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PageFind } from "./find-registry.js";
 import type * as ModHistory from "./history.js";
+import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 
 /** Cache-buster for the re-imports below.
  *
@@ -338,21 +340,30 @@ describe("history: a run's outcome is a glyph, not a word", () => {
     hasTab.mockReturnValue(false);
   });
 
+  /** The markup a mark renders as, named off the shared set rather than inlined. */
+  const markup = (svg: string): string => (iconEl(svg) as HTMLElement).outerHTML;
+
+  // `mark` is null where the row KEEPS its identity glyph (the run glyph, tinted
+  // green) and the shared silhouette otherwise, which is the ratified rule: one
+  // mark per row, and its SHAPE changes for a non-success state.
   const settled = [
-    { status: "completed", cls: "is-ok", badge: "\u2713", word: "succeeded" },
-    { status: "failed", cls: "is-fail", badge: "\u2717", word: "failed" },
-    { status: "aborted", cls: "is-warn", badge: "\u26A0", word: "aborted" },
+    { status: "completed", cls: "is-ok", mark: null, word: "succeeded" },
+    { status: "failed", cls: "is-fail", mark: outcomeIcon("fail"), word: "failed" },
+    { status: "aborted", cls: "is-warn", mark: outcomeIcon("warn"), word: "aborted" },
   ] as const;
 
   for (const s of settled) {
-    it(`paints ${s.status} as a tinted glyph plus a shape, never the word`, async () => {
+    it(`paints ${s.status} as one tinted mark, never the word`, async () => {
       const c = await render({ sessions: [], runs: [runAt(s.status)] });
       const row = c.querySelector('[data-key="r:wf_1"]')!;
       const icon = row.querySelector(".tool-icon")!;
       expect(icon.classList.contains(s.cls)).toBe(true);
-      // Tint alone is one channel and fails WCAG 1.4.1, so the shape is not
-      // optional: check / cross / warning triangle.
-      expect(icon.querySelector(".tool-outcome-badge")?.textContent).toBe(s.badge);
+      // ONE mark, whichever state: never a glyph plus a badge beside it.
+      expect(icon.querySelectorAll("svg")).toHaveLength(1);
+      // Tint alone is one channel and fails WCAG 1.4.1, so the SHAPE is not
+      // optional — and this row's identity glyph is ICON_TAB_RUN rather than a
+      // toolIcon, which is why the writer captures it instead of recomputing it.
+      expect(icon.querySelector("svg")!.outerHTML).toBe(markup(s.mark ?? ICON_TAB_RUN));
       // The word is in the accessible name and nowhere else, and the row's own
       // "Open X" label survives in front of it.
       expect(openName(row)).toBe(`Open feature-pipeline, ${s.word}`);

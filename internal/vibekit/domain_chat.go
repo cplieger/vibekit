@@ -46,6 +46,22 @@ const (
 	// `completed`, which is what the derivation answers by default anyway. A row
 	// that changes no reading is a row the transcript does not need.
 	EventTurnOutcome EventKind = "turn_outcome"
+	// EventStepNotice is a message a workflow STEP sent into the chat that
+	// launched its run (`send_message`), replayed off the durable copy KAS keeps.
+	//
+	// It exists because that copy is persisted as `{type:"user", source:"steer"}`
+	// with `_meta.kiro.notification.kind = "system-notification"`, so on every
+	// `session/load` it replays as a user_message_chunk and became a USER BUBBLE:
+	// the transcript said the reader had typed a step's own question. The two
+	// discriminators that separate it from a real prompt are on the row, and this
+	// kind is what the projection turns them into.
+	//
+	// Not dropped the way a workflow-progress row is. That row is machine state
+	// for the run card and its content is a JSON blob; this one is prose a step
+	// addressed to a person, and it is the only DURABLE copy of a question the ask
+	// registry holds in memory — so losing it would make a restart lose the text
+	// from the transcript as well as from the dock.
+	EventStepNotice EventKind = "step_notice"
 )
 
 // ToolKind identifies the category of a tool invocation. Values are
@@ -343,8 +359,14 @@ type ToolLocation struct {
 // ToolDiff is a before/after text change from a write tool call. Sent
 // by kiro-cli in tool_call notifications for edit operations. Path is
 // workspace-relative (absolute paths from kiro-cli are normalised via
-// agent.relPath before being stored here); OldText/NewText are the
-// changed fragments, not full-file contents.
+// agent.relPath before being stored here).
+//
+// OldText/NewText carry the WHOLE FILE for KAS's edit tools (measured on the
+// live volume: 325 of 413 persisted fragments are whole-file shaped). A hunk
+// pair is also accepted — some tools send one — so a consumer must DIFF the two
+// sides rather than count their newlines: counting reported the entire file as
+// removed and re-added for a one-line edit. internal/buffer/linediff.go is the
+// one line-delta primitive, and its TypeScript twin is diff.ts's lineDelta.
 type ToolDiff struct {
 	Path    string `json:"path"`
 	OldText string `json:"old_text,omitempty"`

@@ -25,6 +25,7 @@ import type {
   RefusalInfo,
   FileChange,
   PendingSteer,
+  SteerOrigin,
   SteerAnchor,
   SteerMark,
 } from "./types.js";
@@ -489,9 +490,17 @@ export function setThinking(id: string, v: boolean): void {
   scheduleMessages(id, "fact");
 }
 
-/** Latch that this chat's last turn or bridge operation failed (`error` SSE).
- *  Cleared by the next `setThinking(id, true)`, so there is no explicit
- *  unlatch — a failure stands until work resumes. */
+/** Latch that this chat's last TURN failed — `turn_ended` carrying outcome
+ *  `failed` or `refused`. Cleared by the next `setThinking(id, true)`, so there
+ *  is no explicit unlatch — a failure stands until work resumes.
+ *
+ *  A turn is the ONLY producer, and the two other callers re-derive that same
+ *  verdict rather than widening it: `relatchTurnVerdict` off the persisted
+ *  `turn_outcome`, and `chat.send_prompt` restoring the snapshot it took. The
+ *  `error` handler used to latch this for every frame naming the chat, and it
+ *  stopped touching turn state when `endsTurn` was removed (handlers/turn.ts
+ *  records that), so no `error`-frame producer remains — which is the breadth
+ *  tabs.ts's narrow "turn failed" dot phrase is written against. */
 export function setTurnFailed(id: string): void {
   const s = get(id);
   if (s === undefined || s.turn_failed === true) {
@@ -799,7 +808,15 @@ export function recordSteerSent(id: string, messageID: string, text: string): vo
   if (s === undefined || messageID === "") {
     return;
   }
-  const entry: PendingSteer = { id: steerIDFor(messageID), text, pending: true };
+  // `user` is a FACT here, not a guess: this row is this device's own POST. It is
+  // the one place the client writes an origin, and the server's own frame
+  // confirms it under the same id a round trip later.
+  const entry: PendingSteer = {
+    id: steerIDFor(messageID),
+    text,
+    origin: "user",
+    pending: true,
+  };
   const existing = s.steers ?? [];
   // Idempotent by id: submit.ts reuses one message id for a retry of a failed
   // attempt, and that retry must refresh the row rather than add a second.
@@ -843,7 +860,10 @@ export function forgetSteer(id: string, steerID: string): void {
  *  id already PROMOTED is not resurrected — `steer_marks` is checked first,
  *  because a reconnect replays the queued frame for a steer the agent has since
  *  read, and branch 3 would otherwise put a delivered message back in the dock. */
-export function recordSteerQueued(id: string, steer: { id: string; text: string }): void {
+export function recordSteerQueued(
+  id: string,
+  steer: { id: string; text: string; origin: SteerOrigin },
+): void {
   const s = get(id);
   if (s === undefined || steer.id === "") {
     return;
@@ -855,7 +875,10 @@ export function recordSteerQueued(id: string, steer: { id: string; text: string 
   const at = existing.findIndex((e) => e.id === steer.id);
   const adoptAt =
     at >= 0 ? at : existing.findIndex((e) => e.pending === true && e.text === steer.text);
-  const entry: PendingSteer = { id: steer.id, text: steer.text };
+  // The frame's origin wins in every branch, including the adopt: the server
+  // resolved it against the ledger of what it sent, and the optimistic row's
+  // `user` was this device's claim about the same fact.
+  const entry: PendingSteer = { id: steer.id, text: steer.text, origin: steer.origin };
   const next =
     adoptAt >= 0 ? existing.map((e, i) => (i === adoptAt ? entry : e)) : [...existing, entry];
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
@@ -881,7 +904,13 @@ export function recordSteerQueued(id: string, steer: { id: string; text: string 
  *  would leave the transcript showing the agent change course with nothing
  *  explaining why. An ack-only frame for an id with no mark and no text IS
  *  ignored — with no text there is nothing to label the note with. */
-export function promoteSteer(id: string, steerID: string, text: string, ack?: string): void {
+export function promoteSteer(
+  id: string,
+  steerID: string,
+  text: string,
+  origin: SteerOrigin,
+  ack?: string,
+): void {
   const s = get(id);
   if (s === undefined || steerID === "") {
     return;
@@ -905,6 +934,7 @@ export function promoteSteer(id: string, steerID: string, text: string, ack?: st
     const mark: SteerMark = {
       id: steerID,
       text: body,
+      origin,
       ...(ack !== undefined && ack !== "" ? { ack } : {}),
       anchor: anchorFor(s),
     };
@@ -912,6 +942,9 @@ export function promoteSteer(id: string, steerID: string, text: string, ack?: st
     scheduleMessages(id, "fact"); // a mark renders inside the turn
     return;
   }
+  // No `origin` here: it is written once, on the frame that CREATES the mark. The
+  // ledger behind it is TTL'd, so a late second frame can answer `agent` for a
+  // message the first correctly named as the user's.
   const nextMarks = marks.map((m, i) =>
     i === mi
       ? {
@@ -963,7 +996,9 @@ export function dropSteers(id: string, steerIDs?: readonly string[]): void {
   const anchor = anchorFor(s);
   const added = going
     .filter((e) => !held.has(e.id))
-    .map((e): SteerMark => ({ id: e.id, text: e.text, dropped: true, anchor }));
+    // The dock entry's own origin, which came from the queued frame the server
+    // stamped: a dropped steer has no injected frame to read one off.
+    .map((e): SteerMark => ({ id: e.id, text: e.text, origin: e.origin, dropped: true, anchor }));
   sessions.update(id, (cur) =>
     withSteers(added.length > 0 ? { ...cur, steer_marks: [...marks, ...added] } : cur, rest),
   );

@@ -28,7 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import { truncate } from "./strings.js";
-import type { RunNode, RunState } from "./run-store.js";
+import { isNeedInputPause, type RunNode, type RunState } from "./run-store.js";
 import type { RunAsks } from "./fundamentals/run-card.js";
 import { stateOf, withAsk, inFlight, type ExecState, type WireStatus } from "./exec-view/status.js";
 import type { ExecFact, ExecKind, ExecNode, ExecRun } from "./exec-view/model.js";
@@ -307,10 +307,24 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     };
   }
   if (state.status === "paused") {
+    // The two `need_input` literals are REPLACED rather than quoted. Both name a
+    // tool and a mechanism (`send_message`, a node id) where what the reader needs
+    // to know is that somebody owes an answer, and the ask arm above already renders
+    // the question itself whenever one reached the dock — so this is the case where
+    // it did not: a restart lost the text, or this client has not been handed it yet.
+    //
+    // It also says what Resume alone will do, because on this page Resume is a
+    // BUTTON the reader can see: KAS's resume clears the run's pause reason and
+    // leaves the step's own signal, so the next step execution parks again. Waiving
+    // the question is the run card's "Continue without answering", which is in the
+    // dock beside the answer box.
     const bits = [
-      state.pauseReason === undefined || state.pauseReason === ""
-        ? "Waiting"
-        : `Waiting: ${state.pauseReason}`,
+      isNeedInputPause(state.pauseReason)
+        ? "A step is waiting for your answer \u2014 Resume alone will park it again; " +
+          "answer or waive it in the dock"
+        : state.pauseReason === undefined || state.pauseReason === ""
+          ? "Waiting"
+          : `Waiting: ${state.pauseReason}`,
     ];
     const code = state.pauseDetail?.code;
     if (code !== undefined && code !== "") {

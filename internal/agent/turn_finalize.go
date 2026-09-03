@@ -87,13 +87,14 @@ type turnStats struct {
 // turn's own open/finalize runs between the two untouched. Returns the epoch,
 // on which the caller holds a completion handle until ReleaseTurn; zero means
 // ctx died while the chat was finalizing. WAITS out a finalize in progress,
-// and a prompt-shaped source finding a turn the WIRE started CLOSES it
+// and a prompt-shaped source finding a turn the ENGINE started CLOSES it
 // first — no closer can claim that turn, so opening over it would drop
-// content already streamed to clients.
+// content already streamed to clients. That covers a workflow step's turn
+// as well as an agent-initiated one; both are the engine's.
 func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
 	if source.Acknowledgeable() {
-		if displaced, ok := bc.turns.displaceableWireTurn(chatID); ok {
-			slog.Info("a prompt displaced a live agent-initiated turn",
+		if displaced, ok := bc.turns.displaceableEngineTurn(chatID); ok {
+			slog.Info("a prompt displaced a live engine-opened turn",
 				"chat_id", chatID, "displaced_epoch", displaced, "source", source)
 			bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, Epoch: displaced})
 		}

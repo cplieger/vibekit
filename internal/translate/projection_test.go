@@ -682,6 +682,72 @@ func TestProjection_WorkflowProgressIsNotUserProse(t *testing.T) {
 	}
 }
 
+// TestProjection_StepNoticeIsNotUserProse pins that a workflow step's own
+// message does not come back attributed to the reader.
+//
+// KAS's deliverSendMessage writes it onto the LAUNCHING chat's transcript as
+// `{type:"user", source:"steer", content:<the message>}` with id
+// `notify-<uuid>` and `_meta.kiro.notification.kind: "system-notification"`, so
+// it replays on exactly the frame a real prompt does. Neither
+// workflow-progress discriminator matches it, which is why the question a step
+// asked used to render as something the user had typed.
+//
+// KEPT rather than dropped, unlike a workflow-progress row: that row is machine
+// state whose content is a JSON blob, while this is prose a step addressed to a
+// person and the only durable copy of a question the ask registry holds in
+// memory. So the assertion is on the ROLE, not on absence.
+//
+// Both discriminators are covered for the reason the sibling above gives.
+func TestProjection_StepNoticeIsNotUserProse(t *testing.T) {
+	const question = "Which branch should I target?"
+
+	cases := map[string]map[string]any{
+		"by id prefix": {
+			"messageId": "notify-3f2b1a04-0000-4000-8000-000000000000",
+			"timestamp": "2026-08-02T20:01:00.000Z",
+		},
+		"by notification kind": {
+			"messageId":    "some-other-id",
+			"timestamp":    "2026-08-02T20:01:00.000Z",
+			"notification": map[string]any{"kind": "system-notification", "status": "warning"},
+		},
+	}
+
+	for name, meta := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := NewProjection(seqIDs())
+			k, raw := replayFrame(t, replayUserChunkKind, question, "", meta)
+			p.Ingest(k, raw)
+			// A real prompt after it, so the two cannot be conflated and the test
+			// cannot pass by the projection producing nothing at all.
+			k2, raw2 := replayFrame(t, replayUserChunkKind, "a real question", "", map[string]any{
+				"messageId": "m-real",
+				"timestamp": "2026-08-02T20:02:00.000Z",
+			})
+			p.Ingest(k2, raw2)
+
+			got := p.Messages()
+			if len(got) != 2 {
+				t.Fatalf("got %d messages, want 2 (the step's note and the real prompt)", len(got))
+			}
+			if got[0].Role != vibekit.RoleEvent {
+				t.Errorf("the step's note has role %q, want %q", got[0].Role, vibekit.RoleEvent)
+			}
+			if got[0].EventKind != vibekit.EventStepNotice {
+				t.Errorf("event_kind = %q, want %q", got[0].EventKind, vibekit.EventStepNotice)
+			}
+			if got[0].Content != question {
+				t.Errorf("content = %q, want the question verbatim", got[0].Content)
+			}
+			// The real prompt is untouched: a note arriving mid-accumulation must
+			// not splice itself into a user message's text.
+			if got[1].Role != vibekit.RoleUser || got[1].Content != "a real question" {
+				t.Errorf("second message = %q/%q, want a user prompt", got[1].Role, got[1].Content)
+			}
+		})
+	}
+}
+
 // A compaction that lands before any message still records its summary. The
 // separator arrives at position 0 on a session whose whole history was
 // compacted, which is the one boundary where "no pending compaction" and

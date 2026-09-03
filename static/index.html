@@ -105,27 +105,37 @@
         <!-- One button, five destinations: find-dispatch.ts routes it by the
              active tab, so the label cannot name one view. It said "Search this
              chat" on every view, including the two where the click did nothing. -->
+        <!-- ONE GRID FOR THE WHOLE BAR: 24-unit viewBox, stroke 2, round caps and
+             joins, and every glyph's ink box 2..22 x 2..22 centred on (12,12) —
+             the hamburger's 3..21 is the one deliberate exception. Check a new
+             glyph with `getBBox()`, which returns the box WITHOUT the stroke, so
+             the ink is 1 unit wider on every side. -->
         <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search (Ctrl+F)" aria-label="Search" aria-pressed="false">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
         <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/></svg>
         </button>
         <button type="button" id="git-btn" class="icon-btn" data-tooltip="Toggle git" aria-label="Toggle git">
-          <svg class="git-btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
+          <svg class="git-btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="17" r="3"/><circle cx="6" cy="5" r="3"/><path d="M6 20V8a9 9 0 009 9"/></svg>
           <span id="git-badge" class="git-badge hidden"></span>
         </button>
         <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <!-- Boxed prompt, unlike the bare `>_` on the shell panel's own header
+               and on tool cards: a bare prompt reaches 12px of the grid's 15px and
+               only stretches if pushed further. The box needs 18px — at 14px its
+               chevron and underscore blur into the frame, so the 14px sites keep
+               the bare glyph. -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 9.5l2.5 2.5L8 14.5"/><path d="M13 15h4"/></svg>
         </button>
         <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
-          <svg class="icon-book" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5v13.5"/><path d="M2 4.5A2.5 2.5 0 014.5 2H9a3 3 0 013 3v1"/><path d="M2 4.5V16A2.5 2.5 0 004.5 18.5H9a3 3 0 013 1.5"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a3 3 0 00-3 3v1"/><path d="M22 4.5V16A2.5 2.5 0 0119.5 18.5H15a3 3 0 00-3 1.5"/></svg>
+          <svg class="icon-book" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 5.5A2.5 2.5 0 015.5 3H9a3 3 0 013 3v1"/><path d="M3 5.5V16.5A2.5 2.5 0 005.5 19H9a3 3 0 013 2"/><path d="M21 5.5A2.5 2.5 0 0018.5 3H15a3 3 0 00-3 3v1"/><path d="M21 5.5V16.5A2.5 2.5 0 0118.5 19H15a3 3 0 00-3 2"/></svg>
         </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         </button>
         <button type="button" id="menu-toggle" class="icon-btn mobile-only" data-tooltip="Menu" aria-label="Menu">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18M3 12h18M3 20h18"/></svg>
         </button>
       </div>
 
@@ -961,7 +971,7 @@
                       <span class="fb-new-label">New file</span>
                     </button>
                     <button type="button" id="fb-new-folder" class="icon-btn" data-tooltip="New folder" aria-label="New folder">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
                       <span class="fb-new-label">New folder</span>
                     </button>
                   </span>
@@ -999,7 +1009,6 @@
       <div id="run-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">Workflow run</h2>
-          <p class="section-hint">Live runs update as they progress; a step's questions appear below.</p>
           <!-- Deliberately NOT a .list-container. That class is a hairline row
                rack: it paints a border-coloured BACKGROUND so its 1px gaps read
                as row separators, and carries no padding because every child is a
@@ -1039,6 +1048,9 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
             <span>Shell</span>
           </span>
+          <button type="button" id="shell-keys-btn" class="shell-header-btn" data-tooltip="Key toolbar" aria-label="Key toolbar" aria-pressed="false">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/></svg>
+          </button>
           <button type="button" id="shell-restart-btn" class="shell-header-btn" data-tooltip="Restart shell" aria-label="Restart shell">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 019-9 9 9 0 016.7 3H21m0 0V3m0 3h-3M21 12a9 9 0 01-9 9 9 9 0 01-6.7-3H3m0 0v3m0-3h3"/></svg>
           </button>
@@ -1125,7 +1137,7 @@
       <div class="mcp-search-row">
         <input id="mcp-search-input" class="tool-form-input" type="search" aria-label="Search the MCP registry" placeholder="Search: github, linear, postgres, notion…" autocomplete="off">
         <button type="button" id="mcp-search-btn" class="action-pill" data-tooltip="Search" aria-label="Search">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
       </div>
       <div id="mcp-search-results" class="mcp-search-results"></div>

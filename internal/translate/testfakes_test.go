@@ -78,6 +78,7 @@ type hostDouble interface {
 	BufferAccess
 	TurnBoundary
 	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
+	SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin
 	MCPRecorder() MCPRecorder
 	SetGovernance(state vibekit.GovernanceStatePayload)
 	// WorkDir is a Roles FIELD in production (a process constant), but the double
@@ -95,6 +96,7 @@ func rolesOf(d hostDouble) *Roles {
 		Buffers:       d,
 		Turns:         d,
 		Lines:         d,
+		Steers:        d,
 		PendingPerms:  d,
 		Respond:       d,
 		Push:          d,

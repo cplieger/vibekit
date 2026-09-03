@@ -40,20 +40,46 @@ export function success(message: string): () => void {
  *  still pauses on hover/focus, so a user reading one is never cut off.
  *
  *  A RETRYABLE error keeps the sticky behaviour: its button is the only way to
- *  take the offered action, and timing that out would silently discard it. */
+ *  take the offered action, and timing that out would silently discard it. How
+ *  many of those may stand at once is MAX_STICKY. */
 const ERROR_DURATION_MS = 12_000;
+
+/** How many sticky toasts may be live at once. The shared stack shows 3
+ *  (ui-primitives' DEFAULT_MAX_VISIBLE, which this app does not override and the
+ *  library does not export, so it is restated here) and promotes from its queue
+ *  only on a dismiss or an expiry — so a third notice that never expires holds
+ *  the last rotating slot for the life of the page, and every later toast, any
+ *  level and any producer, queues where nobody sees it. Reachable rather than
+ *  theoretical: one dead login or one broken agent file is reported per chat, so
+ *  three live chats raise three copies. Two keeps a slot turning over. */
+const MAX_STICKY = 2;
+
+/** The sticky toasts raised here, oldest first. An entry leaves this list only
+ *  by being dismissed, so what is on screen is never more than it holds — which
+ *  is the whole bound. A toast the reader dismissed by hand stays in it (nothing
+ *  reports a dismissal), and that costs only a no-op eviction later. */
+const sticky: (() => void)[] = [];
+
+/** Raise a notice that never expires, dropping the OLDEST one past the cap: the
+ *  reader has had longest to act on that, and the newest says what is wrong now. */
+function showSticky(message: string, retry: ToastRetry): () => void {
+  while (sticky.length >= MAX_STICKY) {
+    sticky.shift()?.();
+  }
+  const dismiss = toast.show(message, { level: "error", retry });
+  sticky.push(dismiss);
+  return dismiss;
+}
 
 /** Show an error-level toast. Auto-dismisses after 12s (paused on hover/focus);
  *  click or press Escape to dismiss sooner. Optionally accepts a retry config;
  *  the toast renders a button that invokes onClick + dismisses, and stays put
- *  until answered. */
+ *  until answered or until MAX_STICKY newer ones displace it. */
 export function error(message: string, retry?: ToastRetry): () => void {
-  return toast.show(
-    message,
-    retry !== undefined
-      ? { level: "error", retry }
-      : { level: "error", duration: ERROR_DURATION_MS },
-  );
+  if (retry !== undefined) {
+    return showSticky(message, retry);
+  }
+  return toast.show(message, { level: "error", duration: ERROR_DURATION_MS });
 }
 
 /** Show an error toast carrying an ACTION button that is a convenience rather
@@ -84,5 +110,6 @@ export function showToast(
 
 /** Test-only: clear all visible + queued toasts and remove the stack. */
 export function _resetForTest(): void {
+  sticky.length = 0;
   uipResetToast();
 }

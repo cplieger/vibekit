@@ -214,8 +214,20 @@ export function runPlan(workflowID: string): unknown {
  *  Empty for a parentless run, which has no launching chat by definition. */
 const launchedBy = new Map<string, string>();
 
+/** A parentless run's own surface, and NOT a chat id.
+ *
+ *  Its lifecycle frames arrive with an EMPTY envelope chat id, but its ASKS are
+ *  keyed to this synthetic value, because the dock queues per chat and a card with
+ *  no key reaches no host. Two spellings of "no launching chat", so noteRunChat has
+ *  to refuse both. */
+const RUN_CHAT_PREFIX = "run:";
+
 export function noteRunChat(workflowID: string, chatID: string): void {
-  if (workflowID === "" || chatID === "") {
+  // The synthetic key is rejected HERE rather than at each caller, because "which
+  // chat launched this run" is this module's own question: recording it would nest
+  // the run's tab under a conversation that does not exist, and the caller that
+  // reads it (`runChatID`) cannot tell a real id from a synthetic one afterwards.
+  if (workflowID === "" || chatID === "" || chatID.startsWith(RUN_CHAT_PREFIX)) {
     return;
   }
   launchedBy.set(workflowID, chatID);
@@ -434,4 +446,38 @@ export function runElapsedMs(state: RunState | undefined): number {
 export function runIsLive(state: RunState | undefined): boolean {
   const s = state?.status;
   return s === "running" || s === "paused";
+}
+
+/** Whether a pause reason means a step is waiting on a PERSON.
+ *
+ *  Two literals, and KAS writes both: `Step requested user input via
+ *  send_message.` for a step's own question, and `Step '<id>' is waiting for user
+ *  input.` when a plain Resume re-parks one — resume clears the run's pause reason
+ *  and leaves the step node's signal, so the next step execution parks again under
+ *  a fallback sentence naming the node. A third spelling, `… is waiting for the
+ *  next user message.`, is the same condition on a step that asked for a message
+ *  rather than an answer.
+ *
+ *  It lives HERE rather than in either renderer because two surfaces ask it (the
+ *  transcript's run card and the `/run/{id}` page's alert) and the answer is a
+ *  property of run state, which is this module's subject. The interpolated form is
+ *  matched by its two ends because the node id sits in the middle; both spellings
+ *  are specific enough that no involuntary pause reason can reach them.
+ *
+ *  The SERVER holds the same rule (`needInputPause`, internal/agent/run_ask.go) and
+ *  neither copy can go: the server's decides whether to reconstruct an ask for a
+ *  restart-orphaned run, this one decides what a reader is told when no ask has
+ *  reached this client. */
+export function isNeedInputPause(reason: string | undefined): boolean {
+  if (reason === undefined || reason === "") {
+    return false;
+  }
+  if (reason === "Step requested user input via send_message.") {
+    return true;
+  }
+  return (
+    reason.startsWith("Step '") &&
+    (reason.endsWith("' is waiting for user input.") ||
+      reason.endsWith("' is waiting for the next user message."))
+  );
 }

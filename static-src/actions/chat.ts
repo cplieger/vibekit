@@ -304,7 +304,10 @@ export const steerChat = defineAction<
     }
     const steerID = steerIDOf(r.body);
     if (steerID !== "") {
-      recordSteerQueued(chatID, { id: steerID, text });
+      // `user` is a fact on this path, not a guess: this is the reply to THIS
+      // device's own POST, and the server has just recorded the same id in the
+      // ledger its own `steer_queued` frame will be stamped from.
+      recordSteerQueued(chatID, { id: steerID, text, origin: "user" });
     }
   },
   optimistic: ({ chatID, text, messageID }) => {

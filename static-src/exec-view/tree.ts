@@ -18,7 +18,7 @@ import { iconEl } from "../icon-el.js";
 import { ICON_REFRESH, ICON_GIT_BRANCH, ICON_HOURGLASS, ICON_TAB_AGENT } from "../icons.js";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
-import { STATE_BADGE, STATE_WORD, type ExecState } from "./status.js";
+import { STATE_WORD, paintStateMark, type ExecState } from "./status.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
  *  naming what it does, since "sequence"/"parallel" shouldn't require reading.
@@ -152,7 +152,7 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     row.sub.hidden = (node.subtitle ?? "") === "";
     row.root.dataset["state"] = node.state;
     row.root.dataset["kind"] = node.kind;
-    row.glyph.textContent = STATE_BADGE[node.state];
+    paintStateMark(row.glyph, node.state);
     const kg = kindGlyph(node.kind);
     if (row.kindSlot.childElementCount === 0 && kg !== null) {
       row.kindSlot.appendChild(kg);

@@ -25,13 +25,16 @@ import type { TurnOutcome } from "../turns.js";
  *
  *  Only the outcomes the summary LINE does not already name. `summaryLine` leads
  *  with "Interrupted" / "Failed" for those two, so repeating them is the defect
- *  being fixed rather than a fix; `completed` hides the glyph entirely, and the
- *  absence of a mark IS the clean case. What is left is the set where a reader
- *  sees a coloured circle and the row says nothing about it — chief among them
- *  `running`, whose accent ring is the only thing on the footer that says the
- *  turn has not finished. */
+ *  being fixed rather than a fix.
+ *
+ *  TWO outcomes carry no glyph at all, so neither needs a word: `completed`,
+ *  where the absence of a mark IS the clean case, and `running`, which
+ *  29-turns.css now hides on the same rule. The footer reports how a turn ENDED
+ *  and no longer claims to report one still going — the accent ring it used to
+ *  paint was the app's one state whose only explanation was a hover, and at 8px
+ *  it read like the resting green ring anyway. What is left is the set where a
+ *  reader sees a coloured circle and the row says nothing about it. */
 const OUTCOME_TOOLTIP: Partial<Record<TurnOutcome, string>> = {
-  running: "Still running",
   cancelled: "Cancelled",
   refused: "Refused by the model",
   unknown: "Ended without a recorded outcome",

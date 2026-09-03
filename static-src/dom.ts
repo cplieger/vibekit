@@ -225,6 +225,9 @@ class Elements {
   get shellRestartBtn(): HTMLButtonElement {
     return byId("shell-restart-btn");
   }
+  get shellKeysBtn(): HTMLButtonElement {
+    return byId("shell-keys-btn");
+  }
   get shellFullscreenBtn(): HTMLButtonElement {
     return byId("shell-fullscreen-btn");
   }

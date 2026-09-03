@@ -28,6 +28,19 @@ vi.mock("../run-view.js", () => ({
   applyRunStep: vi.fn(),
 }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
+// A parked step's question. The DOCK is mocked because its queue, settle-once
+// guard and two hosts are `decision-dock.test.ts`'s subject; what this suite pins
+// is that the handler enqueues one decision carrying the ENVELOPE's chat id, and
+// that its submit reaches the right verb.
+vi.mock("../decision-dock.js", () => ({
+  pushDecision: vi.fn(),
+  collapseSettledRunInput: vi.fn(),
+}));
+vi.mock("../actions/runs.js", () => ({
+  answerRunInput: { dispatch: vi.fn() },
+  continueRunStep: { dispatch: vi.fn() },
+}));
+vi.mock("../notify.js", () => ({ notifyIfHidden: vi.fn(), NOTIFY_TITLE: "Vibekit" }));
 
 import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
@@ -36,6 +49,9 @@ import { invalidateRun, noteRunChat, noteRunLive, noteRunSettled } from "../run-
 import { trackRun } from "../run-dots.js";
 import { openRunSubTab, autoCloseRunSubTab, applyRunStep } from "../run-view.js";
 import { info, success, error } from "../toast.js";
+import { pushDecision, collapseSettledRunInput } from "../decision-dock.js";
+import { answerRunInput, continueRunStep } from "../actions/runs.js";
+import { notifyIfHidden } from "../notify.js";
 
 const invalidate = vi.mocked(invalidateRun);
 const noteChat = vi.mocked(noteRunChat);
@@ -48,6 +64,11 @@ const stepFrames = vi.mocked(applyRunStep);
 const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
+const enqueue = vi.mocked(pushDecision);
+const retireAsk = vi.mocked(collapseSettledRunInput);
+const answer = vi.mocked(answerRunInput.dispatch);
+const waive = vi.mocked(continueRunStep.dispatch);
+const notify = vi.mocked(notifyIfHidden);
 
 /** Every toast raised, in order, whatever its level. */
 function toasts(): string[] {
@@ -75,16 +96,27 @@ beforeEach(() => {
   toastInfo.mockClear();
   toastSuccess.mockClear();
   toastError.mockClear();
+  enqueue.mockClear();
+  retireAsk.mockClear();
+  answer.mockClear();
+  waive.mockClear();
+  notify.mockClear();
   listRefetches = 0;
 });
 
-type RunEvent = "run_started" | "run_progress" | "run_finished" | "run_step";
+type RunEvent =
+  | "run_started"
+  | "run_progress"
+  | "run_finished"
+  | "run_step"
+  | "run_input_needed"
+  | "run_input_settled";
 
-function send(type: RunEvent, payload: Record<string, unknown>): void {
-  dispatch({ type, chat_id: "c1", payload });
+function send(type: RunEvent, payload: Record<string, unknown>, chatID = "c1"): void {
+  dispatch({ type, chat_id: chatID, payload });
 }
 
-// The four run events really are keys of the typed SSE surface, so a rename on
+// The six run events really are keys of the typed SSE surface, so a rename on
 // the Go side that regenerates the wire types breaks this file rather than
 // silently unsubscribing the handlers.
 const _keys: readonly (keyof SSEPayloads)[] = [
@@ -92,6 +124,8 @@ const _keys: readonly (keyof SSEPayloads)[] = [
   "run_progress",
   "run_finished",
   "run_step",
+  "run_input_needed",
+  "run_input_settled",
 ];
 void _keys;
 
@@ -351,5 +385,134 @@ describe("run toasts", () => {
     expect(invalidate).not.toHaveBeenCalled();
     expect(toasts()).toEqual([]);
     expect(listRefetches).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A parked step's question.
+//
+// The one run event besides `run_step` that carries a payload rather than being
+// an invalidation, and for a sharper reason: KAS parks the run with one fixed
+// `pauseReason` literal and an empty `pauseDetail`, so refetching `inspect` can
+// say a step wants input and can never say what it asked.
+//
+// The whole feature is where the card lands, so the chat id is what these cases
+// are about: it comes off the ENVELOPE, which is the launching chat for an
+// agent-parented run and `run:<workflowId>` for a parentless one.
+// ---------------------------------------------------------------------------
+describe("a step's question", () => {
+  interface AskDecision {
+    kind: string;
+    chatID: string;
+    runID?: string;
+    askID: string;
+    submit: (text: string | null) => void;
+  }
+
+  function ask(over: Record<string, unknown> = {}, chatID = "c1"): AskDecision {
+    send(
+      "run_input_needed",
+      {
+        workflow_id: "wf_1",
+        ask_id: "notify:7",
+        node_id: "review",
+        step_session_id: "sess-1",
+        agent_name: "reviewer",
+        question: "Ship it?",
+        asked_at: "2026-09-03T10:00:00Z",
+        ...over,
+      },
+      chatID,
+    );
+    return enqueue.mock.calls.at(-1)?.[0] as unknown as AskDecision;
+  }
+
+  it("enqueues one decision keyed to the LAUNCHING chat", () => {
+    const d = ask();
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(d.kind).toBe("run_input");
+    expect(d.chatID).toBe("c1");
+    // Both, because they are what the two hosts match on: the composer's dock
+    // takes the chat id, a run tab's takes either.
+    expect(d.runID).toBe("wf_1");
+    expect(d.askID).toBe("notify:7");
+  });
+
+  it("keys a PARENTLESS run's ask to the synthetic run chat the server sent", () => {
+    // A manual or scheduled run has no launching chat, so the envelope carries
+    // `run:<workflowId>` and the run tab's dock is the surface that matches.
+    const d = ask({}, "run:wf_1");
+    expect(d.chatID).toBe("run:wf_1");
+    expect(d.runID).toBe("wf_1");
+  });
+
+  it("tracks the run so its tab dot reports the block", () => {
+    ask();
+    expect(track).toHaveBeenCalledWith("wf_1");
+  });
+
+  // On the connect replay this frame can be the FIRST one a client sees for a run,
+  // so without it the run card's footer link opens the tab top-level instead of
+  // beside the conversation that launched it.
+  it("records the launching chat, like the three lifecycle events do", () => {
+    ask();
+    expect(noteChat).toHaveBeenCalledWith("wf_1", "c1");
+  });
+
+  it("hands the synthetic run chat through unchanged and lets the store refuse it", () => {
+    // `run:<workflowId>` is not a chat id, and the run store is where that rule
+    // lives — a caller-side filter would be a second copy of it. See run-store.ts.
+    ask({}, "run:wf_1");
+    expect(noteChat).toHaveBeenCalledWith("wf_1", "run:wf_1");
+  });
+
+  it("pushes a notification, because this ask blocks a run indefinitely", () => {
+    ask();
+    expect(notify).toHaveBeenCalledWith("Vibekit", "A workflow step is waiting for your answer");
+  });
+
+  it("refetches nothing: the question is on no endpoint", () => {
+    ask();
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(listRefetches).toBe(0);
+    expect(toasts()).toEqual([]);
+  });
+
+  it("sends text to the ANSWER verb, addressed by ask id", () => {
+    ask().submit("yes, ship it");
+    expect(answer).toHaveBeenCalledWith({
+      workflowID: "wf_1",
+      ask_id: "notify:7",
+      text: "yes, ship it",
+    });
+    expect(waive).not.toHaveBeenCalled();
+  });
+
+  it("sends null to the CONTINUE verb, addressed by NODE", () => {
+    // The step-status verb takes a node, not an ask: it clears the node's
+    // need-input signal so the step re-runs with its own default continuation.
+    ask().submit(null);
+    expect(waive).toHaveBeenCalledWith({ workflowID: "wf_1", nodeID: "review" });
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it("retires the card on the settle frame", () => {
+    send("run_input_settled", {
+      workflow_id: "wf_1",
+      ask_id: "notify:7",
+      settled_by: "user",
+    });
+    expect(retireAsk).toHaveBeenCalledWith("wf_1", "notify:7", "user");
+    // Not an invalidation either: the run's own status never described the ask.
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("carries the unattended settler through rather than flattening it", () => {
+    send("run_input_settled", {
+      workflow_id: "wf_1",
+      ask_id: "notify:7",
+      settled_by: "unattended",
+    });
+    expect(retireAsk).toHaveBeenCalledWith("wf_1", "notify:7", "unattended");
   });
 });

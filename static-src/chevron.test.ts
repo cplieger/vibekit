@@ -30,13 +30,21 @@ import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { buildTurnFooter } from "./fundamentals/turn-footer.js";
 
-/** Every stylesheet that styles a disclosure. */
+/** Every stylesheet that styles a disclosure.
+ *
+ * `27-run-card.css` and `31-exec-view.css` were missing until 2026-09-03, and
+ * that omission is why the exec view shipped a COMPOSED rotation: `.ev-twist`
+ * turned the wrapper -90deg while the chevron inside it already carried its own
+ * closed -90deg, so a collapsed row pointed UP and an expanded one RIGHT. This
+ * suite's angle check reads only the sheets named here, so it saw none of it. */
 const SHEETS = [
   "10-shell-app.css",
   "14-tools.css",
   "17-settings.css",
   "22-git-multirepo.css",
+  "27-run-card.css",
   "29-turns.css",
+  "31-exec-view.css",
   "61-mcp-tools.css",
 ];
 

@@ -47,7 +47,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		t.suppressed.add(tc.ToolCallID)
 		return
 	}
-	buf := t.buffers.TurnFoldTarget(ctx, chatID)
+	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
 	t.ensureTurnStarted(ctx, chatID, buf)
 	// A workflow STEP's tool frames carry KAS's own agentSubtaskId (or none),
 	// while the step's TEXT is keyed by its nodePath — so without this override
@@ -123,7 +123,7 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 		return
 	}
 	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
-	buf := t.buffers.TurnFoldTarget(ctx, chatID)
+	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
 	// A COPY, folded locally and written back, because the fold below reaches the
 	// terminal registry, the line tracker and the event bus — none of which may
 	// run under the buffer's mutex.

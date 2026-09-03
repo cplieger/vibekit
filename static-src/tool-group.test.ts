@@ -18,6 +18,8 @@ import {
   summarize,
   type CallInfo,
 } from "./tool-group.js";
+import { outcomeIcon } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import type { ToolKind } from "./types.js";
 
 // --- formatDuration ---
@@ -270,20 +272,35 @@ describe("grouping amendments", () => {
     expect(text).not.toContain("3 tool calls");
   });
 
-  it("tints the header glyph to the worst status inside it", () => {
+  it("marks the header with the worst status's shape and tint", () => {
     const clean = groupWith(card("read", "ok"), card("read", "ok"));
-    expect(clean.querySelector(".tool-group-icon")?.classList.contains("is-ok")).toBe(true);
+    const cleanIcon = clean.querySelector(".tool-group-icon");
+    expect(cleanIcon?.classList.contains("is-ok")).toBe(true);
+    // The mark comes from the shared glyph set, so a group header and a tool card
+    // cannot spell one verdict two ways.
+    expect(cleanIcon?.querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("ok")) as HTMLElement).outerHTML,
+    );
+    expect(cleanIcon?.querySelectorAll("svg")).toHaveLength(1);
 
     const dirty = groupWith(card("read", "ok"), card("read", "fail"));
     const icon = dirty.querySelector(".tool-group-icon");
-    // One red member makes a red header, so a closed group is still actionable.
+    // One red member makes a red header, so a closed group is still actionable —
+    // and the SHAPE moves with the tint, so hue is not the only channel.
     expect(icon?.classList.contains("is-fail")).toBe(true);
-    expect(icon?.textContent).toBe("\u2717");
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("fail")) as HTMLElement).outerHTML,
+    );
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
   });
 
   it("a running member outranks a clean one but not a failure", () => {
     const running = groupWith(card("read", "ok"), card("read", "running"));
-    expect(running.querySelector(".tool-group-icon")?.classList.contains("is-running")).toBe(true);
+    const runningIcon = running.querySelector(".tool-group-icon");
+    expect(runningIcon?.classList.contains("is-running")).toBe(true);
+    // No mark while the group runs: the members carry their own spinners, and the
+    // slot's reserved box is what keeps the summary text from shifting on settle.
+    expect(runningIcon?.querySelector("svg")).toBeNull();
 
     const both = groupWith(card("read", "fail"), card("read", "running"));
     expect(both.querySelector(".tool-group-icon")?.classList.contains("is-fail")).toBe(true);

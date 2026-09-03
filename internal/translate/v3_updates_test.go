@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // configModelUpdate builds a config_option_update payload carrying a "model"
@@ -276,6 +278,65 @@ func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 
 	if out := buf.String(); out != "" {
 		t.Errorf("a kindless session_info_update logged %q, want silence", out)
+	}
+}
+
+// turnBracketInfo builds a session_info_update carrying one half of the wire's
+// own turn bracket. KAS spells the two differently — turn_start a flat `true`,
+// turn_end a nested object — and the cascade dispatches on that shape.
+func turnBracketInfo(t *testing.T, kind string) json.RawMessage {
+	t.Helper()
+	kiro := map[string]any{"kind": kind}
+	if kind == "turn_start" {
+		kiro["turnStart"] = true
+	} else {
+		kiro["turnEnd"] = map[string]any{"stopReason": "end_turn"}
+	}
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": kiro}})
+}
+
+// A workflow STEP's own turn bracket is dropped by the attribution gate, so
+// nothing on this path closes the launching chat's turn.
+//
+// That is the premise the step-driven-turn fix rests on: a step's fold opens a
+// turn MARKED vibekit.TurnSourceWorkflowStep precisely because no bracket will
+// ever close it. Widening this gate would take the premise away silently.
+// The chat's own rows are the control — without them a handler that closed
+// nothing at all would pass.
+func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
+	tests := []struct {
+		name string
+		kind string
+		attr FrameAttribution
+		want []turnBracket
+	}{
+		{name: "a step's turn_end", kind: "turn_end", attr: FrameAttribution{Step: true}, want: nil},
+		{name: "a step's turn_start", kind: "turn_start", attr: FrameAttribution{Step: true}, want: nil},
+		{
+			name: "the chat's own turn_end",
+			kind: "turn_end",
+			attr: FrameAttribution{},
+			want: []turnBracket{{chat: "c1", kind: "end", stop: vibekit.StopReason("end_turn")}},
+		},
+		{
+			name: "the chat's own turn_start",
+			kind: "turn_start",
+			attr: FrameAttribution{},
+			want: []turnBracket{{chat: "c1", kind: "start"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps, _, _ := depsWithStore(t, "c1")
+			tr := New(rolesOf(deps))
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", turnBracketInfo(t, tt.kind), tt.attr)
+
+			if !slices.Equal(deps.brackets, tt.want) {
+				t.Errorf("HandleSessionInfoUpdate(%s) recorded brackets %+v, want %+v",
+					tt.name, deps.brackets, tt.want)
+			}
+		})
 	}
 }
 

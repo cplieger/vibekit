@@ -25,11 +25,14 @@
 // (`subagent-view.ts`) built on the shared `exec-view/` surface; the footer's
 // `.subagent-open` link is the door between them.
 //
-// The header glyph carries outcome by tint plus a check/cross at its corner
-// (same vocabulary as tool cards, no status word). `applyIcon` depends on the
-// `tool-icon` class for both the badge's `position: relative` anchor and the
-// `.tool-icon.is-*` tint selectors — a new outcome site should call
-// `applyOutcome` (tool-card.ts) rather than copy this block.
+// The header slot carries ONE mark and no status word, same vocabulary as a tool
+// card: the agent identity glyph tinted green for a success, and for a failure
+// that glyph is REPLACED by the shared silhouette (`icons.ts` `outcomeIcon`), so
+// hue is never the only channel. `applyIcon` depends on the `tool-icon` class for
+// the `.tool-icon.is-*` tint selectors. It does not route through
+// `applyOutcome` (tool-card.ts) because this card owns its own identity glyph and
+// spinner; what IS shared is the glyph set, which is what keeps the two from
+// drifting apart.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -38,7 +41,7 @@ import type { ToolStatus } from "../types.js";
 import { isToolActive } from "../tool-schema.js";
 import { iconEl } from "../icon-el.js";
 import { chevronEl } from "../chevron.js";
-import { ICON_TAB_AGENT, ICON_EXTERNAL } from "../icons.js";
+import { ICON_TAB_AGENT, ICON_EXTERNAL, outcomeIcon } from "../icons.js";
 import { CHUNK_ENTER_ATTR } from "../smd-renderer.js";
 import {
   buildTurnFooter,
@@ -199,10 +202,8 @@ export function buildSubagentBlock(
     root.classList.add("subagent-container");
   }
 
-  // `tool-icon` carries `position: relative` for the outcome badge's corner
-  // anchor, and the `.tool-icon.is-*` tint selectors match against it —
-  // without it the badge paints ~190px off (against `.subagent-block`'s
-  // transform-derived containing block) and the tint classes select nothing.
+  // `tool-icon` is what the `.tool-icon.is-*` tint selectors match against:
+  // without it a settled delegate keeps the running accent forever.
   const icon = el("span", { className: "subagent-icon tool-icon" });
   const nameEl = el("span", { className: "subagent-name" }, name);
   // A span, not a button: the header is `role="button"` and carries the
@@ -311,8 +312,12 @@ export function buildSubagentBlock(
     icon.classList.toggle("is-ok", !failed && !active);
     icon.classList.toggle("is-running", active);
     root.classList.toggle("running", active);
-    // A CONTAINER keeps its identity glyph for the whole run — its stages
-    // carry the rings — and withholds the outcome badge while active.
+    // ONE mark, and its SHAPE is what changes. A LEAF empties the slot while
+    // active so CSS can spin it as a ring; a CONTAINER keeps its identity glyph
+    // for the whole run, because its stages carry the rings. On settle the
+    // identity glyph stands for a success (tinted green by `.tool-icon.is-ok`)
+    // and is REPLACED by the shared failure silhouette otherwise — same set as
+    // every other outcome surface, so hue is never the only channel.
     if (active && !isContainer) {
       icon.classList.add("subagent-spinner");
       icon.replaceChildren();
@@ -321,14 +326,7 @@ export function buildSubagentBlock(
       icon.replaceChildren(iconEl(iconSvg));
     } else {
       icon.classList.remove("subagent-spinner");
-      icon.replaceChildren(
-        iconEl(iconSvg),
-        el(
-          "span",
-          { className: "tool-outcome-badge", "aria-hidden": "true" },
-          failed ? "\u2717" : "\u2713",
-        ),
-      );
+      icon.replaceChildren(iconEl(failed ? outcomeIcon("fail") : iconSvg));
     }
     header.setAttribute(
       "aria-label",

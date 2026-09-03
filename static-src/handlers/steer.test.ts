@@ -100,8 +100,8 @@ function turnOnC1(): void {
 
 describe("steer_queued", () => {
   it("records the steer as waiting", () => {
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs" });
-    expect(get("c1")?.steers).toEqual([{ id: "steer-1", text: "use tabs" }]);
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    expect(get("c1")?.steers).toEqual([{ id: "steer-1", text: "use tabs", origin: "user" }]);
   });
 
   // The whole point of the optimistic row: the user sees it on the keystroke, and
@@ -109,8 +109,12 @@ describe("steer_queued", () => {
   // ids agree because the client derives the one KAS returns.
   it("confirms the row the submit already drew, leaving one row", () => {
     recordSteerSent("c1", "m-1", "use tabs");
-    fireSSE("steer_queued", "c1", { steer_id: steerIDFor("m-1"), text: "use tabs" });
-    expect(get("c1")?.steers).toEqual([{ id: "steer-m-1", text: "use tabs" }]);
+    fireSSE("steer_queued", "c1", {
+      steer_id: steerIDFor("m-1"),
+      text: "use tabs",
+      origin: "user",
+    });
+    expect(get("c1")?.steers).toEqual([{ id: "steer-m-1", text: "use tabs", origin: "user" }]);
   });
 
   // The safety net for a KAS whose id convention has drifted: an exact TEXT match
@@ -118,8 +122,14 @@ describe("steer_queued", () => {
   // becomes one row.
   it("confirms it through the text fallback when the ids disagree", () => {
     recordSteerSent("c1", "m-1", "use tabs");
-    fireSSE("steer_queued", "c1", { steer_id: "kas-generated-7", text: "use tabs" });
-    expect(get("c1")?.steers).toEqual([{ id: "kas-generated-7", text: "use tabs" }]);
+    fireSSE("steer_queued", "c1", {
+      steer_id: "kas-generated-7",
+      text: "use tabs",
+      origin: "user",
+    });
+    expect(get("c1")?.steers).toEqual([
+      { id: "kas-generated-7", text: "use tabs", origin: "user" },
+    ]);
   });
 
   // A notice KAS classified as the AGENT's (a workflow step or a subagent
@@ -138,7 +148,7 @@ describe("steer_queued", () => {
   // The row is per-chat, so a steer raised on a BACKGROUND chat must land on
   // that chat rather than on whichever one happens to be open.
   it("keys by the event's chat, not the active one", () => {
-    fireSSE("steer_queued", "c2", { steer_id: "steer-1", text: "elsewhere" });
+    fireSSE("steer_queued", "c2", { steer_id: "steer-1", text: "elsewhere", origin: "user" });
     expect(steerCount("c1")).toBe(0);
     expect(steerCount("c2")).toBe(1);
   });
@@ -149,12 +159,12 @@ describe("steer_injected", () => {
   // into the transcript as a note anchored where the running turn had got to.
   it("removes the row from the dock and records a mark in the turn", () => {
     turnOnC1();
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs" });
-    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "use tabs" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
     expect(steerCount("c1")).toBe(0);
     expect(get("c1")?.steers).toBeUndefined();
     expect(steerMarks("c1")).toEqual([
-      { id: "steer-1", text: "use tabs", anchor: { msgID: "a-1", blockIndex: 2 } },
+      { id: "steer-1", text: "use tabs", origin: "user", anchor: { msgID: "a-1", blockIndex: 2 } },
     ]);
   });
 
@@ -163,7 +173,11 @@ describe("steer_injected", () => {
   it("promotes a row that is still pending from the submit", () => {
     turnOnC1();
     recordSteerSent("c1", "m-1", "use tabs");
-    fireSSE("steer_injected", "c1", { steer_id: "kas-generated-7", text: "use tabs" });
+    fireSSE("steer_injected", "c1", {
+      steer_id: "kas-generated-7",
+      text: "use tabs",
+      origin: "user",
+    });
     expect(get("c1")?.steers).toBeUndefined();
     expect(steerMarks("c1").map((m) => m.id)).toEqual(["kas-generated-7"]);
   });
@@ -173,10 +187,19 @@ describe("steer_injected", () => {
   // connected mid-turn. Silence here would mean the transcript shows the agent
   // changing course with nothing on screen explaining why.
   it("records a steer it never saw queued", () => {
-    fireSSE("steer_injected", "c1", { steer_id: "steer-ghost", text: "from another tab" });
+    fireSSE("steer_injected", "c1", {
+      steer_id: "steer-ghost",
+      text: "from another tab",
+      origin: "user",
+    });
     expect(get("c1")?.steers).toBeUndefined();
     expect(steerMarks("c1")).toEqual([
-      { id: "steer-ghost", text: "from another tab", anchor: { msgID: "", blockIndex: 0 } },
+      {
+        id: "steer-ghost",
+        text: "from another tab",
+        origin: "user",
+        anchor: { msgID: "", blockIndex: 0 },
+      },
     ]);
   });
 
@@ -185,12 +208,18 @@ describe("steer_injected", () => {
   // same note without blanking the text the first frame put there.
   it("merges the agent's acknowledgement onto the same mark", () => {
     turnOnC1();
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs" });
-    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "use tabs" });
-    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "", ack: "switched to tabs" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
+    fireSSE("steer_injected", "c1", {
+      steer_id: "steer-1",
+      text: "",
+      ack: "switched to tabs",
+      origin: "user",
+    });
     expect(steerMarks("c1")).toEqual([
       {
         id: "steer-1",
+        origin: "user",
         text: "use tabs",
         ack: "switched to tabs",
         anchor: { msgID: "a-1", blockIndex: 2 },
@@ -201,8 +230,8 @@ describe("steer_injected", () => {
   // A reconnect replays the queued frame for a steer the agent has since read.
   // Appending it as confirmed would put a delivered message back in the dock.
   it("survives a replayed queued frame afterwards", () => {
-    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "one" });
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
     expect(steerCount("c1")).toBe(0);
     expect(get("c1")?.steers).toBeUndefined();
     expect(steerMarks("c1")).toHaveLength(1);
@@ -211,8 +240,8 @@ describe("steer_injected", () => {
 
 describe("steer_cleared", () => {
   it("drops only the named steers", () => {
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
-    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two", origin: "user" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
     expect(get("c1")?.steers?.map((e) => e.id)).toEqual(["steer-2"]);
   });
@@ -222,12 +251,13 @@ describe("steer_cleared", () => {
   // says it was not delivered.
   it("promotes an unread steer as undelivered, keeping its text", () => {
     turnOnC1();
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "never read this" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "never read this", origin: "user" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
     expect(get("c1")?.steers).toBeUndefined();
     expect(steerMarks("c1")).toEqual([
       {
         id: "steer-1",
+        origin: "user",
         text: "never read this",
         dropped: true,
         anchor: { msgID: "a-1", blockIndex: 2 },
@@ -240,26 +270,26 @@ describe("steer_cleared", () => {
   // claiming they were missed would be false.
   it("ignores an id it has already promoted", () => {
     turnOnC1();
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
-    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "one" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_injected", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
     expect(steerMarks("c1")).toEqual([
-      { id: "steer-1", text: "one", anchor: { msgID: "a-1", blockIndex: 2 } },
+      { id: "steer-1", text: "one", origin: "user", anchor: { msgID: "a-1", blockIndex: 2 } },
     ]);
   });
 
   // Clearing by id rather than wholesale is what lets an explicit discard of two
   // steers coexist with a third that arrived while the request was in flight.
   it("leaves a steer that arrived after the cleared set was decided", () => {
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
-    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two" });
-    fireSSE("steer_queued", "c1", { steer_id: "steer-3", text: "three" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-3", text: "three", origin: "user" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1", "steer-2"] });
     expect(get("c1")?.steers?.map((e) => e.id)).toEqual(["steer-3"]);
   });
 
   it("removes the field entirely once the last steer goes", () => {
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-1"] });
     expect(get("c1")?.steers).toBeUndefined();
     // Gone from the dock, but not gone: the message is in the transcript.
@@ -267,7 +297,7 @@ describe("steer_cleared", () => {
   });
 
   it("ignores ids it does not hold", () => {
-    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
     fireSSE("steer_cleared", "c1", { steer_ids: ["steer-nope"] });
     expect(steerCount("c1")).toBe(1);
     expect(get("c1")?.steer_marks).toBeUndefined();

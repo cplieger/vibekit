@@ -161,6 +161,28 @@ func newChunkMsg(text string) *vibekit.RPCResponse {
 	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
 }
 
+// newStepChunkMsg builds a session/update agent_message_chunk carrying a WORKFLOW
+// STEP's own marker — the shape a chat-parented run's step frames arrive in on the
+// LAUNCHING chat's connection. The subtask id is empty, exactly as KAS sends it on
+// a content frame; `_meta.kiro.workflow` is the whole attribution.
+func newStepChunkMsg(text, workflowID, nodePath string) *vibekit.RPCResponse {
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "agent_message_chunk",
+		"content":       map[string]any{"type": "text", "text": text},
+		"_meta": map[string]any{
+			"kiro": map[string]any{
+				"workflow": map[string]any{
+					"workflowId": workflowID,
+					"nodePath":   []string{nodePath},
+					"type":       "step",
+				},
+			},
+		},
+	})
+	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
+	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+}
+
 // newToolCallMsg builds a session/update tool_call notification with the
 // given ids / title / status.
 func newToolCallMsg(t *testing.T, id, title, status string) *vibekit.RPCResponse {
@@ -224,7 +246,7 @@ func captureLogs(t *testing.T) *logCapture {
 // no store any more: a buffer belongs to the turn record that installed it.
 func (rt *Runtime) stageTurnBuffer(tb testing.TB, chatID vibekit.ChatID) *buffer.Buffer {
 	tb.Helper()
-	return rt.coord.TurnFoldTarget(tb.Context(), chatID)
+	return rt.coord.TurnFoldTarget(tb.Context(), chatID, vibekit.TurnSourceWireTurnStart)
 }
 
 // stagePromptTurn opens a PROMPT turn and hands back its epoch and its buffer, so
@@ -239,7 +261,7 @@ func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID vibekit.ChatID) (vibeki
 	if epoch == 0 {
 		tb.Fatalf("StartTurn(%q) refused, so there is no turn to stage", chatID)
 	}
-	return epoch, rt.coord.TurnFoldTarget(tb.Context(), chatID)
+	return epoch, rt.coord.TurnFoldTarget(tb.Context(), chatID, vibekit.TurnSourceWireTurnStart)
 }
 
 // liveTurnBuffer returns the chat's open turn's buffer, or nil when no turn is

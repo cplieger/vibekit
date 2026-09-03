@@ -298,7 +298,9 @@
   --dot-color: var(--c-dot-input);
 }
 
-/* Failed — the chat's last turn or bridge operation errored. Still, because
+/* Failed — the chat's last TURN ended `failed` or `refused`. Not an `error`
+   frame: that handler touches no turn state (handlers/turn.ts), which is the
+   breadth tabs.ts's dot phrase is written against. Still, because
    nothing more is coming and nothing clears it until the next prompt; that is
    the source's `crashed` semantics, not its animated `failed` (which is a LIVE
    OSC 9;4 progress state vibekit has no channel for).

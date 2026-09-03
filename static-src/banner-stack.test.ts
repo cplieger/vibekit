@@ -34,7 +34,6 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { signal } from "@cplieger/reactive";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
 import type * as BannerStack from "./banner-stack.js";
-import toolCardSource from "./tool-card.ts?raw";
 
 /** Cache-buster for the re-imports below.
  *
@@ -295,29 +294,8 @@ describe("banner-stack: single live region", () => {
 // before the edge could go, and these cases are what say it did.
 // ---------------------------------------------------------------------------
 
-/** `tool-card.ts`'s OUTCOME_BADGE, read as SOURCE.
- *
- *  It is not exported, and this is the check that would otherwise be a comment:
- *  the banner glyphs MIRROR that vocabulary rather than inventing a second one,
- *  so if a future edit changes the cross or the triangle over there, this fails
- *  here instead of the transcript and the banner stack quietly disagreeing. Read
- *  as text rather than imported for real, the same technique
- *  `__test-helpers__/css-rules.ts` uses on the stylesheets — importing tool-card
- *  would drag its whole DOM graph into this file's mock set for one constant. */
-function outcomeBadge(state: string): string {
-  // `const` anchors the DECLARATION: the first bare `OUTCOME_BADGE` in that file
-  // is the lookup inside applyOutcome, whose braces are a subscript.
-  const body = /const OUTCOME_BADGE[^{]*\{([^}]*)\}/.exec(toolCardSource)?.[1] ?? "";
-  const hit = new RegExp(`${state}:\\s*"([^"]*)"`).exec(body)?.[1];
-  if (hit === undefined) {
-    throw new Error(`tool-card.ts OUTCOME_BADGE has no ${state} member`);
-  }
-  // The source spells them as escapes; this is the character they denote.
-  return JSON.parse(`"${hit}"`) as string;
-}
-
 describe("banner-stack: severity carries a shape, not colour alone", () => {
-  it("gives every level a glyph, and mirrors tool-card's outcome vocabulary", async () => {
+  it("gives every level its own conventional character", async () => {
     const { container, mod } = await setup();
 
     activeSig.value = { id: "A" };
@@ -331,11 +309,14 @@ describe("banner-stack: severity carries a shape, not colour alone", () => {
         `.banner-${code === "e" ? "error" : code === "w" ? "warning" : "info"} .banner-glyph`,
       )?.textContent ?? "";
 
-    // error takes OUTCOME_BADGE.fail, warning takes OUTCOME_BADGE.warn.
-    expect(glyphFor("e")).toBe(outcomeBadge("fail"));
-    expect(glyphFor("w")).toBe(outcomeBadge("warn"));
-    // `info` has no member over there (that vocabulary covers settled TOOL
-    // outcomes only), so the banner picks U+2139 INFORMATION SOURCE.
+    // A banner is a TEXT notice with its own accessible text, so its levels keep
+    // characters. It no longer mirrors the transcript's outcome table — that
+    // vocabulary is SVG road-sign silhouettes now (icons.ts outcomeIcon), and a
+    // banner has no glyph slot to host one. These three are pinned literally
+    // because the values are the whole contract; what makes them a real channel
+    // is their distinctness, asserted next.
+    expect(glyphFor("e")).toBe("\u2717");
+    expect(glyphFor("w")).toBe("\u26A0");
     expect(glyphFor("i")).toBe("\u2139");
   });
 

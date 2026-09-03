@@ -49,6 +49,34 @@ const (
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
 )
 
+// methodKiroSessionNotify is the A→C notification KAS's `send_message` builtin
+// raises: `{sessionId, callerSessionId, message, severity, workflowId?, nodeId?,
+// agentName?}`, severity one of info|success|warning|error.
+//
+// TWO facts decide how it is handled, and both are measured off the pinned KAS
+// bundle rather than inferred:
+//
+//   - The `message` is the ONLY carrier of a workflow step's question. On
+//     `severity: "warning"` KAS also parks the run, but its pause writes one fixed
+//     literal into `state.pauseReason` with an empty `pauseDetail`, so `inspect`
+//     reports that a step wants input and never what it asked. Dropping this frame
+//     therefore loses the question outright, which is what it did until 2026-09.
+//   - `callerSessionId` is the PAUSED STEP's own session, and a `session/prompt`
+//     addressed to it is what KAS reroutes back into the run
+//     (`tryResumeStepWithMessage`). So the frame arrives carrying its own answer
+//     address and the step-session registry does not have to be consulted.
+//
+// The three non-warning severities are dropped: they advance, complete or fail the
+// step with no wait, so there is nothing for a person to answer.
+//
+// A run with NO parent session cannot produce one at all on the pinned build —
+// `send_message` defaults its target to `"parent"` and throws before writing the
+// completion signal when there is none — so a manual or scheduled run's step gets
+// a tool error instead of a park. The handling is still keyed so that a
+// parentless run's ask lands on its own surface the day upstream makes such a
+// target resolvable.
+const methodKiroSessionNotify = "_kiro/session/notify"
+
 // KAS's own filesystem verbs, A→C, each gated on
 // `clientCapabilities.fs._meta.kiro.<name> === true`. NOT declaring one does
 // not remove the capability: the else-branch is KAS's in-process

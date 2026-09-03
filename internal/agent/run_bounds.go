@@ -348,6 +348,13 @@ func (rs *Runs) forgetBounds(ctx context.Context, workflowID string) {
 	rs.stopTimer(workflowID)
 	rs.releaseTermination(workflowID)
 	rs.clearHeals(workflowID)
+	// A run that has ended cannot be waiting on a person, so any ask still
+	// recorded for it is a card no answer would reach. HERE for the reason the
+	// lease is: this is the one site every origin reaches. It ANNOUNCES rather
+	// than dropping quietly — a card the reader can still click is worse than no
+	// card, and while it sits at the head of a per-chat dock queue it also hides
+	// every later ask for that chat.
+	rs.settleAsksForRun(ctx, workflowID)
 	rs.releaseLease(ctx, workflowID)
 }
 

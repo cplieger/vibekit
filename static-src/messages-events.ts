@@ -96,6 +96,24 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
   // A `skip` is still a MESSAGE: it opens the turn, so the transcript shows a
   // headerless card with the failure on its footer rather than nothing at all.
   turn_outcome: { kind: "skip" },
+  // A message a workflow STEP sent into the chat that launched its run, replayed
+  // off the durable copy KAS keeps. It used to come back as a USER bubble, so the
+  // transcript claimed the reader had typed the step's own question.
+  //
+  // The content IS the message, so `labelFn` renders it rather than a fixed
+  // sentence with the text dropped — this is the only durable copy of a question
+  // the interaction dock holds in memory, and a divider reading "A step sent a
+  // message" would lose it a second way. A boundary rather than a bubble because
+  // the author is neither side of the conversation: a step is work this chat
+  // dispatched, and `switched` is the neutral face the other
+  // this-happened-to-your-session markers already use.
+  step_notice: {
+    kind: "boundary",
+    boundary: "switched",
+    icon: "\u{1F4AC}",
+    defaultLabel: "A workflow step sent a message",
+    labelFn: (c) => (c === "" ? "A workflow step sent a message" : `Step: ${c}`),
+  },
 } satisfies Record<EventKind, EventRenderStrategy>;
 
 // ---------------------------------------------------------------------------

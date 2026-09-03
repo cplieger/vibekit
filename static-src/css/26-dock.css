@@ -192,11 +192,86 @@
   color: var(--c-yellow);
 }
 
+/* A parked workflow step's question takes the YELLOW face too, and for the same
+   reason the permission ask does: it blocks work on a decision the agent cannot
+   make itself, and here the work is a whole run rather than one tool call. Reusing
+   the existing `data-kind` vocabulary rather than a fifth colour — the shape is
+   already the ask shape, and one more hue would be one more thing to learn. */
+.dock-run-input {
+  border-color: var(--c-yellow);
+}
+
+.dock-run-input .run-input-body strong {
+  color: var(--c-yellow);
+  font-size: var(--fs-md);
+}
+
 .dock-depth {
   margin: 0;
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
   text-align: end;
+}
+
+/* ==========================================================================
+   The run-input card's own regions: heading + who is asking + the answer box.
+
+   Spacing comes from `.dock-card`'s own flex gap rather than per-region margins,
+   which is the one difference from the user-input card's skin in 14-tools.css:
+   that one predates the dock (it was a <dialog>) and still carries
+   `margin-block-end` on every block, so its regions and the card's gap both
+   contribute.
+   ========================================================================== */
+
+.run-input-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.run-input-step {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* Only rendered when the question text did not survive a restart, which is
+   exactly when the card needs to say why it looks empty. */
+.run-input-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.run-input-editor {
+  display: flex;
+}
+
+.run-input-text {
+  flex: 1;
+  min-inline-size: 0;
+  resize: vertical;
+  padding: var(--sp-2);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+
+.run-input-text:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset-field);
+}
+
+/* Wraps rather than overflowing: "Continue without answering" is a long label
+   and the dock is as narrow as the composer on a phone. */
+.run-input-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-2);
 }
 
 /* --- Turn approval: the per-action file list --- */
@@ -419,18 +494,46 @@
   min-width: 0;
 }
 
-/* Two lines at the full width of the bar, which is several times what the old
-   fixed-width chip showed. Clamped rather than single-line-ellipsised so a
-   message that does not fit still gives its shape; the row's title attribute
-   and its accessible name carry the whole of it. */
 .steer-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   color: var(--c-text-primary);
   line-height: 1.35;
+}
+
+/* FOUR lines at the full width of the bar, behind the attribute the opener
+   toggles — the turn header's own mechanism (29-turns.css, clamp-text.ts). Not an
+   ellipsis that cuts: the text is clipped by overflow, so the whole message stays
+   in the DOM, and `.steer-more` below is what opens it. Four rather than
+   unbounded because the bar grows UPWARD into the transcript. */
+.steer-text[data-clamped] {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Skinned on `.turn-req-more` (29-turns.css) and `.steer-note-more`
+   (13-messages.css), because all three are one control: a text button that opens
+   a clamp. Aligned left with the message rather than stretched across the row. */
+.steer-more {
+  align-self: flex-start;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.steer-more:hover {
+  color: var(--c-accent);
+}
+
+.steer-more:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* --- Actions column ----------------------------------------------------- */

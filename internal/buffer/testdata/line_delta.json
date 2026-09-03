@@ -1,0 +1,117 @@
+{
+  "_comment": "Cross-language contract for the line-delta counts a turn footer shows. Read by internal/buffer/linediff_test.go (Go: lineDelta) and static-src/line-delta.node.test.ts (TypeScript: lineDelta in diff.ts). Both halves must report the same added/removed for every case, or the turn footer and the delegate footer can disagree about one file. Add a case here rather than to one side's table.",
+  "cases": [
+    {
+      "name": "no-op write",
+      "old": "a\nb\nc\n",
+      "new": "a\nb\nc\n",
+      "added": 0,
+      "removed": 0
+    },
+    {
+      "name": "one line rewritten in the middle",
+      "old": "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\n",
+      "new": "l1\nl2\nl3\nl4\nl5\nl6\nEDITED\nl8\nl9\nl10\nl11\nl12\n",
+      "added": 1,
+      "removed": 1
+    },
+    {
+      "name": "pure insertion",
+      "old": "l1\nl2\nl3\nl4\n",
+      "new": "l1\nl2\nnew1\nnew2\nnew3\nl3\nl4\n",
+      "added": 3,
+      "removed": 0
+    },
+    {
+      "name": "pure deletion",
+      "old": "l1\nl2\nl3\nl4\nl5\n",
+      "new": "l1\nl4\nl5\n",
+      "added": 0,
+      "removed": 2
+    },
+    {
+      "name": "whole-file replacement",
+      "old": "a\nb\nc\nd\n",
+      "new": "w\nx\ny\nz\n",
+      "added": 4,
+      "removed": 4
+    },
+    {
+      "name": "new file creation",
+      "old": "",
+      "new": "line1\nline2\n",
+      "added": 2,
+      "removed": 0
+    },
+    {
+      "name": "file emptied",
+      "old": "x\ny\n",
+      "new": "",
+      "added": 0,
+      "removed": 2
+    },
+    {
+      "name": "no trailing newline on either side",
+      "old": "a\nb\nc",
+      "new": "x\ny\nz\nw",
+      "added": 4,
+      "removed": 3
+    },
+    {
+      "name": "trailing-newline-only change counts nothing",
+      "old": "a\nb",
+      "new": "a\nb\n",
+      "added": 0,
+      "removed": 0
+    },
+    {
+      "name": "CRLF to LF counts nothing",
+      "old": "a\r\nb\r\n",
+      "new": "a\nb\n",
+      "added": 0,
+      "removed": 0
+    },
+    {
+      "name": "moved line",
+      "old": "a\nb\nc\nd\n",
+      "new": "b\nc\nd\na\n",
+      "added": 1,
+      "removed": 1
+    },
+    {
+      "name": "duplicate lines are not free",
+      "old": "x\nx\nx\n",
+      "new": "x\n",
+      "added": 0,
+      "removed": 2
+    },
+    {
+      "name": "single line rewritten in a single-line file",
+      "old": "before\n",
+      "new": "after\n",
+      "added": 1,
+      "removed": 1
+    },
+    {
+      "name": "a lone newline is one empty line added",
+      "old": "",
+      "new": "\n",
+      "added": 1,
+      "removed": 0
+    },
+    {
+      "name": "a lone newline removed",
+      "old": "\n",
+      "new": "",
+      "added": 0,
+      "removed": 1
+    },
+    {
+      "name": "a line replaced by a blank line",
+      "old": "a\n",
+      "new": "\n",
+      "added": 1,
+      "removed": 1
+    }
+  ]
+}

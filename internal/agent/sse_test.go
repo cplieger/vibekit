@@ -345,6 +345,51 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	}
 }
 
+// TestHandleSSE_ReplaysAParkedStepsQuestion pins the run-ask half of the connect
+// replay.
+//
+// The reason is stronger than the permission's: a parked run has no deadline of
+// its own, so an ask this client saw an hour ago is still the only thing between
+// that run and its next step — and the event does not re-fire, so a reload with no
+// replay leaves the run parked with nothing on screen to answer it.
+func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
+	h, _, _ := newTestHub()
+	h.runs.asks.Add(&runAsk{
+		chatID: "c1",
+		payload: vibekit.RunInputNeededPayload{
+			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", Question: "which branch?",
+		},
+	})
+
+	replay := func(t *testing.T) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/events?chat_id=c1", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		h.handleSSE(rec, req)
+		return rec.Body.String()
+	}
+
+	body := replay(t)
+	if !strings.Contains(body, `"type":"run_input_needed"`) {
+		t.Fatalf("a parked step's question was not replayed, so the run stays parked with "+
+			"nothing on screen to answer it: %q", body)
+	}
+	if !strings.Contains(body, "which branch?") {
+		t.Errorf("the replayed ask carried no question, and no endpoint has one: %q", body)
+	}
+
+	// After the answer there is nothing to replay: the claim deleted the entry, so
+	// a second connection must not re-offer a card whose request is settled.
+	if _, ok := h.runs.asks.TakeIfPresent("wf_1", "a1"); !ok {
+		t.Fatal("Setup: the ask could not be claimed")
+	}
+	if after := replay(t); strings.Contains(after, `"type":"run_input_needed"`) {
+		t.Errorf("an answered ask was replayed to a later connection: %q", after)
+	}
+}
+
 // TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect pins which connection
 // re-reads the notification toggles from disk.
 //
@@ -383,6 +428,69 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 			if got := fp.reloads.Load(); got != tc.wantReloads {
 				t.Errorf("ReloadPreferences called %d times with Last-Event-ID %q, want %d",
 					got, tc.lastEventID, tc.wantReloads)
+			}
+		})
+	}
+}
+
+// TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn pins the one field a client
+// needs to apply a replayed step turn's transcript WITHOUT reading the chat as busy.
+//
+// The event is emitted rather than skipped because the snapshot is the only copy of
+// an in-flight step's transcript — nothing persists it — so skipping it loses the
+// step's output on every refresh. Unmarked, though, the client's turn_state handler
+// latches `thinking`, and it re-latches on every reconnect for the length of the
+// run with nothing to clear it, since a step's own turn_end is dropped by the
+// workflow attribution gate.
+func TestReplayTurnState_MarksAStepDrivenTurnAsTheRunsOwn(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  *vibekit.RPCResponse
+		want bool
+	}{
+		{
+			name: "a workflow step's fold",
+			msg:  newStepChunkMsg("the step wrote this", "wf-1", "root/step"),
+			want: true,
+		},
+		{
+			name: "the chat's own agent-initiated turn",
+			msg:  newChunkMsg("the agent woke itself"),
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			const chatID vibekit.ChatID = "c1"
+			_ = cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+
+			h.translateACPEvent(chatID, tc.msg)
+
+			var got []vibekit.TurnStatePayload
+			err := h.replayTurnState(func(evt vibekit.ServerEvent) error {
+				if evt.Type != vibekit.EventTurnState {
+					return nil
+				}
+				p, ok := evt.Payload.(vibekit.TurnStatePayload)
+				if !ok {
+					t.Fatalf("turn_state payload = %T, want vibekit.TurnStatePayload", evt.Payload)
+				}
+				got = append(got, p)
+				return nil
+			}, chatID, h.coord.turns.openTurns())
+			if err != nil {
+				t.Fatalf("replayTurnState: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("turn_state events = %d, want 1: the in-flight transcript is the only "+
+					"copy there is, so it must still be replayed", len(got))
+			}
+			if got[0].WorkflowStep != tc.want {
+				t.Errorf("workflow_step = %v, want %v", got[0].WorkflowStep, tc.want)
+			}
+			if got[0].Message == nil {
+				t.Error("the snapshot was withheld, so the step's streamed output is lost on refresh")
 			}
 		})
 	}

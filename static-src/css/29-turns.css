@@ -140,8 +140,22 @@
  * It appears ONLY when the outcome is worth a mark. A green dot on every
  * completed turn was a marker on every row of the transcript, which is the
  * definition of communicating nothing — "it worked" is the expected case, and
- * the exception is the signal. Running, interrupted and failed keep theirs. */
+ * the exception is the signal. Running, interrupted and failed keep theirs.
+ *
+ * MOBILE-ONLY: hidden here and revealed in the media block below, so the dot
+ * exists only at widths where the TAB STRIP cannot be reached. The tab dot
+ * answers the same question with a wider vocabulary (it has states for "wants
+ * you" and it survives a reload), and it is the only surface that speaks for a
+ * chat nobody is looking at — so where both are on screen this one is a second
+ * rendering of a fact the strip already carries. Below the drawer breakpoint the
+ * strip is off-canvas and the transcript is all there is.
+ *
+ * `display: none`, not `visibility: hidden` and not an unstyled span: this is a
+ * flex item in `.turn-head-row`, which has a `gap`, so an item that is merely
+ * invisible still spends 8px of it. Same treatment, same reason, as the ledger
+ * caret further down this file. */
 .turn-dot {
+  display: none;
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
@@ -153,8 +167,24 @@
   display: none;
 }
 
+/* ONE ink for one fact. `--c-dot-working` is the tab dot's in-flight violet
+ * (01-tokens.css), and it is what this arm paints instead of `--c-accent` —
+ * which is a different violet, six units off it in R and seven in G, so the same
+ * "a turn is running" carried two colours depending on which surface you read
+ * it from. `--c-dot-working` is deliberately aligned to web-terminal-kiro's
+ * palette rather than to this app's accent; the token's own comment in
+ * 01-tokens.css carries that provenance and the per-theme sizing behind it.
+ *
+ * `vk-breathe` STAYS, and the app's ruling that a pulsing dot is reserved to
+ * TABS and workflow-agent surfaces (13-messages.css, where a breathing accent
+ * disc was removed from the reasoning block) is satisfied rather than bent. That
+ * ruling is about a mark claiming work on a surface the reader is already
+ * watching, and its remedy was the tab dot — which at these widths is behind
+ * `translateX(-100%)`, so this IS the off-screen-work case the ruling carves
+ * out. Motion is also what separates `running` from a still outcome without
+ * relying on hue, the same WCAG 1.4.1 posture 12-tabs.css states for the strip. */
 .turn-header[data-outcome="running"] .turn-dot {
-  background: var(--c-accent);
+  background: var(--c-dot-working);
   animation: vk-breathe 1.4s var(--ease-standard) infinite;
 }
 
@@ -188,6 +218,29 @@
  * entirely. Something not-clean happened here and nothing explains it. */
 .turn-header[data-outcome="unknown"] .turn-dot {
   background: var(--c-text-tertiary);
+}
+
+/* The header dot's reveal, at the SIDEBAR DRAWER's own breakpoint. Below 48rem
+ * `#sidebar` is off-canvas at `translateX(-100%)` inside this same query
+ * (50-mobile.css), so the tab dot is unreachable without covering the transcript
+ * and this dot is the only outcome mark on screen.
+ *
+ * The coupling is the NUMBER and nothing else, which is the fact a future reader
+ * cannot recover from the rule: the drawer is gated purely on width, with no JS
+ * behind it — `device-view.ts` holds no viewport width, nothing in `static-src/`
+ * matches on one outside `prefers-reduced-motion` and `display-mode`, and the
+ * `.open` class is a reveal toggle that is inert above 48rem. So there is no
+ * device attribute to key on, and `turn-dot-visibility-css.test.ts` asserts the
+ * two queries stay equal instead.
+ *
+ * Only `display` is gated. The per-outcome rules above stay at top level because
+ * they are the vocabulary, and `.turn-header[data-outcome="completed"]
+ * .turn-dot` (0,3,0) still outranks this (0,1,0), so a clean turn hides its dot
+ * in here too. */
+@media (width <= 48rem) {
+  .turn-dot {
+    display: block;
+  }
 }
 
 .turn-ts {
@@ -600,9 +653,9 @@
  * aria-label and the summary text carry the same fact in words. A ring for a
  * clean turn, filled for a non-clean one, so the shape differs too. */
 /* Same rule as the header dot: the mark belongs to the exception, not to every
- * row. A completed turn's cost line reads cleanly on its own, and hiding the
- * glyph here is also what stops the folded row from carrying a second circle
- * beside the header's. */
+ * row. A completed turn's cost line reads cleanly on its own, and below 48rem —
+ * the only width where the header dot renders at all — hiding the glyph here is
+ * also what stops a folded row carrying a second circle beside the header's. */
 .turn-ledger-glyph {
   width: 0.5rem;
   height: 0.5rem;
@@ -611,12 +664,23 @@
   border: 1.5px solid var(--c-green);
 }
 
-.turn-footer[data-outcome="completed"] .turn-ledger-glyph {
-  display: none;
-}
-
+/* `running` joins `completed` rather than keeping an arm of its own: the footer
+ * means THIS TURN IS OVER, and it no longer claims to report an in-flight one.
+ * The accent ring it used to paint was indistinguishable from the resting green
+ * one at 8px, and its hover tooltip was the only channel that said otherwise —
+ * the one state in the app whose whole explanation was a hover.
+ *
+ * Hiding it rather than deleting the arm is the load-bearing half. The base rule
+ * above is a green ring meaning CLEAN, so falling through to it would have put
+ * the mark of a finished turn on a running one, which is the exact direction the
+ * `unknown` rule below refuses to fail in.
+ *
+ * The LEDGER is untouched, and the mount gate in messages.ts with it: a running
+ * turn that has already run a command still shows its counts, it just stops
+ * painting a status ring over them. */
+.turn-footer[data-outcome="completed"] .turn-ledger-glyph,
 .turn-footer[data-outcome="running"] .turn-ledger-glyph {
-  border-color: var(--c-accent);
+  display: none;
 }
 
 .turn-footer[data-outcome="interrupted"] .turn-ledger-glyph {
@@ -910,8 +974,14 @@
   outline-offset: var(--focus-offset);
 }
 
+/* Same ink as the header dot's running arm, for the same reason: one fact, one
+ * violet. `--c-dot-working` is the tab strip's in-flight colour (01-tokens.css),
+ * and `--c-accent` — which this used to take — is a near-neighbour of it, so a
+ * reader glancing between the strip and the rail saw two colours for one state.
+ * Measured on this marker's own surface: 9.258:1 dark / 5.428:1 light against
+ * `--c-bg-primary`, clear of the 4.5:1 floor an 11px glyph needs. */
 .rail-marker[data-outcome="running"] {
-  color: var(--c-accent);
+  color: var(--c-dot-working);
 }
 
 .rail-marker[data-outcome="interrupted"],

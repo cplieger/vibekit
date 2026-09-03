@@ -57,6 +57,14 @@ const (
 	// own turn, so the retry's reply is its own message rather than extending a
 	// closed turn's.
 	TurnSourceEmptyRetry
+	// TurnSourceWorkflowStep is a turn opened only because a workflow STEP's
+	// frames arrived on this chat's connection: it is the RUN's turn, not this
+	// chat's. A chat-parented run executes on the launching chat's session, so the
+	// step's content folds here — but the step's own turn_end is dropped by the
+	// workflow attribution gate, so nothing closes such a turn through the bracket
+	// path and a client that read it as the chat working would say so for the
+	// whole run. The RUN's own tab dot carries that liveness instead.
+	TurnSourceWorkflowStep
 )
 
 // HasUserTrigger reports whether a turn opened by this source has a user message
@@ -96,6 +104,22 @@ func (s TurnOpenSource) PromptClass() bool {
 func (s TurnOpenSource) Acknowledgeable() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourcePrime, TurnSourceEmptyRetry:
+		return true
+	default:
+		return false
+	}
+}
+
+// EngineOpened reports whether the ENGINE opened this turn rather than vibekit:
+// a bracket or a fold arriving with nothing pending. Such a turn holds no
+// admission reservation, so a prompt can meet one and must DISPLACE it — closing
+// it first, or content already broadcast to every client is lost. Both members
+// are the same kind of turn and differ only in what the client may conclude from
+// them, so a predicate is what keeps the displacement rule from having to be
+// widened again for the next one.
+func (s TurnOpenSource) EngineOpened() bool {
+	switch s {
+	case TurnSourceWireTurnStart, TurnSourceWorkflowStep:
 		return true
 	default:
 		return false

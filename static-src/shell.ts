@@ -6,8 +6,10 @@
 // The UI package owns everything above the raw terminal — the display surface,
 // the hidden-textarea input model, IME/composition, predictive local echo, the
 // mobile key toolbar, the right-click/long-press context menu, scroll-to-bottom,
-// and the connection banner (presetTouch: presetSingle + mobileToolbar, NO
-// tabs). The engine (@cplieger/web-terminal-engine) underneath owns the wire
+// and the connection banner (presetSingle plus an externally-driven
+// mobileToolbar — what presetTouch composes, with the key grid's trigger moved
+// into this panel's header; see `keys` below). The engine
+// (@cplieger/web-terminal-engine) underneath owns the wire
 // protocol, the reconnect/resume reliability layer, and the render/scroll
 // modules. vibekit keeps only its panel chrome (the slide-up panel, the header
 // open/close/restart/full-screen buttons) and its lifecycle (device-view
@@ -24,8 +26,10 @@
 // ---------------------------------------------------------------------------
 
 import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-ui";
-import { presetTouch } from "@cplieger/web-terminal-ui/presets/touch";
-import type { TerminalHandle } from "@cplieger/web-terminal-ui";
+import { presetSingle } from "@cplieger/web-terminal-ui/presets/single";
+import { mobileToolbar } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
+import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
+import type { TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
@@ -196,6 +200,28 @@ async function hostRestart(): Promise<void> {
 let handle: TerminalHandle | null = null;
 let initialized = false;
 
+// The on-screen key grid (Tab/Esc/arrows/Enter/sticky-Ctrl). `externalToggle`
+// hides the grid's own toggle so a peer can open it; presetTouch leaves it off,
+// which parked a 54px pill over the terminal's top-right corner on every
+// coarse-pointer device, iPad desktop mode included, while this panel's own
+// control row sat 8px above it. Placement is 21-shell-panel.css's, since the
+// library's copy ships in a CSS file the touch bundle does not carry. Held as
+// the FEATURE rather than its api: the kernel writes `feature.api` after setup,
+// and minting it in the thunk keeps a throw inside createTerminal's boundary.
+let keys: TerminalFeature<MobileToolbarApi> | null = null;
+
+/** Show or hide the key grid, and write the trigger's pressed state. ONE writer,
+ *  because a face left behind is the whole failure mode of a toggle whose panel
+ *  lives somewhere else. */
+function toggleKeys(): void {
+  const api = keys?.api;
+  if (api === undefined) {
+    return; // no terminal yet: the panel's first open builds it
+  }
+  api.toggle();
+  $.shellKeysBtn.setAttribute("aria-pressed", api.isOpen() ? "true" : "false");
+}
+
 /** The toggle's two faces, both Lucide (`maximize` / `minimize`) flattened into
  *  one path: four corners pointing OUT to enter full screen, the same four
  *  pointing IN to leave. Rotating the glyph is not the same icon — the corner
@@ -283,6 +309,10 @@ export function initShellPanel(): void {
   // Restart button kills the PTY and gets a fresh one.
   $.shellRestartBtn.addEventListener("click", () => {
     void hostRestart();
+  });
+  // Key-toolbar button drives the grid the library no longer draws a toggle for.
+  $.shellKeysBtn.addEventListener("click", () => {
+    toggleKeys();
   });
 
   wireFullscreenToggle();
@@ -401,17 +431,20 @@ function initShellResize(): void {
  *  first open and never again; reopening the panel reuses the same terminal and
  *  its live connection.
  *
- *  `features` is the preset FUNCTION, not its result (ui v5): passing
- *  `presetTouch()` evaluated the preset as an argument, so a throw inside it
- *  escaped before createTerminal's failure boundary existed and the panel was
- *  left empty with only a console error. Handing over the uncalled function
- *  moves that failure inside, where the kernel reports it. */
+ *  `features` is a THUNK, not a built array (ui v5): an argument expression is
+ *  evaluated before createTerminal is entered, so a throw while composing the
+ *  list escaped its failure boundary and left the panel empty with only a
+ *  console error. Building the list inside moves that failure where the kernel
+ *  reports it — which is also what lets the key-grid feature be minted here. */
 function ensureTerminal(): void {
   if (handle !== null) {
     return;
   }
   handle = createTerminal($.shellTerminal, {
-    features: presetTouch,
+    features: () => {
+      keys = mobileToolbar({ externalToggle: true });
+      return [...presetSingle(), keys];
+    },
     layout: "container",
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,

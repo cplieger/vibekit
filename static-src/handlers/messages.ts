@@ -21,6 +21,7 @@ import {
 } from "../store.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
+import { isStepSubtask } from "../step-subtask.js";
 
 // Defensive `=== undefined` guards in this file look unnecessary to
 // the type checker — the wire decoder marks payloads non-nullable —
@@ -42,12 +43,18 @@ onSSE("message_created", (chatID, m) => {
     return;
   }
   // message_created starts a new assistant bubble; upsert so future chunks
-  // target the right ID. Also live-turn evidence: the server emits it only
-  // when a turn opens a buffer, and some turns this client did not prompt
-  // (a KAS auto-wake, a run step, another device's send) never set
-  // `thinking` any other way. Also marks which message is unpersisted, so
-  // a refetch's array replacement doesn't drop it.
-  markTurnLive(chatID);
+  // target the right ID, and mark which message is unpersisted so a refetch's
+  // array replacement doesn't drop it.
+  //
+  // It does NOT latch `thinking`, and that is the fix for the tab dot reading
+  // "working" for the length of a workflow run. This frame carries no
+  // attribution at all, and a chat-parented run's step frames arrive on the
+  // LAUNCHING chat's connection: the step opens a turn here (the run executes on
+  // this chat's session), so this was the frame that turned the dot purple for
+  // work the chat's own agent is not doing — and nothing clears it, because a
+  // step's own turn_end is dropped by the workflow attribution gate. The chunk
+  // latch below covers every case this one was written for (a KAS auto-wake,
+  // another device's send) one frame later, and it can tell a step apart.
   noteLiveTurnMessage(chatID, m.id);
   upsertMessage(chatID, m);
 });
@@ -56,9 +63,14 @@ onSSE("message_chunk", (chatID, p) => {
   if (p === undefined) {
     return;
   }
-  // Same live-turn evidence as message_created, covering a dropped or
-  // reordered created frame.
-  markTurnLive(chatID);
+  // The ONE live-turn latch, and the only frame that carries the attribution the
+  // decision needs. A `wf:` subtask id is a workflow STEP: the run's work, not
+  // this chat's agent, so it must not make the chat read as busy — the RUN's own
+  // tab dot carries that. A SUBAGENT's uuid still latches, because a delegate
+  // halts the main agent, so the chat genuinely is working.
+  if (!isStepSubtask(p.agent_subtask_id ?? "")) {
+    markTurnLive(chatID);
+  }
   appendChunk(
     chatID,
     p.message_id,
@@ -73,7 +85,11 @@ onSSE("message_chunk", (chatID, p) => {
 
 /** Latch `thinking` from streaming evidence, idempotently: `setThinking(true)`
  *  clears the previous turn's verdicts, so it must only run on the transition
- *  or every chunk would re-clear latches (and churn the session signal). */
+ *  or every chunk would re-clear latches (and churn the session signal).
+ *
+ *  Its ONE caller is the `message_chunk` handler, which gates it on attribution.
+ *  A run step's frames arrive on the launching chat's connection, so "a frame
+ *  arrived" is not the same claim as "this chat's agent is working". */
 function markTurnLive(chatID: string): void {
   if (chatID !== "" && get(chatID)?.thinking === false) {
     setThinking(chatID, true);
@@ -89,7 +105,15 @@ onSSE("turn_state", (chatID, p) => {
   if (p === undefined || chatID === "") {
     return;
   }
-  setThinking(chatID, true);
+  // `workflow_step` marks a replayed turn a workflow RUN owns: apply the
+  // snapshot, do not set thinking. The server still EMITS it because the
+  // snapshot is the only copy of an in-flight step's transcript, so skipping the
+  // event would lose that content on every refresh — while latching thinking
+  // would re-assert "this chat is working" on every reconnect for the whole run,
+  // with nothing to clear it.
+  if (p.workflow_step !== true) {
+    setThinking(chatID, true);
+  }
   const msg = p.message;
   if (msg !== undefined && msg.id !== "") {
     setSnapshotSeq(chatID, msg.id, p.chunk_seq ?? 0);

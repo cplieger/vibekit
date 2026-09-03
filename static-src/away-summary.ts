@@ -1,14 +1,14 @@
 // ---------------------------------------------------------------------------
 // Away summary: when the user returns after being away for >15 minutes
-// AND the agent consumed >5K tokens, show a dismissible "Welcome back"
-// banner summarizing what happened.
+// AND the agent consumed >5K tokens, show a "Welcome back" toast
+// summarizing what happened.
 //
 // v1 uses heuristic summaries (message/tool counts). v2 could use
 // CheapestModel for AI-generated recaps.
 // ---------------------------------------------------------------------------
 
 import { getActive } from "./store.js";
-import { showBanner } from "./banner-stack.js";
+import { showToast } from "./toast.js";
 
 const AWAY_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
 const TOKEN_THRESHOLD = 5_000;
@@ -112,7 +112,7 @@ class AwaySummaryController {
 
     const awayMins = Math.round(elapsed / 60_000);
     const msg = `Welcome back (${String(awayMins)}m away). ${parts.join(", ")}.`;
-    showBanner(s.id, "away-summary", msg, "info", true);
+    showToast(msg, "info");
 
     this.snapshotState();
   }

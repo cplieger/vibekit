@@ -25,6 +25,9 @@
 //                                 pipeline has and a column cannot express, since
 //                                 two stages as consecutive rows look identical
 //                                 whether they ran in sequence or at once.
+//                                 EXCEPT at exactly one stage, which is the FIRST
+//                                 shape again: that stage becomes the root and no
+//                                 group row is produced, as the transcript promotes.
 //
 // A stage's page therefore shows the WHOLE pipeline with that stage selected. That is
 // why the ref names a subtask and never a driver: one door, and it lands you on the
@@ -273,11 +276,15 @@ export function subagentToExec(
     stages,
   );
   const root: ExecNode = {
-    path: driverPath(group.pipeline),
     // No stage COUNT here: the page header's `step N of M` states it, and this row's
     // own children are the list. The transcript's pipeline box carries the count
     // because a collapsed card has neither.
-    label: "Pipeline",
+    //
+    // `Stages`, not the header's own words: `ExecRun.label` one row up already reads
+    // `Subagent pipeline` byte-identically, so naming the object twice stutters —
+    // this row says what it HOLDS. Not the bare `Pipeline`, which names no kind.
+    path: driverPath(group.pipeline),
+    label: "Stages",
     kind: "parallel",
     state: driverState,
     children: stages,
@@ -292,7 +299,13 @@ export function subagentToExec(
     // TAB and by the detail pane; this row is the one that has to be the container.
     label: "Subagent pipeline",
     state: driverState,
-    nodes: [root],
+    // ONE stage renders no group row, the page's twin of the transcript's promotion:
+    // a container over its only child is a wrapper rather than structure, and
+    // `exec-view/page.ts` hides the tree, the detail-pane name row and the timeline
+    // for exactly that. The pipeline's identity survives the row — its label and the
+    // driver's Task input are `ExecRun` fields the page HEADER renders, and the run's
+    // window comes from the LEAVES, never from a container's stamps.
+    nodes: stages.length === 1 ? stages : [root],
     live: slice.live || inFlight(driverState),
     focus,
   };

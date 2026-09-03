@@ -127,7 +127,23 @@ const (
 	// honest shape rather than a shortcoming — the content belongs to a turn
 	// vibekit never prompted and therefore never finalizes, and `capturedOutput`
 	// is the durable half.
-	EventRunStep          EventType = "run_step"
+	EventRunStep EventType = "run_step"
+	// EventRunInputNeeded is a workflow STEP asking a person a question, and the
+	// FIFTH run event. Like run_step it carries its payload rather than being an
+	// invalidation, and for a stronger reason: the question is on no endpoint at
+	// all. KAS parks the run with one fixed pauseReason literal and an empty
+	// pauseDetail, so a client refetching `inspect` learns that a step wants input
+	// and can never learn what it asked.
+	//
+	// Keyed to the LAUNCHING chat when the run has one and to `run:<workflowId>`
+	// when it does not, so it reaches the parent tab's dock in the first case and
+	// the run tab's in the second — the same two keys the three ask kinds already
+	// use.
+	EventRunInputNeeded EventType = "run_input_needed"
+	// EventRunInputSettled retires a run ask on every surface that did not answer
+	// it, the run-shaped twin of decision_settled. Separate from that event
+	// because a run ask is identified by a string, not by an int64 request id.
+	EventRunInputSettled  EventType = "run_input_settled"
 	EventForgesChanged    EventType = "forges_changed"
 	EventGovernanceState  EventType = "governance_state"
 	EventHooksChanged     EventType = "hooks_changed"

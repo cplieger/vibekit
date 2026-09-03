@@ -41,8 +41,8 @@ import { $ } from "./dom.js";
 /** The dot states that raise an attention cue: the states that WANT the reader.
  *
  *  A chat blocked on a decision (`input`), one whose agent asked a question and
- *  is standing by (`waiting`), one whose last operation failed (`failed`), and
- *  one whose turn finished (`done`).
+ *  is standing by (`waiting`), one whose turn failed (`failed`), and one whose
+ *  turn finished (`done`).
  *
  *  `working` and `idle` are excluded because they are ongoing or absent: a count
  *  that ticked up while an agent worked would nag with nothing to act on.

@@ -301,6 +301,41 @@ describe("runIsLive counts a pause as live", () => {
 });
 
 // ---------------------------------------------------------------------------
+// isNeedInputPause is tested in `run-store-pause.node.test.ts`, NOT here.
+//
+// The rule exists in Go as well (`needInputPause`, internal/agent/run_ask.go) and
+// neither copy can go, so the cases live in ONE shared fixture that both languages
+// read — `internal/agent/testdata/need_input_pauses.json`, on turn_outcomes.json's
+// pattern. A table here would be a third copy of the same list, which is the
+// duplication the fixture exists to remove, and it could not read the fixture
+// anyway: this file runs in the browser project and the fixture is a disk read.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// noteRunChat: which chat's agent launched a run.
+// ---------------------------------------------------------------------------
+describe("noteRunChat refuses the two spellings of 'no launching chat'", () => {
+  it("records a real chat id", () => {
+    store.noteRunChat("wf-parented", "chat-7");
+    expect(store.runChatID("wf-parented")).toBe("chat-7");
+  });
+
+  it("refuses the synthetic run key, which is a surface rather than a chat", () => {
+    // A parentless run's LIFECYCLE frames carry an empty envelope chat id, but its
+    // ASKS are keyed to `run:<workflowId>` because the dock queues per chat. Recorded
+    // as a launching chat, it nests the run's tab under a conversation that does not
+    // exist — and `runChatID`'s callers cannot tell a real id from a synthetic one.
+    store.noteRunChat("wf-parentless", "run:wf-parentless");
+    expect(store.runChatID("wf-parentless")).toBe("");
+  });
+
+  it("refuses an empty chat id, the other spelling of parentless", () => {
+    store.noteRunChat("wf-empty", "");
+    expect(store.runChatID("wf-empty")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The live-runs inventory: the eviction sweep's exemption source. Event-fed,
 // rebuilt from GET /api/runs/live, and degrading toward KEEPING — a stale
 // exemption costs memory, a wrongly-evicted live chat costs correctness.

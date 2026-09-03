@@ -170,7 +170,7 @@ export function findGlyph(kind: "search" | "filter", size: number): string {
   return svg(
     size,
     kind === "search"
-      ? '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>'
+      ? '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>'
       : '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
   );
 }
@@ -227,7 +227,7 @@ const ICON_TOOL_MOVE = svg(
   14,
   '<path d="M5 9l-3 3 3 3"/><path d="M19 15l3-3-3-3"/><path d="M2 12h20"/>',
 );
-const ICON_TOOL_SEARCH = svg(14, '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>');
+const ICON_TOOL_SEARCH = svg(14, '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>');
 const ICON_TOOL_EXECUTE = svg(14, '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>');
 const ICON_TOOL_THINK = svg(
   14,
@@ -247,7 +247,7 @@ const ICON_TOOL_FALLBACK = svg(
 );
 const ICON_TOOL_FOLDER = svg(
   14,
-  '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+  '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
 const ICON_TOOL_TERMINAL = svg(
   14,
@@ -301,6 +301,79 @@ export function toolIcon(kind: ToolKind, title: string): string {
     return byTitle;
   }
   return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+}
+
+// --- Outcome glyphs ---
+//
+// The mark a settled row carries, and the ONE set every outcome surface reads
+// (tool card, group header, delegate card, run-step row, exec tree). A row shows
+// exactly ONE mark: on success it is the row's own identity glyph tinted green,
+// and for the three non-success states the identity glyph is REPLACED by the
+// general silhouette below. So hue is still a channel and never the only one —
+// WCAG 1.4.1 is satisfied by the SHAPE changing rather than by a second mark
+// appearing beside the first.
+//
+// Road-sign silhouettes, SOLID fills, deliberately neither a checkmark nor an X.
+// Solid because these render at 14px, where a two-feature stroked shape (a wall
+// and a hole inside ~1.5 CSS px) keeps neither — the same reasoning the model
+// glyph's eyes record. The fill goes on the PATH, not on the `<svg>`: `svg()`
+// hard-codes `fill="none" stroke="currentColor"`, and a duplicate attribute
+// appended through `extra` LOSES to the first spelling in HTML parsing.
+//
+// `warn` and `denied` knock their bar OUT of the disc as one `fill-rule="evenodd"`
+// path rather than painting a second shape over it. A background-coloured bar
+// would need a colour token that cannot be right on all three surfaces these
+// render on (`.tool-call`, `.list-row:hover` and `.subagent-header:hover` each
+// paint differently), and a `<mask>` needs an `id` — `iconEl` CLONES each glyph,
+// so N copies of one id would collide in the document.
+
+/** The shared circle: centre (12,12), r=10, so it spans 2..22 on both axes like
+ *  the other 15 glyphs. Two semicircles, because a chord equal to the diameter
+ *  makes the large-arc flag immaterial. */
+const OUTCOME_DISC = "M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20z";
+
+const ICON_OUTCOME_OK = svg(14, `<path d="${OUTCOME_DISC}" fill="currentColor" stroke="none"/>`);
+
+/** Apex up, base y=20.5 from x=2.5 to 21.5 — base 19, height 17, so near
+ *  equilateral and unmistakable against the disc at a glance. */
+const ICON_OUTCOME_FAIL = svg(
+  14,
+  '<path d="M12 3.5L21.5 20.5H2.5z" fill="currentColor" stroke="none"/>',
+);
+
+/** Horizontal bar x 5.5..18.5, y 10.25..13.75. The disc's half-chord at y=13.75
+ *  is 9.85, so the bar ends 3.35 units short of the rim and the outline stays
+ *  unbroken — which is what separates a stop from a plain disc. */
+const ICON_OUTCOME_WARN = svg(
+  14,
+  `<path d="${OUTCOME_DISC}M5.5 10.25h13v3.5h-13z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
+);
+
+/** The same bar at 45 degrees: length 16, thickness 3.5, centred on (12,12). All
+ *  four corners sit 8.19 from the centre, so this disc's rim is unbroken too and
+ *  only the bar's ANGLE separates a policy refusal from a stop. */
+const ICON_OUTCOME_DENIED = svg(
+  14,
+  `<path d="${OUTCOME_DISC}M7.58 18.894L18.894 7.58L16.42 5.106L5.106 16.42z" fill="currentColor" fill-rule="evenodd" stroke="none"/>`,
+);
+
+/** The states the glyph set covers. `ok` is here for the surfaces with no
+ *  identity glyph of their own to tint (a group header, an exec-tree row); a
+ *  tool card keeps its own glyph for `ok` and never asks. */
+type OutcomeGlyph = "ok" | "fail" | "warn" | "denied";
+
+const ICON_BY_OUTCOME: Readonly<Record<OutcomeGlyph, string>> = {
+  ok: ICON_OUTCOME_OK,
+  fail: ICON_OUTCOME_FAIL,
+  warn: ICON_OUTCOME_WARN,
+  denied: ICON_OUTCOME_DENIED,
+};
+
+/** The one resolver for an outcome mark. Draws in `currentColor`, so the
+ *  existing `--c-green` / `--c-red` / `--c-yellow` tints reach it through
+ *  whatever slot hosts it and no new colour token is involved. */
+export function outcomeIcon(state: OutcomeGlyph): string {
+  return ICON_BY_OUTCOME[state];
 }
 
 // --- Tab icons ---
@@ -391,18 +464,15 @@ export const ICON_TAB_SETTINGS = `<svg width="14" height="14" viewBox="0 0 24 24
 // create field. One path, so the two can never drift apart.
 export const ICON_GIT_BRANCH = svg(
   14,
-  '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/>',
+  '<circle cx="18" cy="17" r="3"/><circle cx="6" cy="5" r="3"/><path d="M6 20V8a9 9 0 009 9"/>',
 );
 export const ICON_TAB_GIT = ICON_GIT_BRANCH;
 export const ICON_TAB_EDITOR = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`;
 export const ICON_TAB_FILES = svg(
   14,
-  '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+  '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
 );
-export const ICON_TAB_HISTORY = svg(
-  14,
-  '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
-);
+export const ICON_TAB_HISTORY = svg(14, '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 /** The Kiro configuration browser: an open book. The freed spec-board toolbar
  *  slot, and the one glyph on the page — the categories are text, because a
  *  five-icon set for five word-labelled tabs teaches nothing. */

@@ -311,13 +311,19 @@
   background: var(--c-hover);
 }
 
-/* The glyph is a TEXT badge (a check, a cross, a warning triangle, an en dash),
-   which is what keeps outcome a shape rather than only a tint. Fixed width so
-   every row's name starts on one x whatever glyph it carries. */
+/* THE MARK SLOT RENDERS BOTH AN SVG AND A BARE CHARACTER, because this vocabulary
+   holds both: `ok` / `fail` / `warn` are solid road-sign SVGs from the shared
+   outcome set, `input` and `skipped` keep a character, and the three in-flight
+   states are the ::before ring below. Either way outcome is a shape and not only a
+   tint. A grid box centres both kinds, blockifies the SVG, and holds a fixed size
+   so every row's name starts on one x whatever mark it carries; `font-size` and
+   `line-height` stay for the two character states. */
 .run-step-glyph {
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
   inline-size: 1rem;
-  text-align: center;
+  block-size: 1rem;
   font-size: var(--fs-sm);
   line-height: 1;
   color: var(--c-text-tertiary);
@@ -337,7 +343,8 @@
 
 /* An unanswered ask reads as a "?" rather than as another ring, because it is the
    one step state a reader is meant to ACT on and a shape says that where a hue
-   cannot (WCAG 1.4.1 — the same reason every outcome here is a character). Still,
+   cannot (WCAG 1.4.1 — the same reason every state here carries a shape). It is one
+   of the two states that keep a CHARACTER rather than taking a silhouette. Still,
    not animated: motion in this app means in flight, and a step waiting on a person
    is not. */
 .run-step[data-status="input"] .run-step-glyph {
@@ -418,9 +425,19 @@
 /* A step's captured output is its RESULT, so it sits on the collapsed row rather
    than behind the disclosure with its working transcript — the same rule the
    delegated-work card's footer follows. Two lines, then it clamps: the full text
-   is on the run page. */
+   is on the run page.
+
+   THE TRAILING SPACE IS A MARGIN, NOT PADDING. `overflow: hidden` clips at the
+   PADDING box, so a `-webkit-line-clamp` box with block-end padding paints the
+   clipped line INSIDE that band — the ellipsis says two lines and a half-height
+   third one renders under it (measured in Chromium 151: a 7px sliver in an 8px
+   band). A margin is outside the clip region, and the visible gap inside
+   `.run-step` is unchanged: that row is `overflow: hidden`, so it establishes a
+   BFC and the margin cannot collapse out of it, and the following
+   `.run-step-body` is `height: 0; padding-block: 0` while collapsed. */
 .run-step-capture {
-  padding: 0 var(--sp-2) var(--sp-2) calc(var(--sp-2) + 1rem + var(--sp-2));
+  padding: 0 var(--sp-2) 0 calc(var(--sp-2) + 1rem + var(--sp-2));
+  margin-block-end: var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);

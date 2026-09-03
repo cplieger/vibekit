@@ -379,18 +379,20 @@ describe("the tab's accessible name announces its state", () => {
     expect(spoken.get("input")).toBe("Fix the parser, needs a decision");
   });
 
-  it("does not claim a TURN failed for a failure that had no turn in it", async () => {
+  it("claims exactly what the failed latch's one producer supports", async () => {
     const { setTabStatus } = await import("./tabs.js");
     const row = await openChat();
     setTabStatus(chatTabID, "failed");
-    // The latch behind this state is set for every `error` frame naming the chat,
-    // and that deliberately includes `switch_failed` and `bridge_start_failed` —
-    // failures with no turn in them. The breadth is right (a chat whose bridge
-    // would not start has failed at something the reader needs to see), so the
-    // PHRASE is what had to widen: it is the only channel a screen-reader user has
-    // here, and it must not be more specific than its producer supports.
-    expect(nameFromContents(row)).toBe("Fix the parser, last operation failed");
-    expect(nameFromContents(row)).not.toContain("turn");
+    // REWRITTEN, and it used to pin the OPPOSITE. This case asserted
+    // "last operation failed" and that the name did NOT contain "turn", on the
+    // grounds that the latch was set for every `error` frame naming the chat,
+    // `switch_failed` and `bridge_start_failed` among them. That breadth is gone:
+    // the error handler stopped touching turn state when `endsTurn` was removed
+    // (handlers/turn.ts), so `setTurnFailed` has one live producer, `turn_ended`
+    // with outcome `failed` or `refused`, and its two other callers re-derive the
+    // same turn verdict. The phrase is the only channel a screen-reader user has
+    // here, so it must claim neither more NOR less than that.
+    expect(nameFromContents(row)).toBe("Fix the parser, turn failed");
   });
 
   it("keeps the state word between the name and the pinned marker", async () => {

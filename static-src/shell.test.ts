@@ -48,7 +48,8 @@ let bootSeq = 0;
 interface Live {
   createTerminal: (root: HTMLElement, opts: CreateTerminalOptions) => TerminalHandle;
   localScrollbackStorage: (opts: unknown) => unknown;
-  presetTouch: (...args: unknown[]) => unknown;
+  presetSingle: (...args: unknown[]) => unknown;
+  mobileToolbar: (...args: unknown[]) => unknown;
   getScrollEl: () => HTMLElement;
   setShellRunCallback: (cb: (cmd: string) => void) => void;
   setShellHeight: (px: number) => void;
@@ -66,8 +67,14 @@ vi.mock("@cplieger/web-terminal-ui", () => ({
     live.createTerminal(root, opts),
   localScrollbackStorage: (opts: unknown): unknown => live.localScrollbackStorage(opts),
 }));
-vi.mock("@cplieger/web-terminal-ui/presets/touch", () => ({
-  presetTouch: (...args: unknown[]): unknown => live.presetTouch(...args),
+// presetTouch is NOT mocked because the panel no longer imports it: it composes
+// presetSingle with its own externally-toggled mobileToolbar, so the key grid's
+// trigger can live in the panel header instead of floating over the terminal.
+vi.mock("@cplieger/web-terminal-ui/presets/single", () => ({
+  presetSingle: (...args: unknown[]): unknown => live.presetSingle(...args),
+}));
+vi.mock("@cplieger/web-terminal-ui/features/mobile-toolbar", () => ({
+  mobileToolbar: (...args: unknown[]): unknown => live.mobileToolbar(...args),
 }));
 vi.mock("./messages.js", () => ({ getScrollEl: (): HTMLElement => live.getScrollEl() }));
 vi.mock("./code-blocks.js", () => ({
@@ -106,6 +113,8 @@ interface Harness {
   mod: typeof Shell;
   createTerminal: ReturnType<typeof vi.fn>;
   localScrollbackStorage: ReturnType<typeof vi.fn>;
+  mobileToolbar: ReturnType<typeof vi.fn>;
+  kbToggleSpy: ReturnType<typeof vi.fn>;
   resetSpy: ReturnType<typeof vi.fn>;
   sendSpy: ReturnType<typeof vi.fn>;
   reattachSpy: ReturnType<typeof vi.fn>;
@@ -113,6 +122,7 @@ interface Harness {
   shellBtn: HTMLButtonElement;
   shellToggleBtn: HTMLButtonElement;
   shellRestartBtn: HTMLButtonElement;
+  shellKeysBtn: HTMLButtonElement;
   shellFullscreenBtn: HTMLButtonElement;
   shellPanel: HTMLDivElement;
   shellTerminal: HTMLDivElement;
@@ -161,6 +171,8 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   const shellBtn = document.createElement("button");
   const shellToggleBtn = document.createElement("button");
   const shellRestartBtn = document.createElement("button");
+  const shellKeysBtn = document.createElement("button");
+  shellKeysBtn.setAttribute("aria-pressed", "false");
   const shellFullscreenBtn = document.createElement("button");
   // The real button ships a glyph in index.html and the toggle swaps its `d`,
   // so the harness carries one too — without it the icon assertions below pass
@@ -190,6 +202,10 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   const createTerminal = vi.fn(
     (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
       endedCb = opts.onSessionEnded ?? null;
+      // The kernel resolves the features thunk inside its own try, and the panel
+      // mints its key-grid feature there, so a mock that never calls it leaves
+      // that feature unbuilt and every trigger assertion vacuous.
+      opts.features?.();
       return {
         focus: termFocus,
         send: sendSpy,
@@ -199,7 +215,26 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
       };
     },
   );
-  const presetTouch = vi.fn(() => ["preset-feature"]);
+  const presetSingle = vi.fn(() => ["preset-feature"]);
+  // The key-grid feature, standing in for what the kernel hands back. `api` is
+  // populated by the kernel after the feature's setup resolves; createTerminal is
+  // a mock here, so the harness carries it from the start — which is faithful,
+  // because a click cannot reach the trigger before setup has run.
+  let kbOpen = false;
+  const kbToggleSpy = vi.fn(() => {
+    kbOpen = !kbOpen;
+  });
+  const mobileToolbar = vi.fn((opts: unknown) => ({
+    name: "mobileToolbar",
+    opts,
+    setup: vi.fn(),
+    api: {
+      toggle: kbToggleSpy,
+      isOpen: () => kbOpen,
+      isCtrlArmed: () => false,
+      onCtrlArmedChange: () => (): void => undefined,
+    },
+  }));
   // A sentinel, so the assertion below checks the panel hands the LIBRARY's
   // localStorage store through rather than inventing storage of its own.
   const localScrollbackStorage = vi.fn(() => ({ kind: "scrollback-store" }));
@@ -220,7 +255,8 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   live = {
     createTerminal,
     localScrollbackStorage,
-    presetTouch,
+    presetSingle,
+    mobileToolbar,
     getScrollEl,
     setShellRunCallback,
     setShellHeight,
@@ -233,6 +269,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
       shellBtn,
       shellToggleBtn,
       shellRestartBtn,
+      shellKeysBtn,
       shellFullscreenBtn,
       shellPanel,
       shellTerminal,
@@ -245,6 +282,8 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     mod,
     createTerminal,
     localScrollbackStorage,
+    mobileToolbar,
+    kbToggleSpy,
     resetSpy,
     sendSpy,
     reattachSpy,
@@ -252,6 +291,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     shellBtn,
     shellToggleBtn,
     shellRestartBtn,
+    shellKeysBtn,
     shellFullscreenBtn,
     shellPanel,
     shellTerminal,
@@ -301,13 +341,28 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(opts.wsPath).toBe("/api/shell/ws");
     expect(opts.fontReady).toBeDefined();
     expect(opts.theme).toMatchObject({ "--bg": "var(--c-term-bg)", "--accent": "var(--c-accent)" });
-    // The touch preset, handed over UNCALLED (ui v5's lazy `features`), so a
-    // throwing preset fails inside createTerminal rather than at this call
+    // A THUNK, not a built array (ui v5's lazy `features`), so a throw while
+    // composing the list fails inside createTerminal rather than at this call
     // site. Embedded in container layout (the panel is the terminal's
     // boundary; no page-level styling, no bridge feature).
     expect(typeof opts.features).toBe("function");
     expect(opts.features?.()).toContain("preset-feature");
     expect(opts.layout).toBe("container");
+  });
+
+  it("composes the key grid with its own toggle hidden, so nothing floats over the terminal", async () => {
+    // presetTouch leaves externalToggle off, which parks a 54px pill in the
+    // terminal's top-right corner on every coarse-pointer device — iPad desktop
+    // mode included — with the panel's own control row 8px above it. The trigger
+    // belongs in that row, so the grid must be composed rather than presetTouch'd.
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    expect(h.mobileToolbar).toHaveBeenCalledWith({ externalToggle: true });
+    const [, opts] = h.createTerminal.mock.calls.at(0) as [HTMLElement, CreateTerminalOptions];
+    const features = opts.features?.() ?? [];
+    expect(features.at(-1)).toMatchObject({ name: "mobileToolbar" });
   });
 
   it("persists the shell scrollback through the library's store, in vibekit's namespace", async () => {
@@ -624,6 +679,50 @@ describe("shell.ts: resize handle", () => {
     h.shellResize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
     expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("96px");
     expect(h.setShellHeight).toHaveBeenCalledWith(96);
+  });
+});
+
+describe("shell.ts: key-toolbar trigger", () => {
+  it("drives the grid and mirrors its state on aria-pressed", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    expect(h.shellKeysBtn.getAttribute("aria-pressed")).toBe("false");
+
+    h.shellKeysBtn.click();
+    expect(h.kbToggleSpy).toHaveBeenCalledTimes(1);
+    expect(h.shellKeysBtn.getAttribute("aria-pressed")).toBe("true");
+
+    h.shellKeysBtn.click();
+    expect(h.kbToggleSpy).toHaveBeenCalledTimes(2);
+    expect(h.shellKeysBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("is inert before the panel's first open, when no terminal exists", async () => {
+    // The button lives in the header, which only exists while the panel is open,
+    // but nothing stops a boot-time click reaching it — and the feature has no
+    // api until the kernel has run its setup.
+    //
+    // The observable is the ERROR, not the spy: without the guard the listener
+    // dereferences an undefined api and throws, and the spy stays uncalled either
+    // way, so an assertion on the spy alone passes with the guard deleted. A
+    // listener throw does not propagate to click(), so it is caught off window.
+    const h = await setup();
+    h.mod.initShellPanel();
+    const errors: string[] = [];
+    const onError = (e: ErrorEvent): void => {
+      errors.push(e.message);
+    };
+    window.addEventListener("error", onError);
+    try {
+      h.shellKeysBtn.click();
+    } finally {
+      window.removeEventListener("error", onError);
+    }
+
+    expect(errors).toEqual([]);
+    expect(h.kbToggleSpy).not.toHaveBeenCalled();
+    expect(h.shellKeysBtn.getAttribute("aria-pressed")).toBe("false");
   });
 });
 

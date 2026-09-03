@@ -78,7 +78,8 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 	if len(refs) == 0 {
 		return
 	}
-	buf := t.buffers.TurnFoldTarget(ctx, chatID)
+	// A step's copy is already dropped above, so this frame is the chat's own.
+	buf := t.buffers.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart)
 	// Only attach to an in-flight turn. References fire mid-completion (the
 	// model must generate the licensed code first), so by the time one
 	// arrives the assistant buffer is Started with a message id. Dropping a

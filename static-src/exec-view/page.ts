@@ -16,6 +16,7 @@
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
@@ -109,9 +110,14 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   // Collapsed by default: a report can be thousands of characters.
   const resultsCount = el("span", { className: "ev-r-count" });
   const resultsBody = el("div", { className: "ev-r-body" });
+  // The disclosure glyph LEADS, as the app's other section headers do. A span
+  // and not a button: `.ev-r-head` is `role="button"`, so a nested control is
+  // axe's `nested-interactive`, which `aria-hidden` + `tabindex="-1"` does not
+  // clear. `chevronEl()` already returns an `aria-hidden` span.
   const resultsHead = el(
     "div",
     { className: "ev-r-head", role: "button", tabindex: "0" },
+    el("span", { className: "ev-r-twist", "aria-hidden": "true" }, chevronEl()),
     el("span", { className: "ev-r-title" }, "Results"),
     resultsCount,
   );

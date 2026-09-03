@@ -165,7 +165,7 @@ describe("mcpHue properties", () => {
 // at all, which is how a card printing `completed` survived.
 // ---------------------------------------------------------------------------
 
-describe("outcome is a glyph, not a word", () => {
+describe("outcome is the row's one mark, not a word and not a badge", () => {
   it("a finished card prints no status word anywhere in its text", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     for (const status of ["completed", "failed"] as const) {
@@ -184,8 +184,10 @@ describe("outcome is a glyph, not a word", () => {
     }
   });
 
-  it("tints the glyph AND composites a shape, because tint alone is one channel", async () => {
+  it("keeps its identity glyph on success and REPLACES it on a failure", async () => {
     const { buildToolCard } = await import("./tool-card.js");
+    const { toolIcon, outcomeIcon } = await import("./icons.js");
+    const { iconEl } = await import("./icon-el.js");
     const ok = buildToolCard({
       id: "t2",
       title: "executePwsh",
@@ -195,7 +197,12 @@ describe("outcome is a glyph, not a word", () => {
     });
     const okIcon = ok.querySelector(".tool-icon");
     expect(okIcon?.classList.contains("is-ok")).toBe(true);
-    expect(okIcon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u2713");
+    // Success is the ROW's OWN glyph, tinted — not a general success mark. One
+    // mark, and no badge beside it.
+    const identity = okIcon?.querySelector("svg")?.outerHTML ?? "";
+    expect(identity).toBe((iconEl(toolIcon("execute", "executePwsh")) as HTMLElement).outerHTML);
+    expect(identity).not.toBe((iconEl(outcomeIcon("ok")) as HTMLElement).outerHTML);
+    expect(okIcon?.querySelectorAll("svg")).toHaveLength(1);
 
     const bad = buildToolCard({
       id: "t3",
@@ -206,7 +213,32 @@ describe("outcome is a glyph, not a word", () => {
     });
     const badIcon = bad.querySelector(".tool-icon");
     expect(badIcon?.classList.contains("is-fail")).toBe(true);
-    expect(badIcon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u2717");
+    // Still ONE mark, and it is a different SHAPE — which is what keeps hue from
+    // being the only channel (WCAG 1.4.1).
+    expect(badIcon?.querySelectorAll("svg")).toHaveLength(1);
+    expect(badIcon?.querySelector("svg")?.outerHTML).not.toBe(identity);
+  });
+
+  it("gives the four outcome states four distinct shapes", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const { outcomeIcon } = await import("./icons.js");
+    const { iconEl } = await import("./icon-el.js");
+    const identity = buildToolCard({
+      id: "t2d",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+    }).querySelector(".tool-icon svg")?.outerHTML;
+    // The shape channel: if two states ever resolved to one glyph, or a
+    // silhouette collided with a row's identity glyph, this is what fails.
+    const marks = [
+      identity ?? "",
+      ...(["ok", "fail", "warn", "denied"] as const).map(
+        (s) => (iconEl(outcomeIcon(s)) as HTMLElement).outerHTML,
+      ),
+    ];
+    expect(new Set(marks).size).toBe(marks.length);
   });
 
   it("carries the outcome word in the accessible name instead", async () => {
@@ -226,8 +258,10 @@ describe("outcome is a glyph, not a word", () => {
   // `aborted` has no tool counterpart — it is a run-level status, admitted to
   // this vocabulary so the History page states a run's verdict through the same
   // writer instead of growing a second one.
-  it("paints an aborted subject amber with a warning triangle, not as a failure", async () => {
+  it("paints an aborted subject amber with the stop silhouette, not as a failure", async () => {
     const { buildToolCard, applyOutcome } = await import("./tool-card.js");
+    const { outcomeIcon } = await import("./icons.js");
+    const { iconEl } = await import("./icon-el.js");
     const card = buildToolCard({
       id: "t4a",
       title: "executePwsh",
@@ -250,12 +284,111 @@ describe("outcome is a glyph, not a word", () => {
     // Stopped is not broken: the failure tint must be gone, not merely joined.
     expect(icon?.classList.contains("is-fail")).toBe(false);
     expect(icon?.classList.contains("is-ok")).toBe(false);
-    // Amber is shared with a policy refusal, so the SHAPE is what separates them.
-    expect(icon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u26A0");
-    // Rebuilt, not stacked: the check from the first paint is gone.
-    expect(icon?.querySelectorAll(".tool-outcome-badge")).toHaveLength(1);
+    // Amber is shared with a policy refusal, so the SHAPE is what separates them,
+    // and it comes from the shared set rather than from a copy here.
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(
+      (iconEl(outcomeIcon("warn")) as HTMLElement).outerHTML,
+    );
+    // Rebuilt, not stacked: the identity glyph from the first paint is gone.
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
     expect(card.dataset["outcome"]).toBe("warn");
     expect(card.getAttribute("aria-label")).toBe("Open feature-pipeline, aborted");
+  });
+
+  it("leaves exactly one svg in the slot however often applyOutcome is called", async () => {
+    const { buildToolCard, applyOutcome } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t4b",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+    });
+    const icon = card.querySelector(".tool-icon");
+    const info = {
+      kind: "execute",
+      writesFile: false,
+      filePath: "",
+      fileBasename: "",
+      diffSources: null,
+      mcp: null,
+      disclosed: null,
+      denial: null,
+    } as const;
+    // Same state twice, then a change, then the same state again: the writer
+    // REPLACES the slot's child rather than appending to it, so stacking two
+    // marks in one glyph is unrepresentable.
+    applyOutcome(card, "completed", "Run Command", info);
+    applyOutcome(card, "completed", "Run Command", info);
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
+    applyOutcome(card, "failed", "Run Command", info);
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
+    applyOutcome(card, "failed", "Run Command", info);
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("restores the identity glyph when a failed card re-renders as ok", async () => {
+    const { buildToolCard, applyOutcome } = await import("./tool-card.js");
+    const { toolIcon } = await import("./icons.js");
+    const { iconEl } = await import("./icon-el.js");
+    const card = buildToolCard({
+      id: "t4c",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+    });
+    const icon = card.querySelector(".tool-icon");
+    // Named off the icon registry, not read back off the card: a snapshot taken
+    // after buildToolCard has already been through applyOutcome once, so it would
+    // move with any regression that made `ok` paint a general mark.
+    const identity = (iconEl(toolIcon("execute", "executePwsh")) as HTMLElement).outerHTML;
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(identity);
+    const info = {
+      kind: "execute",
+      writesFile: false,
+      filePath: "",
+      fileBasename: "",
+      diffSources: null,
+      mcp: null,
+      disclosed: null,
+      denial: null,
+    } as const;
+    applyOutcome(card, "failed", "Run Command", info);
+    expect(icon?.querySelector("svg")?.outerHTML).not.toBe(identity);
+    // Back to ok: the glyph captured at build comes back, so the writer cannot
+    // strand a surface on a silhouette it borrowed.
+    applyOutcome(card, "completed", "Run Command", info);
+    expect(icon?.querySelector("svg")?.outerHTML).toBe(identity);
+    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("does not strand a glyph-less slot on the silhouette it borrowed", async () => {
+    const { applyOutcome } = await import("./tool-card.js");
+    // A caller that mounts no identity glyph. Every caller in the tree mounts one
+    // before its first call, so this pins the contract for the next one rather
+    // than a live path: the writer owns the silhouette it wrote, so a return to
+    // `ok` must not leave a red triangle standing under an `is-ok` class.
+    const node = document.createElement("div");
+    const icon = document.createElement("span");
+    icon.className = "tool-icon";
+    node.appendChild(icon);
+    const info = {
+      kind: "execute",
+      writesFile: false,
+      filePath: "",
+      fileBasename: "",
+      diffSources: null,
+      mcp: null,
+      disclosed: null,
+      denial: null,
+    } as const;
+    applyOutcome(node, "failed", "Run Command", info);
+    expect(icon.querySelectorAll("svg")).toHaveLength(1);
+    applyOutcome(node, "completed", "Run Command", info);
+    expect(icon.querySelectorAll("svg")).toHaveLength(0);
+    expect(icon.classList.contains("is-ok")).toBe(true);
+    expect(node.getAttribute("aria-label")).toBe("Run Command, succeeded");
   });
 });
 

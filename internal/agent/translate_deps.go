@@ -37,9 +37,12 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Chats: rt.chatStore,
 		// The coordinator, not a buffer store: a frame folds into the OPEN TURN's
 		// buffer, and a fold with no turn open has to open one.
-		Buffers:      rt.coord,
-		Turns:        rt.coord,
-		Lines:        rt.lines,
+		Buffers: rt.coord,
+		Turns:   rt.coord,
+		Lines:   rt.lines,
+		// The ledger of steers this server sent — the whole discriminator between
+		// the user's own words and a workflow reporting into the same buffer.
+		Steers:       rt.steerLedger,
 		PendingPerms: rt.bus,
 		// rt, not the coordinator: BridgeRespond resolves the reply bridge from
 		// the manager by chat id, which is this type's own reach.
