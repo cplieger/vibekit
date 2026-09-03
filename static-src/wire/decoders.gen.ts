@@ -19,6 +19,7 @@ const TAB_KINDS = ["chat", "editor", "run", "subagent", "settings", "git", "file
 const TOOL_KINDS = ["execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"] as const;
 const TOOL_STATUSS = ["pending", "in_progress", "completed", "failed"] as const;
 const TURN_OUTCOMES = ["running", "completed", "cancelled", "interrupted", "failed", "refused", "unknown"] as const;
+const WHOAMI_STATES = ["signed_in", "signed_out", "unavailable"] as const;
 
 export const decodeAccountUsage: Decoder<AccountUsage> = (v) => {
   const o = asObject(v, "$.account_usage");
@@ -1483,6 +1484,7 @@ export const decodeUserInputSubOption: Decoder<UserInputSubOption> = (v) => {
 export const decodeWhoamiResponse: Decoder<WhoamiResponse> = (v) => {
   const o = asObject(v, "$.whoami_response");
   const out: WhoamiResponse = {
+    state: reqOneOf(o, "state", WHOAMI_STATES, "$.whoami_response"),
   };
   const email = o["email"] === null ? undefined : optStr(o, "email", "$.whoami_response");
   if (email !== undefined) out.email = email;
@@ -1494,8 +1496,8 @@ export const decodeWhoamiResponse: Decoder<WhoamiResponse> = (v) => {
   if (startUrl !== undefined) out.startUrl = startUrl;
   const region = o["region"] === null ? undefined : optStr(o, "region", "$.whoami_response");
   if (region !== undefined) out.region = region;
-  const error = o["error"] === null ? undefined : optStr(o, "error", "$.whoami_response");
-  if (error !== undefined) out.error = error;
+  const reason = o["reason"] === null ? undefined : optStr(o, "reason", "$.whoami_response");
+  if (reason !== undefined) out.reason = reason;
   return out;
 };
 

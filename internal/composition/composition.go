@@ -230,6 +230,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	authHandler := auth.NewHandler(kiro.cliPath,
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies))
+	// /api/whoami answers from memory, so something has to keep that memory
+	// current: Run primes the identity and refreshes it on a timer until the app
+	// context ends. Primed off the boot path, like the forge snapshot below, so
+	// nothing here waits on a kiro-cli fork.
+	go authHandler.Run(appCtx)
 	forgesHTTP := forges.NewHTTPHandler(forgesManager, h)
 
 	// The forge snapshot shells out to the forge CLIs (gh repo list is a

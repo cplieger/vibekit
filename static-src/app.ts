@@ -462,17 +462,16 @@ async function checkAuthAndStart(): Promise<void> {
     suppressPush(false);
   }
 
-  let authenticated = false;
   const d = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
-  if (d !== null) {
-    const email = d.email;
-    if (email !== undefined && email !== "") {
-      setUserEmail(email);
-      authenticated = true;
-    }
-  }
-
-  if (!authenticated) {
+  // `unavailable` is NOT a sign-out, and reading it as one is the defect this
+  // three-state answer exists to remove. The client used to read only `email`,
+  // so a whoami timeout took the !authenticated branch — which returns WITHOUT
+  // releasing the splash, measured on 3 boots that sat behind an opaque overlay
+  // over a hidden app forever. A null response is the same case: vibekit does
+  // not know, so the app comes up and the server's own refresh settles it.
+  // Rendering a retry affordance for that state is D3's.
+  const state = d?.state ?? "unavailable";
+  if (state === "signed_out") {
     setUserEmail("");
     // Nothing will hydrate the store behind a login modal, so release the held
     // frames rather than leaving the stream stalled until the watchdog fires.
@@ -481,6 +480,7 @@ async function checkAuthAndStart(): Promise<void> {
     showLoginModal();
     return;
   }
+  setUserEmail(state === "signed_in" ? (d?.email ?? "") : "");
 
   initPostAuth();
 
@@ -635,8 +635,10 @@ function onLoginSuccess(): void {
   dismissLoadingScreen();
   initPostAuth();
   void apiGetTyped("/api/whoami", decodeWhoamiResponse).then((d) => {
-    if (d?.email !== undefined) {
-      setUserEmail(d.email);
+    // Only the signed_in arm carries an email. The other two must not blank a
+    // row the login that just succeeded filled in.
+    if (d?.state === "signed_in") {
+      setUserEmail(d.email ?? "");
     }
   });
   // Fetch the pre-conversation catalog so the picker is populated

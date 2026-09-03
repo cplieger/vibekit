@@ -77,6 +77,15 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 	// second POST during the browser-flow window still gets 409.
 	<-h.loginSem
 	close(r.waitDone)
+	// LAST, and that position is load-bearing twice over. The flow is over
+	// whichever way it went, so the cached identity is now a claim about the
+	// past — and it is re-READ rather than assumed, because a clean exit is not
+	// proof of a sign-in (the user may have abandoned the browser step while the
+	// CLI tidied up) and a dirty one is not proof of a failure. But the read
+	// forks kiro-cli for up to WhoamiTimeout, so doing it above would hold the
+	// login semaphore across it (the next login answers 409 for 5s more) and
+	// hold waitDone shut (handleLogin's timeout branch waits on it).
+	h.identity.refresh()
 }
 
 // extractAuthURL pulls an auth URL out of a single already-stripped
