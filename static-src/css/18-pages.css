@@ -30,15 +30,6 @@
   flex: 1 0 auto;
 }
 
-.page-title {
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-semibold);
-  color: var(--c-text-primary);
-  padding-top: calc(0.3125rem + env(safe-area-inset-top, 0));
-  padding-bottom: var(--sp-4);
-  text-wrap: balance;
-}
-
 .page-section {
   display: flex;
   flex-direction: column;
@@ -56,12 +47,8 @@
   margin: 0;
 }
 
-h3.section-title {
+.section-title {
   padding-block-start: var(--sp-4);
-}
-
-.page-title + .page-section > h3.section-title {
-  padding-block-start: 0;
 }
 
 .section-hint {

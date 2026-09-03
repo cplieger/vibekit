@@ -49,7 +49,7 @@
       <div class="sidebar-header">
         <div class="logo">
           <svg class="logo-icon" width="24" height="24" aria-hidden="true"><use href="#vk-logo"/></svg>
-          <h1>Vibekit <span class="logo-subtitle">for Kiro</span></h1>
+          <p class="logo-name">Vibekit <span class="logo-subtitle">for Kiro</span></p>
         </div>
         <div class="sidebar-header-actions">
           <button type="button" id="theme-btn" class="icon-btn" data-tooltip="Toggle theme" aria-label="Toggle theme">
@@ -101,7 +101,17 @@
 
     <main id="chat-area">
       <div class="chat-toolbar">
-        <span id="toolbar-title" class="toolbar-title"></span>
+        <!-- The page's heading, for every view, written by page-title.ts. Left
+             aligned, and the bar's only non-action content; the actions take the
+             row's other end because this takes its slack. Below 30rem of chat
+             area it wraps to its own row (12-chat.css), because seven 44px touch
+             targets leave a 390px bar 44px of text room for a title that wants
+             259px. -->
+        <div class="titlebar-heading">
+          <h1 id="titlebar-title" class="titlebar-title">Vibekit</h1>
+          <span class="titlebar-sep" aria-hidden="true"></span>
+          <span id="titlebar-subtitle" class="titlebar-subtitle"></span>
+        </div>
         <!-- One button, five destinations: find-dispatch.ts routes it by the
              active tab, so the label cannot name one view. It said "Search this
              chat" on every view, including the two where the click did nothing. -->
@@ -307,9 +317,7 @@
       <div id="settings-view" class="hidden" data-tab-view>
         <div class="settings-shell">
           <header class="settings-header">
-            <div class="settings-title-row">
-              <h2 class="page-title"><span id="settings-page-title">General</span></h2>
-            </div>
+
             <nav id="settings-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Settings tabs">
               <button type="button" class="settings-tab" role="tab" data-settings-tab="general" aria-label="General">
                 <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
@@ -333,7 +341,7 @@
           <!-- General: notifications + theme hooks (theme toggle lives in sidebar; nothing else needs a dedicated setting) -->
           <div class="settings-panel" data-settings-panel="general">
             <div class="page-section">
-              <h3 class="section-title">Notifications</h3>
+              <h2 class="section-title">Notifications</h2>
               <p class="section-hint">Get pinged on any of your devices when an agent needs you or finishes a turn. Push requires your browser's permission.</p>
               <div class="section-option">
                 <label class="toggle">
@@ -386,7 +394,7 @@
             </div>
 
             <div class="page-section" id="general-about-section">
-              <h3 class="section-title">About</h3>
+              <h2 class="section-title">About</h2>
               <p class="section-hint">The pair of versions this session is running. kiro-cli is pinned per Vibekit release, so both move together when a new image is built.</p>
               <dl class="about-grid">
                 <dt>Vibekit</dt>
@@ -406,7 +414,7 @@
 
             <div class="page-section" id="general-retention-section">
               <div class="section-title-status-row">
-                <h3 class="section-title">Chat retention</h3>
+                <h2 class="section-title">Chat retention</h2>
                 <span class="settings-save-status hidden" data-save-status="chat_retention_days" aria-live="polite"></span>
               </div>
               <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. Otherwise <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. vibekit manages this itself; kiro-cli's own cleanup is off.</p>
@@ -421,7 +429,7 @@
             </div>
 
             <div class="page-section" id="general-agent-section">
-              <h3 class="section-title">Agent capabilities</h3>
+              <h2 class="section-title">Agent capabilities</h2>
               <p class="section-hint">What the agent can reach. Each one applies to <strong>new conversations</strong>: kiro-cli resolves it when a session starts and keeps that answer for the session's life, so an open chat is unaffected until you reopen it.</p>
               <div class="section-option">
                 <label class="toggle">
@@ -465,7 +473,7 @@
             </div>
 
             <div class="page-section" id="general-experimental-section">
-              <h3 class="section-title">Experimental features</h3>
+              <h2 class="section-title">Experimental features</h2>
               <p class="section-hint">Optional kiro-cli capabilities. Turning one off takes effect on the next conversation; running sessions keep their current configuration.</p>
               <div class="section-option">
                 <label class="toggle">
@@ -526,7 +534,7 @@
           <div class="settings-panel hidden" data-settings-panel="tools">
 
             <div class="page-section">
-              <h3 class="section-title">Tools &amp; runtimes</h3>
+              <h2 class="section-title">Tools &amp; runtimes</h2>
               <p class="section-hint">Runtimes, language servers, and CLIs installed on demand from a catalog of ~700 tools (or your own install command). Installs run in the background and stream their output here; the pin icon freezes a tool at its current version. Everything lands on the persistent volume, not the image.</p>
               <div class="section-actions-row">
                 <!-- Update all and Refresh catalog each OWN a job kind: while
@@ -571,7 +579,7 @@
             <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. The layers under it (supervised mode, agent ignore files) are vibekit's own complementary controls. Defaults here apply to new conversations; the Supervised pill next to the chat prompt toggles the per-chat review gate.</p>
 
             <div class="page-section" id="security-profile-section">
-              <h3 class="section-title">Security profile</h3>
+              <h2 class="section-title">Security profile</h2>
               <p class="section-hint">How much the agent may do here without asking. The profile is the policy: selecting one writes its own rules below and removes the previous profile's, so the table describes what is in force rather than competing with it. The loosest profile also writes a <strong>durable rule to your user permissions file</strong>, which is what lets it cover workflow steps as well &mdash; it survives a restart and applies to every Kiro client on this machine. Rules <em>you</em> added are never deleted: they stay in the table and keep applying alongside the profile. A change reaches a chat when that chat's session next starts.</p>
               <div id="security-profile-list" class="profile-list" role="radiogroup" aria-label="Security profile"></div>
               <div class="profile-actions">
@@ -581,13 +589,13 @@
             </div>
 
             <div class="page-section" id="native-policy-section">
-              <h3 class="section-title">Active policy</h3>
+              <h2 class="section-title">Active policy</h2>
               <p class="section-hint">The native permission rules kiro-cli enforces, layered by scope. Precedence is <strong>deny</strong> &gt; <strong>ask</strong> &gt; <strong>allow</strong>. You can edit the <strong>user</strong> and <strong>workspace</strong> layers; edits take effect immediately, with no restart. New rules default to <strong>Ask</strong> — widen to Allow only deliberately.</p>
               <p id="native-policy-status" class="section-hint hidden"></p>
               <div id="native-policy-list" class="native-policy-list"></div>
               <p id="native-policy-empty-hint" class="section-hint hidden">No policy rules loaded yet.</p>
 
-              <h4 class="section-subtitle">Add a rule</h4>
+              <h3 class="section-subtitle">Add a rule</h3>
               <div class="rule-form" data-rule-form="policy" role="group" aria-label="Add a policy rule">
                 <label class="rf-field">
                   <span class="rf-label">Scope</span>
@@ -641,7 +649,7 @@
 
             <div class="page-section">
               <div class="section-title-status-row">
-                <h3 class="section-title">Supervised mode (default for new chats)</h3>
+                <h2 class="section-title">Supervised mode (default for new chats)</h2>
                 <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
               </div>
               <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent needs permission to <em>run</em> a write tool; Supervised mode decides whether the <em>resulting file change</em> needs your review before it's saved to disk. When on, every file change (create, edit, delete) shows up in the chat with Accept / Reject buttons and the write only lands after you approve. The Supervised pill next to the chat prompt toggles the current conversation; this setting only picks the default for new ones.</p>
@@ -653,7 +661,7 @@
 
             <div class="page-section">
               <div class="section-title-status-row">
-                <h3 class="section-title">Scheduled runs</h3>
+                <h2 class="section-title">Scheduled runs</h2>
                 <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
               </div>
               <p class="section-hint">A scheduled workflow runs with nobody watching, so a tool request it raises has nobody to answer it. By default vibekit <strong>refuses</strong> such a request after 3 minutes and says so on the workflow's row — the run stops rather than parking forever and blocking every later run of that schedule. Turn this on to approve those requests instead. It is a separate decision from the Active policy above on purpose: approving something while you watch is not the same as approving it unattended at 3am. Approvals granted this way are one-shot and never persisted as a rule.</p>
@@ -666,7 +674,7 @@
             <div class="page-section">
               <div id="agent-ignore-section">
                 <div class="section-title-status-row">
-                  <h3 class="section-title">Agent ignore files</h3>
+                  <h2 class="section-title">Agent ignore files</h2>
                   <span class="settings-save-status hidden" data-save-status="agent_ignore_files" aria-live="polite"></span>
                 </div>
                 <p class="section-hint">Paths to gitignore-style files. The agent cannot <em>read</em> files matching these patterns (writes are still allowed, same as git). Good for keeping decrypted secrets (<code>.env.dec</code>), build artifacts, and other gitignored files out of the agent's context window. Relative entries resolve against the workspace root.</p>
@@ -700,7 +708,7 @@
             </div>
 
             <div class="page-section" id="knowledge-section">
-              <h3 class="section-title">Knowledge bases</h3>
+              <h2 class="section-title">Knowledge bases</h2>
               <p class="section-hint">Local directories indexed for semantic search. When <code>chat.enableKnowledge</code> is on, your agent searches these for relevant context. Indexing runs in the background; large directories take a moment.</p>
               <div class="section-actions-row">
                 <div class="action-bar action-bar-inline">
@@ -725,9 +733,7 @@
       <div id="docs-view" class="hidden" data-tab-view>
         <div class="page-content">
           <header class="settings-header">
-            <div class="settings-title-row">
-              <h2 class="page-title"><span id="docs-page-title">Steering</span></h2>
-            </div>
+
             <nav id="docs-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Kiro document categories">
               <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
                 <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
@@ -771,9 +777,7 @@
       <div id="git-view" class="hidden" data-tab-view>
         <div class="page-content">
           <header class="settings-header">
-            <div class="settings-title-row">
-              <h2 class="page-title"><span>Git · </span><span id="git-page-title">Changes</span></h2>
-            </div>
+
             <nav id="git-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Git tabs">
               <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-git-tab="changes" aria-label="Changes">
                 <svg class="settings-tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><line x1="1.05" y1="12" x2="7" y2="12"/><line x1="17.01" y1="12" x2="22.96" y2="12"/></svg>
@@ -932,7 +936,6 @@
       <div id="files-view" class="hidden" data-tab-view>
         <div class="fb-page">
           <div class="fb-list-wrap page-content">
-            <h2 class="page-title">File Browser</h2>
             <div class="fb-list" id="fb-list"></div>
             <div id="fb-drop-overlay" class="fb-drop-overlay hidden">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -1000,7 +1003,6 @@
       <!-- History view (archived chats) -->
       <div id="history-view" class="hidden" data-tab-view>
         <div class="page-content">
-          <h2 class="page-title">History</h2>
           <div id="history-table" class="list-container">
             <div class="list-empty">No previous sessions in this workspace.</div>
           </div>
@@ -1008,7 +1010,6 @@
       </div>
       <div id="run-view" class="hidden" data-tab-view>
         <div class="page-content">
-          <h2 class="page-title">Workflow run</h2>
           <!-- Deliberately NOT a .list-container. That class is a hairline row
                rack: it paints a border-coloured BACKGROUND so its 1px gaps read
                as row separators, and carries no padding because every child is a

@@ -100,6 +100,7 @@ import { getActiveId, getSessions, setActive } from "./store.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
+import { setPageTitle, clearPageTitle } from "./page-title.js";
 
 // --- Types ---
 
@@ -1543,8 +1544,14 @@ function showView(row: TabRow): void {
     });
   }
 
-  // Mobile toolbar title reads directly from the tab name.
-  $.toolbarTitle.textContent = row.subject.kind === "chat" ? "" : row.name;
+  // The title bar's heading, for every view and every width. The tab's name IS
+  // the page's title, and the kind is what lets the heading recover a subtitle
+  // the view's own module recorded earlier (page-title.ts).
+  //
+  // A chat used to be excluded here and set to "", so the one view people spend
+  // their time in had no title on a phone at all — the exclusion made sense only
+  // while this span was a mobile-only afterthought beside a floating menu.
+  setPageTitle(row.name, row.subject.kind);
 
   // Close mobile sidebar after switching.
   $.sidebar.classList.remove("open");
@@ -1580,7 +1587,7 @@ function showEmptySurface(): void {
       return target as HTMLElement | null;
     });
   }
-  $.toolbarTitle.textContent = "";
+  clearPageTitle();
   syncSidebarButtons(null);
 }
 

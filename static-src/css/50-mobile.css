@@ -75,32 +75,13 @@
     display: flex;
   }
 
-  .chat-toolbar {
-    position: static;
-    width: 100%;
-    border-radius: 0;
-    padding: env(safe-area-inset-top, 0) var(--sp-3) 0;
-    min-height: calc(3.25rem + env(safe-area-inset-top, 0));
-    border: none;
-    border-block-end: 1px solid var(--c-border);
-    justify-content: flex-end;
-    background: var(--c-bg-primary);
-    flex-shrink: 0;
-    z-index: auto;
-  }
-
-  .toolbar-title {
-    display: block;
-  }
-
-  .page-title {
-    display: none;
-  }
-
-  /* Icon-only sub-page bars keep the active section name below the bar. */
-  .settings-title-row .page-title {
-    display: block;
-  }
+  /* The toolbar rules that used to live here ARE the base geometry now
+     (12-chat.css): full width, square, in flow, with its own bottom hairline.
+     They were the mobile-only half of an element that had two layouts, and
+     promoting them removed the desktop half rather than duplicating it. The
+     `.toolbar-title` / `.page-title` pair went with them — one `.titlebar-heading`
+     serves every view at every width, and it takes its own row below 30rem of
+     chat area through a container query rather than a viewport one. */
 
   .chat-toolbar .mobile-only {
     display: flex;

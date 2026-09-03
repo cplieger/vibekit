@@ -730,6 +730,19 @@
      * Its stroke is a token too, so the coarse tier grows the glyph without
      * changing its apparent WEIGHT — a control must not look heavier because a
      * finger arrived. */
+    /* ---- The title bar --------------------------------------------------- *
+     * ONE height for the two bars that meet at the top of the app: the
+     * sidebar's header (10-shell-app.css) and the chat area's title bar
+     * (12-chat.css). They must agree or their bottom hairlines do not line up,
+     * and before this token they agreed only by both spelling `3.25rem` — which
+     * is exactly the shape of drift, and the floating menu that preceded the
+     * title bar sat 1px past the sidebar's rule (measured: rule at y=53,
+     * menu bottom at y=54).
+     *
+     * The safe-area inset is NOT folded in here, because a consumer needs the
+     * bare height as well: the bar adds `env(safe-area-inset-top)` as padding
+     * while `.banner` takes this value alone as a `min-block-size`. */
+    --titlebar-h: 3.25rem;
     --icon-inline: 0.75rem;
     --icon-ui: 1rem;
     --icon-lg: 1.5rem;

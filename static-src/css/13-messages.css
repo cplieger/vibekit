@@ -1095,13 +1095,22 @@
    reach. 9 clears the transcript, `#model-picker` (5) and `.turn-rail` (4), and
    stays under `.chat-toolbar` (10) and `.search-pop` (60).
 
-   `inset-inline-end` is the toolbar's measured width plus the toolbar's own
-   right inset plus one gap; `--chat-toolbar-w` is published by
-   `chat-toolbar-metrics.ts`, because CSS cannot ask how wide that element is.
+   `inset-block-start` is `--below-chat-toolbar`, and it is REQUIRED rather than
+   cosmetic: the band's containing block is `#chat-area`, whose padding box starts
+   ABOVE the in-flow title bar, so a bare `--sp-3` puts the band's first 40px
+   under the bar — a banner visible but answering no pointer event, which is the
+   very defect this element's DOM position exists to prevent.
+
+   `inset-inline-end` no longer dodges the bar's width. The bar was a floating
+   pill of content-driven width, so only a measurement could say where it ended;
+   `chat-toolbar-metrics.ts` published `--chat-toolbar-w` for that one reader and
+   is deleted with it. The token resolves to 0 now (12-chat.css), so this
+   expression is one `--sp-3` plus one `--sp-2` of right inset.
+
    No `inset-block-end`, so a long message grows the band downward. */
 .banner-stack {
   position: absolute;
-  inset-block-start: calc(var(--sp-3) + env(safe-area-inset-top, 0));
+  inset-block-start: var(--below-chat-toolbar);
   inset-inline: var(--sp-3) calc(var(--chat-toolbar-w, 0px) + var(--sp-3) + var(--sp-2));
   z-index: 9;
   display: flex;

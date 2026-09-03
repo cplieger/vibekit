@@ -59,8 +59,12 @@ describe("text-wrap policy", () => {
   });
 
   it("leaves `balance` alone", () => {
-    // Not a blanket blessing: these are the three declarations that existed, all
-    // on short static text. A fourth wants its own reasoning, not this test's.
+    // Not a blanket blessing: these are the declarations that existed, all on
+    // short static text. A new one wants its own reasoning, not this test's.
+    //
+    // Was three. `.page-title` was the fourth-to-last and went with the title bar:
+    // every view's heading is the bar's `<h1>` now, which is a single nowrap line
+    // that ellipsizes, so it has nothing to balance.
     const found: string[] = [];
     for (const name of ownSheets()) {
       for (const rule of allRules(loadCSS(name))) {
@@ -69,6 +73,6 @@ describe("text-wrap policy", () => {
         }
       }
     }
-    expect(found.length).toBe(3);
+    expect(found.length).toBe(2);
   });
 });

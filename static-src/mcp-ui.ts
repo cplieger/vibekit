@@ -83,7 +83,7 @@ function buildSectionScaffold(): void {
     return;
   }
 
-  const title = el("h3", { className: "section-title" }, "MCP integrations");
+  const title = el("h2", { className: "section-title" }, "MCP integrations");
 
   const hint = el(
     "p",

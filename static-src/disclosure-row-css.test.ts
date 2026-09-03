@@ -532,36 +532,39 @@ describe("sub-page menu bars", () => {
     expect(css(label, "display")).toBe("none");
   });
 
-  // One element, two positions. On desktop the title LEADS the bar, and that is
-  // load-bearing rather than cosmetic: `.chat-toolbar` floats over the top-right
-  // corner of every view, so a full-width bar with nothing above it renders its
-  // right end underneath those buttons. Below 48rem the title FOLLOWS the bar,
-  // where the labels are gone and this line is the only text naming the active
-  // section. The layout half is asserted at whichever width the test page has;
-  // the narrow half is asserted as a source fact so it is pinned either way.
-  it("leads the menu bar on desktop and follows it on a narrow bar", () => {
-    const header = document.createElement("header");
-    header.className = "settings-header";
-    const title = document.createElement("div");
-    title.className = "settings-title-row";
+  // THE SUBTITLE DEFERS TO A LABELLED BAR, and this is the dependency that makes
+  // it work. `tab-bar-fit.ts` publishes `.tab-bar-named` while a bar is VISIBLE
+  // and showing its labels, i.e. while it names its own active section, and
+  // 12-chat.css suppresses the title bar's subtitle for exactly that condition —
+  // otherwise the section name prints twice, twenty pixels apart. When the bar
+  // drops its labels the class goes with them and the subtitle becomes the only
+  // text naming the section.
+  //
+  // What this replaced: `.settings-title-row`, an element whose whole job was to
+  // push the bar clear of a floating menu that no longer floats. Its own comment
+  // recorded the measurement (the Sources segment lost its last 33px at 1440x900).
+  // The bar is in flow now, so the row is deleted rather than repositioned.
+  it("suppresses the title bar subtitle while the menu bar names its own section", () => {
+    const area = document.createElement("div");
+    area.id = "chat-area";
+    const heading = document.createElement("div");
+    heading.className = "titlebar-heading";
+    const subtitle = document.createElement("span");
+    subtitle.className = "titlebar-subtitle";
+    subtitle.textContent = "Tools";
+    heading.append(subtitle);
     const bar = document.createElement("nav");
     bar.className = "settings-tab-bar";
-    header.append(title, bar);
-    mount(header);
+    area.append(heading, bar);
+    mount(area);
 
-    const titleBox = title.getBoundingClientRect();
-    const barBox = bar.getBoundingClientRect();
-    if (matchMedia("(width <= 48rem)").matches) {
-      expect(Number(css(title, "order"))).toBeGreaterThan(Number(css(bar, "order")));
-      expect(titleBox.top).toBeGreaterThanOrEqual(barBox.bottom);
-    } else {
-      expect(Number(css(title, "order"))).toBe(Number(css(bar, "order")));
-      expect(titleBox.bottom).toBeLessThanOrEqual(barBox.top);
-    }
+    // Labelled bar: it names the section, so the subtitle stands down.
+    bar.classList.add("tab-bar-named");
+    expect(css(subtitle, "display")).toBe("none");
 
-    expect(ruleBody(loadCSS("17-settings.css"), ".settings-title-row")).toMatch(
-      /@media\s*\(width\s*<=\s*48rem\)\s*\{[^}]*order:\s*1/,
-    );
+    // Labels dropped: the subtitle is the only name left on screen.
+    bar.classList.remove("tab-bar-named");
+    expect(css(subtitle, "display")).not.toBe("none");
   });
 });
 

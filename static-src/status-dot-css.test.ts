@@ -44,12 +44,31 @@ describe("the sidebar connection dot", () => {
     expect(dot.getAnimations({ subtree: true })).toHaveLength(0);
   });
 
-  it("generates no ::after overlay to animate", () => {
+  it("paints and animates nothing on its ::after overlay", () => {
     // The ripple lived on the pseudo, so a rule that survived with its animation
-    // stripped would leave an opaque green disc covering the dot. No `content`
-    // means no box at all.
+    // stripped would leave an opaque green disc covering the dot.
+    //
+    // The pseudo EXISTS again, and this assertion is narrowed to the property that
+    // was ever the defect rather than to the box. `all: unset` on this control
+    // resets `min-width`/`min-height` at class specificity, which makes it
+    // invisible to the app-wide zero-specificity hit-target floor rather than an
+    // override of it — an 8px button at every tier. The mark's size is its
+    // meaning, so the TARGET grows past the paint through an `::after` expander
+    // (10-shell-app.css). Transparent and inert: no background, no animation.
     const dot = mountDot("status-dot connected");
-    expect(getComputedStyle(dot, "::after").content).toBe("none");
+    const after = getComputedStyle(dot, "::after");
+    expect(after.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(after.animationName).toBe("none");
+    expect(dot.getAnimations({ subtree: true })).toHaveLength(0);
+  });
+
+  it("grows its hit target past its 8px disc", () => {
+    // The whole point of the expander: the painted mark stays 8px while the target
+    // reaches the tier's floor. `inset` is negative by half the difference, so the
+    // target follows `--hit-floor` with no second declaration to keep in step.
+    const dot = mountDot("status-dot connected");
+    const inset = getComputedStyle(dot, "::after").insetBlockStart;
+    expect(parseFloat(inset)).toBeLessThan(0);
   });
 
   it("still breathes while connecting", () => {

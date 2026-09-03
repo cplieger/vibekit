@@ -31,9 +31,15 @@
   user-select: none;
 }
 
-.logo h1 {
+/* The app's name, and deliberately NOT a heading any more. The page's title is
+   the `<h1>` in the title bar (12-chat.css), so a second `<h1>` here made every
+   page's real heading the second one on the document and forced its section
+   titles down a level. `margin: 0` because this is a `<p>` now and carries the
+   UA's block margins. */
+.logo-name {
   font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
+  margin: 0;
   transition: color var(--dur-enter) var(--ease-enter);
 }
 
@@ -44,7 +50,7 @@
   margin-left: 0.15em;
 }
 
-.logo:hover h1 {
+.logo:hover .logo-name {
   /* Lighter purple in dark mode, darker purple in light mode — never
    white/black, so it stays branded. */
   color: color-mix(in srgb, var(--c-accent) 70%, var(--c-text-primary));

@@ -431,10 +431,6 @@ class Elements {
   }
 
   // Tabs / shell
-  get toolbarTitle(): HTMLElement {
-    return byId("toolbar-title");
-  }
-
   // Startup
   get appRoot(): HTMLElement {
     return byId("app");

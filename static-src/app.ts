@@ -66,7 +66,6 @@ import type { Route } from "./router.js";
 import { refreshPickerIfVisible, setPickerModels, initModelPicker } from "./picker.js";
 import { setStatus, refreshRuntimeLine, initStatusVersions } from "./status.js";
 import { initShellPanel } from "./shell.js";
-import { initChatToolbarMetrics } from "./chat-toolbar-metrics.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
 import { openFile, activateFile, closeEditorFile } from "./editor-openers.js";
@@ -279,9 +278,6 @@ function init(): void {
 
   setupInput();
   initUI();
-  // Before anything can raise a banner: `.banner-stack` stops at the toolbar's
-  // left edge, and only JS can measure that edge.
-  initChatToolbarMetrics();
   initShellPanel();
   setCopyCallback((text) => void copyClipboard.dispatch(text, { silent: true }));
   initEditor();

@@ -107,6 +107,19 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
+  // `byId` is reached through this graph by page-title.ts, which tabs.ts calls to
+  // paint the title bar's heading on every view switch. ESM links for real, so a
+  // name any module in the graph imports has to exist on the mock or the whole
+  // file fails at link time — which is what it did.
+  byId: (id: string) => {
+    let el = document.getElementById(id);
+    if (el === null) {
+      el = document.createElement("span");
+      el.id = id;
+      document.body.appendChild(el);
+    }
+    return el;
+  },
 }));
 vi.mock("./tabs-drag.js", () => ({
   attachDrag: vi.fn(),

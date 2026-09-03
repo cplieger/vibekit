@@ -9,6 +9,7 @@ import { pushRoute } from "./router.js";
 import type { GitTab } from "./router.js";
 import { setGitTab as setGitTabRoute } from "./tabs.js";
 import { fitTabBar } from "./tab-bar-fit.js";
+import { setPageSubtitle } from "./page-title.js";
 
 // GitTab lives in router.ts (the URL source of truth, alongside SettingsTab);
 // re-exported here so existing `import { GitTab } from "./git-tabs.js"` callers
@@ -101,9 +102,6 @@ export function initGitTabs(): void {
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-git-panel]")) {
       panel.classList.toggle("hidden", panel.dataset["gitPanel"] !== tab);
     }
-    const title = document.getElementById("git-page-title");
-    if (title !== null) {
-      title.textContent = GIT_TAB_LABELS[tab];
-    }
+    setPageSubtitle("git", GIT_TAB_LABELS[tab]);
   });
 }

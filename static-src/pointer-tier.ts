@@ -62,8 +62,19 @@ export function seedTier(): PointerTier {
   if (cached !== null) {
     return cached;
   }
-  const coarse = globalThis.matchMedia?.("(any-pointer: coarse)").matches === true;
-  const touch = (globalThis.navigator?.maxTouchPoints ?? 0) > 0;
+  // Read through a NULLABLE view of the global rather than the DOM lib's, which
+  // declares both of these always present — true of a browser and of nothing
+  // else. Read through that type and `no-unnecessary-condition` proves the guards
+  // dead and offers to delete the two the non-browser runtimes need: a vitest
+  // `node` environment has a global `navigator` (Node 21+) carrying no
+  // `maxTouchPoints`, and no `matchMedia` at all. Same shape and same reason as
+  // `typescript.md` "Read the capability off the object".
+  const g = globalThis as {
+    readonly matchMedia?: (q: string) => MediaQueryList;
+    readonly navigator?: { readonly maxTouchPoints?: number };
+  };
+  const coarse = g.matchMedia?.("(any-pointer: coarse)").matches ?? false;
+  const touch = (g.navigator?.maxTouchPoints ?? 0) > 0;
   return coarse || touch ? "coarse" : "fine";
 }
 
