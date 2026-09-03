@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,31 @@ func writeFakeCLIScript(t *testing.T, body string) string {
 		t.Fatalf("writeFakeCLIScript: %v", err)
 	}
 	return path
+}
+
+// writeCountingCLI writes a fake kiro-cli that records every invocation and
+// prints stdout. calls reports how many times it ran, which is the only way to
+// assert that a request path forks nothing. Unix-only.
+func writeCountingCLI(t *testing.T, stdout string) (path string, calls func() int) {
+	t.Helper()
+	dir := t.TempDir()
+	path = filepath.Join(dir, "fake-kiro-cli")
+	dataPath := filepath.Join(dir, "stdout-data")
+	countPath := filepath.Join(dir, "call-count")
+	if err := os.WriteFile(dataPath, []byte(stdout), 0o644); err != nil {
+		t.Fatalf("writeCountingCLI data: %v", err)
+	}
+	script := fmt.Sprintf("#!/bin/sh\necho x >> %q\ncat %q\n", countPath, dataPath)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("writeCountingCLI: %v", err)
+	}
+	return path, func() int {
+		b, err := os.ReadFile(countPath)
+		if err != nil {
+			return 0
+		}
+		return bytes.Count(b, []byte("\n"))
+	}
 }
 
 // skipIfNotUnix skips the test on Windows. Every subprocess / signal
@@ -317,7 +343,7 @@ func TestHumanizeAccountType(t *testing.T) {
 
 func TestWhoamiInfo(t *testing.T) {
 	tests := []struct {
-		check   func(t *testing.T, got *WhoamiResponse)
+		check   func(t *testing.T, got WhoamiResponse)
 		name    string
 		in      string
 		wantErr bool
@@ -325,7 +351,10 @@ func TestWhoamiInfo(t *testing.T) {
 		{
 			name: "BuilderId normalises account_type to auth",
 			in:   `{"account_type":"BuilderId","email":"a@b.com","start_url":"https://view.awsapps.com/start","region":"us-east-1"}`,
-			check: func(t *testing.T, got *WhoamiResponse) {
+			check: func(t *testing.T, got WhoamiResponse) {
+				if got.State != WhoamiSignedIn {
+					t.Errorf("State = %q, want %q", got.State, WhoamiSignedIn)
+				}
 				if got.Auth != "Logged in with Builder ID" {
 					t.Errorf("Auth = %q, want %q", got.Auth, "Logged in with Builder ID")
 				}
@@ -348,7 +377,7 @@ func TestWhoamiInfo(t *testing.T) {
 			// verbatim under the old map[string]any return; the
 			// typed struct narrows the surface intentionally.
 			in: `{"account_type":"IdentityCenter","email":"u@example.com","profile":"admin","account_id":"123"}`,
-			check: func(t *testing.T, got *WhoamiResponse) {
+			check: func(t *testing.T, got WhoamiResponse) {
 				if got.Auth != "Logged in with IAM Identity Center" {
 					t.Errorf("Auth = %q", got.Auth)
 				}
@@ -373,7 +402,7 @@ func TestWhoamiInfo(t *testing.T) {
 		{
 			name: "missing account_type leaves Auth unset",
 			in:   `{"email":"x@y.com"}`,
-			check: func(t *testing.T, got *WhoamiResponse) {
+			check: func(t *testing.T, got WhoamiResponse) {
 				if got.Auth != "" {
 					t.Errorf("Auth = %q, want empty without account_type", got.Auth)
 				}
@@ -385,7 +414,7 @@ func TestWhoamiInfo(t *testing.T) {
 		{
 			name: "empty account_type is ignored",
 			in:   `{"account_type":"","email":"x@y.com"}`,
-			check: func(t *testing.T, got *WhoamiResponse) {
+			check: func(t *testing.T, got WhoamiResponse) {
 				if got.Auth != "" {
 					t.Errorf("Auth = %q, want empty for empty account_type", got.Auth)
 				}
@@ -397,30 +426,41 @@ func TestWhoamiInfo(t *testing.T) {
 		{
 			name: "non-string account_type is ignored",
 			in:   `{"account_type":42,"email":"x@y.com"}`,
-			check: func(t *testing.T, got *WhoamiResponse) {
+			check: func(t *testing.T, got WhoamiResponse) {
 				if got.Auth != "" {
 					t.Errorf("Auth = %q, want empty for non-string account_type", got.Auth)
 				}
 			},
 		},
 		{
-			name: "null json object becomes zero-valued WhoamiResponse",
+			// A payload vibekit RECEIVED with no email in it is kiro-cli saying
+			// nobody is signed in. It must never read as `unavailable`, which is
+			// reserved for not having been able to ask.
+			name: "null json object is signed_out",
 			in:   `null`,
-			check: func(t *testing.T, got *WhoamiResponse) {
-				if got == nil {
-					t.Fatal("got nil pointer, want zero-valued WhoamiResponse")
-				}
-				if (*got != WhoamiResponse{}) {
-					t.Errorf("WhoamiResponse = %+v, want zero value", got)
+			check: func(t *testing.T, got WhoamiResponse) {
+				if got != (WhoamiResponse{State: WhoamiSignedOut}) {
+					t.Errorf("whoamiInfo(null) = %+v, want the bare signed_out arm", got)
 				}
 			},
 		},
 		{
-			name: "empty json object stays empty",
+			name: "empty json object is signed_out",
 			in:   `{}`,
-			check: func(t *testing.T, got *WhoamiResponse) {
-				if (*got != WhoamiResponse{}) {
-					t.Errorf("WhoamiResponse = %+v, want zero value", got)
+			check: func(t *testing.T, got WhoamiResponse) {
+				if got != (WhoamiResponse{State: WhoamiSignedOut}) {
+					t.Errorf("whoamiInfo({}) = %+v, want the bare signed_out arm", got)
+				}
+			},
+		},
+		{
+			// The account labels are the signed_in arm's, so an emailless payload
+			// carrying them is still signed_out and must carry nothing else.
+			name: "account_type without an email is still signed_out",
+			in:   `{"account_type":"BuilderId","region":"us-east-1"}`,
+			check: func(t *testing.T, got WhoamiResponse) {
+				if got != (WhoamiResponse{State: WhoamiSignedOut}) {
+					t.Errorf("whoamiInfo = %+v, want the bare signed_out arm", got)
 				}
 			},
 		},
@@ -437,7 +477,7 @@ func TestWhoamiInfo(t *testing.T) {
 		{
 			name: "kiro-cli 2.0.1: camelCase accountType",
 			in:   `{"accountType":"IamIdentityCenter","email":"u@example.com","region":"us-east-1","startUrl":"https://view.awsapps.com/start"}`,
-			check: func(t *testing.T, got *WhoamiResponse) {
+			check: func(t *testing.T, got WhoamiResponse) {
 				if got.Auth != "Logged in with IAM Identity Center" {
 					t.Errorf("Auth = %q, want IAM Identity Center", got.Auth)
 				}
@@ -464,7 +504,7 @@ func TestWhoamiInfo(t *testing.T) {
 				"\"startUrl\":\"https://view.awsapps.com/start\"}\n" +
 				"Profile:\nKiroProfile-us-east-1\n" +
 				"arn:aws:codewhisperer:us-east-1:123:profile/ABC\n",
-			check: func(t *testing.T, got *WhoamiResponse) {
+			check: func(t *testing.T, got WhoamiResponse) {
 				if got.Email != "u@example.com" {
 					t.Errorf("Email = %q, want u@example.com (trailing footer should be ignored)", got.Email)
 				}
@@ -562,11 +602,12 @@ func TestValidateRegion(t *testing.T) {
 // HandleWhoami tests (cycle 1 t-3, fake-CLI harness)
 // ---------------------------------------------------------------------------
 
-func TestHandleWhoami_Success(t *testing.T) {
+func TestHandleWhoami_ServesThePrimedIdentity(t *testing.T) {
 	skipIfNotUnix(t)
 
 	cli := writeFakeCLI(t, `{"account_type":"BuilderId","email":"u@example.com"}`, 0)
 	h := NewHandler(fixedPath(cli))
+	h.identity.refresh()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
 	rr := httptest.NewRecorder()
@@ -582,6 +623,9 @@ func TestHandleWhoami_Success(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response not JSON: %v; body=%s", err, rr.Body.String())
 	}
+	if body["state"] != string(WhoamiSignedIn) {
+		t.Errorf("state = %v, want %q", body["state"], WhoamiSignedIn)
+	}
 	if body["email"] != "u@example.com" {
 		t.Errorf("email = %v, want u@example.com", body["email"])
 	}
@@ -590,33 +634,37 @@ func TestHandleWhoami_Success(t *testing.T) {
 	}
 }
 
-func TestHandleWhoami_CLIFails(t *testing.T) {
+// TestHandleWhoami_ForksNothing is the whole point of the cache: a page load
+// and every SSE reconnect behind it must reach memory and nothing else. The
+// measured cost of the old shape was p50 457 ms per call with a 5-second tail.
+func TestHandleWhoami_ForksNothing(t *testing.T) {
 	skipIfNotUnix(t)
 
-	cli := writeFakeCLI(t, "", 1)
+	cli, calls := writeCountingCLI(t, `{"account_type":"BuilderId","email":"u@example.com"}`)
 	h := NewHandler(fixedPath(cli))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-	rr := httptest.NewRecorder()
-	h.handleWhoami(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (fail-soft banner)", rr.Code)
+	h.identity.refresh()
+	if got := calls(); got != 1 {
+		t.Fatalf("prime invoked kiro-cli %d times, want 1", got)
 	}
-	var body map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v; body=%s", err, rr.Body.String())
+
+	for range 10 {
+		req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
+		rr := httptest.NewRecorder()
+		h.handleWhoami(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rr.Code)
+		}
 	}
-	if body["error"] != "whoami unavailable" {
-		t.Errorf("error = %v, want generic sentinel", body["error"])
+	if got := calls(); got != 1 {
+		t.Errorf("10 requests invoked kiro-cli %d times, want the 1 from the prime", got)
 	}
 }
 
-func TestHandleWhoami_MalformedJSON(t *testing.T) {
-	skipIfNotUnix(t)
-
-	cli := writeFakeCLI(t, "not-json-garbage", 0)
-	h := NewHandler(fixedPath(cli))
+// TestHandleWhoami_ColdReadIsUnavailableNotSignedOut is the defect the union
+// exists for: before the first read lands the server does not KNOW, and saying
+// signed_out there is what puts a sign-in prompt over a working app.
+func TestHandleWhoami_ColdReadIsUnavailableNotSignedOut(t *testing.T) {
+	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
 	rr := httptest.NewRecorder()
@@ -626,8 +674,41 @@ func TestHandleWhoami_MalformedJSON(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response not JSON: %v", err)
 	}
-	if body["error"] != "whoami unavailable" {
-		t.Errorf("error = %v, want generic sentinel", body["error"])
+	if body["state"] != string(WhoamiUnavailable) {
+		t.Errorf("state = %v, want %q on a cold cache", body["state"], WhoamiUnavailable)
+	}
+	if body["reason"] != reasonNotRead {
+		t.Errorf("reason = %v, want %q", body["reason"], reasonNotRead)
+	}
+	if _, present := body["email"]; present {
+		t.Errorf("the unavailable arm carried an email: %v", body)
+	}
+}
+
+func TestReadIdentity_CLIFailureIsUnavailable(t *testing.T) {
+	skipIfNotUnix(t)
+
+	tests := []struct {
+		name       string
+		stdout     string
+		exitCode   int
+		wantReason string
+	}{
+		{"non-zero exit", "", 1, reasonCLIFailed},
+		{"output that is not json", "not-json-garbage", 0, reasonUnreadable},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHandler(fixedPath(writeFakeCLI(t, tc.stdout, tc.exitCode)))
+			got := h.readIdentity(t.Context())
+			if got.State != WhoamiUnavailable {
+				t.Errorf("State = %q, want %q — a CLI that could not answer is not a sign-out",
+					got.State, WhoamiUnavailable)
+			}
+			if got.Reason != tc.wantReason {
+				t.Errorf("Reason = %q, want %q", got.Reason, tc.wantReason)
+			}
+		})
 	}
 }
 
@@ -911,10 +992,10 @@ func TestNewHandler(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// handleWhoami timeout branch (cycle 3 t-2)
+// readIdentity failure classification (cycle 3 t-2)
 // ---------------------------------------------------------------------------
 
-func TestHandleWhoami_TimesOutWhenCLIHangs(t *testing.T) {
+func TestReadIdentity_TimesOutWhenCLIHangs(t *testing.T) {
 	skipIfNotUnix(t)
 
 	path := writeFakeCLIScript(t, "sleep 10\n")
@@ -925,61 +1006,41 @@ func TestHandleWhoami_TimesOutWhenCLIHangs(t *testing.T) {
 		WhoamiTimeout:   50 * time.Millisecond,
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-	rr := httptest.NewRecorder()
-	h.handleWhoami(rr, req)
+	ctx, cancel := context.WithTimeout(t.Context(), h.cfg.WhoamiTimeout)
+	defer cancel()
+	got := h.readIdentity(ctx)
 
-	// Fail-soft: always 200 with "whoami unavailable" so the UI
-	// renders "not logged in" regardless of timeout vs failure.
-	if rr.Code != http.StatusOK {
-		t.Fatalf("handleWhoami timeout status = %d, want 200 (fail-soft banner)", rr.Code)
+	// The defect this arm exists for: a timeout used to be indistinguishable
+	// from a sign-out, so a hiccup rendered a sign-in prompt.
+	if got.State != WhoamiUnavailable {
+		t.Fatalf("State = %q, want %q on a timeout", got.State, WhoamiUnavailable)
 	}
-	var body map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
-	}
-	if body["error"] != "whoami unavailable" {
-		t.Errorf("error = %v, want %q", body["error"], "whoami unavailable")
+	if got.Reason != reasonTimedOut {
+		t.Errorf("Reason = %q, want %q", got.Reason, reasonTimedOut)
 	}
 }
 
-// TestHandleWhoami_BinaryMissingFailsSoft pins the ErrNotFound branch
-// of handleWhoami (line 184). Mirrors the structural pattern already
-// tested for handleLogout (TestHandleLogout_BinaryMissing) and
-// handleLogin (TestHandleLogin_BinaryMissingReturns503). A future
-// refactor that accidentally made this branch fall through to the
-// default case (losing the dedicated "kiro-cli binary not found" log
-// that Grafana alerts on) would still pass CI without this.
-func TestHandleWhoami_BinaryMissingFailsSoft(t *testing.T) {
-	// Path that doesn't exist and isn't on PATH — triggers
-	// exec.ErrNotFound from cmd.Run, which must route through
-	// the dedicated "binary not found" log branch and still
-	// surface as the generic fail-soft "whoami unavailable"
-	// sentinel so the UI renders "not logged in" regardless.
+// TestReadIdentity_BinaryMissingIsUnavailable pins the ErrNotFound branch,
+// which carries its own log line Grafana alerts on. A refactor that let it fall
+// through to the default case would still pass CI without this.
+func TestReadIdentity_BinaryMissingIsUnavailable(t *testing.T) {
+	// A path that does not exist and is not on PATH triggers exec.ErrNotFound
+	// from cmd.Run.
 	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-	rr := httptest.NewRecorder()
-	h.handleWhoami(rr, req)
+	got := h.readIdentity(t.Context())
 
-	// Fail-soft: always 200 so the banner caller sees a
-	// consistent shape regardless of the failure class.
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (fail-soft banner)", rr.Code)
+	if got.State != WhoamiUnavailable {
+		t.Fatalf("State = %q, want %q", got.State, WhoamiUnavailable)
 	}
-	var body map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response not JSON: %v", err)
+	if got.Reason != reasonCLIMissing {
+		t.Errorf("Reason = %q, want %q", got.Reason, reasonCLIMissing)
 	}
-	if body["error"] != "whoami unavailable" {
-		t.Errorf("error = %v, want %q", body["error"], "whoami unavailable")
-	}
-	// Must not leak filesystem paths or exec error shape.
-	errStr, _ := body["error"].(string)
-	if strings.Contains(errStr, "fork/exec") ||
-		strings.Contains(errStr, "no-such-kiro-cli") ||
-		strings.Contains(errStr, "not found") {
-		t.Errorf("error = %q, leaks binary path / exec details", errStr)
+	// The reason is a server-authored phrase, never the exec error: it is
+	// rendered in a banner, so a filesystem path or an errno must not reach it.
+	if strings.Contains(got.Reason, "fork/exec") ||
+		strings.Contains(got.Reason, "no-such-kiro-cli") {
+		t.Errorf("Reason = %q, leaks the binary path / exec details", got.Reason)
 	}
 }
 

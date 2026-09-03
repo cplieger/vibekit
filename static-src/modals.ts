@@ -357,15 +357,17 @@ function doLogin(
           AbortSignal.timeout(MAX_POLL_ATTEMPTS * 3000),
         ]);
         void (async () => {
-          // Wait-then-poll /api/whoami every 3s until it reports a
-          // signed-in email (terminal), the user dismisses (ctrl), or the
-          // 10-minute deadline fires — both rolled into `signal`. A null
-          // whoami (not-yet-logged-in / transient) keeps polling at 3s.
+          // Wait-then-poll /api/whoami every 3s until it reports signed_in
+          // (terminal), the user dismisses (ctrl), or the 10-minute deadline
+          // fires — both rolled into `signal`. `signed_out` is the expected
+          // answer for most of the window and keeps polling; so does
+          // `unavailable`, which is the state that used to be indistinguishable
+          // from a sign-out and would have ended the poll at the first hiccup.
           const outcome = await pollUntil(
             (s) => apiGetTyped("/api/whoami", decodeWhoamiResponse, s),
             {
               intervalMs: 3000,
-              until: (wd) => wd.email !== undefined && wd.email !== "",
+              until: (wd) => wd.state === "signed_in",
               signal,
             },
           );

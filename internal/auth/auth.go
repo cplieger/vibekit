@@ -100,6 +100,11 @@ var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 // subprocess is still alive still gets 409.
 type Handler struct {
 	loginSem chan struct{}
+	// identity is what /api/whoami answers from. See identityCache: the
+	// endpoint fires on every page load and every SSE reconnect, so the read
+	// behind it happens on a timer and on the sign-in/sign-out transitions,
+	// never on a request.
+	identity *identityCache
 	// cliPath resolves the kiro-cli binary at CALL time. It is a function
 	// because the install manager selects the active version after the listener
 	// binds and can switch it later, so a path captured at construction would
@@ -142,6 +147,9 @@ func NewHandler(cliPath func() string, opts ...Option) *Handler {
 	for _, o := range opts {
 		o(h)
 	}
+	// After the options, not before: the cache captures the read budget, and
+	// WithConfig is what sets it.
+	h.identity = newIdentityCache(h.readIdentity, h.cfg.WhoamiTimeout)
 	return h
 }
 

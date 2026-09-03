@@ -78,6 +78,10 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	slog.Info("logout: completed", "output_bytes", len(out))
+	// Published rather than re-read: a clean `kiro-cli logout` exit IS the
+	// answer, so forking a second kiro-cli to be told what we just did would
+	// only add a window in which the sidebar still shows the old identity.
+	h.identity.publish(signedOutIdentity())
 	webhttp.WriteJSON(w, result)
 }
 

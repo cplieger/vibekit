@@ -194,8 +194,14 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// this row TabSubject.kind is TabKind rather than string, so a subject
 	// carrying an unknown kind fails the generated decoder at the boundary
 	// instead of reaching the factory.
-	"TabKind":   {},
-	"Transport": {Values: []string{"stdio", "http", "sse"}},
+	"TabKind": {},
+	// WhoamiState is registered for TabKind's reason and for one more: the
+	// client's branch over it must be TOTAL, because the state it used to be
+	// missing — "vibekit could not ask" — is the one that must render a retry
+	// rather than a sign-in prompt. A hand-written union could gain a fourth arm
+	// server-side with no build error anywhere.
+	"WhoamiState": {},
+	"Transport":   {Values: []string{"stdio", "http", "sse"}},
 }
 
 // enumTSNames renames an enum on the TypeScript side.

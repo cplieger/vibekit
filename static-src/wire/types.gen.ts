@@ -34,6 +34,8 @@ export type Transport = "stdio" | "http" | "sse";
 
 export type TurnOutcome = "running" | "completed" | "cancelled" | "interrupted" | "failed" | "refused" | "unknown";
 
+export type WhoamiState = "signed_in" | "signed_out" | "unavailable";
+
 /**
  * AccountUsage is the account/subscription usage snapshot for the
  * signed-in identity.
@@ -2374,15 +2376,29 @@ export interface UserInputSubOption {
 }
 
 /**
- * WhoamiResponse is the typed response from /api/whoami; see the block
- * comment above for field semantics.
+ * WhoamiResponse is the typed wire shape returned by /api/whoami.
+ * //
+ * State is the discriminator; the remaining fields belong to one arm each. Any
+ * kiro-cli field not represented here is dropped at the wire boundary, so a
+ * compromised or upgraded CLI cannot leak arbitrary attributes into the
+ * browser.
  */
 export interface WhoamiResponse {
+  state: WhoamiState;
+  /**
+ * Email and the four labels below belong to the signed_in arm. The
+ * frontend uses Email for the sidebar identity row and Auth for the
+ * humanised label.
+ */
   email?: string;
   auth?: string;
   accountType?: string;
   startUrl?: string;
   region?: string;
-  error?: string;
+  /**
+ * Reason belongs to the unavailable arm: a short server-authored phrase
+ * the client shows in a retry banner. Never CLI output.
+ */
+  reason?: string;
 }
 

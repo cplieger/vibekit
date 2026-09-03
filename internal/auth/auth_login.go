@@ -200,6 +200,13 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// the device-code window still gets 409.
 	semReleased = true
 
+	// The identity is now known-stale for the whole device-flow window, and
+	// this is what makes that window converge. The browser polls /api/whoami
+	// every 3 s while the modal is open; without this, a fresh cache entry
+	// would keep answering signed_out for its full TTL and the login that just
+	// succeeded would look like it never did.
+	h.identity.invalidate()
+
 	// Reap the child no matter which branch wins the select below so both
 	// the success path and the timeout path collect the exit status and
 	// release resources. On timeout we kill the process group

@@ -382,12 +382,13 @@ const userArb = fc.record({
 });
 
 const whoamiResponseArb = fc.record({
+  state: fc.constantFrom("signed_in", "signed_out", "unavailable"),
   email: optField(fc.string()),
   auth: optField(fc.string()),
   accountType: optField(fc.string()),
   startUrl: optField(fc.string()),
   region: optField(fc.string()),
-  error: optField(fc.string()),
+  reason: optField(fc.string()),
 });
 
 // --- Decoder registry: maps decoder name to its valid-shape arbitrary ---
