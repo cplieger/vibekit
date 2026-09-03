@@ -743,6 +743,17 @@
   opacity: 1;
 }
 
+/* A COARSE POINTER GETS THEM PERMANENTLY. Neither reveal above is reachable by a
+   finger: there is no hover, and `:focus-within` needs something inside the row
+   focused, which means tapping a button that is invisible until it is tapped.
+   Stage and Discard were therefore unreachable on touch — including Discard,
+   which is destructive, so the alternative reading (leave them hidden and let
+   touch users use another surface) would mean the git view silently offers less
+   on a tablet than the same build offers on a laptop. */
+:where([data-pointer="coarse"]) .git-repo-section-body .git-file-actions {
+  opacity: 1;
+}
+
 /* Commit composition area inside a repo section */
 .git-commit-area {
   display: flex;

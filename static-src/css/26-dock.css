@@ -582,8 +582,12 @@
   outline-offset: var(--focus-offset);
 }
 
-/* Expand the hit target to ~44px on touch without growing the glyph. */
-@media (pointer: coarse) {
+/* Expand the hit target to ~44px on touch without growing the glyph. Gated on the
+   observed tier rather than `@media (pointer: coarse)` for the reason
+   21-shell-panel.css states at length: the query answers for the primary input
+   only, and the size tokens already key on this attribute. `:where()` keeps the
+   gate at zero specificity. */
+:where([data-pointer="coarse"]) {
   .steer-act::after {
     content: "";
     position: absolute;
