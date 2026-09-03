@@ -35,7 +35,7 @@
 // subscribes every caller without any of them knowing about it.
 // ---------------------------------------------------------------------------
 
-import { signal } from "@cplieger/reactive";
+import { signal, touch } from "@cplieger/reactive";
 
 /** What a find affordance MEANS on a page, which decides its glyph and its
  *  wording wherever it is offered.
@@ -95,7 +95,7 @@ export function registerFind(kind: string, find: PageFind): void {
  *  Reads the version signal, so a caller inside an effect re-runs when a page
  *  registers. Outside an effect that read is free. */
 export function pageFind(kind: string): PageFind | undefined {
-  void version.value;
+  touch(version);
   return registry.get(kind);
 }
 

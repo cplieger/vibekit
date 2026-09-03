@@ -220,6 +220,11 @@ vi.mock("./dom.js", () => {
       },
     ),
     byId: vi.fn(() => document.createElement("div")),
+    // Present because the mock must carry every name anything in this test's
+    // import graph reaches — Browser Mode links ESM for real, so a missing
+    // export fails the whole file at link time rather than at the call.
+    // `decision-dock.ts` (reached via the ask readers) imports it.
+    forceReflow: vi.fn(() => 0),
   };
 });
 

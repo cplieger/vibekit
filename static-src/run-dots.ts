@@ -47,7 +47,7 @@
 // status cannot carry.
 // ---------------------------------------------------------------------------
 
-import { effect, signal } from "@cplieger/reactive";
+import { effect, signal, touch } from "@cplieger/reactive";
 import { setTabStatus, tabIdFor, tabSetVersion } from "./tabs.js";
 import { runStatusFor } from "./store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -133,7 +133,7 @@ function repaint(): void {
  *  then. The tab-set dependency is what picks a tab up once it does. */
 export function installRunDotSubscriber(): void {
   effect(() => {
-    void version.value;
+    touch(version);
     // Subscribes to the tab SET as well, so a run tab arriving after its run's
     // frames (the open_tab round trip) or restored on boot paints without a
     // fresh run event.

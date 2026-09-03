@@ -44,7 +44,7 @@
 // a page that fills itself in once that chat's messages arrive.
 // ---------------------------------------------------------------------------
 
-import { el, effect, signal } from "@cplieger/reactive";
+import { el, effect, signal, touch } from "@cplieger/reactive";
 import { hasTab, openSubagentTab } from "./tabs.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight } from "./exec-view/status.js";
@@ -125,7 +125,7 @@ function installViewEffect(): void {
     // page live background updates: the transcript's global bump used to fire
     // only for the chat on screen. Read before the early return so the effect
     // stays subscribed on the passes that bail below.
-    void messagesVersionOf(chatID).value;
+    touch(messagesVersionOf(chatID));
     if (chatID === "" || subtaskID === "") {
       return;
     }
@@ -152,8 +152,7 @@ function installViewEffect(): void {
  *  version bumps, and this effect re-runs anyway. */
 function subscribeToDeltas(slice: SubagentSlice): void {
   for (const key of slice.sourceKeys) {
-    void blockTextSigs.get(key)?.value;
-    void blockThinkingSigs.get(key)?.value;
+    touch(blockTextSigs.get(key), blockThinkingSigs.get(key));
   }
 }
 

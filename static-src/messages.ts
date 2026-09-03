@@ -38,7 +38,7 @@ import {
   registerEvictionExemption,
 } from "./store.js";
 import { clearStreamingSig, clearReasoningSig, clearBlockSigsFor } from "./store-signals.js";
-import { effect, el } from "@cplieger/reactive";
+import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
 import { $, forceReflow } from "./dom.js";
@@ -580,7 +580,7 @@ export function mountChatView(): void {
   // removing the active chat repaints via the activeId write in removeChat.
   effect(() => {
     const id = watchActiveId();
-    void messagesVersionOf(id).value;
+    touch(messagesVersionOf(id));
     paint();
   });
 }

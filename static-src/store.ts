@@ -34,6 +34,7 @@ import {
   computed,
   createCollection,
   batch,
+  touch,
   SignalMap,
   type Signal,
 } from "@cplieger/reactive";
@@ -198,7 +199,7 @@ const activeId = signal("");
  *  Active-session UI subscribers read `activeSession.value` to re-render only
  *  when the active session (or which session is active) changes. */
 export const activeSession = computed<Session | undefined>(() => {
-  void sessions.ids.value; // also re-derive on structural changes (add/remove/setAll)
+  touch(sessions.ids); // also re-derive on structural changes (add/remove/setAll)
   const id = activeId.value;
   return id === "" ? undefined : sessions.signalFor(id)?.value;
 });
@@ -230,7 +231,7 @@ export function get(id: string): Session | undefined {
  *  (the row appearing or vanishing) — never on another session's field churn.
  *  The tab strip's per-row effects (chat.ts) are the consumer. */
 export function watchSession(id: string): Session | undefined {
-  void sessions.ids.value;
+  touch(sessions.ids);
   return sessions.signalFor(id)?.value;
 }
 

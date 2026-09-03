@@ -37,7 +37,7 @@ import { DEFAULT_HOST, FORGE_META, FORGE_URLS, kindTitle } from "./forge-types.j
 import { signOut } from "./actions/forge.js";
 import { refreshForges, type ForgesListResponse } from "./forge-store.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { signal, effect, el } from "@cplieger/reactive";
+import { signal, effect, el, touch } from "@cplieger/reactive";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { startGitHubDeviceFlow, abortPoll, type OAuthFlowDeps } from "./forge-auth-oauth.js";
 import { renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";
@@ -149,7 +149,7 @@ function ensurePanelEffect(): void {
   }
   panelEffectStarted = true;
   effect(() => {
-    void stateVersion.value; // subscribe
+    touch(stateVersion);
     const root = document.getElementById("forges-panel");
     if (root === null) {
       return;

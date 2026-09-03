@@ -30,7 +30,7 @@
 // gate dropped it and only a reconnect brought it back.
 // ---------------------------------------------------------------------------
 
-import { el, signal, effect } from "@cplieger/reactive";
+import { el, signal, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { activeSession } from "./store.js";
 import { forceReflow } from "./dom.js";
@@ -232,8 +232,7 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
   // Two triggers: the active chat changed (a different queue is on screen), or
   // this module's queue changed (a decision arrived or was answered).
   effect(() => {
-    void activeSession.value?.id;
-    void queueVersion.value;
+    touch(activeSession, queueVersion);
     renderHost(h);
   });
 }
@@ -336,7 +335,7 @@ export function dropTurnDecisions(chatID: string): void {
  *
  *  A `run:<id>` key is not a chat and has no tab, so it simply never matches. */
 export function hasPendingDecision(chatID: string): boolean {
-  void queueVersion.value;
+  touch(queueVersion);
   return (queues.get(chatID)?.length ?? 0) > 0;
 }
 
@@ -357,7 +356,7 @@ export function hasPendingDecision(chatID: string): boolean {
  *  the card's own render effect, and this read is what subscribes it to an ask
  *  arriving or being answered. */
 export function runPendingAsks(workflowID: string): RunAsks {
-  void queueVersion.value;
+  touch(queueVersion);
   const nodes = new Set<string>();
   if (workflowID === "") {
     return { count: 0, nodes, label: "" };
