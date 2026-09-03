@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -36,6 +36,10 @@ func (r *lineRec) RecordFromDiffs(_ vibekit.ChatID, diffs []vibekit.ToolDiff, tu
 type lineDeps struct {
 	*baseDeps
 	rec *lineRec
+	// primed is the tool call primeToolCall created, kept because it clears the
+	// event stream afterwards: the delta oracle needs the value the deltas fold
+	// ONTO, and the create frame that carried it is gone by then.
+	primed vibekit.ToolCall
 }
 
 func (d *lineDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
@@ -91,27 +95,120 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]vibekit.S
 		"kind":       "read",
 		"status":     "pending",
 	}), FrameAttribution{})
-	*events = nil
+	stashCreatedThenClear(t, deps, events)
 	rec.calls = 0
 	rec.lastDiffs = nil
 	rec.lastTurn = 0
 	return tr, rec, deps, events, chatID
 }
 
-// lastToolCallUpdate returns the ToolCall carried by the most recent
-// tool_call_update event, or ok=false if none was emitted.
-func lastToolCallUpdate(t *testing.T, events *[]vibekit.ServerEvent) (vibekit.ToolCall, bool) {
+// stashCreatedThenClear records the tool call the create frames built and then
+// empties the stream, so a following update is observed in isolation while the
+// delta oracle still knows the value those deltas fold onto.
+func stashCreatedThenClear(t *testing.T, deps *lineDeps, events *[]vibekit.ServerEvent) {
 	t.Helper()
-	for i := range slices.Backward(*events) {
-		if (*events)[i].Type == vibekit.EventToolCallUpdate {
-			p, ok := (*events)[i].Payload.(vibekit.ToolCallUpdatePayload)
-			if !ok {
-				t.Fatalf("tool_call_update payload type = %T, want vibekit.ToolCallUpdatePayload", (*events)[i].Payload)
-			}
-			return p.ToolCall, true
+	deps.primed, _ = foldToolCallUpdates(t, vibekit.ToolCall{}, events)
+	*events = nil
+}
+
+// lastToolCallUpdate folds every tool_call_update DELTA in events onto the tool
+// call the buffer started from, and returns the reconstructed whole object.
+//
+// The frame is a delta now, so no single event carries the answer. Folding the
+// stream is also the ORACLE for the delta shape: the fold below is the inverse of
+// toolCallDelta, and the cross-check against the buffer's own accumulated value
+// is what keeps this from being a second copy of the emitter's rules agreeing with
+// itself. A delta stream that loses a field fails here even when every assertion
+// in the calling test would have passed.
+func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]vibekit.ServerEvent) (vibekit.ToolCall, bool) {
+	t.Helper()
+	// Seeded from the create primeToolCall consumed. A create frame still in the
+	// stream overrides it, so a test that primes its own call needs no seed.
+	folded, ok := foldToolCallUpdates(t, deps.primed, events)
+	if !ok {
+		return vibekit.ToolCall{}, false
+	}
+	held, _, found := deps.bufStore.GetOrInit("c1").ToolCall(folded.ID)
+	if !found {
+		t.Fatalf("the buffer holds no tool call %q, so the delta stream cannot be checked", folded.ID)
+	}
+	if !reflect.DeepEqual(folded, held) {
+		t.Fatalf("the delta stream reconstructs\n  %+v\nbut the buffer holds\n  %+v\n"+
+			"— a field the fold changed is missing from the wire", folded, held)
+	}
+	return folded, true
+}
+
+// foldToolCallUpdates replays the delta stream: the create frame's whole ToolCall
+// plus every later delta for that id, in order.
+func foldToolCallUpdates(t *testing.T, seed vibekit.ToolCall, events *[]vibekit.ServerEvent) (vibekit.ToolCall, bool) {
+	t.Helper()
+	out := seed
+	sawUpdate := false
+	for _, e := range *events {
+		switch p := e.Payload.(type) {
+		case vibekit.ToolCallPayload:
+			out = p.ToolCall
+		case vibekit.ToolCallUpdatePayload:
+			sawUpdate = true
+			applyToolCallDelta(&out, p)
 		}
 	}
-	return vibekit.ToolCall{}, false
+	return out, sawUpdate
+}
+
+// applyToolCallDelta is the client's fold, in Go: the inverse of toolCallDelta.
+// An absent field means unchanged.
+func applyToolCallDelta(tc *vibekit.ToolCall, d vibekit.ToolCallUpdatePayload) {
+	tc.ID = d.ToolCallID
+	if d.Title != "" {
+		tc.Title = d.Title
+	}
+	if d.Kind != "" {
+		tc.Kind = d.Kind
+	}
+	if d.Status != "" {
+		tc.Status = d.Status
+	}
+	switch {
+	case d.OutputReplace:
+		tc.Output = d.OutputDelta
+	case d.OutputDelta != "":
+		tc.Output += d.OutputDelta
+	}
+	if d.OutputSpans != nil {
+		tc.OutputSpans = d.OutputSpans
+	}
+	if len(d.DiffsAppended) > 0 {
+		tc.Diffs = append(tc.Diffs, d.DiffsAppended...)
+	}
+	if d.Locations != nil {
+		tc.Locations = d.Locations
+	}
+	if d.DurationMs != 0 {
+		tc.DurationMs = d.DurationMs
+	}
+	if d.TerminalID != "" {
+		tc.TerminalID = d.TerminalID
+	}
+	if d.SubSessionID != "" {
+		tc.SubSessionID = d.SubSessionID
+	}
+	if d.AgentSubtaskID != "" {
+		tc.AgentSubtaskID = d.AgentSubtaskID
+	}
+	if d.WorkflowID != "" {
+		tc.WorkflowID = d.WorkflowID
+	}
+	if d.Checkpoint != nil {
+		tc.Checkpoint = d.Checkpoint
+	}
+	if d.Disclosed != nil {
+		tc.Disclosed = d.Disclosed
+	}
+	if d.Denial != nil {
+		tc.Denial = d.Denial
+	}
 }
 
 func hasWorkingLabel(events *[]vibekit.ServerEvent) bool {
@@ -249,12 +346,12 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 // TestToolCallUpdate_StatusApplied pins that a non-empty status in an
 // update overwrites the in-flight tool call's status.
 func TestToolCallUpdate_StatusApplied(t *testing.T) {
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "completed",
 	}), FrameAttribution{})
-	tc, ok := lastToolCallUpdate(t, events)
+	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -292,7 +389,7 @@ func TestToolCallUpdate_TerminalStatusEmitsWorkingLabel(t *testing.T) {
 // text in an update is sanitized, newline-terminated, and appended to
 // the tool call's Output.
 func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "in_progress",
@@ -300,7 +397,7 @@ func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 			{"type": "content", "content": map[string]any{"text": "hello"}},
 		},
 	}), FrameAttribution{})
-	tc, ok := lastToolCallUpdate(t, events)
+	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -314,13 +411,13 @@ func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 // existing Locations (nil here) untouched.
 func TestToolCallUpdate_LocationsGate(t *testing.T) {
 	t.Run("LocationsSetWhenPresent", func(t *testing.T) {
-		tr, _, _, events, chatID := primeToolCall(t)
+		tr, _, deps, events, chatID := primeToolCall(t)
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 			"locations":  []map[string]any{{"path": "f.go", "line": 5}},
 		}), FrameAttribution{})
-		tc, ok := lastToolCallUpdate(t, events)
+		tc, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
@@ -329,13 +426,13 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 		}
 	})
 	t.Run("EmptyLocationsNotAssigned", func(t *testing.T) {
-		tr, _, _, events, chatID := primeToolCall(t)
+		tr, _, deps, events, chatID := primeToolCall(t)
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 			"locations":  []map[string]any{}, // decodes to a non-nil empty slice
 		}), FrameAttribution{})
-		tc, ok := lastToolCallUpdate(t, events)
+		tc, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
@@ -348,12 +445,12 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 // TestToolCallUpdate_NoDiffSkipsLineTracker pins that an update carrying
 // no diffs does not invoke the LineTracker.
 func TestToolCallUpdate_NoDiffSkipsLineTracker(t *testing.T) {
-	tr, rec, _, events, chatID := primeToolCall(t)
+	tr, rec, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "in_progress",
 	}), FrameAttribution{})
-	if _, ok := lastToolCallUpdate(t, events); !ok {
+	if _, ok := lastToolCallUpdate(t, deps, events); !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
 	if rec.calls != 0 {
@@ -640,13 +737,13 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tr, _, _, events, chatID := primeToolCall(t)
+			tr, _, deps, events, chatID := primeToolCall(t)
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 				"toolCallId": "tc-1",
 				"status":     "completed",
 				"_meta":      map[string]any{"kiro": map[string]any{"checkpoint": tt.checkpoint}},
 			}), FrameAttribution{})
-			tc, ok := lastToolCallUpdate(t, events)
+			tc, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
 				t.Fatal("no tool_call_update event emitted")
 			}
@@ -667,7 +764,7 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 // call, so a wholesale struct replacement would drop `original` and take the
 // pre-image — the only thing a diff actually needs — with it.
 func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 	send := func(cp map[string]any) {
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -677,7 +774,7 @@ func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 	send(map[string]any{"original": "orig-uri", "modified": "mod-uri", "local": "local-uri"})
 	send(map[string]any{"modified": "mod-uri-2"})
 
-	tc, ok := lastToolCallUpdate(t, events)
+	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -702,13 +799,13 @@ func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tr, _, _, events, chatID := primeToolCall(t)
+			tr, _, deps, events, chatID := primeToolCall(t)
 			frame := map[string]any{"toolCallId": "tc-1", "status": "completed"}
 			if tt.meta != nil {
 				frame["_meta"] = tt.meta
 			}
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, frame), FrameAttribution{})
-			tc, ok := lastToolCallUpdate(t, events)
+			tc, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
 				t.Fatal("no tool_call_update event emitted")
 			}
@@ -745,13 +842,13 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tr, _, _, events, chatID := primeToolCall(t)
+			tr, _, deps, events, chatID := primeToolCall(t)
 			update := map[string]any{"toolCallId": "tc-1", "status": "completed"}
 			maps.Copy(update, tc.update)
 
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, update), FrameAttribution{})
 
-			got, ok := lastToolCallUpdate(t, events)
+			got, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
 				t.Fatal("no tool_call_update event emitted")
 			}
@@ -778,7 +875,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 	}
 
 	t.Run("workflow_identity_wins_over_the_plain_id", func(t *testing.T) {
-		tr, _, _, events, chatID := primeToolCall(t)
+		tr, _, deps, events, chatID := primeToolCall(t)
 		meta := map[string]any{"agentSubtaskId": "uuid-plain"}
 		maps.Copy(meta, workflowMeta)
 
@@ -788,7 +885,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 			"_meta":      map[string]any{"kiro": meta},
 		}), FrameAttribution{})
 
-		got, ok := lastToolCallUpdate(t, events)
+		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
@@ -799,7 +896,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 	})
 
 	t.Run("the_plain_id_is_adopted_when_no_workflow_rides_along", func(t *testing.T) {
-		tr, _, _, events, chatID := primeToolCall(t)
+		tr, _, deps, events, chatID := primeToolCall(t)
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -807,7 +904,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-plain"}},
 		}), FrameAttribution{})
 
-		got, ok := lastToolCallUpdate(t, events)
+		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
@@ -828,7 +925,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 			"status":     "pending",
 			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-first"}},
 		}), FrameAttribution{})
-		*events = nil
+		stashCreatedThenClear(t, deps, events)
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -836,7 +933,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "uuid-second"}},
 		}), FrameAttribution{})
 
-		got, ok := lastToolCallUpdate(t, events)
+		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
@@ -878,14 +975,14 @@ func TestToolCallUpdate_WorkflowIDFromRawOutput(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			tr, _, _, events, chatID := primeToolCall(t)
+			tr, _, deps, events, chatID := primeToolCall(t)
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 				"toolCallId": "tc-1",
 				"status":     "completed",
 				"rawOutput":  c.raw,
 			}), FrameAttribution{})
 
-			got, ok := lastToolCallUpdate(t, events)
+			got, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
 				t.Fatal("no tool_call_update event emitted")
 			}
@@ -901,7 +998,7 @@ func TestToolCallUpdate_WorkflowIDFromRawOutput(t *testing.T) {
 // frame for the same call can name a different run.
 func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 	t.Parallel()
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 
 	for _, id := range []string{"wf_first", "wf_second"} {
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -911,7 +1008,7 @@ func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 		}), FrameAttribution{})
 	}
 
-	got, ok := lastToolCallUpdate(t, events)
+	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -943,7 +1040,7 @@ func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 		},
 	}), FrameAttribution{})
 
-	got, ok := lastToolCallUpdate(t, events)
+	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -966,7 +1063,7 @@ func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 // the reader needs; dropping the guard would append KAS's error text to it or
 // overwrite it.
 func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "failed",
@@ -976,7 +1073,7 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 		},
 	}), FrameAttribution{})
 
-	got, ok := lastToolCallUpdate(t, events)
+	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -990,7 +1087,7 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 // structured-output channel the content blocks own. `run_workflow` succeeds with
 // an OBJECT in rawOutput, so a dropped gate puts its JSON on the card.
 func TestHandleToolCallUpdate_CompletedIgnoresRawOutput(t *testing.T) {
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "completed",
@@ -1001,7 +1098,7 @@ func TestHandleToolCallUpdate_CompletedIgnoresRawOutput(t *testing.T) {
 		},
 	}), FrameAttribution{})
 
-	got, ok := lastToolCallUpdate(t, events)
+	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
@@ -1054,7 +1151,7 @@ func TestRawOutputFailureText(t *testing.T) {
 // refusal a user is reading with a narrower one.
 func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 	t.Run("a_disclosure_on_the_update_is_adopted", func(t *testing.T) {
-		tr, _, _, events, chatID := primeToolCall(t)
+		tr, _, deps, events, chatID := primeToolCall(t)
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -1066,7 +1163,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 			}},
 		}), FrameAttribution{})
 
-		got, ok := lastToolCallUpdate(t, events)
+		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
@@ -1079,7 +1176,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 	})
 
 	t.Run("a_denial_on_the_update_is_adopted", func(t *testing.T) {
-		tr, _, _, events, chatID := primeToolCall(t)
+		tr, _, deps, events, chatID := primeToolCall(t)
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -1091,7 +1188,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 			}},
 		}), FrameAttribution{})
 
-		got, ok := lastToolCallUpdate(t, events)
+		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}
@@ -1117,7 +1214,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 				"policyDenial":     map[string]any{"capability": "fs.write", "resource": "/first"},
 			}},
 		}), FrameAttribution{})
-		*events = nil
+		stashCreatedThenClear(t, deps, events)
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -1128,7 +1225,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 			}},
 		}), FrameAttribution{})
 
-		got, ok := lastToolCallUpdate(t, events)
+		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
 			t.Fatal("no tool_call_update event emitted")
 		}

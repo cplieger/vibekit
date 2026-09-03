@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -131,9 +132,109 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	if !ok {
 		return
 	}
+	// The pre-fold value, kept so the frame can carry the fold's INPUTS rather
+	// than its result. Comparing before against after is what makes the delta
+	// derived from the fold instead of a second statement of the fold's rules at
+	// the emit site — including the one rule a pure-append wire cannot express,
+	// adoptTerminalOutput replacing the accumulated output at completion.
+	//
+	// A struct copy is enough: every field the fold writes is either replaced
+	// outright or appended to, so the aliased slice headers are only ever read
+	// for their length and their prefix.
+	before := tc
 	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
 	buf.SetToolCall(idx, &tc)
-	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
+	t.emit(ctx, buf, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
+		toolCallDelta(buf.MessageID, &before, &tc)))
+}
+
+// toolCallDelta describes what one fold changed about a tool call.
+//
+// The whole accumulated ToolCall used to go on the wire, so a call's output and
+// diffs were re-sent in full on every later frame for it: 5.73 MiB of diffs and
+// 4.41 MiB of output behind five open tabs, p99 frame 122 KB. Input is not here
+// at all, which is another 1.49 MiB — an update never changes it.
+//
+// Every omitted field means "unchanged", so a caller applying this to the value
+// `before` reconstructs `after` exactly. That is the property the round-trip test
+// asserts, and it is what lets the client keep no rules of its own about which
+// fields accumulate.
+func toolCallDelta(messageID string, before, after *vibekit.ToolCall) vibekit.ToolCallUpdatePayload {
+	d := vibekit.ToolCallUpdatePayload{MessageID: messageID, ToolCallID: after.ID}
+	if after.Title != before.Title {
+		d.Title = after.Title
+	}
+	if after.Kind != before.Kind {
+		d.Kind = after.Kind
+	}
+	if after.Status != before.Status {
+		d.Status = after.Status
+	}
+	d.OutputDelta, d.OutputReplace = outputDelta(before.Output, after.Output)
+	if !slices.Equal(after.OutputSpans, before.OutputSpans) {
+		d.OutputSpans = after.OutputSpans
+	}
+	// Diffs only ever append (applyToolCallDiffs), so the tail is the whole
+	// change. Guarded on the length rather than asserted, because a frame that
+	// appended nothing must send nothing.
+	if len(after.Diffs) > len(before.Diffs) {
+		d.DiffsAppended = after.Diffs[len(before.Diffs):]
+	}
+	if !slices.Equal(after.Locations, before.Locations) {
+		d.Locations = after.Locations
+	}
+	if after.DurationMs != before.DurationMs {
+		d.DurationMs = after.DurationMs
+	}
+	if after.TerminalID != before.TerminalID {
+		d.TerminalID = after.TerminalID
+	}
+	if after.SubSessionID != before.SubSessionID {
+		d.SubSessionID = after.SubSessionID
+	}
+	if after.AgentSubtaskID != before.AgentSubtaskID {
+		d.AgentSubtaskID = after.AgentSubtaskID
+	}
+	if after.WorkflowID != before.WorkflowID {
+		d.WorkflowID = after.WorkflowID
+	}
+	if after.Checkpoint != nil && *after.Checkpoint != derefCheckpoint(before.Checkpoint) {
+		d.Checkpoint = after.Checkpoint
+	}
+	if before.Disclosed == nil && after.Disclosed != nil {
+		d.Disclosed = after.Disclosed
+	}
+	if before.Denial == nil && after.Denial != nil {
+		d.Denial = after.Denial
+	}
+	return d
+}
+
+// outputDelta describes the change from one accumulated output to the next: the
+// appended tail, or the whole new value when it is not an extension of the old.
+//
+// The replace arm is adoptTerminalOutput: at completion a terminal's full stream
+// wins over the ACP fragments already on the card, which can shorten or rewrite
+// them. Detected by asking whether the new value EXTENDS the old rather than by
+// checking which fold ran, so the rule lives in one place — the fold — and this
+// only reports what it did.
+func outputDelta(before, after string) (delta string, replace bool) {
+	if after == before {
+		return "", false
+	}
+	if strings.HasPrefix(after, before) {
+		return after[len(before):], false
+	}
+	return after, true
+}
+
+// derefCheckpoint returns the checkpoint's value, or the zero value for nil, so
+// a nil-to-set transition compares as a change without a second nil branch.
+func derefCheckpoint(c *vibekit.ToolCheckpoint) vibekit.ToolCheckpoint {
+	if c == nil {
+		return vibekit.ToolCheckpoint{}
+	}
+	return *c
 }
 
 // parseToolUpdateContent extracts the sanitized output delta, any file

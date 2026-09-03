@@ -102,6 +102,7 @@ export const storeMock = {
   upsertMessage: vi.fn(),
   appendChunk: vi.fn(),
   upsertToolCall: vi.fn(),
+  applyToolCallDelta: vi.fn(),
   setCodeReferences: vi.fn(),
   setSnapshotSeq: vi.fn(),
   clearSnapshotSeq: vi.fn(),

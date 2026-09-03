@@ -431,8 +431,15 @@ func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) vib
 func (bc *BridgeCoordinator) failInFlightTools(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
 	messageID, changed := buf.MarkCancelledToolsFailed()
 	for i := range changed {
+		// The status is the only thing that moved, so the frame carries the id and
+		// the status and nothing else — the buffer already holds the rest, and a
+		// reconnecting client reads it from turn_state.
 		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
-			vibekit.ToolCallUpdatePayload{MessageID: messageID, ToolCall: changed[i]}))
+			vibekit.ToolCallUpdatePayload{
+				MessageID:  messageID,
+				ToolCallID: changed[i].ID,
+				Status:     changed[i].Status,
+			}))
 	}
 }
 

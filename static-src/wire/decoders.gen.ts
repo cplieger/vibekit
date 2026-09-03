@@ -1248,8 +1248,32 @@ export const decodeToolCallUpdatePayload: Decoder<ToolCallUpdatePayload> = (v) =
   const o = asObject(v, "$.tool_call_update_payload");
   const out: ToolCallUpdatePayload = {
     message_id: reqStr(o, "message_id", "$.tool_call_update_payload"),
-    tool_call: decodeToolCall(o["tool_call"]),
+    tool_call_id: reqStr(o, "tool_call_id", "$.tool_call_update_payload"),
   };
+  const title = o["title"] === null ? undefined : optStr(o, "title", "$.tool_call_update_payload");
+  if (title !== undefined) out.title = title;
+  if (o["kind"] !== undefined && o["kind"] !== null) out.kind = reqOneOf(o, "kind", TOOL_KINDS, "$.tool_call_update_payload");
+  if (o["status"] !== undefined && o["status"] !== null) out.status = reqOneOf(o, "status", TOOL_STATUSS, "$.tool_call_update_payload");
+  const outputDelta = o["output_delta"] === null ? undefined : optStr(o, "output_delta", "$.tool_call_update_payload");
+  if (outputDelta !== undefined) out.output_delta = outputDelta;
+  const outputReplace = o["output_replace"] === null ? undefined : optBool(o, "output_replace", "$.tool_call_update_payload");
+  if (outputReplace !== undefined) out.output_replace = outputReplace;
+  if (o["output_spans"] !== undefined && o["output_spans"] !== null) out.output_spans = decodeArray(o["output_spans"], decodeTextSpan, "$.tool_call_update_payload.output_spans");
+  if (o["diffs_appended"] !== undefined && o["diffs_appended"] !== null) out.diffs_appended = decodeArray(o["diffs_appended"], decodeToolDiff, "$.tool_call_update_payload.diffs_appended");
+  if (o["locations"] !== undefined && o["locations"] !== null) out.locations = decodeArray(o["locations"], decodeToolLocation, "$.tool_call_update_payload.locations");
+  const durationMs = o["duration_ms"] === null ? undefined : optNum(o, "duration_ms", "$.tool_call_update_payload");
+  if (durationMs !== undefined) out.duration_ms = durationMs;
+  const terminalId = o["terminal_id"] === null ? undefined : optStr(o, "terminal_id", "$.tool_call_update_payload");
+  if (terminalId !== undefined) out.terminal_id = terminalId;
+  const subSessionId = o["sub_session_id"] === null ? undefined : optStr(o, "sub_session_id", "$.tool_call_update_payload");
+  if (subSessionId !== undefined) out.sub_session_id = subSessionId;
+  const agentSubtaskId = o["agent_subtask_id"] === null ? undefined : optStr(o, "agent_subtask_id", "$.tool_call_update_payload");
+  if (agentSubtaskId !== undefined) out.agent_subtask_id = agentSubtaskId;
+  const workflowId = o["workflow_id"] === null ? undefined : optStr(o, "workflow_id", "$.tool_call_update_payload");
+  if (workflowId !== undefined) out.workflow_id = workflowId;
+  if (o["checkpoint"] !== undefined && o["checkpoint"] !== null) out.checkpoint = decodeToolCheckpoint(o["checkpoint"]);
+  if (o["disclosed"] !== undefined && o["disclosed"] !== null) out.disclosed = decodeToolDisclosed(o["disclosed"]);
+  if (o["denial"] !== undefined && o["denial"] !== null) out.denial = decodeToolDenial(o["denial"]);
   return out;
 };
 

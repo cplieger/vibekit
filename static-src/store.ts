@@ -21,6 +21,7 @@ import type {
   Block,
   Usage,
   ToolCall,
+  ToolCallUpdatePayload,
   CodeReference,
   RefusalInfo,
   FileChange,
@@ -1841,7 +1842,9 @@ export function upsertToolCall(
   msg.tool_calls[tcIdx] = call;
   // Late identity attachments are STRUCTURAL, not status updates (the server
   // attaches both ids on updates when the initial call lacked them —
-  // translate/streaming_tools.go):
+  // translate/streaming_tools.go). This arm covers a REPEATED whole-object
+  // arrival; the streaming path reaches applyToolCallDelta below instead, where
+  // the frame itself says which id was attached.
   //
   //  - a first `agent_subtask_id` decides container MEMBERSHIP (top-level list
   //    vs subagent box vs run step), which is the BLOCK's field, and the tool
@@ -1861,6 +1864,100 @@ export function upsertToolCall(
   if (nonEmptyStr(call.workflow_id) && !nonEmptyStr(prev?.workflow_id)) {
     scheduleMessages(chatID, "fact");
   }
+  republishToolCall(chatID, messageID, call);
+}
+
+/** Apply a `tool_call_update` DELTA to the held tool call.
+ *
+ *  The frame carries only what the server's fold changed — the whole accumulated
+ *  call used to go on the wire, re-sending a Replace-in-File's 184 KB of diffs on
+ *  every later frame for it. An absent field means unchanged.
+ *
+ *  A call this client does not hold is DROPPED, not created: a delta has nothing
+ *  to apply to, and the channel for a client that missed the beginning is
+ *  `turn_state`, which still carries whole objects. */
+export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): void {
+  const s = get(chatID);
+  if (s === undefined) {
+    return;
+  }
+  const idx = getMsgIndex(chatID, s.messages).get(d.message_id) ?? -1;
+  const msg = idx !== -1 ? s.messages[idx] : undefined;
+  const tcIdx = msg?.tool_calls?.findIndex((tc) => tc.id === d.tool_call_id) ?? -1;
+  if (msg?.tool_calls === undefined || tcIdx === -1) {
+    return;
+  }
+  const prev = msg.tool_calls[tcIdx];
+  if (prev === undefined) {
+    return;
+  }
+  const next = foldToolCallDelta(prev, d);
+  msg.tool_calls[tcIdx] = next;
+  // A first `agent_subtask_id` decides container MEMBERSHIP, which is the
+  // BLOCK's field and the tool fast path never re-homes a card — so the block
+  // updates here and the full pass re-homes. Only the delta can say this
+  // happened now, which is what makes it cheaper than the old whole-object
+  // compare against `prev`.
+  if (nonEmptyStr(d.agent_subtask_id) && !nonEmptyStr(prev.agent_subtask_id)) {
+    msg.blocks ??= [];
+    const blk = msg.blocks.find((b) => b.type === "tool_use" && b.tool_call_id === next.id);
+    if (blk !== undefined) {
+      Object.assign(blk, subtaskField(next.agent_subtask_id));
+    }
+    scheduleMessages(chatID, "shape");
+  }
+  // A first `workflow_id` changes `turnRunIDs`, a projection/fold input, so the
+  // fold pass must run.
+  if (nonEmptyStr(d.workflow_id) && !nonEmptyStr(prev.workflow_id)) {
+    scheduleMessages(chatID, "fact");
+  }
+  republishToolCall(chatID, d.message_id, next);
+}
+
+/** Fold one delta onto a held tool call, returning the new value.
+ *
+ *  A fresh object rather than a mutation, because the card's signal dedups by
+ *  identity: repainting on a delta that changed nothing observable would undo
+ *  the frame budget this shape exists to buy.
+ *
+ *  Fields are spread conditionally rather than assigned undefined — the client
+ *  compiles under exactOptionalPropertyTypes. */
+function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): ToolCall {
+  // `output_replace` is the terminal's full stream winning over the ACP
+  // fragments at completion (adoptTerminalOutput server-side). It is the only
+  // case where the accumulated output legitimately shrinks or is rewritten.
+  const output =
+    d.output_delta === undefined
+      ? prev.output
+      : d.output_replace === true
+        ? d.output_delta
+        : (prev.output ?? "") + d.output_delta;
+  const diffs =
+    d.diffs_appended === undefined ? prev.diffs : [...(prev.diffs ?? []), ...d.diffs_appended];
+  return {
+    ...prev,
+    ...(d.title !== undefined && { title: d.title }),
+    ...(d.kind !== undefined && { kind: d.kind }),
+    ...(d.status !== undefined && { status: d.status }),
+    ...(output !== undefined && { output }),
+    ...(d.output_spans !== undefined && { output_spans: d.output_spans }),
+    ...(diffs !== undefined && { diffs }),
+    ...(d.locations !== undefined && { locations: d.locations }),
+    ...(d.duration_ms !== undefined && { duration_ms: d.duration_ms }),
+    ...(d.terminal_id !== undefined && { terminal_id: d.terminal_id }),
+    ...(d.sub_session_id !== undefined && { sub_session_id: d.sub_session_id }),
+    ...(d.agent_subtask_id !== undefined && { agent_subtask_id: d.agent_subtask_id }),
+    ...(d.workflow_id !== undefined && { workflow_id: d.workflow_id }),
+    ...(d.checkpoint !== undefined && { checkpoint: d.checkpoint }),
+    ...(d.disclosed !== undefined && { disclosed: d.disclosed }),
+    ...(d.denial !== undefined && { denial: d.denial }),
+  };
+}
+
+/** Push a tool call's new value at whatever is rendering it, and schedule the
+ *  narrowest pass that can show it. Shared by the create path and the delta
+ *  path so the two cannot disagree about which pass a tool update needs. */
+function republishToolCall(chatID: string, messageID: string, call: ToolCall): void {
   const sig = toolCallSigs.get(toolCallSigKey(chatID, call.id));
   if (sig !== undefined) {
     sig.value = call;

@@ -481,10 +481,65 @@ type ToolCallPayload struct {
 	BlockIndex int      `json:"block_index"`
 }
 
-// ToolCallUpdatePayload is the payload for type="tool_call_update".
+// ToolCallUpdatePayload is the payload for type="tool_call_update": a DELTA
+// addressed by id, carrying only what this frame changed.
+//
+// It used to carry the whole accumulated ToolCall, and two of that object's
+// fields accumulate — Output appends and Diffs appends — so every later frame
+// for a call re-sent everything the earlier ones had already delivered.
+// Measured behind five open tabs: 5.73 MiB of diffs, 4.41 MiB of output,
+// 1.49 MiB of input, p99 frame 122 KB, max 186 KB, with one Replace-in-File's
+// 184 KB of diffs re-sent on every subsequent frame for that call. Input is
+// absent here entirely: an update never changes it.
+//
+// This is the wire discipline message_chunk already has for text. The server's
+// BUFFER still accumulates — turn_state needs the whole object, and so does the
+// persist — and turn_state stays the whole-object channel, because a
+// reconnecting client has nothing to apply a delta to.
+//
+// Every field is omitempty and means "unchanged" when absent. The one field that
+// is not a plain value is OutputDelta, whose meaning depends on OutputReplace.
 type ToolCallUpdatePayload struct {
-	MessageID string   `json:"message_id"`
-	ToolCall  ToolCall `json:"tool_call"`
+	MessageID  string `json:"message_id"`
+	ToolCallID string `json:"tool_call_id"`
+	// Title and Kind: KAS sends them nullish on most updates and refines them on
+	// some, so an absent value is "keep", never "clear".
+	Title  string     `json:"title,omitempty"`
+	Kind   ToolKind   `json:"kind,omitempty"`
+	Status ToolStatus `json:"status,omitempty"`
+	// OutputDelta is normally the text to APPEND. When OutputReplace is set it is
+	// the whole output instead.
+	//
+	// The replace case is load-bearing rather than a fallback: at completion a
+	// terminal's full stream wins over the ACP fragments already on the card
+	// (adoptTerminalOutput), so that one frame legitimately shortens or rewrites
+	// what came before. A pure-append wire cannot express it, and dropping it
+	// would leave a command's output as whatever fragments happened to arrive.
+	OutputDelta   string `json:"output_delta,omitempty"`
+	OutputReplace bool   `json:"output_replace,omitempty"`
+	// OutputSpans style the WHOLE output at absolute offsets, so they are sent
+	// entire whenever they change. Empty for the ~99.75% of real command outputs
+	// that carry no escape sequence.
+	OutputSpans []TextSpan `json:"output_spans,omitempty"`
+	// DiffsAppended are the diffs this frame added. Diffs only ever append, so
+	// there is no replace case: KAS repeats a write's diff block on every
+	// streaming frame and the card keeps each arrival.
+	DiffsAppended []ToolDiff `json:"diffs_appended,omitempty"`
+	// Locations are REPLACED wholesale when present, which is what the fold does
+	// with them. Small: a path list, not content.
+	Locations  []ToolLocation `json:"locations,omitempty"`
+	DurationMs int            `json:"duration_ms,omitempty"`
+	// The four late identity attachments. Each is adopted once and never
+	// overwritten, so each appears on at most one frame per call.
+	TerminalID     string `json:"terminal_id,omitempty"`
+	SubSessionID   string `json:"sub_session_id,omitempty"`
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	WorkflowID     string `json:"workflow_id,omitempty"`
+	// The three metadata blocks, each sent whole when it changed. All three are
+	// small and none accumulates.
+	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
+	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
+	Denial     *ToolDenial     `json:"denial,omitempty"`
 }
 
 // TerminalOutputPayload is the payload for type="terminal_output".
