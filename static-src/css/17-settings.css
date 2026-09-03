@@ -1279,20 +1279,8 @@
   background: var(--c-bg-tertiary);
 }
 
-.git-ci-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--c-text-tertiary);
-  flex-shrink: 0;
-}
-
 .git-ci-pill-success {
   border-color: color-mix(in srgb, var(--c-teal) 45%, var(--c-border));
-}
-
-.git-ci-pill-success .git-ci-dot {
-  background: var(--c-teal);
 }
 
 .git-ci-pill-failure,
@@ -1300,22 +1288,8 @@
   border-color: color-mix(in srgb, var(--c-danger) 45%, var(--c-border));
 }
 
-.git-ci-pill-failure .git-ci-dot,
-.git-ci-pill-error .git-ci-dot {
-  background: var(--c-danger);
-}
-
 .git-ci-pill-pending {
   border-color: color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
-}
-
-.git-ci-pill-pending .git-ci-dot {
-  background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
-}
-
-.git-ci-pill-canceled .git-ci-dot {
-  background: var(--c-text-tertiary);
 }
 
 .git-ci-panel {
@@ -1353,20 +1327,6 @@
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-3);
   font-size: var(--fs-sm);
-}
-
-.git-ci-panel-row-success .git-ci-dot {
-  background: var(--c-teal);
-}
-
-.git-ci-panel-row-failure .git-ci-dot,
-.git-ci-panel-row-error .git-ci-dot {
-  background: var(--c-danger);
-}
-
-.git-ci-panel-row-pending .git-ci-dot {
-  background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
 }
 
 .git-ci-panel-name {

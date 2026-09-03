@@ -538,28 +538,38 @@
   }
 
   /* Connecting (default/yellow): gentle breathing pulse. Motion here means an
-     UNSETTLED state, which is this app's motion axis, so it stays. */
-  animation: vk-breathe 2s ease-in-out infinite;
+     UNSETTLED state, which is this app's motion axis, so it stays — but it now
+     reads the shared document beat (03-base.css) rather than its own 2s
+     animation, so the footer breathes in step with the tab strip instead of
+     against it. There is exactly one of these on screen, so nothing here was a
+     noise problem; the point is that the app has ONE period. */
+  opacity: calc(1 - var(--vk-beat) * 0.55);
 
   /* Connected (green): a STILL disc. It used to carry a `vk-ping` ripple on an
-     `::after` overlay every 4 seconds, forever — a dot pulsing in the healthy
-     steady state, in the same green the tab dot uses for a finished turn, next to
-     a card showing credits, which is why it read as a work indicator rather than
-     as a transport light. This dot has never reported a turn.
-     The `::after` went with the animation rather than just the animation: the
-     overlay was an opaque green disc at `inset: 0` and `vk-ping` was the only
-     thing fading it, so removing one declaration would have left a solid layer
-     covering the dot. `@keyframes vk-ping` stays in 03-base.css — the cloned-repo
-     indicator in 22-git-multirepo.css still uses it. */
+     ::after overlay every four seconds, which said "activity" on a light that
+     only reports whether the transport is up — this dot has never reported a
+     turn. The overlay was an opaque green disc at `inset: 0`, so removing only
+     its animation would have left it permanently covering the dot; the pseudo
+     went wholesale.
+
+     `@keyframes vk-ping` is now DELETED: the cloned-repo indicator in
+     22-git-multirepo.css was its last consumer and it is a still dot too, for
+     the same reason as here. */
   &.connected {
     background: var(--c-green);
-    animation: none;
+
+    /* `opacity: 1`, not `animation: none`. The breathe is now an inherited value
+       rather than an animation on this element, so cancelling an animation
+       cancels nothing and a CONNECTED dot would breathe — which is exactly the
+       claim this state exists to deny. */
+    opacity: 1;
   }
 
-  /* Disconnected (red): static, no animation */
+  /* Disconnected (red): static — see `.connected` for why this resets opacity
+     rather than an animation. */
   &.error {
     background: var(--c-red);
-    animation: none;
+    opacity: 1;
   }
 
   &:focus-visible {
@@ -584,7 +594,12 @@
     width: var(--btn-h);
     height: var(--btn-h);
     background: transparent;
-    animation: none;
+
+    /* The button becomes a transparent 44px target and its ::before carries the
+       mark, so the beat moves down with it. Resetting opacity here is required,
+       not tidy: the desktop rule above sets it on the BUTTON, and inherited
+       opacity would multiply with the pseudo's own. */
+    opacity: 1;
   }
 
   .status-dot::before {
@@ -593,17 +608,17 @@
     height: 0.5rem;
     border-radius: 50%;
     background: var(--c-yellow);
-    animation: vk-breathe 2s ease-in-out infinite;
+    opacity: calc(1 - var(--vk-beat) * 0.55);
   }
 
   .status-dot.connected::before {
     background: var(--c-green);
-    animation: none;
+    opacity: 1;
   }
 
   .status-dot.error::before {
     background: var(--c-red);
-    animation: none;
+    opacity: 1;
   }
 
   /* No `.status-dot.connected::after` twin here. It only re-centred the ripple

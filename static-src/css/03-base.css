@@ -162,69 +162,6 @@
   }
 }
 
-@keyframes vk-ping {
-  0% {
-    transform: scale(1);
-    opacity: 0.6;
-  }
-
-  15% {
-    transform: scale(2.5);
-    opacity: 0;
-  }
-
-  100% {
-    opacity: 0;
-  }
-}
-
-/* The status-dot glow beat: base -> brighter -> base, then a rest until the next
- * cycle — expressed as the OPACITY ENVELOPE of a pre-painted bright overlay, not
- * as the disc's own colours. Animating background-color/border-color at every
- * keyframe (what this replaced) repaints the disc every frame for the whole time
- * an agent works; an opacity blend over two static layers costs compositing
- * only. Shared verbatim with @cplieger/web-terminal-ui's wt-working-glow.
- *
- * Phase-locked with vk-dot-wave at 1.2s — change both or neither. */
-@keyframes vk-dot-glow {
-  0%,
-  70%,
-  100% {
-    opacity: 0;
-  }
-
-  35% {
-    opacity: 1;
-  }
-}
-
-/* The status-dot wave: one emission per cycle, launching off the disc's edge and
- * dissolving by ~2.1x. Deliberately NOT vk-ping (which stays the sidebar/repo
- * ping): the travel is LINEAR while the opacity is shaped separately, because an
- * ease shared by both spends the slow opening on top of the disc — where the
- * wave is indistinguishable from it — and then accelerates away exactly as the
- * opacity collapses. Bright at birth (0.95 after a 12% ramp-in) so it holds
- * usable weight across the travel instead of only while merged with the disc. */
-@keyframes vk-dot-wave {
-  0% {
-    transform: scale(1);
-    opacity: 0.15;
-  }
-
-  12% {
-    opacity: 0.95;
-  }
-
-  70% {
-    opacity: 0.45;
-  }
-
-  100% {
-    transform: scale(2.1);
-    opacity: 0;
-  }
-}
-
 /* The activity-dot wave: a travelling BRIGHTNESS, never a travelling size.
  *
  * It replaced `vk-bounce-dot`, whose one consumer was the dead `.thinking-dots`
@@ -234,12 +171,18 @@
  * running pipeline caught nothing at all. An indicator whose job is "something in
  * here is still working" may not read as empty at any instant.
  *
- * So the disc is always painted and only its opacity moves, which is the same
- * choice `vk-dot-glow` above makes for the tab's working dot, for the same two
- * reasons: it composites rather than repainting, and the thing being animated
- * never leaves. Floor at 0.35 so a resting dot is visibly a dot.
+ * So the disc is always painted and only its opacity moves, for the same two
+ * reasons the tab dot's overlay reads an opacity rather than repainting: it
+ * composites, and the thing being animated never leaves. Floor at 0.35 so a
+ * resting dot is visibly a dot.
  *
- * Phase-locked with vk-dot-glow / vk-dot-wave at 1.2s — change all three or none. */
+ * THIS IS THE ONE INDICATOR THAT KEEPS ITS OWN ANIMATION, and the reason is the
+ * per-dot STAGGER below: three dots offset in phase are what make the indicator
+ * read as a travelling brightness, and one shared clock has exactly one phase, so
+ * reading it would freeze all three together. It is self-contained (three dots
+ * inside one card), few instances, and it says "something inside is working"
+ * rather than reporting a state — so it is not in the status-dot vocabulary the
+ * document beat unifies. */
 @keyframes vk-dot-pulse {
   0%,
   100% {
@@ -328,6 +271,44 @@
 @media (prefers-reduced-motion: reduce) {
   [data-chat-entry] {
     animation-duration: 10ms;
+  }
+}
+
+/* ==========================================================================
+   The document beat
+
+   `--vk-beat` ramps 0 -> 1 -> 0 once per `--dot-beat-dur`, eased with the app's
+   own standard curve, on an element that never changes state. Why that placement
+   IS the synchronisation is in 00-header.css where the property is registered.
+
+   The easing lives here rather than in each dot's own animation, so the SHAPE is
+   shared too: a dot reads `var(--vk-beat)` as a plain 0..1 amplitude and scales
+   it to taste. No dot declares an animation, so none can be created at its own
+   mount time, which is what made them drift apart.
+   ========================================================================== */
+
+@keyframes vk-beat {
+  0%,
+  100% {
+    --vk-beat: 0;
+  }
+
+  50% {
+    --vk-beat: 1;
+  }
+}
+
+:root {
+  animation: vk-beat var(--dot-beat-dur) var(--ease-standard) infinite;
+}
+
+/* Reduced motion stops the CLOCK, once, and every dot in the app goes still with
+   it — there is no per-dot animation left to gate. `0.01ms` is the house value so
+   `animationend` still fires; a stopped clock rests at 0, so any dot reading it
+   settles at its own resting amplitude rather than mid-beat. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    animation: none;
   }
 }
 

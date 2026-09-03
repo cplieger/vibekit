@@ -71,7 +71,7 @@ describe("every outcome the wire can send has a treatment", () => {
     // outcome without relying on hue — dropping it would leave the two
     // yellow/red/neutral outcomes and this one separable by colour alone.
     const dot = ruleContaining(turns, '.turn-header[data-outcome="running"] .turn-dot');
-    expect(dot.body).toMatch(/animation:\s*vk-breathe/u);
+    expect(dot.body).toMatch(/opacity:\s*calc\(1 - var\(--vk-beat\)/u);
   });
 
   it("shows no ledger glyph at all for a running turn", () => {

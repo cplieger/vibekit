@@ -451,27 +451,24 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
   const tabs = loadCSS("12-tabs.css");
   const dot = '.tab-status-dot[data-status="working"]';
 
-  it("animates only in the normal-motion rule", () => {
-    const normal = ruleContaining(tabs, dot, "top");
-    expect(/animation:/.test(normal.body)).toBe(false);
-    // The motion lives on the two pseudos, which is what lets the disc stay a
-    // static layer the GPU merely blends over.
-    expect(/animation: vk-dot-glow/.test(ruleContaining(tabs, `${dot}::before`, "top").body)).toBe(
-      true,
-    );
-    expect(/animation: vk-dot-wave/.test(ruleContaining(tabs, `${dot}::after`, "top").body)).toBe(
-      true,
-    );
+  it("declares no animation of its own, on the disc or on its overlay", () => {
+    // The beat is an inherited value read off the document clock (03-base.css),
+    // not an animation created on this element. That is the synchronisation: an
+    // animation would be created when `data-status` becomes `working`, so N
+    // working chats would hold N arbitrary phases.
+    expect(/animation:/.test(ruleContaining(tabs, dot, "top").body)).toBe(false);
+    const glow = ruleContaining(tabs, `${dot}::before`, "top");
+    expect(/animation:/.test(glow.body)).toBe(false);
+    expect(glow.body).toContain("var(--vk-beat)");
   });
 
-  it("removes both animated pseudos entirely under reduced motion", () => {
-    // `content: none` rather than `animation: none`. The global rule in
-    // 40-a11y.css runs each animation to completion instead of suppressing it,
-    // and with no fill-mode the wave's ::after then reverts to `opacity: 1` with
-    // no transform — a permanent opaque band around the disc. Deleting the
-    // pseudos is the only thing that prevents it.
+  it("removes the beat overlay entirely under reduced motion", () => {
+    // `content: none` rather than a reset of its opacity. Stopping the clock
+    // leaves `--vk-beat` at its registered initial 0, so the overlay would be
+    // invisible — but that is a property of the initial value, and a future
+    // non-zero resting amplitude would paint a permanent bright ring over the
+    // donut. Deleting the pseudo makes it independent of the clock's rest state.
     const reduced = ruleContaining(tabs, `${dot}::before`, "prefers-reduced-motion");
-    expect(reduced.selector).toContain(`${dot}::after`);
     expect(/content:\s*none/.test(reduced.body)).toBe(true);
   });
 
@@ -1019,27 +1016,31 @@ describe("the dot is local and costs the projection nothing", () => {
 describe("the leading dot slot is one width for every state", () => {
   const tabs = loadCSS("12-tabs.css");
 
-  it("re-derives the diamond's margin from its own 8px width", () => {
-    // The generic slot rule is computed for the 9px disc, so the 8px diamond
-    // reserved 13px where every other state reserves 14px — and the chat's name
-    // moved 1px sideways at the exact moment its status flipped to or from failed,
-    // which is the one moment the reader is watching that row.
+  it("derives both slot margins from the dot tokens, never a literal", () => {
+    // The generic slot rule is computed for the DISC, so the smaller diamond
+    // would reserve less than every other state — and the chat's name would move
+    // sideways at the exact moment its status flipped to or from failed, which is
+    // the one moment the reader is watching that row. Each is derived from the
+    // token it actually renders at, so changing --dot-size cannot desync them.
     const generic = ruleContaining(tabs, ".tab-status-dot:first-child", "top");
-    expect(generic.body).toContain("calc((0.875rem - 9px) / 2)");
+    expect(generic.body).toContain("calc((0.875rem - var(--dot-size)) / 2)");
 
     const diamond = ruleContaining(
       tabs,
       '.tab-status-dot[data-status="failed"]:first-child',
       "top",
     );
-    expect(diamond.body).toContain("calc((0.875rem - 8px) / 2)");
+    expect(diamond.body).toContain("calc((0.875rem - var(--dot-size-sm)) / 2)");
   });
 
-  it("keeps the only geometry deviation at 8px, so the override stays paired", () => {
-    // If `failed` ever returns to 9px this override becomes wrong rather than
-    // merely redundant, so the two are asserted together.
+  it("keeps the diamond on the small token, so the override stays paired", () => {
+    // A rotated square's DIAGONAL is its footprint, so the diamond takes the
+    // smaller token to sit level with the disc beside it (6px on the diagonal is
+    // 8.49px against an 8px disc). If it ever returns to --dot-size the margin
+    // override above becomes wrong rather than merely redundant, so the two are
+    // asserted together.
     const failed = ruleContaining(tabs, '.tab-status-dot[data-status="failed"]', "top");
-    expect(/width:\s*8px/.test(failed.body)).toBe(true);
+    expect(/inline-size:\s*var\(--dot-size-sm\)/.test(failed.body)).toBe(true);
   });
 });
 
@@ -1047,18 +1048,21 @@ describe("the dot's motion uses the app's own easing vocabulary", () => {
   const tabs = loadCSS("12-tabs.css");
   const dot = '.tab-status-dot[data-status="working"]';
 
-  it("beats on the standard curve rather than a bare ease-in-out", () => {
-    const glow = ruleContaining(tabs, `${dot}::before`, "top");
-    expect(glow.body).toContain("animation: vk-dot-glow 1.2s var(--ease-standard) infinite");
-    expect(glow.body).not.toContain("ease-in-out");
+  it("beats on the standard curve, which now lives on the clock", () => {
+    // The easing moved WITH the animation: the dot reads `--vk-beat` as a plain
+    // 0..1 amplitude, so the shape is shared by every dot in the app instead of
+    // being restated per keyframe set at four different durations.
+    const base = loadCSS("03-base.css");
+    const clock = ruleContaining(base, ":root", "top");
+    expect(clock.body).toContain("animation: vk-beat var(--dot-beat-dur) var(--ease-standard)");
+    expect(clock.body).not.toContain("ease-in-out");
   });
 
-  it("leaves the wave linear, which is not an oversight", () => {
-    // The glow is UI emphasis and takes the token; the wave's travel is continuous
-    // motion, and an eased one made it invisible (the source records the same
-    // finding). Asserted so a later sweep does not "fix" it into the token.
-    const wave = ruleContaining(tabs, `${dot}::after`, "top");
-    expect(wave.body).toContain("animation: vk-dot-wave 1.2s linear infinite");
+  it("scales the beat down rather than flashing to full opacity", () => {
+    // Every dot beating in unison at full amplitude trades a noisy strip for a
+    // throbbing one, which is not what "less visually present" asked for.
+    const glow = ruleContaining(tabs, `${dot}::before`, "top");
+    expect(glow.body).toMatch(/opacity:\s*calc\(var\(--vk-beat\) \* 0\.55\)/u);
   });
 
   it("resolves the token it names", () => {

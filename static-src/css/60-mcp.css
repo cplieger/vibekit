@@ -511,12 +511,12 @@
 
   &.oauth {
     background: var(--c-yellow);
-    animation: vk-breathe 2s ease-in-out infinite;
+    opacity: calc(1 - var(--vk-beat) * 0.6);
   }
 
   &.failed {
     background: var(--c-red);
-    animation: vk-breathe 2s ease-in-out infinite;
+    opacity: calc(1 - var(--vk-beat) * 0.6);
   }
 
   &.disabled {

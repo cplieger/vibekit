@@ -750,19 +750,13 @@
 
 .tool-state-busy {
   background: var(--c-accent);
-  animation: tool-dot-pulse 1.2s ease-in-out infinite;
-}
 
-@keyframes tool-dot-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tool-state-busy {
-    animation: none;
-  }
+  /* Reads the document beat (03-base.css) like every other status dot, so an
+     installing tool pulses in step with the tab strip instead of on its own
+     1.2s. `tool-dot-pulse` was a seventh bespoke keyframe outside the vk-*
+     family and it is deleted; reduced motion needs no rule here either, because
+     stopping the one clock stops this. */
+  opacity: calc(1 - var(--vk-beat) * 0.65);
 }
 
 .tool-installing {

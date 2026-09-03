@@ -1357,7 +1357,7 @@
   margin-inline-start: var(--sp-1);
   border-radius: 50%;
   background: var(--c-accent);
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
+  opacity: calc(1 - var(--vk-beat) * 0.6);
   vertical-align: 1px;
 }
 

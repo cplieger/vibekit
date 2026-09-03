@@ -175,7 +175,8 @@
  * palette rather than to this app's accent; the token's own comment in
  * 01-tokens.css carries that provenance and the per-theme sizing behind it.
  *
- * `vk-breathe` STAYS, and the app's ruling that a pulsing dot is reserved to
+ * THE PULSE STAYS (as the shared document beat rather than a private
+ * `vk-breathe`), and the app's ruling that a pulsing dot is reserved to
  * TABS and workflow-agent surfaces (13-messages.css, where a breathing accent
  * disc was removed from the reasoning block) is satisfied rather than bent. That
  * ruling is about a mark claiming work on a surface the reader is already
@@ -185,7 +186,7 @@
  * relying on hue, the same WCAG 1.4.1 posture 12-tabs.css states for the strip. */
 .turn-header[data-outcome="running"] .turn-dot {
   background: var(--c-dot-working);
-  animation: vk-breathe 1.4s var(--ease-standard) infinite;
+  opacity: calc(1 - var(--vk-beat) * 0.6);
 }
 
 .turn-header[data-outcome="interrupted"] .turn-dot {
@@ -1018,7 +1019,7 @@
 /* Waiting on a fetch: the target turn is not resident, so the jump has to page
  * history in first. Saying so beats appearing to do nothing. */
 .rail-marker[data-pending] {
-  animation: vk-breathe 1s var(--ease-standard) infinite;
+  opacity: calc(1 - var(--vk-beat) * 0.6);
 }
 
 .rail-cluster {

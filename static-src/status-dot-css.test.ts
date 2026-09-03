@@ -71,13 +71,40 @@ describe("the sidebar connection dot", () => {
     expect(parseFloat(inset)).toBeLessThan(0);
   });
 
-  it("still breathes while connecting", () => {
+  it("still breathes while connecting, by tracking the document clock", () => {
+    // The dot owns no animation any more: it reads `--vk-beat` (03-base.css), so
+    // the footer breathes in step with the tab strip instead of against it. The
+    // clock is DRIVEN to two known phases here rather than sampled over time —
+    // deterministic, and it proves the dot follows the clock rather than merely
+    // naming it.
     const dot = mountDot("status-dot");
-    expect(getComputedStyle(dot).animationName).toBe("vk-breathe");
+    const clock = document.documentElement.getAnimations()[0];
+    expect(clock, "the document beat must be running on :root").toBeDefined();
+    clock!.pause();
+
+    clock!.currentTime = 0; // --vk-beat 0 -> resting, fully opaque
+    expect(Number(getComputedStyle(dot).opacity)).toBeCloseTo(1, 2);
+
+    clock!.currentTime = 1200; // half of --dot-beat-dur -> --vk-beat 1 -> trough
+    expect(Number(getComputedStyle(dot).opacity)).toBeCloseTo(0.45, 2);
+
+    clock!.play();
   });
 
-  it("is static when disconnected", () => {
-    const dot = mountDot("status-dot error");
-    expect(getComputedStyle(dot).animationName).toBe("none");
+  it.each(["connected", "error"])("is static when %s, at every phase of the clock", (state) => {
+    // BOTH settled states, because the two are separate rules and only one of
+    // them being wrong is the live shape of this bug. The settled states reset
+    // OPACITY, not an animation: with the beat inherited there is no animation on
+    // this element to cancel, so `animation: none` here cancels nothing and the
+    // dot keeps breathing — which is the claim these states exist to deny.
+    const dot = mountDot(`status-dot ${state}`);
+    const clock = document.documentElement.getAnimations()[0];
+    expect(clock, "the document beat must be running on :root").toBeDefined();
+    clock!.pause();
+    for (const t of [0, 600, 1200, 1800]) {
+      clock!.currentTime = t;
+      expect(Number(getComputedStyle(dot).opacity), `phase ${String(t)}ms`).toBeCloseTo(1, 3);
+    }
+    clock!.play();
   });
 });

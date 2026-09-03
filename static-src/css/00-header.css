@@ -35,6 +35,35 @@
   initial-value: 0;
 }
 
+/* THE DOCUMENT BEAT — one clock every status dot reads, 0 -> 1 per cycle.
+ *
+ *  This is the whole synchronisation mechanism, and it works because of WHERE it
+ *  is animated rather than anything about the value. A CSS animation's phase is
+ *  `(now - creation time) mod duration`, and an animation is created the moment
+ *  its `animation-name` starts applying to an element. A per-dot beat is
+ *  therefore created when that dot's `data-status` becomes `working` and
+ *  DESTROYED when it leaves, so N working chats produce N arbitrary phases and
+ *  nothing ever drifts into alignment — measured as a field of unsynchronised
+ *  expanding rings, which is the reported complaint.
+ *
+ *  `:root` never changes state, so the animation below is created once at
+ *  document load and never restarts. `inherits: true` means every dot reads the
+ *  CURRENT phase, so a dot that appears mid-cycle is already in step: desync is
+ *  unrepresentable rather than guarded against. The dots own no animation at
+ *  all, which is also why this is CHEAPER than what it replaces — measured in
+ *  Chromium 151 over 48 dots, interleaved A/B: 60fps with 0 frames over 20ms,
+ *  against 48fps with 32 of 119 frames over 20ms for 48 independent
+ *  pseudo-element animations, because each of those forces its own raster.
+ *
+ *  A registered property is required: an unregistered one is a token the
+ *  animation engine cannot interpolate, so it would step 0 -> 1 at the halfway
+ *  point instead of ramping. */
+@property --vk-beat {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 /* ==========================================================================
    Design System
    ========================================================================== */

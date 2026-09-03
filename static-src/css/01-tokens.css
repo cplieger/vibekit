@@ -776,6 +776,23 @@
     --icon-ui: 1rem;
     --icon-lg: 1.5rem;
     --icon-hero: 3rem;
+    /* ---- Status dots -------------------------------------------------------
+     *
+     * ONE size and ONE period for every dot that reports state. The app had
+     * twelve dot-shaped indicators across five periods (1.2s, 1.4s, 2s, 4s, plus
+     * the run card's spinners) with no shared phase, and up to 48 of them beat
+     * independently on one strip — the reported "visually noisy mess".
+     *
+     * The period is DELIBERATELY slow. A status dot is ambient: it answers "is
+     * something happening off-screen" on a glance, and it is on screen for as
+     * long as the work runs, so a fast beat is a demand for attention it cannot
+     * justify. 2.4s is twice the 1.2s it replaces.
+     *
+     * `--dot-size` is 8px, which is what `.status-dot`, `.turn-dot` and the two
+     * git presence dots already used; the tab dot's 9px was the outlier. */
+    --dot-size: 0.5rem;
+    --dot-size-sm: 0.375rem;
+    --dot-beat-dur: 2.4s;
     --icon-stroke-inline: 1;
     --icon-stroke-ui: 1;
     --icon-stroke-lg: 2;
