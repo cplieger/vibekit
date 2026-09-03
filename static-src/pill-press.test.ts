@@ -64,18 +64,23 @@ one frame. Its list is the one that wins the (0,1,0) tie against 03-base.css's
     expect(/transition:/.test(press)).toBe(false);
   });
 
-  it("keeps .pill OUT of the universal scale list", async () => {
-    const css = loadCSS("03-base.css");
-    const at = css.indexOf(":where(");
-    const close = css.indexOf("):active", at);
-    const list = css.slice(at, close);
-    expect(
-      list,
-      "A press signalled by both a scale and a colour step is two mechanisms for " +
-        "one state, which is what the interaction ladder replaced.",
-    ).not.toContain(".pill,");
-    // The rule still exists for the controls that have not been converted.
-    expect(css.slice(close, close + 200)).toContain("scale(0.96)");
+  it("is not joined by a scale, because no scale press exists any more", async () => {
+    // This used to assert that `.pill` was absent from a hand-kept 13-class scale
+    // list. That list is GONE: the app-wide press is one zero-specificity rule
+    // painting `--c-press` as an inset shadow, so nothing scales and the reason
+    // this test existed — "a press signalled by both a scale and a colour step is
+    // two mechanisms for one state" — is now true by construction rather than by
+    // keeping one class out of one list.
+    //
+    // Asserted as the ABSENCE of a scale in the whole base sheet's rules, so a
+    // future re-introduction of a transform press has to answer this.
+    const css = loadCSS("03-base.css").replace(/\/\*[\s\S]*?\*\//g, " ");
+    expect(css, "no rule in 03-base.css may press with a transform").not.toMatch(
+      /:active[^{]*\{[^}]*transform:/u,
+    );
+    expect(css, "the app-wide press is the inset wash").toMatch(
+      /:where\(button, summary, \[role="button"\]\):active\s*\{\s*box-shadow: inset/u,
+    );
   });
 
   it("lets the toggled-on press win on specificity, not on file order", async () => {
