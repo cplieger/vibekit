@@ -39,6 +39,25 @@ export function maybeEl<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
 }
 
+/** Force a synchronous style and layout flush for `el`.
+ *
+ *  The browser coalesces style mutations, so removing a class and re-adding it
+ *  in one task is not a change and restarts no animation. Reading a layout
+ *  property between the two makes the removal land in a completed style
+ *  resolution, which is what separates the two writes.
+ *
+ *  Returns the value it read, and the callers discard it. That is deliberate:
+ *  the read IS the side effect, and a returned value keeps it a call rather
+ *  than an expression statement, which reads as dead code to anyone (and to
+ *  `@typescript-eslint/no-unused-expressions`).
+ *
+ *  Takes `Element` rather than `HTMLElement` because `getBoundingClientRect`
+ *  is on `Element`; `offsetWidth` is not, and every call site that used it
+ *  needed a cast to say so. */
+export function forceReflow(el: Element): number {
+  return el.getBoundingClientRect().height;
+}
+
 // Lazy singleton: elements are queried on first access via getter.
 // This allows the module to be imported before DOMContentLoaded
 // as long as no property is accessed until the DOM is ready.

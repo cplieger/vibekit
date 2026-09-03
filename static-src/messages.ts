@@ -41,7 +41,7 @@ import { clearStreamingSig, clearReasoningSig, clearBlockSigsFor } from "./store
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
-import { $ } from "./dom.js";
+import { $, forceReflow } from "./dom.js";
 import { setComposerValue } from "./composer-value.js";
 import {
   getScrollEl,
@@ -599,7 +599,7 @@ export function mountChatView(): void {
 export function fadeInTranscript(): void {
   const root = paintRoot();
   root.removeAttribute("data-chat-entry");
-  void root.offsetWidth;
+  forceReflow(root);
   root.setAttribute("data-chat-entry", "");
 }
 

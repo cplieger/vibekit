@@ -28,6 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import { getActiveTabRoute, toggleSettingsView } from "./tabs.js";
+import { forceReflow } from "./dom.js";
 import { forceSettingsTab } from "./settings-tabs.js";
 import { pushRoute } from "./router.js";
 import type { SettingsTab } from "./router.js";
@@ -116,7 +117,7 @@ export function highlightControl(id: string): void {
     // first flash is still running must restart the animation, and removing the
     // class only takes effect after a reflow.
     target.classList.remove(FLASH_CLASS);
-    void target.offsetWidth;
+    forceReflow(target);
     target.classList.add(FLASH_CLASS);
     target.addEventListener("animationend", clear, { once: true });
     flashTimers.set(target, setTimeout(clear, FLASH_CLEAR_MS));

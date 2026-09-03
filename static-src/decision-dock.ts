@@ -33,6 +33,7 @@
 import { el, signal, effect } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { activeSession } from "./store.js";
+import { forceReflow } from "./dom.js";
 import { buildPermissionCard } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
@@ -745,7 +746,7 @@ function pinAndRelease(h: DockHost, from: BoxState, to: BoxState): void {
   s.height = from.height;
   s.marginBlockEnd = from.margin;
   // Flush: the pin has to land in a COMPLETED style resolution.
-  void getComputedStyle(h.el).height;
+  forceReflow(h.el);
   s.transition = "";
   s.height = to.height;
   s.marginBlockEnd = to.margin;
