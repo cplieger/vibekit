@@ -14,6 +14,7 @@
 import { el } from "@cplieger/reactive";
 import { openAtLine } from "./navigate.js";
 import { fileIcon } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { FILE_EXTS } from "./file-extensions.js";
 
 const PATH_PATTERN =
@@ -89,8 +90,7 @@ function makeLink(path: string, lineStr: string | undefined): HTMLButtonElement 
     className: "inline-file-link",
     title: line !== undefined ? `${path}:${String(line)}` : path,
   });
-  const iconSpan = el("span", { className: "inline-file-icon" });
-  iconSpan.innerHTML = fileIcon(basename, false);
+  const iconSpan = el("span", { className: "inline-file-icon" }, iconEl(fileIcon(basename, false)));
   const labelSpan = el("span", undefined, label);
   btn.append(iconSpan, labelSpan);
   btn.addEventListener("click", () => {

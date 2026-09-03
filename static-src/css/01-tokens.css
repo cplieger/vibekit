@@ -122,6 +122,14 @@
     --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e142e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e142e' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
 
+    /* The `appearance: none` select arrow. A data URI is forced here (a select's
+       indicator can only arrive as a background image, which cannot reach the
+       icon library), so like the two above it carries a literal hue and is
+       theme-split. Geometry is ICON_CHEVRON_DOWN's, and 1rem of background-size
+       reproduces its ink exactly, so the app has ONE chevron shape. It replaced
+       a hardcoded #6c7086 that matched neither theme's tertiary ink. */
+    --img-chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238d91a7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+
     /* ---- SEEDS: status hues ----------------------------------------------- */
     --c-green: oklch(85.8% 0.109 142.7deg);
     --c-red: oklch(75.6% 0.13 2.8deg);
@@ -931,6 +939,7 @@
     --c-on-accent: oklch(100% 0 none);
     --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
+    --img-chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2361636c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
     /* 48%/52% L, not 50%/55%: as glyph ink on the tool group's tertiary
        surface the old values measured 4.49:1 and 4.15:1 — under the 4.5:1
        text floor (same class of fix as --c-yellow's 49%). */
