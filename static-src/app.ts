@@ -35,6 +35,7 @@ import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { $, byId } from "./dom.js";
 import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
+import { initPointerTier } from "./pointer-tier.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
 import {
@@ -152,6 +153,14 @@ function dismissLoadingScreen(): void {
 // ============================================================
 
 function init(): void {
+  // FIRST, before anything measures or renders: `data-pointer` on <html> decides
+  // every control height, hit target and icon size (01-tokens.css), so a
+  // consumer that reads a box before it is set reads the wrong tier. Nothing is
+  // visible yet either way — `#app-loading` covers the window at z-index 400
+  // until boot completes, which is why this needs no inline pre-paint snippet of
+  // its own. Detection and its cost: pointer-tier.ts.
+  initPointerTier();
+
   initActions();
 
   // The tab factory's injected half. `materializeTab` turns a server-owned

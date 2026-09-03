@@ -40,6 +40,42 @@
   border: 0;
 }
 
+/* THE FOCUS RING, over every focusable element rather than per component.
+ *
+ * `--focus-ring` was adopted at 39 sites and MISSING from 27 interactive
+ * families — the whole `.btn` group, `.pill` and all six pill triggers,
+ * `.send-btn`, `.sidebar-action-btn`, `.list-row-btn`, `.git-action-btn`,
+ * `.chip`, `.popup-item`, `.settings-tab`, `.mcp-modal-tab`, `.picker-btn`,
+ * `.effort-btn`, `.shell-header-btn`, `.turn-action-btn`, `.mcp-row`,
+ * `.section-option`, `.sched-row` — so a keyboard user's focus simply vanished
+ * on most of the app. `70-selection.css` records the gap in a comment beside
+ * `.pill-role-item.active:focus-visible`, which had to carry its own indicator
+ * because of it. Seven further sites hand-rolled a ring, two of them at 1px,
+ * half the token's width.
+ *
+ * `:focus-visible`, never `:focus`: a pointer user sees no ring, a keyboard user
+ * does. `:where()` scores ZERO, so every component that declares its own ring,
+ * its own offset, or a different `outline-color` (24-find.css does, at 3 sites)
+ * still wins — this is the floor, not a mandate. The seven hand-rolled rings are
+ * therefore deletable rather than in conflict.
+ *
+ * Split into three rules only to stay under stylelint's `selector-max-attribute`
+ * of 2. One rule conceptually; edit all three together. */
+:where(a[href], button, input, select, textarea, summary):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+:where([role="button"]):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+:where([tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* stylelint-disable declaration-no-important, time-min-milliseconds -- intentionally near-zero for a11y */
   *,

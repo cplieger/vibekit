@@ -517,6 +517,20 @@
   cursor: pointer;
   box-sizing: border-box;
 
+  /* The TARGET is --hit-floor; the DISC stays 8px. `all: unset` above resets
+     `min-width`/`min-height`, and it scores (0,1,0) against the app-wide floor's
+     zero-specificity `:where()` (61-mcp-tools.css), so this control is invisible
+     to that floor — an 8px button at every tier and the one undersize the desktop
+     audit reports. Growing the box is not the answer here: this is a status MARK
+     whose size is its meaning, so the hit area grows past the paint instead. The
+     expander is centred by `inset` rather than sized, so it follows the tier with
+     no second declaration. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: calc((var(--hit-floor) - 100%) / -2);
+  }
+
   /* Connecting (default/yellow): gentle breathing pulse. Motion here means an
      UNSETTLED state, which is this app's motion axis, so it stays. */
   animation: vk-breathe 2s ease-in-out infinite;

@@ -7,12 +7,17 @@
    work. The layer declaration in
    00-header.css now names only reset and tokens - the two sets that are MEANT
    to lose to everything. */
+/* The control-height bump that used to open this block is GONE, and it did not
+   move here — it moved off the WIDTH axis entirely. `--ctl-h`, `--ctl-h-dense`,
+   `--ctl-h-sm` and `--hit-floor` now flip on `[data-pointer="coarse"]`
+   (01-tokens.css), because touch and width are orthogonal: keying size to width
+   is what left an iPad and a touch laptop served as mouse desktops, and it put
+   this file's 48rem bump on a different breakpoint from the hit-target floor's
+   40rem one, so the 640-768px band got 44px controls beside a 24px floor. A
+   phone still gets the enlarged tier — it reports a coarse pointer, and
+   01-tokens.css carries a narrow-viewport fallback for a browser running no JS
+   at all. This file keeps only LAYOUT. */
 @media (width <= 48rem) {
-  :root {
-    --btn-h: 2.75rem;
-    --ctl-h-dense: 2.75rem;
-  }
-
   [id="chat-area"] {
     margin-inline-start: 0;
   }

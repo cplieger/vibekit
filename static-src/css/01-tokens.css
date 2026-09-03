@@ -415,6 +415,26 @@
      * Measure with `css-contrast.py shadow`, which lists every site. */
     --shadow-ambient: 0 0 0 1px var(--c-border);
 
+    /* ---- The elevation scale --------------------------------------------- *
+     * FOUR levels, each already carrying the ambient ring, so a site writes one
+     * token instead of composing two. The 19 shadow sites this replaces spelled
+     * one black three ways (`oklch(0% 0 none / N%)` x10, `rgb(0 0 0 / N%)` x3,
+     * `color-mix(#000 25%)` x1), one blur in two unit systems (`0.5rem 1.5rem`
+     * against `8px 24px`), and level-4 alpha anywhere from 22% to 50% — two
+     * sites shared the geometry `0 0.25rem 0.75rem` at 25% and at 40%.
+     *
+     *   --elev-1  a resting card that needs separating from the page
+     *   --elev-2  a popover, a context menu, a chip menu
+     *   --elev-3  a dialog
+     *   --elev-4  a dragged element, which must read as lifted off everything
+     *
+     * One notation (oklch, so it stays in the same space as every other colour
+     * here) and one unit (rem, so a level scales with the root font). */
+    --elev-1: var(--shadow-ambient), 0 0.125rem 0.25rem oklch(0% 0 none / 12%);
+    --elev-2: var(--shadow-ambient), 0 0.25rem 0.75rem oklch(0% 0 none / 22%);
+    --elev-3: var(--shadow-ambient), 0 0.5rem 1.5rem oklch(0% 0 none / 32%);
+    --elev-4: var(--shadow-ambient), 0 0.75rem 2rem oklch(0% 0 none / 42%);
+
     /* ---- The interaction ladder ------------------------------------------ *
      * Hover and press are two DEPTHS OF ONE WASH, adopted from
      * web-terminal-ui's tab vocabulary (15% of the text colour to hover, 25%
@@ -438,6 +458,11 @@
     --c-press: color-mix(in oklch, var(--c-text-primary) 25%, transparent);
     --layer-hover: linear-gradient(var(--c-hover) 0 100%);
     --layer-press: linear-gradient(var(--c-press) 0 100%);
+
+    /* ONE disabled treatment. The app spelled four (0.3, 0.4, 0.55, and one
+     * site changing colour only), so how unavailable a control looked depended
+     * on which button family it belonged to. */
+    --opacity-disabled: 0.4;
 
     /* ---- Selection: ONE treatment, three channels ------------------------ *
      * The app had 20 selected-state rules across 9 recipes, disagreeing about
@@ -585,6 +610,20 @@
     --fw-normal: 400;
     --fw-medium: 500;
     --fw-semibold: 600;
+
+    /* 700 had no token, so bold chrome was a fourth unnamed weight written as a
+     * literal at 3 sites, beside 18 literal `600`s and 7 literal `500`s that
+     * duplicate the two tokens above. 30.4% of the app's weight declarations
+     * bypassed this scale. */
+    --fw-bold: 700;
+
+    /* --sp-05 and --hairline exist because the 95 literal padding and gap values
+     * in this app cluster BELOW --sp-1: `0.125rem` x14, `1px` x11, `2px` x8,
+     * `0.0625rem` x3. The scale had no sub-4px step, so a site that needed one
+     * had no choice but a literal. `0.25rem`/`4px` is separately written 16
+     * times despite being exactly --sp-1. */
+    --sp-05: 0.125rem;
+    --hairline: 1px;
     --sp-1: 0.25rem;
     --sp-2: 0.5rem;
     --sp-3: 0.75rem;
@@ -617,10 +656,103 @@
      * There was a third value, `--input-h: 2.375rem`, read by the file
      * browser's path and search fields and the editor's filename. It differed
      * from --btn-h on desktop only (mobile agreed), so those fields sat 2px
-     * taller than the buttons beside them in three rows and nothing said why. */
-    --btn-h: 2.25rem;
+     * taller than the buttons beside them in three rows and nothing said why.
+     *
+     * THE TIER IS THE POINTER, NOT THE WIDTH (2026-09). These four values move
+     * on `[data-pointer="coarse"]` and no longer on a breakpoint, because width
+     * and touch are orthogonal and deriving size from width leaves the middle
+     * tier — an iPad, a touch laptop — served as a mouse desktop. Two
+     * independent mechanisms used to answer this on two DIFFERENT breakpoints:
+     * these heights flipped at 48rem while the hit-target floor flipped at
+     * 40rem, so the 640-768px band got 44px controls beside a 24px floor.
+     * `--hit-floor` joins them here so one tier decides both.
+     *
+     * `--btn-h` is retained as an ALIAS of --ctl-h for the ~200 call sites that
+     * read it; new work reads --ctl-h. Detection is pointer-tier.ts (runtime
+     * `pointerType`, seeded by the boot snippet) — never a capability query,
+     * for the measured reason in the fallback comment below. */
+    --ctl-h: 2.25rem;
     --ctl-h-dense: 2rem;
+    --ctl-h-sm: 1.5rem;
+    --hit-floor: 1.5rem;
+    --btn-h: var(--ctl-h);
+  }
 
+  /* The enlarged tier: a finger or a pen is the pointer in use. 44px is Apple's
+   * HIG figure and WCAG 2.5.5 (AAA); 24px is WCAG 2.5.8 (AA), which is what the
+   * fine tier holds. */
+  :root[data-pointer="coarse"] {
+    --ctl-h: 2.75rem;
+    --ctl-h-dense: 2.5rem;
+    --ctl-h-sm: 2.25rem;
+    --hit-floor: 2.75rem;
+  }
+
+  /* NO-JS FALLBACK, and it is narrow on purpose. A capability query cannot
+   * decide this tier: Chromium reports `pointer: coarse` with `any-pointer:
+   * fine` FALSE on a Windows touch laptop that has a mouse attached
+   * (crbug 398065927, open), and iPadOS reports coarse with a trackpad
+   * attached. So the attribute above is the decision and this block only
+   * catches a browser that ran no JS at all, where a narrow viewport is the
+   * best available guess. `:not([data-pointer="fine"])` yields to the observed
+   * tier the moment one exists. */
+  @media (width <= 48rem) {
+    :root:not([data-pointer="fine"]) {
+      --ctl-h: 2.75rem;
+      --ctl-h-dense: 2.5rem;
+      --ctl-h-sm: 2.25rem;
+      --hit-floor: 2.75rem;
+    }
+  }
+
+  :root {
+    /* ---- The icon scale --------------------------------------------------- *
+     * FOUR sizes, and each one lands the rendered stroke on a whole or a half
+     * device pixel. Before this the app had no icon size token at all: 16px was
+     * written at ~52 sites, 14px at ~24, 18px at 15, 12px at 13, plus 20/22/24/
+     * 32/36/44/48 and three fractional values (13.6px, 9.35px, 9.945px).
+     *
+     * The library draws every UI glyph on a 24-unit viewBox at stroke-width 2,
+     * so the rendered stroke is `size / 12`. That lands cleanly at 12px (1.0)
+     * and 18px (1.5) and NOWHERE ELSE — 16px gives 1.333 and 14px gives 1.167,
+     * which is a blurred edge at DPR 1 and a fractional one at DPR 2, and those
+     * were the two most-used sizes in the app. So the stroke is set from CSS
+     * per size (`width`/`height`/`stroke-width` on an <svg> are presentation
+     * attributes, which any author declaration beats with no specificity
+     * contest) and the pairs below are chosen for the arithmetic:
+     *
+     *   --icon-inline  12px @ stroke 2     -> 1.0 device px
+     *   --icon-ui      16px @ stroke 2.25  -> 1.5 device px  (18px @ 2 on coarse)
+     *   --icon-lg      24px @ stroke 2     -> 2.0 device px
+     *   --icon-hero    48px @ stroke 1.5   -> 3.0 device px
+     *
+     * --icon-ui is the chrome glyph and absorbs the old 14px and 18px groups.
+     * Its stroke is a token too, so the coarse tier grows the glyph without
+     * changing its apparent WEIGHT — a control must not look heavier because a
+     * finger arrived. */
+    --icon-inline: 0.75rem;
+    --icon-ui: 1rem;
+    --icon-lg: 1.5rem;
+    --icon-hero: 3rem;
+    --icon-stroke-inline: 2;
+    --icon-stroke-ui: 2.25;
+    --icon-stroke-lg: 2;
+    --icon-stroke-hero: 1.5;
+  }
+
+  :root[data-pointer="coarse"] {
+    --icon-ui: 1.125rem;
+    --icon-stroke-ui: 2;
+  }
+
+  @media (width <= 48rem) {
+    :root:not([data-pointer="fine"]) {
+      --icon-ui: 1.125rem;
+      --icon-stroke-ui: 2;
+    }
+  }
+
+  :root {
     /* ---- The radius ladder ----------------------------------------------- *
      * Four rungs, because a radius reads far rounder on a small box than on a
      * large one: the same 8px is a quarter of a 32px control's side and a
