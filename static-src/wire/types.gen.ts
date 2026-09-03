@@ -2068,10 +2068,81 @@ export interface ToolCallPayload {
   block_index: number;
 }
 
-/** ToolCallUpdatePayload is the payload for type="tool_call_update". */
+/**
+ * ToolCallUpdatePayload is the payload for type="tool_call_update": a DELTA
+ * addressed by id, carrying only what this frame changed.
+ * //
+ * It used to carry the whole accumulated ToolCall, and two of that object's
+ * fields accumulate — Output appends and Diffs appends — so every later frame
+ * for a call re-sent everything the earlier ones had already delivered.
+ * Measured behind five open tabs: 5.73 MiB of diffs, 4.41 MiB of output,
+ * 1.49 MiB of input, p99 frame 122 KB, max 186 KB, with one Replace-in-File's
+ * 184 KB of diffs re-sent on every subsequent frame for that call. Input is
+ * absent here entirely: an update never changes it.
+ * //
+ * This is the wire discipline message_chunk already has for text. The server's
+ * BUFFER still accumulates — turn_state needs the whole object, and so does the
+ * persist — and turn_state stays the whole-object channel, because a
+ * reconnecting client has nothing to apply a delta to.
+ * //
+ * Every field is omitempty and means "unchanged" when absent. The one field that
+ * is not a plain value is OutputDelta, whose meaning depends on OutputReplace.
+ */
 export interface ToolCallUpdatePayload {
   message_id: string;
-  tool_call: ToolCall;
+  tool_call_id: string;
+  /**
+ * Title and Kind: KAS sends them nullish on most updates and refines them on
+ * some, so an absent value is "keep", never "clear".
+ */
+  title?: string;
+  kind?: ToolKind;
+  status?: ToolStatus;
+  /**
+ * OutputDelta is normally the text to APPEND. When OutputReplace is set it is
+ * the whole output instead.
+ * //
+ * The replace case is load-bearing rather than a fallback: at completion a
+ * terminal's full stream wins over the ACP fragments already on the card
+ * (adoptTerminalOutput), so that one frame legitimately shortens or rewrites
+ * what came before. A pure-append wire cannot express it, and dropping it
+ * would leave a command's output as whatever fragments happened to arrive.
+ */
+  output_delta?: string;
+  output_replace?: boolean;
+  /**
+ * OutputSpans style the WHOLE output at absolute offsets, so they are sent
+ * entire whenever they change. Empty for the ~99.75% of real command outputs
+ * that carry no escape sequence.
+ */
+  output_spans?: TextSpan[];
+  /**
+ * DiffsAppended are the diffs this frame added. Diffs only ever append, so
+ * there is no replace case: KAS repeats a write's diff block on every
+ * streaming frame and the card keeps each arrival.
+ */
+  diffs_appended?: ToolDiff[];
+  /**
+ * Locations are REPLACED wholesale when present, which is what the fold does
+ * with them. Small: a path list, not content.
+ */
+  locations?: ToolLocation[];
+  duration_ms?: number;
+  /**
+ * The four late identity attachments. Each is adopted once and never
+ * overwritten, so each appears on at most one frame per call.
+ */
+  terminal_id?: string;
+  sub_session_id?: string;
+  agent_subtask_id?: string;
+  workflow_id?: string;
+  /**
+ * The three metadata blocks, each sent whole when it changed. All three are
+ * small and none accumulates.
+ */
+  checkpoint?: ToolCheckpoint;
+  disclosed?: ToolDisclosed;
+  denial?: ToolDenial;
 }
 
 /**

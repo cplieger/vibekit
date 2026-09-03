@@ -38,7 +38,7 @@ func TestAdoptTerminalOutput_LinkAndCompletionInOneFrame(t *testing.T) {
 		},
 	}), FrameAttribution{})
 
-	tc, ok := lastToolCallUpdate(t, events)
+	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update was broadcast")
 	}
@@ -66,14 +66,14 @@ func TestAdoptTerminalOutput_LinkOnAnEarlierFrame(t *testing.T) {
 	}), FrameAttribution{})
 	// An in_progress frame must NOT adopt: the command is still running, so the
 	// bytes are provisional and the live stream owns them.
-	if tc, ok := lastToolCallUpdate(t, events); ok && tc.Output != "" {
+	if tc, ok := lastToolCallUpdate(t, deps, events); ok && tc.Output != "" {
 		t.Errorf("output = %q on an in_progress frame, want it empty until completion", tc.Output)
 	}
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1", "status": "completed",
 	}), FrameAttribution{})
 
-	tc, ok := lastToolCallUpdate(t, events)
+	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update was broadcast")
 	}
@@ -103,7 +103,7 @@ func TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment(t *testing.T) {
 		"toolCallId": "tc-1", "status": "completed",
 	}), FrameAttribution{})
 
-	tc, _ := lastToolCallUpdate(t, events)
+	tc, _ := lastToolCallUpdate(t, deps, events)
 	if tc.Output != "line 1\nline 2\nline 3\n" {
 		t.Errorf("output = %q, want the terminal's full text rather than the fragment", tc.Output)
 	}
@@ -112,7 +112,7 @@ func TestAdoptTerminalOutput_TerminalWinsOverAnEarlierFragment(t *testing.T) {
 // A type:"terminal" block's own text is never folded into the output delta: the
 // bytes arrive on the terminal/* surface, so consuming both would double-render.
 func TestParseToolUpdateContent_TerminalBlockContributesNoOutput(t *testing.T) {
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1", "status": "in_progress",
 		"content": []map[string]any{
@@ -122,7 +122,7 @@ func TestParseToolUpdateContent_TerminalBlockContributesNoOutput(t *testing.T) {
 			},
 		},
 	}), FrameAttribution{})
-	tc, _ := lastToolCallUpdate(t, events)
+	tc, _ := lastToolCallUpdate(t, deps, events)
 	if strings.Contains(tc.Output, "SHOULD NOT APPEAR") {
 		t.Errorf("output = %q, want the terminal block's text left to the stream", tc.Output)
 	}
@@ -262,7 +262,7 @@ func TestApplyToolCallStatus_SecondTerminalFrameKeepsTheFirstDuration(t *testing
 	completed := mustJSON(t, map[string]any{"toolCallId": "tc-1", "status": "completed"})
 	tr.HandleToolCallUpdate(t.Context(), chatID, completed, FrameAttribution{})
 
-	first, ok := lastToolCallUpdate(t, events)
+	first, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event for the first terminal frame")
 	}
@@ -272,7 +272,7 @@ func TestApplyToolCallStatus_SecondTerminalFrameKeepsTheFirstDuration(t *testing
 
 	tr.HandleToolCallUpdate(t.Context(), chatID, completed, FrameAttribution{})
 
-	second, ok := lastToolCallUpdate(t, events)
+	second, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
 		t.Fatal("no tool_call_update event for the second terminal frame")
 	}

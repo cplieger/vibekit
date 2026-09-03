@@ -12,6 +12,7 @@ import {
   upsertMessage,
   appendChunk,
   upsertToolCall,
+  applyToolCallDelta,
   setCodeReferences,
   setThinking,
   setAgentStatus,
@@ -19,6 +20,7 @@ import {
   noteLiveTurnMessage,
   get,
 } from "../store.js";
+import type { ToolCallUpdatePayload, ToolKind } from "../wire/types.gen.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
 import { isStepSubtask } from "../step-subtask.js";
@@ -153,12 +155,25 @@ onSSE("tool_call_update", (chatID, p) => {
   if (p === undefined) {
     return;
   }
-  // tool_call_update payload doesn't carry block_index — by definition
-  // we're updating an already-mounted tool, so the block index is
-  // unused in upsertToolCall's update branch (only the first
-  // tool_call event drives block placement).
-  upsertToolCall(chatID, p.message_id, p.tool_call, 0);
-  if (p.tool_call.status === "completed" && isRepoMutatingKind(p.tool_call.kind)) {
+  // A DELTA addressed by id, so the fold is the store's and the frame carries no
+  // block_index: by definition the card is already mounted, and only the first
+  // `tool_call` event drives block placement.
+  applyToolCallDelta(chatID, p);
+  // `kind` is on the delta only when this frame CHANGED it, so the completed
+  // call's kind is read off the store rather than off the frame — the frame that
+  // completes a write usually carries a status and nothing else.
+  const kind = toolCallKind(chatID, p);
+  if (p.status === "completed" && kind !== undefined && isRepoMutatingKind(kind)) {
     markGitDirty();
   }
 });
+
+/** The kind of the tool call a delta addresses, from the store.
+ *
+ *  Not from the frame: `kind` rides a delta only when that frame changed it, and
+ *  the frame that completes a call normally changes the status alone. Reading it
+ *  off the frame made every completed edit look like a non-mutating tool. */
+function toolCallKind(chatID: string, d: ToolCallUpdatePayload): ToolKind | undefined {
+  const msg = get(chatID)?.messages.find((m) => m.id === d.message_id);
+  return msg?.tool_calls?.find((tc) => tc.id === d.tool_call_id)?.kind;
+}

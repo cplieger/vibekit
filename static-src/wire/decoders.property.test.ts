@@ -360,7 +360,19 @@ const toolCallPayloadArb = fc.record({
 
 const toolCallUpdatePayloadArb = fc.record({
   message_id: fc.string({ minLength: 1 }),
-  tool_call: toolCallArb,
+  tool_call_id: fc.string({ minLength: 1 }),
+  title: optField(fc.string()),
+  kind: optField(toolKindArb),
+  status: optField(toolStatusArb),
+  output_delta: optField(fc.string()),
+  output_replace: optField(fc.boolean()),
+  diffs_appended: optField(fc.array(toolDiffArb, { maxLength: 3 })),
+  locations: optField(fc.array(toolLocationArb, { maxLength: 3 })),
+  duration_ms: optField(posInt),
+  terminal_id: optField(fc.string()),
+  sub_session_id: optField(fc.string()),
+  agent_subtask_id: optField(fc.string()),
+  workflow_id: optField(fc.string()),
 });
 
 const turnEndedPayloadArb = fc.record({
