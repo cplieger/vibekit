@@ -643,10 +643,13 @@
   white-space: nowrap;
 }
 
-/* Per-unit metering breakdown shown inside the context pill expanded
-   view. Rendered only when kiro-cli reports more than one metering
-   entry (e.g. tokens-in + tokens-out + credits). Fixed compact grid
-   so long unit labels wrap within the pill instead of overflowing. */
+/* Per-unit metering breakdown inside the context pill's expanded view, shown
+ * only when kiro-cli reports more than one metering entry.
+ *
+ * Both declarations below are needed for a label to wrap and neither works
+ * alone: the card sets `white-space: nowrap`, and a unit is whatever kiro-cli
+ * reports (`MeteringItem.UnitPlural`), so an underscored identifier carries no
+ * break of its own. Measured at 390px: either alone overflows the card by 97px. */
 .pill-metering {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -655,6 +658,8 @@
   padding-top: var(--sp-2);
   margin-top: var(--sp-2);
   border-top: 1px dashed var(--c-border);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .pill-metering-row {
