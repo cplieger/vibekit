@@ -4,11 +4,10 @@ package git
 // judges whether a fast-forward is safe, pulls the ones that are, and reports a
 // verdict for every one it looked at.
 //
-// Shaped like handleStatusAll (singleflight, detached scan, bounded per repo,
-// results written by index) because it asks the same kind of question of the
-// same population. What it adds is the PRE-FLIGHT, and that is why the pass
-// lives here rather than as a client-side fan-out over handlePull: the judgement
-// "is a fast-forward safe in this tree" has to be atomic with the pull it
+// Shaped like the status fan-out, but it keeps a singleflight rather than a
+// snapshot holder: a pull is a gesture whose result the caller waits for. What it
+// adds is the PRE-FLIGHT, which is why it is not a client-side fan-out over
+// handlePull — "is a fast-forward safe here" has to be atomic with the pull it
 // guards, or the tree changes between the answer and the action.
 
 import (
@@ -233,9 +232,11 @@ func blocked(reason, detail string) *pullResult {
 }
 
 // upstreamDivergence reports how far HEAD is from its upstream. ok is false when
-// the branch tracks nothing, which aheadBehind deliberately cannot distinguish
-// from being in sync — it answers (0, 0) for both, and the two want different
-// verdicts here.
+// the branch tracks nothing, which is why the pass asks rev-list rather than
+// reading the counts off the shared status call: porcelain v2 omits the
+// ahead/behind header entirely for an untracked branch, so a status read answers
+// (0, 0) for both that and being in sync, and the two want different verdicts
+// here.
 func upstreamDivergence(ctx context.Context, dir string) (ahead, behind int, ok bool) {
 	out, err := gitCmd(ctx, dir, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
 	if err != nil {
@@ -285,57 +286,27 @@ func operationInProgress(ctx context.Context, dir string) bool {
 	return false
 }
 
-// worktreeState answers the two questions the pre-flight asks of a working tree,
-// from ONE git status call: does the index already hold a merge conflict, and
-// which paths carry a local change.
+// worktreeState answers the pre-flight's two questions off ONE status read: does the
+// index hold a merge conflict, and which paths carry a local change.
 //
-// It reads the porcelain records itself rather than going through
-// parseGitStatusOutput, and that is not duplication: that parser splits an XY
-// pair into one row per side of the index, which is right for the file list the
-// panel renders and unusable here, because it is exactly the pairing a conflict
-// IS. Through it `UU` becomes two ordinary "U" rows and `AA` becomes a plain
-// staged add.
-//
-// Every changed path counts as dirty, staged and untracked alike: git refuses a
-// merge that would overwrite an index change or an untracked file just as it
-// refuses one that would overwrite a worktree edit.
+// The conflict half cannot come off the file rows — the row builder splits an XY pair
+// into one row per side, and that pairing is what a conflict IS — so it reads v2's own
+// unmerged record type. Every changed path counts as dirty, staged and untracked
+// alike, and a rename's ORIGIN too: a fast-forward would have to write either end.
 func worktreeState(ctx context.Context, dir string) (dirty map[string]struct{}, conflicted, ok bool) {
-	raw, err := gitExec(ctx, dir, "status", "--porcelain=v1", "-z", "-uall").CombinedOutput()
+	st, err := readStatus(ctx, dir)
 	if err != nil {
+		// Fail closed: a tree whose status could not be read is not a clean one.
 		return nil, false, false
 	}
-	dirty = make(map[string]struct{})
-	records := strings.Split(string(raw), "\x00")
-	for i := 0; i < len(records); i++ {
-		line := records[i]
-		// A valid record is at least "XY P". Anything shorter is the trailing
-		// empty field after the final NUL, or an origin path already consumed.
-		if len(line) < 4 {
-			continue
+	dirty = make(map[string]struct{}, len(st.Files))
+	for _, f := range st.Files {
+		dirty[f.Path] = struct{}{}
+		if f.OrigPath != "" {
+			dirty[f.OrigPath] = struct{}{}
 		}
-		x, y, path := line[0], line[1], line[3:]
-		if isRenameOrCopy(x, y) {
-			// A rename or copy carries its origin path as a second NUL field.
-			// Both ends are dirty (a fast-forward would have to write either),
-			// and consuming it stops it being read as a record of its own.
-			if i+1 < len(records) {
-				dirty[records[i+1]] = struct{}{}
-			}
-			i++
-		}
-		if isUnmerged(x, y) {
-			conflicted = true
-		}
-		dirty[path] = struct{}{}
 	}
-	return dirty, conflicted, true
-}
-
-// isUnmerged reports whether an XY status pair records a merge conflict. The
-// seven pairs are git's own (git-status(1) "Short Format"): either side U, plus
-// the two both-changed cases where neither side is.
-func isUnmerged(x, y byte) bool {
-	return x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D')
+	return dirty, st.Conflicted, true
 }
 
 // incomingFiles lists the paths a fast-forward to the upstream would write. Only

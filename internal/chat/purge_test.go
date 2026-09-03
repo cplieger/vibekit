@@ -9,104 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/chat/archive"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
-
-// --- OldestChatMTime ---
-
-func TestOldestChatMTime(t *testing.T) {
-	cases := []struct {
-		setup  func(t *testing.T, s *Store) time.Time
-		name   string
-		wantOK bool
-	}{
-		{
-			name:   "EmptyWhenNoChatDir",
-			setup:  func(t *testing.T, s *Store) time.Time { return time.Time{} },
-			wantOK: false,
-		},
-		{
-			name: "EmptyWhenChatDirEmpty",
-			setup: func(t *testing.T, s *Store) time.Time {
-				if err := os.MkdirAll(s.dir, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				return time.Time{}
-			},
-			wantOK: false,
-		},
-		{
-			name: "PicksOldestJSONFile",
-			setup: func(t *testing.T, s *Store) time.Time {
-				dir := s.dir
-				if err := os.MkdirAll(dir, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				oldPath := filepath.Join(dir, "old.json")
-				newPath := filepath.Join(dir, "new.json")
-				if err := os.WriteFile(oldPath, []byte("{}"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				oldTime := time.Now().Add(-24 * time.Hour)
-				if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(newPath, []byte("{}"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				return oldTime
-			},
-			wantOK: true,
-		},
-		{
-			name: "SkipsSubdirsAndNonJSON",
-			setup: func(t *testing.T, s *Store) time.Time {
-				dir := s.dir
-				if err := os.MkdirAll(dir, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				subDir := filepath.Join(dir, "subdir")
-				if err := os.MkdirAll(subDir, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				md := filepath.Join(dir, "chat.notes.md")
-				if err := os.WriteFile(md, []byte("# notes"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				mdTime := time.Now().Add(-48 * time.Hour)
-				if err := os.Chtimes(md, mdTime, mdTime); err != nil {
-					t.Fatal(err)
-				}
-				j := filepath.Join(dir, "chat.json")
-				if err := os.WriteFile(j, []byte("{}"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				jTime := time.Now().Add(-6 * time.Hour)
-				if err := os.Chtimes(j, jTime, jTime); err != nil {
-					t.Fatal(err)
-				}
-				return jTime
-			},
-			wantOK: true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s, _ := newTestStore(t)
-			wantTime := tc.setup(t, s)
-			got, ok := archive.OldestChatMTime(t.Context(), s.dir)
-			if ok != tc.wantOK {
-				t.Fatalf("OldestChatMTime ok=%v, want %v", ok, tc.wantOK)
-			}
-			if tc.wantOK {
-				if got.Sub(wantTime) > time.Second || wantTime.Sub(got) > time.Second {
-					t.Errorf("OldestChatMTime = %v, want near %v", got, wantTime)
-				}
-			}
-		})
-	}
-}
 
 // --- PurgeScheduler ---
 
@@ -274,9 +178,11 @@ func TestPurgeScheduler_CollapsesConcurrentTriggers(t *testing.T) {
 	waitForRetentionConsults(t, calls, 1)
 }
 
-func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
+func TestPurgeScheduler_ShortRetentionPurgesExpiredAndKeepsFresh(t *testing.T) {
 	// With retention=1s and an entry already aged past retention,
-	// the scheduler must purge expired entries and keep fresh ones.
+	// the scheduler must purge expired entries and keep fresh ones. The fresh
+	// one's deadline is about a second away, which is the boundary the armed
+	// wait's floor exists for.
 	s, _ := newTestStore(t)
 	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")

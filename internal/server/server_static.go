@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -15,12 +16,12 @@ import (
 // zero ModTime, so a bare FileServer never revalidates), construction-time
 // gzip at BestCompression kept only when smaller, Vary: Accept-Encoding, and
 // distinct per-representation ETags with their own 304 handling. vibekit
-// keeps only its policy and its SPA shape: assets revalidate (the handler's
-// default `no-cache`), HTML is always fresh (`no-store`), and any path that
-// is not a real embedded file falls back to index.html for History-API
-// client routing. cmd/bundle no longer emits precompressed .gz siblings —
-// the handler compresses the original bytes at the same level, so the
-// embedded tree carries each asset exactly once.
+// keeps only its policy and its SPA shape: a content-addressed asset is
+// immutable, every other asset revalidates, HTML is always fresh
+// (`no-store`), and any path that is not a real embedded file falls back to
+// index.html for History-API client routing. cmd/bundle no longer emits
+// precompressed .gz siblings — the handler compresses the original bytes at
+// the same level, so the embedded tree carries each asset exactly once.
 
 // shellContentType is what the SPA shell is served as. Fixed rather than
 // sniffed: the bytes are always the embedded index.html, so there is nothing
@@ -28,12 +29,55 @@ import (
 // ".html" extension on the path this replaced.
 const shellContentType = "text/html; charset=utf-8"
 
+// The three cache policies, each a claim about the NAME rather than the bytes.
+//
+// immutableAsset is only correct for a name that cannot change content: get that
+// wrong and a client serves a stale asset for a year with no request that could
+// discover it. revalidateAsset is the answer for every stable name (`app.js`,
+// `style.css`, `sw.js`), whose bytes a release replaces under the name, and the
+// content-hash ETag makes its revalidation a 304 with no body. noStoreHTML keeps
+// the shell out of every cache, so a release takes effect on the next load.
+const (
+	immutableAsset  = "public, max-age=31536000, immutable"
+	revalidateAsset = "no-cache"
+	noStoreHTML     = "no-store"
+)
+
+// contentHashedAsset matches the ONE naming shape whose bytes its name pins:
+// cmd/bundle emits lazy chunks as esbuild's `chunks/[name]-[hash]`, and that hash
+// is 8 uppercase base32 characters (`chunks/api-client-4K73XYBF.js`, plus a `.map`
+// sibling carrying the same hash).
+//
+// Anchored at both ends and pinned to the chunk directory on purpose: a looser rule
+// would eventually match a hand-authored asset and cache it for a year, and this
+// one degrades to the revalidating answer if ChunkNames ever changes.
+var contentHashedAsset = regexp.MustCompile(`^chunks/[^/]+-[A-Z0-9]{8}\.js(\.map)?$`)
+
+// assetCachePolicy is the per-asset Cache-Control policy webhttp.StaticHandler
+// asks for. assetPath is normalized: no leading slash, and "index.html" for a
+// root request.
+//
+// index.html is answered here as well as by spaHandler's own no-store write, even
+// though the handler intercepts every path that could reach it. The rule belongs
+// to the policy, not to one branch of one handler: whoever mounts this tree next
+// gets the same answer without having to know that.
+func assetCachePolicy(assetPath string) string {
+	switch {
+	case contentHashedAsset.MatchString(assetPath):
+		return immutableAsset
+	case strings.HasSuffix(assetPath, ".html"):
+		return noStoreHTML
+	default:
+		return revalidateAsset
+	}
+}
+
 // spaHandler serves static files from the embedded FS, falling back to
 // index.html for any path that doesn't match a real file (client-side
-// routing via the History API). Assets get ETag + no-cache + gzip variants
-// from webhttp.StaticHandler; HTML (direct or fallback) is no-store and
-// deliberately un-ETagged, so a new release's script graph takes effect on
-// the next load.
+// routing via the History API). Assets get an ETag, a gzip representation and
+// their cache policy from webhttp.StaticHandler (see assetCachePolicy); HTML
+// (direct or fallback) is no-store and deliberately un-ETagged, so a new
+// release's script graph takes effect on the next load.
 //
 // # The fallback WRITES the shell rather than serving it as a file
 //
@@ -74,7 +118,7 @@ const shellContentType = "text/html; charset=utf-8"
 // handler runs. The encoded spelling now gets the shell instead of a 400,
 // which is what every other unrouted path already got.
 func spaHandler(staticFS fs.FS) http.Handler {
-	static, err := webhttp.StaticHandler(staticFS)
+	static, err := webhttp.StaticHandler(staticFS, webhttp.WithStaticCacheControl(assetCachePolicy))
 	if err != nil {
 		// An unreadable embedded FS is a build defect, not a runtime
 		// condition — fail construction loudly.

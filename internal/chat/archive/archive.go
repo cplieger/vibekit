@@ -19,6 +19,27 @@ import (
 
 const chatFileSuffix = ".json"
 
+// RetentionHeader is the projection of a chat a retention decision reads: when
+// the chat was last active, which KAS sessions it has run on, and whether it
+// holds unsent words. Nothing else — a chat's messages, blocks, tool calls and
+// diffs decide nothing here and cost megabytes to decode.
+//
+// Declared in this package because this is the consumer that needs it; the store
+// implements the read (see chat.Store.LoadRetentionHeader).
+type RetentionHeader struct {
+	// SessionChain is every KAS session the chat has run on, current one last.
+	// The purge hands it to onPurge, which reaps those directories.
+	SessionChain []string
+	// UpdatedAt is the chat's own last-activity stamp in Unix milliseconds. Zero
+	// or negative means the chat records none, and purgeOne falls back to the
+	// file mtime.
+	UpdatedAt int64
+	// Drafting reports a non-empty draft: composer text typed and not sent, which
+	// Store.SetDraft deliberately writes WITHOUT stamping UpdatedAt, so the age
+	// test structurally cannot see it.
+	Drafting bool
+}
+
 // StoreAccess is the narrow interface the archive subsystem requires
 // from the chat store. Keeps the dependency minimal and testable.
 type StoreAccess interface {
@@ -26,8 +47,9 @@ type StoreAccess interface {
 	Lock(chatID vibekit.ChatID) *sync.Mutex
 	// Dir returns the store's base directory.
 	Dir() string
-	// Load reads a chat from the active directory.
-	Load(chatID vibekit.ChatID) (*vibekit.Chat, error)
+	// LoadRetentionHeader reads the retention projection of a chat, without
+	// materializing its messages.
+	LoadRetentionHeader(chatID vibekit.ChatID) (RetentionHeader, error)
 }
 
 // Service implements the archive lifecycle operations.

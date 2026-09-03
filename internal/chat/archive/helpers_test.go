@@ -1,7 +1,6 @@
 package archive
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,14 +16,12 @@ import (
 // Lock carry behavior the purge subsystem under test depends on; the
 // rest are inert stubs that record the calls a test wants to assert on.
 type fakeStore struct {
-	dir         string
-	mu          sync.Mutex
-	locks       map[vibekit.ChatID]*sync.Mutex
-	markedDel   []vibekit.ChatID
-	clearedTomb []vibekit.ChatID
-	// loadResult, when non-nil, makes Load succeed with this chat
-	// (default: Load returns an error).
-	loadResult *vibekit.Chat
+	dir   string
+	mu    sync.Mutex
+	locks map[vibekit.ChatID]*sync.Mutex
+	// header, when non-nil, makes LoadRetentionHeader succeed with this
+	// projection (default: it fails, the unreadable-chat path).
+	header *RetentionHeader
 }
 
 func newFakeStore(dir string) *fakeStore {
@@ -46,31 +43,11 @@ func (f *fakeStore) Lock(chatID vibekit.ChatID) *sync.Mutex {
 	return m
 }
 
-func (f *fakeStore) PathFor(chatID vibekit.ChatID) (string, error) {
-	return filepath.Join(f.dir, string(chatID)+".json"), nil
-}
-
-func (f *fakeStore) Load(vibekit.ChatID) (*vibekit.Chat, error) {
-	if f.loadResult != nil {
-		return f.loadResult, nil
+func (f *fakeStore) LoadRetentionHeader(vibekit.ChatID) (RetentionHeader, error) {
+	if f.header != nil {
+		return *f.header, nil
 	}
-	return nil, errors.New("fakeStore: Load not implemented")
-}
-
-func (f *fakeStore) Header(context.Context, *vibekit.Chat) vibekit.ChatHeader {
-	return vibekit.ChatHeader{}
-}
-
-func (f *fakeStore) MarkDeleted(chatID vibekit.ChatID) {
-	f.mu.Lock()
-	f.markedDel = append(f.markedDel, chatID)
-	f.mu.Unlock()
-}
-
-func (f *fakeStore) ClearTombstone(chatID vibekit.ChatID) {
-	f.mu.Lock()
-	f.clearedTomb = append(f.clearedTomb, chatID)
-	f.mu.Unlock()
+	return RetentionHeader{}, errors.New("fakeStore: chat is unreadable")
 }
 
 // purgeRecorder collects chat IDs passed to an onPurge
@@ -130,9 +107,9 @@ func newPurgeTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, st
 // writeAgedChat writes a chat file whose MTIME is `age` in the past and
 // returns its path. age=0 means "now".
 //
-// It writes no UpdatedAt, so purgeReferenceTime falls through to the mtime —
-// which is what makes these age assertions readable. The UpdatedAt path has its
-// own test.
+// The fake store reports no readable projection for it unless a test sets one, so
+// purgeReferenceTime falls through to the mtime — which is what makes these age
+// assertions readable. The UpdatedAt path has its own test.
 func writeAgedChat(t *testing.T, dir, id string, age time.Duration) string {
 	t.Helper()
 	p := filepath.Join(dir, id+".json")

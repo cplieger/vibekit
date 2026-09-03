@@ -185,7 +185,7 @@ func TestPullAll_BlocksWhileAnOperationIsInProgress(t *testing.T) {
 }
 
 // A repo tracking nothing has nothing to pull, and it must not read as an error:
-// aheadBehind answers (0, 0) for both this and being in sync, which is exactly
+// a status read answers (0, 0) for both this and being in sync, which is exactly
 // why upstreamDivergence reports ok separately.
 func TestPullAll_SkipsARepoWithNoUpstream(t *testing.T) {
 	skipNoGit(t)
@@ -248,21 +248,6 @@ func TestPullAll_RefusesANonPOST(t *testing.T) {
 	h.handlePullAll(rec, httptest.NewRequest(http.MethodGet, "/api/git/pull-all", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
-	}
-}
-
-// The seven pairs are git's own; the point of the table is that the two
-// both-changed cases carry no U at all, which is what a per-side parse loses.
-func TestIsUnmerged_CoversGitsSevenConflictPairs(t *testing.T) {
-	for _, pair := range []string{"DD", "AU", "UD", "UA", "DU", "AA", "UU"} {
-		if !isUnmerged(pair[0], pair[1]) {
-			t.Errorf("%s: not reported as unmerged", pair)
-		}
-	}
-	for _, pair := range []string{"M ", " M", "MM", "A ", " D", "??", "R ", "AD", "DA"} {
-		if isUnmerged(pair[0], pair[1]) {
-			t.Errorf("%s: reported as unmerged", pair)
-		}
 	}
 }
 
@@ -356,5 +341,46 @@ func TestWorktreeState_ReportsARealMergeConflict(t *testing.T) {
 	}
 	if !conflicted {
 		t.Error("a conflicted index was not reported as conflicted")
+	}
+}
+
+// A both-added conflict is the case a per-side letter parse loses: git's short
+// format spells it `AA`, with no U on either side, so a reader that classified
+// letters had to know that pair by heart and a reader that split the pair into
+// rows saw a plain staged add. Porcelain v2 gives an unmerged path its own record
+// type, so this asserts the conflict is seen without anything classifying letters.
+//
+// The identity goes in the repo's OWN config, because the merge below runs through
+// the production exec path and that carries no identity env — on a machine with no
+// global git identity the merge would abort at 128 before touching the index, and
+// the test would fail for a reason that has nothing to do with the status read.
+func TestWorktreeState_ReportsABothAddedConflict(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "test")
+	// Two branches from the same base, each ADDING the same path.
+	runGit(t, dir, "checkout", "-b", "other")
+	writeCommit(t, dir, "added.txt", "theirs\n", "theirs adds it")
+	runGit(t, dir, "checkout", "main")
+	writeCommit(t, dir, "added.txt", "ours\n", "ours adds it")
+	out, err := gitCmd(t.Context(), dir, "merge", "other")
+	if err == nil {
+		t.Fatalf("merge succeeded; the fixture produced no conflict:\n%s", out)
+	}
+	if !strings.Contains(out, "CONFLICT") {
+		t.Fatalf("merge failed without conflicting, so the fixture is not armed:\n%s", out)
+	}
+
+	dirty, conflicted, ok := worktreeState(t.Context(), dir)
+	if !ok {
+		t.Fatal("worktreeState reported the tree unreadable")
+	}
+	if !conflicted {
+		t.Error("a both-added conflict was not reported as conflicted")
+	}
+	if _, hit := dirty["added.txt"]; !hit {
+		t.Errorf("the conflicted path is missing from the dirty set: %v", dirty)
 	}
 }

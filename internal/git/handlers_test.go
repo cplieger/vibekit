@@ -110,105 +110,6 @@ func TestStatusLabel(t *testing.T) {
 	}
 }
 
-func TestParseGitStatusOutput(t *testing.T) {
-	tests := []struct {
-		name string
-		in   []byte
-		want []gitFile
-	}{
-		{"nil input", nil, nil},
-		{"empty input", []byte(""), nil},
-		{"unstaged modified", []byte(" M file.go\x00"), []gitFile{
-			{Path: "file.go", Status: "M", Display: "Modified"},
-		}},
-		{"staged added", []byte("A  new.go\x00"), []gitFile{
-			{Path: "new.go", Status: "A", Display: "Added", Staged: true},
-		}},
-		{"staged and unstaged emits two entries", []byte("MM both.go\x00"), []gitFile{
-			{Path: "both.go", Status: "M", Display: "Modified", Staged: true},
-			{Path: "both.go", Status: "M", Display: "Modified", Staged: false},
-		}},
-		{"untracked", []byte("?? newfile.go\x00"), []gitFile{
-			{Path: "newfile.go", Status: "?", Display: "Untracked"},
-		}},
-		// -z rename: the ` -> ` is dropped and the order is reversed, so
-		// the new (current) path comes first and the origin path is a
-		// second NUL field. Path is the new one (what stage, discard and
-		// diff need); OrigPath carries where it came from, so the panel
-		// can say "new.go ← old.go" instead of dropping the origin on
-		// the floor as this parser used to.
-		{"rename keeps new path, carries origin", []byte("R  new.go\x00old.go\x00"), []gitFile{
-			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old.go"},
-		}},
-		// The worktree half of a staged rename describes an ordinary edit
-		// to the file at its NEW path, so it carries no origin: the move
-		// is the staged entry's fact, not this one's.
-		{"rename plus worktree modify emits two entries", []byte("RM renamed.go\x00orig.go\x00"), []gitFile{
-			{Path: "renamed.go", Status: "R", Display: "Renamed", Staged: true, OrigPath: "orig.go"},
-			{Path: "renamed.go", Status: "M", Display: "Modified", Staged: false},
-		}},
-		{"copy carries origin", []byte("C  copy.go\x00src.go\x00"), []gitFile{
-			{Path: "copy.go", Status: "C", Display: "Copied", Staged: true, OrigPath: "src.go"},
-		}},
-		// A rename recorded only in the WORKTREE puts the R in the Y
-		// column, so the origin has to ride the unstaged entry there.
-		{"unstaged rename carries origin", []byte(" R new.go\x00old.go\x00"), []gitFile{
-			{Path: "new.go", Status: "R", Display: "Renamed", OrigPath: "old.go"},
-		}},
-		// A truncated tail must not read past the record slice: the
-		// origin is simply unknown, and the entry still renders.
-		{"rename with a missing origin field", []byte("R  new.go"), []gitFile{
-			{Path: "new.go", Status: "R", Display: "Renamed", Staged: true},
-		}},
-		// 'T' (typechange) used to fall through statusLabel's default and
-		// render as "Unknown". Measured on git 2.x: `rm f && ln -s /tmp f`.
-		{"unstaged typechange", []byte(" T link.txt\x00"), []gitFile{
-			{Path: "link.txt", Status: "T", Display: "Typechange"},
-		}},
-		{"staged typechange", []byte("T  link.txt\x00"), []gitFile{
-			{Path: "link.txt", Status: "T", Display: "Typechange", Staged: true},
-		}},
-		// -z never quotes: non-ASCII bytes arrive verbatim as UTF-8.
-		{"non-ascii filename unquoted", []byte(" M café.txt\x00"), []gitFile{
-			{Path: "café.txt", Status: "M", Display: "Modified"},
-		}},
-		{"staged non-ascii rename", []byte("R  café-new.txt\x00café-old.txt\x00"), []gitFile{
-			{Path: "café-new.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "café-old.txt"},
-		}},
-		// A literal " -> " inside a filename is no longer mistaken for a
-		// rename separator (the old newline parser split on it).
-		{"spaced filename with arrow-like substring", []byte(" M foo -> bar.txt\x00"), []gitFile{
-			{Path: "foo -> bar.txt", Status: "M", Display: "Modified"},
-		}},
-		{"rename of spaced paths", []byte("R  new name.txt\x00old name.txt\x00"), []gitFile{
-			{Path: "new name.txt", Status: "R", Display: "Renamed", Staged: true, OrigPath: "old name.txt"},
-		}},
-		{"directory entry skipped", []byte("?? somedir/\x00?? real.txt\x00"), []gitFile{
-			{Path: "real.txt", Status: "?", Display: "Untracked"},
-		}},
-		{"short records skipped", []byte("XY\x00 M file.go\x00?\x00"), []gitFile{
-			{Path: "file.go", Status: "M", Display: "Modified"},
-		}},
-		{"multiple entries", []byte("M  staged.go\x00 M unstaged.go\x00?? untracked.go\x00A  added.go\x00"), []gitFile{
-			{Path: "staged.go", Status: "M", Display: "Modified", Staged: true},
-			{Path: "unstaged.go", Status: "M", Display: "Modified"},
-			{Path: "untracked.go", Status: "?", Display: "Untracked"},
-			{Path: "added.go", Status: "A", Display: "Added", Staged: true},
-		}},
-		{"no trailing NUL still parses final record", []byte(" M file.go"), []gitFile{
-			{Path: "file.go", Status: "M", Display: "Modified"},
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseGitStatusOutput(tt.in)
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("parseGitStatusOutput(%q) = %+v, want %+v", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRepoFromQuery(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1842,23 +1743,6 @@ func behindRepo(t *testing.T) string {
 	return work
 }
 
-// aheadBehind must report real upstream divergence. The counts come from
-// `git rev-list --left-right --count HEAD...@{upstream}`, so rev-list has to
-// be permitted by the allowedSubcommands allowlist; if it is dropped, the command is
-// rigged to fail and the counts silently collapse to 0/0 (a dead ahead/behind
-// indicator in the git panel).
-func TestAheadBehind_ReportsUpstreamDivergence(t *testing.T) {
-	work := behindRepo(t) // HEAD at C1, origin/main at C2 -> behind 1, ahead 0
-	if ahead, behind := aheadBehind(t.Context(), work); ahead != 0 || behind != 1 {
-		t.Fatalf("aheadBehind on a behind-by-one work tree = (%d, %d), want (0, 1)", ahead, behind)
-	}
-	// A local commit on top of C1 leaves the work tree both ahead and behind.
-	writeCommit(t, work, "local.txt", "local\n", "local commit")
-	if ahead, behind := aheadBehind(t.Context(), work); ahead != 1 || behind != 1 {
-		t.Fatalf("aheadBehind after a local commit = (%d, %d), want (1, 1)", ahead, behind)
-	}
-}
-
 func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
 	workDir := t.TempDir()
 	h := NewHandler(workDir)
@@ -1979,65 +1863,6 @@ func TestHandleStatus_DirtyRepoReportsFiles(t *testing.T) {
 	}
 	if len(resp.Files) < 2 {
 		t.Errorf("Files = %+v, want >=2 entries", resp.Files)
-	}
-}
-
-// parseGitStatus round-trips real `git status --porcelain=v1 -z` output
-// for filenames git C-quotes in the default (newline) format: non-ASCII
-// bytes, embedded spaces, and a staged rename to such a name. The -z
-// format never quotes, so every returned Path is the exact on-disk path
-// — which is what stage/unstage/discard/diff feed back to git. This is
-// the end-to-end proof of the quoting-bug fix (GIT-PANEL): under the old
-// newline + line[3:] parser these paths came back wrapped in double
-// quotes with C-escapes (café.txt → "caf\303\251.txt") and no subsequent
-// git op could resolve them.
-func TestParseGitStatus_UnquotesSpecialFilenames(t *testing.T) {
-	skipNoGit(t)
-	dir := t.TempDir()
-	initFixtureRepo(t, dir) // commits README.md on main
-
-	// Untracked files whose names the default porcelain format would quote.
-	const nonASCII = "café.txt"
-	const spaced = "with space.txt"
-	for _, name := range []string{nonASCII, spaced} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A staged rename to a non-ASCII + spaced name (git mv stages it).
-	const renamedTo = "rénamed doc.md"
-	runGit(t, dir, "mv", "README.md", renamedTo)
-
-	files := parseGitStatus(t.Context(), dir)
-
-	byPath := make(map[string]gitFile, len(files))
-	for _, f := range files {
-		byPath[f.Path] = f
-		// Regression guard: the old parser surfaced C-quoted paths
-		// (e.g. "caf\303\251.txt"). -z output is verbatim, so no
-		// returned path may be double-quote-wrapped or carry a
-		// backslash escape.
-		if strings.HasPrefix(f.Path, `"`) || strings.Contains(f.Path, `\`) {
-			t.Errorf("path %q looks C-quoted; -z output must be verbatim", f.Path)
-		}
-	}
-
-	if f, ok := byPath[nonASCII]; !ok {
-		t.Errorf("non-ASCII untracked file %q missing from %+v", nonASCII, files)
-	} else if f.Status != "?" {
-		t.Errorf("%q status = %q, want untracked", nonASCII, f.Status)
-	}
-	if _, ok := byPath[spaced]; !ok {
-		t.Errorf("spaced untracked file %q missing from %+v", spaced, files)
-	}
-	// The rename's new (current) path must be present, staged, and
-	// un-quoted regardless of whether git reports it as R (rename
-	// detected, origin field consumed) or A (add) — both stage the new
-	// path under this exact name.
-	if f, ok := byPath[renamedTo]; !ok {
-		t.Errorf("renamed path %q missing from %+v", renamedTo, files)
-	} else if !f.Staged {
-		t.Errorf("renamed path %q Staged = false, want true", renamedTo)
 	}
 }
 
@@ -2600,34 +2425,6 @@ func TestPRRemoteHost_NeverContainsPathOrUserinfo(t *testing.T) {
 
 // --- fuzz targets ---
 
-func FuzzParseGitStatusOutput(f *testing.F) {
-	// Seed corpus from the table-driven test cases (NUL-delimited -z format).
-	seeds := [][]byte{
-		nil,
-		[]byte(""),
-		[]byte(" M file.go\x00"),
-		[]byte("A  new.go\x00"),
-		[]byte("MM both.go\x00"),
-		[]byte("?? newfile.go\x00"),
-		[]byte("R  new.go\x00old.go\x00"),
-		[]byte("RM renamed.go\x00orig.go\x00"),
-		[]byte("C  copy.go\x00src.go\x00"),
-		[]byte(" M café.txt\x00"),
-		[]byte(" M foo -> bar.txt\x00"),
-		[]byte("?? somedir/\x00?? real.txt\x00"),
-		[]byte("XY\x00 M file.go\x00?\x00"),
-		[]byte("M  staged.go\x00 M unstaged.go\x00?? untracked.go\x00A  added.go\x00"),
-		[]byte(" M file.go"),
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, data []byte) {
-		// Must not panic on any input.
-		_ = parseGitStatusOutput(data)
-	})
-}
-
 func FuzzScrubAuth(f *testing.F) {
 	// Seed corpus from existing test cases.
 	seeds := []string{
@@ -2785,35 +2582,6 @@ func FuzzExtractCommitMessage(f *testing.F) {
 			t.Errorf("extractCommitMessage(%q) = %q: prefix not stripped", data, result)
 		}
 	})
-}
-
-func BenchmarkParseGitStatusOutput(b *testing.B) {
-	// Generate synthetic porcelain -z output (NUL-delimited) for sub-benchmarks.
-	generate := func(n int) []byte {
-		var buf strings.Builder
-		for i := range n {
-			switch i % 4 {
-			case 0:
-				buf.WriteString(" M file" + strconv.Itoa(i) + ".go\x00")
-			case 1:
-				buf.WriteString("A  new" + strconv.Itoa(i) + ".go\x00")
-			case 2:
-				buf.WriteString("?? untracked" + strconv.Itoa(i) + ".txt\x00")
-			case 3:
-				buf.WriteString("MM both" + strconv.Itoa(i) + ".go\x00")
-			}
-		}
-		return []byte(buf.String())
-	}
-
-	for _, n := range []int{10, 100, 1000} {
-		data := generate(n)
-		b.Run(strconv.Itoa(n)+"_files", func(b *testing.B) {
-			for b.Loop() {
-				_ = parseGitStatusOutput(data)
-			}
-		})
-	}
 }
 
 func BenchmarkScrubAuth(b *testing.B) {
@@ -3469,7 +3237,8 @@ func TestCollectStatus_RemoteSet(t *testing.T) {
 	}
 }
 
-// collectStatus counts stash entries from `git stash list`.
+// collectStatus reports stash entries, which now ride the one status call's
+// `# stash` header rather than a `git stash list` spawn of their own.
 func TestCollectStatus_StashCount(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
@@ -3484,22 +3253,19 @@ func TestCollectStatus_StashCount(t *testing.T) {
 	}
 }
 
-// parseGitStatusOutput's inclusive lower bound for a parseable record is
-// 4 bytes ("XY P": 2 status bytes, a space, a >=1-char path). A record of
-// exactly 4 bytes yields one entry; a 3-byte record (no path) is dropped
-// rather than emitting a useless empty-path entry.
-func TestParseGitStatusOutput_LenBoundary(t *testing.T) {
-	got := parseGitStatusOutput([]byte("?? x\x00"))
+// The untracked record's lower bound: `? <path>` is 3 bytes at minimum, and a
+// record with no path at all must be dropped rather than emitted as an
+// empty-path row the panel would render as a nameless file.
+func TestParsePorcelainV2_UntrackedLenBoundary(t *testing.T) {
+	got := parsePorcelainV2([]byte("? x\x00")).Files
 	if len(got) != 1 {
-		t.Fatalf("parseGitStatusOutput(\"?? x\") len = %d, want 1", len(got))
+		t.Fatalf(`parsePorcelainV2("? x") len = %d, want 1`, len(got))
 	}
 	if got[0].Status != "?" || got[0].Display != "Untracked" || got[0].Path != "x" {
-		t.Errorf("entry = %+v, want {Path:\"x\" Status:\"?\" Display:\"Untracked\"}", got[0])
+		t.Errorf(`entry = %+v, want {Path:"x" Status:"?" Display:"Untracked"}`, got[0])
 	}
-
-	// One byte short of a path: dropped, not emitted as an empty-path entry.
-	if got := parseGitStatusOutput([]byte("?? \x00")); len(got) != 0 {
-		t.Errorf("parseGitStatusOutput(\"?? \") = %+v, want no entries", got)
+	if got := parsePorcelainV2([]byte("? \x00")).Files; len(got) != 0 {
+		t.Errorf(`parsePorcelainV2("? ") = %+v, want no entries`, got)
 	}
 }
 
