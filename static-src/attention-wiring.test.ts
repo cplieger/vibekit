@@ -37,7 +37,6 @@ vi.mock("./icons.js", () => ({
   ICON_TRASH_14: "",
   ICON_PLUS: "",
   ICON_PLUS_16: "",
-  ICON_MINUS: "",
   ICON_PIN: "",
   ICON_PIN_FILLED: "",
   ICON_COPY: "",

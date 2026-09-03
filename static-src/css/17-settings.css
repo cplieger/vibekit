@@ -78,6 +78,17 @@
   border-width: 1.5px;
 }
 
+/* The two save faces carry `currentColor` and a semantic class; the hue is the
+   host's to state, so a save indicator elsewhere tints them for its own
+   surface instead of inheriting a colour baked into the glyph. */
+.icon-save-ok {
+  color: var(--c-green);
+}
+
+.icon-save-fail {
+  color: var(--c-red);
+}
+
 /* Desktop tab bar: segmented-control pills.
  *
  * THIS PAIR IS DERIVED THE OTHER WAY ROUND, and that is the interesting half.
