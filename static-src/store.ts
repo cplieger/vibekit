@@ -1154,8 +1154,6 @@ export function upsertHeader(h: ChatHeader): void {
         model: h.model !== undefined && h.model !== "" ? h.model : s.model,
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
-        available_modes: h.available_modes ?? [],
-        available_models: h.available_models ?? [],
         supervised_mode: h.supervised_mode ?? false,
         effort: h.effort ?? "",
         // The live effort vocabulary and the tier the session runs at. Absent
@@ -1182,8 +1180,6 @@ export function upsertHeader(h: ChatHeader): void {
     model: h.model ?? "",
     acp_session_id: h.acp_session_id ?? "",
     current_mode_id: h.current_mode_id ?? "",
-    available_modes: h.available_modes ?? [],
-    available_models: h.available_models ?? [],
     supervised_mode: h.supervised_mode ?? false,
     effort: h.effort ?? "",
     effort_levels: h.effort_levels ?? [],

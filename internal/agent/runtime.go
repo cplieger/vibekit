@@ -158,8 +158,12 @@ type Runtime struct {
 	bus       *bus
 	coord     *BridgeCoordinator
 
-	push               pushService
-	chatStore          chatRecords
+	push      pushService
+	chatStore chatRecords
+	// catalog is the workspace's ONE mode + model vocabulary. Both lists used to
+	// be stamped onto every chat record and every ChatHeader — 93.1% and 5.5% of a
+	// 1.25 MiB /api/chats response, identical across all 29 chats. See Catalog.
+	catalog            *Catalog
 	mcpConfig          mcpNameSets
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
@@ -373,6 +377,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		runs:         runs,
 		config:       configP,
 		chatStore:    chatStore,
+		catalog:      &Catalog{},
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		authLatch:    &authTokenLatch{},
 		chatHandlers: make(map[string]chatHandler),

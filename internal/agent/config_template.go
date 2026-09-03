@@ -88,27 +88,47 @@ type configTemplateResponse struct {
 	EffortLevels []vibekit.SessionEffortLevel `json:"effort_levels"`
 }
 
-// handleConfigTemplate: GET /api/config-template → the pre-session mode +
-// model catalog. Degrades to empty lists on any failure, matching the old
-// /api/models contract: the client keeps its static fallbacks and the
-// authoritative per-session catalog arrives with the first bridge.
+// handleConfigTemplate: GET /api/config-template → the workspace's mode +
+// model catalog, served ONCE.
+//
+// This is now the only place the client gets that vocabulary. Both lists used to
+// ride every ChatHeader as well — 98.6% of a 1.25 MiB /api/chats response,
+// identical in all 29 headers, fetched twice per boot — and deleting them from
+// there is what makes this endpoint load-bearing rather than a pre-session seed.
+//
+// A LIVE session's report wins over the template's, per list, because it is
+// strictly better: KAS has already resolved which workspace agent shadows which
+// bundled mode, and the template is built session-less with no workspace paths
+// so it carries no workspace entries at all. The template is what answers before
+// any bridge has run, and what fills a list no session has reported yet.
+//
+// Degrades to empty lists on a failure to read the template, matching the old
+// /api/models contract: the client keeps its static fallbacks.
 func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(r.Context(), configTemplateTimeout)
 	defer cancel()
-	raw, err := u.session.configTemplateRaw(cctx)
-	if err != nil {
-		slog.Warn("config template failed", "error", err)
-		webhttp.WriteJSON(w, configTemplateResponse{Modes: []vibekit.SessionMode{}, Models: []vibekit.SessionModel{}})
-		return
-	}
 	var tpl kasConfigTemplate
-	if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
-		slog.Warn("config template decode failed", "error", uErr)
-		webhttp.WriteJSON(w, configTemplateResponse{Modes: []vibekit.SessionMode{}, Models: []vibekit.SessionModel{}})
-		return
+	raw, err := u.session.configTemplateRaw(cctx)
+	switch {
+	case err != nil:
+		slog.Warn("config template failed", "error", err)
+	default:
+		if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
+			slog.Warn("config template decode failed", "error", uErr)
+		}
 	}
-	webhttp.WriteJSON(w, templateToResponse(&tpl))
+	// A failed or undecodable read leaves tpl zero-valued, which
+	// templateToResponse renders as empty lists — so the live catalog still
+	// reaches the client on a template outage.
+	out := templateToResponse(&tpl)
+	if modes := rt.catalog.Modes(); len(modes) > 0 {
+		out.Modes = modes
+	}
+	if models := rt.catalog.Models(); len(models) > 0 {
+		out.Models = models
+	}
+	webhttp.WriteJSON(w, out)
 }
 
 // templateToResponse flattens the KAS template into the client-facing

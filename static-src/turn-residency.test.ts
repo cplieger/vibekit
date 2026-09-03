@@ -131,8 +131,6 @@ function activate(chatID: string, messages: Msg[], thinking = false): void {
       model: "",
       acp_session_id: "",
       current_mode_id: "",
-      available_modes: [],
-      available_models: [],
       supervised_mode: false,
       effort: "",
       effort_levels: [],

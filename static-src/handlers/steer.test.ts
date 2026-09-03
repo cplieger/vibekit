@@ -56,8 +56,6 @@ function makeSession(id: string): Session {
     model: "claude",
     acp_session_id: "",
     current_mode_id: "",
-    available_modes: [],
-    available_models: [],
     supervised_mode: false,
     usage: {
       context_pct: 0,

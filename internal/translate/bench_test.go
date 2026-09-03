@@ -35,6 +35,10 @@ type baseDeps struct {
 	// sentinel ended the turn exactly once and named its cause, with no bridge
 	// behind it.
 	turnInterrupts []turnInterrupt
+	// catalogModels is the last model list SetModels was handed: the workspace
+	// catalog a config_option_update publishes, which used to be a field on the
+	// chat record.
+	catalogModels []vibekit.SessionModel
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
@@ -271,6 +275,17 @@ func (d *baseDeps) PendingPermsAdd(int64, vibekit.ServerEvent)                  
 func (d *baseDeps) PendingPermsRemove(int64)                                             {}
 func (d *baseDeps) NotifyPush(context.Context, string, vibekit.PushKind, vibekit.ChatID) {}
 func (d *baseDeps) IsHookStatusEnabled() bool                                            { return false }
+
+// SetModels stands in for the workspace catalog holder, recording what the
+// translator published so a test can assert on the list without an agent
+// runtime. Empty is ignored, matching the production holder's rule.
+func (d *baseDeps) SetModels(models []vibekit.SessionModel) bool {
+	if len(models) == 0 {
+		return false
+	}
+	d.catalogModels = models
+	return true
+}
 
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 

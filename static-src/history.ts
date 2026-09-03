@@ -95,7 +95,7 @@ function chatFacts(chatID: string): string[] {
     facts.push(s.model);
   }
   if (s.current_mode_id !== "") {
-    facts.push(labelForMode(s.current_mode_id, s.available_modes));
+    facts.push(labelForMode(s.current_mode_id));
   }
   // Turns is the agent's own count and messages is what is on disk; they answer
   // different questions ("how long a conversation" vs "how much is stored"), and

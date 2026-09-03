@@ -54,8 +54,6 @@ function session(over: Partial<Session> = {}): Session {
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    available_modes: [],
-    available_models: [],
     usage: { context_pct: 0, context_size: 0, credits: 0, turns: 0, last_turn_ms: 0 },
     messages: [],
     message_count: 0,

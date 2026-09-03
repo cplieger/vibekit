@@ -171,8 +171,6 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
   if (o["effort_levels"] !== undefined && o["effort_levels"] !== null) out.effort_levels = decodeArray(o["effort_levels"], decodeSessionEffortLevel, "$.chat_header.effort_levels");
   const compactionWatermark = o["compaction_watermark"] === null ? undefined : optStr(o, "compaction_watermark", "$.chat_header");
   if (compactionWatermark !== undefined) out.compaction_watermark = compactionWatermark;
-  if (o["available_models"] !== undefined && o["available_models"] !== null) out.available_models = decodeArray(o["available_models"], decodeSessionModel, "$.chat_header.available_models");
-  if (o["available_modes"] !== undefined && o["available_modes"] !== null) out.available_modes = decodeArray(o["available_modes"], decodeSessionMode, "$.chat_header.available_modes");
   if (o["prior_acp_session_ids"] !== undefined && o["prior_acp_session_ids"] !== null) out.prior_acp_session_ids = decodeArray(o["prior_acp_session_ids"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.chat_header.prior_acp_session_ids");
   const supervisedMode = o["supervised_mode"] === null ? undefined : optBool(o, "supervised_mode", "$.chat_header");
   if (supervisedMode !== undefined) out.supervised_mode = supervisedMode;

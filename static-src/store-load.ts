@@ -105,8 +105,6 @@ export async function loadList(): Promise<boolean> {
       model: h.model ?? "",
       acp_session_id: h.acp_session_id ?? "",
       current_mode_id: h.current_mode_id ?? "",
-      available_modes: h.available_modes ?? [],
-      available_models: h.available_models ?? [],
       supervised_mode: h.supervised_mode ?? false,
       effort: h.effort ?? "",
       // Keep the client's live effort catalog when the header carries none: this

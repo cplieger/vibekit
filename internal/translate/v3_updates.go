@@ -466,10 +466,17 @@ type configChoice struct {
 	Options     []configChoice  `json:"options"`
 }
 
-// HandleConfigOptionUpdate refreshes the chat's model catalog from the v3
-// config_option_update. Modes are intentionally NOT refreshed here: the
-// config catalog omits the bundled/workspace source tag the picker groups
-// by, so the authoritative mode list stays the one captured on session/new.
+// HandleConfigOptionUpdate refreshes the model catalog and the chat's own
+// effort state from the v3 config_option_update.
+//
+// The frame carries two things with different owners, which is why it writes to
+// two places. The MODEL LIST is a workspace vocabulary and goes to the one
+// catalog holder. The current model and the effort state are this chat's, and
+// go on the chat record.
+//
+// Modes are intentionally NOT refreshed here: the config catalog omits the
+// bundled/workspace source tag the picker groups by, so the authoritative mode
+// list stays the one captured on session/new.
 func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p configOptionUpdate
 	if json.Unmarshal(raw, &p) != nil {
@@ -479,6 +486,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 	if len(cat.models) == 0 && !cat.sawEffort {
 		return
 	}
+	t.catalog.SetModels(cat.models)
 	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
@@ -527,15 +535,15 @@ func readConfigCatalog(opts []configOption) configCatalog {
 	return cat
 }
 
-// applyTo writes the catalog onto the chat, reporting whether anything changed
-// (the store only persists and broadcasts on a change, so a repeated frame must
-// answer false).
+// applyTo writes the chat's own share of the catalog onto the chat, reporting
+// whether anything changed (the store only persists and broadcasts on a change,
+// so a repeated frame must answer false).
+//
+// The model LIST is not here: it is the workspace's, and HandleConfigOptionUpdate
+// hands it to the catalog holder. What is left is what genuinely differs between
+// chats — which model this one is on, and the effort vocabulary of that model.
 func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
 	changed := false
-	if len(cat.models) > 0 && !sameModelIDs(c.AvailableModels, cat.models) {
-		c.AvailableModels = cat.models
-		changed = true
-	}
 	if cat.currentModel != "" && c.Model != cat.currentModel {
 		c.Model = cat.currentModel
 		changed = true

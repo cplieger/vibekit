@@ -10,26 +10,16 @@ import (
 // Chat.Header; the rest of the types are plain structs with JSON tags.
 
 func TestChatHeader_copies_metadata_without_messages(t *testing.T) {
-	modes := []SessionMode{
-		{ID: "plan", Name: "Plan", Description: "planning mode"},
-		{ID: "build", Name: "Build"},
-	}
-	models := []SessionModel{
-		{ID: "claude-sonnet-4", Name: "Claude Sonnet 4"},
-		{ID: "claude-opus-4", Name: "Claude Opus 4", Description: "most capable"},
-	}
 	c := &Chat{
-		ID:              "c1",
-		Name:            "Hello",
-		Model:           "claude",
-		ACPSessionID:    "acp-1",
-		CurrentModeID:   "plan",
-		AvailableModes:  modes,
-		AvailableModels: models,
-		Usage:           Usage{ContextPct: 50, ContextSize: 200000, HasRealData: true},
-		CreatedAt:       100,
-		UpdatedAt:       200,
-		Messages:        []Message{{ID: "m1"}, {ID: "m2"}},
+		ID:            "c1",
+		Name:          "Hello",
+		Model:         "claude",
+		ACPSessionID:  "acp-1",
+		CurrentModeID: "plan",
+		Usage:         Usage{ContextPct: 50, ContextSize: 200000, HasRealData: true},
+		CreatedAt:     100,
+		UpdatedAt:     200,
+		Messages:      []Message{{ID: "m1"}, {ID: "m2"}},
 	}
 
 	h := c.Header()
@@ -42,12 +32,6 @@ func TestChatHeader_copies_metadata_without_messages(t *testing.T) {
 	}
 	if h.CurrentModeID != "plan" {
 		t.Errorf("CurrentModeID = %q, want plan", h.CurrentModeID)
-	}
-	if len(h.AvailableModes) != 2 || h.AvailableModes[0].ID != "plan" || h.AvailableModes[1].ID != "build" {
-		t.Errorf("AvailableModes = %+v, want 2 entries [plan, build]", h.AvailableModes)
-	}
-	if len(h.AvailableModels) != 2 || h.AvailableModels[0].ID != "claude-sonnet-4" || h.AvailableModels[1].Description != "most capable" {
-		t.Errorf("AvailableModels = %+v, want 2 entries carrying ID+Description", h.AvailableModels)
 	}
 	if h.Usage.ContextPct != 50 || h.Usage.ContextSize != 200000 || !h.Usage.HasRealData {
 		t.Errorf("Usage = %+v, want {ContextPct:50 ContextSize:200000 HasRealData:true}", h.Usage)
@@ -73,9 +57,6 @@ func TestChatHeader_zero_value_chat_produces_empty_header(t *testing.T) {
 	}
 	if h.MessageCount != 0 {
 		t.Errorf("MessageCount = %d, want 0 for zero-value Chat", h.MessageCount)
-	}
-	if h.AvailableModes != nil || h.AvailableModels != nil {
-		t.Errorf("leaked non-nil slices: modes=%v models=%v", h.AvailableModes, h.AvailableModels)
 	}
 	if h.Usage.ContextPct != 0 || h.Usage.Credits != 0 || h.Usage.TurnCount != 0 ||
 		h.Usage.LastTurnMs != 0 || h.Usage.HasRealData || len(h.Usage.MeteringItems) != 0 {

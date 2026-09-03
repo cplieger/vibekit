@@ -54,11 +54,13 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	if c.Model != "model-a" {
 		t.Errorf("current model = %q, want model-a", c.Model)
 	}
+	// The model LIST is the workspace catalog's, not the chat's — the same frame
+	// carries both, with different owners.
 	want := map[string]bool{"model-a": true, "model-b": false, "model-c": false}
-	if len(c.AvailableModels) != len(want) {
-		t.Fatalf("AvailableModels len = %d, want %d: %+v", len(c.AvailableModels), len(want), c.AvailableModels)
+	if len(deps.catalogModels) != len(want) {
+		t.Fatalf("catalog models len = %d, want %d: %+v", len(deps.catalogModels), len(want), deps.catalogModels)
 	}
-	for _, m := range c.AvailableModels {
+	for _, m := range deps.catalogModels {
 		exp, known := want[m.ID]
 		if !known {
 			t.Errorf("unexpected model %q in catalog", m.ID)
@@ -544,12 +546,12 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 	if !ok {
 		t.Fatal("chat c1 missing after config_option_update")
 	}
-	gotIDs := make([]string, 0, len(c.AvailableModels))
-	for _, m := range c.AvailableModels {
+	gotIDs := make([]string, 0, len(deps.catalogModels))
+	for _, m := range deps.catalogModels {
 		gotIDs = append(gotIDs, m.ID)
 	}
 	if !slices.Equal(gotIDs, []string{"model-a", "model-b"}) {
-		t.Errorf("AvailableModels after an effort-only frame = %v, want [model-a model-b]", gotIDs)
+		t.Errorf("catalog models after an effort-only frame = %v, want [model-a model-b]", gotIDs)
 	}
 	if c.EffortActive != "high" {
 		t.Errorf("EffortActive = %q, want high (the effort half still applied)", c.EffortActive)

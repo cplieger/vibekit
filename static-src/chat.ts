@@ -742,7 +742,7 @@ export async function createPlannerSession(): Promise<void> {
  *  agent only declares a description while it is working — so the separator is
  *  emitted only when both are present, rather than leaving a dangling one. */
 function tabTooltipFor(s: Session): string {
-  const mode = s.current_mode_id === "" ? "" : labelForMode(s.current_mode_id, s.available_modes);
+  const mode = s.current_mode_id === "" ? "" : labelForMode(s.current_mode_id);
   const doing = s.agent_status_text ?? "";
   if (mode === "" || doing === "") {
     return mode === "" ? doing : mode;

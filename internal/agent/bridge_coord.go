@@ -25,6 +25,9 @@ import (
 type BridgeCoordinator struct {
 	bridge    *bridges
 	chatStore bridgeChatRecords
+	// catalog is the workspace mode + model vocabulary a session's own report
+	// lands in, instead of on every chat record. See Catalog.
+	catalog *Catalog
 	// turns is the per-chat turn lifecycle: one record per turn, and the
 	// exclusion every terminal step claims through. See turn.go.
 	turns          *turnRegistry
@@ -132,6 +135,7 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 	return &BridgeCoordinator{
 		bridge:         h.bridge,
 		chatStore:      h.chatStore,
+		catalog:        h.catalog,
 		turns:          newTurnRegistry(),
 		broadcast:      h.bus.Broadcast,
 		translateEvent: h.translateACPEvent,
@@ -282,7 +286,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// does. Every other spawn keeps the chat's own resolution.
 	effort := bc.effortFor(ctx, chat)
 	if model != "" && model != chat.Model {
-		effort = bc.EffortForSwitch(ctx, chat, model)
+		effort = bc.EffortForSwitch(ctx, model)
 	}
 
 	if chat.ACPSessionID != "" {
@@ -389,6 +393,8 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.MarkReplayLoadDone(chatID)
 	}
 	title := sb.bridge.SessionTitle()
+	bc.catalog.SetModes(sb.bridge.Modes())
+	bc.catalog.SetModels(sb.bridge.Models())
 	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
@@ -440,23 +446,18 @@ func adoptKASTitle(c *vibekit.Chat, title string) {
 // The guard belongs here rather than one layer down: applySessionResultLocked
 // already keeps-on-absent, but that keep is worthless on a resume because the
 // bridge is FRESHLY constructed, so every accessor answers the zero value for
-// whatever the result omitted. `session/load` omits the model catalog
-// routinely (KAS resolves ListAvailableModels asynchronously) — models
-// self-heal from a later config_option_update, but modes have no repair
-// channel, so an emptied mode list stays empty for the rest of the session.
+// whatever the result omitted.
 //
 // session/new's own persistNewSessionMetadata keeps unconditional writes on
 // purpose: there the overwrite IS the check (reportModeNotApplied compares
 // the mode asked for against the mode that landed).
+//
+// The mode and model catalogs are NOT written here any more — they are a
+// workspace fact and go to the Catalog holder, which applies the same
+// empty-is-not-an-answer rule for the same reason.
 func applyLoadedSessionFacts(c *vibekit.Chat, facts acpSessionFacts, title string) {
 	if mode := facts.CurrentMode(); mode != "" {
 		c.CurrentModeID = mode
-	}
-	if modes := facts.Modes(); len(modes) > 0 {
-		c.AvailableModes = modes
-	}
-	if models := facts.Models(); len(models) > 0 {
-		c.AvailableModels = models
 	}
 	adoptKASTitle(c, title)
 }
@@ -465,10 +466,14 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
-	modes := bridge.Modes()
-	models := bridge.Models()
 	served := bridge.ServedModels()
 	title := bridge.SessionTitle()
+	// The vocabulary this session advertised is a workspace fact, so it goes to
+	// the one holder rather than onto this chat's record. Outside the Mutate: it
+	// is not part of the chat file's write, and holding the per-chat record lock
+	// across it would order two unrelated locks for nothing.
+	bc.catalog.SetModes(bridge.Modes())
+	bc.catalog.SetModels(bridge.Models())
 	// requestedMode is the mode the chat asked for, read before the line below
 	// overwrites it with the mode the session actually got.
 	var requestedMode string
@@ -482,8 +487,6 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 			c.Model = string(newModelID)
 		}
 		c.CurrentModeID = currentMode
-		c.AvailableModes = modes
-		c.AvailableModels = models
 		c.ServedModelIDs = served
 		adoptKASTitle(c, title)
 		return true
@@ -984,7 +987,7 @@ func (bc *BridgeCoordinator) effortSeedFor(ctx context.Context, model string) st
 
 // EffortForSwitch resolves the level a chat runs at AFTER a model switch: the
 // seed when it was picked under the TARGET model, else the target model's own
-// default from the chat's catalog, else "" (KAS reconciles on its own).
+// default from the workspace catalog, else "" (KAS reconciles on its own).
 //
 // Deliberately NOT effortFor: the chat's stored choice was made under the model
 // being switched away from, so honouring it here is what carried `max` from one
@@ -992,16 +995,11 @@ func (bc *BridgeCoordinator) effortSeedFor(ctx context.Context, model string) st
 // (PersistModelSwitch) and this names its replacement explicitly — explicit,
 // because KAS KEEPS a fitting level across a swap, so without the assert a
 // cleared choice would silently keep running.
-func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, chat *vibekit.Chat, model string) string {
+func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, model string) string {
 	if level := bc.effortSeedFor(ctx, model); level != "" {
 		return level
 	}
-	for _, m := range chat.AvailableModels {
-		if m.ID == model {
-			return m.DefaultEffortLevel
-		}
-	}
-	return ""
+	return bc.catalog.DefaultEffortFor(model)
 }
 
 // PersistModelSwitch records the switch event and updates the chat's

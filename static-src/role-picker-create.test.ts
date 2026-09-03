@@ -146,7 +146,7 @@ describe("picking a mode with no active chat", () => {
 
 describe("picking a mode on a chat that already exists", () => {
   it("creates nothing and dispatches straight away", () => {
-    getActiveMock.mockReturnValue({ id: "c-live", current_mode_id: "", available_modes: [] });
+    getActiveMock.mockReturnValue({ id: "c-live", current_mode_id: "" });
     const list = mountPill();
     initRolePicker();
 

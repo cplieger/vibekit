@@ -19,7 +19,6 @@ import {
   MODEL_CONTEXT_SIZES,
   parseContextSize,
   contextSizeFor,
-  activeSession,
   getActiveId,
   getActive,
   get,
@@ -29,7 +28,7 @@ import {
   startEvictionSweep,
 } from "./store.js";
 import { loadList } from "./store-load.js";
-import { computed, effect, touch } from "@cplieger/reactive";
+import { effect } from "@cplieger/reactive";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -243,30 +242,13 @@ function init(): void {
   // and subscribes to the tab store's dot and set signals.
   initAttention();
 
-  // Refresh picker whenever the active session's available_models
-  // shifts. Models come both from a pre-conversation REST fetch at
-  // startup (kiro-cli chat --list-models) and per-session from the
-  // ACP bridge's session/new response; this listener is the live
-  // update path — session-sourced lists are authoritative and
-  // overwrite whatever the REST path seeded.
-  const modelSig = computed(() => {
-    touch(activeSession);
-    const active = getActive();
-    if (active === undefined) {
-      return "";
-    }
-    return active.id + ":" + active.available_models.map((m) => m.id).join(",");
-  });
-  effect(() => {
-    // The computed dedups by value (Object.is) and is glitch-free, so the
-    // effect re-runs only when the active session's id or available_models
-    // actually change — each distinct catalog triggers exactly one fetch.
-    // An empty signature means no active session (the computed's only "" path).
-    if (modelSig.value === "") {
-      return;
-    }
-    fetchModelsFromSession();
-  });
+  // There is no per-session model feed. It watched the active chat's
+  // `available_models` and re-populated the picker from it, but that list was the
+  // WORKSPACE catalog copied onto every chat — 29 identical copies, 5.5% of a
+  // 1.25 MiB response — so the signature it deduped on could only change when
+  // the workspace's own catalog did. /api/config-template is that one feed, and
+  // the server prefers a live session's report over the session-less template,
+  // so nothing authoritative is lost.
 
   setupInput();
   initUI();
@@ -705,35 +687,19 @@ async function fetchModelsFromREST(): Promise<void> {
   if (d.modes.length > 0) {
     setCatalogModes(d.modes);
   }
-  if (d.models.length > 0) {
-    populatePickerModels(d.models.map(toModelInfo), "");
-  }
-  // The model pill names a non-default reasoning tier, and it can only know
-  // which tier is default from the catalog this fetch just landed. Nothing else
-  // repaints the pill on this path (the per-session feed below has its own
-  // refresh), so without this the tier stays unnamed until the next store emit.
   const active = getActive();
+  if (d.models.length > 0) {
+    populatePickerModels(d.models.map(toModelInfo), active?.model ?? "");
+  }
+  // The context-size seed and the pill's tier name both need the catalog, and
+  // this is now the only feed that carries it — the per-session path that used to
+  // do the seeding read the same list off a per-chat copy of it.
   if (active !== undefined) {
+    if (active.usage.context_size === 0 && active.model !== "") {
+      active.usage.context_size = contextSizeFor(active.model);
+    }
     refreshContextUI(active);
   }
-}
-
-function fetchModelsFromSession(): void {
-  // Live per-chat catalog: kiro-cli's session/new response carries
-  // modes.availableModels which the bridge applies onto vibekit.Chat.
-  // Whenever that list changes on the active session we push the
-  // authoritative list into the picker, overwriting whatever the
-  // REST fetch seeded at startup.
-  const active = getActive();
-  if (active === undefined || active.available_models.length === 0) {
-    return;
-  }
-  const mapped: ModelInfo[] = active.available_models.map(toModelInfo);
-  populatePickerModels(mapped, active.model);
-  if (active.usage.context_size === 0 && active.model !== "") {
-    active.usage.context_size = contextSizeFor(active.model);
-  }
-  refreshContextUI(active);
 }
 
 /** Merge a model list into the picker cache + context-size table.

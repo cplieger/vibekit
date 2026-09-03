@@ -322,7 +322,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 // TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes is the case that
 // decides whether this gate was safe to add at all.
 //
-// The picker's list (chat.AvailableModels, Bridge.Models) drops [Deprecated] and
+// The picker's list (the workspace Catalog, Bridge.Models) drops [Deprecated] and
 // [Legacy] entries for display. Validating against THAT list would refuse a model
 // the account can still run, converting a working session into a client-side
 // refusal — worse than the defect the gate prevents. The gate must read the
@@ -332,9 +332,8 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
-		// The display list omits it; the served set does not. That divergence is
+		// The display catalog omits it; the served set does not. That divergence is
 		// exactly what applyModelConfigOptionLocked produces.
-		c.AvailableModels = []vibekit.SessionModel{{ID: "m-old", Name: "Old"}}
 		c.ServedModelIDs = []string{"m-old", "m-deprecated"}
 		return true
 	})
@@ -424,9 +423,9 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 		// A tier chosen under m-old: it must NOT ride onto m-new (user report,
 		// 2026-08-31) — the switch resolves against the TARGET model instead.
 		c.Effort = "max"
-		c.AvailableModels = []vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "high"}}
 		return true
 	})
+	h.catalog.SetModels([]vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "high"}})
 	// A LIVE bridge, because the fast path returns early when there is none and
 	// would consume no failure: the fallback has to be reached by a swap that was
 	// actually refused, not by an absent bridge.
@@ -476,12 +475,12 @@ func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 		// Chosen under m-old, so the fresh spawn resolves against the TARGET:
 		// its catalog default, never this value.
 		c.Effort = "max"
-		c.AvailableModels = []vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "medium"}}
 		// History with no session id: the shell-intercept shape, which is what
 		// makes the switch spawn a FRESH session rather than persist-and-return.
 		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "!ls"}}
 		return true
 	})
+	h.catalog.SetModels([]vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "medium"}})
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
