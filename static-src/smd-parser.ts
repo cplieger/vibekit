@@ -67,7 +67,6 @@ import {
   LINE_BREAK,
   LIST_ORDERED,
   LIST_UNORDERED,
-  PARAGRAPH,
   NEWLINE,
   TABLE,
   TABLE_ROW,
@@ -91,7 +90,6 @@ import {
   TOKEN_ARRAY_CAP,
   add_text,
   end_token,
-  add_token,
   end_tokens_to_indent,
 } from "./smd-parser-types.js";
 
@@ -127,23 +125,6 @@ export function parser_end(p: Parser): void {
     parser_write(p, "\n");
   }
 }
-
-function ensure_paragraph(p: Parser): void {
-  switch (p.token) {
-    case LINE_BREAK:
-    case DOCUMENT:
-    case BLOCKQUOTE:
-    case LIST_ORDERED:
-    case LIST_UNORDERED:
-      add_token(p, PARAGRAPH);
-  }
-}
-
-// The reference parser exposes `push_text` that wraps ensure_paragraph
-// + text concat. We don't call it directly because parser_write inlines
-// the logic for performance, but ensure_paragraph is still referenced
-// indirectly to keep the symbol live and document the control flow.
-void ensure_paragraph;
 
 // ---------------------------------------------------------------------------
 // parser_write — the state machine. Consumes a chunk of markdown text

@@ -297,7 +297,6 @@ export function handleTable(p: Parser, char: string, pending_with_char: string):
 }
 
 export function handleTableRow(p: Parser, char: string, _pending_with_char: string): boolean {
-  void _pending_with_char;
   switch (p.pending) {
     case "":
       return false;

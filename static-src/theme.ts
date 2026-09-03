@@ -24,7 +24,7 @@
 // which is the whole point of having the third state visible.
 // ---------------------------------------------------------------------------
 
-import { $ } from "./dom.js";
+import { $, forceReflow } from "./dom.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import { createTheme } from "@cplieger/ui-primitives/theme";
 import type { ThemeController, ThemeStorage } from "@cplieger/ui-primitives/theme";
@@ -91,7 +91,7 @@ function updateIcon(): void {
     incoming.classList.add("theme-rising");
     btn.classList.add(glowClass);
     // Force reflow so the browser sees the "rising" start state.
-    void (incoming as HTMLElement).offsetHeight;
+    forceReflow(incoming);
     // Remove "rising" so the transition runs from below → center.
     incoming.classList.remove("theme-rising");
     incoming.addEventListener(
