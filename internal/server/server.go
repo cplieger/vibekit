@@ -513,6 +513,13 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 		// entry a later well-formed retry would replay.
 		canonicalAPIPath,
 		idem.middleware,
+		// INNERMOST, so it sees exactly what a handler wrote and nothing the
+		// layers above synthesize. Two consequences, both wanted: the
+		// idempotency cache stores identity bytes, so a replay re-negotiates
+		// against the replaying client's own Accept-Encoding rather than
+		// serving the first client's encoding to everyone; and the access
+		// logger, outermost, counts ON-THE-WIRE bytes.
+		compressJSON,
 	}
 }
 
