@@ -783,7 +783,10 @@
   align-items: center;
   gap: var(--sp-2);
   width: 100%;
-  min-height: 1.5rem;
+  /* The TOKEN, not the literal 1.5rem it used to spell. Both are 24px on a fine
+     pointer, so nothing moves there — but the literal could not flip, so this row
+     stayed 24px under a finger while every control around it grew. */
+  min-block-size: var(--ctl-h-sm);
   padding: var(--sp-1) var(--sp-1);
   background: none;
   border: 0;

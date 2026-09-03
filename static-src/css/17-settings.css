@@ -450,6 +450,13 @@
 }
 
 .forge-account-repo-row {
+  /* Row height comes from the TIER, not from the font. Without it this row
+     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
+     close — so it measured the same on a finger as on a mouse while `.tab`
+     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
+     own height: measured, this moves desktop by at most 1px and gives every
+     list row a real 36px target on touch. */
+  min-block-size: var(--ctl-h-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
