@@ -198,8 +198,13 @@ export function clearSearchOpened(chatID: string): boolean {
 // with oldest-first eviction (per-chat-store.ts), so a purged or deleted chat needs
 // nobody to tell this module about it.
 
-/** @internal Test seam: reset the module between cases. */
-export function _resetFoldStateForTest(): void {
+/** Drop the in-memory copy of the persisted document, so the next read reloads it.
+ *
+ *  Production caller: the sign-out sweep (`boot.ts` `forgetDeviceState`). Deleting
+ *  the localStorage key alone does not forget anything — `persist` rewrites the whole
+ *  document out of this map, so the next fold after a sign-out would put the previous
+ *  user's folds straight back. Also the reset a test that drives two boots needs. */
+export function resetFoldState(): void {
   overrides.clear();
   searchOpened.clear();
   loaded = false;

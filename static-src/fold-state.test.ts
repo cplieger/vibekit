@@ -7,7 +7,7 @@ import {
   setTurnOpen,
   openForSearch,
   clearSearchOpened,
-  _resetFoldStateForTest,
+  resetFoldState,
 } from "./fold-state.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
@@ -22,7 +22,7 @@ function turns(n: number): Turn[] {
 
 beforeEach(() => {
   localStorage.clear();
-  _resetFoldStateForTest();
+  resetFoldState();
 });
 
 describe("the automatic rule", () => {
@@ -118,7 +118,7 @@ describe("the reader's own choice", () => {
   it("comes back from localStorage after the module is reset", () => {
     const list = turns(6);
     setTurnOpen("c1", list[0]!.id, true);
-    _resetFoldStateForTest();
+    resetFoldState();
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
   });
 
@@ -126,7 +126,7 @@ describe("the reader's own choice", () => {
     const list = turns(6);
     setTurnOpen("c1", list[0]!.id, true);
     setTurnOpen("c2", list[1]!.id, true);
-    _resetFoldStateForTest();
+    resetFoldState();
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(true);
     expect(isTurnOpen("c2", list[1]!, 1, list.length)).toBe(true);
     expect(isTurnOpen("c1", list[1]!, 1, list.length)).toBe(false);

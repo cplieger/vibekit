@@ -147,14 +147,13 @@ export async function loadList(): Promise<boolean> {
       // without it every reconnect would wipe the notes back out of turns the
       // reader can still see.
       ...(existing?.steer_marks !== undefined && { steer_marks: existing.steer_marks }),
-      // Every CLIENT-ONLY projection carries over, not just steers. This list is
-      // the header endpoint's blind spot: the server sends none of these fields,
-      // so rebuilding a Session from a header alone silently resets them — and
-      // `loadList` runs on every RE-connect, so an ordinary network recovery
-      // repainted a failed tab as idle and dropped the agent's declared status
-      // with it. The reconcile that IS entitled to drop them is
-      // `transport:gap`, which clears them explicitly and runs first, so there is
-      // nothing left here to preserve after a real replay gap.
+      // Every CLIENT-ONLY projection carries over, not just steers. This list is the
+      // header endpoint's blind spot: the server sends none of these fields, so
+      // rebuilding a Session from a header alone silently resets them — and
+      // `boot.ts onTransportStatus` owns which connections call this, which is more
+      // of them than a reconnect, so an ordinary network recovery repainted a failed
+      // tab as idle. The reconcile that IS entitled to drop them is `transport:gap`,
+      // which clears them explicitly and runs first.
       ...(existing?.turn_failed === true && { turn_failed: true as const }),
       ...(existing?.turn_done === true && { turn_done: true as const }),
       ...(existing?.agent_status !== undefined && { agent_status: existing.agent_status }),

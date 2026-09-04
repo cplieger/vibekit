@@ -55,7 +55,7 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 // replay (pending permissions, staged writes, per-turn trust).
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
-	lastRaw := r.Header.Get("Last-Event-ID")
+	lastRaw := adoptCursorParam(r)
 	slog.Info("SSE connected", "chat_filter", logsafe.Field(string(chatFilter)), "last_event_id", logsafe.Field(lastRaw))
 
 	// A reconnect (any Last-Event-ID) reloads push preferences from disk so
@@ -73,6 +73,39 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	)
 	slog.Info("SSE disconnected", "chat_filter", logsafe.Field(string(chatFilter)))
 }
+
+// cursorParam is the query spelling of Last-Event-ID, for the resume the browser
+// cannot ask for.
+const cursorParam = "last_event_id"
+
+// adoptCursorParam resolves the replay cursor and returns it, promoting
+// ?last_event_id= into the Last-Event-ID header when the header is absent.
+//
+// The header always WINS: only the browser sets it, and only it knows what its own
+// EventSource last delivered. The parameter covers the resume it cannot express — it
+// sends the header on its own retry and nothing else, so every reconnect vibekit
+// drove itself got no replay. Promoted rather than parsed here so the sse library
+// stays the one replay implementation; digits only, so a mangled value never logs.
+func adoptCursorParam(r *http.Request) string {
+	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
+		return raw
+	}
+	raw := r.URL.Query().Get(cursorParam)
+	if raw == "" || len(raw) > maxCursorDigits {
+		return ""
+	}
+	for _, c := range raw {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	r.Header.Set("Last-Event-ID", raw)
+	return raw
+}
+
+// maxCursorDigits bounds the parameter at what a uint64 can spell, so an
+// arbitrarily long digit string never reaches the parser or the log.
+const maxCursorDigits = 20
 
 // streamInitialState writes the connected handshake and then replays the
 // client's outstanding state — unanswered permission requests and the

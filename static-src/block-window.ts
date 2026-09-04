@@ -35,10 +35,10 @@ import type { Turn } from "./turns.js";
  *  budget is what bounds the tool-card-heavy ones the block budget alone lets
  *  through.
  *
- *  320 is ten of `messages.ts`'s `BUILD_BATCH_BLOCKS` slices — the yielded
- *  builder's unit, so the ceiling is stated in the same terms as the work. 96
- *  collapsed tool cards is about three viewports of claim lines, and it is what
- *  stubs the measured 353-card turn while leaving the 44-card one whole. */
+ *  320 is ten of `messages.ts`'s `BUILD_BATCH_BLOCKS` slices, and bounds what a
+ *  paint HOLDS; how much lands on the frame is `PAINT_SYNC_BLOCKS`. 96 collapsed
+ *  tool cards is three viewports of claim lines, and stubs the measured 353-card
+ *  turn while leaving the 44-card one whole. */
 export const RESIDENT_BLOCKS = 320;
 export const RESIDENT_TOOL_CALLS = 96;
 

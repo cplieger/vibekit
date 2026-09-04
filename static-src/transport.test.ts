@@ -531,3 +531,95 @@ describe("hidden-abort over in-flight requests", () => {
     }
   });
 });
+
+// THE REPLAY CURSOR ON THE URL. EventSource sends `Last-Event-ID` on ITS OWN
+// automatic retry and on nothing else, and every reconnect the transport drives
+// itself closes the source first — so those reconnects opened a brand-new stream
+// with no history and got no replay at all, leaving recovery to the floor/head gap
+// arithmetic tripping into a full heal.
+describe("the replay cursor", () => {
+  /** Every EventSource the transport constructed, in order, so a test can read
+   *  which URL each reconnect asked for. */
+  function recordingEventSource(): { urls: string[]; sources: FakeSource[] } {
+    const urls: string[] = [];
+    const sources: FakeSource[] = [];
+    class Recording extends FakeSource {
+      constructor(url: string) {
+        super(url);
+        urls.push(url);
+        sources.push(this);
+      }
+    }
+    vi.stubGlobal("EventSource", Recording);
+    return { urls, sources };
+  }
+
+  class FakeSource {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    onopen: ((e: Event) => void) | null = null;
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    onerror: ((e: Event) => void) | null = null;
+    readyState = 0;
+    url: string;
+    constructor(url: string) {
+      this.url = url;
+    }
+    close(): void {
+      this.readyState = FakeSource.CLOSED;
+    }
+  }
+
+  /** One SSE frame as the browser delivers it: `lastEventId` is what advances the
+   *  transport's cursor. */
+  function frame(id: number, data: unknown): MessageEvent {
+    return new MessageEvent("message", { data: JSON.stringify(data), lastEventId: String(id) });
+  }
+
+  it("asks for nothing on a first connection, which has missed nothing", () => {
+    const { urls } = recordingEventSource();
+    init(
+      () => {
+        /* frames unobserved */
+      },
+      () => {
+        /* status unobserved */
+      },
+    );
+    expect(urls).toEqual(["/api/events"]);
+  });
+
+  it("carries the cursor on a reconnect this module drove itself", () => {
+    const { urls, sources } = recordingEventSource();
+    init(
+      () => {
+        /* frames unobserved */
+      },
+      () => {
+        /* status unobserved */
+      },
+    );
+    const first = sources[0];
+    expect(first).toBeDefined();
+    // Three frames delivered, so the cursor is at 7.
+    first?.onmessage?.(frame(5, { type: "chat_updated", chat_id: "c1" }));
+    first?.onmessage?.(frame(7, { type: "chat_updated", chat_id: "c2" }));
+
+    // The stream dies terminally, which is the case this module reconnects for:
+    // the browser has given up, so its own Last-Event-ID goes with the source.
+    if (first !== undefined) {
+      first.readyState = FakeSource.CLOSED;
+    }
+    first?.onerror?.(new Event("error"));
+    // The reconnect is behind a backoff timer; kick it directly rather than
+    // waiting out a 500ms ramp.
+    return vi.waitFor(
+      () => {
+        expect(urls).toHaveLength(2);
+        expect(urls[1]).toBe("/api/events?last_event_id=7");
+      },
+      { timeout: 3000 },
+    );
+  });
+});

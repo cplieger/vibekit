@@ -30,14 +30,18 @@ static-src/node_modules/.vite-temp/
 # one is ever needed, allow-list that file with a `!static/…` line here.
 #
 # Produced by `go run ./cmd/bundle` (esbuild: /app.js, hashed /chunks/, /sw.js,
-# /style.css), by wiregen (/wire/*.gen.js), or fetched by the Dockerfile build
-# stage (/vendor/). The binary embeds the built tree.
+# /style.css, /precache.json), by wiregen (/wire/*.gen.js), or fetched by the
+# Dockerfile build stage (/vendor/). The binary embeds the built tree.
+#
+# precache.json is named rather than covered by a `*.json` rule: static/manifest.json
+# is hand-authored and lives in the same directory.
 static/**/*.js
 static/**/*.map
 static/**/*.gz
 static/chunks/
 static/vendor/
 static/style.css
+static/precache.json
 
 # Stryker mutation-testing artifacts (weekly-stryker.yaml / local npx stryker run)
 reports/
