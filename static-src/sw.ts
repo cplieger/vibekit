@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Service worker for Web Push notifications, PWA installability, and the shell
 // precache. Handles push events, notification clicks, subscription recovery, and
-// a fetch handler that serves the build's lazy chunks cache-first (see "The shell
-// precache" below).
+// a fetch handler that serves the build's content-hashed chunks cache-first (see
+// "The shell precache" below).
 // Compiled to static/sw.js by tsconfig.sw.json.
 // ---------------------------------------------------------------------------
 
@@ -14,11 +14,12 @@ import { type PrecacheManifest, isShellPath, parseManifest } from "./precache.js
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 // ---------------------------------------------------------------------------
-// The shell precache: the content-hashed lazy chunks, never a stable name and
-// never the HTML (precache.ts's `isShellPath` owns that rule and the reason).
-//
-// A resume used to spend ~50 revalidation round trips before first paint, every one
-// a 304 — the bytes were already local and the app waited for the network to say so.
+// The shell precache: the content-hashed chunks, never a stable name and never the
+// HTML (precache.ts's `isShellPath` owns that rule and the reason). Most of the set
+// is on the FIRST-PAINT path rather than lazy — app.js statically imports 45 of the
+// 63 and dynamically imports 5 — which is why the rule is about the NAME. A resume
+// used to spend ~50 revalidation round trips before first paint, every one a 304:
+// the bytes were already local and the app waited for the network to say so.
 // ---------------------------------------------------------------------------
 
 /** Cache holding the precached chunks. One name, and the manifest is stored INSIDE

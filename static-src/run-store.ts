@@ -415,16 +415,15 @@ export function runControls(workflowID: string): RunControlsResponse | undefined
   return controlCell(workflowID).value;
 }
 
-/** Re-read what a run offers: one request per tab open plus one per that run's
- *  `run_finished`, never one per repaint.
+/** Re-read what a run offers. THREE triggers, never one per repaint: a tab open
+ *  (`run-view.ts`), that run's own `run_finished` (`handlers/run.ts`), and a retry
+ *  that succeeded (`actions/runs.ts`).
  *
- *  Coalesced with a TRAILING refetch, the state cell's discipline: the two triggers
- *  CAN coincide, and a run ending inside the tab-open read's window is the one moment
- *  the answer changes, so dropping it would leave a pre-terminal verb row with
- *  nothing left to re-ask.
- *
- *  A failed fetch leaves the previous answer standing, which beats blanking the
- *  controls under a reader about to use them. */
+ *  Coalesced with a TRAILING refetch, the state cell's discipline: any two CAN
+ *  coincide, and the retry one is fired by a CLICK, so it is the likeliest to land
+ *  inside another read's window. A run ending inside the tab-open read's window is
+ *  the moment the answer changes, so dropping it would leave a pre-terminal verb row
+ *  with nothing left to re-ask. A failed fetch leaves the previous answer standing. */
 export function invalidateRunControls(workflowID: string): void {
   if (workflowID === "") {
     return;

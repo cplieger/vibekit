@@ -81,6 +81,7 @@ import {
   runPlan,
   type RunState,
 } from "./run-store.js";
+import type { RunControlsResponse } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import type { RunStepPayload } from "./types.js";
 
@@ -103,13 +104,39 @@ const RUN_ACTION: Record<
 let shownRun = "";
 
 /** The pending bindings on the control row's buttons, dropped when the row that
- *  carries them is replaced.
+ *  carries them goes — either replaced by a new one or discarded with the page.
  *
  *  `bindLoadingState` self-disposes only for an element that was ATTACHED the last
- *  time its effect ran, and this row is built before the caller appends it — so a
- *  button replaced before its first pending flip never reaches that path, and the
- *  row is rebuilt once per `run_progress` frame. */
+ *  time its effect ran, and this row is built before the caller appends it, so a
+ *  button replaced before its first pending flip never reaches that path. Nothing
+ *  else would drop it. */
 let controlBindings: (() => void)[] = [];
+
+/** The control row on screen and the affordance it was built from, so a render that
+ *  did not move the answer hands the SAME row back.
+ *
+ *  The row is a function of that answer and the pending signals its buttons carry,
+ *  and neither moves at the rate this is called: it is built inside the exec page's
+ *  one render pass, which runs per `run_progress` frame. Rebuilding there threw away
+ *  a live button several times a minute on a busy run. `""` is the no-answer
+ *  signature; a real one always carries its separators. */
+let controlRow: HTMLElement | null = null;
+let controlSig = "";
+
+/** Drop the row on screen and the bindings its buttons hold.
+ *
+ *  Both callers own a moment the row stops being current: `buildRunControls` when the
+ *  answer moved, `mountPage` when the whole page it lived in is disposed. Without the
+ *  second, the last row's disposers were held until some later build — bounded to one
+ *  row, and still a live effect following an action for a button nothing can see. */
+function dropControlRow(): void {
+  for (const dispose of controlBindings) {
+    dispose();
+  }
+  controlBindings = [];
+  controlRow = null;
+  controlSig = "";
+}
 
 /** Point the run view at one run and mount its dock.
  *
@@ -136,8 +163,7 @@ export function showRun(workflowID: string): void {
   // leak a subscription per tab opened.
   installViewEffect();
   invalidateRun(workflowID);
-  // The affordance, once per tab open. Its other trigger is the run's own
-  // `run_finished` (handlers/run.ts), which is the moment the answer changes.
+  // The affordance, once per tab open. `invalidateRunControls` owns the trigger list.
   invalidateRunControls(workflowID);
 }
 
@@ -354,6 +380,8 @@ const pendingSteps: RunStepPayload[] = [];
 /** Build the page into `#run-body`, replacing whatever was there. */
 function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   page?.dispose();
+  // The row belonged to the page being replaced, and its host goes with it.
+  dropControlRow();
   const built = buildExecPage({
     emptyNote: stepEmptyNote,
     controls: (run) => buildRunControls(run.id),
@@ -486,30 +514,48 @@ function paint(workflowID: string, state: RunState | undefined): void {
   view.render(runToExec(workflowID, state, runPlan(workflowID), runPendingAsks(workflowID)));
 }
 
-/** The run's control row, rendered from the SERVER's answer.
+/** The run's control row, rendered from the SERVER's answer and rebuilt only when
+ *  that answer moved (`controlRow` owns why).
  *
  *  Nothing is decided here. The exec view's own state word is not even consulted:
  *  the affordance is computed against a status the server read one round trip ago,
  *  and re-deriving it from the state this page happens to hold would put the
  *  drifting copy back.
  *
- *  Three outcomes, and the third is new. Verbs render as buttons. No verbs but a
- *  REFUSAL renders the server's sentences where the buttons would have been —
- *  before this the row returned null and a reader was never told why a run
- *  offered nothing. Neither renders nothing, which is the honest answer for a
- *  completed run (its state word says it) and for the moment before the first
- *  fetch resolves. */
+ *  Three outcomes. Verbs render as buttons. No verbs but a REFUSAL renders the
+ *  server's sentences where the buttons would have been — before this the row
+ *  returned null and a reader was never told why a run offered nothing. Neither
+ *  renders nothing, the honest answer for a completed run (its state word says it)
+ *  and for the moment before the first fetch resolves. */
 function buildRunControls(workflowID: string): HTMLElement | null {
-  // Whatever this call answers, the caller replaces the host's children with it, so
-  // the row built by the previous call is on its way out and its bindings go now.
-  for (const dispose of controlBindings) {
-    dispose();
-  }
-  controlBindings = [];
   const answer = runControls(workflowID);
-  if (answer === undefined) {
-    return null;
+  const sig = answer === undefined ? "" : controlSignature(workflowID, answer);
+  if (sig === controlSig) {
+    return controlRow;
   }
+  // The answer moved, so the row on screen is on its way out and its bindings go
+  // with it — the caller replaces the host's children with whatever is returned here.
+  dropControlRow();
+  controlSig = sig;
+  controlRow = answer === undefined ? null : renderControls(workflowID, answer);
+  return controlRow;
+}
+
+/** What the row is a function of, and nothing else: the run it acts on, the verbs it
+ *  draws and the sentences it draws instead. The parent chat travels on the same
+ *  answer and changes nothing here, so it is left out rather than churning the row. */
+function controlSignature(workflowID: string, answer: RunControlsResponse): string {
+  // Keyed, not positional: `refused` is a map on the wire, so two answers that differ
+  // only in the order the server happened to serialize them are the same row.
+  const refused = Object.entries(answer.refused ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([verb, text]) => `${verb}\u0001${text}`)
+    .join("\u0002");
+  return `${workflowID}\u0000${answer.verbs.join("\u0001")}\u0000${refused}`;
+}
+
+/** The row itself. Split from the decision above so the guard reads as one thing. */
+function renderControls(workflowID: string, answer: RunControlsResponse): HTMLElement | null {
   const verbs = offeredVerbs(answer.verbs);
   if (verbs.length === 0) {
     return refusalRow(refusalSentences(answer.refused));
