@@ -45,6 +45,7 @@ services:
       - "./config:/config"  # chats, kiro-cli auth/state, tools
       - "./workspace:/workspace"  # your repos
     restart: unless-stopped
+    init: true  # required: reaps the processes an agent's terminal commands leave behind
 ```
 
 Before the first start, create the bind-mount directories and give them to that UID (1000 unless you set `PUID`/`PGID`). The entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
