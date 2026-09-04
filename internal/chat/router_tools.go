@@ -268,9 +268,8 @@ func previewDiffs(diffs []vibekit.ToolDiff) ([]vibekit.ToolDiff, bool) {
 // Per MEMBER rather than per object, because the claim line is built from the small
 // members — `pickFilePath` reads `path`/`targetFile`/`sourcePath` — while the bulk
 // is one member: a write's whole `text`, or an edit's `oldStr`/`newStr`. Dropping
-// the object wholesale would blank the claim line to save the same bytes.
-//
-// A non-object input is kept or dropped whole on the same budget.
+// the object wholesale would blank the claim line to save the same bytes. A
+// non-object input is kept or dropped whole on the same budget.
 func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 	if len(raw) <= toolPreviewInputBytes {
 		return nil, false
@@ -284,10 +283,12 @@ func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 	kept := make(map[string]json.RawMessage, len(obj))
 	cut := false
 	// The enclosing braces, less the comma inputMemberBytes charges to the last
-	// member. Both halves are what make `spent` the MARSHALLED size rather than a
-	// sum of contents, so the budget bounds the bytes that go on the wire.
+	// member: for a non-empty object the members' costs then sum to EXACTLY the
+	// marshalled length, so both budgets below bound the bytes that go on the wire
+	// rather than the sum of the members' contents.
 	spent := len("{}") - len(",")
 	for k, v := range obj {
+		v = inputWireBytes(v)
 		if len(v) > toolPreviewInputBytes {
 			cut = true
 			continue
@@ -311,19 +312,32 @@ func previewInput(raw json.RawMessage) (json.RawMessage, bool) {
 	return out, true
 }
 
+// inputWireBytes is v as it will appear in the marshalled object.
+//
+// encoding/json compacts a RawMessage on the way out AND HTML-escapes it: `<`, `>`
+// and `&` go from one byte to six, U+2028 and U+2029 from three to six, so a raw
+// length is not an upper bound on what a value costs. Handing the measurement to the
+// encoder is what stops the budget and the encoder disagreeing again; the conversion
+// is idempotent, so the object the caller marshals afterwards is byte-identical to
+// what was measured here.
+func inputWireBytes(v json.RawMessage) json.RawMessage {
+	out, err := json.Marshal(v)
+	if err != nil {
+		// Unreachable: v came out of a successful Unmarshal, so it is valid JSON.
+		// Leave it raw and let the caller's own Marshal answer with no input.
+		return v
+	}
+	return out
+}
+
 // inputMemberBytes is what one member costs in the MARSHALLED object: its key as
 // JSON, the colon, the value, and the comma before the next member.
 //
-// Charging a comma to every member over-states the object by one byte once the two
-// braces are added, which is the direction a bound has to err in. Without this
-// accounting `toolPreviewInputTotalBytes` bounded the sum of the CONTENTS, and the
-// object json.Marshal produced from them exceeded it by every quote, colon and
-// comma — four bytes a member, so a wide input beat the budget by the shape of JSON
-// rather than by its own size.
-//
-// The key is marshalled rather than measured, because one needing an escape is
-// longer quoted than raw. The value is measured, because encoding/json COMPACTS a
-// RawMessage on the way out, so its raw length is already an upper bound.
+// Without this accounting `toolPreviewInputTotalBytes` bounded the sum of the
+// CONTENTS, and the object json.Marshal produced from them exceeded it by every
+// quote, colon and comma — four bytes a member. The key is marshalled here and the
+// value already converted by inputWireBytes, both for the same reason: escaped is
+// longer than raw.
 func inputMemberBytes(k string, v json.RawMessage) int {
 	key, err := json.Marshal(k)
 	if err != nil {

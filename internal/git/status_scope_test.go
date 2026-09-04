@@ -299,20 +299,61 @@ func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 	}
 }
 
-// A FULL scan covers every repository, so a read that joins one is already answered
-// and records NOTHING — in either direction.
+// A write landing BEHIND a running full scan's cursor is rescanned, because a full
+// scan's coverage is not its timing.
 //
-// Recorded anyway, the full scan would release the slot with work outstanding and
-// nobody looping, so the next read would inherit it and rescan for no reason; and a
-// recorded full intent would chain a SECOND whole-tree scan, the ~275-subprocess
-// cost the whole holder exists to pay once.
-func TestStatusCache_AFullScanSatisfiesEveryJoiningRead(t *testing.T) {
+// scanRepos fans out over the whole inventory under one budget, so a repository is
+// read at an unspecified point inside that window and a scoped read arriving after
+// that point is not answered by the rows the scan publishes — they predate the write
+// that triggered it. Treating coverage as an answer left that write invisible until
+// the next unscoped gesture. Honouring it costs ONE repository's scan.
+func TestStatusCache_AWriteBehindAFullScansCursorIsStillRescanned(t *testing.T) {
 	var c statusCache
 	if _, started := c.claim(statusKeyPoll, nil); !started {
 		t.Fatal("Setup: claim did not start")
 	}
 	if _, started := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); started {
 		t.Fatal("Setup: the scoped read did not join the running full scan")
+	}
+
+	next, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")})
+	if !run {
+		t.Fatal("finish ended the chain after a full scan swallowed a scoped read: the " +
+			"repository that moved keeps its pre-write rows until the next unscoped gesture")
+	}
+	if _, want := next["a"]; !want || len(next) != 1 {
+		t.Fatalf("finish returned %v, want exactly {a}: the joining read's repository "+
+			"was dropped by the full scan it arrived behind", next)
+	}
+
+	// And the follow-up pass is SCOPED, so it merges rather than republishing — the
+	// full scan's `at` is the newer of the two and must survive.
+	published, _ := c.read(statusKeyPoll)
+	if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); run {
+		t.Error("the chain did not end after the scoped follow-up pass")
+	}
+	snap, _ := c.read(statusKeyPoll)
+	if !snap.at.Equal(published.at) {
+		t.Errorf("snapshot at = %v, want the full scan's %v: the follow-up pass published "+
+			"one repository's rows as a whole-tree scan", snap.at, published.at)
+	}
+	if len(snap.rows()) != 2 {
+		t.Errorf("repos = %+v, want both: the scoped pass replaced the full scan's rows "+
+			"instead of merging into them", snap.rows())
+	}
+}
+
+// A whole-tree read joining a whole-tree scan records NOTHING, and that is the one
+// window the holder leaves open on purpose.
+//
+// Recorded, it would chain a SECOND whole-tree scan — the ~275-subprocess cost the
+// whole holder exists to pay once — for a read that a scan already covering every
+// repository answers within one window's staleness. The scoped direction above is
+// recorded because it costs one repo; this one is not because it costs the sweep.
+func TestStatusCache_AFullReadJoiningAFullScanChainsNothing(t *testing.T) {
+	var c statusCache
+	if _, started := c.claim(statusKeyPoll, nil); !started {
+		t.Fatal("Setup: claim did not start")
 	}
 	if _, started := c.claim(statusKeyPoll, nil); started {
 		t.Fatal("Setup: the second unscoped read did not join the running full scan")
@@ -323,8 +364,8 @@ func TestStatusCache_AFullScanSatisfiesEveryJoiningRead(t *testing.T) {
 	pending, pendingFull := slot.pending, slot.pendingFull
 	c.mu.Unlock()
 	if len(pending) != 0 || pendingFull {
-		t.Errorf("recorded pending = %v, pendingFull = %v while a full scan ran, want "+
-			"nothing: it looks at every repository already", pending, pendingFull)
+		t.Errorf("recorded pending = %v, pendingFull = %v for a whole-tree read joining a "+
+			"whole-tree scan, want nothing: the sweep would run twice", pending, pendingFull)
 	}
 
 	if next, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}); run {
