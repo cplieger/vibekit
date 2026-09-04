@@ -220,9 +220,9 @@ func TestSpaHandler_headOnTheShellIsLengthOnly(t *testing.T) {
 // A content-addressed chunk is served immutable, end to end.
 //
 // The name is the real shape cmd/bundle emits (esbuild's
-// `chunks/[name]-[hash]`, 8 uppercase base32 characters), so this is the header
-// a browser actually receives for the ~45 lazy chunks a boot pulls. Each one
-// used to cost a revalidation round trip per load — all 304, all 0 ms
+// `chunks/[name]-[hash]`, 8 uppercase base32 characters), so this is the header a
+// browser actually receives for the ~45 content-hashed chunks a boot pulls — each
+// one used to cost a revalidation round trip per load, all 304, all 0 ms
 // server-side, and all avoidable, because a hashed name cannot change content.
 func TestSpaHandler_hashedChunkIsImmutable(t *testing.T) {
 	fsys := fstest.MapFS{
