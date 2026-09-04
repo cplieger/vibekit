@@ -301,7 +301,12 @@ class ScrollController {
       {
         root: this.scrollEl,
         // The same tolerance `isAtBottom` applies, expressed as room BELOW the
-        // scrollport: the sentinel counts as reached while it is within it.
+        // scrollport: the sentinel counts as reached while it is within it. Equal
+        // only because the sentinel sits ON the scroller's content bottom — the
+        // view's block-end air is the marker's own top margin for exactly this
+        // reason, and moving it back onto `.transcript-view` as `padding-block`
+        // makes this observe 116px where `isAtBottom` measures 100
+        // (css/13-messages.css `.transcript-edge`).
         rootMargin: `0px 0px ${String(BOTTOM_TOLERANCE_PX)}px 0px`,
         threshold: 0,
       },
@@ -347,6 +352,12 @@ class ScrollController {
     // instead (css/13-messages.css).
     if (this.edgeSentinel !== null) {
       view.appendChild(this.edgeSentinel);
+      // Re-observed rather than left watching across the move, because `detach`
+      // unobserves it: a parked view must produce no callback at all. `observe`
+      // delivers an entry for a new target, and here that is wanted — it lands
+      // after `attach`'s scroll restore, so a restored view publishes the edge
+      // state of the position it was restored to.
+      this.edgeObserver?.observe(this.edgeSentinel);
     }
     this.contentObserver?.disconnect();
     this.contentObserver?.observe(view, {
@@ -362,6 +373,14 @@ class ScrollController {
   private disconnectView(): void {
     this.contentObserver?.disconnect();
     this.childObserver?.disconnect();
+    // The edge marker rides with the outgoing view, so unobserving it is what makes
+    // `detach`'s promise true for all FOUR view observers: parking the view sets
+    // `content-visibility: hidden`, the sentinel stops being rendered, and the
+    // observer would otherwise publish `isIntersecting: false` from a subtree
+    // nobody is reading.
+    if (this.edgeSentinel !== null) {
+      this.edgeObserver?.unobserve(this.edgeSentinel);
+    }
     for (const child of this.observedChildren) {
       this.resizeObserver?.unobserve(child);
     }

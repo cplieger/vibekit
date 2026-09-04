@@ -10,6 +10,9 @@ interface ServiceWorkerGlobalScope {
 interface Clients {
   matchAll(options?: { type?: string; includeUncontrolled?: boolean }): Promise<readonly Client[]>;
   openWindow(url: string): Promise<WindowClient | null>;
+  // Take control of already-loaded pages. Called once, on the FIRST activation, so
+  // the page that registered this worker gets the precache without a reload.
+  claim(): Promise<void>;
 }
 
 interface Client {

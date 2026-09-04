@@ -193,6 +193,93 @@ func TestHandleSSE_ReplaysNewestBeyondClientBuffer(t *testing.T) {
 	}
 }
 
+// TestHandleSSE_ReplaysFromTheCursorQueryParameter covers the resume the browser
+// cannot ask for: EventSource sends Last-Event-ID on ITS OWN retry and on nothing
+// else, so every reconnect the client drives itself carries the cursor as a query
+// parameter instead.
+func TestHandleSSE_ReplaysFromTheCursorQueryParameter(t *testing.T) {
+	h, _, _ := newTestHub()
+
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events?last_event_id=2", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	if strings.Contains(body, `"chat_id":"c1"`) || strings.Contains(body, `"chat_id":"c2"`) {
+		t.Errorf("replay included an event at or below the cursor: %s", body)
+	}
+	if !strings.Contains(body, `"chat_id":"c3"`) {
+		t.Errorf("replay missed the event after the cursor: %s", body)
+	}
+}
+
+// TestHandleSSE_HeaderOutranksTheCursorParameter pins which side wins when both
+// are present. Only the browser knows which event its own EventSource last
+// delivered, so a stale parameter left on the URL may never override it.
+func TestHandleSSE_HeaderOutranksTheCursorParameter(t *testing.T) {
+	h, _, _ := newTestHub()
+
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/events?last_event_id=2", nil).WithContext(ctx)
+	req.Header.Set("Last-Event-ID", "1")
+	rec := httptest.NewRecorder()
+
+	h.handleSSE(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"chat_id":"c2"`) {
+		t.Errorf("the parameter overrode the header: c2 was not replayed: %s", body)
+	}
+}
+
+func TestAdoptCursorParam(t *testing.T) {
+	cases := map[string]struct {
+		url    string
+		header string
+		want   string
+	}{
+		"promotes a digit string":      {url: "/api/events?last_event_id=42", want: "42"},
+		"header wins":                  {url: "/api/events?last_event_id=42", header: "7", want: "7"},
+		"no cursor at all":             {url: "/api/events", want: ""},
+		"empty parameter":              {url: "/api/events?last_event_id=", want: ""},
+		"rejects a non-digit":          {url: "/api/events?last_event_id=12a", want: ""},
+		"rejects a sign":               {url: "/api/events?last_event_id=-1", want: ""},
+		"rejects a leading space":      {url: "/api/events?last_event_id=%2012", want: ""},
+		"rejects past uint64 digits":   {url: "/api/events?last_event_id=123456789012345678901", want: ""},
+		"accepts twenty digits":        {url: "/api/events?last_event_id=12345678901234567890", want: "12345678901234567890"},
+		"header wins over a bad param": {url: "/api/events?last_event_id=nope", header: "9", want: "9"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			if tc.header != "" {
+				req.Header.Set("Last-Event-ID", tc.header)
+			}
+			got := adoptCursorParam(req)
+			if got != tc.want {
+				t.Errorf("adoptCursorParam(%q, header %q) = %q, want %q", tc.url, tc.header, got, tc.want)
+			}
+			// The replay stays one code path, so the promotion has to be VISIBLE to
+			// the sse library — which only ever reads the header.
+			if h := req.Header.Get("Last-Event-ID"); h != tc.want {
+				t.Errorf("header after adopt = %q, want %q", h, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandleSSE_RejectsNonFlusher(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := &nonFlusherWriter{}

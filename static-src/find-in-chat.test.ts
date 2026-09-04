@@ -998,6 +998,48 @@ describe("server-hit navigation", () => {
     expect(countText()).toBe("1 of 1");
   });
 
+  it("releases next/prev when the frame the re-walk waits for is never delivered", async () => {
+    // A HIDDEN PAGE IS DELIVERED NO ANIMATION FRAMES. The re-walk above awaits two
+    // `requestAnimationFrame` hops inside `stepServerHit`'s `navBusy` latch, so
+    // backgrounding the tab between the jump and the re-walk left find's next/prev
+    // inert until the tab came forward. A rAF that never calls back is that page.
+    stageChat([
+      { id: "u1", role: "user", content: "q" },
+      {
+        id: "a1",
+        role: "assistant",
+        blocks: [{ type: "text", text: "see the retry backoff here" }],
+      },
+    ]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+         <div class="assistant-blocks" style="content-visibility: hidden">
+           <div class="message assistant">see the retry backoff here</div>
+         </div>
+       </div>`,
+    );
+    stageHits([
+      serverHit({
+        excerpt: "see the retry backoff here",
+        block_index: 0,
+        offset: 8,
+        segment_len: 26,
+      }),
+    ]);
+    await openAndSearch("retry");
+
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    typeAndEnter("retry");
+
+    // The ceiling released the wait, the re-walk ran against a still-unrendered
+    // card, and the navigation reported its honest miss. Without it this promise
+    // never settles and the counter keeps its pre-navigation text.
+    await vi.waitFor(() => {
+      expect(countText()).toContain("not in rendered text");
+    });
+  });
+
   it("navigates a message hit to the message container (scroll + brief highlight)", async () => {
     stageChat([
       { id: "u1", role: "user", content: "q" },

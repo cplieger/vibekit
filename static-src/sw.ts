@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// Service worker for Web Push notifications + PWA installability.
-// Handles push events, notification clicks, subscription recovery, and a
-// minimal fetch handler (the presence of an active fetch handler is part of
-// the browser's PWA install criteria).
+// Service worker for Web Push notifications, PWA installability, and the shell
+// precache. Handles push events, notification clicks, subscription recovery, and
+// a fetch handler that serves the build's script graph and stylesheet cache-first
+// (see "The shell precache" below).
 // Compiled to static/sw.js by tsconfig.sw.json.
 // ---------------------------------------------------------------------------
 
@@ -11,17 +11,158 @@
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-// Minimal fetch handler. Its presence (an active SW with a fetch handler) is
-// what satisfies the PWA install criterion; without it browsers won't offer
-// installation. We only pass navigations straight through to the network and
-// leave every other request (assets, /api/*, SSE, the shell WebSocket) to the
-// browser's default handling. Deliberately NO caching — the app is served
-// fresh on every load (HTTP `Cache-Control: no-cache` + revalidation owns
-// freshness), so a deploy is never masked by a stale precache.
+// ---------------------------------------------------------------------------
+// The shell precache: the script graph and the stylesheet, never the HTML.
+//
+// A resume used to spend ~50 revalidation round trips before first paint, every one
+// a 304 — the bytes were already local and the app waited for the network to say so.
+// ---------------------------------------------------------------------------
+
+/** Cache holding the precached shell. One name, and the manifest is stored INSIDE it
+ *  under its own path, so the stamp travels with the assets it describes.
+ *
+ *  A DEPLOY IS NEVER MASKED, which is a claim about the SHELL rather than about
+ *  caching: index.html stays `no-store`, so every load fetches the current HTML and
+ *  therefore the current graph. Chunks are content-hashed; app.js and style.css are
+ *  the two stable names, and `syncPrecache` covers them off every navigation, because
+ *  a deploy that leaves sw.js byte-identical fires no `install` at all. */
+const SHELL_CACHE = "vibekit-shell";
+
+/** Where the build's asset list lives (cmd/bundle writes it). */
+const PRECACHE_URL = "/precache.json";
+
+/** The build-emitted asset list. `stamp` moves when any listed asset's bytes or
+ *  name move; `assets` are root-relative URL paths. */
+interface PrecacheManifest {
+  stamp?: string;
+  assets?: string[];
+}
+
+/** Read the manifest a document just served, or null when it is unusable.
+ *
+ *  `no-store` so this one request is never the thing serving a stale answer, and
+ *  every field is checked rather than cast — a half-written or foreign document
+ *  must leave the existing cache alone rather than emptying it. */
+async function fetchManifest(): Promise<PrecacheManifest | null> {
+  try {
+    const r = await fetch(PRECACHE_URL, { cache: "no-store" });
+    if (!r.ok) {
+      return null;
+    }
+    const d = (await r.json()) as unknown;
+    if (typeof d !== "object" || d === null) {
+      return null;
+    }
+    const rec = d as Record<string, unknown>;
+    const stamp = rec["stamp"];
+    const assets = rec["assets"];
+    if (typeof stamp !== "string" || stamp === "" || !Array.isArray(assets)) {
+      return null;
+    }
+    const paths: string[] = [];
+    for (const a of assets as unknown[]) {
+      if (typeof a !== "string" || a === "" || a.startsWith("/") || a.includes("..")) {
+        return null;
+      }
+      paths.push(`/${a}`);
+    }
+    return { stamp, assets: paths };
+  } catch {
+    // Offline. The cache already holds whatever the last successful sync put
+    // there, which is the state this whole mechanism exists to serve.
+    return null;
+  }
+}
+
+/** Bring the cache in line with the current build, and report whether it moved.
+ *
+ *  ORDER IS LOAD-BEARING: fill first, then record the stamp, then prune. A stamp
+ *  written before its assets are in would make a crashed sync look complete
+ *  forever, and pruning before the fill would blank the cache for a document
+ *  loading right now. */
+async function syncPrecache(): Promise<boolean> {
+  const next = await fetchManifest();
+  if (next?.assets === undefined || next.stamp === undefined) {
+    return false;
+  }
+  const cache = await caches.open(SHELL_CACHE);
+  const held = await cache.match(PRECACHE_URL);
+  if (held !== undefined) {
+    const heldDoc = (await held.json().catch(() => null)) as PrecacheManifest | null;
+    if (heldDoc?.stamp === next.stamp) {
+      return false;
+    }
+  }
+  await cache.addAll(next.assets);
+  await cache.put(PRECACHE_URL, new Response(JSON.stringify(next)));
+  const wanted = new Set([...next.assets, PRECACHE_URL]);
+  for (const req of await cache.keys()) {
+    if (!wanted.has(new URL(req.url).pathname)) {
+      await cache.delete(req);
+    }
+  }
+  return true;
+}
+
+sw.addEventListener("install", ((event: ExtendableEvent) => {
+  // NOT gated on success: a manifest the build did not write, or a network that
+  // is down at install time, must still leave a working worker. The next
+  // navigation syncs.
+  event.waitUntil(
+    syncPrecache().catch((err: unknown) => {
+      console.warn("sw: precache install failed", err);
+      return false;
+    }),
+  );
+}) as EventListener);
+
+sw.addEventListener("activate", ((event: ExtendableEvent) => {
+  event.waitUntil(
+    (async () => {
+      // Any cache from an earlier naming scheme. Nothing else in this origin's
+      // storage is this worker's.
+      for (const name of await caches.keys()) {
+        if (name !== SHELL_CACHE && name.startsWith("vibekit-")) {
+          await caches.delete(name);
+        }
+      }
+      // No skipWaiting anywhere, so this only runs once the previous worker's
+      // clients are gone — claiming here therefore cannot hand a document a
+      // graph its HTML did not ask for. What it does buy is the FIRST install:
+      // the page that registered the worker becomes controlled without a reload,
+      // and it loaded the very deployment this cache was built from.
+      await sw.clients.claim();
+    })(),
+  );
+}) as EventListener);
+
+// Three arms, and the handler's mere presence is also what satisfies the PWA install
+// criterion. A NAVIGATION goes to the network — the shell must stay fresh — and
+// doubles as the deploy check. A precached asset is answered from the cache, decided
+// by ASKING the cache rather than by matching the URL, so the eligible set is exactly
+// what the manifest listed. Everything else (/api/*, SSE, the shell WebSocket) falls
+// through to the browser's default handling.
 sw.addEventListener("fetch", ((event: FetchEvent) => {
   if (event.request.mode === "navigate") {
     event.respondWith(fetch(event.request));
+    event.waitUntil(
+      syncPrecache().catch((err: unknown) => {
+        console.warn("sw: precache sync failed", err);
+        return false;
+      }),
+    );
+    return;
   }
+  if (event.request.method !== "GET" || new URL(event.request.url).origin !== location.origin) {
+    return;
+  }
+  event.respondWith(
+    (async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      const hit = await cache.match(event.request);
+      return hit ?? (await fetch(event.request));
+    })(),
+  );
 }) as EventListener);
 
 /** The push payload vibekit's server sends (internal/push/send.go pushPayload,

@@ -84,6 +84,9 @@ const m = vi.hoisted(() => {
     readBootSnapshot: vi.fn(),
     paintBootSnapshot: vi.fn(),
     clearBootSnapshot: vi.fn(),
+    startBootSnapshot: vi.fn(),
+    clearDeviceKeys: vi.fn(),
+    resetFoldState: vi.fn(),
     parseRoute: vi.fn(() => ({ kind: "chat", id: "" })),
     replaceRoute: vi.fn(() => {
       depths.replaceRoute.push(suppression.depth);
@@ -155,8 +158,10 @@ vi.mock("./boot-snapshot.js", () => ({
   readBootSnapshot: m.readBootSnapshot,
   paintBootSnapshot: m.paintBootSnapshot,
   clearBootSnapshot: m.clearBootSnapshot,
-  startBootSnapshot: vi.fn(),
+  startBootSnapshot: m.startBootSnapshot,
 }));
+vi.mock("./ls-keys.js", () => ({ clearDeviceKeys: m.clearDeviceKeys }));
+vi.mock("./fold-state.js", () => ({ resetFoldState: m.resetFoldState }));
 
 /** A fresh module per test: `postAuthInitDone` and the connected latch are module
  *  state, and `vi.resetModules()` does not re-evaluate a module in Browser Mode —
@@ -391,6 +396,45 @@ describe("the chat list is read once per cold boot", () => {
     expect(m.loadList).toHaveBeenCalledTimes(2);
   });
 
+  it("recovers a read that FAILED while the stream was already up", async () => {
+    // THE CASE NOTHING ELSE COVERS, and the reason the latch carries an answer
+    // rather than only "has it settled". The connection the boot rides arrives
+    // while the read is in flight, so the hook skips it; the read then fails; and
+    // the stream never dropped, so no later `connected` arrives to carry the fetch.
+    // The store kept whatever the snapshot painted until the user took the toast's
+    // Reload.
+    m.loadList.mockResolvedValue(false);
+    m.getSessions.mockReturnValue([]);
+
+    const { startBoot, onTransportStatus } = await freshBoot();
+    onTransportStatus("connected");
+    await startBoot({ applyRoute: m.applyRoute });
+
+    // The boot's own read, plus the recovery it triggered. No third: the hook
+    // skipped the connect, because at that moment the read had not settled.
+    expect(m.loadList).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not recover a read that SUCCEEDED", async () => {
+    const { startBoot, onTransportStatus } = await freshBoot();
+    onTransportStatus("connected");
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.loadList).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not recover a failed read with no stream up, because a connect will cover it", async () => {
+    // The offline boot below: nothing to fetch over yet, so the recovery must not
+    // fire a request into a dead link — the first `connected` is what covers it.
+    m.loadList.mockResolvedValue(false);
+    m.getSessions.mockReturnValue([]);
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.loadList).toHaveBeenCalledTimes(1);
+  });
+
   it("reads it on the FIRST connect when the boot's own read failed", async () => {
     // An offline boot: every read fails and the EventSource never opens. The link
     // comes up seconds later and the stream connects for the first time, carrying no
@@ -563,6 +607,53 @@ describe("the local snapshot", () => {
     listener?.({ status: "success" });
 
     expect(m.clearBootSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets every per-device record on a logout, not only the snapshot", async () => {
+    // FOUR RECORDS, THREE OWNERS. The snapshot is the one this phase added; the
+    // three localStorage blobs (the UI-state document, the turn folds, the
+    // dismissed banners) predate it and a sign-out left all three. Clearing the
+    // fold KEY alone forgets nothing either — `persist` rewrites the whole document
+    // out of the in-memory map, so the next fold would put the previous user's
+    // folds straight back.
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    const listener = m.subscribeByName.mock.calls.find(([name]) => name === "settings.logout")?.[1];
+    listener?.({ status: "success" });
+
+    expect(m.clearDeviceKeys).toHaveBeenCalledTimes(1);
+    expect(m.resetFoldState).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets every per-device record on a signed_out boot too", async () => {
+    m.resolveIdentity.mockResolvedValue({ state: "signed_out" });
+
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    expect(m.clearBootSnapshot).toHaveBeenCalledTimes(1);
+    expect(m.clearDeviceKeys).toHaveBeenCalledTimes(1);
+    expect(m.resetFoldState).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts the capture on a login in the same page, after a logout stopped it", async () => {
+    // `initPostAuth` is latched, and the capture used to sit INSIDE the latch: a
+    // signed-in boot spent the latch, the logout disposed the capture, and
+    // `onLoginSuccess`'s call was then a no-op — so the record stayed absent for the
+    // rest of the page's life. The capture's lifetime is the SESSION, not the page.
+    const { startBoot, initPostAuth } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.startBootSnapshot).toHaveBeenCalledTimes(1);
+
+    const listener = m.subscribeByName.mock.calls.find(([name]) => name === "settings.logout")?.[1];
+    listener?.({ status: "success" });
+
+    // The login door, which is the same door the boot came through.
+    initPostAuth();
+    expect(m.startBootSnapshot).toHaveBeenCalledTimes(2);
+    // And nothing behind the latch runs twice.
+    expect(m.initPostAuthUI).toHaveBeenCalledTimes(1);
   });
 
   it("keeps capturing when a logout FAILS, because the user is still signed in", async () => {

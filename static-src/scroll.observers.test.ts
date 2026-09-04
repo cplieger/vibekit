@@ -592,6 +592,29 @@ describe("the live-edge publisher", () => {
     expect(h.scroll.readingState()).toBe("following");
   });
 
+  it("stops watching the marker on detach, and watches it again on attach", async () => {
+    // `detach` promises the parked view can never produce a callback, and the edge
+    // observer was the one view observer it left connected: the marker rides with
+    // the outgoing view, parking that view sets `content-visibility: hidden`, the
+    // marker stops being rendered, and the callback fires `isIntersecting: false`
+    // from a subtree nobody is reading. Harmless on every path traced — which is
+    // exactly why the wrong record is the defect: it is the sentence the next editor
+    // trusts when they add a fifth observer.
+    const h = await freshModule();
+    const marker = h.messagesEl.querySelector(".transcript-edge");
+    expect(h.io.targets.has(marker!)).toBe(true);
+
+    h.scroll.detach();
+    expect(h.io.targets.size).toBe(0);
+
+    const incoming = document.createElement("div");
+    h.messagesEl.appendChild(incoming);
+    h.scroll.attach({ el: incoming, scrollTop: 0, readingState: "following" });
+    // Re-seated into the incoming view AND re-observed there.
+    expect(marker?.parentElement).toBe(incoming);
+    expect(h.io.targets.has(marker!)).toBe(true);
+  });
+
   it("keeps a publish the gesture window blocked, for the next mutation to use", async () => {
     // The published value is STATE, not an event: a publish that arrives while
     // the reader's own gesture still outranks the layout may not be lost, and the

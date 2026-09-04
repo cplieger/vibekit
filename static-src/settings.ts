@@ -6,7 +6,7 @@
 
 import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
-import { initGitPanel } from "./git.js";
+import { initGitBadge } from "./git-badge.js";
 import { getGitTab } from "./git-tabs.js";
 import { restoreFileBrowser } from "./files.js";
 import { restoreShell } from "./shell.js";
@@ -333,18 +333,16 @@ export function initChatRetention(s: EffectiveSettings): void {
 
 // --- UI init ---
 
-/** Load the one list the Instructions tab still shows: the workspace knowledge
- *  bases. Fired once on the tab's first activation via the settings-tabs loader
- *  map.
+/** What the Instructions tab reads: the global-instructions document and the
+ *  workspace knowledge bases. Fired once on the tab's first activation via the
+ *  settings-tabs loader map.
  *
- *  TWO lists left this panel, and for the same reason both times: a `.kiro`
- *  inventory belongs on the page that shows `.kiro` inventories. The steering /
- *  skills / agents list went to the configuration browser first, and the HOOKS
- *  dashboard followed it — hooks are `.kiro` files with a trigger, and keeping
- *  them here meant one file family had two homes with different affordances in
- *  each. The /api/workspace/kiro-config ENDPOINT stays: role-picker.ts fetches it
- *  to seed the mode picker with workspace agents before a session exists. */
+ *  TWO lists left this panel, both because a `.kiro` inventory belongs on the page
+ *  that shows `.kiro` inventories: the steering/skills/agents list, then the hooks
+ *  dashboard. The /api/workspace/kiro-config ENDPOINT stays — role-picker.ts reads
+ *  it to seed the mode picker before a session exists. */
 function loadInstructionsPanel(): void {
+  loadSteeringDoc();
   loadKnowledge();
 }
 
@@ -410,18 +408,35 @@ export function initUI(): void {
 
 /** Post-auth UI init: the reads that must not fire on a login screen.
  *
- *  `loadAbout` reads the shared version pair (versions.ts owns GET /api/version).
- *  `initGitPanel` wires the git view and its sidebar badge, whose subscription starts
- *  git-status-store.ts's ONE status-all scan and forge-store.ts's 15s forges poll.
+ *  `initGitBadge` is the BADGE alone. It is boot-visible toolbar chrome, so the one
+ *  `status-all` scan its subscription starts is a read for something on screen; the
+ *  rest of `initGitPanel` is not, and wiring it here fired `refreshChanges(true)`, a
+ *  forced `git fetch` across every worktree, for a view nobody had opened.
  *
- *  Called once, through `boot.ts`'s `initPostAuth` — on the `signed_in` AND
- *  `unavailable` verdicts at boot, and from `onLoginSuccess` after a first login. */
+ *  Called once through `boot.ts`'s `initPostAuth`. */
 export function initPostAuthUI(): void {
   void loadAbout();
-  initGitPanel();
+  initGitBadge();
 }
 
 // --- Steering (auto-save with debounce) ---
+
+/** Read the global-instructions document into its textarea. Fired once, on the
+ *  Instructions panel's first activation, via the settings-tabs loader map.
+ *
+ *  Split out of `initSteeringEditor` because the two have different lifetimes: the
+ *  listeners must exist before the panel can be typed into, the READ must not.
+ *  `initUI` runs on the boot path, so this fetch was a file read the server served
+ *  concurrently with the boot's own five for a panel nobody had opened — the same
+ *  defect class as the General panel's three `kiro-cli settings` spawns. */
+function loadSteeringDoc(): void {
+  const textarea = $.steeringInput;
+  void apiGet<{ content?: string }>("/api/steering").then((d) => {
+    if (d?.content !== undefined) {
+      textarea.value = d.content;
+    }
+  });
+}
 
 function initSteeringEditor(): void {
   const textarea = $.steeringInput;
@@ -432,12 +447,6 @@ function initSteeringEditor(): void {
   // resolution), and the indicator is driven by the action's own
   // lifecycle events below rather than a per-dispatch .then().
   const debouncedSave = debouncedDispatch(saveSteering, { wait: 600 });
-
-  void apiGet<{ content?: string }>("/api/steering").then((d) => {
-    if (d?.content !== undefined) {
-      textarea.value = d.content;
-    }
-  });
 
   const unsub = subscribeByName("settings.save_steering", (inst) => {
     if (inst.status === "success") {

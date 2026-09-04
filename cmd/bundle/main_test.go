@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -163,5 +165,122 @@ func TestCleanOutputs_KeepsADirectoryHoldingACommittedAsset(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, outDir, "icons", "logo.js")); !os.IsNotExist(err) {
 		t.Error("static/icons/logo.js still present, want it swept")
+	}
+}
+
+// stampOf stages an output tree, writes the manifest over it and returns the
+// decoded document. t.Chdir is process-wide, so no caller may be parallel.
+func stampOf(t *testing.T, files map[string]string) precacheManifest {
+	t.Helper()
+	dir := stageOut(t, files)
+	if err := writePrecacheManifest(); err != nil {
+		t.Fatalf("writePrecacheManifest() = %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, outDir, precacheName))
+	if err != nil {
+		t.Fatalf("read %s: %v", precacheName, err)
+	}
+	var got precacheManifest
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal %s: %v", precacheName, err)
+	}
+	return got
+}
+
+// TestWritePrecacheManifest_ListsTheRuntimeAssets: the worker cannot guess the
+// hashed chunk names, so the list has to be built from what landed. What it must
+// NOT list is anything the app does not need to run, and sw.js above all — a
+// worker that caches itself makes a broken worker permanent.
+func TestWritePrecacheManifest_ListsTheRuntimeAssets(t *testing.T) {
+	got := stampOf(t, map[string]string{
+		"app.js":                        "entry\n",
+		"app.js.map":                    "map\n",
+		"style.css":                     "css\n",
+		"sw.js":                         "worker\n",
+		"chunks/editor-AAAA1111.js":     "chunk\n",
+		"chunks/editor-AAAA1111.js.map": "map\n",
+		"chunks/history-BBBB2222.js":    "chunk\n",
+		"index.html":                    "<!doctype html>\n",
+		"manifest.json":                 "{}\n",
+	})
+	want := []string{"app.js", "chunks/editor-AAAA1111.js", "chunks/history-BBBB2222.js", "style.css"}
+	if !slices.Equal(got.Assets, want) {
+		t.Errorf("assets = %v, want %v", got.Assets, want)
+	}
+	if got.Stamp == "" {
+		t.Error("stamp is empty, want a content stamp")
+	}
+}
+
+// TestWritePrecacheManifest_StampTracksContentUnderAStableName is the whole
+// reason the stamp is over bytes rather than names. A release replaces app.js and
+// style.css under the same name, and it frequently leaves sw.js byte-identical —
+// in which case the browser runs no worker update at all, so the manifest's stamp
+// is the ONLY thing that can tell the cache a deploy happened.
+func TestWritePrecacheManifest_StampTracksContentUnderAStableName(t *testing.T) {
+	before := stampOf(t, map[string]string{
+		"app.js":    "entry v1\n",
+		"style.css": "css\n",
+	})
+	after := stampOf(t, map[string]string{
+		"app.js":    "entry v2\n",
+		"style.css": "css\n",
+	})
+	if !slices.Equal(before.Assets, after.Assets) {
+		t.Fatalf("asset list moved: %v then %v", before.Assets, after.Assets)
+	}
+	if before.Stamp == after.Stamp {
+		t.Errorf("stamp %q survived a content change under a stable name", after.Stamp)
+	}
+}
+
+// TestWritePrecacheManifest_StampTracksARename: a chunk split can move code
+// between files without changing any one file's bytes, so the name goes into the
+// hash beside its content.
+func TestWritePrecacheManifest_StampTracksARename(t *testing.T) {
+	before := stampOf(t, map[string]string{
+		"app.js":                    "entry\n",
+		"style.css":                 "css\n",
+		"chunks/editor-AAAA1111.js": "chunk\n",
+	})
+	after := stampOf(t, map[string]string{
+		"app.js":                    "entry\n",
+		"style.css":                 "css\n",
+		"chunks/editor-CCCC3333.js": "chunk\n",
+	})
+	if before.Stamp == after.Stamp {
+		t.Errorf("stamp %q survived a chunk rename with identical content", after.Stamp)
+	}
+}
+
+// TestWritePrecacheManifest_NoChunksDirectory: a build that split nothing is not
+// an error, and the manifest is still valid.
+func TestWritePrecacheManifest_NoChunksDirectory(t *testing.T) {
+	got := stampOf(t, map[string]string{
+		"app.js":    "entry\n",
+		"style.css": "css\n",
+	})
+	if !slices.Equal(got.Assets, []string{"app.js", "style.css"}) {
+		t.Errorf("assets = %v, want the two entry points", got.Assets)
+	}
+}
+
+// TestCleanOutputs_SweepsThePrecacheManifest: it is build output, so a rebuild
+// must not leave the previous build's list beside the new assets. manifest.json
+// is hand-authored and sits in the same directory, which is why bundleOwns names
+// this file rather than matching ".json".
+func TestCleanOutputs_SweepsThePrecacheManifest(t *testing.T) {
+	dir := stageOut(t, map[string]string{
+		precacheName:    `{"stamp":"stale","assets":[]}`,
+		"manifest.json": `{"name":"vibekit"}`,
+	})
+	if err := cleanOutputs(); err != nil {
+		t.Fatalf("cleanOutputs() = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, outDir, precacheName)); !os.IsNotExist(err) {
+		t.Errorf("static/%s still present, want it swept", precacheName)
+	}
+	if _, err := os.Stat(filepath.Join(dir, outDir, "manifest.json")); err != nil {
+		t.Errorf("static/manifest.json was removed, want the committed asset untouched: %v", err)
 	}
 }

@@ -111,7 +111,12 @@
  * rail offset key on, and the flex-end geometry are all per-view state that
  * parks and unparks with the chat. */
 .transcript-view {
-  padding-block: var(--sp-4);
+  /* START ONLY. The air under the LAST turn is the live-edge marker's top margin
+   * below, and it has to be, or the marker sits `--sp-4` above the scroller's
+   * content bottom and the two paths that answer "is the reader at the live edge"
+   * disagree by that much (scroll.ts: an `isAtBottom()` of 100px against an
+   * observed 116px). Same total height, same air, one geometry. */
+  padding-block-start: var(--sp-4);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
@@ -130,15 +135,18 @@
  * every paint. Flex order is decided by this property, not by the DOM, and every
  * card sits at the default `order: 0`.
  *
- * The negative margin cancels the column's `gap`, which is drawn between items
- * whatever their size — so a zero-height last item would otherwise add
- * `--sp-3` under the final turn and, with `justify-content: flex-end`, lift the
- * whole transcript by it. Same mechanism as the collapsing toolbar button
- * (12-chat.css). */
+ * THE MARGIN CARRIES THE VIEW'S BLOCK-END AIR, which is what puts the marker
+ * exactly ON the scroller's content bottom — the only position at which a
+ * `rootMargin` of `BOTTOM_TOLERANCE_PX` observes the same threshold `isAtBottom()`
+ * measures. `--sp-4` is that air, less the column `gap` flex already draws above a
+ * zero-height last item (which is also why the value cannot simply be `--sp-4`:
+ * the gap is drawn whatever the item's size, same mechanism as the collapsing
+ * toolbar button in 12-chat.css). With the view's `padding-block-end` gone, the
+ * total height and the space under the final turn are both unchanged. */
 .transcript-edge {
   order: 1;
   block-size: 0;
-  margin-block-start: calc(-1 * var(--sp-3));
+  margin-block-start: calc(var(--sp-4) - var(--sp-3));
 }
 
 /* Parked views keep their DOM and rendering state but cost the page nothing:

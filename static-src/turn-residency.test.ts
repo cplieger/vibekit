@@ -63,7 +63,7 @@ vi.mock("./api-client.js", async () => ({
 
 const { mountChatView, mountTurnBody, activeTranscriptView } = await import("./messages.js");
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
-const { setTurnOpen, openForSearch, clearSearchOpened, _resetFoldStateForTest } =
+const { setTurnOpen, openForSearch, clearSearchOpened, resetFoldState } =
   await import("./fold-state.js");
 const { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } = await import("./block-window.js");
 const { blockTextSigs, ensureBlockTextSig, blockKey } = await import("./store-signals.js");
@@ -229,7 +229,7 @@ function chatID(): string {
 beforeEach(() => {
   mountChatView();
   localStorage.clear();
-  _resetFoldStateForTest();
+  resetFoldState();
   runStatus.clear();
   resetTurnRail();
   // Tear the previous case's transcript down through the renderer's own door
@@ -691,8 +691,10 @@ describe("the cold build", () => {
   it("stops taking slices on the frame once the pass has spent its block allowance", async () => {
     const id = chatID();
     // Twelve turns the reader opened by hand. Pins are exempt from the residency
-    // budget, so all twelve mount — and without a pass-wide allowance all twelve
-    // would take a slice in the paint frame.
+    // budget, so all twelve mount — and PINS ARE THE WHOLE POPULATION the allowance
+    // exists for: an unpinned paint is already capped at `RESIDENT_BLOCKS` by the
+    // plan, so this is the only shape that can exceed it. Without the pass-wide
+    // allowance all twelve would take a slice in the paint frame.
     for (let n = 1; n <= 12; n++) {
       setTurnOpen(id, `h${String(n)}`, true);
     }

@@ -581,14 +581,25 @@ function walkAndPick(target: HTMLElement, hit: SearchHit): number {
   return pickNearestMark(target, hit);
 }
 
-/** One RENDERED frame. `requestAnimationFrame` runs before layout, so the second
- *  callback is the first point after the browser has laid the previous frame out
- *  — which is when a `content-visibility: auto` card a scroll just reached has
- *  rendered and holds walkable text. */
+/** Ceiling on the frame wait below. Four 60Hz frames: long enough that a busy
+ *  frame does not lose the re-walk, short enough that the fallback is not itself
+ *  a stall the reader can feel. */
+const RENDER_WAIT_CEILING_MS = 64;
+
+/** One RENDERED frame, or the ceiling, whichever lands first.
+ *
+ *  The second callback is the first point after the previous frame was laid out,
+ *  which is when a `content-visibility: auto` card a scroll just reached holds
+ *  walkable text. THE TIMEOUT IS NOT BELT-AND-BRACES: a hidden page gets no
+ *  animation frames, so the bare pair never settles — and this is awaited inside
+ *  `stepServerHit`'s `navBusy` latch, so backgrounding the tab left find's next/prev
+ *  inert until it came forward. */
 function nextRender(): Promise<void> {
   return new Promise((resolve) => {
+    const ceiling = setTimeout(resolve, RENDER_WAIT_CEILING_MS);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        clearTimeout(ceiling);
         resolve();
       });
     });

@@ -1542,15 +1542,11 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
  *  in how much body they have. Density comes from type scale, not from
  *  structural variation.
  *
- *  A card is born in the residency the current pass planned for it: a
- *  non-resident turn mounts as a header/footer STUB — no `.turn-body`, no inner
- *  reconcile, no per-block effects — and folds at birth, which removes nothing
- *  because the card did not exist a frame ago.
- *
- *  A resident body is built through the SAME batched builder the on-demand
- *  reveal uses: one slice here, the rest yielded. The cold path used to call
- *  `reconcile` on the whole body, so the frame budget was respected only as long
- *  as some tier bound happened to hold. One builder, one yield policy. */
+ *  A card is born in the residency the current pass planned for it: a non-resident
+ *  turn mounts as a header/footer STUB — no `.turn-body`, no inner reconcile, no
+ *  per-block effects — and folds at birth. A resident body is built through the SAME
+ *  batched builder the on-demand reveal uses: one slice here, the rest yielded, with
+ *  `PAINT_SYNC_BLOCKS` bounding what the pass spends on the frame. */
 function buildTurn(t: Turn): HTMLElement {
   const card = el("div", { className: "turn" });
   // No `data-outcome` on the CARD: the leading-edge hairline that was this
@@ -1702,13 +1698,11 @@ const BUILD_BATCH_BLOCKS = 32;
 /** Blocks one full pass may mount ON THE FRAME across every body it starts,
  *  refilled by `paint`.
  *
- *  A per-slice cap does not bound a PASS: pinned turns are exempt from the
- *  residency budget (`block-window.ts`), so a reader who revealed a dozen turns by
- *  hand has a dozen bodies starting in one paint and pays a slice for each. The
- *  ceiling is the residency budget itself — a paint may mount synchronously what
- *  a paint is allowed to hold and no more — which is also why an ordinary chat
- *  never reaches it: its whole transcript is inside that budget already. Past it a
- *  body is born empty and built entirely off the frame. */
+ *  A CAP ON WHAT A PAINT MAY HOLD, NOT A FRAME BUDGET: nothing here measures what a
+ *  frame costs. It extends the residency budget over the PINS, the only way past it —
+ *  `planResidency` caps an unpinned paint at `RESIDENT_BLOCKS` and exempts pins, so a
+ *  dozen revealed heavy turns started a dozen bodies unbounded. An ordinary chat never
+ *  reaches it, deliberately: a smaller allowance defers the turns being READ. */
 const PAINT_SYNC_BLOCKS = RESIDENT_BLOCKS;
 let paintSyncBlocks = PAINT_SYNC_BLOCKS;
 

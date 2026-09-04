@@ -6,20 +6,25 @@
 //
 // It replaces the previous tsc-emit pipeline (per-module JS served over an
 // importmap: ~260 uncached module fetches per page load) with three cacheable
-// artifacts: /app.js (+ hashed lazy chunks), /sw.js, /style.css. tsc remains
-// the TYPE gate (run with --noEmit in CI and the Docker build); esbuild does
-// not typecheck.
+// artifacts: /app.js (+ hashed lazy chunks), /sw.js, /style.css, plus the
+// /precache.json list the service worker reads to cache them. tsc remains the
+// TYPE gate (--noEmit in CI and the Docker build); esbuild does not typecheck.
 //
-// Usage: go run ./cmd/bundle   (from the repo root; also run by the
-// Dockerfile builder stage). Inputs are static-src/ plus the library sources
-// under static-src/node_modules/ (npm install locally; registry tarballs in
-// the Docker build). Outputs land in static/, which go:embed ships.
+// Usage: go run ./cmd/bundle   (from the repo root; also run by the Dockerfile
+// builder stage). Inputs are static-src/ plus the library sources under
+// static-src/node_modules/. Outputs land in static/, which go:embed ships.
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -50,7 +55,90 @@ func run() error {
 	if err := bundleServiceWorker(); err != nil {
 		return err
 	}
-	return buildCSS()
+	if err := buildCSS(); err != nil {
+		return err
+	}
+	return writePrecacheManifest()
+}
+
+// precacheManifest is what static/precache.json holds: the shell's asset list and
+// a stamp over their bytes.
+//
+// The worker cannot import anything (it compiles standalone as a classic script),
+// so this travels as a fetched document rather than a generated module. Field names
+// are the wire contract with static-src/sw.ts.
+type precacheManifest struct {
+	Stamp  string   `json:"stamp"`
+	Assets []string `json:"assets"`
+}
+
+// precacheName is the manifest's own path, relative to outDir. Named because three
+// things have to agree on it: this writer, cleanOutputs (via bundleOwns), and the
+// worker's fetch.
+const precacheName = "precache.json"
+
+// writePrecacheManifest enumerates the shell's assets and stamps their content.
+//
+// THE LIST IS BUILT, not written by hand: the lazy chunks are content-hashed, so
+// the worker has no way to guess their names.
+//
+// THE STAMP IS OVER THE BYTES, not the names: a release replaces app.js and
+// style.css under the same name, so a stamp over names would tell the worker
+// nothing had changed. Sourcemaps are excluded: a precache is for running.
+func writePrecacheManifest() error {
+	assets, err := precacheAssets()
+	if err != nil {
+		return err
+	}
+	sum := sha256.New()
+	for _, name := range assets {
+		body, err := os.ReadFile(filepath.Join(outDir, name)) //nolint:gosec // G304: name is walked out of the bundler's own output directory
+		if err != nil {
+			return fmt.Errorf("precache stamp: %w", err)
+		}
+		// The NAME goes into the hash beside its bytes, so a rename with identical
+		// content (a chunk split moving code between files) still moves the stamp.
+		sum.Write([]byte(name))
+		sum.Write(body)
+	}
+	doc, err := json.Marshal(precacheManifest{
+		Stamp:  hex.EncodeToString(sum.Sum(nil))[:16],
+		Assets: assets,
+	})
+	if err != nil {
+		return fmt.Errorf("precache marshal: %w", err)
+	}
+	return os.WriteFile(filepath.Join(outDir, precacheName), doc, 0o600)
+}
+
+// precacheAssets lists the shell's runtime assets, sorted, as URL paths relative
+// to the site root.
+//
+// sw.js is deliberately NOT in it: a service worker caching itself is how a
+// broken worker becomes permanent, and the browser fetches it through its own
+// update check rather than through the fetch handler. index.html is not either —
+// it stays `no-store` (internal/server/server_static.go), which is what makes a
+// release's new script graph take effect on the next load.
+func precacheAssets() ([]string, error) {
+	assets := []string{"app.js", "style.css"}
+	entries, err := os.ReadDir(filepath.Join(outDir, "chunks"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// A build that produced no lazy chunk at all. Not reachable from this
+			// entrypoint today, and not an error: the manifest is still valid.
+			slices.Sort(assets)
+			return assets, nil
+		}
+		return nil, fmt.Errorf("precache chunks: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".js" {
+			continue
+		}
+		assets = append(assets, "chunks/"+e.Name())
+	}
+	slices.Sort(assets)
+	return assets, nil
 }
 
 // cleanOutputs removes previous build artifacts from static/ so stale modules
@@ -86,7 +174,9 @@ func bundleOwns(name string) bool {
 	case ".js", ".map", ".gz":
 		return true
 	}
-	return name == "style.css"
+	// Named rather than matched by ".json": static/manifest.json is hand-authored
+	// and sits in the same directory.
+	return name == "style.css" || name == precacheName
 }
 
 // removeBundleFiles deletes every bundle-owned file under dir, at any depth.

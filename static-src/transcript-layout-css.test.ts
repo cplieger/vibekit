@@ -118,21 +118,38 @@ describe("against real layout", () => {
     return v;
   }
 
-  it("the live-edge marker costs the transcript no height", () => {
-    // A zero-height flex item still earns the column's `gap`, so without the
-    // negative margin the marker would add `--sp-3` under the last turn — and
-    // with `justify-content: flex-end` that lifts the whole transcript.
-    const without = view(false).getBoundingClientRect().height;
-    const withEdge = view(true).getBoundingClientRect().height;
-    expect(withEdge).toBe(without);
+  it("the live-edge marker sits ON the view's content bottom", () => {
+    // THE WHOLE POINT OF THE MARKER'S TOP MARGIN. scroll.ts roots an
+    // IntersectionObserver on this element with a `rootMargin` of
+    // BOTTOM_TOLERANCE_PX and calls the answer "the same tolerance `isAtBottom`
+    // applies" — true only at zero offset from the scroller's content bottom. Put
+    // the air back on `.transcript-view` as `padding-block` and this reads 16px,
+    // which is the two paths disagreeing by that much.
+    const v = view(true);
+    const edge = v.querySelector<HTMLElement>(".transcript-edge");
+    const offsetFromBottom =
+      v.getBoundingClientRect().bottom - edge!.getBoundingClientRect().bottom;
+    expect(offsetFromBottom).toBe(0);
   });
 
-  it("the live-edge marker lands after the last turn whatever its DOM position", () => {
+  it("the marker's margin carries the block-end air and adds nothing of its own", () => {
+    // A zero-height flex item still earns the column's `gap`, so the margin is
+    // `--sp-4 - --sp-3` — enough to draw the air the view's `padding-block-end` used
+    // to, and no more. Get it wrong in either direction and the transcript MOVES:
+    // with `justify-content: flex-end`, extra height lifts the whole column.
+    //
+    // Absolute numbers rather than a comparison against a marker-less view, which
+    // measures nothing production has (scroll.ts appends the marker to every view it
+    // attaches): 244 = two 100px turns, two 12px gaps, 4px of margin, 16px of air
+    // above the first turn. That total is what it was while the view carried
+    // symmetric padding and the margin was negative.
     const v = view(true);
     const edge = v.querySelector<HTMLElement>(".transcript-edge");
     const turns = v.querySelectorAll<HTMLElement>(".turn");
     const last = turns[turns.length - 1];
-    // `order: 1` is the reason: in the DOM this marker is the FIRST child.
+    expect(v.getBoundingClientRect().height).toBe(244);
+    expect(v.getBoundingClientRect().bottom - last!.getBoundingClientRect().bottom).toBe(16);
+    // `order: 1` is why it lands last: in the DOM this marker is the FIRST child.
     expect(edge?.previousElementSibling).toBeNull();
     expect(edge!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
       last!.getBoundingClientRect().bottom,
