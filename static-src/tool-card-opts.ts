@@ -42,6 +42,18 @@ export interface BuildToolCardOpts {
   disclosed?: ToolDisclosed | undefined;
   /** KAS's `_meta.kiro.policyDenial`: the rule that refused this call. */
   denial?: ToolDenial | undefined;
+  /** `input`, `output` and `diffs` above are a windowed PREVIEW and the whole of
+   *  them is at `GET /api/chats/{id}/tools/{id}`. Set only by the transcript read
+   *  path — a card built from the stream holds every byte already. */
+  hasFull?: boolean;
+  /** The full output's byte length and the full diff count, present only
+   *  alongside `hasFull`: what the reader cannot see, so a control can offer it
+   *  without first fetching it. */
+  outputBytes?: number;
+  diffCount?: number;
+  /** Which chat to fetch the bulk from. Absent for a card with no chat behind it
+   *  — a workflow step's, which streams and is never previewed. */
+  chatID?: string;
 }
 
 /** The `BuildToolCardOpts` a domain tool call describes.
@@ -54,7 +66,7 @@ export interface BuildToolCardOpts {
  *  step runs exactly the same tools as a chat turn does. The copy that existed
  *  before this had already been transcribed once; a third would be where a field
  *  like `denial` or `diffs` quietly stops reaching one of the two surfaces. */
-export function toolCardOptsFor(tc: ToolCall, live: boolean): BuildToolCardOpts {
+export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): BuildToolCardOpts {
   const opts: BuildToolCardOpts = {
     id: tc.id,
     title: tc.title,
@@ -62,6 +74,18 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean): BuildToolCardOpts 
     status: tc.status,
     live,
   };
+  if (chatID !== "") {
+    opts.chatID = chatID;
+  }
+  if (tc.has_full === true) {
+    opts.hasFull = true;
+    if (tc.output_bytes !== undefined) {
+      opts.outputBytes = tc.output_bytes;
+    }
+    if (tc.diff_count !== undefined) {
+      opts.diffCount = tc.diff_count;
+    }
+  }
   const rawInput = tc.input as Record<string, unknown> | undefined;
   if (rawInput !== undefined) {
     opts.input = rawInput;

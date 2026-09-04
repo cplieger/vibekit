@@ -53,6 +53,11 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 // routeChatSubResource dispatches /api/chats/{id}/<sub> to the handler for
 // the addressed sub-resource.
 func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid vibekit.ChatID, sub string) {
+	// The one sub-resource that is itself addressed: /tools/{toolCallID}.
+	if rest, ok := strings.CutPrefix(sub, "tools/"); ok {
+		rt.handleToolCall(w, r, cid, rest)
+		return
+	}
 	switch sub {
 	case "export":
 		rt.handleExport(w, r, cid)
@@ -116,18 +121,20 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // through whole, however big it is. The envelope is the client's reconcile unit,
 // so a half-message has no honest `blocks` array — and a budget that could
 // return nothing would make the newest message of an over-budget chat
-// unreachable.
-func messageWindow(msgs []vibekit.Message, limit, maxBytes int) ([]json.RawMessage, int) {
+// unreachable. What bounds the message ITSELF is previewMessage, which windows
+// each of its tool calls and points the card at GET /api/chats/{id}/tools/{id}
+// for the rest; without it "whole, however big" was the whole worst case.
+func messageWindow(msgs []vibekit.Message, limit, maxBytes int) (window []json.RawMessage, start int) {
 	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
 	// `null` for an array. Same guard as the one the make+copy here replaced.
-	window := make([]json.RawMessage, 0, min(limit, len(msgs)))
+	window = make([]json.RawMessage, 0, min(limit, len(msgs)))
 	spent := 0
-	start := len(msgs)
+	start = len(msgs)
 	for i := range slices.Backward(msgs) {
 		if len(window) == limit {
 			break
 		}
-		raw, err := json.Marshal(msgs[i])
+		raw, err := json.Marshal(previewMessage(&msgs[i]))
 		if err != nil {
 			// A Message holds no type encoding/json can refuse, so this is
 			// unreachable; stop rather than serve a window with a hole in it.

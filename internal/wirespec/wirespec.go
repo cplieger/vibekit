@@ -46,6 +46,11 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ToolDenial](),
 	wiregen.TypeRef[vibekit.TextSpan](),
 	wiregen.TypeRef[vibekit.ToolCall](),
+	// GET /api/chats/{id}/tools/{toolCallID}'s response, after ToolDiff and
+	// TextSpan, which it references. No `Payload` suffix, so
+	// TestRegistry_EveryRegisteredPayloadHasAnSSEBinding exempts it by
+	// construction — the slot EffectiveSettings occupies as a REST response.
+	wiregen.TypeRef[vibekit.ToolCallBulk](),
 	wiregen.TypeRef[vibekit.PlanEntry](),
 	wiregen.TypeRef[vibekit.Block](),
 	wiregen.TypeRef[vibekit.CodeReference](),

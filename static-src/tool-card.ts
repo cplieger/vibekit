@@ -23,6 +23,7 @@ import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import { wireRowToggle } from "./disclosure-row.js";
+import { toolCallBulk } from "./tool-bulk.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
@@ -107,19 +108,20 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   }
 
   if (withToggle) {
-    node.insertAdjacentHTML("beforeend", buildDetails(opts));
-    if (opts.output !== undefined && opts.output !== "") {
-      appendOutput(node, opts.output, opts.outputSpans ?? [], depth1 === "output");
-    }
-    wireToggle(node);
+    // The SHELL only: an empty details region plus the output slot the live
+    // update path writes into. Everything with a cost in it — the denial rows,
+    // the input dump, painting the output through the ANSI renderer and the path
+    // linkifier — is built on first open by `detailsBody`, because a collapsed
+    // card is a claim line and a transcript mounts dozens of them.
+    node.insertAdjacentHTML("beforeend", detailsShell());
+    wireToggle(node, detailsBody(node, opts, depth1));
   }
 
   wireFileLink(node, info.filePath, depth1 === "diff");
 
-  // An edit's diff lives BEHIND the disclosure, not in the resting state. It
-  // used to be inserted unconditionally, which made every edit card's depth 1
-  // its resting state — and turned a merged multi-edit group into a wall of
-  // hunks by default, the opposite of what progressive collapse buys.
+  // An edit's diff IS its depth 1, which is why it is inserted here rather than
+  // deferred with the details body. It used to be inserted for every kind, which
+  // turned a merged multi-edit group into a wall of hunks by default.
   if (depth1 === "diff") {
     if (opts.diffs !== undefined && opts.diffs.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -127,9 +129,54 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
       insertDiffPreview(node, d.path, { oldText: d.old_text ?? "", newText: d.new_text });
     } else if (info.writesFile && info.diffSources !== null) {
       insertDiffPreview(node, info.filePath, info.diffSources);
+    } else if (opts.hasFull === true) {
+      // The transcript dropped this card's diff: a ToolDiff is a before/after
+      // pair the client runs its own line diff over, so the server sends it
+      // whole or not at all rather than a truncated pair that would render an
+      // edit nobody made. The bulk carries it.
+      appendDiffFetch(node, opts, info.filePath);
     }
   }
   return node;
+}
+
+/** A control that fetches the call's diff and replaces itself with the preview.
+ *
+ *  Its own affordance rather than a silent fetch on mount, which would undo what
+ *  the preview bought: the whole point is that a card nobody opened costs one
+ *  claim line. */
+function appendDiffFetch(node: HTMLDivElement, opts: BuildToolCardOpts, filePath: string): void {
+  const chatID = opts.chatID ?? "";
+  if (chatID === "") {
+    return;
+  }
+  const count = opts.diffCount ?? 0;
+  // `.tool-output-reveal` deliberately: it is already the card's reveal-button
+  // vocabulary ("Show N more lines" inside the details region), and this is the
+  // same affordance one level out. A class of its own would be a second
+  // stylesheet rule for one visual.
+  const btn = el(
+    "button",
+    { type: "button", className: "tool-output-reveal", "data-reveal": "diff" },
+    count > 1 ? `Show ${String(count)} diffs` : "Show the diff",
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", (e: Event) => {
+    e.stopPropagation();
+    btn.disabled = true;
+    void toolCallBulk(chatID, opts.id).then((bulk) => {
+      const d = bulk?.diffs?.[0];
+      if (d === undefined) {
+        btn.disabled = false;
+        return;
+      }
+      btn.remove();
+      insertDiffPreview(node, d.path === "" ? filePath : d.path, {
+        oldText: d.old_text ?? "",
+        newText: d.new_text,
+      });
+    });
+  });
+  node.insertBefore(btn, node.querySelector(".tool-details"));
 }
 
 /** Two facts a move's claim line cannot carry. */
@@ -400,14 +447,83 @@ export function mcpHue(server: string): number {
   return h % 360;
 }
 
-function buildDetails(opts: BuildToolCardOpts): string {
-  const inputBlock =
-    opts.live && opts.input !== undefined
-      ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
-      : "";
-  // No "collapsed" class: the disclosure controller wired in wireToggle owns
-  // the collapse state (inline height + aria-hidden/inert on the region).
-  return `<div class="tool-details">${denialBlock(opts.denial)}${inputBlock}<div class="tool-output"></div></div>`;
+/** The empty details region, mounted with the card.
+ *
+ *  `.tool-output` is part of the SHELL rather than the deferred body, because the
+ *  live update path writes streamed chunks straight into it
+ *  (`messages-tools.ts` writeChunkToCard / applyOutputUpdate) and a card that is
+ *  streaming has usually not been opened. An empty div costs nothing; what cost
+ *  something was painting megabytes into it.
+ *
+ *  No "collapsed" class: the disclosure controller wired in wireToggle owns the
+ *  collapse state (inline height + aria-hidden/inert on the region). */
+function detailsShell(): string {
+  return `<div class="tool-details"><div class="tool-output"></div></div>`;
+}
+
+/** The details body's builder, run at most once, on first open.
+ *
+ *  Registered on the toggle BEFORE the disclosure controller's own listener so it
+ *  runs first: the controller measures `scrollHeight` to animate the reveal, and
+ *  a region filled after that measurement would animate to zero and then jump.
+ *
+ *  A previewed card (`has_full`) fetches its bulk here and repaints when it
+ *  lands. The preview is painted first regardless, so the reveal shows the head
+ *  and tail immediately and fills in behind — the alternative, an empty region
+ *  until the network answers, is a worse reveal than the one this replaced. */
+function detailsBody(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: string): () => void {
+  let built = false;
+  return () => {
+    if (built) {
+      return;
+    }
+    built = true;
+    const details = node.querySelector<HTMLElement>(".tool-details");
+    if (details === null) {
+      return;
+    }
+    const inputBlock =
+      opts.live && opts.input !== undefined
+        ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
+        : "";
+    const head = denialBlock(opts.denial) + inputBlock;
+    if (head !== "") {
+      details.insertAdjacentHTML("afterbegin", head);
+    }
+    if (opts.output !== undefined && opts.output !== "") {
+      appendOutput(node, opts.output, opts.outputSpans ?? [], depth1 === "output");
+    }
+    if (opts.hasFull === true) {
+      fetchOutputBulk(node, opts, depth1);
+    }
+  };
+}
+
+/** Replace a previewed card's output with the whole of it, plus its style spans.
+ *
+ *  The spans are why the repaint is unconditional rather than gated on a line
+ *  count: a previewed output is sent PLAIN, because TextSpan offsets are UTF-16
+ *  code units into the whole text and remapping them onto a head-and-tail window
+ *  would be a second implementation of `windowSpans` in Go against a different
+ *  offset unit. So the bulk is where an ANSI-styled command output regains its
+ *  colour. */
+function fetchOutputBulk(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: string): void {
+  const chatID = opts.chatID ?? "";
+  if (chatID === "") {
+    return;
+  }
+  void toolCallBulk(chatID, opts.id).then((bulk) => {
+    const output = bulk?.output ?? "";
+    if (output === "") {
+      return;
+    }
+    const out = node.querySelector(".tool-output");
+    if (out === null) {
+      return;
+    }
+    out.replaceChildren();
+    appendOutput(node, output, bulk?.output_spans ?? [], depth1 === "output");
+  });
 }
 
 /** The rule that refused the call, and where it lives.
@@ -472,12 +588,25 @@ function wireFileLink(el: HTMLElement, filePath: string, isChange: boolean): voi
 // (messages-tools.ts force-opens the details when a tool fails).
 const detailCtls = new WeakMap<HTMLElement, DisclosureController>();
 
-function wireToggle(el: HTMLElement): void {
+// Per-card deferred body builders. Held beside the controller because
+// `expandToolDetails` opens a card WITHOUT a click, so it has to run the builder
+// itself — and because the failure path reads the output back out of the DOM
+// immediately afterwards to offer "Explain this error".
+const detailBuilders = new WeakMap<HTMLElement, () => void>();
+
+function wireToggle(el: HTMLElement, buildBody: () => void): void {
   const toggle = el.querySelector<HTMLElement>(".tool-disclosure");
   const details = el.querySelector<HTMLElement>(".tool-details");
   if (toggle === null || details === null) {
     return;
   }
+  // BEFORE createDisclosure registers its own click handler, so this one runs
+  // first and the region is filled before the controller measures it to animate
+  // the reveal. Listeners on one element in one phase fire in registration
+  // order, and `wireRowToggle` forwards a summary click through `toggle.click()`,
+  // so the row's whole surface reaches this too.
+  toggle.addEventListener("click", buildBody);
+  detailBuilders.set(el, buildBody);
   const summary = el.querySelector<HTMLElement>(".tool-summary");
   // The disclosure primitive owns aria-expanded/aria-controls, activation,
   // and the animated height 0↔auto with aria-hidden + inert on the collapsed
@@ -511,8 +640,14 @@ function wireToggle(el: HTMLElement): void {
 
 /** Force-open a card's details (e.g. when the tool fails so the error output
  *  is visible without a click). The chevron follows from the `aria-expanded`
- *  the controller writes; a card without wired details is a no-op. */
+ *  the controller writes; a card without wired details is a no-op.
+ *
+ *  The body is built BEFORE the open, for the reason `wireToggle`'s own listener
+ *  is registered early: the controller measures the region to animate it. It also
+ *  makes the output readable to the caller straight after — the failure path
+ *  offers "Explain this error" from `.tool-output`'s text. */
 export function expandToolDetails(card: HTMLElement): void {
+  detailBuilders.get(card)?.();
   detailCtls.get(card)?.open();
 }
 
