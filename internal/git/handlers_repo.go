@@ -75,9 +75,9 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 		// everything would be the opposite of what it asked for, so this answers
 		// from the snapshot unchanged.
 	case scoped:
-		running = h.refreshStatusScoped(r, key, doFetch, only)
+		running = h.refreshStatus(r, key, doFetch, only)
 	case doFetch || snap.stale(statusMaxAge):
-		running = h.refreshStatusAll(r, key, doFetch)
+		running = h.refreshStatus(r, key, doFetch, nil)
 	}
 	if wait := h.coldWait(snap, doFetch); wait > 0 {
 		snap = h.awaitStatusAll(r, key, running, wait)
@@ -152,49 +152,33 @@ func (h *Handler) coldWait(snap *statusSnapshot, doFetch bool) time.Duration {
 	}
 }
 
-// refreshStatusAll starts a scan for key unless one is already in flight, and
-// returns the channel that closes when the scan in flight publishes.
+// refreshStatus starts a scan for key unless one is already in flight, and returns
+// the channel that closes when the refresh in flight publishes. `only` names the
+// repositories to scan; nil is the whole tree. A scoped result is MERGED, leaving
+// every row the scan did not look at as it was.
 //
-// The scan runs on its own goroutine under a context DETACHED from the request:
-// its lifetime is the scan budget, and a client that walks away mid-poll must not
-// abort work the next poll would otherwise repeat from scratch.
-func (h *Handler) refreshStatusAll(r *http.Request, key string, doFetch bool) chan struct{} {
-	done, started := h.statusCache.claim(key)
-	if !started {
-		return done
-	}
-	parent := context.WithoutCancel(r.Context())
-	go func() {
-		ctx, cancel := context.WithTimeout(parent, statusScanBudget)
-		defer cancel()
-		// Publishes unconditionally, including an empty result: the claim is
-		// released here and nowhere else, so a scan that returns nothing must still
-		// hand the slot back or this variant never refreshes again.
-		h.statusCache.publish(key, h.scanRepos(ctx, doFetch, nil))
-	}()
-	return done
-}
-
-// refreshStatusScoped rescans only the repositories in `only` and merges the
-// result into the snapshot, leaving every other row as it was.
+// The scan runs on its own goroutine under a context DETACHED from the request: its
+// lifetime is the scan budget, and a client that walks away mid-poll must not abort
+// work the next poll would otherwise repeat from scratch.
 //
 // It shares the variant's one refresh slot, so a burst of edits costs one scan at a
-// time. A read that finds a scan running leaves its repositories in the slot's
-// pending set instead of starting a second scan, and this LOOP drains that set —
-// without it the joining read's rows go unscanned whenever the scan it joined was
-// scoped elsewhere. The chain ends when a pass finds nothing accumulated.
-func (h *Handler) refreshStatusScoped(r *http.Request, key string, doFetch bool, only map[string]struct{}) chan struct{} {
-	done, started := h.statusCache.claimScoped(key, only)
+// time, and it LOOPS because a read that joins that scan leaves its intent in the
+// slot instead of starting a second one. Draining it is what keeps the rule from
+// losing work — in EITHER direction: a scoped read joining a scan of another repo,
+// and an unscoped read joining a scoped scan, which covers a fraction of the tree
+// and leaves the snapshot stale. The chain ends when a pass finds nothing recorded.
+func (h *Handler) refreshStatus(r *http.Request, key string, doFetch bool, only map[string]struct{}) chan struct{} {
+	done, started := h.statusCache.claim(key, only)
 	if !started {
 		return done
 	}
 	parent := context.WithoutCancel(r.Context())
 	go func() {
-		for scope := only; len(scope) > 0; {
+		for scope, run := only, true; run; {
 			ctx, cancel := context.WithTimeout(parent, statusScanBudget)
 			rows := h.scanRepos(ctx, doFetch, scope)
 			cancel()
-			scope = h.statusCache.mergeScoped(key, rows)
+			scope, run = h.statusCache.finish(key, rows)
 		}
 	}()
 	return done

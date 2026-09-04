@@ -244,9 +244,13 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	if !got.HasFull {
 		t.Fatal("has_full = false for an input the transcript did not carry whole")
 	}
-	if len(got.Input) > toolPreviewInputTotalBytes*2 {
-		t.Errorf("preview input is %d bytes, want it bounded near the %d-byte budget",
-			len(got.Input), toolPreviewInputTotalBytes)
+	// The budget is a BOUND on the marshalled bytes, not a target near them. It used
+	// to be asserted at 2x, which a sum-of-contents accounting satisfied while the
+	// object json.Marshal produced ran over by every quote, colon and comma.
+	if len(got.Input) > toolPreviewInputTotalBytes {
+		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget by %d: the "+
+			"aggregate cut charged the members' contents and not the JSON around them",
+			len(got.Input), toolPreviewInputTotalBytes, len(got.Input)-toolPreviewInputTotalBytes)
 	}
 	var kept map[string]any
 	if err := json.Unmarshal(got.Input, &kept); err != nil {
@@ -259,6 +263,53 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 	}
 	if kept["command"] != "go build ./..." {
 		t.Errorf("command = %v, want it kept", kept["command"])
+	}
+}
+
+// The aggregate budget bounds the MARSHALLED object, and this is the fixture that
+// tells that apart from bounding the sum of its members' contents.
+//
+// Many tiny members is where JSON's own syntax dominates: two quotes, a colon and a
+// separating comma is four bytes a member, so an accounting that charges only
+// len(key)+len(value) under-counts by 4N — here about half the budget again. The
+// 40-fat-member fixture above cannot see it, because one member is 3 KiB, so the cut
+// stops a whole member short of the budget and the error hides in that granularity.
+func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
+	// Enough one-byte values that the old accounting believed the object fit.
+	const members = 4_000
+	obj := make(map[string]any, members)
+	for i := range members {
+		obj["k"+strconv.Itoa(i)] = 1
+	}
+	in, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("Setup: marshal input: %v", err)
+	}
+
+	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
+		ID: "tc1", Title: "Write", Kind: vibekit.ToolKindWrite,
+		Status: vibekit.ToolCompleted, Input: in,
+	})})
+
+	if !got.HasFull {
+		t.Fatal("has_full = false for an input the transcript did not carry whole")
+	}
+	if len(got.Input) > toolPreviewInputTotalBytes {
+		t.Errorf("preview input marshals to %d bytes, over the %d-byte budget by %d: the "+
+			"aggregate cut charged the members' contents and not the quotes, colons and "+
+			"commas around them", len(got.Input), toolPreviewInputTotalBytes,
+			len(got.Input)-toolPreviewInputTotalBytes)
+	}
+	// And it is not bounded by dropping everything: the budget still has to fit a
+	// claim line's worth of members, or "bounded" would be satisfied by "empty".
+	var kept map[string]any
+	if err := json.Unmarshal(got.Input, &kept); err != nil {
+		t.Fatalf("preview input is not an object: %s", got.Input)
+	}
+	if len(kept) < 100 {
+		t.Errorf("kept %d of %d members in a %d-byte budget, want most of what fits: the "+
+			"charge per member is too high, not too low", len(kept), members,
+			toolPreviewInputTotalBytes)
 	}
 }
 

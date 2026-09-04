@@ -197,11 +197,11 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 	var c statusCache
 	seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}, time.Now())
 
-	first, started := c.claimScoped(statusKeyPoll, map[string]struct{}{"a": {}})
+	first, started := c.claim(statusKeyPoll, map[string]struct{}{"a": {}})
 	if !started {
 		t.Fatal("Setup: the first scoped claim did not start")
 	}
-	second, started := c.claimScoped(statusKeyPoll, map[string]struct{}{"b": {}})
+	second, started := c.claim(statusKeyPoll, map[string]struct{}{"b": {}})
 	if started {
 		t.Error("a second scoped claim started a concurrent scan; the subprocess bound is gone")
 	}
@@ -209,69 +209,139 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 		t.Error("the joining read got a different channel; it would wait on a refresh nobody runs")
 	}
 
-	// The first pass publishes "a" and is handed "b" to go round again.
-	next := c.mergeScoped(statusKeyPoll, []allRepoStatus{{Repo: "a", IsRepo: true, Files: []gitFile{{Path: "x"}}}})
+	// The first pass merges "a" and is handed "b" to go round again.
+	next, run := c.finish(statusKeyPoll, []allRepoStatus{{Repo: "a", IsRepo: true, Files: []gitFile{{Path: "x"}}}})
+	if !run {
+		t.Fatal("finish ended the chain with a scope still recorded; the joining read's " +
+			"repository was dropped and its rows stay stale")
+	}
 	if _, want := next["b"]; !want || len(next) != 1 {
-		t.Fatalf("mergeScoped returned %v, want exactly {b}: the joining read's repository "+
+		t.Fatalf("finish returned %v, want exactly {b}: the joining read's repository "+
 			"was dropped and its rows stay stale", next)
 	}
 	// Waiters are woken either way, because the snapshot they were waiting on moved.
 	select {
 	case <-first:
 	default:
-		t.Error("mergeScoped left the waiters blocked on a channel it replaced")
+		t.Error("finish left the waiters blocked on a channel it replaced")
 	}
 	// And the slot is STILL claimed, so a third read joins this chain rather than
 	// starting a second concurrent scan.
-	if _, again := c.claimScoped(statusKeyPoll, nil); again {
+	if _, again := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); again {
 		t.Error("the slot opened between passes; a third read would start a concurrent scan")
 	}
+	// That third read's scope is drained too, so the chain runs one more pass.
+	third, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("b")})
+	if !run || len(third) != 1 {
+		t.Fatalf("finish returned (%v, %v) after a read joined between passes, want its "+
+			"scope drained", third, run)
+	}
 
-	// The second pass finds nothing accumulated, so it releases.
-	if last := c.mergeScoped(statusKeyPoll, []allRepoStatus{repoRow("b")}); len(last) != 0 {
-		t.Errorf("mergeScoped returned %v after an idle pass, want nothing: the chain would never end", last)
+	// The last pass finds nothing recorded, so it releases.
+	if last, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); run {
+		t.Errorf("finish returned %v after an idle pass, want the chain to end", last)
 	}
 	if _, running := c.read(statusKeyPoll); running != nil {
 		t.Error("the slot is still in flight after the chain ended; the variant would never refresh again")
 	}
 }
 
-// A FULL scan covers every repository, so anything a scoped read asked for while it
-// ran is already answered and the pending set is cleared.
+// The MIRROR of the test above: an unscoped read that joins a SCOPED scan is not
+// dropped either, and the pass it asked for runs.
 //
-// Left uncleared, the full scan's publish would release the slot with work still
-// recorded and nobody looping — so the next scoped read would inherit a stale
-// pending set and rescan repositories for no reason.
-func TestStatusCache_AFullScanSatisfiesEveryPendingScope(t *testing.T) {
+// This is the direction the pending set could not express. A scoped scan covers a
+// fraction of the tree and deliberately leaves `at` where it was, so the whole-tree
+// read is answered from a snapshot that stays stale and — with no timer left on the
+// client — its scan would wait for the next unscoped gesture rather than for a
+// clock. `run` with a nil scope is what says "scan everything", and only a full pass
+// moves `at`.
+func TestStatusCache_AFullReadJoiningAScopedScanIsNotDropped(t *testing.T) {
 	var c statusCache
-	if _, started := c.claim(statusKeyPoll); !started {
-		t.Fatal("Setup: claim did not start")
+	old := time.Now().Add(-time.Minute)
+	seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("a")}, old)
+
+	if _, started := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); !started {
+		t.Fatal("Setup: the scoped claim did not start")
 	}
-	if _, started := c.claimScoped(statusKeyPoll, map[string]struct{}{"a": {}}); started {
-		t.Fatal("Setup: the scoped read did not join the running full scan")
+	if _, started := c.claim(statusKeyPoll, nil); started {
+		t.Fatal("Setup: the unscoped read did not join the running scoped scan")
 	}
 
-	c.publish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")})
+	next, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")})
+	if !run {
+		t.Fatal("finish released the slot with a full scan recorded: the whole-tree scan " +
+			"never runs, and the snapshot it would have freshened stays stale forever")
+	}
+	if next != nil {
+		t.Errorf("finish returned scope %v, want nil: a drained full intent must scan "+
+			"EVERY repository, not the scope of the pass that preceded it", next)
+	}
+	// The scoped pass left `at` alone, which is why the full pass was still needed.
+	snap, _ := c.read(statusKeyPoll)
+	if snap.at.After(old) {
+		t.Errorf("snapshot at = %v, want the original %v after a SCOPED pass", snap.at, old)
+	}
 
-	c.mu.Lock()
-	pending := c.slots[statusKeyPoll].pending
-	c.mu.Unlock()
-	if len(pending) != 0 {
-		t.Errorf("pending = %v after a full publish, want empty: a full scan looked at "+
-			"every repository", pending)
+	// And that full pass publishes: `at` moves, and the chain then ends.
+	if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}); run {
+		t.Error("the chain did not end after the full pass")
+	}
+	snap, running := c.read(statusKeyPoll)
+	if !snap.at.After(old) {
+		t.Errorf("snapshot at = %v, want freshened: the full pass merged instead of "+
+			"publishing, so every later read still sees a stale snapshot", snap.at)
+	}
+	if len(snap.rows()) != 2 {
+		t.Errorf("repos = %+v, want both: the full pass did not replace the snapshot", snap.rows())
+	}
+	if running != nil {
+		t.Error("the slot is still in flight after the chain ended")
 	}
 }
 
-// mergeScoped appends a row the snapshot does not hold, which is how a repository
+// A FULL scan covers every repository, so a read that joins one is already answered
+// and records NOTHING — in either direction.
+//
+// Recorded anyway, the full scan would release the slot with work outstanding and
+// nobody looping, so the next read would inherit it and rescan for no reason; and a
+// recorded full intent would chain a SECOND whole-tree scan, the ~275-subprocess
+// cost the whole holder exists to pay once.
+func TestStatusCache_AFullScanSatisfiesEveryJoiningRead(t *testing.T) {
+	var c statusCache
+	if _, started := c.claim(statusKeyPoll, nil); !started {
+		t.Fatal("Setup: claim did not start")
+	}
+	if _, started := c.claim(statusKeyPoll, map[string]struct{}{"a": {}}); started {
+		t.Fatal("Setup: the scoped read did not join the running full scan")
+	}
+	if _, started := c.claim(statusKeyPoll, nil); started {
+		t.Fatal("Setup: the second unscoped read did not join the running full scan")
+	}
+
+	c.mu.Lock()
+	slot := c.slots[statusKeyPoll]
+	pending, pendingFull := slot.pending, slot.pendingFull
+	c.mu.Unlock()
+	if len(pending) != 0 || pendingFull {
+		t.Errorf("recorded pending = %v, pendingFull = %v while a full scan ran, want "+
+			"nothing: it looks at every repository already", pending, pendingFull)
+	}
+
+	if next, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}); run {
+		t.Errorf("finish chained a %v pass after a full scan, want the chain to end", next)
+	}
+}
+
+// A scoped merge appends a row the snapshot does not hold, which is how a repository
 // cloned since the last full scan reaches the answer at all.
 func TestStatusCache_AScopedMergeAppendsAnUnknownRepo(t *testing.T) {
 	var c statusCache
 	seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("old")}, time.Now())
-	if _, started := c.claimScoped(statusKeyPoll, map[string]struct{}{"fresh": {}}); !started {
+	if _, started := c.claim(statusKeyPoll, map[string]struct{}{"fresh": {}}); !started {
 		t.Fatal("Setup: claim did not start")
 	}
 
-	c.mergeScoped(statusKeyPoll, []allRepoStatus{repoRow("fresh")})
+	c.finish(statusKeyPoll, []allRepoStatus{repoRow("fresh")})
 
 	snap, _ := c.read(statusKeyPoll)
 	names := make([]string, 0, 2)

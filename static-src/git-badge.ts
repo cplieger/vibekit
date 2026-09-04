@@ -45,12 +45,14 @@ let lastTooltip = "";
 
 /** Wire the badge to both shared stores. Idempotent.
  *
- *  Neither poll is started here: git-status-store.ts and forge-store.ts each own
- *  one, and the badge repaints from their subscriptions. That removed the last of
- *  the duplicate fetches — the status half moved first (which is what let the
- *  docs page and the file browser get per-path letters), the forges half
- *  followed, and the PR fan-out now reads the same forge list instead of asking
- *  for its own. */
+ *  No fetch is started here: the badge repaints from the two stores'
+ *  subscriptions, which is what removed the last of the duplicate fetches — the
+ *  status half moved first (which is what let the docs page and the file browser
+ *  get per-path letters), the forges half followed, and the PR fan-out now reads
+ *  the same forge list instead of asking for its own.
+ *
+ *  Only forge-store.ts owns a timer. git-status-store.ts refreshes on facts
+ *  rather than on a clock, and its header says which. */
 export function initGitBadge(): void {
   if (started) {
     return;

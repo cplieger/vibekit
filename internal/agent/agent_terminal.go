@@ -895,10 +895,13 @@ func (at *agentTerminals) awaitExit(
 	// term.done, the pending wait_for_exit), and the agent then reads a file the
 	// command's backgrounded grandchild is still writing. Not a kill — the point is
 	// to observe when the tree has stopped, and to SAY SO when it has not.
-	if owns && !procgroup.WaitGone(pgid, terminalGroupGrace) {
-		slog.Warn("agent terminal: the command exited but its process group did not empty",
-			"chat_id", chatID, "term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
-	}
+	//
+	// Started here and JOINED after the drain, so the two overlap. They bound the
+	// same population — a grandchild the head left behind — and sequenced they would
+	// charge `some-daemon &` both graces before the agent hears the command
+	// finished. Neither observation touches the other's subject.
+	groupEmptied := make(chan bool, 1)
+	go func() { groupEmptied <- !owns || procgroup.WaitGone(pgid, terminalGroupGrace) }()
 
 	// Bound the drain from the moment the process actually exited: EOF is not
 	// guaranteed, since a command that leaves a grandchild holding the write
@@ -916,6 +919,15 @@ func (at *agentTerminals) awaitExit(
 			"chat_id", chatID, "term_id", termID, "grace", terminalDrainGrace)
 		_ = pr.Close()
 		<-drained
+	}
+
+	// Debug, not Warn: a command that backgrounds a long-lived process ON PURPOSE
+	// (a dev server, a watcher) reaches this on every exit and there is nothing for
+	// anyone to do about it. killTerminalGroup's line stays a Warn because there a
+	// SIGKILL was sent and the group outlived it, which is not an ordinary outcome.
+	if !<-groupEmptied {
+		slog.Debug("agent terminal: the command exited but its process group did not empty",
+			"chat_id", chatID, "term_id", termID, "pgid", pgid, "grace", terminalGroupGrace)
 	}
 
 	stop()      // unregister the AfterFunc
