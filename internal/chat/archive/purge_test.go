@@ -824,11 +824,17 @@ func TestPurgeScheduler_ATriggerEndsTheIdleBackOff(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t,
 		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }),
 		WithOpenTabs(func(vibekit.ChatID) bool {
+			// Read BEFORE the handshake, or this pass can answer with the value the
+			// TEST is about to store: the test flips the flag the moment it receives
+			// a handshake, so a scheduler descheduled between the send and the load
+			// would purge the chat on the FIRST pass, satisfy the assertion below,
+			// and green a run in which no Trigger ever did anything.
+			answer := exempt.Load()
 			select {
 			case passes <- struct{}{}:
 			default:
 			}
-			return exempt.Load()
+			return answer
 		}))
 	chat := writeAgedChat(t, dir, "pinned", 500*time.Hour)
 

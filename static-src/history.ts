@@ -57,7 +57,8 @@ interface HistoryRow {
   detail: string;
   status: string;
   /** The verdict this row states as a glyph, or null when there is none to
-   *  state: any chat, an agent-parented run, and a run that is still moving. */
+   *  state: any chat, and a run that is still moving or carries a status this
+   *  client has no verdict for. */
   outcome: RunVerdict | null;
   /** The row's third line: what this conversation or run WAS, in facts. Empty
    *  entries are dropped by the builder, so a chat vibekit knows nothing about
@@ -163,7 +164,7 @@ const END_REASON_TEXT: Readonly<Record<string, string>> = {
 
 /** A run's verdict, or null for a run with none to state.
  *
- *  Exhaustive over `RUN_STATUSES` (run-controls.ts): `running` and `paused`
+ *  Exhaustive over `run-store.ts RunState.status`: `running` and `paused`
  *  return null because their live status already renders in the status slot and
  *  a verdict is a claim only a settled run can make. An unknown status returns
  *  null for a different reason — it degrades to the status word rather than
@@ -188,6 +189,24 @@ function runVerdict(status: string, endReason = ""): RunVerdict | null {
     default:
       return null;
   }
+}
+
+/** Whether a run is still moving, and so not this page's to remove.
+ *
+ *  `deleteRow`'s run arm CANCELS a run that is still going before it removes the
+ *  directory, so on a live row the trash is a stop control the confirm cannot
+ *  describe. Stopping a run belongs to the run page, whose verbs the server names.
+ *
+ *  Status-shaped, not parentage-shaped: a manually launched live run was always
+ *  reachable here too, so gating on the launcher would leave the same defect.
+ *
+ *  A recognised `end_reason` outranks the status, as in `runVerdict`: a bound
+ *  already stopped that run, so a `running` status is a frame yet to land. */
+function runIsMoving(status: string, endReason: string): boolean {
+  if (END_REASON_TEXT[endReason] !== undefined) {
+    return false;
+  }
+  return status === "running" || status === "paused";
 }
 
 /** What `applyOutcome` needs from a caller that has no tool call behind it, the
@@ -546,6 +565,11 @@ function openRow(row: HistoryRow, onGone: () => void): void {
  *      still moving and then removes its run directory, plus vibekit's own lease,
  *      timer and recorded end reason.
  *
+ *  WHICH ROWS IT REACHES is `buildDeleteButton`'s: everything the list holds except
+ *  a run that is still moving. That exception exists because of the cancel arm
+ *  above, and it started mattering when `session_list.go` stopped filtering
+ *  chat-parented runs out of this page.
+ *
  *  Returns true when the row is gone, so the caller can refresh rather than wait
  *  for a poll. */
 async function deleteRow(row: HistoryRow): Promise<boolean> {
@@ -646,7 +670,7 @@ function buildRow(row: HistoryRow): HTMLElement {
   return node;
 }
 
-/** The row's delete control.
+/** The row's delete control, or null for a row this page will not remove.
  *
  *  A real `<button>`, beside the row's open button rather than inside it: both are
  *  ordinary children of a plain row, so assistive tech reads two controls. It
@@ -654,9 +678,16 @@ function buildRow(row: HistoryRow): HTMLElement {
  *  a delete click from an open click, and the open handler bails on it — otherwise
  *  every delete would also open the thing it is deleting.
  *
+ *  ABSENT for a run that is still moving (`runIsMoving` says why): withheld here
+ *  rather than refused in `deleteRow`, because this button is that function's only
+ *  caller and a control whose click can only be declined is worse than none.
+ *
  *  Named for the row, not the glyph: "Delete X" is what a screen reader announces,
  *  beside the row's own "Open X". */
-function buildDeleteButton(row: HistoryRow): HTMLElement {
+function buildDeleteButton(row: HistoryRow): HTMLElement | null {
+  if (row.run !== undefined && runIsMoving(row.status, row.run.end_reason ?? "")) {
+    return null;
+  }
   const btn = el("button", {
     type: "button",
     className: "history-delete",

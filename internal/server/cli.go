@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"maps"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -272,6 +273,26 @@ func kiroSettingValueText(v json.RawMessage) string {
 		return s
 	}
 	return strings.TrimSpace(string(v))
+}
+
+// kiroSettingsKeysParam is the ONE query parameter GET /api/kiro-settings reads.
+// Named so unknownKiroSettingsQuery and the reader cannot disagree about it.
+const kiroSettingsKeysParam = "keys"
+
+// unknownKiroSettingsQuery reports whether q carries a parameter this endpoint
+// does not read.
+//
+// An ignored parameter is indistinguishable from no selection, which here means
+// "answer the whole allowlist" — so ignoring one fails OPEN. The selector used to
+// be `key` and take a single name, so `?key=telemetry.enabled`, and any typo of the
+// new spelling, would answer all six keys. A typo in a VALUE already refuses.
+func unknownKiroSettingsQuery(q url.Values) bool {
+	for name := range q {
+		if name != kiroSettingsKeysParam {
+			return true
+		}
+	}
+	return false
 }
 
 // requestedKiroSettings resolves the ?keys= parameter to the allowlisted keys to

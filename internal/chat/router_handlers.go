@@ -104,7 +104,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	})
 }
 
-// windowBudget is what one transcript page may carry. A struct rather than three
+// windowBudget is what one transcript page may carry. A struct rather than four
 // int parameters: they are interchangeable at a call site and a transposition
 // would silently serve a 50-byte page or a million-message one.
 type windowBudget struct {
@@ -114,9 +114,10 @@ type windowBudget struct {
 	// Bytes is the hostile-input bound: what the wire may carry however the
 	// content is shaped.
 	Bytes int
-	// Blocks is the CLIENT'S OWN residency unit, so the page the server cuts and
-	// the window the client can hold are measured in the same thing.
-	Blocks int
+	// Blocks and ToolCalls are the client's own residency budgets, BOTH of them:
+	// `block-window.ts planResidency` stops on whichever runs out first.
+	Blocks    int
+	ToolCalls int
 }
 
 // messageWindow returns the newest messages of msgs that fit EVERY budget, plus
@@ -127,13 +128,10 @@ type windowBudget struct {
 // real conversation whole, and a SIX-message chat answered 13,010,641 bytes: one
 // assistant message can carry 580 blocks and 353 tool calls.
 //
-// BYTES AND BLOCKS ARE DIFFERENT QUESTIONS, which is why both are here. Bytes
-// bound what the wire carries whatever the content is — the hostile-input bound,
-// and what a reader waits on. Blocks are what the CLIENT can hold: `block-window.ts`
-// bounds residency at RESIDENT_BLOCKS and stubs everything past it, so a page cut
-// on bytes alone holds a chat-dependent number of blocks and can overshoot that
-// budget — fetched, decoded, and then thrown away on arrival. Measuring the page
-// in the client's own unit is what closes that.
+// Bytes bound what the WIRE carries; the residency pair bounds what the CLIENT can
+// hold. A page cut on bytes alone holds a chat-dependent number of blocks and tool
+// cards, so it can overshoot either half of what `block-window.ts` mounts — and the
+// surplus is decoded and then stubbed on arrival, which the budgets exist to avoid.
 //
 // The messages are marshalled HERE, once, and returned as raw JSON. Measuring
 // one encoding and shipping another would be a second implementation of "how
@@ -150,7 +148,8 @@ func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.R
 	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
 	// `null` for an array. Same guard as the one the make+copy here replaced.
 	window = make([]json.RawMessage, 0, min(budget.Messages, len(msgs)))
-	spentBytes, spentBlocks := 0, 0
+	spentBytes := 0
+	var spent messageCost
 	start = len(msgs)
 	for i := range slices.Backward(msgs) {
 		if len(window) == budget.Messages {
@@ -164,13 +163,15 @@ func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.R
 				"message_id", msgs[i].ID, "error", err)
 			break
 		}
-		blocks := messageBlockCost(&msgs[i])
-		if len(window) > 0 &&
-			(spentBytes+len(raw) > budget.Bytes || spentBlocks+blocks > budget.Blocks) {
+		cost := costOfMessage(&msgs[i])
+		if len(window) > 0 && (spentBytes+len(raw) > budget.Bytes ||
+			spent.Blocks+cost.Blocks > budget.Blocks ||
+			spent.ToolCalls+cost.ToolCalls > budget.ToolCalls) {
 			break
 		}
 		spentBytes += len(raw)
-		spentBlocks += blocks
+		spent.Blocks += cost.Blocks
+		spent.ToolCalls += cost.ToolCalls
 		window = append(window, raw)
 		start = i
 	}
@@ -178,21 +179,33 @@ func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.R
 	return window, start
 }
 
-// messageBlockCost is what one message costs the client's residency budget.
+// messageCost is what one message costs the client's two residency budgets.
+type messageCost struct {
+	Blocks    int
+	ToolCalls int
+}
+
+// costOfMessage prices one message the way `block-window.ts turnCost` does, and
+// has to: a budget measured one way here and another way there would cut a page
+// the client still stubs.
+func costOfMessage(m *vibekit.Message) messageCost {
+	return messageCost{Blocks: messageBlockCost(m), ToolCalls: len(m.ToolCalls)}
+}
+
+// messageBlockCost is the BLOCK half of costOfMessage. A message with no blocks
+// costs ONE, because the reconcile unit is the message row.
 //
-// It mirrors `block-window.ts turnCost` exactly, and has to: a budget measured
-// one way here and another way there would cut a page the client still stubs. A
-// message with no blocks costs ONE, because the reconcile unit is the message row
-// and an empty one is still a row.
-//
-// The synthesis is `store.ts normalizeMessage`'s: a message persisted before the
-// blocks field carries none, and the client builds one thinking block, one text
-// block and one per tool call before it measures. Counting the wire's empty
-// `blocks` array as one row instead would price a legacy 353-tool-call message at
-// a single block.
+// The synthesis is `store.ts normalizeMessage`'s, INCLUDING its role gate: it
+// builds one thinking block, one text block and one per tool call for an ASSISTANT
+// message persisted before the blocks field, and returns every other role
+// untouched. Missing either half misprices a legacy 353-tool-call turn — the
+// synthesis at one block, the gate at 353.
 func messageBlockCost(m *vibekit.Message) int {
 	if n := len(m.Blocks); n > 0 {
 		return n
+	}
+	if m.Role != vibekit.RoleAssistant {
+		return 1
 	}
 	n := len(m.ToolCalls)
 	if m.Reasoning != "" {
@@ -281,10 +294,11 @@ func parseMaxBytesParam(r *http.Request) int {
 	return clampedQueryInt(r, "max_bytes", defaultMaxBytes, 1<<10, maxMaxBytes)
 }
 
-// Block-count bounds for the transcript window. The default is generous — a few
-// of the client's own residency budgets — because a caller that names no block
-// budget is asking for the byte-bounded answer this endpoint served before the
-// parameter existed. The ceiling is 8× the default, as the byte budget's is.
+// Residency-count bounds for the transcript window, shared by ?blocks= and
+// ?tool_calls=. The default is generous — a few of the client's own residency
+// budgets — because a caller that names neither is asking for the byte-bounded
+// answer this endpoint served before the parameters existed. The ceiling is 8× the
+// default, as the byte budget's is.
 const (
 	defaultMaxBlocks = 1024
 	maxMaxBlocks     = 8 * defaultMaxBlocks
@@ -301,12 +315,25 @@ func parseBlocksParam(r *http.Request) int {
 	return clampedQueryInt(r, "blocks", defaultMaxBlocks, 1, maxMaxBlocks)
 }
 
-// parseWindowBudget reads the three page budgets off the query.
+// parseToolCallsParam returns the validated ?tool_calls= budget, the second half
+// of the client's residency pair.
+//
+// The default is the BLOCK default, not a number of its own: a tool call the client
+// synthesizes a block for costs a block too, so at that value this budget cannot
+// cut a page the block budget admitted — which is what a caller naming only one of
+// the two is asking for. The floor is 0, unlike the block floor: a page of pure
+// prose costs no tool calls, so 0 is a budget a client can honestly hold.
+func parseToolCallsParam(r *http.Request) int {
+	return clampedQueryInt(r, "tool_calls", defaultMaxBlocks, 0, maxMaxBlocks)
+}
+
+// parseWindowBudget reads the four page budgets off the query.
 func parseWindowBudget(r *http.Request) windowBudget {
 	return windowBudget{
-		Messages: parseLimitParam(r),
-		Bytes:    parseMaxBytesParam(r),
-		Blocks:   parseBlocksParam(r),
+		Messages:  parseLimitParam(r),
+		Bytes:     parseMaxBytesParam(r),
+		Blocks:    parseBlocksParam(r),
+		ToolCalls: parseToolCallsParam(r),
 	}
 }
 

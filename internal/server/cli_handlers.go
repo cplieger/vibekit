@@ -75,21 +75,33 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 //
 // A key the list read does not answer falls back to the per-key invocation
 // rather than reporting no value: `settings list` is what the installed 2.20.2
-// serves, and a build pinned to something older must still fill the panel. The
-// fallback is bounded by what the request asked for, which is why ?keys= exists
-// at all.
+// serves, and a build pinned to something older must still fill the panel.
+//
+// ONE DEADLINE FOR THE WHOLE READ, set here and shared by every spawn, which is
+// what bounds that fallback: the per-key reads are sequential and an absent ?keys=
+// names the entire allowlist, so a per-spawn budget made a degraded read cost N ×
+// cliTimeouts.Settings — six keys is 18 s of the client's 30 s API timeout for one
+// panel. A key the deadline arrives before answers "", which the client renders as
+// the control's default.
 func (s *Server) readKiroSettings(w http.ResponseWriter, r *http.Request) {
-	keys := requestedKiroSettings(r.URL.Query().Get("keys"))
+	q := r.URL.Query()
+	if unknownKiroSettingsQuery(q) {
+		httpreply.BadRequest(w, "unknown query parameter")
+		return
+	}
+	keys := requestedKiroSettings(q.Get(kiroSettingsKeysParam))
 	if len(keys) == 0 {
 		httpreply.BadRequest(w, "unknown setting key")
 		return
 	}
-	listed := s.readKiroSettingsList(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Settings)
+	defer cancel()
+	listed := s.readKiroSettingsList(ctx)
 	out := make(map[string]string, len(keys))
 	for _, key := range keys {
 		value, ok := listed[key]
 		if !ok {
-			value = s.readOneKiroSetting(r.Context(), key)
+			value = s.readOneKiroSetting(ctx, key)
 		}
 		out[key] = value
 	}
@@ -102,10 +114,10 @@ func (s *Server) readKiroSettings(w http.ResponseWriter, r *http.Request) {
 // STDOUT only (RunStdoutCapped, not Run): the document is parsed as JSON, and
 // CombinedOutput would fold any stderr line kiro-cli writes into the bytes
 // json.Unmarshal reads.
+//
+// The deadline is the caller's — readKiroSettings owns the whole read's budget.
 func (s *Server) readKiroSettingsList(ctx context.Context) map[string]string {
-	cctx, cancel := context.WithTimeout(ctx, s.cliTimeouts.Settings)
-	defer cancel()
-	out, truncated, err := s.cliRunner.RunStdoutCapped(cctx, settingsListMaxBytes, settingsListArgs...)
+	out, truncated, err := s.cliRunner.RunStdoutCapped(ctx, settingsListMaxBytes, settingsListArgs...)
 	if err != nil {
 		slog.Debug("kiro-cli settings list failed; reading the requested keys one at a time",
 			"error", logsafe.Field(err.Error()))
@@ -129,10 +141,10 @@ func (s *Server) readKiroSettingsList(ctx context.Context) map[string]string {
 // readOneKiroSetting reads a single setting with the per-key invocation,
 // answering "" when kiro-cli declines. An empty value is what the client reads
 // as "unset", which renders the control's default rather than failing the panel.
+//
+// The deadline is the caller's — readKiroSettings owns the whole read's budget.
 func (s *Server) readOneKiroSetting(ctx context.Context, key string) string {
-	cctx, cancel := context.WithTimeout(ctx, s.cliTimeouts.Settings)
-	defer cancel()
-	out, err := s.cliRunner.Run(cctx, "settings", key)
+	out, err := s.cliRunner.Run(ctx, "settings", key)
 	if err != nil {
 		return ""
 	}

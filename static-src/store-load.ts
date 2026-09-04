@@ -9,7 +9,7 @@ import { apiGetTyped } from "./api-client.js";
 import { asObject, decodeArray, reqBool, type Decoder } from "./validators.js";
 import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
 import { registerCleanup } from "./actions/index.js";
-import { RESIDENT_BLOCKS } from "./block-window.js";
+import { RESIDENT_BLOCKS, RESIDENT_TOOL_CALLS } from "./block-window.js";
 import {
   setSessions,
   get,
@@ -65,20 +65,21 @@ const decodeChatGetResponseLocal: Decoder<{
 const PAGE_BUDGET_BYTES = 1 << 18;
 
 /**
- * The BLOCK bound on one transcript page, and the client's own residency unit.
+ * The RESIDENCY bounds on one transcript page, in this client's own two units.
  *
- * `block-window.ts` bounds a paint in blocks because that is what a paint costs,
- * and stubs every turn past `RESIDENT_BLOCKS`. So a page cut on bytes alone holds
- * a chat-dependent number of blocks: one assistant message can carry 580 blocks
- * and 353 tool calls, so 256 KiB can overshoot residency and the surplus is
- * decoded and then thrown away.
+ * `block-window.ts` prices a paint as a PAIR and stubs every turn past whichever
+ * runs out first, so a page cut on bytes alone holds a chat-dependent number of
+ * both — one assistant message can carry 580 blocks and 353 tool calls, so 256 KiB
+ * can overshoot either and the surplus is decoded and then thrown away. Asking for
+ * exactly what one paint holds, in BOTH units, is what makes the server's cut and
+ * this client's window the same measure; sending one leaves the other to overshoot.
  *
- * Asking for exactly what one paint can hold is what makes the server's cut and
- * this client's window the SAME unit. It is not a second message cap: the server
- * still cuts at a message boundary and still sends the newest message whole, and
- * `has_more` still reports honestly against whichever budget cut the page.
+ * Neither is a second message cap: the server still cuts at a message boundary and
+ * still sends the newest message whole, and `has_more` reports honestly against
+ * whichever budget cut the page.
  */
 const PAGE_BUDGET_BLOCKS = RESIDENT_BLOCKS;
+const PAGE_BUDGET_TOOL_CALLS = RESIDENT_TOOL_CALLS;
 
 /**
  * The server's cap on messages per page, and NOT this client's budget — it is a
@@ -201,6 +202,7 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     limit: String(PAGE_MESSAGE_CAP),
     max_bytes: String(PAGE_BUDGET_BYTES),
     blocks: String(PAGE_BUDGET_BLOCKS),
+    tool_calls: String(PAGE_BUDGET_TOOL_CALLS),
   });
   if (beforeID !== undefined) {
     params.set("before_id", beforeID);
